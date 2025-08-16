@@ -223,13 +223,7 @@ class PollingManager extends EventEmitter {
         const error = result.error || 'Unknown error';
         instance.lastError = error;
         
-        // Emit error event
-        this.emit('error', {
-          key,
-          error,
-          timestamp: new Date(),
-        });
-        
+        // Just log the error, don't emit event without handler
         console.error(`[PollingManager] ${key} fetch failed:`, error);
         
         // Re-authenticate if needed
@@ -247,12 +241,6 @@ class PollingManager extends EventEmitter {
     } catch (error) {
       console.error(`[PollingManager] Exception for ${key}:`, error);
       instance.lastError = error instanceof Error ? error.message : 'Unknown error';
-      
-      this.emit('error', {
-        key,
-        error: instance.lastError,
-        timestamp: new Date(),
-      });
     }
   }
 

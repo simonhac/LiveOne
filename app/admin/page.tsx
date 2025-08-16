@@ -120,54 +120,55 @@ export default function AdminDashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-base-100 flex items-center justify-center" data-theme="dark">
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-center">
-          <span className="loading loading-spinner loading-lg text-primary"></span>
-          <p className="mt-4 text-base-content/70">Loading systems...</p>
+          <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400 text-lg">Loading systems...</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-base-100" data-theme="dark">
+    <div className="min-h-screen bg-gray-900">
       {/* Header */}
-      <header className="navbar bg-base-200 border-b border-base-300">
-        <div className="flex-1">
-          <div>
-            <h1 className="text-2xl font-bold">LiveOne Admin</h1>
-            <p className="text-sm text-base-content/70">System Overview Dashboard</p>
+      <header className="bg-gray-800 border-b border-gray-700">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-2xl font-bold text-white">LiveOne Admin</h1>
+              <p className="text-sm text-gray-400">System Overview Dashboard</p>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 text-sm text-gray-400">
+                <Clock className="w-4 h-4" />
+                Last update: {lastUpdate ? formatTime(lastUpdate.toISOString()) : 'Never'}
+              </div>
+              <button
+                onClick={handleLogout}
+                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                Logout
+              </button>
+            </div>
           </div>
-        </div>
-        <div className="flex-none gap-4">
-          <div className="flex items-center gap-2 text-sm text-base-content/70">
-            <Clock className="w-4 h-4" />
-            Last update: {lastUpdate ? formatTime(lastUpdate.toISOString()) : 'Never'}
-          </div>
-          <button
-            onClick={handleLogout}
-            className="btn btn-error btn-sm"
-          >
-            <LogOut className="w-4 h-4" />
-            Logout
-          </button>
         </div>
       </header>
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {error && (
-          <div className="alert alert-error mb-6">
-            <span>{error}</span>
+          <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded-lg mb-6">
+            {error}
           </div>
         )}
 
         {/* Systems Table */}
-        <div className="card bg-base-200">
-          <div className="card-body p-0">
-            <div className="overflow-x-auto">
-              <table className="table table-zebra">
-                <thead>
+        <div className="bg-gray-800 rounded-lg overflow-hidden mb-8">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-900">
                 <tr>
                   <th className="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                     Owner
@@ -201,16 +202,16 @@ export default function AdminDashboard() {
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-800">
-                  {systems.length === 0 ? (
-                    <tr>
-                      <td colSpan={10} className="text-center text-base-content/50 py-8">
-                        No systems registered
-                      </td>
-                    </tr>
-                  ) : (
+              <tbody className="divide-y divide-gray-700">
+                {systems.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="text-center text-gray-500 py-8">
+                      No systems registered
+                    </td>
+                  </tr>
+                ) : (
                   systems.map((system) => (
-                    <tr key={system.systemNumber} className="hover:bg-gray-800/50 transition-colors">
+                    <tr key={system.systemNumber} className="hover:bg-gray-700/50 transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div>
                           <div className="text-sm font-medium text-gray-200">
@@ -232,15 +233,22 @@ export default function AdminDashboard() {
                               onMouseEnter={() => setHoveredSystem(system.systemNumber)}
                               onMouseLeave={() => setHoveredSystem(null)}
                             >
-                              <Info className="w-4 h-4 text-info cursor-help" />
+                              <Info className="w-4 h-4 text-blue-400 cursor-help" />
                               
                               {/* System Info Panel */}
                               {hoveredSystem === system.systemNumber && (
-                                <div className="absolute z-50 left-6 top-0 ml-2 card bg-base-300 shadow-xl">
-                                  <div className="card-body p-4 w-72">
-                                    <div className="text-sm font-semibold text-info mb-3">
-                                      System Information
-                                    </div>
+                                <div className="fixed z-[9999] bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 w-72"
+                                     style={{ 
+                                       position: 'fixed',
+                                       left: '50%',
+                                       top: '200px',
+                                       transform: 'translateX(-50%)'
+                                     }}
+                                     onMouseEnter={() => setHoveredSystem(system.systemNumber)}
+                                     onMouseLeave={() => setHoveredSystem(null)}>
+                                  <div className="text-sm font-semibold text-blue-400 mb-3">
+                                    System Information
+                                  </div>
                                   <div className="space-y-2 text-xs">
                                     {system.systemInfo.model && (
                                       <div className="flex justify-between">
@@ -272,7 +280,6 @@ export default function AdminDashboard() {
                                         <span className="text-gray-200 font-medium">{system.systemInfo.batterySize}</span>
                                       </div>
                                     )}
-                                    </div>
                                   </div>
                                 </div>
                               )}
@@ -280,21 +287,21 @@ export default function AdminDashboard() {
                           )}
                         </div>
                       </td>
-                      <td>
+                      <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
                           {system.isLoggedIn ? (
-                            <div className="badge badge-success badge-sm gap-1">
+                            <div className="bg-green-900/50 text-green-400 px-2 py-1 rounded text-xs flex items-center gap-1">
                               <Wifi className="w-3 h-3" />
                               Online
                             </div>
                           ) : (
-                            <div className="badge badge-ghost badge-sm gap-1">
+                            <div className="bg-gray-700 text-gray-400 px-2 py-1 rounded text-xs flex items-center gap-1">
                               <WifiOff className="w-3 h-3" />
                               Offline
                             </div>
                           )}
                           {system.polling.isActive && (
-                            <div className="badge badge-info badge-sm gap-1">
+                            <div className="bg-blue-900/50 text-blue-400 px-2 py-1 rounded text-xs flex items-center gap-1">
                               <Activity className="w-3 h-3" />
                               Polling
                             </div>
@@ -308,22 +315,22 @@ export default function AdminDashboard() {
                         {formatTime(system.polling.lastPollTime)}
                       </td>
                       <td className="text-center">
-                        <div className="text-sm font-mono text-warning">
+                        <div className="text-sm font-mono text-yellow-400">
                           {formatPower(system.data?.solarPower)}
                         </div>
                       </td>
                       <td className="text-center">
-                        <div className="text-sm font-mono text-info">
+                        <div className="text-sm font-mono text-blue-400">
                           {formatPower(system.data?.loadPower)}
                         </div>
                       </td>
                       <td className="text-center">
                         <div className={`text-sm font-mono ${
                           system.data && system.data.batteryPower > 0 
-                            ? 'text-success' 
+                            ? 'text-orange-400' 
                             : system.data && system.data.batteryPower < 0 
-                            ? 'text-error' 
-                            : 'text-base-content/50'
+                            ? 'text-green-400' 
+                            : 'text-gray-500'
                         }`}>
                           {formatPower(system.data?.batteryPower)}
                         </div>
@@ -331,12 +338,12 @@ export default function AdminDashboard() {
                       <td className="text-center">
                         <div className={`text-sm font-mono ${
                           system.data && system.data.batterySOC > 80 
-                            ? 'text-success' 
+                            ? 'text-green-400' 
                             : system.data && system.data.batterySOC > 50 
-                            ? 'text-warning' 
+                            ? 'text-yellow-400' 
                             : system.data && system.data.batterySOC > 20 
-                            ? 'text-warning' 
-                            : 'text-error'
+                            ? 'text-orange-400' 
+                            : 'text-red-400'
                         }`}>
                           {formatSOC(system.data?.batterySOC)}
                         </div>
@@ -344,8 +351,8 @@ export default function AdminDashboard() {
                       <td className="text-center">
                         <div className={`text-sm font-mono ${
                           system.data && Math.abs(system.data.gridPower) > 0 
-                            ? 'text-secondary' 
-                            : 'text-base-content/50'
+                            ? 'text-purple-400' 
+                            : 'text-gray-500'
                         }`}>
                           {formatPower(system.data?.gridPower)}
                         </div>
@@ -354,41 +361,48 @@ export default function AdminDashboard() {
                   ))
                 )}
               </tbody>
-              </table>
-            </div>
+            </table>
           </div>
         </div>
 
         {/* Summary Stats */}
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="stats shadow">
-            <div className="stat">
-              <div className="stat-figure text-primary">
-                <Server className="w-8 h-8" />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-gray-400 text-sm">Total Systems</p>
+                <p className="text-3xl font-bold text-white mt-1">{systems.length}</p>
               </div>
-              <div className="stat-title">Total Systems</div>
-              <div className="stat-value text-primary">{systems.length}</div>
-            </div>
-          </div>
-          <div className="stats shadow">
-            <div className="stat">
-              <div className="stat-figure text-success">
-                <Gauge className="w-8 h-8" />
-              </div>
-              <div className="stat-title">Active Polling</div>
-              <div className="stat-value text-success">
-                {systems.filter(s => s.polling.isActive).length}
+              <div className="text-blue-400">
+                <Server className="w-10 h-10" />
               </div>
             </div>
           </div>
-          <div className="stats shadow">
-            <div className="stat">
-              <div className="stat-figure text-secondary">
-                <Users className="w-8 h-8" />
+          
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-gray-400 text-sm">Active Polling</p>
+                <p className="text-3xl font-bold text-white mt-1">
+                  {systems.filter(s => s.polling.isActive).length}
+                </p>
               </div>
-              <div className="stat-title">Users Online</div>
-              <div className="stat-value text-secondary">
-                {systems.filter(s => s.isLoggedIn).length}
+              <div className="text-green-400">
+                <Gauge className="w-10 h-10" />
+              </div>
+            </div>
+          </div>
+          
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-gray-400 text-sm">Users Online</p>
+                <p className="text-3xl font-bold text-white mt-1">
+                  {systems.filter(s => s.isLoggedIn).length}
+                </p>
+              </div>
+              <div className="text-purple-400">
+                <Users className="w-10 h-10" />
               </div>
             </div>
           </div>
