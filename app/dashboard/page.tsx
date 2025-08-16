@@ -164,7 +164,7 @@ export default function DashboardPage() {
                     <Info className="w-4 h-4" />
                   </button>
                   {showSystemInfo && (
-                    <div className="absolute top-full mt-2 right-1/2 translate-x-1/2 z-50 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 min-w-[280px]" 
+                    <div className="absolute top-full mt-2 right-1/2 translate-x-1/2 z-50 bg-gray-800 border border-gray-600 rounded shadow-xl p-4 min-w-[280px]" 
                          onMouseEnter={() => setShowSystemInfo(true)}
                          onMouseLeave={() => setShowSystemInfo(false)}>
                       <h4 className="font-semibold text-white mb-3">System Information</h4>
@@ -238,7 +238,7 @@ export default function DashboardPage() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {error && (
-          <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded-lg mb-6 flex items-center gap-2">
+          <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
             <AlertTriangle className="w-5 h-5" />
             <span>{error}</span>
           </div>
@@ -248,7 +248,7 @@ export default function DashboardPage() {
           <div className="space-y-6">
             {/* Fault Warning */}
             {data.faultCode !== 0 && (
-              <div className="bg-yellow-900/50 border border-yellow-700 text-yellow-300 px-4 py-3 rounded-lg flex items-center gap-2">
+              <div className="bg-yellow-900/50 border border-yellow-700 text-yellow-300 px-4 py-3 rounded flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5" />
                 <div>
                   <span className="font-semibold">Fault Code {data.faultCode}</span> encountered at {new Date(data.faultTimestamp * 1000).toLocaleString()}
@@ -260,7 +260,7 @@ export default function DashboardPage() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               {/* Chart Placeholder - 2/3 width */}
               <div className="lg:col-span-2">
-                <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 h-full min-h-[400px] flex items-center justify-center">
+                <div className="bg-gray-800 border border-gray-700 rounded p-6 h-full min-h-[400px] flex items-center justify-center">
                   <div className="text-center">
                     <div className="text-gray-500 text-lg mb-2">Chart Placeholder</div>
                     <div className="text-gray-600 text-sm">Energy visualization coming soon</div>
@@ -319,7 +319,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Energy Statistics */}
-            <div className="bg-gray-800 rounded-lg p-3">
+            <div className="bg-gray-800 rounded p-3">
               <h3 className="text-sm font-semibold text-white mb-2">Energy</h3>
               
               <div className="overflow-x-auto">
@@ -421,7 +421,7 @@ function PowerCard({
   extraInfo?: string
 }) {
   return (
-    <div className={`${bgColor} border ${borderColor} rounded-lg p-6 transition-all hover:bg-opacity-30`}>
+    <div className={`${bgColor} border ${borderColor} rounded p-6 transition-all hover:bg-opacity-30`}>
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-base font-medium text-gray-300">{title}</h3>
         <div className={iconColor}>{icon}</div>
