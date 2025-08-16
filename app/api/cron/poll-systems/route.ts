@@ -49,13 +49,40 @@ export async function GET(request: NextRequest) {
       try {
         console.log(`[Cron] Polling system ${system.systemNumber}...`);
         
-        // Get credentials for this system
-        const credentials = USER_TO_SYSTEM[system.userId as keyof typeof USER_TO_SYSTEM] || SELECTLIVE_CONFIG;
+        // Get credentials - try environment variables first, then fall back to config
+        let email: string | undefined;
+        let password: string | undefined;
+        
+        // Check environment variables
+        if (process.env.SELECTRONIC_EMAIL && process.env.SELECTRONIC_PASSWORD) {
+          email = process.env.SELECTRONIC_EMAIL;
+          password = process.env.SELECTRONIC_PASSWORD;
+          console.log('[Cron] Using credentials from environment variables');
+        } else {
+          // Try to get from config (will fail in production if USER_SECRETS doesn't exist)
+          try {
+            const credentials = USER_TO_SYSTEM[system.userId as keyof typeof USER_TO_SYSTEM] || SELECTLIVE_CONFIG;
+            email = credentials.username;
+            password = credentials.password;
+            console.log('[Cron] Using credentials from config file');
+          } catch (error) {
+            console.error('[Cron] ❌ No credentials available!');
+            console.error('[Cron] Please set SELECTRONIC_EMAIL and SELECTRONIC_PASSWORD environment variables');
+            throw new Error('Missing Selectronic credentials');
+          }
+        }
+        
+        if (!email || !password) {
+          console.error('[Cron] ❌ Credentials are incomplete!');
+          console.error('[Cron] Email present:', !!email);
+          console.error('[Cron] Password present:', !!password);
+          throw new Error('Incomplete Selectronic credentials');
+        }
         
         // Create client for this system
         const client = new SelectronicFetchClient({
-          email: credentials.username,
-          password: credentials.password,
+          email,
+          password,
           systemNumber: system.systemNumber
         });
         

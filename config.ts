@@ -45,20 +45,32 @@ export const CACHE_CONFIG = {
   cacheKeyPrefix: 'liveone:',
 } as const;
 
-// Import real secrets from separate file
-import { LIVEONE_USERS, SELECTLIVE_CREDENTIALS, USER_TO_SYSTEM } from './USER_SECRETS';
+// Import real secrets from separate file (optional in production)
+let LIVEONE_USERS: any = {};
+let SELECTLIVE_CREDENTIALS: any = {};
+let USER_TO_SYSTEM: any = {};
+
+try {
+  const secrets = require('./USER_SECRETS');
+  LIVEONE_USERS = secrets.LIVEONE_USERS || {};
+  SELECTLIVE_CREDENTIALS = secrets.SELECTLIVE_CREDENTIALS || {};
+  USER_TO_SYSTEM = secrets.USER_TO_SYSTEM || {};
+} catch (error) {
+  // USER_SECRETS not available (production environment)
+  console.log('[Config] USER_SECRETS not found, using environment variables');
+}
 
 // All users configuration
 export const APP_USERS = LIVEONE_USERS;
 
-// User to system mapping - re-export from USER_SECRETS
+// User to system mapping - re-export
 export { USER_TO_SYSTEM };
 
 // Select.Live API Configuration (for fetching inverter data)
 export const SELECTLIVE_CONFIG = {
-  username: SELECTLIVE_CREDENTIALS.username,
-  password: SELECTLIVE_CREDENTIALS.password,
-  systemNumber: SELECTLIVE_CREDENTIALS.systemNumber,
+  username: SELECTLIVE_CREDENTIALS.username || process.env.SELECTRONIC_EMAIL || '',
+  password: SELECTLIVE_CREDENTIALS.password || process.env.SELECTRONIC_PASSWORD || '',
+  systemNumber: SELECTLIVE_CREDENTIALS.systemNumber || process.env.SELECTRONIC_SYSTEM || '',
 } as const;
 
 // MQTT Configuration (for future use)
