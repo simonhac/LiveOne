@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { SelectronicData } from '@/config'
+import EnergyChart from '@/components/EnergyChart'
 import { 
   Sun, 
   Home, 
@@ -258,14 +259,9 @@ export default function DashboardPage() {
 
             {/* Main Dashboard Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* Chart Placeholder - 2/3 width */}
+              {/* Energy Chart - 2/3 width */}
               <div className="lg:col-span-2">
-                <div className="bg-gray-800 border border-gray-700 rounded p-6 h-full min-h-[400px] flex items-center justify-center">
-                  <div className="text-center">
-                    <div className="text-gray-500 text-lg mb-2">Chart Placeholder</div>
-                    <div className="text-gray-600 text-sm">Energy visualization coming soon</div>
-                  </div>
-                </div>
+                <EnergyChart className="h-full min-h-[400px]" />
               </div>
 
               {/* Power Cards - 1/3 width, stacked vertically */}
@@ -343,24 +339,24 @@ export default function DashboardPage() {
                     <tr className="border-b border-gray-700">
                       <td className="py-1.5 font-medium text-gray-300 text-xs">Today</td>
                       <td className="text-right py-1.5 text-yellow-400 font-mono text-sm">
-                        {data.solarKwhToday.toFixed(3)}
+                        <span className="font-bold">{data.solarKwhToday.toFixed(3)}</span> <span className="font-normal">kWh</span>
                       </td>
                       <td className="text-right py-1.5 text-blue-400 font-mono text-sm">
-                        {data.loadKwhToday.toFixed(3)}
+                        <span className="font-bold">{data.loadKwhToday.toFixed(3)}</span> <span className="font-normal">kWh</span>
                       </td>
                       <td className="text-right py-1.5 text-green-400 font-mono text-sm">
-                        {data.batteryInKwhToday.toFixed(3)}
+                        <span className="font-bold">{data.batteryInKwhToday.toFixed(3)}</span> <span className="font-normal">kWh</span>
                       </td>
                       <td className="text-right py-1.5 text-orange-400 font-mono text-sm">
-                        {data.batteryOutKwhToday.toFixed(3)}
+                        <span className="font-bold">{data.batteryOutKwhToday.toFixed(3)}</span> <span className="font-normal">kWh</span>
                       </td>
                       {showGrid && (
                         <>
                           <td className="text-right py-1.5 text-red-400 font-mono text-sm">
-                            {data.gridInKwhToday.toFixed(3)}
+                            <span className="font-bold">{data.gridInKwhToday.toFixed(3)}</span> <span className="font-normal">kWh</span>
                           </td>
                           <td className="text-right py-1.5 text-green-400 font-mono text-sm">
-                            {data.gridOutKwhToday.toFixed(3)}
+                            <span className="font-bold">{data.gridOutKwhToday.toFixed(3)}</span> <span className="font-normal">kWh</span>
                           </td>
                         </>
                       )}
@@ -368,24 +364,24 @@ export default function DashboardPage() {
                     <tr>
                       <td className="py-1.5 font-medium text-gray-300 text-xs">Total</td>
                       <td className="text-right py-1.5 text-yellow-400 font-mono text-sm">
-                        {data.solarKwhTotal.toFixed(1)}
+                        <span className="font-bold">{data.solarKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
                       </td>
                       <td className="text-right py-1.5 text-blue-400 font-mono text-sm">
-                        {data.loadKwhTotal.toFixed(1)}
+                        <span className="font-bold">{data.loadKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
                       </td>
                       <td className="text-right py-1.5 text-green-400 font-mono text-sm">
-                        {data.batteryInKwhTotal.toFixed(1)}
+                        <span className="font-bold">{data.batteryInKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
                       </td>
                       <td className="text-right py-1.5 text-orange-400 font-mono text-sm">
-                        {data.batteryOutKwhTotal.toFixed(1)}
+                        <span className="font-bold">{data.batteryOutKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
                       </td>
                       {showGrid && (
                         <>
                           <td className="text-right py-1.5 text-red-400 font-mono text-sm">
-                            {data.gridInKwhTotal.toFixed(1)}
+                            <span className="font-bold">{data.gridInKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
                           </td>
                           <td className="text-right py-1.5 text-green-400 font-mono text-sm">
-                            {data.gridOutKwhTotal.toFixed(1)}
+                            <span className="font-bold">{data.gridOutKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
                           </td>
                         </>
                       )}

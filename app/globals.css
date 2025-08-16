@@ -1,3 +1,12 @@
 @import "tailwindcss";
 
-/* Custom styles can go here */
+/* Ensure DM Sans is applied globally */
+html,
+body {
+  font-family: 'DM Sans', system-ui, sans-serif;
+}
+
+/* Override font-mono to also use DM Sans */
+.font-mono {
+  font-family: 'DM Sans', system-ui, sans-serif;
+}
