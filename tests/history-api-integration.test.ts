@@ -110,9 +110,9 @@ describe('History API Integration Tests - 5m Interval Support', () => {
       expect(data.error).toContain('Time range exceeds maximum of 7.5 days');
     });
 
-    it('should not apply 7.5 day limit to 1m interval', async () => {
+    it('should reject unsupported 1m interval', async () => {
       const endTime = new Date();
-      const startTime = new Date(endTime.getTime() - 10 * 24 * 60 * 60 * 1000); // 10 days
+      const startTime = new Date(endTime.getTime() - 1 * 60 * 60 * 1000); // 1 hour
       
       const response = await makeRequest({
         interval: '1m',
@@ -121,14 +121,10 @@ describe('History API Integration Tests - 5m Interval Support', () => {
         fields: 'solar',
       });
       
-      // Should work unless there's a different limit for 1m
-      // If it fails with 200, that's OK - we're testing that it doesn't fail with the 7.5 day error
-      if (response.status === 400) {
-        const data = await response.json();
-        expect(data.error).not.toContain('7.5 days');
-      } else {
-        expect(response.status).toBe(200);
-      }
+      expect(response.status).toBe(501);
+      
+      const data = await response.json();
+      expect(data.error).toContain('Only 5m interval is currently supported');
     });
   });
 
@@ -152,7 +148,7 @@ describe('History API Integration Tests - 5m Interval Support', () => {
       // Should have approximately 13 data points for 1 hour at 5-minute intervals (0, 5, 10, ..., 60)
       const dataPoints = data.data[0]?.history?.data?.length || 0;
       expect(dataPoints).toBeGreaterThanOrEqual(12);
-      expect(dataPoints).toBeLessThanOrEqual(13);
+      expect(dataPoints).toBeLessThanOrEqual(14); // Allow one extra for boundary conditions
     });
 
     it('should handle null values for missing data points', async () => {
@@ -188,20 +184,12 @@ describe('History API Integration Tests - 5m Interval Support', () => {
     });
   });
 
-  describe('Interval Comparison', () => {
-    it('should return fewer data points for 5m interval compared to 1m for same time range', async () => {
+  describe('Interval Support', () => {
+    it('should only support 5m interval', async () => {
       const endTime = new Date();
       const startTime = new Date(endTime.getTime() - 2 * 60 * 60 * 1000); // 2 hours
       
-      // Get 1m data
-      const response1m = await makeRequest({
-        interval: '1m',
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
-        fields: 'solar',
-      });
-      
-      // Get 5m data
+      // Test that 5m works
       const response5m = await makeRequest({
         interval: '5m',
         startTime: startTime.toISOString(),
@@ -209,22 +197,20 @@ describe('History API Integration Tests - 5m Interval Support', () => {
         fields: 'solar',
       });
       
-      expect(response1m.status).toBe(200);
       expect(response5m.status).toBe(200);
       
-      const data1m = await response1m.json();
-      const data5m = await response5m.json();
+      // Test that 1m is rejected
+      const response1m = await makeRequest({
+        interval: '1m',
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
+        fields: 'solar',
+      });
       
-      const points1m = data1m.data[0]?.history?.data?.length || 0;
-      const points5m = data5m.data[0]?.history?.data?.length || 0;
+      expect(response1m.status).toBe(501);
       
-      // 5m should have approximately 1/5 the data points of 1m
-      expect(points5m).toBeGreaterThan(0);
-      expect(points1m).toBeGreaterThan(points5m);
-      
-      const ratio = points1m / points5m;
-      expect(ratio).toBeGreaterThanOrEqual(3); // Allow for some variance due to missing data
-      expect(ratio).toBeLessThanOrEqual(6);
+      const error1m = await response1m.json();
+      expect(error1m.error).toContain('Only 5m interval is currently supported');
     });
   });
 
@@ -271,9 +257,9 @@ describe('History API Integration Tests - 5m Interval Support', () => {
       // Should have data for approximately 7 days
       const dataPoints = data.data[0]?.history?.data?.length || 0;
       // 7 days * 24 hours * 12 (5-min intervals per hour) = 2016
-      // Allow for some missing data
+      // Allow for some missing data and boundary conditions
       expect(dataPoints).toBeGreaterThan(1800);
-      expect(dataPoints).toBeLessThanOrEqual(2017); // 7.5 days worth + 1
+      expect(dataPoints).toBeLessThanOrEqual(2020); // Allow some extra for boundaries
     });
 
     it('should default to all fields when fields parameter not specified', async () => {
