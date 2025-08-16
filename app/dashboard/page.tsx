@@ -62,8 +62,12 @@ export default function DashboardPage() {
         } else if (result.type === 'update') {
           if (result.data) {
             setData(result.data)
-            setLastUpdate(new Date(result.timestamp))
-            setSecondsSinceUpdate(0)
+            // Use the timestamp from the actual data, which represents when it was captured from the inverter
+            const dataTimestamp = new Date(result.data.timestamp)
+            setLastUpdate(dataTimestamp)
+            // Calculate the actual seconds since the data timestamp
+            const secondsAgo = Math.floor((Date.now() - dataTimestamp.getTime()) / 1000)
+            setSecondsSinceUpdate(secondsAgo)
             setIsPolling(result.status?.isPolling || false)
             setIsAuthenticated(result.status?.isAuthenticated || false)
             setSystemInfo(result.systemInfo || null)
@@ -143,20 +147,62 @@ export default function DashboardPage() {
               <div className="text-sm text-gray-400 flex items-center gap-2">
                 <Clock className="w-4 h-4" />
                 <span className="font-mono text-white">
-                  {secondsSinceUpdate === 0 ? 'Just now' : 
+                  {!lastUpdate ? '-' :
+                   secondsSinceUpdate === 0 ? 'Just now' : 
                    secondsSinceUpdate === 1 ? '1 second ago' : 
                    secondsSinceUpdate < 60 ? `${secondsSinceUpdate}s ago` :
                    `${Math.floor(secondsSinceUpdate / 60)}m ${secondsSinceUpdate % 60}s ago`}
                 </span>
               </div>
               {systemInfo && (
-                <button
-                  onMouseEnter={() => setShowSystemInfo(true)}
-                  onMouseLeave={() => setShowSystemInfo(false)}
-                  className="text-gray-400 hover:text-white transition-colors"
-                >
-                  <Info className="w-4 h-4" />
-                </button>
+                <div className="relative">
+                  <button
+                    onMouseEnter={() => setShowSystemInfo(true)}
+                    onMouseLeave={() => setShowSystemInfo(false)}
+                    className="text-gray-400 hover:text-white transition-colors"
+                  >
+                    <Info className="w-4 h-4" />
+                  </button>
+                  {showSystemInfo && (
+                    <div className="absolute top-full mt-2 right-1/2 translate-x-1/2 z-50 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 min-w-[280px]" 
+                         onMouseEnter={() => setShowSystemInfo(true)}
+                         onMouseLeave={() => setShowSystemInfo(false)}>
+                      <h4 className="font-semibold text-white mb-3">System Information</h4>
+                      <div className="space-y-2 text-sm">
+                        {systemInfo.model && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Model:</span>
+                            <span className="text-white">{systemInfo.model}</span>
+                          </div>
+                        )}
+                        {systemInfo.serial && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Serial:</span>
+                            <span className="text-white">{systemInfo.serial}</span>
+                          </div>
+                        )}
+                        {systemInfo.ratings && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Ratings:</span>
+                            <span className="text-white">{systemInfo.ratings}</span>
+                          </div>
+                        )}
+                        {systemInfo.solarSize && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Solar Size:</span>
+                            <span className="text-white">{systemInfo.solarSize}</span>
+                          </div>
+                        )}
+                        {systemInfo.batterySize && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Battery Size:</span>
+                            <span className="text-white">{systemInfo.batterySize}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
               <div className={`px-2 py-1 rounded text-xs flex items-center gap-1 ${
                 isPolling ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
@@ -187,47 +233,6 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
-        
-        {showSystemInfo && systemInfo && (
-          <div className="fixed z-50 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 min-w-[280px]" 
-               style={{ top: '70px', right: '20px' }}
-               onMouseEnter={() => setShowSystemInfo(true)}
-               onMouseLeave={() => setShowSystemInfo(false)}>
-            <h4 className="font-semibold text-white mb-3">System Information</h4>
-            <div className="space-y-2 text-sm">
-              {systemInfo.model && (
-                <div className="flex justify-between">
-                  <span className="text-gray-400">Model:</span>
-                  <span className="text-white">{systemInfo.model}</span>
-                </div>
-              )}
-              {systemInfo.serial && (
-                <div className="flex justify-between">
-                  <span className="text-gray-400">Serial:</span>
-                  <span className="text-white">{systemInfo.serial}</span>
-                </div>
-              )}
-              {systemInfo.ratings && (
-                <div className="flex justify-between">
-                  <span className="text-gray-400">Ratings:</span>
-                  <span className="text-white">{systemInfo.ratings}</span>
-                </div>
-              )}
-              {systemInfo.solarSize && (
-                <div className="flex justify-between">
-                  <span className="text-gray-400">Solar Size:</span>
-                  <span className="text-white">{systemInfo.solarSize}</span>
-                </div>
-              )}
-              {systemInfo.batterySize && (
-                <div className="flex justify-between">
-                  <span className="text-gray-400">Battery Size:</span>
-                  <span className="text-white">{systemInfo.batterySize}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
       </header>
 
       {/* Main Content */}
