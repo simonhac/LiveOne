@@ -78,8 +78,13 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
           throw new Error('Missing data series')
         }
 
+        // Parse the start time - the API returns timestamps like "2025-08-16T12:17:53+10:00"
+        const startTimeString = solarData.history.start
+        
+        // JavaScript Date constructor handles timezone offsets correctly
+        const startTime = new Date(startTimeString)
+        
         // Calculate timestamps based on start time and interval
-        const startTime = new Date(solarData.history.start)
         const timestamps = solarData.history.data.map((_: any, index: number) => 
           new Date(startTime.getTime() + index * 60000) // 1 minute intervals
         )
@@ -87,6 +92,8 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
         // Get last 24 hours of data
         const now = new Date()
         const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+        
+        // Filter to last 24 hours
         const last24HoursIndices = timestamps
           .map((t, i) => ({ time: t, index: i }))
           .filter(({ time }) => time >= twentyFourHoursAgo)
@@ -174,6 +181,10 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
     ],
   }
 
+  // Calculate the 24-hour window for x-axis
+  const now = new Date()
+  const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+
   const options: ChartOptions<'line'> = {
     responsive: true,
     maintainAspectRatio: false,
@@ -233,75 +244,39 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
         annotations: (() => {
           const annotations: any[] = []
           
-          // Create daytime background regions
-          for (let i = 0; i < chartData.timestamps.length - 1; i++) {
-            const currentTime = chartData.timestamps[i]
-            const nextTime = chartData.timestamps[i + 1]
-            const currentHour = currentTime.getHours()
-            const nextHour = nextTime.getHours()
-            
-            // Check if we're entering daytime (7am)
-            if (currentHour < 7 && nextHour >= 7) {
-              const dayStart = new Date(currentTime)
-              dayStart.setHours(7, 0, 0, 0)
-              
-              // Find where daytime ends (10pm) or data ends
-              let dayEnd = new Date(currentTime)
-              dayEnd.setHours(22, 0, 0, 0)
-              
-              // Make sure we don't go past the data range
-              if (dayEnd > chartData.timestamps[chartData.timestamps.length - 1]) {
-                dayEnd = chartData.timestamps[chartData.timestamps.length - 1]
-              }
-              
-              annotations.push({
-                type: 'box',
-                xMin: dayStart,
-                xMax: dayEnd,
-                backgroundColor: 'rgba(255, 255, 255, 0.1)', // 10% opacity white overlay
-                borderWidth: 0,
-              })
-            }
-            
-            // Check if we span midnight and need another daytime region
-            if (currentHour >= 22 && nextHour < 7 && i < chartData.timestamps.length - 2) {
-              const nextDayStart = new Date(nextTime)
-              nextDayStart.setDate(nextDayStart.getDate() + (nextHour < 7 ? 0 : 1))
-              nextDayStart.setHours(7, 0, 0, 0)
-              
-              let nextDayEnd = new Date(nextDayStart)
-              nextDayEnd.setHours(22, 0, 0, 0)
-              
-              if (nextDayEnd > chartData.timestamps[chartData.timestamps.length - 1]) {
-                nextDayEnd = chartData.timestamps[chartData.timestamps.length - 1]
-              }
-              
-              if (nextDayStart < chartData.timestamps[chartData.timestamps.length - 1]) {
-                annotations.push({
-                  type: 'box',
-                  xMin: nextDayStart,
-                  xMax: nextDayEnd,
-                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                  borderWidth: 0,
-                })
-              }
-            }
-          }
+          // Create daytime background regions based on the 24-hour window
+          // We need to check both yesterday and today for daytime periods
           
-          // If the first timestamp is already in daytime
-          if (chartData.timestamps[0].getHours() >= 7 && chartData.timestamps[0].getHours() < 22) {
-            let dayEnd = new Date(chartData.timestamps[0])
-            dayEnd.setHours(22, 0, 0, 0)
-            
-            if (dayEnd > chartData.timestamps[chartData.timestamps.length - 1]) {
-              dayEnd = chartData.timestamps[chartData.timestamps.length - 1]
-            }
-            
+          // Yesterday's daytime (if it falls within our 24-hour window)
+          const yesterdayStart = new Date(twentyFourHoursAgo)
+          yesterdayStart.setHours(7, 0, 0, 0)
+          const yesterdayEnd = new Date(twentyFourHoursAgo)
+          yesterdayEnd.setHours(22, 0, 0, 0)
+          
+          // If yesterday's daytime overlaps with our 24-hour window
+          if (yesterdayEnd > twentyFourHoursAgo) {
             annotations.push({
               type: 'box',
-              xMin: chartData.timestamps[0],
-              xMax: dayEnd,
-              backgroundColor: 'rgba(255, 255, 255, 0.1)',
+              xMin: Math.max(yesterdayStart.getTime(), twentyFourHoursAgo.getTime()),
+              xMax: Math.min(yesterdayEnd.getTime(), now.getTime()),
+              backgroundColor: 'rgba(255, 255, 255, 0.07)', // 7% opacity white overlay
+              borderWidth: 0,
+            })
+          }
+          
+          // Today's daytime
+          const todayStart = new Date(now)
+          todayStart.setHours(7, 0, 0, 0)
+          const todayEnd = new Date(now)
+          todayEnd.setHours(22, 0, 0, 0)
+          
+          // If today's daytime overlaps with our 24-hour window
+          if (todayStart < now && todayEnd > twentyFourHoursAgo) {
+            annotations.push({
+              type: 'box',
+              xMin: Math.max(todayStart.getTime(), twentyFourHoursAgo.getTime()),
+              xMax: Math.min(todayEnd.getTime(), now.getTime()),
+              backgroundColor: 'rgba(255, 255, 255, 0.07)',
               borderWidth: 0,
             })
           }
@@ -313,6 +288,8 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
     scales: {
       x: {
         type: 'time',
+        min: twentyFourHoursAgo.getTime(), // Always show from 24 hours ago
+        max: now.getTime(), // To current time
         time: {
           unit: 'hour',
           stepSize: 2, // Show every 2 hours
@@ -340,14 +317,7 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
         display: true,
         position: 'left' as const,
         title: {
-          display: true,
-          text: 'kW',
-          color: 'rgb(156, 163, 175)', // gray-400
-          font: {
-            size: 11,
-            family: 'DM Sans, system-ui, sans-serif',
-            weight: 700,
-          },
+          display: false, // Hide the title
         },
         grid: {
           color: 'rgb(55, 65, 81)', // gray-700
@@ -359,6 +329,13 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
             size: 10,
             family: 'DM Sans, system-ui, sans-serif',
           },
+          callback: function(value, index, ticks) {
+            // Add " kW" only to the last (top) tick
+            if (index === ticks.length - 1) {
+              return value + ' kW';
+            }
+            return value;
+          },
         },
       },
       y1: {
@@ -366,14 +343,7 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
         display: true,
         position: 'right' as const,
         title: {
-          display: true,
-          text: '%',
-          color: 'rgb(156, 163, 175)', // gray-400
-          font: {
-            size: 11,
-            family: 'DM Sans, system-ui, sans-serif',
-            weight: 700,
-          },
+          display: false, // Hide the title
         },
         grid: {
           drawOnChartArea: false,
@@ -384,6 +354,13 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
           font: {
             size: 10,
             family: 'DM Sans, system-ui, sans-serif',
+          },
+          callback: function(value, index, ticks) {
+            // Add "%" only to the last (top) tick
+            if (index === ticks.length - 1) {
+              return value + '%';
+            }
+            return value;
           },
         },
         min: 0,

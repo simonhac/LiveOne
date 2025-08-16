@@ -156,11 +156,11 @@ export default function DashboardPage() {
                 </span>
               </div>
               {systemInfo && (
-                <div className="relative">
+                <div className="relative flex items-center">
                   <button
                     onMouseEnter={() => setShowSystemInfo(true)}
                     onMouseLeave={() => setShowSystemInfo(false)}
-                    className="text-gray-400 hover:text-white transition-colors"
+                    className="text-gray-400 hover:text-white transition-colors flex items-center"
                   >
                     <Info className="w-4 h-4" />
                   </button>

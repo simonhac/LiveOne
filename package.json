@@ -23,6 +23,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@internationalized/date": "^3.8.2",
     "@libsql/client": "^0.15.11",
     "@tailwindcss/postcss": "^4.1.12",
     "@types/better-sqlite3": "^7.6.13",

@@ -4,6 +4,30 @@ import { eq, and, desc, gte, sql } from 'drizzle-orm';
 import { OpenNEMResponse, OpenNEMDataSeries, DataInterval } from '@/types/opennem';
 import { APP_USERS, USER_TO_SYSTEM } from '@/config';
 import { formatDataArray } from '@/lib/format-opennem';
+import { parseAbsolute, toZoned } from '@internationalized/date';
+
+// Helper function to format date to AEST timezone string without milliseconds
+export function formatToAEST(date: Date): string {
+  // Convert JavaScript Date to ISO string, then parse as an absolute date
+  const isoString = date.toISOString();
+  const absoluteDate = parseAbsolute(isoString);
+  
+  // Convert to AEST/AEDT (Australia/Sydney handles DST automatically)
+  const zonedDate = toZoned(absoluteDate, 'Australia/Sydney');
+  
+  // Format as ISO string with timezone offset
+  // The toString() method returns format like: 2025-08-16T20:36:41.999+10:00[Australia/Sydney]
+  const fullString = zonedDate.toString();
+  
+  // Extract just the date, time and offset (remove timezone name and milliseconds)
+  const match = fullString.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d{3})?([\+\-]\d{2}:\d{2})/);
+  if (match) {
+    return match[1] + match[2];
+  }
+  
+  // Fallback (shouldn't happen)
+  return date.toISOString().slice(0, 19) + '+10:00';
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -118,7 +142,7 @@ export async function GET(request: NextRequest) {
       type: 'energy',
       version: 'v4',
       network: 'liveone',
-      created_at: new Date().toISOString(),
+      created_at: formatToAEST(new Date()),
       data: []
     };
 
@@ -131,8 +155,8 @@ export async function GET(request: NextRequest) {
         type: 'power',
         units: 'W',
         history: {
-          start: data[0].inverterTime.toISOString(),
-          last: data[data.length - 1].inverterTime.toISOString(),
+          start: formatToAEST(data[0].inverterTime),
+          last: formatToAEST(data[data.length - 1].inverterTime),
           interval: '1m',
           data: formatDataArray(data.map(r => r.solarPower))
         },
@@ -148,8 +172,8 @@ export async function GET(request: NextRequest) {
         type: 'power',
         units: 'W',
         history: {
-          start: data[0].inverterTime.toISOString(),
-          last: data[data.length - 1].inverterTime.toISOString(),
+          start: formatToAEST(data[0].inverterTime),
+          last: formatToAEST(data[data.length - 1].inverterTime),
           interval: '1m',
           data: formatDataArray(data.map(r => r.loadPower))
         },
@@ -165,8 +189,8 @@ export async function GET(request: NextRequest) {
         type: 'power',
         units: 'W',
         history: {
-          start: data[0].inverterTime.toISOString(),
-          last: data[data.length - 1].inverterTime.toISOString(),
+          start: formatToAEST(data[0].inverterTime),
+          last: formatToAEST(data[data.length - 1].inverterTime),
           interval: '1m',
           data: formatDataArray(data.map(r => r.batteryPower))
         },
@@ -181,8 +205,8 @@ export async function GET(request: NextRequest) {
         type: 'percentage',
         units: '%',
         history: {
-          start: data[0].inverterTime.toISOString(),
-          last: data[data.length - 1].inverterTime.toISOString(),
+          start: formatToAEST(data[0].inverterTime),
+          last: formatToAEST(data[data.length - 1].inverterTime),
           interval: '1m',
           data: formatDataArray(data.map(r => r.batterySOC))
         },
@@ -198,8 +222,8 @@ export async function GET(request: NextRequest) {
         type: 'power',
         units: 'W',
         history: {
-          start: data[0].inverterTime.toISOString(),
-          last: data[data.length - 1].inverterTime.toISOString(),
+          start: formatToAEST(data[0].inverterTime),
+          last: formatToAEST(data[data.length - 1].inverterTime),
           interval: '1m',
           data: formatDataArray(data.map(r => r.gridPower))
         },
@@ -211,17 +235,15 @@ export async function GET(request: NextRequest) {
 
     response.data = dataSeries;
 
-    // Format JSON with 2-space indentation
+    // Convert to JSON string with proper indentation
     let jsonStr = JSON.stringify(response, null, 2);
     
-    // Compact numerical arrays in the data field (similar to OpenNEM formatting)
-    // This regex finds "data": [...] arrays that appear after "interval": 
-    // and compacts them to single lines with spaces between values
-    const pattern = /("interval":[^}]*?"data":\s*)\[([\d\s,.\-null]+)\]/g;
-    jsonStr = jsonStr.replace(pattern, (match, prefix, arrayContent) => {
-      // Remove excess whitespace and newlines within the numerical array
-      const compacted = arrayContent.trim().replace(/\s+/g, ' ');
-      return `${prefix}[${compacted}]`;
+    // Replace multi-line numeric data arrays with single-line arrays
+    // Only target "data" arrays that contain numbers (within history objects)
+    jsonStr = jsonStr.replace(/"data": \[\n\s+([\d\s,.\-null\n]+)\n\s+\]/g, (match, content) => {
+      // Compact numeric arrays to single line with single spaces between elements
+      const compacted = content.trim().replace(/\n\s+/g, '').replace(/,\s*/g, ',');
+      return `"data": [${compacted}]`;
     });
 
     return new NextResponse(jsonStr, {
