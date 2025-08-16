@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, readings, systems } from '@/lib/db';
-import { eq, and, desc, gte, sql } from 'drizzle-orm';
+import { eq, and, desc, gte, lte, sql } from 'drizzle-orm';
 import { OpenNEMResponse, OpenNEMDataSeries, DataInterval } from '@/types/opennem';
 import { APP_USERS, USER_TO_SYSTEM } from '@/config';
 import { formatDataArray } from '@/lib/format-opennem';
@@ -27,6 +27,117 @@ export function formatToAEST(date: Date): string {
   
   // Fallback (shouldn't happen)
   return date.toISOString().slice(0, 19) + '+10:00';
+}
+
+// Helper function to aggregate data to 5-minute intervals
+function aggregate5MinuteData(
+  data: any[], 
+  startTime: Date, 
+  endTime: Date
+): any[] {
+  console.log('[5m Aggregation] Starting with', data.length, 'data points');
+  console.log('[5m Aggregation] Time range:', startTime.toISOString(), 'to', endTime.toISOString());
+  
+  if (data.length === 0) return [];
+  
+  const result: any[] = [];
+  const intervalMs = 5 * 60 * 1000; // 5 minutes in milliseconds
+  const maxDriftMs = 2 * 60 * 1000; // 2 minutes maximum drift allowed
+  
+  // Align start time to 5-minute boundary
+  const alignedStart = new Date(Math.floor(startTime.getTime() / intervalMs) * intervalMs);
+  const alignedEnd = new Date(Math.ceil(endTime.getTime() / intervalMs) * intervalMs);
+  
+  // Calculate number of intervals to avoid infinite loops
+  const numIntervals = Math.floor((alignedEnd.getTime() - alignedStart.getTime()) / intervalMs) + 1;
+  console.log('[5m Aggregation] Creating', numIntervals, 'intervals');
+  
+  // Limit to prevent excessive memory usage
+  if (numIntervals > 2500) { // ~8.7 days worth of 5-minute intervals
+    console.error('[5m Aggregation] Too many intervals requested:', numIntervals);
+    throw new Error('Too many intervals requested');
+  }
+  
+  // Create a map for faster lookups
+  const dataByTime = new Map();
+  for (const reading of data) {
+    const readingTime = reading.inverterTime.getTime();
+    dataByTime.set(readingTime, reading);
+  }
+  
+  // Sort data points by time for binary search
+  const sortedTimes = Array.from(dataByTime.keys()).sort((a, b) => a - b);
+  
+  // Create time slots for every 5-minute interval
+  for (let time = alignedStart.getTime(); time <= alignedEnd.getTime(); time += intervalMs) {
+    const targetTime = new Date(time);
+    
+    // Binary search for closest reading
+    let closestReading = null;
+    let closestDistance = Infinity;
+    
+    // Find the insertion point for target time
+    let left = 0;
+    let right = sortedTimes.length - 1;
+    
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      const midTime = sortedTimes[mid];
+      const distance = Math.abs(midTime - time);
+      
+      if (distance <= maxDriftMs && distance < closestDistance) {
+        closestDistance = distance;
+        closestReading = dataByTime.get(midTime);
+      }
+      
+      if (midTime < time) {
+        left = mid + 1;
+      } else {
+        right = mid - 1;
+      }
+    }
+    
+    // Check neighbors for potentially closer readings
+    if (left > 0) {
+      const prevTime = sortedTimes[left - 1];
+      const distance = Math.abs(prevTime - time);
+      if (distance <= maxDriftMs && distance < closestDistance) {
+        closestDistance = distance;
+        closestReading = dataByTime.get(prevTime);
+      }
+    }
+    
+    if (left < sortedTimes.length) {
+      const nextTime = sortedTimes[left];
+      const distance = Math.abs(nextTime - time);
+      if (distance <= maxDriftMs && distance < closestDistance) {
+        closestDistance = distance;
+        closestReading = dataByTime.get(nextTime);
+      }
+    }
+    
+    if (closestReading) {
+      // Use the closest reading but with the aligned timestamp
+      result.push({
+        ...closestReading,
+        inverterTime: targetTime
+      });
+    } else {
+      // No data within 2 minutes, create null entry
+      result.push({
+        inverterTime: targetTime,
+        solarPower: null,
+        loadPower: null,
+        batteryPower: null,
+        batterySOC: null,
+        gridPower: null,
+        systemId: data[0]?.systemId
+      });
+    }
+  }
+  
+  console.log('[5m Aggregation] Created', result.length, 'aggregated points');
+  return result;
 }
 
 export async function GET(request: NextRequest) {
@@ -65,9 +176,22 @@ export async function GET(request: NextRequest) {
 
     // Parse query parameters
     const searchParams = request.nextUrl.searchParams;
-    const interval = (searchParams.get('interval') || '1m') as DataInterval;
+    const interval = searchParams.get('interval') || '5m';
     const fieldsParam = searchParams.get('fields');
     const fields = fieldsParam ? fieldsParam.split(',') : ['solar', 'load', 'battery', 'grid'];
+    
+    // For now, only support 5m interval
+    if (interval !== '5m') {
+      return NextResponse.json(
+        { error: 'Only 5m interval is currently supported' },
+        { status: 501 }
+      );
+    }
+    
+    // Parse time range parameters
+    const lastParam = searchParams.get('last');
+    const startTimeParam = searchParams.get('startTime');
+    const endTimeParam = searchParams.get('endTime');
 
     // Get system ID from database
     const system = await db.select()
@@ -84,58 +208,125 @@ export async function GET(request: NextRequest) {
 
     const systemId = system[0].id;
 
-    // Calculate time range based on interval
+    // Calculate time range
     const now = new Date();
     let startTime: Date;
+    let endTime: Date;
     let aggregationInterval: string;
 
-    switch (interval) {
-      case '1m':
-        // Last 7 days of 1-minute data
-        startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        aggregationInterval = '1m';
-        break;
-      case '1d':
-        // Last 365 days of daily data
-        startTime = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-        aggregationInterval = '1d';
-        break;
-      case '1w':
-        // Last 52 weeks of weekly data
-        startTime = new Date(now.getTime() - 52 * 7 * 24 * 60 * 60 * 1000);
-        aggregationInterval = '1w';
-        break;
-      case '1M':
-        // All time monthly data
-        startTime = new Date(2020, 0, 1); // Assuming data starts from 2020
-        aggregationInterval = '1M';
-        break;
-      default:
+    // Parse 'last' parameter for relative time ranges
+    if (lastParam) {
+      const match = lastParam.match(/^(\d+)([dhm])$/i);
+      if (!match) {
         return NextResponse.json(
-          { error: 'Invalid interval. Use 1m, 1d, 1w, or 1M' },
+          { error: 'Invalid last parameter. Use format like 7d, 3h, or 30m' },
           { status: 400 }
         );
+      }
+      
+      const amount = parseInt(match[1]);
+      const unit = match[2].toLowerCase();
+      
+      endTime = now;
+      switch (unit) {
+        case 'd':
+          startTime = new Date(now.getTime() - amount * 24 * 60 * 60 * 1000);
+          break;
+        case 'h':
+          startTime = new Date(now.getTime() - amount * 60 * 60 * 1000);
+          break;
+        case 'm':
+          startTime = new Date(now.getTime() - amount * 60 * 1000);
+          break;
+        default:
+          return NextResponse.json(
+            { error: 'Invalid time unit. Use d (days), h (hours), or m (minutes)' },
+            { status: 400 }
+          );
+      }
+      
+      // Validate time range for 5m interval
+      if (interval === '5m') {
+        const timeDiff = endTime.getTime() - startTime.getTime();
+        const maxDuration = 7.5 * 24 * 60 * 60 * 1000; // 7.5 days in milliseconds
+        
+        if (timeDiff > maxDuration) {
+          return NextResponse.json(
+            { error: 'Time range exceeds maximum of 7.5 days for 5m interval' },
+            { status: 400 }
+          );
+        }
+      }
     }
+    // Use provided absolute time range if available
+    else if (startTimeParam && endTimeParam) {
+      try {
+        startTime = new Date(startTimeParam);
+        endTime = new Date(endTimeParam);
+        
+        if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) {
+          return NextResponse.json(
+            { error: 'Invalid date format. Use ISO 8601 format' },
+            { status: 400 }
+          );
+        }
+        
+        if (startTime >= endTime) {
+          return NextResponse.json(
+            { error: 'startTime must be before endTime' },
+            { status: 400 }
+          );
+        }
+        
+        // Validate time range for 5m interval
+        if (interval === '5m') {
+          const timeDiff = endTime.getTime() - startTime.getTime();
+          const maxDuration = 7.5 * 24 * 60 * 60 * 1000; // 7.5 days in milliseconds
+          
+          if (timeDiff > maxDuration) {
+            return NextResponse.json(
+              { error: 'Time range exceeds maximum of 7.5 days for 5m interval' },
+              { status: 400 }
+            );
+          }
+        }
+      } catch (error) {
+        return NextResponse.json(
+          { error: 'Invalid date format. Use ISO 8601 format' },
+          { status: 400 }
+        );
+      }
+    } else {
+      // Default time range: last 7 days for 5m interval
+      endTime = now;
+      startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    }
+    
+    aggregationInterval = '5m';
 
     // Fetch data from database
+    console.log('[History API] Fetching data for interval:', interval);
+    console.log('[History API] Time range:', startTime.toISOString(), 'to', endTime.toISOString());
+    
     const data = await db.select()
       .from(readings)
       .where(
         and(
           eq(readings.systemId, systemId),
-          gte(readings.inverterTime, startTime)
+          gte(readings.inverterTime, startTime),
+          lte(readings.inverterTime, endTime)
         )
       )
       .orderBy(readings.inverterTime);
+    
+    console.log('[History API] Fetched', data.length, 'raw data points');
 
-    // For now, we'll implement 1-minute interval (raw data)
-    // Later we'll add aggregation for other intervals
-    if (interval !== '1m') {
-      return NextResponse.json(
-        { error: 'Only 1m interval is currently supported' },
-        { status: 501 }
-      );
-    }
+    // Process data - always aggregate to 5-minute intervals
+    let processedData: typeof data;
+    let effectiveInterval: string = '5m';
+    
+    // Aggregate data to 5-minute intervals
+    processedData = aggregate5MinuteData(data, startTime, endTime);
 
     // Build OpenNEM response
     const response: OpenNEMResponse = {
@@ -149,16 +340,16 @@ export async function GET(request: NextRequest) {
     // Process each requested field
     const dataSeries: OpenNEMDataSeries[] = [];
 
-    if (fields.includes('solar') && data.length > 0) {
+    if (fields.includes('solar') && processedData.length > 0) {
       dataSeries.push({
         id: `liveone.${systemNumber}.solar.power`,
         type: 'power',
         units: 'W',
         history: {
-          start: formatToAEST(data[0].inverterTime),
-          last: formatToAEST(data[data.length - 1].inverterTime),
-          interval: '1m',
-          data: formatDataArray(data.map(r => r.solarPower))
+          start: formatToAEST(processedData[0].inverterTime),
+          last: formatToAEST(processedData[processedData.length - 1].inverterTime),
+          interval: effectiveInterval,
+          data: formatDataArray(processedData.map(r => r.solarPower))
         },
         network: 'liveone',
         source: 'selectronic',
@@ -166,16 +357,16 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    if (fields.includes('load') && data.length > 0) {
+    if (fields.includes('load') && processedData.length > 0) {
       dataSeries.push({
         id: `liveone.${systemNumber}.load.power`,
         type: 'power',
         units: 'W',
         history: {
-          start: formatToAEST(data[0].inverterTime),
-          last: formatToAEST(data[data.length - 1].inverterTime),
-          interval: '1m',
-          data: formatDataArray(data.map(r => r.loadPower))
+          start: formatToAEST(processedData[0].inverterTime),
+          last: formatToAEST(processedData[processedData.length - 1].inverterTime),
+          interval: effectiveInterval,
+          data: formatDataArray(processedData.map(r => r.loadPower))
         },
         network: 'liveone',
         source: 'selectronic',
@@ -183,16 +374,16 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    if (fields.includes('battery') && data.length > 0) {
+    if (fields.includes('battery') && processedData.length > 0) {
       dataSeries.push({
         id: `liveone.${systemNumber}.battery.power`,
         type: 'power',
         units: 'W',
         history: {
-          start: formatToAEST(data[0].inverterTime),
-          last: formatToAEST(data[data.length - 1].inverterTime),
-          interval: '1m',
-          data: formatDataArray(data.map(r => r.batteryPower))
+          start: formatToAEST(processedData[0].inverterTime),
+          last: formatToAEST(processedData[processedData.length - 1].inverterTime),
+          interval: effectiveInterval,
+          data: formatDataArray(processedData.map(r => r.batteryPower))
         },
         network: 'liveone',
         source: 'selectronic',
@@ -205,10 +396,10 @@ export async function GET(request: NextRequest) {
         type: 'percentage',
         units: '%',
         history: {
-          start: formatToAEST(data[0].inverterTime),
-          last: formatToAEST(data[data.length - 1].inverterTime),
-          interval: '1m',
-          data: formatDataArray(data.map(r => r.batterySOC))
+          start: formatToAEST(processedData[0].inverterTime),
+          last: formatToAEST(processedData[processedData.length - 1].inverterTime),
+          interval: effectiveInterval,
+          data: formatDataArray(processedData.map(r => r.batterySOC))
         },
         network: 'liveone',
         source: 'selectronic',
@@ -216,16 +407,16 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    if (fields.includes('grid') && data.length > 0) {
+    if (fields.includes('grid') && processedData.length > 0) {
       dataSeries.push({
         id: `liveone.${systemNumber}.grid.power`,
         type: 'power',
         units: 'W',
         history: {
-          start: formatToAEST(data[0].inverterTime),
-          last: formatToAEST(data[data.length - 1].inverterTime),
-          interval: '1m',
-          data: formatDataArray(data.map(r => r.gridPower))
+          start: formatToAEST(processedData[0].inverterTime),
+          last: formatToAEST(processedData[processedData.length - 1].inverterTime),
+          interval: effectiveInterval,
+          data: formatDataArray(processedData.map(r => r.gridPower))
         },
         network: 'liveone',
         source: 'selectronic',

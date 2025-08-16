@@ -261,7 +261,34 @@ export default function DashboardPage() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               {/* Energy Chart - 2/3 width */}
               <div className="lg:col-span-2">
-                <EnergyChart className="h-full min-h-[400px]" />
+                <EnergyChart 
+                  className="h-full min-h-[400px]" 
+                  maxPowerHint={(() => {
+                    // Parse solar size (format: "9 kW")
+                    let solarKW: number | undefined
+                    if (systemInfo?.solarSize) {
+                      const solarMatch = systemInfo.solarSize.match(/^(\d+(?:\.\d+)?)\s+kW$/i)
+                      if (solarMatch) {
+                        solarKW = parseFloat(solarMatch[1])
+                      }
+                    }
+                    
+                    // Parse inverter rating (format: "7.5kW, 48V")
+                    let inverterKW: number | undefined
+                    if (systemInfo?.ratings) {
+                      const ratingMatch = systemInfo.ratings.match(/(\d+(?:\.\d+)?)kW/i)
+                      if (ratingMatch) {
+                        inverterKW = parseFloat(ratingMatch[1])
+                      }
+                    }
+                    
+                    // Return the maximum of both values, or undefined if neither parsed
+                    if (solarKW !== undefined && inverterKW !== undefined) {
+                      return Math.max(solarKW, inverterKW)
+                    }
+                    return solarKW ?? inverterKW
+                  })()}
+                />
               </div>
 
               {/* Power Cards - 1/3 width, stacked vertically */}

@@ -35,6 +35,7 @@ ChartJS.register(
 
 interface EnergyChartProps {
   className?: string
+  maxPowerHint?: number // Max power in kW
 }
 
 interface ChartData {
@@ -45,21 +46,31 @@ interface ChartData {
   batterySOC: number[]
 }
 
-export default function EnergyChart({ className = '' }: EnergyChartProps) {
+export default function EnergyChart({ className = '', maxPowerHint }: EnergyChartProps) {
   const [chartData, setChartData] = useState<ChartData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  
+  if (maxPowerHint !== undefined) {
+    console.log('[EnergyChart] Max power hint:', maxPowerHint, 'kW')
+  }
 
   useEffect(() => {
+    let abortController = new AbortController()
+    
     const fetchData = async () => {
+      // Create a new abort controller for this specific request
+      abortController = new AbortController()
+      
       try {
         // Get the authentication token from session storage
         const password = sessionStorage.getItem('password') || 'password'
         
-        const response = await fetch('/api/history?interval=1m&fields=solar,load,battery', {
+        const response = await fetch('/api/history?interval=5m&last=25h&fields=solar,load,battery', {
           headers: {
             'Authorization': `Bearer ${password}`
-          }
+          },
+          signal: abortController.signal
         })
 
         if (!response.ok) {
@@ -84,9 +95,28 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
         // JavaScript Date constructor handles timezone offsets correctly
         const startTime = new Date(startTimeString)
         
-        // Calculate timestamps based on start time and interval
+        // Parse the interval from the response (e.g., "5m", "1m")
+        const interval = solarData.history.interval
+        if (!interval) {
+          throw new Error('No interval specified in API response')
+        }
+        
+        let intervalMs: number
+        
+        if (interval === '5m') {
+          intervalMs = 5 * 60000 // 5 minutes
+        } else if (interval === '1m') {
+          intervalMs = 60000 // 1 minute
+        } else {
+          throw new Error(`Unsupported interval: ${interval}`)
+        }
+        
+        console.log('[EnergyChart] API returned interval:', interval, '- using', intervalMs, 'ms spacing')
+        console.log('[EnergyChart] Data points:', solarData.history.data.length, 'Start:', startTimeString)
+        
+        // Calculate timestamps based on start time and actual interval
         const timestamps = solarData.history.data.map((_: any, index: number) => 
-          new Date(startTime.getTime() + index * 60000) // 1 minute intervals
+          new Date(startTime.getTime() + index * intervalMs)
         )
 
         // Get last 24 hours of data
@@ -107,7 +137,12 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
           batterySOC: last24HoursIndices.map(i => batterySOCData.history.data[i]),
         })
         setLoading(false)
-      } catch (err) {
+      } catch (err: any) {
+        // Ignore abort errors
+        if (err.name === 'AbortError') {
+          console.log('[EnergyChart] Fetch aborted')
+          return
+        }
         console.error('Error fetching chart data:', err)
         setError(err instanceof Error ? err.message : 'Failed to load chart data')
         setLoading(false)
@@ -117,7 +152,12 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
     fetchData()
     // Refresh every minute
     const interval = setInterval(fetchData, 60000)
-    return () => clearInterval(interval)
+    
+    // Cleanup function
+    return () => {
+      clearInterval(interval)
+      abortController.abort() // Cancel any pending requests
+    }
   }, [])
 
   if (loading) {
@@ -147,7 +187,7 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
     datasets: [
       {
         label: 'Solar',
-        data: chartData.solar.map(w => w / 1000), // Convert W to kW
+        data: chartData.solar.map(w => w === null ? null : w / 1000), // Convert W to kW, preserve nulls
         borderColor: 'rgb(250, 204, 21)', // yellow-400
         backgroundColor: 'rgb(250, 204, 21)', // Solid color for legend
         yAxisID: 'y',
@@ -155,10 +195,11 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
         borderWidth: 2,
         pointRadius: 0,
         fill: false, // Don't fill under the line
+        spanGaps: false, // Don't connect lines across null values
       },
       {
         label: 'Load',
-        data: chartData.load.map(w => w / 1000), // Convert W to kW
+        data: chartData.load.map(w => w === null ? null : w / 1000), // Convert W to kW, preserve nulls
         borderColor: 'rgb(96, 165, 250)', // blue-400
         backgroundColor: 'rgb(96, 165, 250)', // Solid color for legend
         yAxisID: 'y',
@@ -166,10 +207,11 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
         borderWidth: 2,
         pointRadius: 0,
         fill: false, // Don't fill under the line
+        spanGaps: false, // Don't connect lines across null values
       },
       {
         label: 'Battery SOC',
-        data: chartData.batterySOC,
+        data: chartData.batterySOC, // Already in percentage, may contain nulls
         borderColor: 'rgb(74, 222, 128)', // green-400
         backgroundColor: 'rgb(74, 222, 128)', // Solid color for legend
         yAxisID: 'y1',
@@ -177,6 +219,7 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
         borderWidth: 2,
         pointRadius: 0,
         fill: false, // Don't fill under the line
+        spanGaps: false, // Don't connect lines across null values
       },
     ],
   }
@@ -319,6 +362,8 @@ export default function EnergyChart({ className = '' }: EnergyChartProps) {
         title: {
           display: false, // Hide the title
         },
+        // Use maxPowerHint as suggested max, but allow chart to scale higher if needed
+        suggestedMax: maxPowerHint,
         grid: {
           color: 'rgb(55, 65, 81)', // gray-700
           drawBorder: false,
