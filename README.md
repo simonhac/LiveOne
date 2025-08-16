@@ -4,51 +4,62 @@ Real-time monitoring dashboard for Selectronic SP PRO inverters.
 
 ## Overview
 
-LiveOne polls Selectronic Live service and publishes inverter data to MQTT topics, enabling integration with home automation systems, data logging, and custom monitoring solutions.
+LiveOne provides a modern web-based dashboard for monitoring Selectronic SP PRO inverters in real-time, with automatic data polling, historical storage, and live updates via Server-Sent Events (SSE).
 
-### Key Features
+### Current Features
 
-- 🔐 **User Authentication** - Secure multi-user support with device ownership
-- 📊 **Real-time Dashboard** - Monitor inverter status, power flow, and battery state
-- 📡 **MQTT Publishing** - Standard MQTT topics for easy integration
-- ⏱️ **Automatic Polling** - Configurable polling intervals (default 1 minute)
-- 📈 **Data Visualization** - Power flow diagrams and historical charts
-- 🔔 **Connection Monitoring** - Track device status and receive alerts
-- 🔒 **Encrypted Credentials** - Secure storage of Selectronic login details
+- 📊 **Real-time Dashboard** - Live power flow visualization with automatic updates
+- ☀️ **Dual Solar Tracking** - Monitors both remote (inverter) and local (DC shunt) solar generation
+- 🔋 **Battery Monitoring** - Real-time SOC, power flow, charge/discharge tracking
+- ⚡ **Energy Statistics** - Daily and all-time energy totals with 3-decimal precision
+- 🚨 **Fault Detection** - Automatic alerts when fault codes are detected
+- 📈 **Energy Delta Logging** - Console logging of energy changes between polls for analysis
+- ℹ️ **System Information** - Display of inverter model, serial, ratings, and configuration
+- 🔐 **User Authentication** - Secure login system with session management
+- 💾 **Data Persistence** - SQLite database storing all readings with dual timestamps
+- 🔄 **Automatic Polling** - Fetches data every minute from select.live API
+- 📡 **Live Updates** - Server-Sent Events (SSE) for real-time dashboard updates
+- 🎚️ **Grid Toggle** - Optional display of grid import/export data
+
+### Planned Features (Future Enhancements)
+
+- 📡 **MQTT Integration** - Publish data to MQTT brokers for home automation
+- 📊 **Historical Charts** - Graphs and trends for energy production/consumption
+- 🌡️ **Weather Integration** - Correlate solar production with weather data
+- 📱 **Mobile App** - Native mobile applications for iOS/Android
+- 🔔 **Alert System** - Email/SMS notifications for faults and thresholds
+- 🏠 **Multi-System Support** - Monitor multiple inverters from one dashboard
+- 📤 **Data Export** - CSV/JSON export of historical data
+- 🔌 **Home Assistant Integration** - Direct integration with Home Assistant
+- ⚙️ **Inverter Control** - Remote control of inverter settings (where supported)
 
 ## Architecture
 
-Built on Vercel's serverless platform for reliability and scalability:
+### Current Stack
 
-- **Frontend**: Next.js 15 with App Router, React, TypeScript
-- **Styling**: Tailwind CSS with custom components
-- **Database**: 
-  - Development: SQLite (zero-config, file-based)
-  - Production: Turso (edge-hosted SQLite) or PostgreSQL (Neon/Supabase)
-- **ORM**: Drizzle ORM (type-safe, performant)
+- **Frontend**: Next.js 14 with App Router, React, TypeScript
+- **Styling**: Tailwind CSS with responsive design
+- **Database**: SQLite with Drizzle ORM (production-ready with Turso)
 - **Real-time Updates**: Server-Sent Events (SSE)
-- **Authentication**: Session-based with secure credentials
-- **Data Collection**: Background polling manager with 1-minute intervals
-- **Data Storage**: Time-series database with dual timestamps (inverter time & received time)
+- **Authentication**: Session-based with bcrypt password hashing
+- **Data Collection**: Server-side polling manager with 1-minute intervals
+- **API Integration**: Direct connection to select.live using node-fetch
 
-## MQTT Topic Structure
+### Planned MQTT Architecture
+
+When MQTT support is added, the system will publish to topics like:
 
 ```
-liveone/{user_id}/{device_id}/status        # online/offline
-liveone/{user_id}/{device_id}/battery/soc   # State of charge (%)
-liveone/{user_id}/{device_id}/battery/voltage
-liveone/{user_id}/{device_id}/battery/current
-liveone/{user_id}/{device_id}/battery/power
-liveone/{user_id}/{device_id}/solar/power   # Solar generation (W)
-liveone/{user_id}/{device_id}/solar/voltage
-liveone/{user_id}/{device_id}/solar/current
-liveone/{user_id}/{device_id}/grid/power    # Grid import/export (W)
-liveone/{user_id}/{device_id}/grid/voltage
-liveone/{user_id}/{device_id}/grid/frequency
-liveone/{user_id}/{device_id}/load/power    # Load consumption (W)
-liveone/{user_id}/{device_id}/inverter/temperature
-liveone/{user_id}/{device_id}/inverter/mode
-liveone/{user_id}/{device_id}/raw           # Complete JSON payload
+liveone/{user_id}/{system_id}/status        # online/offline
+liveone/{user_id}/{system_id}/battery/soc   # State of charge (%)
+liveone/{user_id}/{system_id}/battery/power # Battery power (W)
+liveone/{user_id}/{system_id}/solar/power   # Total solar generation (W)
+liveone/{user_id}/{system_id}/solar/remote  # Remote solar (W)
+liveone/{user_id}/{system_id}/solar/local   # Local/shunt solar (W)
+liveone/{user_id}/{system_id}/grid/power    # Grid import/export (W)
+liveone/{user_id}/{system_id}/load/power    # Load consumption (W)
+liveone/{user_id}/{system_id}/fault/code    # Current fault code
+liveone/{user_id}/{system_id}/raw           # Complete JSON payload
 ```
 
 ## Getting Started
@@ -56,9 +67,8 @@ liveone/{user_id}/{device_id}/raw           # Complete JSON payload
 ### Prerequisites
 
 - Node.js 18+ and npm
-- Vercel account (free tier works for testing)
-- MQTT broker (HiveMQ Cloud free tier recommended)
-- Selectronic SP PRO with Live monitoring enabled
+- Selectronic SP PRO with select.live account
+- (Optional) Vercel account for deployment
 
 ### Installation
 
@@ -73,16 +83,16 @@ cd liveone
 npm install
 ```
 
-3. Set up environment variables:
+3. Create your secrets file:
 ```bash
-cp .env.example .env.local
+cp USER_SECRETS.example.ts USER_SECRETS.ts
 ```
 
-4. Configure your environment variables in `.env.local`
+4. Edit `USER_SECRETS.ts` with your Selectronic credentials and create a user account
 
-5. Run database migrations:
+5. Initialize the database:
 ```bash
-npm run db:migrate
+npx tsx scripts/init-db.ts
 ```
 
 6. Start development server:
@@ -90,16 +100,16 @@ npm run db:migrate
 npm run dev
 ```
 
-### Deployment
+7. Access the dashboard at [http://localhost:3000](http://localhost:3000)
+
+### Deployment to Vercel
 
 1. Push to GitHub
 2. Import project in Vercel
-3. Configure environment variables in Vercel dashboard
+3. Configure environment variables (if using environment variables instead of USER_SECRETS.ts)
 4. Deploy
 
 ## Configuration
-
-### Configuration
 
 All configuration is managed through TypeScript files:
 
@@ -139,38 +149,26 @@ sqlite3 ./dev.db "SELECT * FROM readings ORDER BY id DESC LIMIT 10;"
 - **Paid Tier ($29/mo)**: Supports 1000+ systems with full data retention
 - **Data Growth**: ~170 bytes per reading, 43K readings/month per system
 
-### Polling Intervals
+### Polling Configuration
 
-Configure in `vercel.json`:
-```json
-{
-  "crons": [{
-    "path": "/api/cron/poll-devices",
-    "schedule": "* * * * *"  // Every minute (Pro plan)
-  }]
-}
+The system automatically polls the Selectronic API every minute when running. You can adjust the polling interval in `config.ts`:
+
+```typescript
+POLLING_CONFIG.defaultInterval: 60000  // milliseconds
 ```
 
-## API Endpoints
+Note: The Selectronic API has a "magic window" from minutes 48-52 of each hour where it may be unavailable.
 
-### Authentication
-- `POST /api/auth/register` - User registration
-- `POST /api/auth/login` - User login
-- `POST /api/auth/logout` - User logout
+## API Endpoints (Currently Implemented)
 
-### Devices
-- `GET /api/devices` - List user's devices
-- `POST /api/devices` - Add new device
-- `PUT /api/devices/[id]` - Update device
-- `DELETE /api/devices/[id]` - Remove device
-- `GET /api/devices/[id]/status` - Get device status
-
-### Data
-- `GET /api/devices/[id]/data` - Get latest readings
-- `GET /api/devices/[id]/history` - Get historical data
+### Data & Status
+- `GET /api/data` - Get latest inverter data
+- `GET /api/status` - Get polling status
+- `GET /api/sse/user` - Server-sent events for real-time updates
 
 ### Admin
-- `GET /api/cron/poll-devices` - Trigger manual poll (protected)
+- `GET /api/admin/systems` - View all systems (admin page)
+- `POST /api/polling/start` - Start polling (development)
 
 ## Development
 
@@ -179,52 +177,54 @@ Configure in `vercel.json`:
 ```
 liveone/
 ├── app/                    # Next.js app router
-│   ├── (auth)/            # Authentication pages
-│   ├── dashboard/         # Main app UI
+│   ├── dashboard/         # Main dashboard UI
+│   ├── admin/            # Admin interface
 │   ├── api/              # API routes
-│   └── layout.tsx        # Root layout
-├── components/            # React components
-│   ├── ui/               # shadcn/ui components
-│   ├── dashboard/        # Dashboard components
-│   └── charts/           # Data visualizations
-├── lib/                   # Utilities
-│   ├── selectronic/      # Selectronic API client
-│   ├── mqtt/             # MQTT client
-│   ├── db/               # Database utilities
-│   └── auth/             # Auth helpers
-├── prisma/               # Database schema
-└── public/               # Static assets
+│   └── page.tsx          # Login page
+├── lib/                   # Core libraries
+│   ├── selectronic-fetch-client.ts  # Selectronic API client
+│   ├── server/polling-manager.ts    # Server-side polling
+│   ├── db/               # Database (Drizzle ORM)
+│   └── session-manager.ts # Session handling
+├── scripts/              # Utility scripts
+│   ├── init-db.ts        # Database initialization
+│   └── test-fetch.ts     # API testing
+├── docs/                 # Documentation
+└── config.ts             # Main configuration
 ```
 
 ### Testing
 
 ```bash
-# Run tests
+# Test Selectronic API connection
+npx tsx scripts/test-fetch.ts
+
+# Run unit tests
 npm test
-
-# Run tests in watch mode
-npm run test:watch
-
-# E2E tests
-npm run test:e2e
 ```
+
+## Known Issues & Limitations
+
+- **Magic Window**: The Selectronic API is unavailable during minutes 48-52 of each hour
+- **Single System**: Currently supports monitoring one inverter system at a time
+- **Read-Only**: No inverter control capabilities (monitoring only)
+- **Energy Values**: API returns kWh despite field names containing "_wh_"
 
 ## Contributing
 
-Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details.
+Contributions are welcome! Areas of interest:
+- MQTT integration
+- Historical charting
+- Multi-system support
+- Mobile app development
+- Home Assistant integration
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License
 
 ## Acknowledgments
 
-- Inspired by the original SelectronicMQTT project
-- Built with Next.js and Vercel
-- UI components from shadcn/ui
-
-## Support
-
-- Create an issue on GitHub
-- Email: support@liveone.app
-- Documentation: https://docs.liveone.app
+- Inspired by the original SelectronicMQTT C# project
+- Built with Next.js, TypeScript, and Tailwind CSS
+- Real-time updates via Server-Sent Events (SSE)
