@@ -11,15 +11,16 @@ LiveOne provides a modern web-based dashboard for monitoring Selectronic SP PRO 
 - 📊 **Real-time Dashboard** - Live power flow visualization with automatic updates
 - ☀️ **Dual Solar Tracking** - Monitors both remote (inverter) and local (DC shunt) solar generation
 - 🔋 **Battery Monitoring** - Real-time SOC, power flow, charge/discharge tracking
-- ⚡ **Energy Statistics** - Daily and all-time energy totals with 3-decimal precision
+- ⚡ **Energy Statistics** - Daily and all-time energy totals with 3-decimal precision kWh storage
 - 🚨 **Fault Detection** - Automatic alerts when fault codes are detected
-- 📈 **Energy Delta Logging** - Console logging of energy changes between polls for analysis
+- 📈 **Energy Delta Logging** - Precise energy change tracking between polls (3 decimal places)
 - ℹ️ **System Information** - Display of inverter model, serial, ratings, and configuration
 - 🔐 **User Authentication** - Secure login system with session management
-- 💾 **Data Persistence** - SQLite database storing all readings with dual timestamps
+- 💾 **Data Persistence** - SQLite database with optimized schema (totals only, no daily values)
 - 🔄 **Automatic Polling** - Fetches data every minute from select.live API
 - 📡 **Live Updates** - Server-Sent Events (SSE) for real-time dashboard updates
 - 🎚️ **Grid Toggle** - Optional display of grid import/export data
+- 🎨 **Modern UI** - Clean, professional dark theme with responsive design
 
 ### Planned Features (Future Enhancements)
 
@@ -38,7 +39,8 @@ LiveOne provides a modern web-based dashboard for monitoring Selectronic SP PRO 
 ### Current Stack
 
 - **Frontend**: Next.js 14 with App Router, React, TypeScript
-- **Styling**: Tailwind CSS with responsive design
+- **Styling**: Tailwind CSS with custom dark theme (removed DaisyUI for better control)
+- **Icons**: Lucide React for consistent, professional iconography
 - **Database**: SQLite with Drizzle ORM (production-ready with Turso)
 - **Real-time Updates**: Server-Sent Events (SSE)
 - **Authentication**: Session-based with bcrypt password hashing

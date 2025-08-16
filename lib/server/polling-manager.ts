@@ -331,7 +331,7 @@ class PollingManager extends EventEmitter {
       };
       
       // Always log to see patterns
-      console.log(`[Energy Δ] ${key} - Solar: ${deltas.solar.toFixed(1)}Wh, Load: ${deltas.load.toFixed(1)}Wh, Batt In: ${deltas.batteryIn.toFixed(1)}Wh, Batt Out: ${deltas.batteryOut.toFixed(1)}Wh, Grid In: ${deltas.gridIn.toFixed(1)}Wh, Grid Out: ${deltas.gridOut.toFixed(1)}Wh`);
+      console.log(`[Energy Δ] ${key} - Solar: ${deltas.solar.toFixed(3)}Wh, Load: ${deltas.load.toFixed(3)}Wh, Batt In: ${deltas.batteryIn.toFixed(3)}Wh, Batt Out: ${deltas.batteryOut.toFixed(3)}Wh`);
     }
     
     instance.previousTotals = currentTotals;
@@ -397,13 +397,13 @@ class PollingManager extends EventEmitter {
         faultCode: data.faultCode,
         faultTimestamp: data.faultTimestamp,
         generatorStatus: data.generatorStatus,
-        // Energy counters (kWh) - lifetime totals only (not storing daily as requested)
-        solarKwhTotal: data.solarKwhTotal,
-        loadKwhTotal: data.loadKwhTotal,
-        batteryInKwhTotal: data.batteryInKwhTotal,
-        batteryOutKwhTotal: data.batteryOutKwhTotal,
-        gridInKwhTotal: data.gridInKwhTotal,
-        gridOutKwhTotal: data.gridOutKwhTotal,
+        // Energy counters (kWh) - lifetime totals only, rounded to 3 decimal places
+        solarKwhTotal: Math.round(data.solarKwhTotal * 1000) / 1000,
+        loadKwhTotal: Math.round(data.loadKwhTotal * 1000) / 1000,
+        batteryInKwhTotal: Math.round(data.batteryInKwhTotal * 1000) / 1000,
+        batteryOutKwhTotal: Math.round(data.batteryOutKwhTotal * 1000) / 1000,
+        gridInKwhTotal: Math.round(data.gridInKwhTotal * 1000) / 1000,
+        gridOutKwhTotal: Math.round(data.gridOutKwhTotal * 1000) / 1000,
       };
       
       await db.insert(readings).values(reading);

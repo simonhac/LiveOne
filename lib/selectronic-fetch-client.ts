@@ -245,10 +245,8 @@ export class SelectronicFetchClient {
    */
   public async fetchData(): Promise<ApiResponse<SelectronicData>> {
     try {
-      // Note if we're in magic window but still try
-      if (this.isInMagicWindow()) {
-        console.warn('[API] Currently in magic window (48-52 min) - request may fail');
-      }
+      // Check if we're in magic window but don't warn unless it fails
+      const inMagicWindow = this.isInMagicWindow();
 
       // Ensure we have cookies
       if (this.cookies.size === 0) {
@@ -295,7 +293,8 @@ export class SelectronicFetchClient {
 
       if (!response.ok) {
         // Check if it's a magic window error (usually 500 or 503)
-        if (this.isInMagicWindow() && (response.status === 500 || response.status === 503)) {
+        if (inMagicWindow && (response.status === 500 || response.status === 503)) {
+          console.warn('[API] Request failed during magic window (48-52 min)');
           return {
             success: false,
             error: `${ERROR_MESSAGES.MAGIC_WINDOW} (HTTP ${response.status})`,

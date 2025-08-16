@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { APP_USERS } from '@/config'
+import { LogIn, Zap } from 'lucide-react'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -43,78 +44,76 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+    <div className="min-h-screen bg-gray-900 flex items-center justify-center px-4">
+      <div className="max-w-md w-full">
+        <div className="bg-gray-800 rounded-2xl shadow-2xl p-8">
+          <div className="flex justify-center mb-8">
+            <div className="bg-gradient-to-br from-blue-500 to-purple-600 p-4 rounded-xl">
+              <Zap className="w-10 h-10 text-white" />
+            </div>
+          </div>
+          
+          <h2 className="text-3xl font-bold text-white text-center mb-2">
             LiveOne
           </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
+          <p className="text-gray-400 text-center mb-8">
             Selectronic SP PRO Monitor
           </p>
-        </div>
-        
-        <form className="mt-8 space-y-6" onSubmit={handleLogin}>
-          <div className="rounded-md shadow-sm -space-y-px">
+          
+          <form className="space-y-6" onSubmit={handleLogin}>
             <div>
-              <label htmlFor="email" className="sr-only">
-                Email address
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Email
               </label>
               <input
-                id="email"
-                name="email"
                 type="email"
-                autoComplete="email"
+                placeholder="email@example.com"
+                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
                 required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                placeholder="Email address"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
             </div>
+            
             <div>
-              <label htmlFor="password" className="sr-only">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
                 Password
               </label>
               <input
-                id="password"
-                name="password"
                 type="password"
-                autoComplete="current-password"
+                placeholder="••••••••"
+                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
                 required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
-          </div>
 
-          {error && (
-            <div className="rounded-md bg-red-50 p-4">
-              <div className="text-sm text-red-800">{error}</div>
-            </div>
-          )}
+            {error && (
+              <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded-lg">
+                {error}
+              </div>
+            )}
 
-          <div>
             <button
               type="submit"
               disabled={loading}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+              className="w-full bg-gradient-to-r from-blue-500 to-purple-600 text-white py-3 px-4 rounded-lg font-medium hover:from-blue-600 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
-              {loading ? 'Signing in...' : 'Sign in'}
+              {loading ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                  Signing in...
+                </>
+              ) : (
+                <>
+                  <LogIn className="w-5 h-5" />
+                  Sign in
+                </>
+              )}
             </button>
-          </div>
-
-          <div className="text-sm text-center text-gray-600">
-            Demo credentials:<br/>
-            <div className="mt-2">
-              <strong>User:</strong> simon@holmesacourt.com<br/>
-              <strong>Admin:</strong> admin@liveone.local<br/>
-              <strong>Password:</strong> password
-            </div>
-          </div>
-        </form>
+          </form>
+        </div>
       </div>
     </div>
   )

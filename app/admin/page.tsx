@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { LogOut, Info, Clock, Activity, Wifi, WifiOff, Users, Server, Gauge } from 'lucide-react'
 
 interface SystemInfo {
   model?: string
@@ -119,50 +120,54 @@ export default function AdminDashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-950 text-gray-100 flex items-center justify-center">
-        <div className="text-xl">Loading systems...</div>
+      <div className="min-h-screen bg-base-100 flex items-center justify-center" data-theme="dark">
+        <div className="text-center">
+          <span className="loading loading-spinner loading-lg text-primary"></span>
+          <p className="mt-4 text-base-content/70">Loading systems...</p>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100">
+    <div className="min-h-screen bg-base-100" data-theme="dark">
       {/* Header */}
-      <div className="bg-gray-900 border-b border-gray-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-4">
-            <div>
-              <h1 className="text-2xl font-bold text-blue-400">LiveOne Admin</h1>
-              <p className="text-sm text-gray-400">System Overview Dashboard</p>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="text-sm text-gray-400">
-                Last update: {lastUpdate ? formatTime(lastUpdate.toISOString()) : 'Never'}
-              </div>
-              <button
-                onClick={handleLogout}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm font-medium transition-colors"
-              >
-                Logout
-              </button>
-            </div>
+      <header className="navbar bg-base-200 border-b border-base-300">
+        <div className="flex-1">
+          <div>
+            <h1 className="text-2xl font-bold">LiveOne Admin</h1>
+            <p className="text-sm text-base-content/70">System Overview Dashboard</p>
           </div>
         </div>
-      </div>
+        <div className="flex-none gap-4">
+          <div className="flex items-center gap-2 text-sm text-base-content/70">
+            <Clock className="w-4 h-4" />
+            Last update: {lastUpdate ? formatTime(lastUpdate.toISOString()) : 'Never'}
+          </div>
+          <button
+            onClick={handleLogout}
+            className="btn btn-error btn-sm"
+          >
+            <LogOut className="w-4 h-4" />
+            Logout
+          </button>
+        </div>
+      </header>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {error && (
-          <div className="mb-6 p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-200">
-            {error}
+          <div className="alert alert-error mb-6">
+            <span>{error}</span>
           </div>
         )}
 
         {/* Systems Table */}
-        <div className="bg-gray-900 rounded-lg overflow-hidden shadow-xl">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-800">
+        <div className="card bg-base-200">
+          <div className="card-body p-0">
+            <div className="overflow-x-auto">
+              <table className="table table-zebra">
+                <thead>
                 <tr>
                   <th className="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                     Owner
@@ -197,13 +202,13 @@ export default function AdminDashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800">
-                {systems.length === 0 ? (
-                  <tr>
-                    <td colSpan={10} className="px-6 py-8 text-center text-gray-500">
-                      No systems registered
-                    </td>
-                  </tr>
-                ) : (
+                  {systems.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="text-center text-base-content/50 py-8">
+                        No systems registered
+                      </td>
+                    </tr>
+                  ) : (
                   systems.map((system) => (
                     <tr key={system.systemNumber} className="hover:bg-gray-800/50 transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -227,27 +232,15 @@ export default function AdminDashboard() {
                               onMouseEnter={() => setHoveredSystem(system.systemNumber)}
                               onMouseLeave={() => setHoveredSystem(null)}
                             >
-                              {/* Info Icon */}
-                              <svg
-                                className="w-4 h-4 text-blue-400 cursor-help"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                                />
-                              </svg>
+                              <Info className="w-4 h-4 text-info cursor-help" />
                               
                               {/* System Info Panel */}
                               {hoveredSystem === system.systemNumber && (
-                                <div className="absolute z-50 left-6 top-0 ml-2 w-72 p-4 bg-gray-800 border border-gray-700 rounded-lg shadow-xl">
-                                  <div className="text-sm font-semibold text-blue-400 mb-3">
-                                    System Information
-                                  </div>
+                                <div className="absolute z-50 left-6 top-0 ml-2 card bg-base-300 shadow-xl">
+                                  <div className="card-body p-4 w-72">
+                                    <div className="text-sm font-semibold text-info mb-3">
+                                      System Information
+                                    </div>
                                   <div className="space-y-2 text-xs">
                                     {system.systemInfo.model && (
                                       <div className="flex justify-between">
@@ -279,6 +272,7 @@ export default function AdminDashboard() {
                                         <span className="text-gray-200 font-medium">{system.systemInfo.batterySize}</span>
                                       </div>
                                     )}
+                                    </div>
                                   </div>
                                 </div>
                               )}
@@ -286,21 +280,24 @@ export default function AdminDashboard() {
                           )}
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      <td>
                         <div className="flex items-center gap-2">
                           {system.isLoggedIn ? (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-900/50 text-green-400 border border-green-800">
+                            <div className="badge badge-success badge-sm gap-1">
+                              <Wifi className="w-3 h-3" />
                               Online
-                            </span>
+                            </div>
                           ) : (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-800 text-gray-400 border border-gray-700">
+                            <div className="badge badge-ghost badge-sm gap-1">
+                              <WifiOff className="w-3 h-3" />
                               Offline
-                            </span>
+                            </div>
                           )}
                           {system.polling.isActive && (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-900/50 text-blue-400 border border-blue-800">
+                            <div className="badge badge-info badge-sm gap-1">
+                              <Activity className="w-3 h-3" />
                               Polling
-                            </span>
+                            </div>
                           )}
                         </div>
                       </td>
@@ -310,45 +307,45 @@ export default function AdminDashboard() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
                         {formatTime(system.polling.lastPollTime)}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <div className="text-sm font-mono text-yellow-400">
+                      <td className="text-center">
+                        <div className="text-sm font-mono text-warning">
                           {formatPower(system.data?.solarPower)}
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <div className="text-sm font-mono text-orange-400">
+                      <td className="text-center">
+                        <div className="text-sm font-mono text-info">
                           {formatPower(system.data?.loadPower)}
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
+                      <td className="text-center">
                         <div className={`text-sm font-mono ${
                           system.data && system.data.batteryPower > 0 
-                            ? 'text-green-400' 
+                            ? 'text-success' 
                             : system.data && system.data.batteryPower < 0 
-                            ? 'text-red-400' 
-                            : 'text-gray-400'
+                            ? 'text-error' 
+                            : 'text-base-content/50'
                         }`}>
                           {formatPower(system.data?.batteryPower)}
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
+                      <td className="text-center">
                         <div className={`text-sm font-mono ${
                           system.data && system.data.batterySOC > 80 
-                            ? 'text-green-400' 
+                            ? 'text-success' 
                             : system.data && system.data.batterySOC > 50 
-                            ? 'text-yellow-400' 
+                            ? 'text-warning' 
                             : system.data && system.data.batterySOC > 20 
-                            ? 'text-orange-400' 
-                            : 'text-red-400'
+                            ? 'text-warning' 
+                            : 'text-error'
                         }`}>
                           {formatSOC(system.data?.batterySOC)}
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
+                      <td className="text-center">
                         <div className={`text-sm font-mono ${
                           system.data && Math.abs(system.data.gridPower) > 0 
-                            ? 'text-purple-400' 
-                            : 'text-gray-400'
+                            ? 'text-secondary' 
+                            : 'text-base-content/50'
                         }`}>
                           {formatPower(system.data?.gridPower)}
                         </div>
@@ -357,30 +354,46 @@ export default function AdminDashboard() {
                   ))
                 )}
               </tbody>
-            </table>
+              </table>
+            </div>
           </div>
         </div>
 
         {/* Summary Stats */}
         <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-gray-900 rounded-lg p-6">
-            <div className="text-sm text-gray-400 mb-2">Total Systems</div>
-            <div className="text-3xl font-bold text-blue-400">{systems.length}</div>
-          </div>
-          <div className="bg-gray-900 rounded-lg p-6">
-            <div className="text-sm text-gray-400 mb-2">Active Polling</div>
-            <div className="text-3xl font-bold text-green-400">
-              {systems.filter(s => s.polling.isActive).length}
+          <div className="stats shadow">
+            <div className="stat">
+              <div className="stat-figure text-primary">
+                <Server className="w-8 h-8" />
+              </div>
+              <div className="stat-title">Total Systems</div>
+              <div className="stat-value text-primary">{systems.length}</div>
             </div>
           </div>
-          <div className="bg-gray-900 rounded-lg p-6">
-            <div className="text-sm text-gray-400 mb-2">Users Online</div>
-            <div className="text-3xl font-bold text-purple-400">
-              {systems.filter(s => s.isLoggedIn).length}
+          <div className="stats shadow">
+            <div className="stat">
+              <div className="stat-figure text-success">
+                <Gauge className="w-8 h-8" />
+              </div>
+              <div className="stat-title">Active Polling</div>
+              <div className="stat-value text-success">
+                {systems.filter(s => s.polling.isActive).length}
+              </div>
+            </div>
+          </div>
+          <div className="stats shadow">
+            <div className="stat">
+              <div className="stat-figure text-secondary">
+                <Users className="w-8 h-8" />
+              </div>
+              <div className="stat-title">Users Online</div>
+              <div className="stat-value text-secondary">
+                {systems.filter(s => s.isLoggedIn).length}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </main>
     </div>
   )
 }
