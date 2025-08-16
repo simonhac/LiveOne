@@ -6,6 +6,7 @@ const dmSans = DM_Sans({
   subsets: ['latin'],
   weight: ['400', '500', '600', '700'],
   display: 'swap',
+  preload: false, // Disable preloading to avoid unused preload warnings
 })
 
 export const metadata: Metadata = {
