@@ -46,9 +46,14 @@ export const CACHE_CONFIG = {
 } as const;
 
 // Import real secrets from separate file (optional in production)
+interface UserSystem {
+  systemNumber: string;
+  displayName: string;
+}
+
 let LIVEONE_USERS: any = {};
 let SELECTLIVE_CREDENTIALS: any = {};
-let USER_TO_SYSTEM: any = {};
+let USER_TO_SYSTEM: Record<string, UserSystem> = {};
 
 try {
   const secrets = require('./USER_SECRETS');

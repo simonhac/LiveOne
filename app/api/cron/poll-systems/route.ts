@@ -61,13 +61,19 @@ export async function GET(request: NextRequest) {
         } else {
           // Try to get from config (will fail in production if USER_SECRETS doesn't exist)
           try {
-            const credentials = USER_TO_SYSTEM[system.userId as keyof typeof USER_TO_SYSTEM] || SELECTLIVE_CONFIG;
-            email = credentials.username;
-            password = credentials.password;
-            console.log('[Cron] Using credentials from config file');
+            // In production, SELECTLIVE_CONFIG should have env vars
+            const credentials = SELECTLIVE_CONFIG;
+            if (credentials.username && credentials.password) {
+              email = credentials.username;
+              password = credentials.password;
+              console.log('[Cron] Using credentials from config file');
+            } else {
+              console.error('[Cron] ❌ No credentials available!');
+              console.error('[Cron] Please set SELECTRONIC_EMAIL and SELECTRONIC_PASSWORD environment variables');
+              throw new Error('Missing Selectronic credentials');
+            }
           } catch (error) {
-            console.error('[Cron] ❌ No credentials available!');
-            console.error('[Cron] Please set SELECTRONIC_EMAIL and SELECTRONIC_PASSWORD environment variables');
+            console.error('[Cron] ❌ Error getting credentials:', error);
             throw new Error('Missing Selectronic credentials');
           }
         }

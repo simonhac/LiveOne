@@ -167,20 +167,20 @@ export async function GET(request: NextRequest) {
       );
     }
     
-    // Find user by matching password token
-    const userEntry = Object.entries(APP_USERS).find(([_, user]) => user.password === token);
-    
-    if (!userEntry) {
+    // In production, validate against AUTH_PASSWORD env var if set
+    const validPassword = process.env.AUTH_PASSWORD;
+    if (validPassword && token !== validPassword) {
       return NextResponse.json(
         { error: 'Invalid authentication token' },
         { status: 401 }
       );
     }
 
-    const [username, userInfo] = userEntry;
+    // Default values for production
+    const username = 'simon';
 
     // Get system info for this user - for now hardcode since we only have one system
-    const systemNumber = '1586'; // From SELECTLIVE_CREDENTIALS
+    const systemNumber = process.env.SELECTRONIC_SYSTEM || '1586';
     if (!systemNumber) {
       return NextResponse.json(
         { error: 'No system configured for user' },
