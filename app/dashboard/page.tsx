@@ -35,7 +35,6 @@ export default function DashboardPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [showSystemInfo, setShowSystemInfo] = useState(false)
-  const [showGrid, setShowGrid] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -127,6 +126,9 @@ export default function DashboardPage() {
     return `${(watts / 1000).toFixed(3)} kW`
   }
 
+  // Automatically determine if grid information should be shown
+  const showGrid = data ? (data.gridInKwhTotal > 0 || data.gridOutKwhTotal > 0) : false
+
   return (
     <div className="min-h-screen bg-gray-900">
       {/* Header */}
@@ -138,16 +140,46 @@ export default function DashboardPage() {
               <p className="text-sm text-gray-400 mt-1">Selectronic SP PRO Monitoring</p>
             </div>
             <div className="flex items-center gap-4">
-              <div className="bg-green-900/50 text-green-400 px-3 py-1 rounded-lg text-sm flex items-center gap-2">
-                <Activity className="w-4 h-4" />
-                Live Updates
+              <div className="text-sm text-gray-400 flex items-center gap-2">
+                <Clock className="w-4 h-4" />
+                <span className="font-mono text-white">
+                  {secondsSinceUpdate === 0 ? 'Just now' : 
+                   secondsSinceUpdate === 1 ? '1 second ago' : 
+                   secondsSinceUpdate < 60 ? `${secondsSinceUpdate}s ago` :
+                   `${Math.floor(secondsSinceUpdate / 60)}m ${secondsSinceUpdate % 60}s ago`}
+                </span>
+              </div>
+              {systemInfo && (
+                <button
+                  onMouseEnter={() => setShowSystemInfo(true)}
+                  onMouseLeave={() => setShowSystemInfo(false)}
+                  className="text-gray-400 hover:text-white transition-colors"
+                >
+                  <Info className="w-4 h-4" />
+                </button>
+              )}
+              <div className={`px-2 py-1 rounded text-xs flex items-center gap-1 ${
+                isPolling ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
+              }`}>
+                <Activity className="w-3 h-3" />
+                {isPolling ? 'Polling' : 'Stopped'}
+              </div>
+              <div className={`px-2 py-1 rounded text-xs flex items-center gap-1 ${
+                isAuthenticated ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
+              }`}>
+                {isAuthenticated ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+                {isAuthenticated ? 'Connected' : 'Disconnected'}
+              </div>
+              <div className="bg-green-900/50 text-green-400 px-2 py-1 rounded text-xs flex items-center gap-1">
+                <Activity className="w-3 h-3" />
+                Live
               </div>
               <div className="text-sm text-gray-400">
                 {sessionStorage.getItem('displayName')}
               </div>
               <button
                 onClick={handleLogout}
-                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
+                className="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-sm flex items-center gap-2 transition-colors"
               >
                 <LogOut className="w-4 h-4" />
                 Logout
@@ -155,6 +187,47 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
+        
+        {showSystemInfo && systemInfo && (
+          <div className="fixed z-50 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 min-w-[280px]" 
+               style={{ top: '70px', right: '20px' }}
+               onMouseEnter={() => setShowSystemInfo(true)}
+               onMouseLeave={() => setShowSystemInfo(false)}>
+            <h4 className="font-semibold text-white mb-3">System Information</h4>
+            <div className="space-y-2 text-sm">
+              {systemInfo.model && (
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Model:</span>
+                  <span className="text-white">{systemInfo.model}</span>
+                </div>
+              )}
+              {systemInfo.serial && (
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Serial:</span>
+                  <span className="text-white">{systemInfo.serial}</span>
+                </div>
+              )}
+              {systemInfo.ratings && (
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Ratings:</span>
+                  <span className="text-white">{systemInfo.ratings}</span>
+                </div>
+              )}
+              {systemInfo.solarSize && (
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Solar Size:</span>
+                  <span className="text-white">{systemInfo.solarSize}</span>
+                </div>
+              )}
+              {systemInfo.batterySize && (
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Battery Size:</span>
+                  <span className="text-white">{systemInfo.batterySize}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Main Content */}
@@ -178,206 +251,136 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* Status Bar */}
-            <div className="bg-gray-800 rounded-lg p-4">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div className="flex items-center gap-4">
-                  <div className="text-sm text-gray-400 flex items-center gap-2">
-                    <Clock className="w-4 h-4" />
-                    <span>
-                      Last Update: <span className="font-mono text-white">
-                        {secondsSinceUpdate === 0 ? 'Just now' : 
-                         secondsSinceUpdate === 1 ? '1 second ago' : 
-                         secondsSinceUpdate < 60 ? `${secondsSinceUpdate} seconds ago` :
-                         `${Math.floor(secondsSinceUpdate / 60)}m ${secondsSinceUpdate % 60}s ago`}
-                      </span>
-                    </span>
-                  </div>
-                  {systemInfo && (
-                    <button
-                      onMouseEnter={() => setShowSystemInfo(true)}
-                      onMouseLeave={() => setShowSystemInfo(false)}
-                      className="text-gray-400 hover:text-white transition-colors"
-                    >
-                      <Info className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className={`px-3 py-1 rounded-lg text-sm flex items-center gap-2 ${
-                    isPolling ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
-                  }`}>
-                    <Activity className="w-4 h-4" />
-                    Polling {isPolling ? 'Active' : 'Inactive'}
-                  </div>
-                  <div className={`px-3 py-1 rounded-lg text-sm flex items-center gap-2 ${
-                    isAuthenticated ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
-                  }`}>
-                    {isAuthenticated ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
-                    API {isAuthenticated ? 'Connected' : 'Disconnected'}
+            {/* Main Dashboard Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* Chart Placeholder - 2/3 width */}
+              <div className="lg:col-span-2">
+                <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 h-full min-h-[400px] flex items-center justify-center">
+                  <div className="text-center">
+                    <div className="text-gray-500 text-lg mb-2">Chart Placeholder</div>
+                    <div className="text-gray-600 text-sm">Energy visualization coming soon</div>
                   </div>
                 </div>
               </div>
-              
-              {showSystemInfo && systemInfo && (
-                <div className="fixed z-50 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 min-w-[280px]" 
-                     style={{ top: '140px', left: '50%', transform: 'translateX(-50%)' }}
-                     onMouseEnter={() => setShowSystemInfo(true)}
-                     onMouseLeave={() => setShowSystemInfo(false)}>
-                  <h4 className="font-semibold text-white mb-3">System Information</h4>
-                  <div className="space-y-2 text-sm">
-                    {systemInfo.model && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Model:</span>
-                        <span className="text-white">{systemInfo.model}</span>
-                      </div>
-                    )}
-                    {systemInfo.serial && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Serial:</span>
-                        <span className="text-white">{systemInfo.serial}</span>
-                      </div>
-                    )}
-                    {systemInfo.ratings && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Ratings:</span>
-                        <span className="text-white">{systemInfo.ratings}</span>
-                      </div>
-                    )}
-                    {systemInfo.solarSize && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Solar Size:</span>
-                        <span className="text-white">{systemInfo.solarSize}</span>
-                      </div>
-                    )}
-                    {systemInfo.batterySize && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Battery Size:</span>
-                        <span className="text-white">{systemInfo.batterySize}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
 
-            {/* Power Flow Grid */}
-            <div className={`grid grid-cols-1 md:grid-cols-2 ${showGrid ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-4`}>
-              <PowerCard
-                title="Solar"
-                value={formatPower(data.solarPower)}
-                icon={<Sun className="w-6 h-6" />}
-                iconColor="text-yellow-400"
-                bgColor="bg-yellow-900/20"
-                borderColor="border-yellow-700"
-                extra={
-                  <div className="text-xs space-y-1 text-gray-400">
-                    <div>Remote: {formatPower(data.solarInverterPower)}</div>
-                    <div>Local: {formatPower(data.shuntPower)}</div>
-                  </div>
-                }
-              />
-              <PowerCard
-                title="Load"
-                value={formatPower(data.loadPower)}
-                icon={<Home className="w-6 h-6" />}
-                iconColor="text-blue-400"
-                bgColor="bg-blue-900/20"
-                borderColor="border-blue-700"
-              />
-              <PowerCard
-                title="Battery"
-                value={formatPower(data.batteryPower)}
-                icon={<Battery className="w-6 h-6" />}
-                iconColor={data.batteryPower < 0 ? "text-green-400" : data.batteryPower > 0 ? "text-orange-400" : "text-gray-400"}
-                bgColor={data.batteryPower < 0 ? "bg-green-900/20" : data.batteryPower > 0 ? "bg-orange-900/20" : "bg-gray-900/20"}
-                borderColor={data.batteryPower < 0 ? "border-green-700" : data.batteryPower > 0 ? "border-orange-700" : "border-gray-700"}
-                extra={
-                  <div className="text-sm font-semibold text-white">{data.batterySOC.toFixed(1)}% SOC</div>
-                }
-                extraInfo={data.batteryPower < 0 ? 'Charging' : data.batteryPower > 0 ? 'Discharging' : 'Idle'}
-              />
-              {showGrid && (
+              {/* Power Cards - 1/3 width, stacked vertically */}
+              <div className="space-y-4">
                 <PowerCard
-                  title="Grid"
-                  value={formatPower(data.gridPower)}
-                  icon={<Zap className="w-6 h-6" />}
-                  iconColor={data.gridPower > 0 ? "text-red-400" : data.gridPower < 0 ? "text-green-400" : "text-gray-400"}
-                  bgColor={data.gridPower > 0 ? "bg-red-900/20" : data.gridPower < 0 ? "bg-green-900/20" : "bg-gray-900/20"}
-                  borderColor={data.gridPower > 0 ? "border-red-700" : data.gridPower < 0 ? "border-green-700" : "border-gray-700"}
-                  extraInfo={data.gridPower > 0 ? 'Importing' : data.gridPower < 0 ? 'Exporting' : 'Neutral'}
+                  title="Solar"
+                  value={formatPower(data.solarPower)}
+                  icon={<Sun className="w-6 h-6" />}
+                  iconColor="text-yellow-400"
+                  bgColor="bg-yellow-900/20"
+                  borderColor="border-yellow-700"
+                  extra={
+                    <div className="text-xs space-y-1 text-gray-400">
+                      <div>Remote: {formatPower(data.solarInverterPower)}</div>
+                      <div>Local: {formatPower(data.shuntPower)}</div>
+                    </div>
+                  }
                 />
-              )}
+                <PowerCard
+                  title="Load"
+                  value={formatPower(data.loadPower)}
+                  icon={<Home className="w-6 h-6" />}
+                  iconColor="text-blue-400"
+                  bgColor="bg-blue-900/20"
+                  borderColor="border-blue-700"
+                />
+                <PowerCard
+                  title="Battery"
+                  value={formatPower(data.batteryPower)}
+                  icon={<Battery className="w-6 h-6" />}
+                  iconColor={data.batteryPower < 0 ? "text-green-400" : data.batteryPower > 0 ? "text-orange-400" : "text-gray-400"}
+                  bgColor={data.batteryPower < 0 ? "bg-green-900/20" : data.batteryPower > 0 ? "bg-orange-900/20" : "bg-gray-900/20"}
+                  borderColor={data.batteryPower < 0 ? "border-green-700" : data.batteryPower > 0 ? "border-orange-700" : "border-gray-700"}
+                  extra={
+                    <div className="text-sm font-semibold text-white">{data.batterySOC.toFixed(1)}% SOC</div>
+                  }
+                  extraInfo={data.batteryPower < 0 ? 'Charging' : data.batteryPower > 0 ? 'Discharging' : 'Idle'}
+                />
+                {showGrid && (
+                  <PowerCard
+                    title="Grid"
+                    value={formatPower(data.gridPower)}
+                    icon={<Zap className="w-6 h-6" />}
+                    iconColor={data.gridPower > 0 ? "text-red-400" : data.gridPower < 0 ? "text-green-400" : "text-gray-400"}
+                    bgColor={data.gridPower > 0 ? "bg-red-900/20" : data.gridPower < 0 ? "bg-green-900/20" : "bg-gray-900/20"}
+                    borderColor={data.gridPower > 0 ? "border-red-700" : data.gridPower < 0 ? "border-green-700" : "border-gray-700"}
+                    extraInfo={data.gridPower > 0 ? 'Importing' : data.gridPower < 0 ? 'Exporting' : 'Neutral'}
+                  />
+                )}
+              </div>
             </div>
 
             {/* Energy Statistics */}
-            <div className="bg-gray-800 rounded-lg p-6">
-              <h3 className="text-lg font-semibold text-white mb-4">Energy</h3>
+            <div className="bg-gray-800 rounded-lg p-3">
+              <h3 className="text-sm font-semibold text-white mb-2">Energy</h3>
               
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-gray-700">
-                      <th className="text-left py-2 text-gray-400 font-medium"></th>
-                      <th className="text-right py-2 text-gray-400 font-medium">Solar</th>
-                      <th className="text-right py-2 text-gray-400 font-medium">Load</th>
-                      <th className="text-right py-2 text-gray-400 font-medium">Battery In</th>
-                      <th className="text-right py-2 text-gray-400 font-medium">Battery Out</th>
+                      <th className="text-left py-1 text-gray-400 font-medium text-xs"></th>
+                      <th className="text-right py-1 text-gray-400 font-medium text-xs">Solar</th>
+                      <th className="text-right py-1 text-gray-400 font-medium text-xs">Load</th>
+                      <th className="text-right py-1 text-gray-400 font-medium text-xs">Battery In</th>
+                      <th className="text-right py-1 text-gray-400 font-medium text-xs">Battery Out</th>
                       {showGrid && (
                         <>
-                          <th className="text-right py-2 text-gray-400 font-medium">Grid In</th>
-                          <th className="text-right py-2 text-gray-400 font-medium">Grid Out</th>
+                          <th className="text-right py-1 text-gray-400 font-medium text-xs">Grid In</th>
+                          <th className="text-right py-1 text-gray-400 font-medium text-xs">Grid Out</th>
                         </>
                       )}
                     </tr>
                   </thead>
                   <tbody>
                     <tr className="border-b border-gray-700">
-                      <td className="py-3 font-medium text-gray-300">Today</td>
-                      <td className="text-right py-3 text-yellow-400 font-mono">
-                        {data.solarKwhToday.toFixed(3)} kWh
+                      <td className="py-1.5 font-medium text-gray-300 text-xs">Today</td>
+                      <td className="text-right py-1.5 text-yellow-400 font-mono text-sm">
+                        {data.solarKwhToday.toFixed(3)}
                       </td>
-                      <td className="text-right py-3 text-blue-400 font-mono">
-                        {data.loadKwhToday.toFixed(3)} kWh
+                      <td className="text-right py-1.5 text-blue-400 font-mono text-sm">
+                        {data.loadKwhToday.toFixed(3)}
                       </td>
-                      <td className="text-right py-3 text-green-400 font-mono">
-                        {data.batteryInKwhToday.toFixed(3)} kWh
+                      <td className="text-right py-1.5 text-green-400 font-mono text-sm">
+                        {data.batteryInKwhToday.toFixed(3)}
                       </td>
-                      <td className="text-right py-3 text-orange-400 font-mono">
-                        {data.batteryOutKwhToday.toFixed(3)} kWh
+                      <td className="text-right py-1.5 text-orange-400 font-mono text-sm">
+                        {data.batteryOutKwhToday.toFixed(3)}
                       </td>
                       {showGrid && (
                         <>
-                          <td className="text-right py-3 text-red-400 font-mono">
-                            {data.gridInKwhToday.toFixed(3)} kWh
+                          <td className="text-right py-1.5 text-red-400 font-mono text-sm">
+                            {data.gridInKwhToday.toFixed(3)}
                           </td>
-                          <td className="text-right py-3 text-green-400 font-mono">
-                            {data.gridOutKwhToday.toFixed(3)} kWh
+                          <td className="text-right py-1.5 text-green-400 font-mono text-sm">
+                            {data.gridOutKwhToday.toFixed(3)}
                           </td>
                         </>
                       )}
                     </tr>
                     <tr>
-                      <td className="py-3 font-medium text-gray-300">All Time</td>
-                      <td className="text-right py-3 text-yellow-400 font-mono">
-                        {data.solarKwhTotal.toFixed(1)} kWh
+                      <td className="py-1.5 font-medium text-gray-300 text-xs">Total</td>
+                      <td className="text-right py-1.5 text-yellow-400 font-mono text-sm">
+                        {data.solarKwhTotal.toFixed(1)}
                       </td>
-                      <td className="text-right py-3 text-blue-400 font-mono">
-                        {data.loadKwhTotal.toFixed(1)} kWh
+                      <td className="text-right py-1.5 text-blue-400 font-mono text-sm">
+                        {data.loadKwhTotal.toFixed(1)}
                       </td>
-                      <td className="text-right py-3 text-green-400 font-mono">
-                        {data.batteryInKwhTotal.toFixed(1)} kWh
+                      <td className="text-right py-1.5 text-green-400 font-mono text-sm">
+                        {data.batteryInKwhTotal.toFixed(1)}
                       </td>
-                      <td className="text-right py-3 text-orange-400 font-mono">
-                        {data.batteryOutKwhTotal.toFixed(1)} kWh
+                      <td className="text-right py-1.5 text-orange-400 font-mono text-sm">
+                        {data.batteryOutKwhTotal.toFixed(1)}
                       </td>
                       {showGrid && (
                         <>
-                          <td className="text-right py-3 text-red-400 font-mono">
-                            {data.gridInKwhTotal.toFixed(1)} kWh
+                          <td className="text-right py-1.5 text-red-400 font-mono text-sm">
+                            {data.gridInKwhTotal.toFixed(1)}
                           </td>
-                          <td className="text-right py-3 text-green-400 font-mono">
-                            {data.gridOutKwhTotal.toFixed(1)} kWh
+                          <td className="text-right py-1.5 text-green-400 font-mono text-sm">
+                            {data.gridOutKwhTotal.toFixed(1)}
                           </td>
                         </>
                       )}
@@ -385,22 +388,6 @@ export default function DashboardPage() {
                   </tbody>
                 </table>
               </div>
-            </div>
-            
-            {/* Grid Toggle */}
-            <div className="bg-gray-800 rounded-lg p-4">
-              <label className="flex items-center justify-between cursor-pointer">
-                <span className="text-sm text-gray-300">Show Grid Information</span>
-                <div className="relative">
-                  <input 
-                    type="checkbox" 
-                    className="sr-only peer"
-                    checked={showGrid}
-                    onChange={() => setShowGrid(!showGrid)}
-                  />
-                  <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                </div>
-              </label>
             </div>
           </div>
         )}
