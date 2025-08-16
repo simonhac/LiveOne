@@ -59,3 +59,5 @@ dev.db-journal
 .env.development
 .env.production.env.local
 liveone_backup.sql
+dev.db-wal
+dev.db-shm

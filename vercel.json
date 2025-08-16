@@ -1,0 +1,20 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/poll-systems",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/cleanup",
+      "schedule": "0 2 * * *"
+    }
+  ],
+  "functions": {
+    "app/api/cron/poll-systems/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/history/route.ts": {
+      "maxDuration": 30
+    }
+  }
+}
