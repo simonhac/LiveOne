@@ -51,9 +51,6 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   
-  if (maxPowerHint !== undefined) {
-    console.log('[EnergyChart] Max power hint:', maxPowerHint, 'kW')
-  }
 
   useEffect(() => {
     let abortController = new AbortController()
@@ -110,8 +107,6 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
           throw new Error(`Unsupported interval: ${interval}`)
         }
         
-        console.log('[EnergyChart] API returned interval:', interval, '- using', intervalMs, 'ms spacing')
-        console.log('[EnergyChart] Data points:', solarData.history.data.length, 'Start:', startTimeString)
         
         // Calculate timestamps based on start time and actual interval
         const timestamps = solarData.history.data.map((_: any, index: number) => 
