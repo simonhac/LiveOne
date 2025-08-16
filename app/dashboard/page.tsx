@@ -47,7 +47,8 @@ export default function DashboardPage() {
     }
 
     // Set up SSE connection for real-time updates
-    const eventSource = new EventSource('/api/sse/user')
+    // Use serverless endpoint in production
+    const eventSource = new EventSource('/api/sse/user-serverless')
     
     eventSource.onopen = () => {
       console.log('SSE connection established')

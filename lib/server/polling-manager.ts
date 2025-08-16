@@ -436,7 +436,8 @@ class PollingManager extends EventEmitter {
 export default PollingManager;
 
 // Initialize and start the polling manager when this module is imported
-if (process.env.NODE_ENV === 'development') {
+// DISABLED for local testing - we don't want to poll locally
+if (process.env.NODE_ENV === 'development' && false) {
   const manager = PollingManager.getInstance();
   
   // Start polling when server starts
