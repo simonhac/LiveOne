@@ -63,18 +63,17 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
       abortController = new AbortController()
       
       try {
-        // Get the authentication token from session storage
-        const password = sessionStorage.getItem('password') || 'password'
-        
+        // Fetch will automatically include cookies
         const response = await fetch('/api/history?interval=5m&last=25h&fields=solar,load,battery', {
-          headers: {
-            'Authorization': `Bearer ${password}`
-          },
+          credentials: 'same-origin', // Include cookies
           signal: abortController.signal
         })
 
         if (!response.ok) {
-          throw new Error('Failed to fetch data')
+          if (response.status === 401) {
+            throw new Error('Not authenticated - please log in')
+          }
+          throw new Error(`Failed to fetch data: ${response.status}`)
         }
 
         const data = await response.json()

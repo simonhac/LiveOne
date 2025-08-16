@@ -91,7 +91,11 @@ export default function AdminDashboard() {
     }
   }, [router])
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // Clear the auth cookie
+    await fetch('/api/auth/logout', { method: 'POST' })
+    
+    // Clear session storage
     sessionStorage.clear()
     router.push('/')
   }

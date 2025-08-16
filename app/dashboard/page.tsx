@@ -111,7 +111,11 @@ export default function DashboardPage() {
     return () => clearInterval(interval)
   }, [lastUpdate])
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // Clear the auth cookie
+    await fetch('/api/auth/logout', { method: 'POST' })
+    
+    // Clear session storage
     sessionStorage.clear()
     router.push('/')
   }

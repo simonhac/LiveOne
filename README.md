@@ -9,6 +9,12 @@ LiveOne provides a modern web-based dashboard for monitoring Selectronic SP PRO 
 ### Current Features
 
 - 📊 **Real-time Dashboard** - Live power flow visualization with automatic updates
+- 📈 **24-Hour Chart** - Interactive time-series chart showing solar, load, and battery SOC trends
+  - Chart.js with responsive design and custom styling
+  - Daytime/nighttime shading (7am-10pm highlighted)
+  - Automatic y-axis scaling with units on top labels only
+  - Timezone-aware display with proper AEST/AEDT handling
+  - Always displays full 24-hour window, even with partial data
 - ☀️ **Dual Solar Tracking** - Monitors both remote (inverter) and local (DC shunt) solar generation
 - 🔋 **Battery Monitoring** - Real-time SOC, power flow, charge/discharge tracking
 - ⚡ **Energy Statistics** - Daily and all-time energy totals with 3-decimal precision kWh storage
@@ -19,8 +25,9 @@ LiveOne provides a modern web-based dashboard for monitoring Selectronic SP PRO 
 - 💾 **Data Persistence** - SQLite database with optimized schema (totals only, no daily values)
 - 🔄 **Automatic Polling** - Fetches data every minute from select.live API
 - 📡 **Live Updates** - Server-Sent Events (SSE) for real-time dashboard updates
-- 🎚️ **Grid Toggle** - Optional display of grid import/export data
-- 🎨 **Modern UI** - Clean, professional dark theme with responsive design
+- 🎚️ **Grid Toggle** - Automatic display of grid data when import/export detected
+- 🎨 **Modern UI** - Clean, compact dark theme with responsive design
+- 🌐 **OpenNEM API Format** - History endpoint returns data in OpenNEM v4 format
 
 ### Planned Features (Future Enhancements)
 
@@ -39,6 +46,7 @@ LiveOne provides a modern web-based dashboard for monitoring Selectronic SP PRO 
 ### Current Stack
 
 - **Frontend**: Next.js 14 with App Router, React, TypeScript
+- **Charting**: Chart.js with react-chartjs-2, chartjs-adapter-date-fns
 - **Styling**: Tailwind CSS with custom dark theme (removed DaisyUI for better control)
 - **Icons**: Lucide React for consistent, professional iconography
 - **Database**: SQLite with Drizzle ORM (production-ready with Turso)
@@ -46,6 +54,8 @@ LiveOne provides a modern web-based dashboard for monitoring Selectronic SP PRO 
 - **Authentication**: Session-based with bcrypt password hashing
 - **Data Collection**: Server-side polling manager with 1-minute intervals
 - **API Integration**: Direct connection to select.live using node-fetch
+- **Timezone Handling**: @internationalized/date for proper AEST/AEDT conversion
+- **MCP Integration**: Context7 MCP server for enhanced AI assistance
 
 ### Planned MQTT Architecture
 
@@ -103,6 +113,16 @@ npm run dev
 ```
 
 7. Access the dashboard at [http://localhost:3000](http://localhost:3000)
+
+### Optional: MCP Integration
+
+For enhanced AI assistance with Claude, install the Context7 MCP server:
+
+```bash
+claude mcp add --transport http context7 https://mcp.context7.com/mcp
+```
+
+Then restart Claude to activate the MCP server.
 
 ### Deployment to Vercel
 
@@ -167,6 +187,10 @@ Note: The Selectronic API has a "magic window" from minutes 48-52 of each hour w
 - `GET /api/data` - Get latest inverter data
 - `GET /api/status` - Get polling status
 - `GET /api/sse/user` - Server-sent events for real-time updates
+- `GET /api/history` - Historical data in OpenNEM v4 format
+  - Query params: `interval` (1m/1d/1w/1M), `fields` (solar,load,battery,grid)
+  - Returns timezone-aware timestamps in AEST/AEDT
+  - Supports up to 7 days of minute-resolution data
 
 ### Admin
 - `GET /api/admin/systems` - View all systems (admin page)
@@ -182,15 +206,22 @@ liveone/
 │   ├── dashboard/         # Main dashboard UI
 │   ├── admin/            # Admin interface
 │   ├── api/              # API routes
+│   │   ├── history/      # OpenNEM-format historical data
+│   │   └── sse/          # Server-sent events
 │   └── page.tsx          # Login page
+├── components/            # React components
+│   └── EnergyChart.tsx   # 24-hour Chart.js visualization
 ├── lib/                   # Core libraries
 │   ├── selectronic-fetch-client.ts  # Selectronic API client
 │   ├── server/polling-manager.ts    # Server-side polling
 │   ├── db/               # Database (Drizzle ORM)
+│   ├── format-opennem.ts # OpenNEM format utilities
 │   └── session-manager.ts # Session handling
 ├── scripts/              # Utility scripts
 │   ├── init-db.ts        # Database initialization
 │   └── test-fetch.ts     # API testing
+├── tests/                # Unit tests
+│   └── format-date.test.ts # Timezone formatting tests
 ├── docs/                 # Documentation
 └── config.ts             # Main configuration
 ```

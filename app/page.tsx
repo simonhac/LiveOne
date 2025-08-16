@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { APP_USERS } from '@/config'
 import { LogIn, Zap } from 'lucide-react'
 
 export default function LoginPage() {
@@ -17,27 +16,37 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
 
-    // Check against all users
-    const user = Object.values(APP_USERS).find(
-      u => u.email === email && u.password === password
-    )
+    try {
+      // Call the auth API endpoint
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password }),
+      })
 
-    if (user) {
-      // Store in sessionStorage for now (MVP)
-      sessionStorage.setItem('authenticated', 'true')
-      sessionStorage.setItem('userEmail', user.email)
-      sessionStorage.setItem('userRole', user.role)
-      sessionStorage.setItem('displayName', user.displayName)
-      sessionStorage.setItem('loginTime', new Date().toISOString())
-      
-      // Redirect based on role
-      if (user.role === 'admin') {
-        router.push('/admin')
+      const data = await response.json()
+
+      if (response.ok && data.success) {
+        // Store user info in sessionStorage (not password)
+        sessionStorage.setItem('authenticated', 'true')
+        sessionStorage.setItem('userEmail', data.user.email)
+        sessionStorage.setItem('userRole', data.user.role)
+        sessionStorage.setItem('displayName', data.user.displayName)
+        sessionStorage.setItem('loginTime', new Date().toISOString())
+        
+        // Redirect based on role
+        if (data.user.role === 'admin') {
+          router.push('/admin')
+        } else {
+          router.push('/dashboard')
+        }
       } else {
-        router.push('/dashboard')
+        setError(data.error || 'Invalid email or password')
       }
-    } else {
-      setError('Invalid email or password')
+    } catch (err) {
+      setError('Login failed. Please try again.')
     }
 
     setLoading(false)

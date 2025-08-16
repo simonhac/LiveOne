@@ -142,16 +142,30 @@ function aggregate5MinuteData(
 
 export async function GET(request: NextRequest) {
   try {
-    // Check authentication
+    // Check authentication - try Bearer token first, then cookie
+    let token: string | undefined;
+    
+    // Check for Bearer token
     const authHeader = request.headers.get('authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7);
+    }
+    
+    // If no Bearer token, check for cookie
+    if (!token) {
+      const cookieToken = request.cookies.get('auth-token');
+      if (cookieToken) {
+        token = cookieToken.value;
+      }
+    }
+    
+    // If still no token, unauthorized
+    if (!token) {
       return NextResponse.json(
-        { error: 'Unauthorized - Bearer token required' },
+        { error: 'Unauthorized - Authentication required' },
         { status: 401 }
       );
     }
-
-    const token = authHeader.substring(7);
     
     // Find user by matching password token
     const userEntry = Object.entries(APP_USERS).find(([_, user]) => user.password === token);
