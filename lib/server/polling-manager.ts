@@ -381,7 +381,7 @@ class PollingManager extends EventEmitter {
         loadPower: data.loadPower,
         batteryPower: data.batteryPower,
         gridPower: data.gridPower,
-        batterySOC: data.batterySOC,
+        batterySOC: Math.round(data.batterySOC * 10) / 10, // Round to 1 decimal place
         faultCode: data.faultCode,
         faultTimestamp: data.faultTimestamp,
         generatorStatus: data.generatorStatus,

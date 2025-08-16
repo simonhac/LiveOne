@@ -120,16 +120,17 @@ export async function GET(request: NextRequest) {
             loadPower: data.loadPower,
             batteryPower: data.batteryPower,
             gridPower: data.gridPower,
-            batterySOC: data.batterySOC,
+            batterySOC: Math.round(data.batterySOC * 10) / 10, // Round to 1 decimal place
             faultCode: data.faultCode,
             faultTimestamp: data.faultTimestamp,
             generatorStatus: data.generatorStatus,
-            solarKwhTotal: data.solarKwhTotal,
-            loadKwhTotal: data.loadKwhTotal,
-            batteryInKwhTotal: data.batteryInKwhTotal,
-            batteryOutKwhTotal: data.batteryOutKwhTotal,
-            gridInKwhTotal: data.gridInKwhTotal,
-            gridOutKwhTotal: data.gridOutKwhTotal,
+            // Energy counters (kWh) - lifetime totals only, rounded to 3 decimal places
+            solarKwhTotal: Math.round(data.solarKwhTotal * 1000) / 1000,
+            loadKwhTotal: Math.round(data.loadKwhTotal * 1000) / 1000,
+            batteryInKwhTotal: Math.round(data.batteryInKwhTotal * 1000) / 1000,
+            batteryOutKwhTotal: Math.round(data.batteryOutKwhTotal * 1000) / 1000,
+            gridInKwhTotal: Math.round(data.gridInKwhTotal * 1000) / 1000,
+            gridOutKwhTotal: Math.round(data.gridOutKwhTotal * 1000) / 1000,
           });
           
           // Update polling status
