@@ -7,7 +7,7 @@ import { formatDataArray } from '@/lib/format-opennem';
 import { parseAbsolute, toZoned } from '@internationalized/date';
 
 // Helper function to format date to AEST timezone string without milliseconds
-export function formatToAEST(date: Date): string {
+function formatToAEST(date: Date): string {
   // Convert JavaScript Date to ISO string, then parse as an absolute date
   const isoString = date.toISOString();
   const absoluteDate = parseAbsolute(isoString);
