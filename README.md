@@ -49,9 +49,9 @@ LiveOne provides a modern web-based dashboard for monitoring Selectronic SP PRO 
 - **Charting**: Chart.js with react-chartjs-2, chartjs-adapter-date-fns
 - **Styling**: Tailwind CSS with custom dark theme (removed DaisyUI for better control)
 - **Icons**: Lucide React for consistent, professional iconography
-- **Database**: SQLite with Drizzle ORM (production-ready with Turso)
+- **Database**: Turso (SQLite-compatible cloud database) with Drizzle ORM
 - **Real-time Updates**: Server-Sent Events (SSE)
-- **Authentication**: Session-based with bcrypt password hashing
+- **Authentication**: Cookie-based with HTTP-only tokens
 - **Data Collection**: Server-side polling manager with 1-minute intervals
 - **API Integration**: Direct connection to select.live using node-fetch
 - **Timezone Handling**: @internationalized/date for proper AEST/AEDT conversion
@@ -102,10 +102,32 @@ cp USER_SECRETS.example.ts USER_SECRETS.ts
 
 4. Edit `USER_SECRETS.ts` with your Selectronic credentials and create a user account
 
-5. Initialize the database:
-```bash
-npx tsx scripts/init-db.ts
-```
+5. Set up database (choose one):
+
+   **Option A: Use Turso Cloud Database (Recommended for Production)**
+   ```bash
+   # Install Turso CLI
+   curl -sSfL https://get.tur.so/install.sh | bash
+   
+   # Login to Turso
+   turso auth login
+   
+   # Create database
+   turso db create liveone-prod
+   
+   # Get credentials
+   turso db show liveone-prod --url
+   turso db tokens create liveone-prod
+   
+   # Create .env.local file with credentials
+   echo "TURSO_DATABASE_URL=<your-database-url>" > .env.local
+   echo "TURSO_AUTH_TOKEN=<your-auth-token>" >> .env.local
+   ```
+
+   **Option B: Use Local SQLite (Development Only)**
+   ```bash
+   npx tsx scripts/init-db.ts
+   ```
 
 6. Start development server:
 ```bash
@@ -128,7 +150,10 @@ Then restart Claude to activate the MCP server.
 
 1. Push to GitHub
 2. Import project in Vercel
-3. Configure environment variables (if using environment variables instead of USER_SECRETS.ts)
+3. Configure environment variables:
+   - `TURSO_DATABASE_URL` - Your Turso database URL
+   - `TURSO_AUTH_TOKEN` - Your Turso auth token
+   - Copy contents of `USER_SECRETS.ts` to environment variables (optional)
 4. Deploy
 
 ## Configuration
@@ -139,8 +164,8 @@ All configuration is managed through TypeScript files:
 - `USER_SECRETS.ts` - User credentials (gitignored)
 
 Database configuration is environment-aware:
-- Development: SQLite (automatic, zero-config)
-- Production: Set `DATABASE_URL` environment variable for Turso/PostgreSQL
+- Development: Local SQLite file or Turso cloud database
+- Production: Turso cloud database (globally distributed, SQLite-compatible)
 
 ### Database
 
@@ -165,6 +190,20 @@ npm run db:studio
 sqlite3 ./dev.db "SELECT * FROM readings ORDER BY id DESC LIMIT 10;"
 ```
 
+#### Database Options
+
+**Turso (Recommended for Production)**
+- SQLite-compatible cloud database
+- Global edge replication for low latency
+- Free tier: 8GB storage, 1B row reads/month
+- Automatic backups and point-in-time recovery
+- Works seamlessly with existing SQLite/Drizzle code
+
+**Local SQLite (Development)**
+- Zero configuration for local development
+- Same schema and queries as production
+- Useful for offline development
+
 #### Scaling Considerations
 
 - **Free Tier (Turso)**: Supports ~500 systems with 7-day raw data retention
@@ -188,9 +227,18 @@ Note: The Selectronic API has a "magic window" from minutes 48-52 of each hour w
 - `GET /api/status` - Get polling status
 - `GET /api/sse/user` - Server-sent events for real-time updates
 - `GET /api/history` - Historical data in OpenNEM v4 format
-  - Query params: `interval` (1m/1d/1w/1M), `fields` (solar,load,battery,grid)
+  - Query params: 
+    - `interval` (5m only currently supported)
+    - `fields` (solar,load,battery,grid)
+    - `last` (e.g., "7d", "24h", "30m")
+    - `startTime`/`endTime` (ISO 8601 format)
   - Returns timezone-aware timestamps in AEST/AEDT
-  - Supports up to 7 days of minute-resolution data
+  - Supports 5-minute aggregated data with null gaps for missing readings
+  - Dual authentication: Bearer token or HTTP-only cookie
+
+### Authentication
+- `POST /api/auth/login` - Login and set authentication cookie
+- `POST /api/auth/logout` - Clear authentication cookie
 
 ### Admin
 - `GET /api/admin/systems` - View all systems (admin page)
