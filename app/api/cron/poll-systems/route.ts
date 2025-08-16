@@ -133,16 +133,32 @@ export async function GET(request: NextRequest) {
             gridOutKwhTotal: Math.round(data.gridOutKwhTotal * 1000) / 1000,
           });
           
-          // Update polling status
-          await db.update(pollingStatus)
-            .set({
+          // Upsert polling status with full response
+          await db.insert(pollingStatus)
+            .values({
+              systemId: system.id,
               lastPollTime: receivedTime,
               lastSuccessTime: receivedTime,
               isActive: true,
               lastError: null,
+              lastResponse: data as any, // Store the full Select.Live response
               consecutiveErrors: 0,
+              totalPolls: 1,
+              successfulPolls: 1,
             })
-            .where(eq(pollingStatus.systemId, system.id));
+            .onConflictDoUpdate({
+              target: pollingStatus.systemId,
+              set: {
+                lastPollTime: receivedTime,
+                lastSuccessTime: receivedTime,
+                isActive: true,
+                lastError: null,
+                lastResponse: data as any,
+                consecutiveErrors: 0,
+                totalPolls: sql`${pollingStatus.totalPolls} + 1`,
+                successfulPolls: sql`${pollingStatus.successfulPolls} + 1`,
+              },
+            });
           
           results.push({
             system: system.systemNumber,
@@ -157,16 +173,29 @@ export async function GET(request: NextRequest) {
       } catch (error) {
         console.error(`[Cron] Error polling system ${system.systemNumber}:`, error);
         
-        // Update polling status with error
-        await db.update(pollingStatus)
-          .set({
+        // Upsert polling status with error
+        await db.insert(pollingStatus)
+          .values({
+            systemId: system.id,
             lastPollTime: new Date(),
             lastErrorTime: new Date(),
             isActive: true,
             lastError: error instanceof Error ? error.message : 'Unknown error',
-            consecutiveErrors: sql`${pollingStatus.consecutiveErrors} + 1`,
+            consecutiveErrors: 1,
+            totalPolls: 1,
+            successfulPolls: 0,
           })
-          .where(eq(pollingStatus.systemId, system.id));
+          .onConflictDoUpdate({
+            target: pollingStatus.systemId,
+            set: {
+              lastPollTime: new Date(),
+              lastErrorTime: new Date(),
+              isActive: true,
+              lastError: error instanceof Error ? error.message : 'Unknown error',
+              consecutiveErrors: sql`${pollingStatus.consecutiveErrors} + 1`,
+              totalPolls: sql`${pollingStatus.totalPolls} + 1`,
+            },
+          });
         
         results.push({
           system: system.systemNumber,

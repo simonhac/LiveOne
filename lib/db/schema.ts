@@ -147,6 +147,7 @@ export const pollingStatus = sqliteTable('polling_status', {
   lastSuccessTime: integer('last_success_time', { mode: 'timestamp' }),
   lastErrorTime: integer('last_error_time', { mode: 'timestamp' }),
   lastError: text('last_error'),
+  lastResponse: text('last_response', { mode: 'json' }), // Store full Select.Live response
   consecutiveErrors: integer('consecutive_errors').notNull().default(0),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   totalPolls: integer('total_polls').notNull().default(0),

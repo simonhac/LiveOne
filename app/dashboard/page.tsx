@@ -371,24 +371,24 @@ export default function DashboardPage() {
                     <tr className="border-b border-gray-700">
                       <td className="py-1.5 font-medium text-gray-300 text-xs">Today</td>
                       <td className="text-right py-1.5 text-yellow-400 font-mono text-sm">
-                        <span className="font-bold">{data.solarKwhToday.toFixed(3)}</span> <span className="font-normal">kWh</span>
+                        <span className="font-bold">{data.solarKwhToday?.toFixed(3) ?? '—'}</span> {data.solarKwhToday !== null && <span className="font-normal">kWh</span>}
                       </td>
                       <td className="text-right py-1.5 text-blue-400 font-mono text-sm">
-                        <span className="font-bold">{data.loadKwhToday.toFixed(3)}</span> <span className="font-normal">kWh</span>
+                        <span className="font-bold">{data.loadKwhToday?.toFixed(3) ?? '—'}</span> {data.loadKwhToday !== null && <span className="font-normal">kWh</span>}
                       </td>
                       <td className="text-right py-1.5 text-green-400 font-mono text-sm">
-                        <span className="font-bold">{data.batteryInKwhToday.toFixed(3)}</span> <span className="font-normal">kWh</span>
+                        <span className="font-bold">{data.batteryInKwhToday?.toFixed(3) ?? '—'}</span> {data.batteryInKwhToday !== null && <span className="font-normal">kWh</span>}
                       </td>
                       <td className="text-right py-1.5 text-orange-400 font-mono text-sm">
-                        <span className="font-bold">{data.batteryOutKwhToday.toFixed(3)}</span> <span className="font-normal">kWh</span>
+                        <span className="font-bold">{data.batteryOutKwhToday?.toFixed(3) ?? '—'}</span> {data.batteryOutKwhToday !== null && <span className="font-normal">kWh</span>}
                       </td>
                       {showGrid && (
                         <>
                           <td className="text-right py-1.5 text-red-400 font-mono text-sm">
-                            <span className="font-bold">{data.gridInKwhToday.toFixed(3)}</span> <span className="font-normal">kWh</span>
+                            <span className="font-bold">{data.gridInKwhToday?.toFixed(3) ?? '—'}</span> {data.gridInKwhToday !== null && <span className="font-normal">kWh</span>}
                           </td>
                           <td className="text-right py-1.5 text-green-400 font-mono text-sm">
-                            <span className="font-bold">{data.gridOutKwhToday.toFixed(3)}</span> <span className="font-normal">kWh</span>
+                            <span className="font-bold">{data.gridOutKwhToday?.toFixed(3) ?? '—'}</span> {data.gridOutKwhToday !== null && <span className="font-normal">kWh</span>}
                           </td>
                         </>
                       )}

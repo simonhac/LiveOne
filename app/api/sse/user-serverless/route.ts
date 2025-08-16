@@ -58,6 +58,9 @@ export async function GET(request: NextRequest) {
 
           if (latestReading) {
             // Convert reading to API format
+            // Get today values from stored response if available
+            const lastResponse = status?.lastResponse as any;
+            
             const data = {
               timestamp: latestReading.inverterTime.toISOString(),
               solarPower: latestReading.solarPower,
@@ -76,13 +79,13 @@ export async function GET(request: NextRequest) {
               batteryOutKwhTotal: latestReading.batteryOutKwhTotal,
               gridInKwhTotal: latestReading.gridInKwhTotal,
               gridOutKwhTotal: latestReading.gridOutKwhTotal,
-              // Calculate today's values (would need to query for start of day)
-              solarKwhToday: 0, // TODO: Calculate from database
-              loadKwhToday: 0,
-              batteryInKwhToday: 0,
-              batteryOutKwhToday: 0,
-              gridInKwhToday: 0,
-              gridOutKwhToday: 0,
+              // Use today values from stored Select.Live response
+              solarKwhToday: lastResponse?.solarKwhToday ?? null,
+              loadKwhToday: lastResponse?.loadKwhToday ?? null,
+              batteryInKwhToday: lastResponse?.batteryInKwhToday ?? null,
+              batteryOutKwhToday: lastResponse?.batteryOutKwhToday ?? null,
+              gridInKwhToday: lastResponse?.gridInKwhToday ?? null,
+              gridOutKwhToday: lastResponse?.gridOutKwhToday ?? null,
             };
 
             sendMessage({
