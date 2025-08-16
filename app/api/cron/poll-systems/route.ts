@@ -3,7 +3,7 @@ import { db } from '@/lib/db';
 import { systems, readings, pollingStatus } from '@/lib/db/schema';
 import { SelectronicFetchClient } from '@/lib/selectronic-fetch-client';
 import { SELECTLIVE_CONFIG, USER_TO_SYSTEM } from '@/config';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
 // Verify the request is from Vercel Cron
 function validateCronRequest(request: NextRequest): boolean {
@@ -50,14 +50,14 @@ export async function GET(request: NextRequest) {
         console.log(`[Cron] Polling system ${system.systemNumber}...`);
         
         // Get credentials for this system
-        const credentials = USER_TO_SYSTEM[system.owner as keyof typeof USER_TO_SYSTEM] || SELECTLIVE_CONFIG;
+        const credentials = USER_TO_SYSTEM[system.userId as keyof typeof USER_TO_SYSTEM] || SELECTLIVE_CONFIG;
         
         // Create client for this system
-        const client = new SelectronicFetchClient(
-          credentials.username,
-          credentials.password,
-          system.systemNumber
-        );
+        const client = new SelectronicFetchClient({
+          email: credentials.username,
+          password: credentials.password,
+          systemNumber: system.systemNumber
+        });
         
         // Authenticate if needed
         const authCookie = await getOrRefreshAuth(system.systemNumber, client);
@@ -66,9 +66,10 @@ export async function GET(request: NextRequest) {
         }
         
         // Fetch data
-        const data = await client.fetchData();
+        const response = await client.fetchData();
         
-        if (data) {
+        if (response && response.success && response.data) {
+          const data = response.data;
           // Calculate delay
           const inverterTime = new Date(data.timestamp);
           const receivedTime = new Date();
@@ -102,9 +103,10 @@ export async function GET(request: NextRequest) {
           await db.update(pollingStatus)
             .set({
               lastPollTime: receivedTime,
+              lastSuccessTime: receivedTime,
               isActive: true,
-              isAuthenticated: true,
               lastError: null,
+              consecutiveErrors: 0,
             })
             .where(eq(pollingStatus.systemId, system.id));
           
@@ -125,9 +127,10 @@ export async function GET(request: NextRequest) {
         await db.update(pollingStatus)
           .set({
             lastPollTime: new Date(),
+            lastErrorTime: new Date(),
             isActive: true,
-            isAuthenticated: false,
             lastError: error instanceof Error ? error.message : 'Unknown error',
+            consecutiveErrors: sql`${pollingStatus.consecutiveErrors} + 1`,
           })
           .where(eq(pollingStatus.systemId, system.id));
         
@@ -167,8 +170,8 @@ async function getOrRefreshAuth(systemNumber: string, client: SelectronicFetchCl
     // For now, just authenticate fresh each time
     // TODO: Store session cookies in database for reuse
     
-    const session = await client.authenticate();
-    return session?.cookie || null;
+    const authenticated = await client.authenticate();
+    return authenticated ? 'authenticated' : null;
   } catch (error) {
     console.error(`[Cron] Auth failed for system ${systemNumber}:`, error);
     return null;

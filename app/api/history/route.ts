@@ -10,7 +10,7 @@ import { parseAbsolute, toZoned } from '@internationalized/date';
 function formatToAEST(date: Date): string {
   // Convert JavaScript Date to ISO string, then parse as an absolute date
   const isoString = date.toISOString();
-  const absoluteDate = parseAbsolute(isoString);
+  const absoluteDate = parseAbsolute(isoString, 'UTC');
   
   // Convert to AEST/AEDT (Australia/Sydney handles DST automatically)
   const zonedDate = toZoned(absoluteDate, 'Australia/Sydney');

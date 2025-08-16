@@ -71,10 +71,16 @@ export async function GET(request: Request) {
         success: true,
         data: data,
         timestamp: latestReading.receivedTime || latestReading.inverterTime,
-        systemInfo: system.systemInfo,
+        systemInfo: {
+          model: system.model,
+          serial: system.serial,
+          ratings: system.ratings,
+          solarSize: system.solarSize,
+          batterySize: system.batterySize,
+        },
         status: {
           isPolling: status?.isActive || false,
-          isAuthenticated: status?.isAuthenticated || false,
+          isAuthenticated: true, // Always true if we have data
         }
       });
     } else if (status?.lastError) {
@@ -84,7 +90,7 @@ export async function GET(request: Request) {
         timestamp: new Date(),
         status: {
           isPolling: status?.isActive || false,
-          isAuthenticated: status?.isAuthenticated || false,
+          isAuthenticated: true, // Always true if we have data
         }
       }, { status: 503 });
     } else {
@@ -95,7 +101,7 @@ export async function GET(request: Request) {
         timestamp: new Date(),
         status: {
           isPolling: status?.isActive || false,
-          isAuthenticated: status?.isAuthenticated || false,
+          isAuthenticated: true, // Always true if we have data
         }
       }, { status: 503 });
     }

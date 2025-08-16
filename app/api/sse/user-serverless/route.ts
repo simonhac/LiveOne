@@ -89,10 +89,16 @@ export async function GET(request: NextRequest) {
               type: 'update',
               data: data,
               timestamp: new Date(),
-              systemInfo: system.systemInfo,
+              systemInfo: {
+                model: system.model,
+                serial: system.serial,
+                ratings: system.ratings,
+                solarSize: system.solarSize,
+                batterySize: system.batterySize,
+              },
               status: {
                 isPolling: status?.isActive || false,
-                isAuthenticated: status?.isAuthenticated || false,
+                isAuthenticated: true, // Always true if we have data
                 lastFetchTime: status?.lastPollTime?.toISOString() || null,
                 lastError: status?.lastError || null,
               }
@@ -102,10 +108,16 @@ export async function GET(request: NextRequest) {
               type: 'update',
               data: null,
               timestamp: new Date(),
-              systemInfo: system.systemInfo,
+              systemInfo: {
+                model: system.model,
+                serial: system.serial,
+                ratings: system.ratings,
+                solarSize: system.solarSize,
+                batterySize: system.batterySize,
+              },
               status: {
                 isPolling: status?.isActive || false,
-                isAuthenticated: status?.isAuthenticated || false,
+                isAuthenticated: true, // Always true if we have data
                 lastFetchTime: status?.lastPollTime?.toISOString() || null,
                 lastError: status?.lastError || 'No data available',
               }

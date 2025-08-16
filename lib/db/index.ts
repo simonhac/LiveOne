@@ -53,16 +53,16 @@ export const dbUtils = {
    * Get database statistics
    */
   async getStats() {
-    const systemCount = await db.select({ count: sql`count(*)` }).from(schema.systems);
-    const readingCount = await db.select({ count: sql`count(*)` }).from(schema.readings);
+    const systemCount = await db.select().from(schema.systems);
+    const readingCount = await db.select().from(schema.readings);
     const latestReading = await db.select()
       .from(schema.readings)
       .orderBy(desc(schema.readings.inverterTime))
       .limit(1);
     
     return {
-      systems: systemCount[0]?.count || 0,
-      readings: readingCount[0]?.count || 0,
+      systems: systemCount.length,
+      readings: readingCount.length,
       latestReading: latestReading[0]?.inverterTime || null,
     };
   },

@@ -124,16 +124,16 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         
         // Filter to last 24 hours
         const last24HoursIndices = timestamps
-          .map((t, i) => ({ time: t, index: i }))
-          .filter(({ time }) => time >= twentyFourHoursAgo)
-          .map(({ index }) => index)
+          .map((t: Date, i: number) => ({ time: t, index: i }))
+          .filter(({ time }: { time: Date, index: number }) => time >= twentyFourHoursAgo)
+          .map(({ index }: { time: Date, index: number }) => index)
 
         setChartData({
-          timestamps: last24HoursIndices.map(i => timestamps[i]),
-          solar: last24HoursIndices.map(i => solarData.history.data[i]),
-          load: last24HoursIndices.map(i => loadData.history.data[i]),
-          batteryPower: last24HoursIndices.map(i => batteryPowerData.history.data[i]),
-          batterySOC: last24HoursIndices.map(i => batterySOCData.history.data[i]),
+          timestamps: last24HoursIndices.map((i: number) => timestamps[i]),
+          solar: last24HoursIndices.map((i: number) => solarData.history.data[i]),
+          load: last24HoursIndices.map((i: number) => loadData.history.data[i]),
+          batteryPower: last24HoursIndices.map((i: number) => batteryPowerData.history.data[i]),
+          batterySOC: last24HoursIndices.map((i: number) => batterySOCData.history.data[i]),
         })
         setLoading(false)
       } catch (err: any) {
@@ -334,14 +334,12 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         max: now.getTime(), // To current time
         time: {
           unit: 'hour',
-          stepSize: 2, // Show every 2 hours
           displayFormats: {
             hour: 'HH:mm',
           },
         },
         grid: {
           color: 'rgb(55, 65, 81)', // gray-700
-          drawBorder: false,
         },
         ticks: {
           color: 'rgb(156, 163, 175)', // gray-400
@@ -365,7 +363,6 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         suggestedMax: maxPowerHint,
         grid: {
           color: 'rgb(55, 65, 81)', // gray-700
-          drawBorder: false,
         },
         ticks: {
           color: 'rgb(156, 163, 175)', // gray-400
@@ -391,7 +388,6 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         },
         grid: {
           drawOnChartArea: false,
-          drawBorder: false,
         },
         ticks: {
           color: 'rgb(156, 163, 175)', // gray-400
