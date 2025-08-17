@@ -8,22 +8,22 @@ export const readingsAgg5m = sqliteTable('readings_agg_5m', {
   // Interval information
   intervalEnd: integer('interval_end', { mode: 'timestamp' }).notNull(), // End of 5-minute interval
   
-  // Aggregated power values (averaged over 5 minutes)
-  solarWAvg: real('solar_w_avg'),
-  solarWMin: real('solar_w_min'),
-  solarWMax: real('solar_w_max'),
+  // Aggregated power values (averaged over 5 minutes) - stored as integers
+  solarWAvg: integer('solar_w_avg'),
+  solarWMin: integer('solar_w_min'),
+  solarWMax: integer('solar_w_max'),
   
-  loadWAvg: real('load_w_avg'),
-  loadWMin: real('load_w_min'),
-  loadWMax: real('load_w_max'),
+  loadWAvg: integer('load_w_avg'),
+  loadWMin: integer('load_w_min'),
+  loadWMax: integer('load_w_max'),
   
-  batteryWAvg: real('battery_w_avg'),
-  batteryWMin: real('battery_w_min'),
-  batteryWMax: real('battery_w_max'),
+  batteryWAvg: integer('battery_w_avg'),
+  batteryWMin: integer('battery_w_min'),
+  batteryWMax: integer('battery_w_max'),
   
-  gridWAvg: real('grid_w_avg'),
-  gridWMin: real('grid_w_min'),
-  gridWMax: real('grid_w_max'),
+  gridWAvg: integer('grid_w_avg'),
+  gridWMin: integer('grid_w_min'),
+  gridWMax: integer('grid_w_max'),
   
   // State values (last value in interval)
   batterySOCLast: real('battery_soc_last'),

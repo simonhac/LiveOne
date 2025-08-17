@@ -65,7 +65,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         // Use different intervals: 5m for 1D, 30m for 7D
         const requestInterval = timeRange === '1D' ? '5m' : '30m'
         const duration = timeRange === '1D' ? '25h' : '169h' // 25h for 1D, 7*24+1 for 7D
-        const response = await fetch(`/api/history-fast?interval=${requestInterval}&last=${duration}&fields=solar,load,battery`, {
+        const response = await fetch(`/api/history?interval=${requestInterval}&last=${duration}&fields=solar,load,battery`, {
           credentials: 'same-origin', // Include cookies
           signal: abortController.signal
         })

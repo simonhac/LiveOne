@@ -315,7 +315,7 @@ export async function GET(request: NextRequest) {
     // Build OpenNEM response (identical format to regular API)
     const response: OpenNEMResponse = {
       type: 'energy',
-      version: 'v4', // Same version as regular API
+      version: 'v4.1', // Fast implementation version
       network: 'liveone',
       created_at: formatToAEST(new Date()),
       data: []

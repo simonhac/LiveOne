@@ -42,37 +42,47 @@ export async function updateAggregatedData(
     const batteryWValues = intervalReadings.map(r => r.batteryW).filter(v => v !== null);
     const gridWValues = intervalReadings.map(r => r.gridW).filter(v => v !== null);
     
+    // Helper functions for rounding
+    const roundToInteger = (val: number | null): number | null => 
+      val !== null ? Math.round(val) : null;
+    
+    const roundToThree = (val: number | null): number | null => 
+      val !== null ? Math.round(val * 1000) / 1000 : null;
+    
+    const roundToOne = (val: number | null): number | null => 
+      val !== null ? Math.round(val * 10) / 10 : null;
+    
     const aggregatedData = {
       systemId,
       intervalEnd,
       
-      // Power averages, min, max
-      solarWAvg: solarWValues.length > 0 ? solarWValues.reduce((a, b) => a + b, 0) / solarWValues.length : null,
-      solarWMin: solarWValues.length > 0 ? Math.min(...solarWValues) : null,
-      solarWMax: solarWValues.length > 0 ? Math.max(...solarWValues) : null,
+      // Power values (Watts) - round to integers
+      solarWAvg: roundToInteger(solarWValues.length > 0 ? solarWValues.reduce((a, b) => a + b, 0) / solarWValues.length : null),
+      solarWMin: roundToInteger(solarWValues.length > 0 ? Math.min(...solarWValues) : null),
+      solarWMax: roundToInteger(solarWValues.length > 0 ? Math.max(...solarWValues) : null),
       
-      loadWAvg: loadWValues.length > 0 ? loadWValues.reduce((a, b) => a + b, 0) / loadWValues.length : null,
-      loadWMin: loadWValues.length > 0 ? Math.min(...loadWValues) : null,
-      loadWMax: loadWValues.length > 0 ? Math.max(...loadWValues) : null,
+      loadWAvg: roundToInteger(loadWValues.length > 0 ? loadWValues.reduce((a, b) => a + b, 0) / loadWValues.length : null),
+      loadWMin: roundToInteger(loadWValues.length > 0 ? Math.min(...loadWValues) : null),
+      loadWMax: roundToInteger(loadWValues.length > 0 ? Math.max(...loadWValues) : null),
       
-      batteryWAvg: batteryWValues.length > 0 ? batteryWValues.reduce((a, b) => a + b, 0) / batteryWValues.length : null,
-      batteryWMin: batteryWValues.length > 0 ? Math.min(...batteryWValues) : null,
-      batteryWMax: batteryWValues.length > 0 ? Math.max(...batteryWValues) : null,
+      batteryWAvg: roundToInteger(batteryWValues.length > 0 ? batteryWValues.reduce((a, b) => a + b, 0) / batteryWValues.length : null),
+      batteryWMin: roundToInteger(batteryWValues.length > 0 ? Math.min(...batteryWValues) : null),
+      batteryWMax: roundToInteger(batteryWValues.length > 0 ? Math.max(...batteryWValues) : null),
       
-      gridWAvg: gridWValues.length > 0 ? gridWValues.reduce((a, b) => a + b, 0) / gridWValues.length : null,
-      gridWMin: gridWValues.length > 0 ? Math.min(...gridWValues) : null,
-      gridWMax: gridWValues.length > 0 ? Math.max(...gridWValues) : null,
+      gridWAvg: roundToInteger(gridWValues.length > 0 ? gridWValues.reduce((a, b) => a + b, 0) / gridWValues.length : null),
+      gridWMin: roundToInteger(gridWValues.length > 0 ? Math.min(...gridWValues) : null),
+      gridWMax: roundToInteger(gridWValues.length > 0 ? Math.max(...gridWValues) : null),
       
-      // State values - use last reading
-      batterySOCLast: lastReading.batterySOC,
+      // Battery SOC (percentage) - round to 1 decimal place
+      batterySOCLast: roundToOne(lastReading.batterySOC),
       
-      // Energy counters - use last reading
-      solarKwhTotalLast: lastReading.solarKwhTotal,
-      loadKwhTotalLast: lastReading.loadKwhTotal,
-      batteryInKwhTotalLast: lastReading.batteryInKwhTotal,
-      batteryOutKwhTotalLast: lastReading.batteryOutKwhTotal,
-      gridInKwhTotalLast: lastReading.gridInKwhTotal,
-      gridOutKwhTotalLast: lastReading.gridOutKwhTotal,
+      // Energy counters (kWh) - round to 3 decimal places
+      solarKwhTotalLast: roundToThree(lastReading.solarKwhTotal),
+      loadKwhTotalLast: roundToThree(lastReading.loadKwhTotal),
+      batteryInKwhTotalLast: roundToThree(lastReading.batteryInKwhTotal),
+      batteryOutKwhTotalLast: roundToThree(lastReading.batteryOutKwhTotal),
+      gridInKwhTotalLast: roundToThree(lastReading.gridInKwhTotal),
+      gridOutKwhTotalLast: roundToThree(lastReading.gridOutKwhTotal),
       
       sampleCount: intervalReadings.length,
     };
