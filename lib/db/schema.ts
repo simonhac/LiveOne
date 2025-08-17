@@ -79,6 +79,9 @@ export const pollingStatus = sqliteTable('polling_status', {
   systemIdx: index('polling_system_idx').on(table.systemId),
 }));
 
+// Import aggregated readings table
+export { readingsAgg5m } from './schema-aggregated';
+
 // Type exports for TypeScript
 export type System = typeof systems.$inferSelect;
 export type NewSystem = typeof systems.$inferInsert;

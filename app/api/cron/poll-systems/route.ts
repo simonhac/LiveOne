@@ -4,6 +4,7 @@ import { systems, readings, pollingStatus } from '@/lib/db/schema';
 import { SelectronicFetchClient } from '@/lib/selectronic-fetch-client';
 import { SELECTLIVE_CONFIG, USER_TO_SYSTEM } from '@/config';
 import { eq, sql } from 'drizzle-orm';
+import { updateAggregatedData } from '@/lib/aggregation-helper';
 
 // Verify the request is from Vercel Cron
 function validateCronRequest(request: NextRequest): boolean {
@@ -132,6 +133,9 @@ export async function GET(request: NextRequest) {
             gridInKwhTotal: Math.round(data.gridInKwhTotal * 1000) / 1000,
             gridOutKwhTotal: Math.round(data.gridOutKwhTotal * 1000) / 1000,
           });
+          
+          // Update 5-minute aggregated data
+          await updateAggregatedData(system.id, inverterTime);
           
           // Upsert polling status with full response
           await db.insert(pollingStatus)

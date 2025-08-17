@@ -29,103 +29,81 @@ function formatToAEST(date: Date): string {
   return date.toISOString().slice(0, 19) + '+10:00';
 }
 
-// Helper function to aggregate data to 5-minute intervals
-function aggregate5MinuteData(
+// Helper function to aggregate data to specified intervals
+function aggregateData(
   data: any[], 
   startTime: Date, 
-  endTime: Date
+  endTime: Date,
+  intervalMinutes: number
 ): any[] {
-  console.log('[5m Aggregation] Starting with', data.length, 'data points');
-  console.log('[5m Aggregation] Time range:', startTime.toISOString(), 'to', endTime.toISOString());
+  console.log(`[${intervalMinutes}m Aggregation] Starting with`, data.length, 'data points');
+  console.log(`[${intervalMinutes}m Aggregation] Time range:`, startTime.toISOString(), 'to', endTime.toISOString());
   
   if (data.length === 0) return [];
   
   const result: any[] = [];
-  const intervalMs = 5 * 60 * 1000; // 5 minutes in milliseconds
-  const maxDriftMs = 2 * 60 * 1000; // 2 minutes maximum drift allowed
+  const intervalMs = intervalMinutes * 60 * 1000; // interval in milliseconds
   
-  // Align start time to 5-minute boundary
+  // Align start and end times to interval boundaries
   const alignedStart = new Date(Math.floor(startTime.getTime() / intervalMs) * intervalMs);
   const alignedEnd = new Date(Math.ceil(endTime.getTime() / intervalMs) * intervalMs);
   
-  // Calculate number of intervals to avoid infinite loops
+  // Calculate number of intervals
   const numIntervals = Math.floor((alignedEnd.getTime() - alignedStart.getTime()) / intervalMs) + 1;
-  console.log('[5m Aggregation] Creating', numIntervals, 'intervals');
+  console.log(`[${intervalMinutes}m Aggregation] Creating`, numIntervals, 'intervals');
   
   // Limit to prevent excessive memory usage
-  if (numIntervals > 2500) { // ~8.7 days worth of 5-minute intervals
-    console.error('[5m Aggregation] Too many intervals requested:', numIntervals);
+  const maxIntervals = intervalMinutes === 5 ? 2500 : 750; // Adjust limit based on interval
+  if (numIntervals > maxIntervals) {
+    console.error(`[${intervalMinutes}m Aggregation] Too many intervals requested:`, numIntervals);
     throw new Error('Too many intervals requested');
   }
   
-  // Create a map for faster lookups
-  const dataByTime = new Map();
+  // Group data points by interval
+  const intervalBuckets = new Map<number, any[]>();
+  
   for (const reading of data) {
+    // Find which interval this reading belongs to (end of interval)
     const readingTime = reading.inverterTime.getTime();
-    dataByTime.set(readingTime, reading);
+    const intervalEnd = Math.ceil(readingTime / intervalMs) * intervalMs;
+    
+    if (!intervalBuckets.has(intervalEnd)) {
+      intervalBuckets.set(intervalEnd, []);
+    }
+    intervalBuckets.get(intervalEnd)!.push(reading);
   }
   
-  // Sort data points by time for binary search
-  const sortedTimes = Array.from(dataByTime.keys()).sort((a, b) => a - b);
-  
-  // Create time slots for every 5-minute interval
-  for (let time = alignedStart.getTime(); time <= alignedEnd.getTime(); time += intervalMs) {
-    const targetTime = new Date(time);
+  // Create aggregated data for each interval
+  for (let time = alignedStart.getTime() + intervalMs; time <= alignedEnd.getTime(); time += intervalMs) {
+    const intervalData = intervalBuckets.get(time) || [];
     
-    // Binary search for closest reading
-    let closestReading = null;
-    let closestDistance = Infinity;
-    
-    // Find the insertion point for target time
-    let left = 0;
-    let right = sortedTimes.length - 1;
-    
-    while (left <= right) {
-      const mid = Math.floor((left + right) / 2);
-      const midTime = sortedTimes[mid];
-      const distance = Math.abs(midTime - time);
+    if (intervalData.length > 0) {
+      // Average power values (instantaneous measurements)
+      const avgSolarW = intervalData.reduce((sum, r) => sum + (r.solarW || 0), 0) / intervalData.length;
+      const avgLoadW = intervalData.reduce((sum, r) => sum + (r.loadW || 0), 0) / intervalData.length;
+      const avgBatteryW = intervalData.reduce((sum, r) => sum + (r.batteryW || 0), 0) / intervalData.length;
+      const avgGridW = intervalData.reduce((sum, r) => sum + (r.gridW || 0), 0) / intervalData.length;
       
-      if (distance <= maxDriftMs && distance < closestDistance) {
-        closestDistance = distance;
-        closestReading = dataByTime.get(midTime);
-      }
+      // For state values like SOC, use the last reading in the interval
+      // Sort by time to ensure we get the actual last reading
+      const sortedData = intervalData.sort((a, b) => 
+        a.inverterTime.getTime() - b.inverterTime.getTime()
+      );
+      const lastReading = sortedData[sortedData.length - 1];
       
-      if (midTime < time) {
-        left = mid + 1;
-      } else {
-        right = mid - 1;
-      }
-    }
-    
-    // Check neighbors for potentially closer readings
-    if (left > 0) {
-      const prevTime = sortedTimes[left - 1];
-      const distance = Math.abs(prevTime - time);
-      if (distance <= maxDriftMs && distance < closestDistance) {
-        closestDistance = distance;
-        closestReading = dataByTime.get(prevTime);
-      }
-    }
-    
-    if (left < sortedTimes.length) {
-      const nextTime = sortedTimes[left];
-      const distance = Math.abs(nextTime - time);
-      if (distance <= maxDriftMs && distance < closestDistance) {
-        closestDistance = distance;
-        closestReading = dataByTime.get(nextTime);
-      }
-    }
-    
-    if (closestReading) {
-      // Use the closest reading but with the aligned timestamp
       result.push({
-        ...closestReading,
-        inverterTime: targetTime
+        inverterTime: new Date(time), // Timestamp represents END of interval
+        solarW: avgSolarW,
+        loadW: avgLoadW,
+        batteryW: avgBatteryW,
+        batterySOC: lastReading.batterySOC, // Use last SOC value, not average
+        gridW: avgGridW,
+        systemId: intervalData[0].systemId
       });
     } else {
-      // No data within 2 minutes, create null entry
+      // No data for this interval
       result.push({
-        inverterTime: targetTime,
+        inverterTime: new Date(time), // Timestamp represents END of interval
         solarW: null,
         loadW: null,
         batteryW: null,
@@ -136,7 +114,7 @@ function aggregate5MinuteData(
     }
   }
   
-  console.log('[5m Aggregation] Created', result.length, 'aggregated points');
+  console.log(`[${intervalMinutes}m Aggregation] Created`, result.length, 'aggregated points');
   return result;
 }
 
@@ -194,10 +172,10 @@ export async function GET(request: NextRequest) {
     const fieldsParam = searchParams.get('fields');
     const fields = fieldsParam ? fieldsParam.split(',') : ['solar', 'load', 'battery', 'grid'];
     
-    // For now, only support 5m interval
-    if (interval !== '5m') {
+    // Support 5m and 30m intervals
+    if (interval !== '5m' && interval !== '30m') {
       return NextResponse.json(
-        { error: 'Only 5m interval is currently supported' },
+        { error: 'Only 5m and 30m intervals are currently supported' },
         { status: 501 }
       );
     }
@@ -226,7 +204,6 @@ export async function GET(request: NextRequest) {
     const now = new Date();
     let startTime: Date;
     let endTime: Date;
-    let aggregationInterval: string;
 
     // Parse 'last' parameter for relative time ranges
     if (lastParam) {
@@ -259,14 +236,21 @@ export async function GET(request: NextRequest) {
           );
       }
       
-      // Validate time range for 5m interval
+      // Validate time range based on interval
+      const timeDiff = endTime.getTime() - startTime.getTime();
       if (interval === '5m') {
-        const timeDiff = endTime.getTime() - startTime.getTime();
         const maxDuration = 7.5 * 24 * 60 * 60 * 1000; // 7.5 days in milliseconds
-        
         if (timeDiff > maxDuration) {
           return NextResponse.json(
             { error: 'Time range exceeds maximum of 7.5 days for 5m interval' },
+            { status: 400 }
+          );
+        }
+      } else if (interval === '30m') {
+        const maxDuration = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
+        if (timeDiff > maxDuration) {
+          return NextResponse.json(
+            { error: 'Time range exceeds maximum of 30 days for 30m interval' },
             { status: 400 }
           );
         }
@@ -292,14 +276,21 @@ export async function GET(request: NextRequest) {
           );
         }
         
-        // Validate time range for 5m interval
+        // Validate time range based on interval
+        const timeDiff = endTime.getTime() - startTime.getTime();
         if (interval === '5m') {
-          const timeDiff = endTime.getTime() - startTime.getTime();
           const maxDuration = 7.5 * 24 * 60 * 60 * 1000; // 7.5 days in milliseconds
-          
           if (timeDiff > maxDuration) {
             return NextResponse.json(
               { error: 'Time range exceeds maximum of 7.5 days for 5m interval' },
+              { status: 400 }
+            );
+          }
+        } else if (interval === '30m') {
+          const maxDuration = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
+          if (timeDiff > maxDuration) {
+            return NextResponse.json(
+              { error: 'Time range exceeds maximum of 30 days for 30m interval' },
               { status: 400 }
             );
           }
@@ -311,12 +302,10 @@ export async function GET(request: NextRequest) {
         );
       }
     } else {
-      // Default time range: last 7 days for 5m interval
+      // Default time range: last 7 days
       endTime = now;
       startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     }
-    
-    aggregationInterval = '5m';
 
     // Fetch data from database
     console.log('[History API] Fetching data for interval:', interval);
@@ -335,12 +324,13 @@ export async function GET(request: NextRequest) {
     
     console.log('[History API] Fetched', data.length, 'raw data points');
 
-    // Process data - always aggregate to 5-minute intervals
+    // Process data - aggregate based on requested interval
     let processedData: typeof data;
-    let effectiveInterval: string = '5m';
+    let effectiveInterval: string = interval;
     
-    // Aggregate data to 5-minute intervals
-    processedData = aggregate5MinuteData(data, startTime, endTime);
+    // Aggregate data to the requested interval
+    const intervalMinutes = interval === '5m' ? 5 : 30;
+    processedData = aggregateData(data, startTime, endTime, intervalMinutes);
 
     // Build OpenNEM response
     const response: OpenNEMResponse = {

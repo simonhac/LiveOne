@@ -50,6 +50,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
   const [chartData, setChartData] = useState<ChartData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [timeRange, setTimeRange] = useState<'1D' | '7D'>('1D')
   
 
   useEffect(() => {
@@ -61,7 +62,10 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
       
       try {
         // Fetch will automatically include cookies
-        const response = await fetch('/api/history?interval=5m&last=25h&fields=solar,load,battery', {
+        // Use different intervals: 5m for 1D, 30m for 7D
+        const requestInterval = timeRange === '1D' ? '5m' : '30m'
+        const duration = timeRange === '1D' ? '25h' : '169h' // 25h for 1D, 7*24+1 for 7D
+        const response = await fetch(`/api/history-fast?interval=${requestInterval}&last=${duration}&fields=solar,load,battery`, {
           credentials: 'same-origin', // Include cookies
           signal: abortController.signal
         })
@@ -113,22 +117,22 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
           new Date(startTime.getTime() + index * intervalMs)
         )
 
-        // Get last 24 hours of data
+        // Get data for selected time range
         const now = new Date()
-        const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+        const windowStart = new Date(now.getTime() - (timeRange === '1D' ? 24 : 24 * 7) * 60 * 60 * 1000)
         
-        // Filter to last 24 hours
-        const last24HoursIndices = timestamps
+        // Filter to selected time range
+        const selectedIndices = timestamps
           .map((t: Date, i: number) => ({ time: t, index: i }))
-          .filter(({ time }: { time: Date, index: number }) => time >= twentyFourHoursAgo)
+          .filter(({ time }: { time: Date, index: number }) => time >= windowStart)
           .map(({ index }: { time: Date, index: number }) => index)
 
         setChartData({
-          timestamps: last24HoursIndices.map((i: number) => timestamps[i]),
-          solar: last24HoursIndices.map((i: number) => solarData.history.data[i]),
-          load: last24HoursIndices.map((i: number) => loadData.history.data[i]),
-          batteryW: last24HoursIndices.map((i: number) => batteryWData.history.data[i]),
-          batterySOC: last24HoursIndices.map((i: number) => batterySOCData.history.data[i]),
+          timestamps: selectedIndices.map((i: number) => timestamps[i]),
+          solar: selectedIndices.map((i: number) => solarData.history.data[i]),
+          load: selectedIndices.map((i: number) => loadData.history.data[i]),
+          batteryW: selectedIndices.map((i: number) => batteryWData.history.data[i]),
+          batterySOC: selectedIndices.map((i: number) => batterySOCData.history.data[i]),
         })
         setLoading(false)
       } catch (err: any) {
@@ -152,12 +156,36 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
       clearInterval(interval)
       abortController.abort() // Cancel any pending requests
     }
-  }, [])
+  }, [timeRange])
 
   if (loading) {
     return (
       <div className={`bg-gray-800 border border-gray-700 rounded p-4 flex flex-col ${className}`}>
-        <h3 className="text-sm font-semibold text-white mb-2">Last 24 Hours</h3>
+        <div className="flex justify-between items-center mb-2">
+          <h3 className="text-sm font-semibold text-white">Energy History</h3>
+          <div className="inline-flex rounded-md shadow-sm" role="group">
+            <button
+              onClick={() => setTimeRange('1D')}
+              className={`px-3 py-1 text-xs font-medium rounded-l-md border transition-colors ${
+                timeRange === '1D' 
+                  ? 'bg-blue-600 text-white border-blue-600' 
+                  : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
+              }`}
+            >
+              1D
+            </button>
+            <button
+              onClick={() => setTimeRange('7D')}
+              className={`px-3 py-1 text-xs font-medium rounded-r-md border-t border-r border-b transition-colors ${
+                timeRange === '7D' 
+                  ? 'bg-blue-600 text-white border-blue-600' 
+                  : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
+              }`}
+            >
+              7D
+            </button>
+          </div>
+        </div>
         <div className="flex-1 flex items-center justify-center min-h-0">
           <div className="text-gray-500">Loading chart...</div>
         </div>
@@ -168,7 +196,31 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
   if (error || !chartData) {
     return (
       <div className={`bg-gray-800 border border-gray-700 rounded p-4 flex flex-col ${className}`}>
-        <h3 className="text-sm font-semibold text-white mb-2">Last 24 Hours</h3>
+        <div className="flex justify-between items-center mb-2">
+          <h3 className="text-sm font-semibold text-white">Energy History</h3>
+          <div className="inline-flex rounded-md shadow-sm" role="group">
+            <button
+              onClick={() => setTimeRange('1D')}
+              className={`px-3 py-1 text-xs font-medium rounded-l-md border transition-colors ${
+                timeRange === '1D' 
+                  ? 'bg-blue-600 text-white border-blue-600' 
+                  : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
+              }`}
+            >
+              1D
+            </button>
+            <button
+              onClick={() => setTimeRange('7D')}
+              className={`px-3 py-1 text-xs font-medium rounded-r-md border-t border-r border-b transition-colors ${
+                timeRange === '7D' 
+                  ? 'bg-blue-600 text-white border-blue-600' 
+                  : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
+              }`}
+            >
+              7D
+            </button>
+          </div>
+        </div>
         <div className="flex-1 flex items-center justify-center min-h-0">
           <div className="text-red-400">Error: {error || 'No data available'}</div>
         </div>
@@ -218,9 +270,9 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
     ],
   }
 
-  // Calculate the 24-hour window for x-axis
+  // Calculate the time window for x-axis
   const now = new Date()
-  const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+  const windowStart = new Date(now.getTime() - (timeRange === '1D' ? 24 : 24 * 7) * 60 * 60 * 1000)
 
   const options: ChartOptions<'line'> = {
     responsive: true,
@@ -281,41 +333,28 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         annotations: (() => {
           const annotations: any[] = []
           
-          // Create daytime background regions based on the 24-hour window
-          // We need to check both yesterday and today for daytime periods
-          
-          // Yesterday's daytime (if it falls within our 24-hour window)
-          const yesterdayStart = new Date(twentyFourHoursAgo)
-          yesterdayStart.setHours(7, 0, 0, 0)
-          const yesterdayEnd = new Date(twentyFourHoursAgo)
-          yesterdayEnd.setHours(22, 0, 0, 0)
-          
-          // If yesterday's daytime overlaps with our 24-hour window
-          if (yesterdayEnd > twentyFourHoursAgo) {
-            annotations.push({
-              type: 'box',
-              xMin: Math.max(yesterdayStart.getTime(), twentyFourHoursAgo.getTime()),
-              xMax: Math.min(yesterdayEnd.getTime(), now.getTime()),
-              backgroundColor: 'rgba(255, 255, 255, 0.07)', // 7% opacity white overlay
-              borderWidth: 0,
-            })
-          }
-          
-          // Today's daytime
-          const todayStart = new Date(now)
-          todayStart.setHours(7, 0, 0, 0)
-          const todayEnd = new Date(now)
-          todayEnd.setHours(22, 0, 0, 0)
-          
-          // If today's daytime overlaps with our 24-hour window
-          if (todayStart < now && todayEnd > twentyFourHoursAgo) {
-            annotations.push({
-              type: 'box',
-              xMin: Math.max(todayStart.getTime(), twentyFourHoursAgo.getTime()),
-              xMax: Math.min(todayEnd.getTime(), now.getTime()),
-              backgroundColor: 'rgba(255, 255, 255, 0.07)',
-              borderWidth: 0,
-            })
+          // Create daytime background regions based on the time window
+          // Add daytime regions for each day in the window
+          const daysToShow = timeRange === '1D' ? 2 : 8 // Show 2 days for 1D view, 8 days for 7D
+          for (let i = 0; i < daysToShow; i++) {
+            const dayStart = new Date(now)
+            dayStart.setDate(dayStart.getDate() - i)
+            dayStart.setHours(7, 0, 0, 0)
+            
+            const dayEnd = new Date(now)
+            dayEnd.setDate(dayEnd.getDate() - i)
+            dayEnd.setHours(22, 0, 0, 0)
+            
+            // Only add if this day overlaps with our window
+            if (dayEnd > windowStart && dayStart < now) {
+              annotations.push({
+                type: 'box',
+                xMin: Math.max(dayStart.getTime(), windowStart.getTime()),
+                xMax: Math.min(dayEnd.getTime(), now.getTime()),
+                backgroundColor: 'rgba(255, 255, 255, 0.07)', // 7% opacity white overlay
+                borderWidth: 0,
+              })
+            }
           }
           
           return annotations
@@ -325,7 +364,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
     scales: {
       x: {
         type: 'time',
-        min: twentyFourHoursAgo.getTime(), // Always show from 24 hours ago
+        min: windowStart.getTime(), // Show from selected time range
         max: now.getTime(), // To current time
         time: {
           unit: 'hour',
@@ -406,7 +445,31 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
 
   return (
     <div className={`bg-gray-800 border border-gray-700 rounded p-4 flex flex-col ${className}`}>
-      <h3 className="text-sm font-semibold text-white mb-2">Last 24 Hours</h3>
+      <div className="flex justify-between items-center mb-2">
+        <h3 className="text-sm font-semibold text-white">Energy History</h3>
+        <div className="inline-flex rounded-md shadow-sm" role="group">
+          <button
+            onClick={() => setTimeRange('1D')}
+            className={`px-3 py-1 text-xs font-medium rounded-l-md border transition-colors ${
+              timeRange === '1D' 
+                ? 'bg-blue-600 text-white border-blue-600' 
+                : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
+            }`}
+          >
+            1D
+          </button>
+          <button
+            onClick={() => setTimeRange('7D')}
+            className={`px-3 py-1 text-xs font-medium rounded-r-md border-t border-r border-b transition-colors ${
+              timeRange === '7D' 
+                ? 'bg-blue-600 text-white border-blue-600' 
+                : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
+            }`}
+          >
+            7D
+          </button>
+        </div>
+      </div>
       <div className="flex-1 min-h-0">
         <Line data={data} options={options} />
       </div>
