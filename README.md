@@ -125,6 +125,14 @@ The application runs on Vercel's serverless platform:
 - **Real-time**: Server-Sent Events (SSE)
 - **Charts**: Chart.js with responsive design
 
+### Infrastructure
+
+- **Vercel Functions**: Tokyo region (hnd1) for optimal Australian latency
+- **Turso Database**: Tokyo region (aws-ap-northeast-1)
+- **Pre-aggregated Data**: 5-minute aggregates for fast queries
+- **Performance**: ~200ms API response time from Australia
+- **Data Pipeline**: Raw readings → 5-minute aggregates → 30-minute aggregates
+
 ### Data Flow
 
 1. Vercel Cron triggers `/api/cron/poll-systems` every minute
@@ -210,9 +218,10 @@ curl "https://liveone.vercel.app/api/history?interval=5m&last=24h&fields=solar,l
 
 ### Data Retention
 
-- Raw data: 30 days (configurable)
-- Aggregated data: 1 year
-- ~170 bytes per reading, ~7MB/month per system
+- Raw data: No automatic deletion (retention policies not yet implemented)
+- Aggregated data: No automatic deletion
+- Storage: ~125 bytes per raw reading + ~27 bytes per minute for aggregates
+- Total: ~150 bytes per minute, ~6.3MB/month per system
 
 ## Development
 
