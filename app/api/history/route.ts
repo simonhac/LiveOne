@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, readings, systems } from '@/lib/db';
-import { eq, and, desc, gte, lte, sql } from 'drizzle-orm';
-import { OpenNEMResponse, OpenNEMDataSeries, DataInterval } from '@/types/opennem';
-import { APP_USERS, USER_TO_SYSTEM } from '@/config';
+import { db } from '@/lib/db';
+import { readingsAgg5m, systems } from '@/lib/db/schema';
+import { eq, and, gte, lte } from 'drizzle-orm';
+import { OpenNEMResponse, OpenNEMDataSeries } from '@/types/opennem';
 import { formatDataArray } from '@/lib/format-opennem';
 import { parseAbsolute, toZoned } from '@internationalized/date';
 
 // Helper function to format date to AEST timezone string without milliseconds
+// (identical to regular API)
 function formatToAEST(date: Date): string {
   // Convert JavaScript Date to ISO string, then parse as an absolute date
   const isoString = date.toISOString();
@@ -29,92 +30,65 @@ function formatToAEST(date: Date): string {
   return date.toISOString().slice(0, 19) + '+10:00';
 }
 
-// Helper function to aggregate data to specified intervals
-function aggregateData(
-  data: any[], 
-  startTime: Date, 
-  endTime: Date,
-  intervalMinutes: number
-): any[] {
-  console.log(`[${intervalMinutes}m Aggregation] Starting with`, data.length, 'data points');
-  console.log(`[${intervalMinutes}m Aggregation] Time range:`, startTime.toISOString(), 'to', endTime.toISOString());
-  
+// Helper to aggregate 5m data to 30m intervals
+// Optimized version that processes data in a single pass
+function aggregateTo30m(data: any[], startTime: Date, endTime: Date): any[] {
   if (data.length === 0) return [];
   
   const result: any[] = [];
-  const intervalMs = intervalMinutes * 60 * 1000; // interval in milliseconds
+  const intervalMs = 30 * 60 * 1000;
   
-  // Align start and end times to interval boundaries
-  const alignedStart = new Date(Math.floor(startTime.getTime() / intervalMs) * intervalMs);
-  const alignedEnd = new Date(Math.ceil(endTime.getTime() / intervalMs) * intervalMs);
+  // Running totals for the current 30-minute interval
+  let solarWSum = 0;
+  let loadWSum = 0;
+  let batteryWSum = 0;
+  let gridWSum = 0;
+  let totalSamples = 0;
+  let count = 0;
+  let lastReading: any = null;
   
-  // Calculate number of intervals
-  const numIntervals = Math.floor((alignedEnd.getTime() - alignedStart.getTime()) / intervalMs) + 1;
-  console.log(`[${intervalMinutes}m Aggregation] Creating`, numIntervals, 'intervals');
-  
-  // Limit to prevent excessive memory usage
-  const maxIntervals = intervalMinutes === 5 ? 2500 : 750; // Adjust limit based on interval
-  if (numIntervals > maxIntervals) {
-    console.error(`[${intervalMinutes}m Aggregation] Too many intervals requested:`, numIntervals);
-    throw new Error('Too many intervals requested');
-  }
-  
-  // Group data points by interval
-  const intervalBuckets = new Map<number, any[]>();
-  
-  for (const reading of data) {
-    // Find which interval this reading belongs to (end of interval)
-    const readingTime = reading.inverterTime.getTime();
-    const intervalEnd = Math.ceil(readingTime / intervalMs) * intervalMs;
+  // Process data in order (it's already sorted)
+  for (let i = 0; i < data.length; i++) {
+    const reading = data[i];
+    const weight = reading.sampleCount || 1;
     
-    if (!intervalBuckets.has(intervalEnd)) {
-      intervalBuckets.set(intervalEnd, []);
-    }
-    intervalBuckets.get(intervalEnd)!.push(reading);
-  }
-  
-  // Create aggregated data for each interval
-  for (let time = alignedStart.getTime() + intervalMs; time <= alignedEnd.getTime(); time += intervalMs) {
-    const intervalData = intervalBuckets.get(time) || [];
+    // Add to running totals
+    totalSamples += weight;
+    if (reading.solarWAvg !== null) solarWSum += reading.solarWAvg * weight;
+    if (reading.loadWAvg !== null) loadWSum += reading.loadWAvg * weight;
+    if (reading.batteryWAvg !== null) batteryWSum += reading.batteryWAvg * weight;
+    if (reading.gridWAvg !== null) gridWSum += reading.gridWAvg * weight;
+    lastReading = reading;
+    count++;
     
-    if (intervalData.length > 0) {
-      // Average power values (instantaneous measurements)
-      const avgSolarW = intervalData.reduce((sum, r) => sum + (r.solarW || 0), 0) / intervalData.length;
-      const avgLoadW = intervalData.reduce((sum, r) => sum + (r.loadW || 0), 0) / intervalData.length;
-      const avgBatteryW = intervalData.reduce((sum, r) => sum + (r.batteryW || 0), 0) / intervalData.length;
-      const avgGridW = intervalData.reduce((sum, r) => sum + (r.gridW || 0), 0) / intervalData.length;
-      
-      // For state values like SOC, use the last reading in the interval
-      // Sort by time to ensure we get the actual last reading
-      const sortedData = intervalData.sort((a, b) => 
-        a.inverterTime.getTime() - b.inverterTime.getTime()
+    // Every 6 readings (or at the end of data), create a 30-minute aggregate
+    if (count === 6 || i === data.length - 1) {
+      // Calculate the interval end time (round up to next 30-minute boundary)
+      const intervalEnd = new Date(
+        Math.ceil(reading.intervalEnd.getTime() / intervalMs) * intervalMs
       );
-      const lastReading = sortedData[sortedData.length - 1];
       
       result.push({
-        inverterTime: new Date(time), // Timestamp represents END of interval
-        solarW: avgSolarW,
-        loadW: avgLoadW,
-        batteryW: avgBatteryW,
-        batterySOC: lastReading.batterySOC, // Use last SOC value, not average
-        gridW: avgGridW,
-        systemId: intervalData[0].systemId
+        intervalEnd,
+        solarWAvg: totalSamples > 0 ? Math.round(solarWSum / totalSamples) : null,
+        loadWAvg: totalSamples > 0 ? Math.round(loadWSum / totalSamples) : null,
+        batteryWAvg: totalSamples > 0 ? Math.round(batteryWSum / totalSamples) : null,
+        gridWAvg: totalSamples > 0 ? Math.round(gridWSum / totalSamples) : null,
+        batterySOCLast: lastReading?.batterySOCLast || null,
+        sampleCount: totalSamples,
       });
-    } else {
-      // No data for this interval
-      result.push({
-        inverterTime: new Date(time), // Timestamp represents END of interval
-        solarW: null,
-        loadW: null,
-        batteryW: null,
-        batterySOC: null,
-        gridW: null,
-        systemId: data[0]?.systemId
-      });
+      
+      // Reset for next interval
+      solarWSum = 0;
+      loadWSum = 0;
+      batteryWSum = 0;
+      gridWSum = 0;
+      totalSamples = 0;
+      count = 0;
+      lastReading = null;
     }
   }
   
-  console.log(`[${intervalMinutes}m Aggregation] Created`, result.length, 'aggregated points');
   return result;
 }
 
@@ -307,35 +281,41 @@ export async function GET(request: NextRequest) {
       startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     }
 
-    // Fetch data from database
-    console.log('[History API] Fetching data for interval:', interval);
-    console.log('[History API] Time range:', startTime.toISOString(), 'to', endTime.toISOString());
+    // Fetch data from aggregated table
+    console.log('[History API Fast] Fetching data for interval:', interval);
+    console.log('[History API Fast] Time range:', startTime.toISOString(), 'to', endTime.toISOString());
+    
+    const queryStart = Date.now();
     
     const data = await db.select()
-      .from(readings)
+      .from(readingsAgg5m)
       .where(
         and(
-          eq(readings.systemId, systemId),
-          gte(readings.inverterTime, startTime),
-          lte(readings.inverterTime, endTime)
+          eq(readingsAgg5m.systemId, systemId),
+          gte(readingsAgg5m.intervalEnd, startTime),
+          lte(readingsAgg5m.intervalEnd, endTime)
         )
       )
-      .orderBy(readings.inverterTime);
+      .orderBy(readingsAgg5m.intervalEnd);
     
-    console.log('[History API] Fetched', data.length, 'raw data points');
+    const queryTime = Date.now() - queryStart;
+    console.log(`[History API Fast] Query completed in ${queryTime}ms, fetched ${data.length} rows`);
 
-    // Process data - aggregate based on requested interval
-    let processedData: typeof data;
+    // Process data - aggregate to 30m if needed
+    let processedData: any[];
     let effectiveInterval: string = interval;
     
-    // Aggregate data to the requested interval
-    const intervalMinutes = interval === '5m' ? 5 : 30;
-    processedData = aggregateData(data, startTime, endTime, intervalMinutes);
+    if (interval === '30m') {
+      processedData = aggregateTo30m(data, startTime, endTime);
+      console.log(`[History API Fast] Aggregated to ${processedData.length} 30m intervals`);
+    } else {
+      processedData = data;
+    }
 
-    // Build OpenNEM response
+    // Build OpenNEM response (identical format to regular API)
     const response: OpenNEMResponse = {
       type: 'energy',
-      version: 'v4',
+      version: 'v4', // Same version as regular API
       network: 'liveone',
       created_at: formatToAEST(new Date()),
       data: []
@@ -350,10 +330,10 @@ export async function GET(request: NextRequest) {
         type: 'power',
         units: 'W',
         history: {
-          start: formatToAEST(processedData[0].inverterTime),
-          last: formatToAEST(processedData[processedData.length - 1].inverterTime),
+          start: formatToAEST(processedData[0].intervalEnd),
+          last: formatToAEST(processedData[processedData.length - 1].intervalEnd),
           interval: effectiveInterval,
-          data: formatDataArray(processedData.map(r => r.solarW))
+          data: formatDataArray(processedData.map(r => r.solarWAvg))
         },
         network: 'liveone',
         source: 'selectronic',
@@ -367,10 +347,10 @@ export async function GET(request: NextRequest) {
         type: 'power',
         units: 'W',
         history: {
-          start: formatToAEST(processedData[0].inverterTime),
-          last: formatToAEST(processedData[processedData.length - 1].inverterTime),
+          start: formatToAEST(processedData[0].intervalEnd),
+          last: formatToAEST(processedData[processedData.length - 1].intervalEnd),
           interval: effectiveInterval,
-          data: formatDataArray(processedData.map(r => r.loadW))
+          data: formatDataArray(processedData.map(r => r.loadWAvg))
         },
         network: 'liveone',
         source: 'selectronic',
@@ -384,10 +364,10 @@ export async function GET(request: NextRequest) {
         type: 'power',
         units: 'W',
         history: {
-          start: formatToAEST(processedData[0].inverterTime),
-          last: formatToAEST(processedData[processedData.length - 1].inverterTime),
+          start: formatToAEST(processedData[0].intervalEnd),
+          last: formatToAEST(processedData[processedData.length - 1].intervalEnd),
           interval: effectiveInterval,
-          data: formatDataArray(processedData.map(r => r.batteryW))
+          data: formatDataArray(processedData.map(r => r.batteryWAvg))
         },
         network: 'liveone',
         source: 'selectronic',
@@ -400,10 +380,10 @@ export async function GET(request: NextRequest) {
         type: 'percentage',
         units: '%',
         history: {
-          start: formatToAEST(processedData[0].inverterTime),
-          last: formatToAEST(processedData[processedData.length - 1].inverterTime),
+          start: formatToAEST(processedData[0].intervalEnd),
+          last: formatToAEST(processedData[processedData.length - 1].intervalEnd),
           interval: effectiveInterval,
-          data: formatDataArray(processedData.map(r => r.batterySOC))
+          data: formatDataArray(processedData.map(r => r.batterySOCLast))
         },
         network: 'liveone',
         source: 'selectronic',
@@ -417,10 +397,10 @@ export async function GET(request: NextRequest) {
         type: 'power',
         units: 'W',
         history: {
-          start: formatToAEST(processedData[0].inverterTime),
-          last: formatToAEST(processedData[processedData.length - 1].inverterTime),
+          start: formatToAEST(processedData[0].intervalEnd),
+          last: formatToAEST(processedData[processedData.length - 1].intervalEnd),
           interval: effectiveInterval,
-          data: formatDataArray(processedData.map(r => r.gridW))
+          data: formatDataArray(processedData.map(r => r.gridWAvg))
         },
         network: 'liveone',
         source: 'selectronic',
@@ -430,7 +410,7 @@ export async function GET(request: NextRequest) {
 
     response.data = dataSeries;
 
-    // Convert to JSON string with proper indentation
+    // Convert to JSON string with proper indentation (identical to regular API)
     let jsonStr = JSON.stringify(response, null, 2);
     
     // Replace multi-line numeric data arrays with single-line arrays
@@ -449,7 +429,7 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Error fetching historical data:', error);
+    console.error('Error fetching historical data (fast):', error);
     return NextResponse.json(
       { error: 'Internal server error', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
