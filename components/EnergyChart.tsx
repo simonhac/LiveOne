@@ -103,7 +103,9 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         
         let intervalMs: number
         
-        if (interval === '5m') {
+        if (interval === '30m') {
+          intervalMs = 30 * 60000 // 30 minutes
+        } else if (interval === '5m') {
           intervalMs = 5 * 60000 // 5 minutes
         } else if (interval === '1m') {
           intervalMs = 60000 // 1 minute
