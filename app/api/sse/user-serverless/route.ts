@@ -4,6 +4,11 @@ import { readings, systems, pollingStatus } from '@/lib/db/schema';
 import { eq, desc, and } from 'drizzle-orm';
 import { SELECTLIVE_CONFIG } from '@/config';
 
+// Helper function to round to 3 decimal places
+const roundToThree = (value: number | null | undefined): number | null => {
+  return value != null ? Math.round(value * 1000) / 1000 : null;
+};
+
 export async function GET(request: NextRequest) {
   // In production, verify user session here
   const userId = 'simon';
@@ -79,13 +84,13 @@ export async function GET(request: NextRequest) {
               batteryOutKwhTotal: latestReading.batteryOutKwhTotal,
               gridInKwhTotal: latestReading.gridInKwhTotal,
               gridOutKwhTotal: latestReading.gridOutKwhTotal,
-              // Use today values from stored Select.Live response
-              solarKwhToday: lastResponse?.solarKwhToday ?? null,
-              loadKwhToday: lastResponse?.loadKwhToday ?? null,
-              batteryInKwhToday: lastResponse?.batteryInKwhToday ?? null,
-              batteryOutKwhToday: lastResponse?.batteryOutKwhToday ?? null,
-              gridInKwhToday: lastResponse?.gridInKwhToday ?? null,
-              gridOutKwhToday: lastResponse?.gridOutKwhToday ?? null,
+              // Use today values from stored Select.Live response (rounded to 3 decimal places)
+              solarKwhToday: roundToThree(lastResponse?.solarKwhToday),
+              loadKwhToday: roundToThree(lastResponse?.loadKwhToday),
+              batteryInKwhToday: roundToThree(lastResponse?.batteryInKwhToday),
+              batteryOutKwhToday: roundToThree(lastResponse?.batteryOutKwhToday),
+              gridInKwhToday: roundToThree(lastResponse?.gridInKwhToday),
+              gridOutKwhToday: roundToThree(lastResponse?.gridOutKwhToday),
             };
 
             sendMessage({

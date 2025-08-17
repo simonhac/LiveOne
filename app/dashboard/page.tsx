@@ -143,8 +143,43 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-gray-900">
       {/* Header */}
       <header className="bg-gray-800 border-b border-gray-700">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex justify-between items-center">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
+          {/* Mobile Layout */}
+          <div className="sm:hidden">
+            <div className="flex justify-between items-start">
+              <div className="flex-1">
+                <h1 className="text-lg font-bold text-white">LiveOne</h1>
+                <div className="flex items-center gap-2 mt-1">
+                  <div className={`inline-flex items-center gap-1 text-xs ${
+                    isAuthenticated ? 'text-green-400' : 'text-red-400'
+                  }`}>
+                    {isAuthenticated ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+                    <span>{isPolling ? 'Live' : 'Offline'}</span>
+                  </div>
+                  <span className="text-gray-400 text-xs">•</span>
+                  <span className="text-gray-400 text-xs font-mono">
+                    {!lastUpdate ? '-' :
+                     secondsSinceUpdate < 60 ? `${secondsSinceUpdate}s` :
+                     `${Math.floor(secondsSinceUpdate / 60)}m`}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-400 text-sm">
+                  {sessionStorage.getItem('displayName')}
+                </span>
+                <button
+                  onClick={handleLogout}
+                  className="text-red-400 hover:text-red-300 p-1"
+                >
+                  <LogOut className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Desktop Layout */}
+          <div className="hidden sm:flex justify-between items-center">
             <div>
               <h1 className="text-2xl font-bold text-white">LiveOne Dashboard</h1>
               <p className="text-sm text-gray-400 mt-1">Selectronic SP PRO Monitoring</p>
@@ -357,8 +392,9 @@ export default function DashboardPage() {
                       <th className="text-left py-1 text-gray-400 font-medium text-xs"></th>
                       <th className="text-right py-1 text-gray-400 font-medium text-xs">Solar</th>
                       <th className="text-right py-1 text-gray-400 font-medium text-xs">Load</th>
-                      <th className="text-right py-1 text-gray-400 font-medium text-xs">Battery In</th>
-                      <th className="text-right py-1 text-gray-400 font-medium text-xs">Battery Out</th>
+                      <th className="text-right py-1 text-gray-400 font-medium text-xs hidden sm:table-cell">Battery In</th>
+                      <th className="text-right py-1 text-gray-400 font-medium text-xs hidden sm:table-cell">Battery Out</th>
+                      <th className="text-right py-1 text-gray-400 font-medium text-xs sm:hidden">Battery In/Out</th>
                       {showGrid && (
                         <>
                           <th className="text-right py-1 text-gray-400 font-medium text-xs">Grid In</th>
@@ -371,24 +407,33 @@ export default function DashboardPage() {
                     <tr className="border-b border-gray-700">
                       <td className="py-1.5 font-medium text-gray-300 text-xs">Today</td>
                       <td className="text-right py-1.5 text-yellow-400 font-mono text-sm">
-                        <span className="font-bold">{data.solarKwhToday?.toFixed(3) ?? '—'}</span> {data.solarKwhToday !== null && <span className="font-normal">kWh</span>}
+                        <span className="font-bold">{data.solarKwhToday?.toFixed(1) ?? '—'}</span> {data.solarKwhToday !== null && <span className="font-normal">kWh</span>}
                       </td>
                       <td className="text-right py-1.5 text-blue-400 font-mono text-sm">
-                        <span className="font-bold">{data.loadKwhToday?.toFixed(3) ?? '—'}</span> {data.loadKwhToday !== null && <span className="font-normal">kWh</span>}
+                        <span className="font-bold">{data.loadKwhToday?.toFixed(1) ?? '—'}</span> {data.loadKwhToday !== null && <span className="font-normal">kWh</span>}
                       </td>
-                      <td className="text-right py-1.5 text-green-400 font-mono text-sm">
-                        <span className="font-bold">{data.batteryInKwhToday?.toFixed(3) ?? '—'}</span> {data.batteryInKwhToday !== null && <span className="font-normal">kWh</span>}
+                      <td className="text-right py-1.5 text-green-400 font-mono text-sm hidden sm:table-cell">
+                        <span className="font-bold">{data.batteryInKwhToday?.toFixed(1) ?? '—'}</span> {data.batteryInKwhToday !== null && <span className="font-normal">kWh</span>}
                       </td>
-                      <td className="text-right py-1.5 text-orange-400 font-mono text-sm">
-                        <span className="font-bold">{data.batteryOutKwhToday?.toFixed(3) ?? '—'}</span> {data.batteryOutKwhToday !== null && <span className="font-normal">kWh</span>}
+                      <td className="text-right py-1.5 text-orange-400 font-mono text-sm hidden sm:table-cell">
+                        <span className="font-bold">{data.batteryOutKwhToday?.toFixed(1) ?? '—'}</span> {data.batteryOutKwhToday !== null && <span className="font-normal">kWh</span>}
+                      </td>
+                      <td className="text-right py-1.5 text-green-400 font-mono text-sm sm:hidden">
+                        <span className="font-bold">
+                          {data.batteryInKwhToday !== null && data.batteryOutKwhToday !== null ? 
+                            `${data.batteryInKwhToday.toFixed(1)}/${data.batteryOutKwhToday.toFixed(1)}` : 
+                            '—'
+                          }
+                        </span> 
+                        {data.batteryInKwhToday !== null && <span className="font-normal">kWh</span>}
                       </td>
                       {showGrid && (
                         <>
                           <td className="text-right py-1.5 text-red-400 font-mono text-sm">
-                            <span className="font-bold">{data.gridInKwhToday?.toFixed(3) ?? '—'}</span> {data.gridInKwhToday !== null && <span className="font-normal">kWh</span>}
+                            <span className="font-bold">{data.gridInKwhToday?.toFixed(1) ?? '—'}</span> {data.gridInKwhToday !== null && <span className="font-normal">kWh</span>}
                           </td>
                           <td className="text-right py-1.5 text-green-400 font-mono text-sm">
-                            <span className="font-bold">{data.gridOutKwhToday?.toFixed(3) ?? '—'}</span> {data.gridOutKwhToday !== null && <span className="font-normal">kWh</span>}
+                            <span className="font-bold">{data.gridOutKwhToday?.toFixed(1) ?? '—'}</span> {data.gridOutKwhToday !== null && <span className="font-normal">kWh</span>}
                           </td>
                         </>
                       )}
@@ -401,11 +446,14 @@ export default function DashboardPage() {
                       <td className="text-right py-1.5 text-blue-400 font-mono text-sm">
                         <span className="font-bold">{data.loadKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
                       </td>
-                      <td className="text-right py-1.5 text-green-400 font-mono text-sm">
+                      <td className="text-right py-1.5 text-green-400 font-mono text-sm hidden sm:table-cell">
                         <span className="font-bold">{data.batteryInKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
                       </td>
-                      <td className="text-right py-1.5 text-orange-400 font-mono text-sm">
+                      <td className="text-right py-1.5 text-orange-400 font-mono text-sm hidden sm:table-cell">
                         <span className="font-bold">{data.batteryOutKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
+                      </td>
+                      <td className="text-right py-1.5 text-green-400 font-mono text-sm sm:hidden">
+                        <span className="font-bold">{data.batteryInKwhTotal.toFixed(1)}/{data.batteryOutKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
                       </td>
                       {showGrid && (
                         <>
