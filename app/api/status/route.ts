@@ -22,8 +22,8 @@ export async function GET(request: Request) {
       },
       data: data ? {
         batterySOC: data.batterySOC,
-        solarPower: data.solarPower,
-        loadPower: data.loadPower,
+        solarW: data.solarW,
+        loadW: data.loadW,
         timestamp: data.timestamp,
       } : null,
       server: {

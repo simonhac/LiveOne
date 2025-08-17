@@ -103,7 +103,7 @@ export class PollingService {
         this.lastFetchTime = new Date();
         this.lastError = undefined;
         
-        console.log(`[Polling] Data received - Solar: ${result.data.solarPower}W, Battery: ${result.data.batterySOC}%`);
+        console.log(`[Polling] Data received - Solar: ${result.data.solarW}W, Battery: ${result.data.batterySOC}%`);
         
         this.onData?.(result.data);
         

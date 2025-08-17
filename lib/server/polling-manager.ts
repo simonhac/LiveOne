@@ -213,7 +213,7 @@ class PollingManager extends EventEmitter {
         // Log energy deltas
         this.logEnergyDeltas(key, instance, result.data);
         
-        console.log(`[PollingManager] ${key} - Solar: ${result.data.solarPower.toFixed(0)}W (Remote: ${result.data.solarInverterPower.toFixed(0)}W, Local: ${result.data.shuntPower.toFixed(0)}W), Battery: ${result.data.batterySOC.toFixed(1)}%`);
+        console.log(`[PollingManager] ${key} - Solar: ${result.data.solarW}W (Remote: ${result.data.solarInverterW}W, Local: ${result.data.shuntW}W), Battery: ${result.data.batterySOC.toFixed(1)}%`);
         
         // Check for faults
         if (result.data.faultCode !== 0) {
@@ -375,12 +375,12 @@ class PollingManager extends EventEmitter {
         inverterTime,
         receivedTime,
         delaySeconds,
-        solarPower: data.solarPower,
-        solarInverterPower: data.solarInverterPower,
-        shuntPower: data.shuntPower,
-        loadPower: data.loadPower,
-        batteryPower: data.batteryPower,
-        gridPower: data.gridPower,
+        solarW: data.solarW,
+        solarInverterW: data.solarInverterW,
+        shuntW: data.shuntW,
+        loadW: data.loadW,
+        batteryW: data.batteryW,
+        gridW: data.gridW,
         batterySOC: Math.round(data.batterySOC * 10) / 10, // Round to 1 decimal place
         faultCode: data.faultCode,
         faultTimestamp: data.faultTimestamp,

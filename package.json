@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "type-check": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
@@ -59,6 +60,8 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "drizzle-kit": "^0.31.4",
+    "eslint": "^9.33.0",
+    "eslint-config-next": "^15.4.6",
     "jest": "^30.0.5",
     "ts-jest": "^29.4.1"
   }

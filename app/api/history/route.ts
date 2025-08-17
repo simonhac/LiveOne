@@ -126,11 +126,11 @@ function aggregate5MinuteData(
       // No data within 2 minutes, create null entry
       result.push({
         inverterTime: targetTime,
-        solarPower: null,
-        loadPower: null,
-        batteryPower: null,
+        solarW: null,
+        loadW: null,
+        batteryW: null,
         batterySOC: null,
-        gridPower: null,
+        gridW: null,
         systemId: data[0]?.systemId
       });
     }
@@ -363,7 +363,7 @@ export async function GET(request: NextRequest) {
           start: formatToAEST(processedData[0].inverterTime),
           last: formatToAEST(processedData[processedData.length - 1].inverterTime),
           interval: effectiveInterval,
-          data: formatDataArray(processedData.map(r => r.solarPower))
+          data: formatDataArray(processedData.map(r => r.solarW))
         },
         network: 'liveone',
         source: 'selectronic',
@@ -380,7 +380,7 @@ export async function GET(request: NextRequest) {
           start: formatToAEST(processedData[0].inverterTime),
           last: formatToAEST(processedData[processedData.length - 1].inverterTime),
           interval: effectiveInterval,
-          data: formatDataArray(processedData.map(r => r.loadPower))
+          data: formatDataArray(processedData.map(r => r.loadW))
         },
         network: 'liveone',
         source: 'selectronic',
@@ -397,7 +397,7 @@ export async function GET(request: NextRequest) {
           start: formatToAEST(processedData[0].inverterTime),
           last: formatToAEST(processedData[processedData.length - 1].inverterTime),
           interval: effectiveInterval,
-          data: formatDataArray(processedData.map(r => r.batteryPower))
+          data: formatDataArray(processedData.map(r => r.batteryW))
         },
         network: 'liveone',
         source: 'selectronic',
@@ -430,7 +430,7 @@ export async function GET(request: NextRequest) {
           start: formatToAEST(processedData[0].inverterTime),
           last: formatToAEST(processedData[processedData.length - 1].inverterTime),
           interval: effectiveInterval,
-          data: formatDataArray(processedData.map(r => r.gridPower))
+          data: formatDataArray(processedData.map(r => r.gridW))
         },
         network: 'liveone',
         source: 'selectronic',

@@ -1,0 +1,26 @@
+⣾  Connecting to database
+CREATE TABLE "readings" (                                                                                                                                               
+  id INTEGER PRIMARY KEY AUTOINCREMENT,                                                                                                                                 
+  system_id INTEGER NOT NULL,                                                                                                                                           
+  inverter_time INTEGER NOT NULL,                                                                                                                                       
+  received_time INTEGER NOT NULL,                                                                                                                                       
+  delay_seconds INTEGER,                                                                                                                                                
+  solar_power REAL NOT NULL,                                                                                                                                            
+  solar_inverter_power REAL,                                                                                                                                            
+  shunt_power REAL,                                                                                                                                                     
+  load_power REAL NOT NULL,                                                                                                                                             
+  battery_power REAL NOT NULL,                                                                                                                                          
+  grid_power REAL NOT NULL,                                                                                                                                             
+  battery_soc REAL NOT NULL,                                                                                                                                            
+  fault_code INTEGER DEFAULT 0,                                                                                                                                         
+  fault_timestamp INTEGER DEFAULT 0,                                                                                                                                    
+  generator_status INTEGER DEFAULT 0,                                                                                                                                   
+  solar_kwh_total REAL DEFAULT 0,                                                                                                                                       
+  load_kwh_total REAL DEFAULT 0,                                                                                                                                        
+  battery_in_kwh_total REAL DEFAULT 0,                                                                                                                                  
+  battery_out_kwh_total REAL DEFAULT 0,                                                                                                                                 
+  grid_in_kwh_total REAL DEFAULT 0,                                                                                                                                     
+  grid_out_kwh_total REAL DEFAULT 0,                                                                                                                                    
+  created_at INTEGER DEFAULT (unixepoch()) NOT NULL, solar_w INTEGER, solar_inverter_w INTEGER, shunt_w INTEGER, load_w INTEGER, battery_w INTEGER, grid_w INTEGER,     
+  FOREIGN KEY (system_id) REFERENCES systems(id) ON DELETE CASCADE                                                                                                      
+);                                                                                                                                                                      

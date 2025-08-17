@@ -317,13 +317,13 @@ export class SelectronicFetchClient {
       const shuntW = data.items?.shunt_w || 0;
       
       const transformed: SelectronicData = {
-        solarPower: solarInverterW + shuntW,  // Total solar = remote + local
-        solarInverterPower: solarInverterW,   // Remote solar
-        shuntPower: shuntW,                   // Local solar
-        loadPower: data.items?.load_w || 0,
+        solarW: Math.round(solarInverterW + shuntW),  // Total solar = remote + local
+        solarInverterW: Math.round(solarInverterW),   // Remote solar
+        shuntW: Math.round(shuntW),                   // Local solar
+        loadW: Math.round(data.items?.load_w || 0),
         batterySOC: data.items?.battery_soc || 0,
-        batteryPower: data.items?.battery_w || 0,
-        gridPower: data.items?.grid_w || 0,
+        batteryW: Math.round(data.items?.battery_w || 0),
+        gridW: Math.round(data.items?.grid_w || 0),
         faultCode: data.items?.fault_code || 0,
         faultTimestamp: data.items?.fault_ts || 0,
         generatorStatus: data.items?.gen_status || 0,

@@ -80,12 +80,6 @@ export const dbUtils = {
       await db.delete(schema.readings)
         .where(lt(schema.readings.inverterTime, cutoffDate));
       
-      // Delete old hourly aggregates (keep for 1 year)
-      const aggregateCutoff = new Date();
-      aggregateCutoff.setDate(aggregateCutoff.getDate() - DATABASE_CONFIG.retention.aggregatedDataDays);
-      
-      await db.delete(schema.hourlyAggregates)
-        .where(lt(schema.hourlyAggregates.hourStart, aggregateCutoff));
       
       console.log(`[DB] Cleaned up data older than ${retentionDays} days`);
     } catch (error) {

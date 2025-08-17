@@ -42,7 +42,7 @@ interface ChartData {
   timestamps: Date[]
   solar: number[]
   load: number[]
-  batteryPower: number[]
+  batteryW: number[]
   batterySOC: number[]
 }
 
@@ -78,10 +78,10 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         // Process the data for Chart.js
         const solarData = data.data.find((d: any) => d.id.includes('solar.power'))
         const loadData = data.data.find((d: any) => d.id.includes('load.power'))
-        const batteryPowerData = data.data.find((d: any) => d.id.includes('battery.power'))
+        const batteryWData = data.data.find((d: any) => d.id.includes('battery.power'))
         const batterySOCData = data.data.find((d: any) => d.id.includes('battery.soc'))
 
-        if (!solarData || !loadData || !batteryPowerData || !batterySOCData) {
+        if (!solarData || !loadData || !batteryWData || !batterySOCData) {
           throw new Error('Missing data series')
         }
 
@@ -127,7 +127,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
           timestamps: last24HoursIndices.map((i: number) => timestamps[i]),
           solar: last24HoursIndices.map((i: number) => solarData.history.data[i]),
           load: last24HoursIndices.map((i: number) => loadData.history.data[i]),
-          batteryPower: last24HoursIndices.map((i: number) => batteryPowerData.history.data[i]),
+          batteryW: last24HoursIndices.map((i: number) => batteryWData.history.data[i]),
           batterySOC: last24HoursIndices.map((i: number) => batterySOCData.history.data[i]),
         })
         setLoading(false)

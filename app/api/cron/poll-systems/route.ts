@@ -114,12 +114,12 @@ export async function GET(request: NextRequest) {
             inverterTime,
             receivedTime,
             delaySeconds,
-            solarPower: data.solarPower,
-            solarInverterPower: data.solarInverterPower,
-            shuntPower: data.shuntPower,
-            loadPower: data.loadPower,
-            batteryPower: data.batteryPower,
-            gridPower: data.gridPower,
+            solarW: data.solarW,
+            solarInverterW: data.solarInverterW,
+            shuntW: data.shuntW,
+            loadW: data.loadW,
+            batteryW: data.batteryW,
+            gridW: data.gridW,
             batterySOC: Math.round(data.batterySOC * 10) / 10, // Round to 1 decimal place
             faultCode: data.faultCode,
             faultTimestamp: data.faultTimestamp,
@@ -163,7 +163,7 @@ export async function GET(request: NextRequest) {
           results.push({
             system: system.systemNumber,
             success: true,
-            solar: data.solarPower,
+            solar: data.solarW,
             battery: data.batterySOC,
             delay: delaySeconds
           });

@@ -163,13 +163,13 @@ export const DATABASE_CONFIG = {
 
 // Export type for TypeScript
 export type SelectronicData = {
-  solarPower: number;           // Total solar (solarinverter_w + shunt_w)
-  solarInverterPower: number;   // Remote solar generation
-  shuntPower: number;           // Local solar generation
-  loadPower: number;
+  solarW: number;           // Total solar (solarinverter_w + shunt_w) in Watts
+  solarInverterW: number;   // Remote solar generation in Watts
+  shuntW: number;           // Local solar generation in Watts
+  loadW: number;            // Load in Watts
   batterySOC: number;
-  batteryPower: number;
-  gridPower: number;
+  batteryW: number;         // Battery power in Watts (negative = charging)
+  gridW: number;            // Grid power in Watts
   faultCode: number;
   faultTimestamp: number;       // Unix timestamp
   generatorStatus: number;

@@ -75,7 +75,7 @@ class SessionManager {
   getActiveSessions(): Array<Session & { sessionId: string }> {
     const active: Array<Session & { sessionId: string }> = [];
     
-    for (const [sessionId, session] of this.sessions.entries()) {
+    for (const [sessionId, session] of Array.from(this.sessions.entries())) {
       if (session.isActive) {
         active.push({ ...session, sessionId });
       }
@@ -87,7 +87,7 @@ class SessionManager {
   getUserSessions(email: string): Array<Session & { sessionId: string }> {
     const userSessions: Array<Session & { sessionId: string }> = [];
     
-    for (const [sessionId, session] of this.sessions.entries()) {
+    for (const [sessionId, session] of Array.from(this.sessions.entries())) {
       if (session.email === email) {
         userSessions.push({ ...session, sessionId });
       }
@@ -99,7 +99,7 @@ class SessionManager {
   private cleanupSessions(): void {
     const now = Date.now();
     
-    for (const [sessionId, session] of this.sessions.entries()) {
+    for (const [sessionId, session] of Array.from(this.sessions.entries())) {
       const lastActivity = session.lastActivity.getTime();
       
       if (now - lastActivity > this.SESSION_TIMEOUT) {
@@ -118,7 +118,7 @@ class SessionManager {
   }> {
     const summary = new Map<string, any>();
     
-    for (const session of this.sessions.values()) {
+    for (const session of Array.from(this.sessions.values())) {
       if (!summary.has(session.email)) {
         summary.set(session.email, {
           email: session.email,

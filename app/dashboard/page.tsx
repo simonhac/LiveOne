@@ -300,21 +300,21 @@ export default function DashboardPage() {
               <div className="space-y-4">
                 <PowerCard
                   title="Solar"
-                  value={formatPower(data.solarPower)}
+                  value={formatPower(data.solarW)}
                   icon={<Sun className="w-6 h-6" />}
                   iconColor="text-yellow-400"
                   bgColor="bg-yellow-900/20"
                   borderColor="border-yellow-700"
                   extra={
                     <div className="text-xs space-y-1 text-gray-400">
-                      <div>Remote: {formatPower(data.solarInverterPower)}</div>
-                      <div>Local: {formatPower(data.shuntPower)}</div>
+                      <div>Remote: {formatPower(data.solarInverterW)}</div>
+                      <div>Local: {formatPower(data.shuntW)}</div>
                     </div>
                   }
                 />
                 <PowerCard
                   title="Load"
-                  value={formatPower(data.loadPower)}
+                  value={formatPower(data.loadW)}
                   icon={<Home className="w-6 h-6" />}
                   iconColor="text-blue-400"
                   bgColor="bg-blue-900/20"
@@ -322,25 +322,25 @@ export default function DashboardPage() {
                 />
                 <PowerCard
                   title="Battery"
-                  value={formatPower(data.batteryPower)}
+                  value={formatPower(data.batteryW)}
                   icon={<Battery className="w-6 h-6" />}
-                  iconColor={data.batteryPower < 0 ? "text-green-400" : data.batteryPower > 0 ? "text-orange-400" : "text-gray-400"}
-                  bgColor={data.batteryPower < 0 ? "bg-green-900/20" : data.batteryPower > 0 ? "bg-orange-900/20" : "bg-gray-900/20"}
-                  borderColor={data.batteryPower < 0 ? "border-green-700" : data.batteryPower > 0 ? "border-orange-700" : "border-gray-700"}
+                  iconColor={data.batteryW < 0 ? "text-green-400" : data.batteryW > 0 ? "text-orange-400" : "text-gray-400"}
+                  bgColor={data.batteryW < 0 ? "bg-green-900/20" : data.batteryW > 0 ? "bg-orange-900/20" : "bg-gray-900/20"}
+                  borderColor={data.batteryW < 0 ? "border-green-700" : data.batteryW > 0 ? "border-orange-700" : "border-gray-700"}
                   extra={
                     <div className="text-sm font-semibold text-white">{data.batterySOC.toFixed(1)}% SOC</div>
                   }
-                  extraInfo={data.batteryPower < 0 ? 'Charging' : data.batteryPower > 0 ? 'Discharging' : 'Idle'}
+                  extraInfo={data.batteryW < 0 ? 'Charging' : data.batteryW > 0 ? 'Discharging' : 'Idle'}
                 />
                 {showGrid && (
                   <PowerCard
                     title="Grid"
-                    value={formatPower(data.gridPower)}
+                    value={formatPower(data.gridW)}
                     icon={<Zap className="w-6 h-6" />}
-                    iconColor={data.gridPower > 0 ? "text-red-400" : data.gridPower < 0 ? "text-green-400" : "text-gray-400"}
-                    bgColor={data.gridPower > 0 ? "bg-red-900/20" : data.gridPower < 0 ? "bg-green-900/20" : "bg-gray-900/20"}
-                    borderColor={data.gridPower > 0 ? "border-red-700" : data.gridPower < 0 ? "border-green-700" : "border-gray-700"}
-                    extraInfo={data.gridPower > 0 ? 'Importing' : data.gridPower < 0 ? 'Exporting' : 'Neutral'}
+                    iconColor={data.gridW > 0 ? "text-red-400" : data.gridW < 0 ? "text-green-400" : "text-gray-400"}
+                    bgColor={data.gridW > 0 ? "bg-red-900/20" : data.gridW < 0 ? "bg-green-900/20" : "bg-gray-900/20"}
+                    borderColor={data.gridW > 0 ? "border-red-700" : data.gridW < 0 ? "border-green-700" : "border-gray-700"}
+                    extraInfo={data.gridW > 0 ? 'Importing' : data.gridW < 0 ? 'Exporting' : 'Neutral'}
                   />
                 )}
               </div>

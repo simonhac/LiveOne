@@ -58,11 +58,11 @@ export async function GET(request: NextRequest) {
             lastError: status.lastError,
           },
           data: data ? {
-            solarPower: data.solarPower,
-            loadPower: data.loadPower,
-            batteryPower: data.batteryPower,
+            solarW: data.solarW,
+            loadW: data.loadW,
+            batteryW: data.batteryW,
             batterySOC: data.batterySOC,
-            gridPower: data.gridPower,
+            gridW: data.gridW,
             timestamp: data.timestamp,
           } : null,
         });
@@ -115,11 +115,11 @@ export async function GET(request: NextRequest) {
               lastError: status.lastError,
             },
             data: data ? {
-              solarPower: data.solarPower,
-              loadPower: data.loadPower,
-              batteryPower: data.batteryPower,
+              solarW: data.solarW,
+              loadW: data.loadW,
+              batteryW: data.batteryW,
               batterySOC: data.batterySOC,
-              gridPower: data.gridPower,
+              gridW: data.gridW,
               timestamp: data.timestamp,
             } : null,
           });
