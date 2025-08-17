@@ -394,7 +394,19 @@ class PollingManager extends EventEmitter {
         gridOutKwhTotal: Math.round(data.gridOutKwhTotal * 1000) / 1000,
       };
       
-      await db.insert(readings).values(reading);
+      // Insert reading with duplicate handling
+      try {
+        await db.insert(readings).values(reading);
+      } catch (insertError: any) {
+        // Check if this is a unique constraint violation
+        if (insertError?.message?.includes('UNIQUE') || insertError?.message?.includes('duplicate')) {
+          console.log(`[DB] Skipping duplicate reading for system ${system.id} at ${inverterTime.toISOString()}`);
+          // This is expected if we receive the same reading twice, just skip it
+          return;
+        }
+        // Re-throw other errors
+        throw insertError;
+      }
       
       // Update polling status
       const existingStatus = await db.select()

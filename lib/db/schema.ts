@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
 // Systems table - stores inverter system information
@@ -55,6 +55,9 @@ export const readings = sqliteTable('readings', {
   // Database metadata
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
 }, (table) => ({
+  // Unique constraint to prevent duplicate readings for the same system at the same time
+  systemInverterTimeUnique: uniqueIndex('readings_system_inverter_time_unique').on(table.systemId, table.inverterTime),
+  // Regular indexes for query performance
   systemInverterTimeIdx: index('system_inverter_time_idx').on(table.systemId, table.inverterTime),
   inverterTimeIdx: index('inverter_time_idx').on(table.inverterTime),
   receivedTimeIdx: index('received_time_idx').on(table.receivedTime),
