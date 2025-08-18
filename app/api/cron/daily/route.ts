@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { aggregateYesterdayForAllSystems } from '@/lib/db/aggregate-daily';
 import { headers } from 'next/headers';
+import { db } from '@/lib/db';
+import { readingsAgg1d } from '@/lib/db/schema';
 
 // This endpoint will be called daily at 00:05 (5 minutes after midnight)
 export async function GET(request: NextRequest) {
@@ -53,9 +55,28 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const { systemId, date, catchup } = body;
+    const { action, systemId, date, catchup } = body;
 
-    if (systemId && date) {
+    if (action === 'clear') {
+      // Clear the entire table and regenerate all historical data
+      console.log('[Daily] Clearing readings_agg_1d table and regenerating...');
+      
+      // Clear the table
+      await db.delete(readingsAgg1d).execute();
+      console.log('[Daily] Table cleared');
+      
+      // Regenerate all missing days for all systems
+      const { aggregateAllMissingDaysForAllSystems } = await import('@/lib/db/aggregate-daily');
+      const results = await aggregateAllMissingDaysForAllSystems();
+      
+      return NextResponse.json({
+        success: true,
+        action: 'clear_and_regenerate',
+        message: `Cleared and regenerated daily aggregations`,
+        systems: results,
+        timestamp: new Date().toISOString()
+      });
+    } else if (systemId && date) {
       // Aggregate specific system and date
       const { aggregateDailyData } = await import('@/lib/db/aggregate-daily');
       const result = await aggregateDailyData(systemId, date);
@@ -75,13 +96,14 @@ export async function POST(request: NextRequest) {
         message: `Aggregated ${results.length} days for system ${systemId}`,
         count: results.length
       });
-    } else if (catchup) {
+    } else if (catchup || action === 'catchup') {
       // Aggregate ALL missing days for ALL systems
       const { aggregateAllMissingDaysForAllSystems } = await import('@/lib/db/aggregate-daily');
       const results = await aggregateAllMissingDaysForAllSystems();
       
       return NextResponse.json({
         success: true,
+        action: 'catchup',
         message: `Caught up all missing days for all systems`,
         systems: results
       });
