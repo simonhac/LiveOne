@@ -295,6 +295,10 @@ vercel env pull .env.local
 
 For complete database schema documentation, see @docs/SCHEMA.md
 
+### API Documentation
+
+For comprehensive API endpoint documentation, see @docs/API.md
+
 Key tables:
 1. **readings** - Raw minute-by-minute data
 2. **readings_agg_5m** - 5-minute aggregated data  
@@ -304,9 +308,9 @@ Key tables:
 
 Manual daily aggregation: 
 ```bash
-curl -X POST https://liveone.vercel.app/api/cron/aggregate-daily \
+curl -X POST https://liveone.vercel.app/api/cron/daily \
   -H "Cookie: auth-token=password" \
-  -d '{"catchup": true}'
+  -d '{"action": "catchup"}'  # or "clear" to wipe and regenerate
 ```
 
 ### Data Pipeline
