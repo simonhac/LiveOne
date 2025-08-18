@@ -1,4 +1,5 @@
 import { sqliteTable, integer, real, text, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
 
 // 5-minute aggregated readings for fast queries (up to 30 days)
 export const readingsAgg5m = sqliteTable('readings_agg_5m', {
@@ -48,4 +49,65 @@ export const readingsAgg5m = sqliteTable('readings_agg_5m', {
   // Query performance indexes
   systemIdIdx: index('readings_agg_5m_system_id_idx').on(table.systemId),
   intervalEndIdx: index('readings_agg_5m_interval_end_idx').on(table.intervalEnd),
+}));
+
+// Daily aggregated readings for long-term queries (unlimited retention)
+export const readingsAgg1d = sqliteTable('readings_agg_1d', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  systemId: text('system_id').notNull(),
+  day: text('day').notNull(), // YYYY-MM-DD format (system local time)
+  createdAt: integer('created_at').notNull().default(sql`(unixepoch())`), // Unix epoch seconds
+  updatedAt: integer('updated_at').notNull().default(sql`(unixepoch())`), // Unix epoch seconds
+  
+  // Energy metrics (kWh)
+  solarKwh: real('solar_kwh'),
+  loadKwh: real('load_kwh'),
+  batteryChargeKwh: real('battery_charge_kwh'),
+  batteryDischargeKwh: real('battery_discharge_kwh'),
+  gridImportKwh: real('grid_import_kwh'),
+  gridExportKwh: real('grid_export_kwh'),
+  
+  // Power statistics (W) - stored as integers
+  solarWMin: integer('solar_w_min'),
+  solarWAvg: integer('solar_w_avg'),
+  solarWMax: integer('solar_w_max'),
+  loadWMin: integer('load_w_min'),
+  loadWAvg: integer('load_w_avg'),
+  loadWMax: integer('load_w_max'),
+  batteryWMin: integer('battery_w_min'),
+  batteryWAvg: integer('battery_w_avg'),
+  batteryWMax: integer('battery_w_max'),
+  gridWMin: integer('grid_w_min'),
+  gridWAvg: integer('grid_w_avg'),
+  gridWMax: integer('grid_w_max'),
+  
+  // Battery SOC statistics (%)
+  batterySocMax: real('battery_soc_max'),
+  batterySocMin: real('battery_soc_min'),
+  batterySocAvg: real('battery_soc_avg'),
+  batterySocEnd: real('battery_soc_end'),
+  
+  // All-time Energy metrics (kWh) - values at end of day
+  solarAlltimeKwh: real('solar_alltime_kwh'),
+  loadAlltimeKwh: real('load_alltime_kwh'),
+  batteryChargeAlltimeKwh: real('battery_charge_alltime_kwh'),
+  batteryDischargeAlltimeKwh: real('battery_discharge_alltime_kwh'),
+  gridImportAlltimeKwh: real('grid_import_alltime_kwh'),
+  gridExportAlltimeKwh: real('grid_export_alltime_kwh'),
+  
+  // Data quality
+  intervalCount: integer('interval_count'), // Number of non-null 5 min intervals aggregated
+  
+  // Metadata
+  version: integer('version').default(1),
+}, (table) => ({
+  // Unique constraint on system and day
+  systemDayIdx: uniqueIndex('idx_readings_agg_1d_system_day')
+    .on(table.systemId, table.day),
+  
+  // For filtering by day ranges
+  dayIdx: index('idx_readings_agg_1d_day').on(table.day),
+  
+  // For finding records that need updating
+  updatedIdx: index('idx_readings_agg_1d_updated').on(table.updatedAt),
 }));
