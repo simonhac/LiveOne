@@ -291,32 +291,23 @@ vercel rm <deployment-url>
 vercel env pull .env.local
 ```
 
-### Important Tables
+### Database Schema
 
+For complete database schema documentation, see @docs/SCHEMA.md
+
+Key tables:
 1. **readings** - Raw minute-by-minute data
-   - Retention: No automatic deletion (retention policies not implemented)
-   - Size: ~125 bytes per reading
-   - Unique constraint on (system_id, inverter_time)
-
-2. **readings_agg_5m** - 5-minute aggregated data
-   - Retention: No automatic deletion
-   - Size: ~135 bytes per 5-minute interval (~27 bytes per minute)
-   - Power values: INTEGER (Watts)
-   - Energy values: REAL with 3 decimal places (kWh)
-   - SOC: REAL with 1 decimal place (%)
-
-3. **readings_agg_1d** - Daily aggregated data
-   - Retention: Permanent (long-term storage)
-   - Aggregated daily at 00:05 via cron job
-   - Power values: INTEGER (min/avg/max Watts)
-   - Daily energy: REAL with 3 decimal places (kWh)
-   - SOC: REAL with 1 decimal place (%)
-   - NULL energy values for first day (no baseline)
-   - Manual aggregation: `curl -X POST https://liveone.vercel.app/api/cron/aggregate-daily -H "Cookie: auth-token=password" -d '{"catchup": true}'`
-
-4. **systems** - Registered inverter systems
-
+2. **readings_agg_5m** - 5-minute aggregated data  
+3. **readings_agg_1d** - Daily aggregated data (timezone-aware as of v4)
+4. **systems** - Registered inverter systems (includes timezone_offset)
 5. **polling_status** - Health monitoring for data collection
+
+Manual daily aggregation: 
+```bash
+curl -X POST https://liveone.vercel.app/api/cron/aggregate-daily \
+  -H "Cookie: auth-token=password" \
+  -d '{"catchup": true}'
+```
 
 ### Data Pipeline
 
