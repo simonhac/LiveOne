@@ -87,6 +87,7 @@ export async function POST(request: NextRequest) {
       });
     } else {
       // Run the daily aggregation for yesterday only
+      console.log('[DEBUG] Using groupBy version - deployed', new Date().toISOString());
       const results = await aggregateYesterdayForAllSystems();
       
       return NextResponse.json({
