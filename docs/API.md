@@ -124,8 +124,8 @@ Returns historical time-series data for charting.
 **Authentication:** Not required
 
 **Query Parameters:**
-- `range` (optional): Time range - "24H" (default), "7D", "30D", "1Y"
-- `resolution` (optional): Data resolution - "5m", "1h", "1d"
+- `range` (optional): Time range - "24H" (default), "7D"
+- `resolution` (optional): Data resolution - "5m", "30m"
 
 **Response:**
 ```json
@@ -151,23 +151,32 @@ Returns historical time-series data for charting.
 ### 2. Authentication Endpoints
 
 #### POST /api/auth/login
-Authenticates a user with password.
+Authenticates a user with email and password.
 
 **Request Body:**
 ```json
 {
+  "email": "user@example.com",
   "password": "your-password"
 }
 ```
+
+**Authentication:**
+- Regular user: Uses `AUTH_PASSWORD` environment variable
+- Admin user: Uses `ADMIN_PASSWORD` environment variable
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Login successful"
+  "user": {
+    "email": "user@example.com",
+    "displayName": "User",
+    "role": "user"  // or "admin" for admin users
+  }
 }
 ```
-Sets `auth-token` cookie on success.
+Sets `auth-token` cookie on success with the provided password.
 
 ---
 
@@ -190,9 +199,9 @@ Clears `auth-token` cookie.
 ### 3. System Management Endpoints
 
 #### GET /api/admin/systems
-Lists all configured systems.
+Lists all configured systems with current status and data.
 
-**Authentication:** Required
+**Authentication:** Required (accepts both `AUTH_PASSWORD` and `ADMIN_PASSWORD`)
 
 **Response:**
 ```json
@@ -200,20 +209,38 @@ Lists all configured systems.
   "success": true,
   "systems": [
     {
-      "id": 1,
-      "userId": "simon",
-      "systemNumber": "1586",
+      "owner": "simon",
       "displayName": "Home Solar",
-      "model": "SP PRO GO 7.5kW",
-      "serial": "240315002",
-      "ratings": "7.5kW, 48V",
-      "solarSize": "9 kW",
-      "batterySize": "14.3 kWh",
-      "timezoneOffset": 10,
-      "createdAt": "2025-08-01T00:00:00Z",
-      "updatedAt": "2025-08-18T00:00:00Z"
+      "systemNumber": "1586",
+      "lastLogin": null,
+      "isLoggedIn": false,
+      "activeSessions": 0,
+      "systemInfo": {
+        "model": "SP PRO GO 7.5kW",
+        "serial": "240315002",
+        "ratings": "7.5kW, 48V",
+        "solarSize": "9 kW",
+        "batterySize": "14.3 kWh"
+      },
+      "polling": {
+        "isActive": true,
+        "isAuthenticated": true,
+        "lastPollTime": "2025-08-18T10:00:00+10:00",
+        "lastError": null
+      },
+      "data": {
+        "solarPower": 2500,
+        "loadPower": 1200,
+        "batteryPower": -1300,
+        "batterySOC": 75.5,
+        "gridPower": 0,
+        "timestamp": "2025-08-18T10:00:00+10:00"
+      }
     }
-  ]
+  ],
+  "totalSystems": 1,
+  "activeSessions": 0,
+  "timestamp": "2025-08-18T10:00:00+10:00"
 }
 ```
 
@@ -356,23 +383,24 @@ All endpoints return consistent error responses:
 - Daily aggregation respects system's configured timezone offset
 - Default timezone: AEST (UTC+10)
 
----
-
-## WebSocket/SSE Support
-
-Server-Sent Events (SSE) endpoints have been deprecated in favor of polling due to Vercel serverless limitations. Use polling with 30-second intervals for near real-time updates.
 
 ---
 
 ## Testing
 
-For local testing, set the `AUTH_PASSWORD` environment variable and use cookie authentication:
+For local testing, set the `AUTH_PASSWORD` and optionally `ADMIN_PASSWORD` environment variables:
 
 ```bash
-# Login first
+# Login as regular user
 curl -X POST http://localhost:3000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"password": "your-password"}' \
+  -d '{"email": "user@example.com", "password": "your-password"}' \
+  -c cookies.txt
+
+# Login as admin user
+curl -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "admin@example.com", "password": "admin-password"}' \
   -c cookies.txt
 
 # Use the cookie for authenticated requests
@@ -383,22 +411,11 @@ curl http://localhost:3000/api/admin/systems \
 Or pass the auth token directly:
 
 ```bash
+# Regular user
 curl http://localhost:3000/api/admin/systems \
   -H "Cookie: auth-token=your-password"
+
+# Admin user
+curl http://localhost:3000/api/admin/systems \
+  -H "Cookie: auth-token=admin-password"
 ```
-
----
-
-## Migration Notes
-
-### Deprecated/Removed Endpoints
-- `/api/sse/*` - Removed, replaced with polling via `/api/data`
-- `/api/cron/aggregate-daily` - Renamed to `/api/cron/daily`
-- `/api/cron/poll-systems` - Renamed to `/api/cron/minutely`
-- `/api/cron/cleanup` - Removed (no automatic retention implemented)
-- `/api/polling/start` - Removed (use `/api/cron/minutely` instead)
-- `/api/status` - Removed (use `/api/data` instead)
-
-### Breaking Changes
-- SSE support removed in favor of polling
-- Battery metrics renamed: `batteryInKwh`/`batteryOutKwh` (today) vs `batteryChargeKwh`/`batteryDischargeKwh` (historical)
