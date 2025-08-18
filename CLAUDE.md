@@ -1,21 +1,42 @@
-# CLAUDE.md - Turso Database Interaction Guide
+# CLAUDE.md - Project Management Guide
 
-## Database Connection
+## Turso Database Management
 
-### Using Turso CLI
+### Installing and Setting Up Turso CLI
 
 ```bash
-# Install Turso CLI if not already installed
+# Install Turso CLI (persists in ~/.turso)
 curl -sSfL https://get.tur.so/install.sh | bash
+export PATH="$HOME/.turso:$PATH"  # Add to PATH
+echo 'export PATH="$HOME/.turso:$PATH"' >> ~/.zshrc  # Make permanent
 
 # Authenticate (one-time setup)
-turso auth login
+~/.turso/turso auth login
+
+# List available databases
+~/.turso/turso db list
 
 # Connect to production database shell
-turso db shell liveone-prod-tokyo
+~/.turso/turso db shell liveone-tokyo
 
 # Or use direct connection with URL
-turso db shell libsql://liveone-prod-tokyo-simonhac.turso.io
+~/.turso/turso db shell libsql://liveone-tokyo-simonhac.aws-ap-northeast-1.turso.io
+```
+
+### Quick Database Commands
+
+```bash
+# Check recent data
+~/.turso/turso db shell liveone-tokyo "SELECT system_id, day, solar_kwh, load_kwh FROM readings_agg_1d ORDER BY day DESC LIMIT 5"
+
+# Count records
+~/.turso/turso db shell liveone-tokyo "SELECT COUNT(*) as count FROM readings_agg_5m"
+
+# Check distinct systems
+~/.turso/turso db shell liveone-tokyo "SELECT DISTINCT system_id FROM readings_agg_5m"
+
+# Get fresh auth token
+~/.turso/turso db tokens create liveone-tokyo
 ```
 
 ### Common SQL Operations
@@ -206,16 +227,67 @@ node scripts/aggregate-5min.js
 
 Required for database access:
 ```bash
-TURSO_DATABASE_URL=libsql://liveone-prod-tokyo-simonhac.turso.io
-TURSO_AUTH_TOKEN=<your-token>
+TURSO_DATABASE_URL=libsql://liveone-tokyo-simonhac.aws-ap-northeast-1.turso.io
+TURSO_AUTH_TOKEN=<your-token>  # Generate with: ~/.turso/turso db tokens create liveone-tokyo
 ```
 
 ### Database Locations
 
 - **Production**: Tokyo (aws-ap-northeast-1)
-- **Database Name**: liveone-prod-tokyo
+- **Database Name**: liveone-tokyo
 - **Region**: Optimized for Australian users
 - **Response Time**: ~200ms from Australia
+
+## Vercel Deployment Management
+
+### Checking Build Logs
+
+```bash
+# Use the provided script to get build logs
+./scripts/vercel-build-log.sh
+
+# Or manually check deployments
+vercel ls  # List recent deployments
+vercel inspect <deployment-url> --logs  # Get build logs for specific deployment
+
+# Check deployment status
+vercel inspect <deployment-url> | grep status
+```
+
+### Common Deployment Issues
+
+1. **Build Failures**
+   - Check TypeScript errors: `npm run type-check`
+   - Test build locally: `npm run build`
+   - View build logs: `./scripts/vercel-build-log.sh`
+
+2. **Type Errors with Drizzle**
+   - `select()` doesn't accept arguments in our version
+   - Use `select()` then filter/deduplicate in JavaScript
+   - Example: `[...new Set(results.map(r => r.systemId))]`
+
+3. **Environment Variables**
+   - Ensure TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are set in Vercel
+   - Update tokens if getting 404 errors: `~/.turso/turso db tokens create liveone-tokyo`
+
+### Useful Vercel Commands
+
+```bash
+# Deploy to production
+vercel --prod
+
+# Check logs of running deployment  
+vercel logs <deployment-url>
+
+# List all deployments
+vercel ls
+
+# Remove a deployment
+vercel rm <deployment-url>
+
+# Pull environment variables from Vercel
+vercel env pull .env.local
+```
 
 ### Important Tables
 
@@ -231,17 +303,27 @@ TURSO_AUTH_TOKEN=<your-token>
    - Energy values: REAL with 3 decimal places (kWh)
    - SOC: REAL with 1 decimal place (%)
 
-3. **systems** - Registered inverter systems
+3. **readings_agg_1d** - Daily aggregated data
+   - Retention: Permanent (long-term storage)
+   - Aggregated daily at 00:05 via cron job
+   - Power values: INTEGER (min/avg/max Watts)
+   - Daily energy: REAL with 3 decimal places (kWh)
+   - SOC: REAL with 1 decimal place (%)
+   - NULL energy values for first day (no baseline)
+   - Manual aggregation: `curl -X POST https://liveone.vercel.app/api/cron/aggregate-daily -H "Cookie: auth-token=password" -d '{"catchup": true}'`
 
-4. **polling_status** - Health monitoring for data collection
+4. **systems** - Registered inverter systems
+
+5. **polling_status** - Health monitoring for data collection
 
 ### Data Pipeline
 
 1. **Collection**: Vercel cron job polls Select.Live every minute
 2. **Storage**: Raw data saved to `readings` table
-3. **Aggregation**: 5-minute aggregates created in real-time
-4. **API**: Fast queries use pre-aggregated data
-5. **Cleanup**: No automatic cleanup (retention policies not implemented)
+3. **5-Minute Aggregation**: Created in real-time as data arrives
+4. **Daily Aggregation**: Runs at 00:05 daily via cron job
+5. **API**: Fast queries use pre-aggregated data (< 1 second response)
+6. **Cleanup**: No automatic cleanup (retention policies not implemented)
 
 ### Performance Tips
 
