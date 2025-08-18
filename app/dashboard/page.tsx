@@ -226,7 +226,7 @@ export default function DashboardPage() {
   }
 
   // Calculate average power from energy for yesterday
-  const calculateYesterdayPower = (energyKwh: number | null | undefined, intervalCount: number | undefined): number | null => {
+  const calculateYesterdayPower = (energyKwh: number | null | undefined, intervalCount: number | null | undefined): number | null => {
     if (energyKwh === null || energyKwh === undefined || !intervalCount) return null;
     // Each interval is 5 minutes, so hours = intervalCount * 5 / 60
     const hours = (intervalCount * 5) / 60;
