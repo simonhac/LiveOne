@@ -41,8 +41,8 @@ export async function aggregateDailyData(systemId: string, day: string) {
       .where(
         and(
           eq(readingsAgg5m.systemId, parseInt(systemId)),
-          sql`${readingsAgg5m.intervalEnd} > ${dayStart}`,
-          sql`${readingsAgg5m.intervalEnd} <= ${dayEnd}`
+          sql`${readingsAgg5m.intervalEnd} > ${Math.floor(dayStart.getTime() / 1000)}`,
+          sql`${readingsAgg5m.intervalEnd} <= ${Math.floor(dayEnd.getTime() / 1000)}`
         )
       )
       .orderBy(asc(readingsAgg5m.intervalEnd));
@@ -71,7 +71,7 @@ export async function aggregateDailyData(systemId: string, day: string) {
       .where(
         and(
           eq(readingsAgg5m.systemId, parseInt(systemId)),
-          sql`${readingsAgg5m.intervalEnd} <= ${dayStart}`
+          sql`${readingsAgg5m.intervalEnd} <= ${Math.floor(dayStart.getTime() / 1000)}`
         )
       )
       .orderBy(desc(readingsAgg5m.intervalEnd))
