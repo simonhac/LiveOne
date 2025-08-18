@@ -369,9 +369,10 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         min: windowStart.getTime(), // Show from selected time range
         max: now.getTime(), // To current time
         time: {
-          unit: 'hour',
+          unit: timeRange === '7D' ? 'day' : 'hour',
           displayFormats: {
             hour: 'HH:mm',
+            day: 'EEE', // Just show day name (e.g., "Thu")
           },
         },
         grid: {
@@ -383,9 +384,21 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
             size: 10,
             family: 'DM Sans, system-ui, sans-serif',
           },
-          autoSkip: true,
+          autoSkip: timeRange !== '7D', // Don't skip in 7D mode
           maxRotation: 0, // Keep labels horizontal
           minRotation: 0, // Keep labels horizontal
+          align: timeRange === '7D' ? 'start' : 'center', // Align labels to the right of the grid line in 7D mode
+          callback: function(value, index, ticks) {
+            const date = new Date(value);
+            if (timeRange === '7D') {
+              // For 7D mode, show day name on first line and date on second line
+              const dayName = format(date, 'EEE');
+              const dayDate = format(date, 'd MMM');
+              return [dayName, dayDate]; // Return array for multi-line label
+            }
+            // For 1D mode, keep existing hour format
+            return format(date, 'HH:mm');
+          },
         },
       },
       y: {
