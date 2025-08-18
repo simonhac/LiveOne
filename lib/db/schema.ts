@@ -12,6 +12,7 @@ export const systems = sqliteTable('systems', {
   ratings: text('ratings'),
   solarSize: text('solar_size'),
   batterySize: text('battery_size'),
+  timezoneOffset: integer('timezone_offset').notNull().default(10), // Standard timezone offset in hours (e.g., 10 for AEST, DST calculated separately)
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
 }, (table) => ({

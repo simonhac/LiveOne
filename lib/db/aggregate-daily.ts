@@ -1,5 +1,5 @@
 import { db } from '@/lib/db';
-import { readingsAgg5m, readingsAgg1d } from '@/lib/db/schema';
+import { readingsAgg5m, readingsAgg1d, systems } from '@/lib/db/schema';
 import { sql, eq, and, gte, lt, desc, asc } from 'drizzle-orm';
 
 /**
@@ -10,21 +10,39 @@ import { sql, eq, and, gte, lt, desc, asc } from 'drizzle-orm';
 export async function aggregateDailyData(systemId: string, day: string) {
   const startTime = performance.now();
   
-  // Calculate the start and end timestamps for the day
-  // Note: intervalEnd in DB is stored as Unix seconds, but Date expects milliseconds
-  const dayStart = new Date(`${day}T00:00:00`);
-  const dayEnd = new Date(`${day}T23:59:59`);
+  // Get the system's timezone offset
+  const [system] = await db.select()
+    .from(systems)
+    .where(eq(systems.id, parseInt(systemId)))
+    .limit(1);
+  
+  if (!system) {
+    throw new Error(`System ${systemId} not found`);
+  }
+  
+  // Calculate the start and end timestamps for the day in the system's timezone
+  // For example, for timezone offset +10 (AEST):
+  // 2025-08-17T00:00:00+10:00 = 2025-08-16T14:00:00 UTC
+  const offsetHours = system.timezoneOffset;
+  const offsetString = offsetHours >= 0 ? `+${String(offsetHours).padStart(2, '0')}:00` : `-${String(Math.abs(offsetHours)).padStart(2, '0')}:00`;
+  
+  const dayStart = new Date(`${day}T00:00:00${offsetString}`);
+  const nextDay = new Date(dayStart);
+  nextDay.setDate(nextDay.getDate() + 1);
+  const dayEnd = nextDay; // 00:00:00 of the next day
   
   try {
     // Get all 5-minute aggregated data for the day
+    // Using > dayStart and <= dayEnd because interval_end represents the END of each 5-minute period
+    // So a period ending at 00:00:00 belongs to the previous day
     const fiveMinData = await db
       .select()
       .from(readingsAgg5m)
       .where(
         and(
           eq(readingsAgg5m.systemId, parseInt(systemId)),
-          gte(readingsAgg5m.intervalEnd, dayStart),
-          lt(readingsAgg5m.intervalEnd, dayEnd)
+          sql`${readingsAgg5m.intervalEnd} > ${dayStart}`,
+          sql`${readingsAgg5m.intervalEnd} <= ${dayEnd}`
         )
       )
       .orderBy(asc(readingsAgg5m.intervalEnd));
@@ -46,17 +64,14 @@ export async function aggregateDailyData(systemId: string, day: string) {
     const lastRecord = fiveMinData[fiveMinData.length - 1];
     
     // Get the previous day's last record for energy delta calculation
-    const previousDayEnd = new Date(dayStart);
-    previousDayEnd.setDate(previousDayEnd.getDate() - 1);
-    previousDayEnd.setHours(23, 59, 59);
-    
+    // We want the last record with interval_end <= dayStart (which is 00:00:00)
     const previousDayData = await db
       .select()
       .from(readingsAgg5m)
       .where(
         and(
           eq(readingsAgg5m.systemId, parseInt(systemId)),
-          lt(readingsAgg5m.intervalEnd, dayStart)
+          sql`${readingsAgg5m.intervalEnd} <= ${dayStart}`
         )
       )
       .orderBy(desc(readingsAgg5m.intervalEnd))
