@@ -2,20 +2,16 @@
   "regions": ["hnd1"],
   "crons": [
     {
-      "path": "/api/cron/poll-systems",
+      "path": "/api/cron/minutely",
       "schedule": "* * * * *"
     },
     {
-      "path": "/api/cron/cleanup",
-      "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/cron/aggregate-daily",
+      "path": "/api/cron/daily",
       "schedule": "5 0 * * *"
     }
   ],
   "functions": {
-    "app/api/cron/poll-systems/route.ts": {
+    "app/api/cron/minutely/route.ts": {
       "maxDuration": 60
     },
     "app/api/history/route.ts": {
