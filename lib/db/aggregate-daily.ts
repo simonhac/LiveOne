@@ -180,13 +180,15 @@ export async function aggregateAllDailyData(
     if (!earliestDate) {
       // Find the earliest data for this system
       const earliest = await db
-        .select({ minDate: sql`DATE(interval_end)`.as('minDate') })
+        .select()
         .from(readingsAgg5m)
         .where(eq(readingsAgg5m.systemId, parseInt(systemId)))
         .orderBy(asc(readingsAgg5m.intervalEnd))
         .limit(1);
       
-      earliestDate = earliest[0]?.minDate as string;
+      if (earliest[0]) {
+        earliestDate = earliest[0].intervalEnd.toISOString().split('T')[0];
+      }
     }
     
     if (!latestDate) {
@@ -203,7 +205,7 @@ export async function aggregateAllDailyData(
     
     // Get existing aggregated days
     const existingDays = await db
-      .select({ day: readingsAgg1d.day })
+      .select()
       .from(readingsAgg1d)
       .where(
         and(
@@ -263,7 +265,7 @@ export async function aggregateYesterdayForAllSystems() {
     
     // Get all unique system IDs from recent data
     const systems = await db
-      .selectDistinct({ systemId: readingsAgg5m.systemId })
+      .selectDistinct()
       .from(readingsAgg5m)
       .where(
         gte(readingsAgg5m.intervalEnd, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
@@ -299,7 +301,7 @@ export async function aggregateAllMissingDaysForAllSystems() {
   try {
     // Get all unique system IDs that have any 5-minute data
     const systems = await db
-      .selectDistinct({ systemId: readingsAgg5m.systemId })
+      .selectDistinct()
       .from(readingsAgg5m);
     
     console.log(`Found ${systems.length} systems to process for all missing days`);
