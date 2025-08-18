@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
         polling: {
           isActive: pollStatus?.isActive || false,
           isAuthenticated: true, // Always true if we have data
-          lastPollTime: pollStatus?.lastPollTime ? new Date(pollStatus.lastPollTime * 1000).toISOString() : null,
+          lastPollTime: pollStatus?.lastPollTime ? new Date(Number(pollStatus.lastPollTime) * 1000).toISOString() : null,
           lastError: pollStatus?.lastError || null,
         },
         data: reading ? {
@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
           batteryPower: reading.batteryW,
           batterySOC: reading.batterySOC,
           gridPower: reading.gridW,
-          timestamp: new Date(reading.inverterTime * 1000).toISOString(),
+          timestamp: new Date(Number(reading.inverterTime) * 1000).toISOString(),
         } : null,
       });
     }
