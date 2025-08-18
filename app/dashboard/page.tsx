@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { SelectronicData } from '@/config'
 import EnergyChart from '@/components/EnergyChart'
 import { 
   Sun, 
@@ -26,8 +25,88 @@ interface SystemInfo {
   batterySize?: string;
 }
 
+interface DashboardData {
+  latest: {
+    timestamp: string;
+    power: {
+      solarW: number;
+      solarInverterW: number;
+      shuntW: number;
+      loadW: number;
+      batteryW: number;
+      gridW: number;
+    };
+    soc: {
+      battery: number;
+    };
+    energy: {
+      today: {
+        solarKwh: number | null;
+        loadKwh: number | null;
+        batteryInKwh: number | null;
+        batteryOutKwh: number | null;
+        gridInKwh: number | null;
+        gridOutKwh: number | null;
+      };
+      total: {
+        solarKwh: number | null;
+        loadKwh: number | null;
+        batteryInKwh: number | null;
+        batteryOutKwh: number | null;
+        gridInKwh: number | null;
+        gridOutKwh: number | null;
+      };
+    };
+    system: {
+      faultCode: number;
+      faultTimestamp: number;
+      generatorStatus: number;
+    };
+  };
+  historical: {
+    yesterday: {
+      date: string;
+      energy: {
+        solarKwh: number | null;
+        loadKwh: number | null;
+        batteryChargeKwh: number | null;
+        batteryDischargeKwh: number | null;
+        gridImportKwh: number | null;
+        gridExportKwh: number | null;
+      };
+      power: {
+        solar: { minW: number | null; avgW: number | null; maxW: number | null };
+        load: { minW: number | null; avgW: number | null; maxW: number | null };
+        battery: { minW: number | null; avgW: number | null; maxW: number | null };
+        grid: { minW: number | null; avgW: number | null; maxW: number | null };
+      };
+      soc: {
+        minBattery: number | null;
+        avgBattery: number | null;
+        maxBattery: number | null;
+        endBattery: number | null;
+      };
+      dataQuality: {
+        intervalCount: number | null;
+        coverage: string | null;
+      };
+    } | null;
+  };
+  polling: {
+    lastPollTime: string | null;
+    lastSuccessTime: string | null;
+    lastErrorTime: string | null;
+    lastError: string | null;
+    consecutiveErrors: number;
+    totalPolls: number;
+    successfulPolls: number;
+    isActive: boolean;
+  };
+  systemInfo: SystemInfo;
+}
+
 export default function DashboardPage() {
-  const [data, setData] = useState<SelectronicData | null>(null)
+  const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
@@ -46,57 +125,58 @@ export default function DashboardPage() {
       return
     }
 
-    // Set up SSE connection for real-time updates
-    // Use serverless endpoint in production
-    const eventSource = new EventSource('/api/sse/user-serverless')
-    
-    eventSource.onopen = () => {
-      console.log('SSE connection established')
-      setError('')
-    }
-    
-    eventSource.onmessage = (event) => {
+    // Function to fetch data from API
+    const fetchData = async () => {
       try {
-        const result = JSON.parse(event.data)
+        const response = await fetch('/api/data')
+        const result = await response.json()
         
-        if (result.type === 'connected') {
-          console.log('SSE connected:', result.timestamp)
-        } else if (result.type === 'update') {
-          if (result.data) {
-            setData(result.data)
-            // Use the timestamp from the actual data, which represents when it was captured from the inverter
-            const dataTimestamp = new Date(result.data.timestamp)
-            setLastUpdate(dataTimestamp)
-            // Calculate the actual seconds since the data timestamp
-            const secondsAgo = Math.floor((Date.now() - dataTimestamp.getTime()) / 1000)
-            setSecondsSinceUpdate(secondsAgo)
-            setIsPolling(result.status?.isPolling || false)
-            setIsAuthenticated(result.status?.isAuthenticated || false)
-            setSystemInfo(result.systemInfo || null)
-            setError('')
-          } else if (result.status?.lastError) {
-            setError(result.status.lastError)
-            setIsPolling(result.status?.isPolling || false)
-            setIsAuthenticated(result.status?.isAuthenticated || false)
-          }
+        if (result.success) {
+          setData(result)
+          
+          // Parse timestamp (now in AEST format)
+          const dataTimestamp = new Date(result.latest.timestamp)
+          setLastUpdate(dataTimestamp)
+          
+          // Calculate seconds since update
+          const secondsAgo = Math.floor((Date.now() - dataTimestamp.getTime()) / 1000)
+          setSecondsSinceUpdate(secondsAgo)
+          
+          // Update polling status from the polling section
+          const polling = result.polling || {}
+          // Consider polling active if last poll was within 2 minutes
+          const lastPoll = polling.lastPollTime ? new Date(polling.lastPollTime) : null
+          const isPollingActive = lastPoll ? ((Date.now() - lastPoll.getTime()) / 1000 / 60) < 2 : false
+          setIsPolling(isPollingActive)
+          
+          // Consider authenticated if we have recent successful data
+          const lastSuccess = polling.lastSuccessTime ? new Date(polling.lastSuccessTime) : null
+          const isAuth = lastSuccess ? ((Date.now() - lastSuccess.getTime()) / 1000 / 60) < 5 : false
+          setIsAuthenticated(isAuth)
+          
+          setSystemInfo(result.systemInfo || null)
+          setError('')
           setLoading(false)
-        } else if (result.type === 'heartbeat') {
-          console.log('SSE heartbeat:', result.timestamp)
+        } else {
+          setError(result.error || 'Failed to fetch data')
+          setLoading(false)
         }
       } catch (err) {
-        console.error('Error parsing SSE data:', err)
+        console.error('Error fetching data:', err)
+        setError('Failed to fetch data')
+        setLoading(false)
       }
     }
-    
-    eventSource.onerror = (error) => {
-      console.error('SSE error:', error)
-      setError('Connection lost. Reconnecting...')
-      // Browser will automatically reconnect
-    }
+
+    // Initial fetch
+    fetchData()
+
+    // Set up polling interval (30 seconds)
+    const interval = setInterval(fetchData, 30000)
 
     // Cleanup on unmount
     return () => {
-      eventSource.close()
+      clearInterval(interval)
     }
   }, [router])
 
@@ -137,7 +217,10 @@ export default function DashboardPage() {
   }
 
   // Automatically determine if grid information should be shown
-  const showGrid = data ? (data.gridInKwhTotal > 0 || data.gridOutKwhTotal > 0) : false
+  const showGrid = data ? (
+    (data.latest.energy.total.gridInKwh || 0) > 0 || 
+    (data.latest.energy.total.gridOutKwh || 0) > 0
+  ) : false
 
   return (
     <div className="min-h-screen bg-gray-900">
@@ -288,11 +371,11 @@ export default function DashboardPage() {
         {data && (
           <div className="space-y-6">
             {/* Fault Warning */}
-            {data.faultCode !== 0 && (
+            {data.latest.system.faultCode !== 0 && (
               <div className="bg-yellow-900/50 border border-yellow-700 text-yellow-300 px-4 py-3 rounded flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5" />
                 <div>
-                  <span className="font-semibold">Fault Code {data.faultCode}</span> encountered at {new Date(data.faultTimestamp * 1000).toLocaleString()}
+                  <span className="font-semibold">Fault Code {data.latest.system.faultCode}</span> encountered at {new Date(data.latest.system.faultTimestamp * 1000).toLocaleString()}
                 </div>
               </div>
             )}
@@ -335,21 +418,21 @@ export default function DashboardPage() {
               <div className="space-y-4">
                 <PowerCard
                   title="Solar"
-                  value={formatPower(data.solarW)}
+                  value={formatPower(data.latest.power.solarW)}
                   icon={<Sun className="w-6 h-6" />}
                   iconColor="text-yellow-400"
                   bgColor="bg-yellow-900/20"
                   borderColor="border-yellow-700"
                   extra={
                     <div className="text-xs space-y-1 text-gray-400">
-                      <div>Remote: {formatPower(data.solarInverterW)}</div>
-                      <div>Local: {formatPower(data.shuntW)}</div>
+                      <div>Remote: {formatPower(data.latest.power.solarInverterW)}</div>
+                      <div>Local: {formatPower(data.latest.power.shuntW)}</div>
                     </div>
                   }
                 />
                 <PowerCard
                   title="Load"
-                  value={formatPower(data.loadW)}
+                  value={formatPower(data.latest.power.loadW)}
                   icon={<Home className="w-6 h-6" />}
                   iconColor="text-blue-400"
                   bgColor="bg-blue-900/20"
@@ -357,25 +440,25 @@ export default function DashboardPage() {
                 />
                 <PowerCard
                   title="Battery"
-                  value={formatPower(data.batteryW)}
+                  value={formatPower(data.latest.power.batteryW)}
                   icon={<Battery className="w-6 h-6" />}
-                  iconColor={data.batteryW < 0 ? "text-green-400" : data.batteryW > 0 ? "text-orange-400" : "text-gray-400"}
-                  bgColor={data.batteryW < 0 ? "bg-green-900/20" : data.batteryW > 0 ? "bg-orange-900/20" : "bg-gray-900/20"}
-                  borderColor={data.batteryW < 0 ? "border-green-700" : data.batteryW > 0 ? "border-orange-700" : "border-gray-700"}
+                  iconColor={data.latest.power.batteryW < 0 ? "text-green-400" : data.latest.power.batteryW > 0 ? "text-orange-400" : "text-gray-400"}
+                  bgColor={data.latest.power.batteryW < 0 ? "bg-green-900/20" : data.latest.power.batteryW > 0 ? "bg-orange-900/20" : "bg-gray-900/20"}
+                  borderColor={data.latest.power.batteryW < 0 ? "border-green-700" : data.latest.power.batteryW > 0 ? "border-orange-700" : "border-gray-700"}
                   extra={
-                    <div className="text-sm font-semibold text-white">{data.batterySOC.toFixed(1)}% SOC</div>
+                    <div className="text-sm font-semibold text-white">{data.latest.soc.battery.toFixed(1)}% SOC</div>
                   }
-                  extraInfo={data.batteryW < 0 ? 'Charging' : data.batteryW > 0 ? 'Discharging' : 'Idle'}
+                  extraInfo={data.latest.power.batteryW < 0 ? 'Charging' : data.latest.power.batteryW > 0 ? 'Discharging' : 'Idle'}
                 />
                 {showGrid && (
                   <PowerCard
                     title="Grid"
-                    value={formatPower(data.gridW)}
+                    value={formatPower(data.latest.power.gridW)}
                     icon={<Zap className="w-6 h-6" />}
-                    iconColor={data.gridW > 0 ? "text-red-400" : data.gridW < 0 ? "text-green-400" : "text-gray-400"}
-                    bgColor={data.gridW > 0 ? "bg-red-900/20" : data.gridW < 0 ? "bg-green-900/20" : "bg-gray-900/20"}
-                    borderColor={data.gridW > 0 ? "border-red-700" : data.gridW < 0 ? "border-green-700" : "border-gray-700"}
-                    extraInfo={data.gridW > 0 ? 'Importing' : data.gridW < 0 ? 'Exporting' : 'Neutral'}
+                    iconColor={data.latest.power.gridW > 0 ? "text-red-400" : data.latest.power.gridW < 0 ? "text-green-400" : "text-gray-400"}
+                    bgColor={data.latest.power.gridW > 0 ? "bg-red-900/20" : data.latest.power.gridW < 0 ? "bg-green-900/20" : "bg-gray-900/20"}
+                    borderColor={data.latest.power.gridW > 0 ? "border-red-700" : data.latest.power.gridW < 0 ? "border-green-700" : "border-gray-700"}
+                    extraInfo={data.latest.power.gridW > 0 ? 'Importing' : data.latest.power.gridW < 0 ? 'Exporting' : 'Neutral'}
                   />
                 )}
               </div>
@@ -407,61 +490,95 @@ export default function DashboardPage() {
                     <tr className="border-b border-gray-700">
                       <td className="py-1.5 font-medium text-gray-300 text-xs">Today</td>
                       <td className="text-right py-1.5 text-yellow-400 font-mono text-sm">
-                        <span className="font-bold">{data.solarKwhToday?.toFixed(1) ?? '—'}</span> {data.solarKwhToday !== null && <span className="font-normal">kWh</span>}
+                        <span className="font-bold">{data.latest.energy.today.solarKwh?.toFixed(1) ?? '—'}</span> {data.latest.energy.today.solarKwh !== null && <span className="font-normal">kWh</span>}
                       </td>
                       <td className="text-right py-1.5 text-blue-400 font-mono text-sm">
-                        <span className="font-bold">{data.loadKwhToday?.toFixed(1) ?? '—'}</span> {data.loadKwhToday !== null && <span className="font-normal">kWh</span>}
+                        <span className="font-bold">{data.latest.energy.today.loadKwh?.toFixed(1) ?? '—'}</span> {data.latest.energy.today.loadKwh !== null && <span className="font-normal">kWh</span>}
                       </td>
                       <td className="text-right py-1.5 text-green-400 font-mono text-sm hidden sm:table-cell">
-                        <span className="font-bold">{data.batteryInKwhToday?.toFixed(1) ?? '—'}</span> {data.batteryInKwhToday !== null && <span className="font-normal">kWh</span>}
+                        <span className="font-bold">{data.latest.energy.today.batteryInKwh?.toFixed(1) ?? '—'}</span> {data.latest.energy.today.batteryInKwh !== null && <span className="font-normal">kWh</span>}
                       </td>
                       <td className="text-right py-1.5 text-orange-400 font-mono text-sm hidden sm:table-cell">
-                        <span className="font-bold">{data.batteryOutKwhToday?.toFixed(1) ?? '—'}</span> {data.batteryOutKwhToday !== null && <span className="font-normal">kWh</span>}
+                        <span className="font-bold">{data.latest.energy.today.batteryOutKwh?.toFixed(1) ?? '—'}</span> {data.latest.energy.today.batteryOutKwh !== null && <span className="font-normal">kWh</span>}
                       </td>
                       <td className="text-right py-1.5 text-green-400 font-mono text-sm sm:hidden">
                         <span className="font-bold">
-                          {data.batteryInKwhToday !== null && data.batteryOutKwhToday !== null ? 
-                            `${data.batteryInKwhToday.toFixed(1)}/${data.batteryOutKwhToday.toFixed(1)}` : 
+                          {data.latest.energy.today.batteryInKwh !== null && data.latest.energy.today.batteryOutKwh !== null ? 
+                            `${data.latest.energy.today.batteryInKwh.toFixed(1)}/${data.latest.energy.today.batteryOutKwh.toFixed(1)}` : 
                             '—'
                           }
                         </span> 
-                        {data.batteryInKwhToday !== null && <span className="font-normal">kWh</span>}
+                        {data.latest.energy.today.batteryInKwh !== null && <span className="font-normal">kWh</span>}
                       </td>
                       {showGrid && (
                         <>
                           <td className="text-right py-1.5 text-red-400 font-mono text-sm">
-                            <span className="font-bold">{data.gridInKwhToday?.toFixed(1) ?? '—'}</span> {data.gridInKwhToday !== null && <span className="font-normal">kWh</span>}
+                            <span className="font-bold">{data.latest.energy.today.gridInKwh?.toFixed(1) ?? '—'}</span> {data.latest.energy.today.gridInKwh !== null && <span className="font-normal">kWh</span>}
                           </td>
                           <td className="text-right py-1.5 text-green-400 font-mono text-sm">
-                            <span className="font-bold">{data.gridOutKwhToday?.toFixed(1) ?? '—'}</span> {data.gridOutKwhToday !== null && <span className="font-normal">kWh</span>}
+                            <span className="font-bold">{data.latest.energy.today.gridOutKwh?.toFixed(1) ?? '—'}</span> {data.latest.energy.today.gridOutKwh !== null && <span className="font-normal">kWh</span>}
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                    <tr className="border-b border-gray-700">
+                      <td className="py-1.5 font-medium text-gray-300 text-xs">Yesterday</td>
+                      <td className="text-right py-1.5 text-yellow-400 font-mono text-sm">
+                        <span className="font-bold">{data.historical?.yesterday?.energy.solarKwh?.toFixed(1) ?? '—'}</span> {data.historical?.yesterday?.energy.solarKwh !== null && <span className="font-normal">kWh</span>}
+                      </td>
+                      <td className="text-right py-1.5 text-blue-400 font-mono text-sm">
+                        <span className="font-bold">{data.historical?.yesterday?.energy.loadKwh?.toFixed(1) ?? '—'}</span> {data.historical?.yesterday?.energy.loadKwh !== null && <span className="font-normal">kWh</span>}
+                      </td>
+                      <td className="text-right py-1.5 text-green-400 font-mono text-sm hidden sm:table-cell">
+                        <span className="font-bold">{data.historical?.yesterday?.energy.batteryChargeKwh?.toFixed(1) ?? '—'}</span> {data.historical?.yesterday?.energy.batteryChargeKwh !== null && <span className="font-normal">kWh</span>}
+                      </td>
+                      <td className="text-right py-1.5 text-orange-400 font-mono text-sm hidden sm:table-cell">
+                        <span className="font-bold">{data.historical?.yesterday?.energy.batteryDischargeKwh?.toFixed(1) ?? '—'}</span> {data.historical?.yesterday?.energy.batteryDischargeKwh !== null && <span className="font-normal">kWh</span>}
+                      </td>
+                      <td className="text-right py-1.5 text-green-400 font-mono text-sm sm:hidden">
+                        <span className="font-bold">
+                          {data.historical?.yesterday?.energy.batteryChargeKwh !== null && data.historical?.yesterday?.energy.batteryDischargeKwh !== null ? 
+                            `${data.historical.yesterday.energy.batteryChargeKwh.toFixed(1)}/${data.historical.yesterday.energy.batteryDischargeKwh.toFixed(1)}` : 
+                            '—'
+                          }
+                        </span> 
+                        {data.historical?.yesterday?.energy.batteryChargeKwh !== null && <span className="font-normal">kWh</span>}
+                      </td>
+                      {showGrid && (
+                        <>
+                          <td className="text-right py-1.5 text-red-400 font-mono text-sm">
+                            <span className="font-bold">{data.historical?.yesterday?.energy.gridImportKwh?.toFixed(1) ?? '—'}</span> {data.historical?.yesterday?.energy.gridImportKwh !== null && <span className="font-normal">kWh</span>}
+                          </td>
+                          <td className="text-right py-1.5 text-green-400 font-mono text-sm">
+                            <span className="font-bold">{data.historical?.yesterday?.energy.gridExportKwh?.toFixed(1) ?? '—'}</span> {data.historical?.yesterday?.energy.gridExportKwh !== null && <span className="font-normal">kWh</span>}
                           </td>
                         </>
                       )}
                     </tr>
                     <tr>
-                      <td className="py-1.5 font-medium text-gray-300 text-xs">Total</td>
+                      <td className="py-1.5 font-medium text-gray-300 text-xs">All Time</td>
                       <td className="text-right py-1.5 text-yellow-400 font-mono text-sm">
-                        <span className="font-bold">{data.solarKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
+                        <span className="font-bold">{data.latest.energy.total.solarKwh?.toFixed(1) ?? '—'}</span> <span className="font-normal">kWh</span>
                       </td>
                       <td className="text-right py-1.5 text-blue-400 font-mono text-sm">
-                        <span className="font-bold">{data.loadKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
+                        <span className="font-bold">{data.latest.energy.total.loadKwh?.toFixed(1) ?? '—'}</span> <span className="font-normal">kWh</span>
                       </td>
                       <td className="text-right py-1.5 text-green-400 font-mono text-sm hidden sm:table-cell">
-                        <span className="font-bold">{data.batteryInKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
+                        <span className="font-bold">{data.latest.energy.total.batteryInKwh?.toFixed(1) ?? '—'}</span> <span className="font-normal">kWh</span>
                       </td>
                       <td className="text-right py-1.5 text-orange-400 font-mono text-sm hidden sm:table-cell">
-                        <span className="font-bold">{data.batteryOutKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
+                        <span className="font-bold">{data.latest.energy.total.batteryOutKwh?.toFixed(1) ?? '—'}</span> <span className="font-normal">kWh</span>
                       </td>
                       <td className="text-right py-1.5 text-green-400 font-mono text-sm sm:hidden">
-                        <span className="font-bold">{data.batteryInKwhTotal.toFixed(1)}/{data.batteryOutKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
+                        <span className="font-bold">{(data.latest.energy.total.batteryInKwh?.toFixed(1) ?? '—')}/{(data.latest.energy.total.batteryOutKwh?.toFixed(1) ?? '—')}</span> <span className="font-normal">kWh</span>
                       </td>
                       {showGrid && (
                         <>
                           <td className="text-right py-1.5 text-red-400 font-mono text-sm">
-                            <span className="font-bold">{data.gridInKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
+                            <span className="font-bold">{data.latest.energy.total.gridInKwh?.toFixed(1) ?? '—'}</span> <span className="font-normal">kWh</span>
                           </td>
                           <td className="text-right py-1.5 text-green-400 font-mono text-sm">
-                            <span className="font-bold">{data.gridOutKwhTotal.toFixed(1)}</span> <span className="font-normal">kWh</span>
+                            <span className="font-bold">{data.latest.energy.total.gridOutKwh?.toFixed(1) ?? '—'}</span> <span className="font-normal">kWh</span>
                           </td>
                         </>
                       )}

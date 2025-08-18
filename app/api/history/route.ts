@@ -4,31 +4,7 @@ import { readingsAgg5m, systems } from '@/lib/db/schema';
 import { eq, and, gte, lte } from 'drizzle-orm';
 import { OpenNEMResponse, OpenNEMDataSeries } from '@/types/opennem';
 import { formatDataArray } from '@/lib/format-opennem';
-import { parseAbsolute, toZoned } from '@internationalized/date';
-
-// Helper function to format date to AEST timezone string without milliseconds
-// (identical to regular API)
-function formatToAEST(date: Date): string {
-  // Convert JavaScript Date to ISO string, then parse as an absolute date
-  const isoString = date.toISOString();
-  const absoluteDate = parseAbsolute(isoString, 'UTC');
-  
-  // Convert to AEST/AEDT (Australia/Sydney handles DST automatically)
-  const zonedDate = toZoned(absoluteDate, 'Australia/Sydney');
-  
-  // Format as ISO string with timezone offset
-  // The toString() method returns format like: 2025-08-16T20:36:41.999+10:00[Australia/Sydney]
-  const fullString = zonedDate.toString();
-  
-  // Extract just the date, time and offset (remove timezone name and milliseconds)
-  const match = fullString.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d{3})?([\+\-]\d{2}:\d{2})/);
-  if (match) {
-    return match[1] + match[2];
-  }
-  
-  // Fallback (shouldn't happen)
-  return date.toISOString().slice(0, 19) + '+10:00';
-}
+import { formatToAEST } from '@/lib/date-utils';
 
 // Helper to aggregate 5m data to 30m intervals
 // Optimized version that processes data in a single pass
