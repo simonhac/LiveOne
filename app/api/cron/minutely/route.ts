@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { systems, readings, pollingStatus } from '@/lib/db/schema';
 import { SelectronicFetchClient } from '@/lib/selectronic-fetch-client';
-import { SELECTLIVE_CONFIG, USER_TO_SYSTEM } from '@/config';
+import { SELECTLIVE_CONFIG } from '@/config';
 import { eq, sql } from 'drizzle-orm';
 import { updateAggregatedData } from '@/lib/aggregation-helper';
 

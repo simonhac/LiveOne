@@ -18,20 +18,20 @@ async function measureLatency() {
 }
 
 async function testMinimalAPI() {
-  console.log('2. TESTING MINIMAL API ENDPOINT');
+  console.log('2. TESTING DATA API ENDPOINT');
   console.log('================================');
   
-  // Test a minimal API that doesn't hit the database
+  // Test the data API endpoint
   const times = [];
   for (let i = 0; i < 5; i++) {
     const start = Date.now();
-    const res = await fetch(BASE_URL + '/api/status', {
+    const res = await fetch(BASE_URL + '/api/data', {
       headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
     });
     await res.text();
     times.push(Date.now() - start);
   }
-  console.log(`Minimal API (no DB): ${Math.min(...times)}ms\n`);
+  console.log(`Data API response time: ${Math.min(...times)}ms\n`);
 }
 
 async function testHistoryAPI() {

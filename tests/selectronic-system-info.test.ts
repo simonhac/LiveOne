@@ -120,36 +120,5 @@ describe('SelectronicFetchClient System Info', () => {
     }, 60000);
   });
 
-  describe('Integration with PollingManager', () => {
-    it('should fetch system info when device is added to polling manager', async () => {
-      // Import the polling manager
-      const PollingManager = (await import('../lib/server/polling-manager')).default;
-      const manager = PollingManager.getInstance();
-      
-      // Stop any existing polling first
-      manager.stop();
-      
-      // Add a device (which should trigger system info fetch)
-      const success = await manager.addDevice({
-        userId: 'test',
-        email: VALID_CREDENTIALS.email,
-        password: VALID_CREDENTIALS.password,
-        systemNumber: VALID_CREDENTIALS.systemNumber,
-        intervalMs: 300000, // 5 minutes to avoid too many requests
-      });
-      
-      expect(success).toBe(true);
-      
-      // Get the system info from the manager
-      const systemInfo = manager.getSystemInfo('test', VALID_CREDENTIALS.systemNumber);
-      
-      // Should have fetched system info
-      expect(systemInfo).toBeDefined();
-      console.log('System info from PollingManager:', systemInfo);
-      
-      // Clean up
-      manager.removeDevice('test', VALID_CREDENTIALS.systemNumber);
-      manager.stop();
-    }, 90000); // 90 second timeout
-  });
+  // PollingManager tests removed - PollingManager has been replaced with database-driven polling
 });
