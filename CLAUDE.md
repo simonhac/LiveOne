@@ -242,6 +242,8 @@ TURSO_AUTH_TOKEN=<your-token>  # Generate with: ~/.turso/turso db tokens create 
 
 ### Checking Build Logs
 
+**Note: Vercel CLI is installed and available**
+
 ```bash
 # Use the provided script to get build logs
 ./scripts/vercel-build-log.sh

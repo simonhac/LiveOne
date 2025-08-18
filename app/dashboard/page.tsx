@@ -538,7 +538,7 @@ export default function DashboardPage() {
                       <td className="text-right py-1.5 text-green-400 font-mono text-sm sm:hidden">
                         <span className="font-bold">
                           {data.historical?.yesterday?.energy.batteryChargeKwh !== null && data.historical?.yesterday?.energy.batteryDischargeKwh !== null ? 
-                            `${data.historical.yesterday.energy.batteryChargeKwh.toFixed(1)}/${data.historical.yesterday.energy.batteryDischargeKwh.toFixed(1)}` : 
+                            `${data.historical.yesterday?.energy.batteryChargeKwh?.toFixed(1)}/${data.historical.yesterday?.energy.batteryDischargeKwh?.toFixed(1)}` : 
                             '—'
                           }
                         </span> 
