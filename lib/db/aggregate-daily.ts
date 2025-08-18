@@ -263,14 +263,16 @@ export async function aggregateYesterdayForAllSystems() {
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStr = yesterday.toISOString().split('T')[0];
     
-    // Get all unique system IDs from recent data
-    const systemsQuery = await db
-      .select({ systemId: readingsAgg5m.systemId })
+    // Get all unique system IDs from recent data  
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const allSystems = await db
+      .select()
       .from(readingsAgg5m)
-      .where(
-        gte(readingsAgg5m.intervalEnd, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
-      )
-      .groupBy(readingsAgg5m.systemId);
+      .where(gte(readingsAgg5m.intervalEnd, sevenDaysAgo));
+    
+    // Extract unique system IDs
+    const uniqueSystemIds = [...new Set(allSystems.map(r => r.systemId))];
+    const systemsQuery = uniqueSystemIds.map(id => ({ systemId: id }));
     
     console.log(`Aggregating yesterday's data (${yesterdayStr}) for ${systemsQuery.length} systems`);
     
@@ -301,10 +303,13 @@ export async function aggregateYesterdayForAllSystems() {
 export async function aggregateAllMissingDaysForAllSystems() {
   try {
     // Get all unique system IDs that have any 5-minute data
-    const systems = await db
-      .select({ systemId: readingsAgg5m.systemId })
-      .from(readingsAgg5m)
-      .groupBy(readingsAgg5m.systemId);
+    const allSystems = await db
+      .select()
+      .from(readingsAgg5m);
+    
+    // Extract unique system IDs
+    const uniqueSystemIds = [...new Set(allSystems.map(r => r.systemId))];
+    const systems = uniqueSystemIds.map(id => ({ systemId: id }));
     
     console.log(`Found ${systems.length} systems to process for all missing days`);
     
