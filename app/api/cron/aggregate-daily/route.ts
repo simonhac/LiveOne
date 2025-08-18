@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
       
       return NextResponse.json({
         success: true,
-        message: `Aggregated yesterday's data for ${results.length} systems`,
+        message: `Aggregated yesterday's data for ${results.length} systems (v2-groupBy)`,
         count: results.length
       });
     }
