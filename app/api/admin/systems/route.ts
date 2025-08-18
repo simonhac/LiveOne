@@ -6,11 +6,15 @@ import { formatToAEST } from '@/lib/date-utils';
 
 export async function GET(request: NextRequest) {
   try {
-    // Check for auth token
+    // Check for auth token - accept either admin or regular password
     const authToken = request.cookies.get('auth-token')?.value;
     const validPassword = process.env.AUTH_PASSWORD;
+    const adminPassword = process.env.ADMIN_PASSWORD;
     
-    if (!validPassword || authToken !== validPassword) {
+    const isAuthorized = (validPassword && authToken === validPassword) || 
+                         (adminPassword && authToken === adminPassword);
+    
+    if (!isAuthorized) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     
@@ -54,7 +58,7 @@ export async function GET(request: NextRequest) {
         polling: {
           isActive: pollStatus?.isActive || false,
           isAuthenticated: true, // Always true if we have data
-          lastPollTime: pollStatus?.lastPollTime ? formatToAEST(new Date(Number(pollStatus.lastPollTime) * 1000)) : null,
+          lastPollTime: pollStatus?.lastPollTime ? formatToAEST(pollStatus.lastPollTime) : null,
           lastError: pollStatus?.lastError || null,
         },
         data: reading ? {
@@ -63,7 +67,7 @@ export async function GET(request: NextRequest) {
           batteryPower: reading.batteryW,
           batterySOC: reading.batterySOC,
           gridPower: reading.gridW,
-          timestamp: formatToAEST(new Date(Number(reading.inverterTime) * 1000)),
+          timestamp: formatToAEST(reading.inverterTime),
         } : null,
       });
     }

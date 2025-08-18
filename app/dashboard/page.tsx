@@ -114,7 +114,46 @@ export default function DashboardPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [showSystemInfo, setShowSystemInfo] = useState(false)
+  const [showPower, setShowPower] = useState(false) // Toggle between energy (kWh) and power (W)
   const router = useRouter()
+
+  // Function to fetch data from API
+  const fetchData = async () => {
+    try {
+      const response = await fetch('/api/data')
+      const result = await response.json()
+      
+      if (result.success) {
+        setData(result)
+        
+        // Parse timestamp (now in AEST format)
+        const dataTimestamp = new Date(result.latest.timestamp)
+        setLastUpdate(dataTimestamp)
+        
+        // Calculate seconds since update
+        const secondsAgo = Math.floor((Date.now() - dataTimestamp.getTime()) / 1000)
+        setSecondsSinceUpdate(secondsAgo)
+        
+        // Update authentication status from the polling section
+        const polling = result.polling || {}
+        // Consider authenticated if we have recent successful data
+        const lastSuccess = polling.lastSuccessTime ? new Date(polling.lastSuccessTime) : null
+        const isAuth = lastSuccess ? ((Date.now() - lastSuccess.getTime()) / 1000 / 60) < 5 : false
+        setIsAuthenticated(isAuth)
+        
+        setSystemInfo(result.systemInfo || null)
+        setError('')
+        setLoading(false)
+      } else {
+        setError(result.error || 'Failed to fetch data')
+        setLoading(false)
+      }
+    } catch (err) {
+      console.error('Error fetching data:', err)
+      setError('Failed to fetch data')
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
     // Check authentication
@@ -122,44 +161,6 @@ export default function DashboardPage() {
     if (!isAuthenticated) {
       router.push('/')
       return
-    }
-
-    // Function to fetch data from API
-    const fetchData = async () => {
-      try {
-        const response = await fetch('/api/data')
-        const result = await response.json()
-        
-        if (result.success) {
-          setData(result)
-          
-          // Parse timestamp (now in AEST format)
-          const dataTimestamp = new Date(result.latest.timestamp)
-          setLastUpdate(dataTimestamp)
-          
-          // Calculate seconds since update
-          const secondsAgo = Math.floor((Date.now() - dataTimestamp.getTime()) / 1000)
-          setSecondsSinceUpdate(secondsAgo)
-          
-          // Update authentication status from the polling section
-          const polling = result.polling || {}
-          // Consider authenticated if we have recent successful data
-          const lastSuccess = polling.lastSuccessTime ? new Date(polling.lastSuccessTime) : null
-          const isAuth = lastSuccess ? ((Date.now() - lastSuccess.getTime()) / 1000 / 60) < 5 : false
-          setIsAuthenticated(isAuth)
-          
-          setSystemInfo(result.systemInfo || null)
-          setError('')
-          setLoading(false)
-        } else {
-          setError(result.error || 'Failed to fetch data')
-          setLoading(false)
-        }
-      } catch (err) {
-        console.error('Error fetching data:', err)
-        setError('Failed to fetch data')
-        setLoading(false)
-      }
     }
 
     // Initial fetch
@@ -174,13 +175,18 @@ export default function DashboardPage() {
     }
   }, [router])
 
-  // Update seconds since last update
+  // Update seconds since last update and trigger refresh at 70 seconds
   useEffect(() => {
     if (!lastUpdate) return
     
     const interval = setInterval(() => {
       const seconds = Math.floor((Date.now() - lastUpdate.getTime()) / 1000)
       setSecondsSinceUpdate(seconds)
+      
+      // Trigger refresh when reaching 70 seconds
+      if (seconds === 70) {
+        fetchData()
+      }
     }, 1000)
     
     return () => clearInterval(interval)
@@ -208,6 +214,33 @@ export default function DashboardPage() {
 
   const formatPower = (watts: number) => {
     return `${(watts / 1000).toFixed(3)} kW`
+  }
+
+  // Calculate average power from energy for today
+  const calculateTodayPower = (energyKwh: number | null | undefined): number | null => {
+    if (energyKwh === null || energyKwh === undefined) return null;
+    const now = new Date();
+    const hoursToday = now.getHours() + (now.getMinutes() / 60);
+    if (hoursToday === 0) return null;
+    return (energyKwh * 1000) / hoursToday; // Convert kWh to W
+  }
+
+  // Calculate average power from energy for yesterday
+  const calculateYesterdayPower = (energyKwh: number | null | undefined, intervalCount: number | undefined): number | null => {
+    if (energyKwh === null || energyKwh === undefined || !intervalCount) return null;
+    // Each interval is 5 minutes, so hours = intervalCount * 5 / 60
+    const hours = (intervalCount * 5) / 60;
+    if (hours === 0) return null;
+    return (energyKwh * 1000) / hours; // Convert kWh to W
+  }
+
+  // Format power value for display
+  const formatAvgPower = (watts: number | null): string => {
+    if (watts === null) return '—';
+    if (watts >= 1000) {
+      return `${(watts / 1000).toFixed(3)}`;
+    }
+    return `${watts.toFixed(0)}`;
   }
 
   // Automatically determine if grid information should be shown
@@ -450,7 +483,12 @@ export default function DashboardPage() {
 
             {/* Energy Statistics */}
             <div className="bg-gray-800 rounded p-3">
-              <h3 className="text-sm font-semibold text-white mb-2">Energy</h3>
+              <h3 
+                className="text-sm font-semibold text-white mb-2 cursor-pointer hover:text-blue-400 transition-colors select-none"
+                onClick={() => setShowPower(!showPower)}
+              >
+                {showPower ? 'Average Power' : 'Energy'}
+              </h3>
               
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -474,33 +512,108 @@ export default function DashboardPage() {
                     <tr className="border-b border-gray-700">
                       <td className="py-1.5 font-medium text-gray-300 text-xs">Today</td>
                       <td className="text-right py-1.5 text-yellow-400 font-mono text-sm">
-                        <span className="font-bold">{data.latest.energy.today.solarKwh?.toFixed(1) ?? '—'}</span> {data.latest.energy.today.solarKwh !== null && <span className="font-normal">kWh</span>}
+                        {showPower ? (
+                          <>
+                            <span className="font-bold">{formatAvgPower(calculateTodayPower(data.latest.energy.today.solarKwh))}</span> 
+                            {calculateTodayPower(data.latest.energy.today.solarKwh) !== null && <span className="font-normal">{calculateTodayPower(data.latest.energy.today.solarKwh)! >= 1000 ? 'kW' : 'W'}</span>}
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-bold">{data.latest.energy.today.solarKwh?.toFixed(1) ?? '—'}</span> 
+                            {data.latest.energy.today.solarKwh !== null && <span className="font-normal">kWh</span>}
+                          </>
+                        )}
                       </td>
                       <td className="text-right py-1.5 text-blue-400 font-mono text-sm">
-                        <span className="font-bold">{data.latest.energy.today.loadKwh?.toFixed(1) ?? '—'}</span> {data.latest.energy.today.loadKwh !== null && <span className="font-normal">kWh</span>}
+                        {showPower ? (
+                          <>
+                            <span className="font-bold">{formatAvgPower(calculateTodayPower(data.latest.energy.today.loadKwh))}</span>
+                            {calculateTodayPower(data.latest.energy.today.loadKwh) !== null && <span className="font-normal">{calculateTodayPower(data.latest.energy.today.loadKwh)! >= 1000 ? 'kW' : 'W'}</span>}
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-bold">{data.latest.energy.today.loadKwh?.toFixed(1) ?? '—'}</span>
+                            {data.latest.energy.today.loadKwh !== null && <span className="font-normal">kWh</span>}
+                          </>
+                        )}
                       </td>
                       <td className="text-right py-1.5 text-green-400 font-mono text-sm hidden sm:table-cell">
-                        <span className="font-bold">{data.latest.energy.today.batteryInKwh?.toFixed(1) ?? '—'}</span> {data.latest.energy.today.batteryInKwh !== null && <span className="font-normal">kWh</span>}
+                        {showPower ? (
+                          <>
+                            <span className="font-bold">{formatAvgPower(calculateTodayPower(data.latest.energy.today.batteryInKwh))}</span>
+                            {calculateTodayPower(data.latest.energy.today.batteryInKwh) !== null && <span className="font-normal">{calculateTodayPower(data.latest.energy.today.batteryInKwh)! >= 1000 ? 'kW' : 'W'}</span>}
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-bold">{data.latest.energy.today.batteryInKwh?.toFixed(1) ?? '—'}</span>
+                            {data.latest.energy.today.batteryInKwh !== null && <span className="font-normal">kWh</span>}
+                          </>
+                        )}
                       </td>
                       <td className="text-right py-1.5 text-orange-400 font-mono text-sm hidden sm:table-cell">
-                        <span className="font-bold">{data.latest.energy.today.batteryOutKwh?.toFixed(1) ?? '—'}</span> {data.latest.energy.today.batteryOutKwh !== null && <span className="font-normal">kWh</span>}
+                        {showPower ? (
+                          <>
+                            <span className="font-bold">{formatAvgPower(calculateTodayPower(data.latest.energy.today.batteryOutKwh))}</span>
+                            {calculateTodayPower(data.latest.energy.today.batteryOutKwh) !== null && <span className="font-normal">{calculateTodayPower(data.latest.energy.today.batteryOutKwh)! >= 1000 ? 'kW' : 'W'}</span>}
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-bold">{data.latest.energy.today.batteryOutKwh?.toFixed(1) ?? '—'}</span>
+                            {data.latest.energy.today.batteryOutKwh !== null && <span className="font-normal">kWh</span>}
+                          </>
+                        )}
                       </td>
                       <td className="text-right py-1.5 text-green-400 font-mono text-sm sm:hidden">
-                        <span className="font-bold">
-                          {data.latest.energy.today.batteryInKwh !== null && data.latest.energy.today.batteryOutKwh !== null ? 
-                            `${data.latest.energy.today.batteryInKwh.toFixed(1)}/${data.latest.energy.today.batteryOutKwh.toFixed(1)}` : 
-                            '—'
-                          }
-                        </span> 
-                        {data.latest.energy.today.batteryInKwh !== null && <span className="font-normal">kWh</span>}
+                        {showPower ? (
+                          <>
+                            <span className="font-bold">
+                              {calculateTodayPower(data.latest.energy.today.batteryInKwh) !== null && 
+                               calculateTodayPower(data.latest.energy.today.batteryOutKwh) !== null ? 
+                                `${formatAvgPower(calculateTodayPower(data.latest.energy.today.batteryInKwh))}/${formatAvgPower(calculateTodayPower(data.latest.energy.today.batteryOutKwh))}` : 
+                                '—'
+                              }
+                            </span>
+                            {calculateTodayPower(data.latest.energy.today.batteryInKwh) !== null && <span className="font-normal">kW</span>}
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-bold">
+                              {data.latest.energy.today.batteryInKwh !== null && data.latest.energy.today.batteryOutKwh !== null ? 
+                                `${data.latest.energy.today.batteryInKwh.toFixed(1)}/${data.latest.energy.today.batteryOutKwh.toFixed(1)}` : 
+                                '—'
+                              }
+                            </span> 
+                            {data.latest.energy.today.batteryInKwh !== null && <span className="font-normal">kWh</span>}
+                          </>
+                        )}
                       </td>
                       {showGrid && (
                         <>
                           <td className="text-right py-1.5 text-red-400 font-mono text-sm">
-                            <span className="font-bold">{data.latest.energy.today.gridInKwh?.toFixed(1) ?? '—'}</span> {data.latest.energy.today.gridInKwh !== null && <span className="font-normal">kWh</span>}
+                            {showPower ? (
+                              <>
+                                <span className="font-bold">{formatAvgPower(calculateTodayPower(data.latest.energy.today.gridInKwh))}</span>
+                                {calculateTodayPower(data.latest.energy.today.gridInKwh) !== null && <span className="font-normal">{calculateTodayPower(data.latest.energy.today.gridInKwh)! >= 1000 ? 'kW' : 'W'}</span>}
+                              </>
+                            ) : (
+                              <>
+                                <span className="font-bold">{data.latest.energy.today.gridInKwh?.toFixed(1) ?? '—'}</span>
+                                {data.latest.energy.today.gridInKwh !== null && <span className="font-normal">kWh</span>}
+                              </>
+                            )}
                           </td>
                           <td className="text-right py-1.5 text-green-400 font-mono text-sm">
-                            <span className="font-bold">{data.latest.energy.today.gridOutKwh?.toFixed(1) ?? '—'}</span> {data.latest.energy.today.gridOutKwh !== null && <span className="font-normal">kWh</span>}
+                            {showPower ? (
+                              <>
+                                <span className="font-bold">{formatAvgPower(calculateTodayPower(data.latest.energy.today.gridOutKwh))}</span>
+                                {calculateTodayPower(data.latest.energy.today.gridOutKwh) !== null && <span className="font-normal">{calculateTodayPower(data.latest.energy.today.gridOutKwh)! >= 1000 ? 'kW' : 'W'}</span>}
+                              </>
+                            ) : (
+                              <>
+                                <span className="font-bold">{data.latest.energy.today.gridOutKwh?.toFixed(1) ?? '—'}</span>
+                                {data.latest.energy.today.gridOutKwh !== null && <span className="font-normal">kWh</span>}
+                              </>
+                            )}
                           </td>
                         </>
                       )}
@@ -508,33 +621,108 @@ export default function DashboardPage() {
                     <tr className="border-b border-gray-700">
                       <td className="py-1.5 font-medium text-gray-300 text-xs">Yesterday</td>
                       <td className="text-right py-1.5 text-yellow-400 font-mono text-sm">
-                        <span className="font-bold">{data.historical?.yesterday?.energy.solarKwh?.toFixed(1) ?? '—'}</span> {data.historical?.yesterday?.energy.solarKwh !== null && <span className="font-normal">kWh</span>}
+                        {showPower ? (
+                          <>
+                            <span className="font-bold">{formatAvgPower(calculateYesterdayPower(data.historical?.yesterday?.energy.solarKwh, data.historical?.yesterday?.dataQuality.intervalCount))}</span>
+                            {calculateYesterdayPower(data.historical?.yesterday?.energy.solarKwh, data.historical?.yesterday?.dataQuality.intervalCount) !== null && <span className="font-normal">{calculateYesterdayPower(data.historical?.yesterday?.energy.solarKwh, data.historical?.yesterday?.dataQuality.intervalCount)! >= 1000 ? 'kW' : 'W'}</span>}
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-bold">{data.historical?.yesterday?.energy.solarKwh?.toFixed(1) ?? '—'}</span>
+                            {data.historical?.yesterday?.energy.solarKwh !== null && <span className="font-normal">kWh</span>}
+                          </>
+                        )}
                       </td>
                       <td className="text-right py-1.5 text-blue-400 font-mono text-sm">
-                        <span className="font-bold">{data.historical?.yesterday?.energy.loadKwh?.toFixed(1) ?? '—'}</span> {data.historical?.yesterday?.energy.loadKwh !== null && <span className="font-normal">kWh</span>}
+                        {showPower ? (
+                          <>
+                            <span className="font-bold">{formatAvgPower(calculateYesterdayPower(data.historical?.yesterday?.energy.loadKwh, data.historical?.yesterday?.dataQuality.intervalCount))}</span>
+                            {calculateYesterdayPower(data.historical?.yesterday?.energy.loadKwh, data.historical?.yesterday?.dataQuality.intervalCount) !== null && <span className="font-normal">{calculateYesterdayPower(data.historical?.yesterday?.energy.loadKwh, data.historical?.yesterday?.dataQuality.intervalCount)! >= 1000 ? 'kW' : 'W'}</span>}
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-bold">{data.historical?.yesterday?.energy.loadKwh?.toFixed(1) ?? '—'}</span>
+                            {data.historical?.yesterday?.energy.loadKwh !== null && <span className="font-normal">kWh</span>}
+                          </>
+                        )}
                       </td>
                       <td className="text-right py-1.5 text-green-400 font-mono text-sm hidden sm:table-cell">
-                        <span className="font-bold">{data.historical?.yesterday?.energy.batteryChargeKwh?.toFixed(1) ?? '—'}</span> {data.historical?.yesterday?.energy.batteryChargeKwh !== null && <span className="font-normal">kWh</span>}
+                        {showPower ? (
+                          <>
+                            <span className="font-bold">{formatAvgPower(calculateYesterdayPower(data.historical?.yesterday?.energy.batteryChargeKwh, data.historical?.yesterday?.dataQuality.intervalCount))}</span>
+                            {calculateYesterdayPower(data.historical?.yesterday?.energy.batteryChargeKwh, data.historical?.yesterday?.dataQuality.intervalCount) !== null && <span className="font-normal">{calculateYesterdayPower(data.historical?.yesterday?.energy.batteryChargeKwh, data.historical?.yesterday?.dataQuality.intervalCount)! >= 1000 ? 'kW' : 'W'}</span>}
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-bold">{data.historical?.yesterday?.energy.batteryChargeKwh?.toFixed(1) ?? '—'}</span>
+                            {data.historical?.yesterday?.energy.batteryChargeKwh !== null && <span className="font-normal">kWh</span>}
+                          </>
+                        )}
                       </td>
                       <td className="text-right py-1.5 text-orange-400 font-mono text-sm hidden sm:table-cell">
-                        <span className="font-bold">{data.historical?.yesterday?.energy.batteryDischargeKwh?.toFixed(1) ?? '—'}</span> {data.historical?.yesterday?.energy.batteryDischargeKwh !== null && <span className="font-normal">kWh</span>}
+                        {showPower ? (
+                          <>
+                            <span className="font-bold">{formatAvgPower(calculateYesterdayPower(data.historical?.yesterday?.energy.batteryDischargeKwh, data.historical?.yesterday?.dataQuality.intervalCount))}</span>
+                            {calculateYesterdayPower(data.historical?.yesterday?.energy.batteryDischargeKwh, data.historical?.yesterday?.dataQuality.intervalCount) !== null && <span className="font-normal">{calculateYesterdayPower(data.historical?.yesterday?.energy.batteryDischargeKwh, data.historical?.yesterday?.dataQuality.intervalCount)! >= 1000 ? 'kW' : 'W'}</span>}
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-bold">{data.historical?.yesterday?.energy.batteryDischargeKwh?.toFixed(1) ?? '—'}</span>
+                            {data.historical?.yesterday?.energy.batteryDischargeKwh !== null && <span className="font-normal">kWh</span>}
+                          </>
+                        )}
                       </td>
                       <td className="text-right py-1.5 text-green-400 font-mono text-sm sm:hidden">
-                        <span className="font-bold">
-                          {data.historical?.yesterday?.energy.batteryChargeKwh !== null && data.historical?.yesterday?.energy.batteryDischargeKwh !== null ? 
-                            `${data.historical.yesterday?.energy.batteryChargeKwh?.toFixed(1)}/${data.historical.yesterday?.energy.batteryDischargeKwh?.toFixed(1)}` : 
-                            '—'
-                          }
-                        </span> 
-                        {data.historical?.yesterday?.energy.batteryChargeKwh !== null && <span className="font-normal">kWh</span>}
+                        {showPower ? (
+                          <>
+                            <span className="font-bold">
+                              {calculateYesterdayPower(data.historical?.yesterday?.energy.batteryChargeKwh, data.historical?.yesterday?.dataQuality.intervalCount) !== null && 
+                               calculateYesterdayPower(data.historical?.yesterday?.energy.batteryDischargeKwh, data.historical?.yesterday?.dataQuality.intervalCount) !== null ? 
+                                `${formatAvgPower(calculateYesterdayPower(data.historical?.yesterday?.energy.batteryChargeKwh, data.historical?.yesterday?.dataQuality.intervalCount))}/${formatAvgPower(calculateYesterdayPower(data.historical?.yesterday?.energy.batteryDischargeKwh, data.historical?.yesterday?.dataQuality.intervalCount))}` : 
+                                '—'
+                              }
+                            </span>
+                            {calculateYesterdayPower(data.historical?.yesterday?.energy.batteryChargeKwh, data.historical?.yesterday?.dataQuality.intervalCount) !== null && <span className="font-normal">kW</span>}
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-bold">
+                              {data.historical?.yesterday?.energy.batteryChargeKwh !== null && data.historical?.yesterday?.energy.batteryDischargeKwh !== null ? 
+                                `${data.historical.yesterday?.energy.batteryChargeKwh?.toFixed(1)}/${data.historical.yesterday?.energy.batteryDischargeKwh?.toFixed(1)}` : 
+                                '—'
+                              }
+                            </span>
+                            {data.historical?.yesterday?.energy.batteryChargeKwh !== null && <span className="font-normal">kWh</span>}
+                          </>
+                        )}
                       </td>
                       {showGrid && (
                         <>
                           <td className="text-right py-1.5 text-red-400 font-mono text-sm">
-                            <span className="font-bold">{data.historical?.yesterday?.energy.gridImportKwh?.toFixed(1) ?? '—'}</span> {data.historical?.yesterday?.energy.gridImportKwh !== null && <span className="font-normal">kWh</span>}
+                            {showPower ? (
+                              <>
+                                <span className="font-bold">{formatAvgPower(calculateYesterdayPower(data.historical?.yesterday?.energy.gridImportKwh, data.historical?.yesterday?.dataQuality.intervalCount))}</span>
+                                {calculateYesterdayPower(data.historical?.yesterday?.energy.gridImportKwh, data.historical?.yesterday?.dataQuality.intervalCount) !== null && <span className="font-normal">{calculateYesterdayPower(data.historical?.yesterday?.energy.gridImportKwh, data.historical?.yesterday?.dataQuality.intervalCount)! >= 1000 ? 'kW' : 'W'}</span>}
+                              </>
+                            ) : (
+                              <>
+                                <span className="font-bold">{data.historical?.yesterday?.energy.gridImportKwh?.toFixed(1) ?? '—'}</span>
+                                {data.historical?.yesterday?.energy.gridImportKwh !== null && <span className="font-normal">kWh</span>}
+                              </>
+                            )}
                           </td>
                           <td className="text-right py-1.5 text-green-400 font-mono text-sm">
-                            <span className="font-bold">{data.historical?.yesterday?.energy.gridExportKwh?.toFixed(1) ?? '—'}</span> {data.historical?.yesterday?.energy.gridExportKwh !== null && <span className="font-normal">kWh</span>}
+                            {showPower ? (
+                              <>
+                                <span className="font-bold">{formatAvgPower(calculateYesterdayPower(data.historical?.yesterday?.energy.gridExportKwh, data.historical?.yesterday?.dataQuality.intervalCount))}</span>
+                                {calculateYesterdayPower(data.historical?.yesterday?.energy.gridExportKwh, data.historical?.yesterday?.dataQuality.intervalCount) !== null && <span className="font-normal">{calculateYesterdayPower(data.historical?.yesterday?.energy.gridExportKwh, data.historical?.yesterday?.dataQuality.intervalCount)! >= 1000 ? 'kW' : 'W'}</span>}
+                              </>
+                            ) : (
+                              <>
+                                <span className="font-bold">{data.historical?.yesterday?.energy.gridExportKwh?.toFixed(1) ?? '—'}</span>
+                                {data.historical?.yesterday?.energy.gridExportKwh !== null && <span className="font-normal">kWh</span>}
+                              </>
+                            )}
                           </td>
                         </>
                       )}

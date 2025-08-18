@@ -5,21 +5,28 @@ export async function POST(request: NextRequest) {
   try {
     const { email, password } = await request.json();
     
-    // In production, we don't have APP_USERS, so just validate the password
-    // This is a simplified auth for the dashboard
-    const validPassword = process.env.AUTH_PASSWORD || password; // Accept any password if AUTH_PASSWORD not set
+    // Debug logging
+    console.log('[Auth] Login attempt for:', email);
+    console.log('[Auth] AUTH_PASSWORD from env:', process.env.AUTH_PASSWORD ? 'set' : 'not set');
+    console.log('[Auth] ADMIN_PASSWORD from env:', process.env.ADMIN_PASSWORD ? 'set' : 'not set');
     
-    if (password !== validPassword) {
+    // Check if this is an admin user first
+    const isAdmin = process.env.ADMIN_PASSWORD && 
+                    password === process.env.ADMIN_PASSWORD;
+    
+    // Check if password is valid (either admin password or regular password)
+    const validPassword = process.env.AUTH_PASSWORD;
+    const isValidPassword = isAdmin || (validPassword && password === validPassword);
+    
+    console.log('[Auth] Is admin?', isAdmin);
+    console.log('[Auth] Is valid password?', isValidPassword);
+    
+    if (!isValidPassword) {
       return NextResponse.json(
         { error: 'Invalid email or password' },
         { status: 401 }
       );
     }
-    
-    // Check if this is an admin user
-    // Admin if password matches ADMIN_PASSWORD env var (if set)
-    const isAdmin = process.env.ADMIN_PASSWORD && 
-                    password === process.env.ADMIN_PASSWORD;
     
     // Create response with user data
     const response = NextResponse.json({
