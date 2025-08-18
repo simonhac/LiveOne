@@ -111,7 +111,6 @@ export default function DashboardPage() {
   const [error, setError] = useState('')
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [secondsSinceUpdate, setSecondsSinceUpdate] = useState<number>(0)
-  const [isPolling, setIsPolling] = useState(false)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [showSystemInfo, setShowSystemInfo] = useState(false)
@@ -142,13 +141,8 @@ export default function DashboardPage() {
           const secondsAgo = Math.floor((Date.now() - dataTimestamp.getTime()) / 1000)
           setSecondsSinceUpdate(secondsAgo)
           
-          // Update polling status from the polling section
+          // Update authentication status from the polling section
           const polling = result.polling || {}
-          // Consider polling active if last poll was within 2 minutes
-          const lastPoll = polling.lastPollTime ? new Date(polling.lastPollTime) : null
-          const isPollingActive = lastPoll ? ((Date.now() - lastPoll.getTime()) / 1000 / 60) < 2 : false
-          setIsPolling(isPollingActive)
-          
           // Consider authenticated if we have recent successful data
           const lastSuccess = polling.lastSuccessTime ? new Date(polling.lastSuccessTime) : null
           const isAuth = lastSuccess ? ((Date.now() - lastSuccess.getTime()) / 1000 / 60) < 5 : false
@@ -237,7 +231,7 @@ export default function DashboardPage() {
                     isAuthenticated ? 'text-green-400' : 'text-red-400'
                   }`}>
                     {isAuthenticated ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-                    <span>{isPolling ? 'Live' : 'Offline'}</span>
+                    <span>{isAuthenticated ? 'Connected' : 'Offline'}</span>
                   </div>
                   <span className="text-gray-400 text-xs">•</span>
                   <span className="text-gray-400 text-xs font-mono">
@@ -329,20 +323,10 @@ export default function DashboardPage() {
                 </div>
               )}
               <div className={`px-2 py-1 rounded text-xs flex items-center gap-1 ${
-                isPolling ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
-              }`}>
-                <Activity className="w-3 h-3" />
-                {isPolling ? 'Polling' : 'Stopped'}
-              </div>
-              <div className={`px-2 py-1 rounded text-xs flex items-center gap-1 ${
                 isAuthenticated ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
               }`}>
                 {isAuthenticated ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
                 {isAuthenticated ? 'Connected' : 'Disconnected'}
-              </div>
-              <div className="bg-green-900/50 text-green-400 px-2 py-1 rounded text-xs flex items-center gap-1">
-                <Activity className="w-3 h-3" />
-                Live
               </div>
               <div className="text-sm text-gray-400">
                 {sessionStorage.getItem('displayName')}
