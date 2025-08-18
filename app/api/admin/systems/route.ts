@@ -1,72 +1,78 @@
 import { NextRequest, NextResponse } from 'next/server';
-import PollingManager from '@/lib/server/polling-manager';
-import SessionManager from '@/lib/session-manager';
-import { USER_TO_SYSTEM } from '@/config';
-
-const pollingManager = PollingManager.getInstance();
-const sessionManager = SessionManager.getInstance();
+import { db } from '@/lib/db';
+import { systems, readings, pollingStatus } from '@/lib/db/schema';
+import { eq, desc, sql } from 'drizzle-orm';
 
 export async function GET(request: NextRequest) {
   try {
-    // For MVP, we're not checking auth properly
-    // In production, verify admin role from session/JWT
+    // Check for auth token
+    const authToken = request.cookies.get('auth-token')?.value;
+    const validPassword = process.env.AUTH_PASSWORD;
     
-    // Get all registered systems
-    const systems = [];
+    if (!validPassword || authToken !== validPassword) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     
-    // Get session summary
-    const sessionSummary = sessionManager.getSessionSummary();
+    // Get all systems with their latest data
+    const allSystems = await db.select().from(systems);
+    const systemsData = [];
     
-    // For each registered user system
-    for (const [userEmail, systemConfig] of Object.entries(USER_TO_SYSTEM)) {
-      const systemNumber = systemConfig.systemNumber;
-      const userId = userEmail.split('@')[0]; // Simple user ID from email
+    for (const system of allSystems) {
+      // Get latest reading
+      const latestReading = await db
+        .select()
+        .from(readings)
+        .where(eq(readings.systemId, system.id))
+        .orderBy(desc(readings.inverterTime))
+        .limit(1);
       
-      // Get latest data from polling manager
-      const data = pollingManager.getLatestData(userId, systemNumber);
-      const status = pollingManager.getDeviceStatus(userId, systemNumber);
+      // Get polling status
+      const status = await db
+        .select()
+        .from(pollingStatus)
+        .where(eq(pollingStatus.systemId, system.id))
+        .limit(1);
       
-      // Get session info for this user
-      const userSession = sessionSummary.get(userEmail) || {
-        email: userEmail,
-        displayName: userId,
-        lastLogin: null,
-        isLoggedIn: false,
-        activeSessions: 0,
-      };
+      const reading = latestReading[0];
+      const pollStatus = status[0];
       
-      systems.push({
-        owner: userEmail,
-        displayName: userSession.displayName,
-        systemNumber: systemNumber,
-        lastLogin: userSession.lastLogin,
-        isLoggedIn: userSession.isLoggedIn,
-        activeSessions: userSession.activeSessions,
-        polling: {
-          isActive: status.isPolling,
-          isAuthenticated: status.isAuthenticated,
-          lastPollTime: status.lastFetchTime,
-          lastError: status.lastError,
+      systemsData.push({
+        owner: system.userId,
+        displayName: system.displayName || system.userId,
+        systemNumber: system.systemNumber,
+        lastLogin: null, // No longer tracking user sessions
+        isLoggedIn: false, // No longer tracking user sessions
+        activeSessions: 0, // No longer tracking user sessions
+        systemInfo: {
+          model: system.model,
+          serial: system.serial,
+          ratings: system.ratings,
+          solarSize: system.solarSize,
+          batterySize: system.batterySize,
         },
-        data: data ? {
-          solarW: data.solarW,
-          loadW: data.loadW,
-          batteryW: data.batteryW,
-          batterySOC: data.batterySOC,
-          gridW: data.gridW,
-          timestamp: data.timestamp,
+        polling: {
+          isActive: pollStatus?.isActive || false,
+          isAuthenticated: true, // Always true if we have data
+          lastPollTime: pollStatus?.lastPollTime ? new Date(pollStatus.lastPollTime * 1000).toISOString() : null,
+          lastError: pollStatus?.lastError || null,
+        },
+        data: reading ? {
+          solarPower: reading.solarW,
+          loadPower: reading.loadW,
+          batteryPower: reading.batteryW,
+          batterySOC: reading.batterySOC,
+          gridPower: reading.gridW,
+          timestamp: new Date(reading.inverterTime * 1000).toISOString(),
         } : null,
       });
     }
     
     return NextResponse.json({
       success: true,
-      systems,
-      totalSystems: systems.length,
-      activeSessions: Array.from(sessionSummary.values()).reduce(
-        (sum, u) => sum + u.activeSessions, 0
-      ),
-      timestamp: new Date(),
+      systems: systemsData,
+      totalSystems: systemsData.length,
+      activeSessions: 0, // No longer tracking sessions
+      timestamp: new Date().toISOString(),
     });
     
   } catch (error) {

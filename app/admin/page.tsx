@@ -45,49 +45,49 @@ export default function AdminDashboard() {
   const router = useRouter()
 
   useEffect(() => {
-    // Check if user is admin
-    const userRole = sessionStorage.getItem('userRole')
-    if (userRole !== 'admin') {
+    // Check if user is admin (simplified check)
+    const authToken = document.cookie.split('; ').find(row => row.startsWith('auth-token='))
+    if (!authToken) {
       router.push('/')
       return
     }
 
-    // Set up SSE connection for real-time updates
-    const eventSource = new EventSource('/api/sse')
-    
-    eventSource.onopen = () => {
-      console.log('SSE connection established')
-      setError(null)
-    }
-    
-    eventSource.onmessage = (event) => {
+    // Fetch data function
+    const fetchData = async () => {
       try {
-        const data = JSON.parse(event.data)
+        const response = await fetch('/api/admin/systems')
         
-        if (data.type === 'connected') {
-          console.log('SSE connected:', data.timestamp)
-        } else if (data.type === 'update') {
+        if (!response.ok) {
+          if (response.status === 401) {
+            router.push('/')
+            return
+          }
+          throw new Error('Failed to fetch systems')
+        }
+        
+        const data = await response.json()
+        
+        if (data.success) {
           setSystems(data.systems)
           setLastUpdate(new Date(data.timestamp))
           setLoading(false)
           setError(null)
-        } else if (data.type === 'heartbeat') {
-          console.log('SSE heartbeat:', data.timestamp)
         }
       } catch (err) {
-        console.error('Error parsing SSE data:', err)
+        console.error('Error fetching systems:', err)
+        setError('Failed to load systems. Retrying...')
       }
     }
-    
-    eventSource.onerror = (error) => {
-      console.error('SSE error:', error)
-      setError('Connection lost. Reconnecting...')
-      // Browser will automatically reconnect
-    }
+
+    // Initial fetch
+    fetchData()
+
+    // Set up polling every 30 seconds
+    const interval = setInterval(fetchData, 30000)
 
     // Cleanup on unmount
     return () => {
-      eventSource.close()
+      clearInterval(interval)
     }
   }, [router])
 

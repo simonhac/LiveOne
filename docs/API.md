@@ -189,29 +189,6 @@ Clears `auth-token` cookie.
 
 ### 3. System Management Endpoints
 
-#### GET /api/status
-Returns current system status and health information.
-
-**Authentication:** Not required
-
-**Response:**
-```json
-{
-  "status": "healthy",
-  "database": {
-    "connected": true,
-    "latestReading": "2025-08-18T10:00:00Z"
-  },
-  "polling": {
-    "active": true,
-    "lastRun": "2025-08-18T10:00:00Z",
-    "consecutiveErrors": 0
-  }
-}
-```
-
----
-
 #### GET /api/admin/systems
 Lists all configured systems.
 
@@ -242,32 +219,7 @@ Lists all configured systems.
 
 ---
 
-### 4. Polling Control Endpoints
-
-#### POST /api/polling/start
-Manually triggers a polling cycle for all systems.
-
-**Authentication:** Required
-
-**Request Body:**
-```json
-{
-  "systemId": 1  // Optional - poll specific system only
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Polling started",
-  "systemsPolled": 1
-}
-```
-
----
-
-### 5. Cron Job Endpoints
+### 4. Cron Job Endpoints
 
 These endpoints are designed to be called by scheduled jobs but can be triggered manually for testing.
 
@@ -444,6 +396,8 @@ curl http://localhost:3000/api/admin/systems \
 - `/api/cron/aggregate-daily` - Renamed to `/api/cron/daily`
 - `/api/cron/poll-systems` - Renamed to `/api/cron/minutely`
 - `/api/cron/cleanup` - Removed (no automatic retention implemented)
+- `/api/polling/start` - Removed (use `/api/cron/minutely` instead)
+- `/api/status` - Removed (use `/api/data` instead)
 
 ### Breaking Changes
 - SSE support removed in favor of polling
