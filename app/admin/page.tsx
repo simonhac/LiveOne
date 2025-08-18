@@ -45,9 +45,11 @@ export default function AdminDashboard() {
   const router = useRouter()
 
   useEffect(() => {
-    // Check if user is admin (simplified check)
-    const authToken = document.cookie.split('; ').find(row => row.startsWith('auth-token='))
-    if (!authToken) {
+    // Check if user is authenticated and is admin
+    const isAuthenticated = sessionStorage.getItem('authenticated') === 'true'
+    const userRole = sessionStorage.getItem('userRole')
+    
+    if (!isAuthenticated || userRole !== 'admin') {
       router.push('/')
       return
     }

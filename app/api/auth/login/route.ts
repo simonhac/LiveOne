@@ -16,13 +16,19 @@ export async function POST(request: NextRequest) {
       );
     }
     
+    // Check if this is an admin user (simplified check - you can customize this)
+    // For now, let's use a special admin password or email
+    const isAdmin = password === process.env.ADMIN_PASSWORD || 
+                    email === process.env.ADMIN_EMAIL ||
+                    email === 'admin@liveone.com';
+    
     // Create response with user data
     const response = NextResponse.json({
       success: true,
       user: {
         email: email,
-        displayName: 'User',
-        role: 'user'
+        displayName: isAdmin ? 'Admin' : 'User',
+        role: isAdmin ? 'admin' : 'user'
       }
     });
     
