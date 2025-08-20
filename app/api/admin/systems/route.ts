@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { systems, readings, pollingStatus } from '@/lib/db/schema';
 import { eq, desc, sql } from 'drizzle-orm';
-import { formatToAEST } from '@/lib/date-utils';
+import { formatTimeAEST } from '@/lib/date-utils';
 
 export async function GET(request: NextRequest) {
   try {
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
         polling: {
           isActive: pollStatus?.isActive || false,
           isAuthenticated: true, // Always true if we have data
-          lastPollTime: pollStatus?.lastPollTime ? formatToAEST(pollStatus.lastPollTime) : null,
+          lastPollTime: pollStatus?.lastPollTime ? formatTimeAEST(pollStatus.lastPollTime) : null,
           lastError: pollStatus?.lastError || null,
         },
         data: reading ? {
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
           batteryPower: reading.batteryW,
           batterySOC: reading.batterySOC,
           gridPower: reading.gridW,
-          timestamp: formatToAEST(reading.inverterTime),
+          timestamp: formatTimeAEST(reading.inverterTime),
         } : null,
       });
     }
@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
       systems: systemsData,
       totalSystems: systemsData.length,
       activeSessions: 0, // No longer tracking sessions
-      timestamp: formatToAEST(new Date()),
+      timestamp: formatTimeAEST(new Date()),
     });
     
   } catch (error) {

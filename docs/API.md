@@ -119,30 +119,93 @@ Lightweight version of the data endpoint optimized for serverless environments.
 ---
 
 #### GET /api/history
-Returns historical time-series data for charting.
+Returns historical time-series data for charting in OpenNEM format.
 
-**Authentication:** Not required
+**Authentication:** Required (cookie or Bearer token)
 
 **Query Parameters:**
-- `range` (optional): Time range - "24H" (default), "7D"
-- `resolution` (optional): Data resolution - "5m", "30m"
+- `systemId` (required): Numeric ID of the system to query
+- `interval` (required): Data interval - "5m", "30m", or "1d"
+- `fields` (required): Comma-separated list of fields - "solar", "load", "battery", "grid"
+- Time range (choose one option):
+  - `last` (relative time): e.g., "7d", "24h", "30m" for minute intervals, or "30d" for daily intervals
+  - `startTime` AND `endTime` (absolute time): 
+    - For "5m" or "30m" intervals: ISO8601 datetime (e.g., "2025-08-16T10:00:00Z") or date only (e.g., "2025-08-16")
+    - For "1d" interval: Date only in YYYY-MM-DD format (e.g., "2025-08-16")
 
-**Response:**
+**Time Range Limits:**
+- "5m" interval: Maximum 7.5 days
+- "30m" interval: Maximum 30 days
+- "1d" interval: Maximum 13 months
+
+**Date/Time Handling:**
+- For minute intervals (5m, 30m):
+  - ISO8601 datetime: Parsed with timezone if specified, otherwise assumed UTC
+  - Date-only string: Start time is 00:00:00, end time is 00:00:00 next day (in system timezone, no DST)
+- For daily interval (1d):
+  - Only accepts YYYY-MM-DD format
+  - Datetime strings will be rejected
+
+**Response (OpenNEM format):**
 ```json
 {
-  "success": true,
-  "range": "24H",
+  "type": "energy",
+  "version": "v4.1",
+  "network": "liveone",
+  "created_at": "2025-08-20T20:47:36+10:00",
   "data": [
     {
-      "timestamp": "2025-08-18T00:00:00Z",
-      "solarW": 0,
-      "loadW": 450,
-      "batteryW": 450,
-      "gridW": 0,
-      "batterySOC": 75.5
+      "id": "liveone.1586.solar.power",
+      "type": "power",
+      "units": "W",
+      "history": {
+        "start": "2025-08-16",
+        "last": "2025-08-19",
+        "interval": "1d",
+        "data": [723,451,948,1817]
+      },
+      "network": "liveone",
+      "source": "selectronic",
+      "description": "Total solar generation (remote + local)"
     }
-    // ... more data points
+    // ... more data series for requested fields
   ]
+}
+```
+
+**Examples:**
+
+1. Last 30 days with daily resolution:
+```bash
+GET /api/history?systemId=1&interval=1d&fields=solar,load&last=30d
+```
+
+2. Specific date range with 5-minute resolution:
+```bash
+GET /api/history?systemId=1&interval=5m&fields=battery,grid&startTime=2025-08-16T10:00:00Z&endTime=2025-08-16T15:00:00Z
+```
+
+3. Last 7 days with 30-minute resolution:
+```bash
+GET /api/history?systemId=1&interval=30m&fields=solar,load,battery,grid&last=7d
+```
+
+**Error Responses:**
+
+```json
+// Missing required parameters
+{
+  "error": "Missing required parameter: interval. Must be one of: 5m, 30m, 1d"
+}
+
+// Invalid date format for daily interval
+{
+  "error": "Invalid start date format. Expected YYYY-MM-DD, got: 2025-08-16T10:00:00"
+}
+
+// Time range exceeds limit
+{
+  "error": "Time range exceeds maximum of 13 months for 1d interval"
 }
 ```
 

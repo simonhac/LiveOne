@@ -3,7 +3,19 @@
  * 2x faster than original implementation
  */
 
-// Helper function for single value formatting (for fallback cases)
+/**
+ * Round a number to 3 decimal places
+ * @param value - Number to round
+ * @returns Rounded number or null if input is null/undefined
+ */
+export function roundToThree(value: number | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const rounded = Math.round(value * 1000) / 1000;
+  // Avoid returning -0
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+// Internal helper function for single value formatting (for edge cases)
 function formatSingleValue(value: number): number {
   if (value === 0) {
     return 0;
@@ -79,15 +91,6 @@ function formatSingleValue(value: number): number {
   
   // Single rounding operation
   return Math.round(value * factor) / factor;
-}
-
-/**
- * Format number according to OpenNEM precision rules (legacy interface)
- * @deprecated Use formatDataArray for better performance
- */
-export function formatPrecision(value: number, minSigFigs: number = 4): number {
-  // Ignore minSigFigs parameter for now - hardcoded to 4 for OpenNEM
-  return formatSingleValue(value);
 }
 
 /**
@@ -191,4 +194,23 @@ export function formatDataArray(data: (number | null)[]): (number | null)[] {
   }
   
   return result;
+}
+
+/**
+ * Format OpenNEM response as JSON with compact data arrays
+ * Converts multi-line numeric data arrays to single-line format
+ */
+export function formatOpenNEMResponse(response: any): string {
+  // Convert to JSON string with proper indentation
+  let jsonStr = JSON.stringify(response, null, 2);
+  
+  // Replace multi-line numeric data arrays with single-line arrays
+  // Only target "data" arrays that contain numbers (within history objects)
+  jsonStr = jsonStr.replace(/"data": \[\n\s+([\d\s,.\-null\n]+)\n\s+\]/g, (match, content) => {
+    // Compact numeric arrays to single line with single spaces between elements
+    const compacted = content.trim().replace(/\n\s+/g, '').replace(/,\s*/g, ',');
+    return `"data": [${compacted}]`;
+  });
+  
+  return jsonStr;
 }

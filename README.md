@@ -6,7 +6,8 @@ Real-time monitoring dashboard for Selectronic SP PRO inverters, deployed on Ver
 
 - 🔋 Real-time monitoring of solar, battery, and load power
 - 📊 Interactive dashboard with automatic updates
-- 📈 Historical data with time-series charts
+- 📈 Historical data with time-series charts (5-minute, 30-minute, and daily resolution)
+- 📅 Support for up to 13 months of historical data with daily aggregation
 - ⚡ Energy/Power toggle - switch between kWh and average W display
 - 🔄 Automatic data polling every minute via Vercel Cron
 - 💾 Turso cloud database (globally distributed SQLite)
@@ -110,6 +111,9 @@ vercel env add CRON_SECRET production
 - `POST /api/auth/login` - User authentication
 - `GET /api/data` - Current and historical data
 - `GET /api/history` - Time-series data for charts
+  - Supports 5-minute, 30-minute, and daily intervals
+  - Up to 13 months of historical data for daily resolution
+  - OpenNEM-compatible format
 - `GET /api/cron/minutely` - Minute polling (cron)
 - `GET /api/cron/daily` - Daily aggregation (cron)
 

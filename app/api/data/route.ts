@@ -3,7 +3,8 @@ import { SELECTLIVE_CONFIG } from '@/config'
 import { db } from '@/lib/db'
 import { systems, readings, pollingStatus, readingsAgg1d } from '@/lib/db/schema'
 import { eq, and, desc } from 'drizzle-orm'
-import { formatToAEST, getYesterdayDate, roundToThree } from '@/lib/date-utils'
+import { formatTimeAEST, getYesterdayDate } from '@/lib/date-utils'
+import { roundToThree } from '@/lib/format-opennem'
 
 export async function GET(request: Request) {
   try {
@@ -106,7 +107,7 @@ export async function GET(request: Request) {
       
       // Structure latest data with hierarchy
       const latest = {
-        timestamp: formatToAEST(latestReading.inverterTime),
+        timestamp: formatTimeAEST(latestReading.inverterTime),
         power: {
           solarW: latestReading.solarW,
           solarInverterW: latestReading.solarInverterW,
@@ -147,7 +148,7 @@ export async function GET(request: Request) {
         success: true,
         latest: latest,
         historical: historical,
-        timestamp: formatToAEST(latestReading.receivedTime || latestReading.inverterTime),
+        timestamp: formatTimeAEST(latestReading.receivedTime || latestReading.inverterTime),
         systemInfo: {
           model: system.model,
           serial: system.serial,
@@ -156,9 +157,9 @@ export async function GET(request: Request) {
           batterySize: system.batterySize,
         },
         polling: {
-          lastPollTime: status?.lastPollTime ? formatToAEST(status.lastPollTime) : null,
-          lastSuccessTime: status?.lastSuccessTime ? formatToAEST(status.lastSuccessTime) : null,
-          lastErrorTime: status?.lastErrorTime ? formatToAEST(status.lastErrorTime) : null,
+          lastPollTime: status?.lastPollTime ? formatTimeAEST(status.lastPollTime) : null,
+          lastSuccessTime: status?.lastSuccessTime ? formatTimeAEST(status.lastSuccessTime) : null,
+          lastErrorTime: status?.lastErrorTime ? formatTimeAEST(status.lastErrorTime) : null,
           lastError: status?.lastError || null,
           consecutiveErrors: status?.consecutiveErrors || 0,
           totalPolls: status?.totalPolls || 0,
@@ -172,9 +173,9 @@ export async function GET(request: Request) {
         error: status.lastError,
         timestamp: new Date(),
         polling: {
-          lastPollTime: status?.lastPollTime ? formatToAEST(status.lastPollTime) : null,
-          lastSuccessTime: status?.lastSuccessTime ? formatToAEST(status.lastSuccessTime) : null,
-          lastErrorTime: status?.lastErrorTime ? formatToAEST(status.lastErrorTime) : null,
+          lastPollTime: status?.lastPollTime ? formatTimeAEST(status.lastPollTime) : null,
+          lastSuccessTime: status?.lastSuccessTime ? formatTimeAEST(status.lastSuccessTime) : null,
+          lastErrorTime: status?.lastErrorTime ? formatTimeAEST(status.lastErrorTime) : null,
           lastError: status?.lastError || null,
           consecutiveErrors: status?.consecutiveErrors || 0,
           totalPolls: status?.totalPolls || 0,
