@@ -79,7 +79,7 @@ export async function getUserSystem(user: User) {
 /**
  * Validate that a user has access to a specific system
  */
-export async function userHasSystemAccess(user: User, systemNumber: string): boolean {
+export async function userHasSystemAccess(user: User, systemNumber: string): Promise<boolean> {
   // Admin has access to all systems
   if (user.role === 'admin') {
     return true;

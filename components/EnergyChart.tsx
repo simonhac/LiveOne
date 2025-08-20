@@ -449,7 +449,6 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
             hour: 'HH:mm',
             day: 'MMM d', // Show month and day
           },
-          stepSize: timeRange !== '1D' ? 1 : undefined, // Force one tick per day for 7D and 30D
         },
         grid: {
           color: 'rgb(55, 65, 81)', // gray-700

@@ -4,7 +4,8 @@
   "description": "A modern web service that bridges Selectronic SP PRO inverters to MQTT, providing real-time monitoring and data publishing for solar/battery systems.",
   "main": "index.js",
   "scripts": {
-    "dev": "next dev",
+    "dev": "concurrently \"next dev\" \"tsc --noEmit --watch\"",
+    "dev:no-typecheck": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -60,6 +61,7 @@
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
+    "concurrently": "^9.2.0",
     "drizzle-kit": "^0.31.4",
     "eslint": "^9.33.0",
     "eslint-config-next": "^15.4.6",

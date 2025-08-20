@@ -176,7 +176,7 @@ export function toUnixTimestamp(zonedDateTime: ZonedDateTime): number {
   }
   
   // Convert to milliseconds since epoch, then to seconds
-  const epochMillis = zonedDateTime.toDate('UTC').getTime();
+  const epochMillis = zonedDateTime.toDate().getTime();
   return Math.floor(epochMillis / 1000);
 }
 

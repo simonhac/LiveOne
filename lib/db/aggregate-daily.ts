@@ -202,7 +202,8 @@ export async function aggregateAllDailyData(
         .limit(1);
       
       if (earliest[0]) {
-        earliestDate = earliest[0].intervalEnd.toISOString().split('T')[0];
+        // intervalEnd is a Unix timestamp (number), convert to Date first
+        earliestDate = new Date(earliest[0].intervalEnd * 1000).toISOString().split('T')[0];
       }
     }
     
@@ -279,7 +280,7 @@ export async function aggregateYesterdayForAllSystems() {
     const yesterdayStr = yesterday.toISOString().split('T')[0];
     
     // Get all unique system IDs from recent data  
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const sevenDaysAgo = Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1000) / 1000); // Unix timestamp
     const allSystems = await db
       .select()
       .from(readingsAgg5m)

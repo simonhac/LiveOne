@@ -54,7 +54,7 @@ export async function updateAggregatedData(
     
     const aggregatedData = {
       systemId,
-      intervalEnd,
+      intervalEnd: Math.floor(intervalEnd.getTime() / 1000), // Convert to Unix timestamp (seconds)
       
       // Power values (Watts) - round to integers
       solarWAvg: roundToInteger(solarWValues.length > 0 ? solarWValues.reduce((a, b) => a + b, 0) / solarWValues.length : null),
