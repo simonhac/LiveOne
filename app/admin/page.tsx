@@ -104,7 +104,7 @@ export default function AdminDashboard() {
 
   const formatPower = (watts: number | undefined | null) => {
     if (watts === undefined || watts === null) return '—'
-    return `${(watts / 1000).toFixed(3)} kW`
+    return `${(watts / 1000).toFixed(1)} kW`
   }
 
   const formatSOC = (soc: number | undefined | null) => {

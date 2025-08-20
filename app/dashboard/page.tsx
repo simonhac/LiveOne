@@ -213,7 +213,7 @@ export default function DashboardPage() {
   }
 
   const formatPower = (watts: number) => {
-    return `${(watts / 1000).toFixed(3)} kW`
+    return `${(watts / 1000).toFixed(1)} kW`
   }
 
   // Calculate average power from energy for today

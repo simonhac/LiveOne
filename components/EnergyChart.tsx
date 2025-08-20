@@ -369,7 +369,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
             }
             if (context.parsed.y !== null) {
               if (context.dataset.yAxisID === 'y') {
-                label += `${context.parsed.y.toFixed(2)} kW`
+                label += `${context.parsed.y.toFixed(1)} kW`
               } else {
                 label += `${context.parsed.y.toFixed(1)}%`
               }
