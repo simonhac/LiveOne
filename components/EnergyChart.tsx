@@ -50,7 +50,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
   const [chartData, setChartData] = useState<ChartData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [timeRange, setTimeRange] = useState<'1D' | '7D'>('1D')
+  const [timeRange, setTimeRange] = useState<'1D' | '7D' | '30D'>('1D')
   
 
   useEffect(() => {
@@ -62,10 +62,22 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
       
       try {
         // Fetch will automatically include cookies
-        // Use different intervals: 5m for 1D, 30m for 7D
-        const requestInterval = timeRange === '1D' ? '5m' : '30m'
-        const duration = timeRange === '1D' ? '25h' : '169h' // 25h for 1D, 7*24+1 for 7D
-        const response = await fetch(`/api/history?interval=${requestInterval}&last=${duration}&fields=solar,load,battery`, {
+        // Use different intervals: 5m for 1D, 30m for 7D, 1d for 30D
+        let requestInterval: string
+        let duration: string
+        
+        if (timeRange === '1D') {
+          requestInterval = '5m'
+          duration = '25h' // 25h for 1D
+        } else if (timeRange === '7D') {
+          requestInterval = '30m'
+          duration = '169h' // 7*24+1 for 7D
+        } else { // 30D
+          requestInterval = '1d'
+          duration = '30d' // 30 days
+        }
+        
+        const response = await fetch(`/api/history?interval=${requestInterval}&last=${duration}&fields=solar,load,battery&systemId=1`, {
           credentials: 'same-origin', // Include cookies
           signal: abortController.signal
         })
@@ -103,7 +115,9 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         
         let intervalMs: number
         
-        if (interval === '30m') {
+        if (interval === '1d') {
+          intervalMs = 24 * 60 * 60000 // 1 day
+        } else if (interval === '30m') {
           intervalMs = 30 * 60000 // 30 minutes
         } else if (interval === '5m') {
           intervalMs = 5 * 60000 // 5 minutes
@@ -120,13 +134,21 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         )
 
         // Get data for selected time range
-        const now = new Date()
-        const windowStart = new Date(now.getTime() - (timeRange === '1D' ? 24 : 24 * 7) * 60 * 60 * 1000)
+        const currentTime = new Date()
+        let windowHours: number
+        if (timeRange === '1D') {
+          windowHours = 24
+        } else if (timeRange === '7D') {
+          windowHours = 24 * 7
+        } else { // 30D
+          windowHours = 24 * 30
+        }
+        const windowStart = new Date(currentTime.getTime() - windowHours * 60 * 60 * 1000)
         
         // Filter to selected time range
         const selectedIndices = timestamps
           .map((t: Date, i: number) => ({ time: t, index: i }))
-          .filter(({ time }: { time: Date, index: number }) => time >= windowStart)
+          .filter(({ time }: { time: Date, index: number }) => time >= windowStart && time <= currentTime)
           .map(({ index }: { time: Date, index: number }) => index)
 
         setChartData({
@@ -178,13 +200,23 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
             </button>
             <button
               onClick={() => setTimeRange('7D')}
-              className={`px-3 py-1 text-xs font-medium rounded-r-md border-t border-r border-b transition-colors ${
+              className={`px-3 py-1 text-xs font-medium border-t border-b transition-colors ${
                 timeRange === '7D' 
                   ? 'bg-blue-600 text-white border-blue-600' 
                   : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
               }`}
             >
               7D
+            </button>
+            <button
+              onClick={() => setTimeRange('30D')}
+              className={`px-3 py-1 text-xs font-medium rounded-r-md border transition-colors ${
+                timeRange === '30D' 
+                  ? 'bg-blue-600 text-white border-blue-600' 
+                  : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
+              }`}
+            >
+              30D
             </button>
           </div>
         </div>
@@ -213,13 +245,23 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
             </button>
             <button
               onClick={() => setTimeRange('7D')}
-              className={`px-3 py-1 text-xs font-medium rounded-r-md border-t border-r border-b transition-colors ${
+              className={`px-3 py-1 text-xs font-medium border-t border-b transition-colors ${
                 timeRange === '7D' 
                   ? 'bg-blue-600 text-white border-blue-600' 
                   : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
               }`}
             >
               7D
+            </button>
+            <button
+              onClick={() => setTimeRange('30D')}
+              className={`px-3 py-1 text-xs font-medium rounded-r-md border transition-colors ${
+                timeRange === '30D' 
+                  ? 'bg-blue-600 text-white border-blue-600' 
+                  : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
+              }`}
+            >
+              30D
             </button>
           </div>
         </div>
@@ -235,7 +277,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
     datasets: [
       {
         label: 'Solar',
-        data: chartData.solar.map(w => w === null ? null : w / 1000), // Convert W to kW, preserve nulls
+        data: chartData.solar.map(w => w / 1000), // Convert W to kW
         borderColor: 'rgb(250, 204, 21)', // yellow-400
         backgroundColor: 'rgb(250, 204, 21)', // Solid color for legend
         yAxisID: 'y',
@@ -243,11 +285,10 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         borderWidth: 2,
         pointRadius: 0,
         fill: false, // Don't fill under the line
-        spanGaps: false, // Don't connect lines across null values
       },
       {
         label: 'Load',
-        data: chartData.load.map(w => w === null ? null : w / 1000), // Convert W to kW, preserve nulls
+        data: chartData.load.map(w => w / 1000), // Convert W to kW
         borderColor: 'rgb(96, 165, 250)', // blue-400
         backgroundColor: 'rgb(96, 165, 250)', // Solid color for legend
         yAxisID: 'y',
@@ -255,11 +296,10 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         borderWidth: 2,
         pointRadius: 0,
         fill: false, // Don't fill under the line
-        spanGaps: false, // Don't connect lines across null values
       },
       {
         label: 'Battery SOC',
-        data: chartData.batterySOC, // Already in percentage, may contain nulls
+        data: chartData.batterySOC, // Already in percentage
         borderColor: 'rgb(74, 222, 128)', // green-400
         backgroundColor: 'rgb(74, 222, 128)', // Solid color for legend
         yAxisID: 'y1',
@@ -267,14 +307,21 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         borderWidth: 2,
         pointRadius: 0,
         fill: false, // Don't fill under the line
-        spanGaps: false, // Don't connect lines across null values
       },
     ],
   }
 
   // Calculate the time window for x-axis
   const now = new Date()
-  const windowStart = new Date(now.getTime() - (timeRange === '1D' ? 24 : 24 * 7) * 60 * 60 * 1000)
+  let windowHours: number
+  if (timeRange === '1D') {
+    windowHours = 24
+  } else if (timeRange === '7D') {
+    windowHours = 24 * 7
+  } else { // 30D
+    windowHours = 24 * 30
+  }
+  const windowStart = new Date(now.getTime() - windowHours * 60 * 60 * 1000)
 
   const options: ChartOptions<'line'> = {
     responsive: true,
@@ -335,27 +382,55 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         annotations: (() => {
           const annotations: any[] = []
           
-          // Create daytime background regions based on the time window
-          // Add daytime regions for each day in the window
-          const daysToShow = timeRange === '1D' ? 2 : 8 // Show 2 days for 1D view, 8 days for 7D
-          for (let i = 0; i < daysToShow; i++) {
-            const dayStart = new Date(now)
-            dayStart.setDate(dayStart.getDate() - i)
-            dayStart.setHours(7, 0, 0, 0)
-            
-            const dayEnd = new Date(now)
-            dayEnd.setDate(dayEnd.getDate() - i)
-            dayEnd.setHours(22, 0, 0, 0)
-            
-            // Only add if this day overlaps with our window
-            if (dayEnd > windowStart && dayStart < now) {
-              annotations.push({
-                type: 'box',
-                xMin: Math.max(dayStart.getTime(), windowStart.getTime()),
-                xMax: Math.min(dayEnd.getTime(), now.getTime()),
-                backgroundColor: 'rgba(255, 255, 255, 0.07)', // 7% opacity white overlay
-                borderWidth: 0,
-              })
+          if (timeRange === '30D') {
+            // For 30D view: shade weekdays (Mon-Fri)
+            const daysToShow = 31
+            for (let i = 0; i < daysToShow; i++) {
+              const day = new Date(now)
+              day.setDate(day.getDate() - i)
+              day.setHours(0, 0, 0, 0)
+              
+              const dayOfWeek = day.getDay() // 0 = Sunday, 6 = Saturday
+              
+              // Only shade weekdays (Monday = 1 through Friday = 5)
+              if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+                const dayEnd = new Date(day)
+                dayEnd.setHours(23, 59, 59, 999)
+                
+                // Only add if this day overlaps with our window
+                if (dayEnd > windowStart && day < now) {
+                  annotations.push({
+                    type: 'box',
+                    xMin: Math.max(day.getTime(), windowStart.getTime()),
+                    xMax: Math.min(dayEnd.getTime(), now.getTime()),
+                    backgroundColor: 'rgba(255, 255, 255, 0.07)', // 7% opacity white overlay
+                    borderWidth: 0,
+                  })
+                }
+              }
+            }
+          } else {
+            // For 1D and 7D views: shade daytime hours (7am-10pm)
+            const daysToShow = timeRange === '1D' ? 2 : 8
+            for (let i = 0; i < daysToShow; i++) {
+              const dayStart = new Date(now)
+              dayStart.setDate(dayStart.getDate() - i)
+              dayStart.setHours(7, 0, 0, 0)
+              
+              const dayEnd = new Date(now)
+              dayEnd.setDate(dayEnd.getDate() - i)
+              dayEnd.setHours(22, 0, 0, 0)
+              
+              // Only add if this day overlaps with our window
+              if (dayEnd > windowStart && dayStart < now) {
+                annotations.push({
+                  type: 'box',
+                  xMin: Math.max(dayStart.getTime(), windowStart.getTime()),
+                  xMax: Math.min(dayEnd.getTime(), now.getTime()),
+                  backgroundColor: 'rgba(255, 255, 255, 0.07)', // 7% opacity white overlay
+                  borderWidth: 0,
+                })
+              }
             }
           }
           
@@ -369,35 +444,68 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         min: windowStart.getTime(), // Show from selected time range
         max: now.getTime(), // To current time
         time: {
-          unit: timeRange === '7D' ? 'day' : 'hour',
+          unit: timeRange === '1D' ? 'hour' : 'day',
           displayFormats: {
             hour: 'HH:mm',
-            day: 'EEE', // Just show day name (e.g., "Thu")
+            day: 'MMM d', // Show month and day
           },
+          stepSize: timeRange !== '1D' ? 1 : undefined, // Force one tick per day for 7D and 30D
         },
         grid: {
           color: 'rgb(55, 65, 81)', // gray-700
+          display: true,
+          drawOnChartArea: true,
+          drawTicks: true,
         },
         ticks: {
           color: 'rgb(156, 163, 175)', // gray-400
           font: {
             size: 10,
             family: 'DM Sans, system-ui, sans-serif',
+            lineHeight: 1.4, // Add spacing between day name and date
           },
-          autoSkip: timeRange !== '7D', // Don't skip in 7D mode
           maxRotation: 0, // Keep labels horizontal
           minRotation: 0, // Keep labels horizontal
-          align: timeRange === '7D' ? 'start' : 'center', // Align labels to the right of the grid line in 7D mode
+          align: timeRange !== '1D' ? 'start' : 'center', // Align labels to the right of the grid line in 7D/30D mode
+          padding: timeRange === '30D' ? 6 : 4, // More padding for 30D to prevent collision
+          autoSkip: timeRange === '1D', // Only auto-skip for 1D view
+          source: 'auto', // Let Chart.js generate ticks automatically
           callback: function(value, index, ticks) {
             const date = new Date(value);
-            if (timeRange === '7D') {
+            if (timeRange === '30D') {
+              // Dynamically adjust based on number of ticks
+              // More aggressive skipping for smaller screens
+              const totalDays = ticks.length;
+              let skipInterval = 2; // Default: show every other day
+              
+              if (totalDays > 20) {
+                skipInterval = 3; // Show every 3rd day
+              }
+              if (totalDays > 25) {
+                skipInterval = 4; // Show every 4th day  
+              }
+              
+              if (index % skipInterval !== 0) {
+                // Use multiple spaces to maintain minimum width
+                return '     '; // 5 spaces to prevent collision detection
+              } else {
+                // Show the date label
+                const dayName = format(date, 'EEE'); // Mon, Tue, Wed, etc.
+                const dayDate = format(date, 'd MMM'); // 30 Jun
+                return [dayName, dayDate]; // Return array for multi-line label
+              }
+            } else if (timeRange === '7D') {
               // For 7D mode, show day name on first line and date on second line
               const dayName = format(date, 'EEE');
               const dayDate = format(date, 'd MMM');
               return [dayName, dayDate]; // Return array for multi-line label
+            } else if (timeRange === '1D') {
+              // For 1D mode, skip some labels to prevent collision
+              if (index % 2 !== 0) {
+                return '\u200B'; // Return zero-width space to keep gridline but hide label
+              }
+              return format(date, 'HH:mm');
             }
-            // For 1D mode, keep existing hour format
-            return format(date, 'HH:mm');
           },
         },
       },
@@ -412,6 +520,8 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         suggestedMax: maxPowerHint,
         grid: {
           color: 'rgb(55, 65, 81)', // gray-700
+          display: true,
+          drawOnChartArea: true,
         },
         ticks: {
           color: 'rgb(156, 163, 175)', // gray-400
@@ -436,7 +546,8 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
           display: false, // Hide the title
         },
         grid: {
-          drawOnChartArea: false,
+          display: true,
+          drawOnChartArea: false, // Don't draw y1 grid lines on chart area to avoid overlap
         },
         ticks: {
           color: 'rgb(156, 163, 175)', // gray-400
@@ -475,13 +586,23 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
           </button>
           <button
             onClick={() => setTimeRange('7D')}
-            className={`px-3 py-1 text-xs font-medium rounded-r-md border-t border-r border-b transition-colors ${
+            className={`px-3 py-1 text-xs font-medium border-t border-b transition-colors ${
               timeRange === '7D' 
                 ? 'bg-blue-600 text-white border-blue-600' 
                 : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
             }`}
           >
             7D
+          </button>
+          <button
+            onClick={() => setTimeRange('30D')}
+            className={`px-3 py-1 text-xs font-medium rounded-r-md border transition-colors ${
+              timeRange === '30D' 
+                ? 'bg-blue-600 text-white border-blue-600' 
+                : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
+            }`}
+          >
+            30D
           </button>
         </div>
       </div>
