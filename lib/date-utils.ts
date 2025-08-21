@@ -241,12 +241,14 @@ export function parseRelativeTime(
   
   if (interval === '1d') {
     // For daily intervals, work with calendar dates
+    // Always end with yesterday since today's data isn't complete
     const today = new CalendarDate(nowTime.year, nowTime.month, nowTime.day);
+    const yesterday = today.subtract({ days: 1 });
     let startDate: CalendarDate;
     
     switch (unit) {
       case 'd':
-        startDate = today.subtract({ days: amount - 1 }); // Include today
+        startDate = yesterday.subtract({ days: amount - 1 }); // Count back from yesterday
         break;
       case 'h':
       case 'm':
@@ -255,7 +257,7 @@ export function parseRelativeTime(
         throw new Error(`Invalid time unit: ${unit}`);
     }
     
-    return [startDate, today];
+    return [startDate, yesterday];
   } else {
     // For minute intervals, align end time to interval boundary
     const intervalMinutes = interval === '30m' ? 30 : 5;
