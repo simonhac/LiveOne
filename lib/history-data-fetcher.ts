@@ -165,16 +165,6 @@ export async function fetch5MinuteData(systemId: number, startTime: ZonedDateTim
       }
     },
     
-    // // Energy totals (last values)
-    // energy: {
-    //   solarKwhTotal: row.solarKwhTotalLast,
-    //   loadKwhTotal: row.loadKwhTotalLast,
-    //   batteryInKwhTotal: row.batteryInKwhTotalLast,
-    //   batteryOutKwhTotal: row.batteryOutKwhTotalLast,
-    //   gridInKwhTotal: row.gridInKwhTotalLast,
-    //   gridOutKwhTotal: row.gridOutKwhTotalLast
-    // },
-    
     // Data quality
     dataQuality: {
       sampleCount: row.sampleCount

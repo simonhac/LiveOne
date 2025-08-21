@@ -271,12 +271,28 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Calculate date strings based on the requested range
+    let requestStartStr: string;
+    let requestEndStr: string;
+    
+    if (interval === '1d') {
+      // For daily data, use the requested date range
+      requestStartStr = formatDateAEST(startTime as CalendarDate);
+      requestEndStr = formatDateAEST(endTime as CalendarDate);
+    } else {
+      // For 5m/30m intervals, use the requested time range
+      requestStartStr = formatTimeAEST(startTime as ZonedDateTime);
+      requestEndStr = formatTimeAEST(endTime as ZonedDateTime);
+    }
+
     // Build OpenNEM response (identical format to regular API)
     const response: OpenNEMResponse = {
       type: 'energy',
       version: 'v4.1', // Fast implementation version
       network: 'liveone',
       created_at: formatTimeAEST(now('Australia/Brisbane')),
+      requestStart: requestStartStr,
+      requestEnd: requestEndStr,
       data: []
     };
 
@@ -383,19 +399,48 @@ export async function GET(request: NextRequest) {
         effectiveInterval
       ));
       
-      // Also include battery SOC
+      // Also include battery SOC - use average for daily data, last for minute data
       dataSeries.push(createDataSeries(
         systemNumber,
-        'battery.soc',
-        r => r?.batterySOCLast ?? r?.battery?.batteryLastSOC,
+        interval === '1d' ? 'battery.soc.avg' : 'battery.soc.last',
+        r => interval === '1d' ? r?.soc?.avgBattery : (r?.batterySOCLast ?? r?.battery?.batteryLastSOC),
         'percentage',
         '%',
-        'Battery state of charge',
+        interval === '1d' ? 'Average battery state of charge' : 'Battery state of charge',
         processedData,
         startStr,
         lastStr,
         effectiveInterval
       ));
+      
+      // Add min and max SOC for daily intervals
+      if (interval === '1d') {
+        dataSeries.push(createDataSeries(
+          systemNumber,
+          'battery.soc.min',
+          r => r?.soc?.minBattery,
+          'percentage',
+          '%',
+          'Minimum battery state of charge',
+          processedData,
+          startStr,
+          lastStr,
+          effectiveInterval
+        ));
+        
+        dataSeries.push(createDataSeries(
+          systemNumber,
+          'battery.soc.max',
+          r => r?.soc?.maxBattery,
+          'percentage',
+          '%',
+          'Maximum battery state of charge',
+          processedData,
+          startStr,
+          lastStr,
+          effectiveInterval
+        ));
+      }
     }
 
     if (fields.includes('grid')) {
