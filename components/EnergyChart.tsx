@@ -284,7 +284,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
     )
   }
 
-  const data = chartData.mode === 'energy' ? {
+  const data: any = chartData.mode === 'energy' ? {
     // Energy mode: Use bar chart data structure
     labels: chartData.timestamps,
     datasets: [
@@ -408,11 +408,11 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
           family: 'DM Sans, system-ui, sans-serif',
         },
         callbacks: {
-          title: (context) => {
+          title: (context: any) => {
             const date = new Date(context[0].parsed.x)
             return format(date, 'MMM d, HH:mm')
           },
-          label: (context) => {
+          label: (context: any) => {
             let label = context.dataset.label || ''
             if (label) {
               label += ': '
@@ -521,7 +521,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
           padding: timeRange === '30D' ? 6 : 4, // More padding for 30D to prevent collision
           autoSkip: timeRange === '1D', // Only auto-skip for 1D view
           source: 'auto', // Let Chart.js generate ticks automatically
-          callback: function(value, index, ticks) {
+          callback: function(value: any, index: any, ticks: any) {
             const date = new Date(value);
             if (timeRange === '30D') {
               // Dynamically adjust based on number of ticks
@@ -580,7 +580,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
             size: 10,
             family: 'DM Sans, system-ui, sans-serif',
           },
-          callback: function(value, index, ticks) {
+          callback: function(value: any, index: any, ticks: any) {
             // Add unit only to the last (top) tick
             // Use kWh for energy mode, kW for power mode
             if (index === ticks.length - 1) {
@@ -608,7 +608,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
             size: 10,
             family: 'DM Sans, system-ui, sans-serif',
           },
-          callback: function(value, index, ticks) {
+          callback: function(value: any, index: any, ticks: any) {
             // Add "%" only to the last (top) tick
             if (index === ticks.length - 1) {
               return value + '%';
