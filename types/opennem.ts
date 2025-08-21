@@ -23,6 +23,8 @@ export interface OpenNEMResponse {
   version: string;
   network: string;
   created_at: string;
+  requestStart?: string;  // Start of requested time range
+  requestEnd?: string;    // End of requested time range
   data: OpenNEMDataSeries[];
 }
 
