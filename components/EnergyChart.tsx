@@ -478,7 +478,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
     return (
       <div className={`md:bg-gray-800 md:border md:border-gray-700 md:rounded py-1 px-0 md:p-4 flex flex-col ${className}`}>
         <div className="flex justify-between items-center mb-2 px-1 md:px-0">
-          <h3 className="text-sm font-semibold text-white">Energy History</h3>
+          <h3 className="text-sm font-semibold text-white" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>Daylesford</h3>
           <div className="inline-flex rounded-md shadow-sm" role="group">
             <button
               onClick={() => setTimeRange('1D')}
@@ -523,7 +523,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
     return (
       <div className={`md:bg-gray-800 md:border md:border-gray-700 md:rounded py-1 px-0 md:p-4 flex flex-col ${className}`}>
         <div className="flex justify-between items-center mb-2 px-1 md:px-0">
-          <h3 className="text-sm font-semibold text-white">Energy History</h3>
+          <h3 className="text-sm font-semibold text-white" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>Daylesford</h3>
           <div className="inline-flex rounded-md shadow-sm" role="group">
             <button
               onClick={() => setTimeRange('1D')}
@@ -676,7 +676,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
   return (
     <div className={`md:bg-gray-800 md:border md:border-gray-700 md:rounded py-1 px-0 md:p-4 flex flex-col ${className}`}>
       <div className="flex justify-between items-center mb-1 md:mb-2 px-1 md:px-0">
-        <h3 className="text-sm font-semibold text-white">Energy History</h3>
+        <h3 className="text-sm font-semibold text-white" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>Daylesford</h3>
         <div className="inline-flex rounded-md shadow-sm" role="group">
           <button
             onClick={() => setTimeRange('1D')}
