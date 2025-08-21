@@ -152,7 +152,8 @@ Daily summaries aggregated at 00:05 each day via cron job.
 | `grid_import_alltime_kwh` | REAL | Cumulative grid import at end (kWh) |
 | `grid_export_alltime_kwh` | REAL | Cumulative grid export at end (kWh) |
 | **Data Quality** | | |
-| `interval_count` | INTEGER | Number of 5-minute intervals in this day |
+| `interval_count` | INTEGER NOT NULL DEFAULT 0 | Number of 5-minute intervals in this day |
+| `sample_count` | INTEGER NOT NULL DEFAULT 0 | Total raw samples (cascaded from 5-minute intervals) |
 | `version` | INTEGER | Schema version (currently 1) |
 | `created_at` | INTEGER (timestamp) | Creation timestamp |
 | `updated_at` | INTEGER (timestamp) | Last update timestamp |
@@ -165,6 +166,8 @@ Daily summaries aggregated at 00:05 each day via cron job.
 **Notes:**
 - Energy values are NULL for the first day (no baseline for calculation)
 - Coverage percentage can be calculated as `interval_count / 288 * 100` (288 = 24 hours * 12 intervals/hour)
+- `sample_count` cascades from 5-minute aggregations, representing total raw readings for the day
+- Typical sample_count is ~1400-1440 per day (5 samples per 5-minute interval)
 
 ### 5. `polling_status` - System Health Monitoring
 

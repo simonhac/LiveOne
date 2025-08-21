@@ -1,120 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { systems, readingsAgg5m, readingsAgg1d } from '@/lib/db/schema';
-import { eq, and, gte, lte, sql } from 'drizzle-orm';
+import { systems } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
 import { OpenNEMResponse, OpenNEMDataSeries } from '@/types/opennem';
-import { formatDataArray, formatOpenNEMResponse, roundToThree } from '@/lib/format-opennem';
-import { formatTimeAEST, formatDateAEST, parseTimeRange, parseDateRange, parseRelativeTime, toUnixTimestamp, getDateDifferenceMs, getTimeDifferenceMs } from '@/lib/date-utils';
-import { parseAbsolute, toZoned, CalendarDate, ZonedDateTime, now } from '@internationalized/date';
+import { formatDataArray, formatOpenNEMResponse } from '@/lib/format-opennem';
+import { formatTimeAEST, formatDateAEST, parseTimeRange, parseDateRange, parseRelativeTime, getDateDifferenceMs, getTimeDifferenceMs } from '@/lib/date-utils';
+import { CalendarDate, ZonedDateTime, now } from '@internationalized/date';
 import { getCurrentUser, userHasSystemAccess } from '@/lib/user-manager';
+import { fetch5MinuteData, fetch30MinuteData, fetch1DayData } from '@/lib/history-data-fetcher';
 
-// Fetch 5-minute aggregated data
-async function fetch5MinuteData(systemId: number, startTime: ZonedDateTime, endTime: ZonedDateTime) {
-  // Convert ZonedDateTime to Unix timestamp for database query
-  const startTimestamp = toUnixTimestamp(startTime);
-  const endTimestamp = toUnixTimestamp(endTime);
-  
-  // The intervalEnd column is stored as Unix timestamp, so compare directly
-  const data = await db.select()
-    .from(readingsAgg5m)
-    .where(
-      and(
-        eq(readingsAgg5m.systemId, systemId),
-        gte(readingsAgg5m.intervalEnd, startTimestamp),
-        lte(readingsAgg5m.intervalEnd, endTimestamp)
-      )
-    )
-    .orderBy(readingsAgg5m.intervalEnd);
-  
-  // Drizzle SQLite returns timestamps as integers (Unix seconds), not Date objects
-  // We need to convert them to Date objects for formatTimeAEST
-  const processedData = data.map(row => ({
-    ...row,
-    intervalEnd: new Date(row.intervalEnd * 1000) // Convert Unix seconds to Date
-  }));
-  
-  return processedData;
-}
-
-// Fetch daily aggregated data and transform to match api/data structure
-async function fetchDailyData(systemId: number, startDate: CalendarDate, endDate: CalendarDate) {
-  // Format dates as YYYY-MM-DD strings for the database query
-  const startDateStr = formatDateAEST(startDate);
-  const endDateStr = formatDateAEST(endDate);
-  
-  const dailyData = await db.select()
-    .from(readingsAgg1d)
-    .where(
-      and(
-        eq(readingsAgg1d.systemId, systemId.toString()),
-        gte(readingsAgg1d.day, startDateStr),
-        lte(readingsAgg1d.day, endDateStr)
-      )
-    )
-    .orderBy(readingsAgg1d.day);
-  
-  
-  // Transform daily data to match the api/data structure
-  return dailyData.map(row => {
-    // End of day is 00:00:00 of the next day
-    const nextDay = new Date(row.day + 'T00:00:00Z');
-    nextDay.setDate(nextDay.getDate() + 1);
-    
-    return {
-      // Fields for compatibility with existing charting
-      intervalEnd: nextDay,
-      solarWAvg: row.solarWAvg,
-      loadWAvg: row.loadWAvg,
-      batteryWAvg: row.batteryWAvg,
-      gridWAvg: row.gridWAvg,
-      batterySOCLast: row.batterySocEnd,
-      sampleCount: row.intervalCount || 0,
-      
-      // Full structured data matching api/data format
-      date: row.day,
-      energy: {
-        solarKwh: roundToThree(row.solarKwh),
-        loadKwh: roundToThree(row.loadKwh),
-        batteryChargeKwh: roundToThree(row.batteryChargeKwh),
-        batteryDischargeKwh: roundToThree(row.batteryDischargeKwh),
-        gridImportKwh: roundToThree(row.gridImportKwh),
-        gridExportKwh: roundToThree(row.gridExportKwh)
-      },
-      power: {
-        solar: {
-          minW: row.solarWMin,
-          avgW: row.solarWAvg,
-          maxW: row.solarWMax
-        },
-        load: {
-          minW: row.loadWMin,
-          avgW: row.loadWAvg,
-          maxW: row.loadWMax
-        },
-        battery: {
-          minW: row.batteryWMin,
-          avgW: row.batteryWAvg,
-          maxW: row.batteryWMax
-        },
-        grid: {
-          minW: row.gridWMin,
-          avgW: row.gridWAvg,
-          maxW: row.gridWMax
-        }
-      },
-      soc: {
-        minBattery: roundToThree(row.batterySocMin),
-        avgBattery: roundToThree(row.batterySocAvg),
-        maxBattery: roundToThree(row.batterySocMax),
-        endBattery: roundToThree(row.batterySocEnd)
-      },
-      dataQuality: {
-        intervalCount: row.intervalCount,
-        coverage: row.intervalCount ? `${Math.round((row.intervalCount / 288) * 100)}%` : null
-      }
-    };
-  });
-}
 
 // Helper function to create a data series for OpenNEM response
 function createDataSeries(
@@ -145,68 +39,6 @@ function createDataSeries(
   };
 }
 
-// Helper to aggregate 5m data to 30m intervals
-// Optimized version that processes data in a single pass
-function aggregateTo30m(data: any[]): any[] {
-  if (data.length === 0) return [];
-  
-  const result: any[] = [];
-  const intervalMs = 30 * 60 * 1000;
-  
-  // Running totals for the current 30-minute interval
-  let solarWSum = 0;
-  let loadWSum = 0;
-  let batteryWSum = 0;
-  let gridWSum = 0;
-  let totalSamples = 0;
-  let count = 0;
-  let lastReading: any = null;
-  
-  // Process data in order (it's already sorted)
-  for (let i = 0; i < data.length; i++) {
-    const reading = data[i];
-    const weight = reading.sampleCount || 1;
-    
-    // Add to running totals
-    totalSamples += weight;
-    if (reading.solarWAvg !== null) solarWSum += reading.solarWAvg * weight;
-    if (reading.loadWAvg !== null) loadWSum += reading.loadWAvg * weight;
-    if (reading.batteryWAvg !== null) batteryWSum += reading.batteryWAvg * weight;
-    if (reading.gridWAvg !== null) gridWSum += reading.gridWAvg * weight;
-    lastReading = reading;
-    count++;
-    
-    // Every 6 readings (or at the end of data), create a 30-minute aggregate
-    if (count === 6 || i === data.length - 1) {
-      // Calculate the interval end time (round up to next 30-minute boundary)
-      const intervalEndMs = reading.intervalEnd.getTime();
-      const intervalEnd = new Date(
-        Math.ceil(intervalEndMs / intervalMs) * intervalMs
-      );
-      
-      result.push({
-        intervalEnd,
-        solarWAvg: totalSamples > 0 ? Math.round(solarWSum / totalSamples) : null,
-        loadWAvg: totalSamples > 0 ? Math.round(loadWSum / totalSamples) : null,
-        batteryWAvg: totalSamples > 0 ? Math.round(batteryWSum / totalSamples) : null,
-        gridWAvg: totalSamples > 0 ? Math.round(gridWSum / totalSamples) : null,
-        batterySOCLast: lastReading?.batterySOCLast || null,
-        sampleCount: totalSamples,
-      });
-      
-      // Reset for next interval
-      solarWSum = 0;
-      loadWSum = 0;
-      batteryWSum = 0;
-      gridWSum = 0;
-      totalSamples = 0;
-      count = 0;
-      lastReading = null;
-    }
-  }
-  
-  return result;
-}
 
 export async function GET(request: NextRequest) {
   try {
@@ -402,20 +234,17 @@ export async function GET(request: NextRequest) {
       const start = startTime as CalendarDate;
       const end = endTime as CalendarDate;
       
-      processedData = await fetchDailyData(systemId, start, end);
+      processedData = await fetch1DayData(systemId, start, end);
     } else {
       // ZonedDateTime objects are already properly typed
       const start = startTime as ZonedDateTime;
       const end = endTime as ZonedDateTime;
       
-      // Fetch 5-minute data
-      const data = await fetch5MinuteData(systemId, start, end);
-      
-      // Aggregate to 30m if needed
+      // Fetch data based on interval
       if (interval === '30m') {
-        processedData = aggregateTo30m(data);
+        processedData = await fetch30MinuteData(systemId, start, end, systemTimezoneOffset);
       } else {
-        processedData = data;
+        processedData = await fetch5MinuteData(systemId, start, end, systemTimezoneOffset);
       }
     }
 
@@ -424,7 +253,7 @@ export async function GET(request: NextRequest) {
       type: 'energy',
       version: 'v4.1', // Fast implementation version
       network: 'liveone',
-      created_at: formatTimeAEST(new Date()),
+      created_at: formatTimeAEST(now('Australia/Brisbane')),
       data: []
     };
 
@@ -445,10 +274,11 @@ export async function GET(request: NextRequest) {
     let lastStr: string;
     
     if (interval === '1d') {
-      startStr = processedData[0].date;
-      lastStr = processedData[processedData.length - 1].date;
+      // For daily data, date is a CalendarDate
+      startStr = formatDateAEST(processedData[0].date);
+      lastStr = formatDateAEST(processedData[processedData.length - 1].date);
     } else {
-      // For 5m/30m intervals, intervalEnd is a Date object after processing
+      // For 5m/30m intervals, intervalEnd is a ZonedDateTime after processing
       const firstInterval = processedData[0].intervalEnd;
       const lastInterval = processedData[processedData.length - 1].intervalEnd;
       
@@ -461,7 +291,7 @@ export async function GET(request: NextRequest) {
       dataSeries.push(createDataSeries(
         systemNumber,
         'solar.power',
-        r => r.solarWAvg,
+        r => r.power?.solar?.avgW,
         'power',
         'W',
         'Total solar generation (remote + local)',
@@ -476,7 +306,7 @@ export async function GET(request: NextRequest) {
       dataSeries.push(createDataSeries(
         systemNumber,
         'load.power',
-        r => r.loadWAvg,
+        r => r.power?.load?.avgW,
         'power',
         'W',
         'Total load consumption',
@@ -491,7 +321,7 @@ export async function GET(request: NextRequest) {
       dataSeries.push(createDataSeries(
         systemNumber,
         'battery.power',
-        r => r.batteryWAvg,
+        r => r.power?.battery?.avgW,
         'power',
         'W',
         'Battery power (negative = charging, positive = discharging)',
@@ -520,7 +350,7 @@ export async function GET(request: NextRequest) {
       dataSeries.push(createDataSeries(
         systemNumber,
         'grid.power',
-        r => r.gridWAvg,
+        r => r.power?.grid?.avgW,
         'power',
         'W',
         'Grid power (positive = import, negative = export)',

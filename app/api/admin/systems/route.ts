@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { systems, readings, pollingStatus } from '@/lib/db/schema';
 import { eq, desc, sql } from 'drizzle-orm';
-import { formatTimeAEST } from '@/lib/date-utils';
+import { formatTimeAEST, fromUnixTimestamp } from '@/lib/date-utils';
 
 export async function GET(request: NextRequest) {
   try {
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
         polling: {
           isActive: pollStatus?.isActive || false,
           isAuthenticated: true, // Always true if we have data
-          lastPollTime: pollStatus?.lastPollTime ? formatTimeAEST(pollStatus.lastPollTime) : null,
+          lastPollTime: pollStatus?.lastPollTime ? formatTimeAEST(fromUnixTimestamp(pollStatus.lastPollTime.getTime() / 1000)) : null,
           lastError: pollStatus?.lastError || null,
         },
         data: reading ? {
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
           batteryPower: reading.batteryW,
           batterySOC: reading.batterySOC,
           gridPower: reading.gridW,
-          timestamp: formatTimeAEST(reading.inverterTime),
+          timestamp: formatTimeAEST(fromUnixTimestamp(reading.inverterTime.getTime() / 1000)),
         } : null,
       });
     }
@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
       systems: systemsData,
       totalSystems: systemsData.length,
       activeSessions: 0, // No longer tracking sessions
-      timestamp: formatTimeAEST(new Date()),
+      timestamp: formatTimeAEST(fromUnixTimestamp(Date.now() / 1000)),
     });
     
   } catch (error) {

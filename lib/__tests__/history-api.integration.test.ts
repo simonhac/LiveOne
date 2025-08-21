@@ -162,8 +162,8 @@ describe('History API Integration Tests', () => {
       
       expect(response.data.length).toBe(2);
       const ids = response.data.map((d: any) => d.id);
-      expect(ids.some(id => id.includes('solar.power'))).toBe(true);
-      expect(ids.some(id => id.includes('load.power'))).toBe(true);
+      expect(ids.some((id: string) => id.includes('solar.power'))).toBe(true);
+      expect(ids.some((id: string) => id.includes('load.power'))).toBe(true);
     });
     
     test('should return battery power and SOC when battery field requested', async () => {
@@ -177,8 +177,8 @@ describe('History API Integration Tests', () => {
       
       expect(response.data.length).toBe(2);
       const ids = response.data.map((d: any) => d.id);
-      expect(ids.some(id => id.includes('battery.power'))).toBe(true);
-      expect(ids.some(id => id.includes('battery.soc'))).toBe(true);
+      expect(ids.some((id: string) => id.includes('battery.power'))).toBe(true);
+      expect(ids.some((id: string) => id.includes('battery.soc'))).toBe(true);
     });
     
     test('should return all fields when requested', async () => {
@@ -192,11 +192,11 @@ describe('History API Integration Tests', () => {
       
       expect(response.data.length).toBe(5); // solar, load, battery power, battery SOC, grid
       const ids = response.data.map((d: any) => d.id);
-      expect(ids.some(id => id.includes('solar.power'))).toBe(true);
-      expect(ids.some(id => id.includes('load.power'))).toBe(true);
-      expect(ids.some(id => id.includes('battery.power'))).toBe(true);
-      expect(ids.some(id => id.includes('battery.soc'))).toBe(true);
-      expect(ids.some(id => id.includes('grid.power'))).toBe(true);
+      expect(ids.some((id: string) => id.includes('solar.power'))).toBe(true);
+      expect(ids.some((id: string) => id.includes('load.power'))).toBe(true);
+      expect(ids.some((id: string) => id.includes('battery.power'))).toBe(true);
+      expect(ids.some((id: string) => id.includes('battery.soc'))).toBe(true);
+      expect(ids.some((id: string) => id.includes('grid.power'))).toBe(true);
     });
   });
 
