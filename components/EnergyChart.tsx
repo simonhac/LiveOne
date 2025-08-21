@@ -196,7 +196,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
 
   if (loading) {
     return (
-      <div className={`bg-gray-800 border border-gray-700 rounded p-4 flex flex-col ${className}`}>
+      <div className={`md:bg-gray-800 md:border md:border-gray-700 md:rounded p-1 md:p-4 flex flex-col ${className}`}>
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-sm font-semibold text-white">Energy History</h3>
           <div className="inline-flex rounded-md shadow-sm" role="group">
@@ -241,7 +241,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
 
   if (error || !chartData) {
     return (
-      <div className={`bg-gray-800 border border-gray-700 rounded p-4 flex flex-col ${className}`}>
+      <div className={`md:bg-gray-800 md:border md:border-gray-700 md:rounded p-1 md:p-4 flex flex-col ${className}`}>
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-sm font-semibold text-white">Energy History</h3>
           <div className="inline-flex rounded-md shadow-sm" role="group">
@@ -623,8 +623,8 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
   }
 
   return (
-    <div className={`bg-gray-800 border border-gray-700 rounded p-4 flex flex-col ${className}`}>
-      <div className="flex justify-between items-center mb-2">
+    <div className={`md:bg-gray-800 md:border md:border-gray-700 md:rounded p-1 md:p-4 flex flex-col ${className}`}>
+      <div className="flex justify-between items-center mb-1 md:mb-2">
         <h3 className="text-sm font-semibold text-white">Energy History</h3>
         <div className="inline-flex rounded-md shadow-sm" role="group">
           <button

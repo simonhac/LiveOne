@@ -256,25 +256,20 @@ export default function DashboardPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
           {/* Mobile Layout */}
           <div className="sm:hidden">
-            <div className="flex justify-between items-start">
-              <div className="flex-1">
-                <h1 className="text-lg font-bold text-white">LiveOne</h1>
-                <div className="flex items-center gap-2 mt-1">
-                  <div className={`inline-flex items-center gap-1 text-xs ${
-                    isAuthenticated ? 'text-green-400' : 'text-red-400'
-                  }`}>
-                    {isAuthenticated ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-                    <span>{isAuthenticated ? 'Connected' : 'Offline'}</span>
-                  </div>
-                  <span className="text-gray-400 text-xs">•</span>
-                  <span className="text-gray-400 text-xs font-mono">
-                    {!lastUpdate ? '-' :
-                     secondsSinceUpdate < 60 ? `${secondsSinceUpdate}s` :
-                     `${Math.floor(secondsSinceUpdate / 60)}m`}
-                  </span>
-                </div>
-              </div>
+            <div className="flex justify-between items-center">
+              <h1 className="text-lg font-bold text-white">LiveOne</h1>
               <div className="flex items-center gap-2">
+                <span className={`${
+                  isAuthenticated ? 'text-green-400' : 'text-red-400'
+                }`}>
+                  {isAuthenticated ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+                </span>
+                <span className="text-gray-400 text-xs font-mono">
+                  {!lastUpdate ? '-' :
+                   secondsSinceUpdate < 60 ? `${secondsSinceUpdate}s` :
+                   `${Math.floor(secondsSinceUpdate / 60)}m`}
+                </span>
+                <span className="text-gray-400 text-xs">•</span>
                 <span className="text-gray-400 text-sm">
                   {sessionStorage.getItem('displayName')}
                 </span>
@@ -282,7 +277,7 @@ export default function DashboardPage() {
                   onClick={handleLogout}
                   className="text-red-400 hover:text-red-300 p-1"
                 >
-                  <LogOut className="w-5 h-5" />
+                  <LogOut className="w-4 h-4" />
                 </button>
               </div>
             </div>
