@@ -200,6 +200,43 @@ describe('parseRelativeTime', () => {
       expect(start).toBeInstanceOf(ZonedDateTime);
       expect(end).toBeInstanceOf(ZonedDateTime);
     });
+    
+    test('aligns to 5-minute boundaries for 5m interval', () => {
+      const [start, end] = parseRelativeTime('2h', '5m', systemOffset);
+      
+      const startTime = start as ZonedDateTime;
+      const endTime = end as ZonedDateTime;
+      
+      // Both should be aligned to 5-minute boundaries
+      expect(startTime.minute % 5).toBe(0);
+      expect(startTime.second).toBe(0);
+      expect(endTime.minute % 5).toBe(0);
+      expect(endTime.second).toBe(0);
+    });
+    
+    test('aligns to 30-minute boundaries for 30m interval', () => {
+      const [start, end] = parseRelativeTime('4h', '30m', systemOffset);
+      
+      const startTime = start as ZonedDateTime;
+      const endTime = end as ZonedDateTime;
+      
+      // Both should be aligned to 30-minute boundaries
+      expect(startTime.minute % 30).toBe(0);
+      expect(startTime.second).toBe(0);
+      expect(endTime.minute % 30).toBe(0);
+      expect(endTime.second).toBe(0);
+    });
+    
+    test('maintains exact duration after alignment', () => {
+      const [start, end] = parseRelativeTime('24h', '30m', systemOffset);
+      
+      const startTime = start as ZonedDateTime;
+      const endTime = end as ZonedDateTime;
+      
+      // The difference should be exactly 24 hours
+      const diffMs = endTime.toDate().getTime() - startTime.toDate().getTime();
+      expect(diffMs).toBe(24 * 60 * 60 * 1000);
+    });
   });
 
   test('rejects invalid format', () => {
@@ -248,15 +285,16 @@ describe('date formatting', () => {
       expect(result).toBe('2025-08-16T10:36:41+10:00');
     });
 
-    test('handles daylight saving time correctly', () => {
-      // January is summer in Australia, so it should be +11:00
+    test('always uses UTC+10 (no daylight saving)', () => {
+      // Brisbane doesn't observe daylight saving time
+      // January (summer) should still be +10:00
       const summerDate = fromUnixTimestamp(new Date('2025-01-15T00:00:00.000Z').getTime() / 1000);
       const result = formatTimeAEST(summerDate);
-      expect(result).toBe('2025-01-15T11:00:00+11:00');
+      expect(result).toBe('2025-01-15T10:00:00+10:00');
     });
 
-    test('handles non-daylight saving time correctly', () => {
-      // June is winter in Australia, so it should be +10:00
+    test('uses UTC+10 year-round', () => {
+      // June (winter) should also be +10:00
       const winterDate = fromUnixTimestamp(new Date('2025-06-15T00:00:00.000Z').getTime() / 1000);
       const result = formatTimeAEST(winterDate);
       expect(result).toBe('2025-06-15T10:00:00+10:00');

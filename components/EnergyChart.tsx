@@ -277,7 +277,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
     datasets: [
       {
         label: 'Solar',
-        data: chartData.solar.map(w => w / 1000), // Convert W to kW
+        data: chartData.solar.map(w => w === null ? null : w / 1000), // Convert W to kW, preserve nulls
         borderColor: 'rgb(250, 204, 21)', // yellow-400
         backgroundColor: 'rgb(250, 204, 21)', // Solid color for legend
         yAxisID: 'y',
@@ -288,7 +288,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
       },
       {
         label: 'Load',
-        data: chartData.load.map(w => w / 1000), // Convert W to kW
+        data: chartData.load.map(w => w === null ? null : w / 1000), // Convert W to kW, preserve nulls
         borderColor: 'rgb(96, 165, 250)', // blue-400
         backgroundColor: 'rgb(96, 165, 250)', // Solid color for legend
         yAxisID: 'y',
