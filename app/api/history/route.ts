@@ -192,6 +192,29 @@ export async function GET(request: NextRequest) {
         );
       }
       
+      // Validate alignment with interval boundaries
+      const intervalMinutes = interval === '30m' ? 30 : 5;
+      
+      // Check if start time is aligned to interval boundary
+      const startMinute = start.minute;
+      const startSecond = start.second;
+      if (startSecond !== 0 || startMinute % intervalMinutes !== 0) {
+        return NextResponse.json(
+          { error: `Start time must be aligned to ${intervalMinutes}-minute boundaries (e.g., HH:00:00, HH:${intervalMinutes.toString().padStart(2, '0')}:00)` },
+          { status: 400 }
+        );
+      }
+      
+      // Check if end time is aligned to interval boundary
+      const endMinute = end.minute;
+      const endSecond = end.second;
+      if (endSecond !== 0 || endMinute % intervalMinutes !== 0) {
+        return NextResponse.json(
+          { error: `End time must be aligned to ${intervalMinutes}-minute boundaries (e.g., HH:00:00, HH:${intervalMinutes.toString().padStart(2, '0')}:00)` },
+          { status: 400 }
+        );
+      }
+      
       // Calculate time difference in milliseconds
       timeDiff = getTimeDifferenceMs(start, end);
     }
@@ -269,21 +292,18 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Calculate date strings once for all fields
+    // Calculate date strings based on the requested range (not the data)
     let startStr: string;
     let lastStr: string;
     
     if (interval === '1d') {
-      // For daily data, date is a CalendarDate
-      startStr = formatDateAEST(processedData[0].date);
-      lastStr = formatDateAEST(processedData[processedData.length - 1].date);
+      // For daily data, use the requested date range
+      startStr = formatDateAEST(startTime as CalendarDate);
+      lastStr = formatDateAEST(endTime as CalendarDate);
     } else {
-      // For 5m/30m intervals, intervalEnd is a ZonedDateTime after processing
-      const firstInterval = processedData[0].intervalEnd;
-      const lastInterval = processedData[processedData.length - 1].intervalEnd;
-      
-      startStr = formatTimeAEST(firstInterval);
-      lastStr = formatTimeAEST(lastInterval);
+      // For 5m/30m intervals, use the requested time range
+      startStr = formatTimeAEST(startTime as ZonedDateTime);
+      lastStr = formatTimeAEST(endTime as ZonedDateTime);
     }
 
     // Add requested fields
@@ -291,7 +311,7 @@ export async function GET(request: NextRequest) {
       dataSeries.push(createDataSeries(
         systemNumber,
         'solar.power',
-        r => r.power?.solar?.avgW,
+        r => r?.power?.solar?.avgW,
         'power',
         'W',
         'Total solar generation (remote + local)',
@@ -306,7 +326,7 @@ export async function GET(request: NextRequest) {
       dataSeries.push(createDataSeries(
         systemNumber,
         'load.power',
-        r => r.power?.load?.avgW,
+        r => r?.power?.load?.avgW,
         'power',
         'W',
         'Total load consumption',
@@ -321,7 +341,7 @@ export async function GET(request: NextRequest) {
       dataSeries.push(createDataSeries(
         systemNumber,
         'battery.power',
-        r => r.power?.battery?.avgW,
+        r => r?.power?.battery?.avgW,
         'power',
         'W',
         'Battery power (negative = charging, positive = discharging)',
@@ -335,7 +355,7 @@ export async function GET(request: NextRequest) {
       dataSeries.push(createDataSeries(
         systemNumber,
         'battery.soc',
-        r => r.batterySOCLast,
+        r => r?.batterySOCLast,
         'percentage',
         '%',
         'Battery state of charge',
@@ -350,7 +370,7 @@ export async function GET(request: NextRequest) {
       dataSeries.push(createDataSeries(
         systemNumber,
         'grid.power',
-        r => r.power?.grid?.avgW,
+        r => r?.power?.grid?.avgW,
         'power',
         'W',
         'Grid power (positive = import, negative = export)',

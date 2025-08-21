@@ -237,7 +237,7 @@ export function parseRelativeTime(
   const amount = parseInt(match[1]);
   const unit = match[2].toLowerCase();
   
-  const nowTime = now('Australia/Sydney');
+  const nowTime = now('Australia/Brisbane');
   
   if (interval === '1d') {
     // For daily intervals, work with calendar dates
@@ -257,23 +257,32 @@ export function parseRelativeTime(
     
     return [startDate, today];
   } else {
-    // For minute intervals, work with ZonedDateTime
+    // For minute intervals, align end time to interval boundary
+    const intervalMinutes = interval === '30m' ? 30 : 5;
+    
+    // Align current time to next interval boundary
+    const endMinute = nowTime.minute;
+    const endAlignedMinute = Math.ceil(endMinute / intervalMinutes) * intervalMinutes;
+    const minutesToAdd = endAlignedMinute - endMinute;
+    const endTime = nowTime.add({ minutes: minutesToAdd }).set({ second: 0, millisecond: 0 });
+    
+    // Calculate start time based on the aligned end time
     let startTime: ZonedDateTime;
     
     switch (unit) {
       case 'd':
-        startTime = nowTime.subtract({ days: amount });
+        startTime = endTime.subtract({ days: amount });
         break;
       case 'h':
-        startTime = nowTime.subtract({ hours: amount });
+        startTime = endTime.subtract({ hours: amount });
         break;
       case 'm':
-        startTime = nowTime.subtract({ minutes: amount });
+        startTime = endTime.subtract({ minutes: amount });
         break;
       default:
         throw new Error(`Invalid time unit: ${unit}`);
     }
     
-    return [startTime, nowTime];
+    return [startTime, endTime];
   }
 }
