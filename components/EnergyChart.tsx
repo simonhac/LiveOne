@@ -7,6 +7,7 @@ import {
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
   Legend,
@@ -14,7 +15,7 @@ import {
   ChartOptions,
   Filler,
 } from 'chart.js'
-import { Line } from 'react-chartjs-2'
+import { Line, Bar } from 'react-chartjs-2'
 import { format } from 'date-fns'
 import 'chartjs-adapter-date-fns'
 import annotationPlugin from 'chartjs-plugin-annotation'
@@ -25,6 +26,7 @@ ChartJS.register(
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
   Legend,
@@ -44,6 +46,7 @@ interface ChartData {
   load: number[]
   batteryW: number[]
   batterySOC: number[]
+  mode: 'power' | 'energy' // Mode based on interval: power (≤30m) or energy (≥1d)
 }
 
 export default function EnergyChart({ className = '', maxPowerHint }: EnergyChartProps) {
@@ -91,13 +94,21 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
 
         const data = await response.json()
         
+        // Determine mode based on interval
+        const isEnergyMode = requestInterval === '1d'
+        
         // Process the data for Chart.js
-        const solarData = data.data.find((d: any) => d.id.includes('solar.power'))
-        const loadData = data.data.find((d: any) => d.id.includes('load.power'))
+        // Energy mode: use energy data; Power mode: use power data
+        const solarData = isEnergyMode 
+          ? data.data.find((d: any) => d.id.includes('solar.energy'))
+          : data.data.find((d: any) => d.id.includes('solar.power'))
+        const loadData = isEnergyMode
+          ? data.data.find((d: any) => d.id.includes('load.energy'))
+          : data.data.find((d: any) => d.id.includes('load.power'))
         const batteryWData = data.data.find((d: any) => d.id.includes('battery.power'))
         const batterySOCData = data.data.find((d: any) => d.id.includes('battery.soc'))
 
-        if (!solarData || !loadData || !batteryWData || !batterySOCData) {
+        if (!solarData || !loadData || !batterySOCData) {
           throw new Error('Missing data series')
         }
 
@@ -155,8 +166,9 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
           timestamps: selectedIndices.map((i: number) => timestamps[i]),
           solar: selectedIndices.map((i: number) => solarData.history.data[i]),
           load: selectedIndices.map((i: number) => loadData.history.data[i]),
-          batteryW: selectedIndices.map((i: number) => batteryWData.history.data[i]),
+          batteryW: selectedIndices.map((i: number) => batteryWData?.history.data[i]),
           batterySOC: selectedIndices.map((i: number) => batterySOCData.history.data[i]),
+          mode: isEnergyMode ? 'energy' : 'power',
         })
         setLoading(false)
       } catch (err: any) {
@@ -272,12 +284,50 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
     )
   }
 
-  const data = {
+  const data = chartData.mode === 'energy' ? {
+    // Energy mode: Use bar chart data structure
     labels: chartData.timestamps,
     datasets: [
       {
         label: 'Solar',
-        data: chartData.solar.map(w => w === null ? null : w / 1000), // Convert W to kW, preserve nulls
+        data: chartData.solar, // Already in kWh for energy mode
+        backgroundColor: 'rgba(250, 204, 21, 0.8)', // yellow-400 with transparency
+        borderColor: 'rgb(250, 204, 21)', // yellow-400
+        borderWidth: 1,
+        yAxisID: 'y',
+        barPercentage: 0.9,
+        categoryPercentage: 0.8,
+      },
+      {
+        label: 'Load',
+        data: chartData.load, // Already in kWh for energy mode
+        backgroundColor: 'rgba(96, 165, 250, 0.8)', // blue-400 with transparency
+        borderColor: 'rgb(96, 165, 250)', // blue-400
+        borderWidth: 1,
+        yAxisID: 'y',
+        barPercentage: 0.9,
+        categoryPercentage: 0.8,
+      },
+      {
+        label: 'Battery SOC',
+        type: 'line' as const, // Keep SOC as line even in bar chart
+        data: chartData.batterySOC, // Already in percentage
+        borderColor: 'rgb(74, 222, 128)', // green-400
+        backgroundColor: 'rgb(74, 222, 128)', // Solid color for legend
+        yAxisID: 'y1',
+        tension: 0.1,
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: false, // Don't fill under the line
+      },
+    ],
+  } : {
+    // Power mode: Use line chart data structure
+    labels: chartData.timestamps,
+    datasets: [
+      {
+        label: 'Solar',
+        data: chartData.solar.map(w => w === null ? null : w / 1000), // Convert W to kW for power mode
         borderColor: 'rgb(250, 204, 21)', // yellow-400
         backgroundColor: 'rgb(250, 204, 21)', // Solid color for legend
         yAxisID: 'y',
@@ -288,7 +338,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
       },
       {
         label: 'Load',
-        data: chartData.load.map(w => w === null ? null : w / 1000), // Convert W to kW, preserve nulls
+        data: chartData.load.map(w => w === null ? null : w / 1000), // Convert W to kW for power mode
         borderColor: 'rgb(96, 165, 250)', // blue-400
         backgroundColor: 'rgb(96, 165, 250)', // Solid color for legend
         yAxisID: 'y',
@@ -323,7 +373,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
   }
   const windowStart = new Date(now.getTime() - windowHours * 60 * 60 * 1000)
 
-  const options: ChartOptions<'line'> = {
+  const options: ChartOptions<any> = {
     responsive: true,
     maintainAspectRatio: false,
     interaction: {
@@ -369,7 +419,9 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
             }
             if (context.parsed.y !== null) {
               if (context.dataset.yAxisID === 'y') {
-                label += `${context.parsed.y.toFixed(1)} kW`
+                // Use appropriate unit based on mode
+                const unit = chartData.mode === 'energy' ? 'kWh' : 'kW'
+                label += `${context.parsed.y.toFixed(1)} ${unit}`
               } else {
                 label += `${context.parsed.y.toFixed(1)}%`
               }
@@ -515,8 +567,8 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         title: {
           display: false, // Hide the title
         },
-        // Use maxPowerHint as suggested max, but allow chart to scale higher if needed
-        suggestedMax: maxPowerHint,
+        // Use maxPowerHint for power mode, auto-scale for energy mode
+        suggestedMax: chartData?.mode === 'energy' ? undefined : maxPowerHint,
         grid: {
           color: 'rgb(55, 65, 81)', // gray-700
           display: true,
@@ -529,9 +581,11 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
             family: 'DM Sans, system-ui, sans-serif',
           },
           callback: function(value, index, ticks) {
-            // Add " kW" only to the last (top) tick
+            // Add unit only to the last (top) tick
+            // Use kWh for energy mode, kW for power mode
             if (index === ticks.length - 1) {
-              return value + ' kW';
+              const unit = chartData?.mode === 'energy' ? 'kWh' : 'kW'
+              return value + ' ' + unit;
             }
             return value;
           },
@@ -606,7 +660,11 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         </div>
       </div>
       <div className="flex-1 min-h-0">
-        <Line data={data} options={options} />
+        {chartData.mode === 'energy' ? (
+          <Bar data={data} options={options} />
+        ) : (
+          <Line data={data} options={options} />
+        )}
       </div>
     </div>
   )
