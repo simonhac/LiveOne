@@ -165,15 +165,15 @@ export async function fetch5MinuteData(systemId: number, startTime: ZonedDateTim
       }
     },
     
-    // Energy totals (last values)
-    energy: {
-      solarKwhTotal: row.solarKwhTotalLast,
-      loadKwhTotal: row.loadKwhTotalLast,
-      batteryInKwhTotal: row.batteryInKwhTotalLast,
-      batteryOutKwhTotal: row.batteryOutKwhTotalLast,
-      gridInKwhTotal: row.gridInKwhTotalLast,
-      gridOutKwhTotal: row.gridOutKwhTotalLast
-    },
+    // // Energy totals (last values)
+    // energy: {
+    //   solarKwhTotal: row.solarKwhTotalLast,
+    //   loadKwhTotal: row.loadKwhTotalLast,
+    //   batteryInKwhTotal: row.batteryInKwhTotalLast,
+    //   batteryOutKwhTotal: row.batteryOutKwhTotalLast,
+    //   gridInKwhTotal: row.gridInKwhTotalLast,
+    //   gridOutKwhTotal: row.gridOutKwhTotalLast
+    // },
     
     // Data quality
     dataQuality: {
@@ -207,41 +207,33 @@ export async function fetch1DayData(systemId: number, startDate: CalendarDate, e
     // Parse the day string to CalendarDate
     date: parseDate(row.day),
     
-    // Battery SOC at end of day
-    batterySOCLast: row.batterySocEnd,
-    
-    // Daily energy totals (no rounding, direct from database)
-    energy: {
-      solarKwh: row.solarKwh,
-      loadKwh: row.loadKwh,
-      batteryChargeKwh: row.batteryChargeKwh,
-      batteryDischargeKwh: row.batteryDischargeKwh,
-      gridImportKwh: row.gridImportKwh,
-      gridExportKwh: row.gridExportKwh
+    // Daily power, energy and SoC values
+    solar: {
+      minW: row.solarWMin,
+      avgW: row.solarWAvg,
+      maxW: row.solarWMax,
+      intervalKwh: row.solarKwh
     },
-    
-    // Full power statistics (single source of truth)
-    power: {
-      solar: {
-        minW: row.solarWMin,
-        avgW: row.solarWAvg,
-        maxW: row.solarWMax
-      },
-      load: {
-        minW: row.loadWMin,
-        avgW: row.loadWAvg,
-        maxW: row.loadWMax
-      },
-      battery: {
-        minW: row.batteryWMin,
-        avgW: row.batteryWAvg,
-        maxW: row.batteryWMax
-      },
-      grid: {
-        minW: row.gridWMin,
-        avgW: row.gridWAvg,
-        maxW: row.gridWMax
-      }
+    load: {
+      minW: row.loadWMin,
+      avgW: row.loadWAvg,
+      maxW: row.loadWMax,
+      loadIntervalKwh: row.loadKwh
+    },
+    battery: {
+      minW: row.batteryWMin,
+      avgW: row.batteryWAvg,
+      maxW: row.batteryWMax,
+      chargeIntervalKwh: row.batteryChargeKwh,
+      dischargeIntervalKwh: row.batteryDischargeKwh,
+      batteryLastSOC: row.batterySocEnd
+    },
+    grid: {
+      minW: row.gridWMin,
+      avgW: row.gridWAvg,
+      maxW: row.gridWMax,
+      importIntervalKwh: row.gridImportKwh,
+      exportIntervalKwh: row.gridExportKwh
     },
     
     // Battery SOC statistics

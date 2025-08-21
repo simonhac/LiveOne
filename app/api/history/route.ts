@@ -311,7 +311,7 @@ export async function GET(request: NextRequest) {
       dataSeries.push(createDataSeries(
         systemNumber,
         'solar.power',
-        r => r?.power?.solar?.avgW,
+        r => r?.power?.solar?.avgW ?? r?.solar?.avgW,
         'power',
         'W',
         'Total solar generation (remote + local)',
@@ -320,13 +320,29 @@ export async function GET(request: NextRequest) {
         lastStr,
         effectiveInterval
       ));
+      
+      // Add interval energy for daily data
+      if (interval === '1d') {
+        dataSeries.push(createDataSeries(
+          systemNumber,
+          'solar.energy',
+          r => r?.solar?.intervalKwh,
+          'energy',
+          'kWh',
+          'Total solar energy generated',
+          processedData,
+          startStr,
+          lastStr,
+          effectiveInterval
+        ));
+      }
     }
 
     if (fields.includes('load')) {
       dataSeries.push(createDataSeries(
         systemNumber,
         'load.power',
-        r => r?.power?.load?.avgW,
+        r => r?.power?.load?.avgW ?? r?.load?.avgW,
         'power',
         'W',
         'Total load consumption',
@@ -335,13 +351,29 @@ export async function GET(request: NextRequest) {
         lastStr,
         effectiveInterval
       ));
+      
+      // Add interval energy for daily data
+      if (interval === '1d') {
+        dataSeries.push(createDataSeries(
+          systemNumber,
+          'load.energy',
+          r => r?.load?.loadIntervalKwh,
+          'energy',
+          'kWh',
+          'Total load energy consumed',
+          processedData,
+          startStr,
+          lastStr,
+          effectiveInterval
+        ));
+      }
     }
 
     if (fields.includes('battery')) {
       dataSeries.push(createDataSeries(
         systemNumber,
         'battery.power',
-        r => r?.power?.battery?.avgW,
+        r => r?.power?.battery?.avgW ?? r?.battery?.avgW,
         'power',
         'W',
         'Battery power (negative = charging, positive = discharging)',
@@ -355,7 +387,7 @@ export async function GET(request: NextRequest) {
       dataSeries.push(createDataSeries(
         systemNumber,
         'battery.soc',
-        r => r?.batterySOCLast,
+        r => r?.batterySOCLast ?? r?.battery?.batteryLastSOC,
         'percentage',
         '%',
         'Battery state of charge',
@@ -370,7 +402,7 @@ export async function GET(request: NextRequest) {
       dataSeries.push(createDataSeries(
         systemNumber,
         'grid.power',
-        r => r?.power?.grid?.avgW,
+        r => r?.power?.grid?.avgW ?? r?.grid?.avgW,
         'power',
         'W',
         'Grid power (positive = import, negative = export)',
