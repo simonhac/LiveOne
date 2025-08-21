@@ -253,7 +253,7 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-gray-900">
       {/* Header */}
       <header className="bg-gray-800 border-b border-gray-700">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
+        <div className="max-w-7xl mx-auto px-1 sm:px-6 lg:px-8 py-3 sm:py-4">
           {/* Mobile Layout */}
           <div className="sm:hidden">
             <div className="flex justify-between items-center">
@@ -372,7 +372,7 @@ export default function DashboardPage() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-1 sm:px-6 lg:px-8 py-8">
         {error && (
           <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
             <AlertTriangle className="w-5 h-5" />
@@ -426,8 +426,8 @@ export default function DashboardPage() {
                 />
               </div>
 
-              {/* Power Cards - 1/3 width, stacked vertically */}
-              <div className="space-y-4">
+              {/* Power Cards - 1/3 width on desktop, horizontal on mobile */}
+              <div className="grid grid-cols-3 gap-2 lg:grid-cols-1 lg:gap-4">
                 <PowerCard
                   title="Solar"
                   value={formatPower(data.latest.power.solarW)}
@@ -452,15 +452,16 @@ export default function DashboardPage() {
                 />
                 <PowerCard
                   title="Battery"
-                  value={formatPower(data.latest.power.batteryW)}
+                  value={`${data.latest.soc.battery.toFixed(1)}%`}
                   icon={<Battery className="w-6 h-6" />}
                   iconColor={data.latest.power.batteryW < 0 ? "text-green-400" : data.latest.power.batteryW > 0 ? "text-orange-400" : "text-gray-400"}
                   bgColor={data.latest.power.batteryW < 0 ? "bg-green-900/20" : data.latest.power.batteryW > 0 ? "bg-orange-900/20" : "bg-gray-900/20"}
                   borderColor={data.latest.power.batteryW < 0 ? "border-green-700" : data.latest.power.batteryW > 0 ? "border-orange-700" : "border-gray-700"}
-                  extra={
-                    <div className="text-sm font-semibold text-white">{data.latest.soc.battery.toFixed(1)}% SOC</div>
+                  extraInfo={
+                    data.latest.power.batteryW !== 0 
+                      ? `${data.latest.power.batteryW < 0 ? 'Charging' : 'Discharging'} ${formatPower(Math.abs(data.latest.power.batteryW))}`
+                      : 'Idle'
                   }
-                  extraInfo={data.latest.power.batteryW < 0 ? 'Charging' : data.latest.power.batteryW > 0 ? 'Discharging' : 'Idle'}
                 />
                 {showGrid && (
                   <PowerCard
@@ -781,20 +782,42 @@ function PowerCard({
   extraInfo?: string
 }) {
   return (
-    <div className={`${bgColor} border ${borderColor} rounded p-6 transition-all hover:bg-opacity-30`}>
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-base font-medium text-gray-300">{title}</h3>
-        <div className={iconColor}>{icon}</div>
+    <div className={`${bgColor} border ${borderColor} rounded p-3 lg:p-6 transition-all hover:bg-opacity-30`}>
+      {/* Mobile layout: horizontal with icon on left */}
+      <div className="lg:hidden">
+        <div className="flex items-start gap-3">
+          <div className={`${iconColor} flex-shrink-0`}>{icon}</div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-medium text-gray-300">{title}</h3>
+            <div className="text-xl font-bold text-white">
+              {value}
+            </div>
+            {extraInfo && (
+              <div className="text-xs text-gray-400">{extraInfo}</div>
+            )}
+            {extra && typeof extra === 'string' ? (
+              <div className="text-xs text-gray-400 mt-1">{extra}</div>
+            ) : extra}
+          </div>
+        </div>
       </div>
-      <div className="text-3xl font-bold text-white mb-2">
-        {value}
+      
+      {/* Desktop layout: original vertical layout */}
+      <div className="hidden lg:block">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-medium text-gray-300">{title}</h3>
+          <div className={iconColor}>{icon}</div>
+        </div>
+        <div className="text-3xl font-bold text-white mb-2">
+          {value}
+        </div>
+        {extra && (
+          <div className="mt-2">{extra}</div>
+        )}
+        {extraInfo && (
+          <div className="text-xs text-gray-400 mt-1">{extraInfo}</div>
+        )}
       </div>
-      {extra && (
-        <div className="mt-2">{extra}</div>
-      )}
-      {extraInfo && (
-        <div className="text-xs text-gray-400 mt-1">{extraInfo}</div>
-      )}
     </div>
   )
 }
