@@ -1,33 +1,26 @@
-import { parseAbsolute, toZoned, CalendarDate, ZonedDateTime, parseDate, now } from '@internationalized/date';
+import { parseAbsolute, toZoned, CalendarDate, ZonedDateTime, parseDate, now, fromDate } from '@internationalized/date';
 
 /**
  * Format a Date to AEST/AEDT timezone string without milliseconds
  * @param date - JavaScript Date object
  * @returns ISO string with timezone offset (e.g., "2025-08-16T20:36:41+10:00")
  */
-export function formatTimeAEST(date: Date): string {
+export function formatTimeAEST(zonedDateTime: ZonedDateTime): string {
   // Validate input
-  if (!(date instanceof Date)) {
-    throw new Error(`formatTimeAEST expects a Date object, got ${typeof date}: ${date}`);
+  if (!zonedDateTime || typeof zonedDateTime.year === 'undefined') {
+    throw new Error(`formatTimeAEST expects a ZonedDateTime object, got ${typeof zonedDateTime}: ${zonedDateTime}`);
   }
   
-  // Convert JavaScript Date to ISO string, then parse as an absolute date
-  const isoString = date.toISOString();
-  const absoluteDate = parseAbsolute(isoString, 'UTC');
-  
-  // Convert to AEST/AEDT (Australia/Sydney handles DST automatically)
-  const zonedDate = toZoned(absoluteDate, 'Australia/Sydney');
-  
   // Get the year, month, day, hour, minute, second from the zoned date
-  const year = zonedDate.year;
-  const month = String(zonedDate.month).padStart(2, '0');
-  const day = String(zonedDate.day).padStart(2, '0');
-  const hour = String(zonedDate.hour).padStart(2, '0');
-  const minute = String(zonedDate.minute).padStart(2, '0');
-  const second = String(zonedDate.second).padStart(2, '0');
+  const year = zonedDateTime.year;
+  const month = String(zonedDateTime.month).padStart(2, '0');
+  const day = String(zonedDateTime.day).padStart(2, '0');
+  const hour = String(zonedDateTime.hour).padStart(2, '0');
+  const minute = String(zonedDateTime.minute).padStart(2, '0');
+  const second = String(zonedDateTime.second).padStart(2, '0');
   
   // Get the offset in milliseconds and convert to +HH:MM format
-  const offsetMs = zonedDate.offset;
+  const offsetMs = zonedDateTime.offset;
   const offsetMinutes = offsetMs / (1000 * 60); // Convert ms to minutes
   const offsetHours = Math.floor(Math.abs(offsetMinutes) / 60);
   const offsetMins = Math.abs(offsetMinutes) % 60;
@@ -178,6 +171,27 @@ export function toUnixTimestamp(zonedDateTime: ZonedDateTime): number {
   // Convert to milliseconds since epoch, then to seconds
   const epochMillis = zonedDateTime.toDate().getTime();
   return Math.floor(epochMillis / 1000);
+}
+
+/**
+ * Convert Unix timestamp to ZonedDateTime
+ * @param unixSeconds - Unix timestamp in seconds
+ * @param timezoneOffset - Timezone offset in hours (default 10 for AEST)
+ * @returns ZonedDateTime object
+ */
+export function fromUnixTimestamp(unixSeconds: number, timezoneOffset: number = 10): ZonedDateTime {
+  // Convert Unix seconds to milliseconds
+  const epochMillis = unixSeconds * 1000;
+  
+  // fromDate requires a Date object, not a number
+  // Create a Date object from the epoch milliseconds
+  const date = new Date(epochMillis);
+  
+  // Use fromDate with the Date object
+  const timezone = timezoneOffset === 10 ? 'Australia/Brisbane' : 'UTC';
+  
+  // Create ZonedDateTime from the Date object
+  return fromDate(date, timezone);
 }
 
 /**

@@ -108,6 +108,9 @@ export async function aggregateDailyData(systemId: string, day: string) {
       };
     }
 
+    // Calculate total sample count (cascading from 5-minute intervals)
+    const totalSampleCount = fiveMinData.reduce((sum, record) => sum + (record.sampleCount || 0), 0);
+
     const dailyAggregates = {
       systemId,
       day,
@@ -148,6 +151,7 @@ export async function aggregateDailyData(systemId: string, day: string) {
       
       // Data quality
       intervalCount: fiveMinData.length,
+      sampleCount: totalSampleCount,
       
       // Metadata
       version: 1,

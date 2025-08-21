@@ -4,7 +4,8 @@ import {
   parseDateRange, 
   parseRelativeTime,
   formatDateAEST,
-  formatTimeAEST
+  formatTimeAEST,
+  fromUnixTimestamp
 } from '@/lib/date-utils';
 import { CalendarDate, ZonedDateTime } from '@internationalized/date';
 
@@ -242,27 +243,27 @@ describe('date formatting', () => {
   describe('formatTimeAEST', () => {
     test('formats UTC date to AEST correctly', () => {
       // 2025-08-16 00:36:41 UTC should be 2025-08-16 10:36:41 AEST (+10:00)
-      const utcDate = new Date('2025-08-16T00:36:41.000Z');
+      const utcDate = fromUnixTimestamp(new Date('2025-08-16T00:36:41.000Z').getTime() / 1000);
       const result = formatTimeAEST(utcDate);
       expect(result).toBe('2025-08-16T10:36:41+10:00');
     });
 
     test('handles daylight saving time correctly', () => {
       // January is summer in Australia, so it should be +11:00
-      const summerDate = new Date('2025-01-15T00:00:00.000Z');
+      const summerDate = fromUnixTimestamp(new Date('2025-01-15T00:00:00.000Z').getTime() / 1000);
       const result = formatTimeAEST(summerDate);
       expect(result).toBe('2025-01-15T11:00:00+11:00');
     });
 
     test('handles non-daylight saving time correctly', () => {
       // June is winter in Australia, so it should be +10:00
-      const winterDate = new Date('2025-06-15T00:00:00.000Z');
+      const winterDate = fromUnixTimestamp(new Date('2025-06-15T00:00:00.000Z').getTime() / 1000);
       const result = formatTimeAEST(winterDate);
       expect(result).toBe('2025-06-15T10:00:00+10:00');
     });
 
     test('removes milliseconds from the output', () => {
-      const dateWithMillis = new Date('2025-08-16T00:36:41.999Z');
+      const dateWithMillis = fromUnixTimestamp(new Date('2025-08-16T00:36:41.999Z').getTime() / 1000);
       const result = formatTimeAEST(dateWithMillis);
       expect(result).toBe('2025-08-16T10:36:41+10:00');
       expect(result).not.toContain('.');
@@ -270,19 +271,19 @@ describe('date formatting', () => {
     });
 
     test('handles midnight correctly', () => {
-      const midnight = new Date('2025-08-16T14:00:00.000Z'); // Midnight AEST
+      const midnight = fromUnixTimestamp(new Date('2025-08-16T14:00:00.000Z').getTime() / 1000); // Midnight AEST
       const result = formatTimeAEST(midnight);
       expect(result).toBe('2025-08-17T00:00:00+10:00');
     });
 
     test('handles noon correctly', () => {
-      const noon = new Date('2025-08-16T02:00:00.000Z'); // Noon AEST
+      const noon = fromUnixTimestamp(new Date('2025-08-16T02:00:00.000Z').getTime() / 1000); // Noon AEST
       const result = formatTimeAEST(noon);
       expect(result).toBe('2025-08-16T12:00:00+10:00');
     });
 
     test('formats result with correct pattern', () => {
-      const localDate = new Date(2025, 7, 16, 20, 36, 41); // August 16, 2025, 8:36:41 PM local
+      const localDate = fromUnixTimestamp(new Date(2025, 7, 16, 20, 36, 41).getTime() / 1000); // August 16, 2025, 8:36:41 PM local
       const result = formatTimeAEST(localDate);
       // Result should be in AEST with proper format
       expect(result).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[\+\-]\d{2}:\d{2}$/);
@@ -295,7 +296,7 @@ describe('date formatting', () => {
       const results = new Set();
       
       for (let i = 0; i < 100; i++) {
-        const date = new Date('2025-08-16T12:30:45.000Z');
+        const date = fromUnixTimestamp(new Date('2025-08-16T12:30:45.000Z').getTime() / 1000);
         const result = formatTimeAEST(date);
         const hour = result.substring(11, 13);
         results.add(hour);
@@ -319,7 +320,7 @@ describe('date formatting', () => {
       ];
       
       for (const date of testDates) {
-        const result = formatTimeAEST(date);
+        const result = formatTimeAEST(fromUnixTimestamp(date.getTime() / 1000));
         // All should format to AEST (22:30:45+10:00)
         expect(result).toBe('2025-08-16T22:30:45+10:00');
       }

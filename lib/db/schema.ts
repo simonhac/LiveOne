@@ -178,7 +178,8 @@ export const readingsAgg1d = sqliteTable('readings_agg_1d', {
   gridExportAlltimeKwh: real('grid_export_alltime_kwh'),
   
   // Data quality
-  intervalCount: integer('interval_count'), // Number of non-null 5 min intervals aggregated
+  intervalCount: integer('interval_count').notNull().default(0), // Number of non-null 5 min intervals aggregated
+  sampleCount: integer('sample_count').notNull().default(0), // Total number of raw samples (cascaded from 5-min intervals)
   
   // Metadata
   version: integer('version').default(1),
