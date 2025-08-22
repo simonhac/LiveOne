@@ -40,8 +40,9 @@ export async function GET(request: Request) {
       .where(eq(pollingStatus.systemId, system.id))
       .limit(1);
     
-    // Get yesterday's aggregated data
-    const yesterdayDate = getYesterdayDate();
+    // Get yesterday's aggregated data using system's timezone
+    const systemTimezoneOffsetMinutes = (system.timezoneOffset || 10) * 60; // Convert hours to minutes (10 hours = 600 minutes for AEST)
+    const yesterdayDate = getYesterdayDate(systemTimezoneOffsetMinutes);
     const [yesterdayData] = await db.select()
       .from(readingsAgg1d)
       .where(

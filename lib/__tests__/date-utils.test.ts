@@ -5,7 +5,8 @@ import {
   parseRelativeTime,
   formatDateAEST,
   formatTimeAEST,
-  fromUnixTimestamp
+  fromUnixTimestamp,
+  getYesterdayDate
 } from '@/lib/date-utils';
 import { CalendarDate, ZonedDateTime } from '@internationalized/date';
 
@@ -261,6 +262,154 @@ describe('parseRelativeTime', () => {
     expect(() => {
       parseRelativeTime('7y', '1d', systemOffset);
     }).toThrow('Invalid relative time format');
+  });
+});
+
+describe('getYesterdayDate', () => {
+  test('returns yesterday in AEST timezone', () => {
+    // Mock a specific date for consistent testing
+    const originalDate = Date;
+    const mockDate = new Date('2025-08-22T01:00:00Z'); // 11:00 AM AEST on Aug 22
+    global.Date = class extends originalDate {
+      constructor() {
+        super();
+        return mockDate;
+      }
+      static now() {
+        return mockDate.getTime();
+      }
+    } as any;
+
+    try {
+      // 600 minutes = 10 hours offset for AEST
+      const yesterday = getYesterdayDate(600);
+      expect(yesterday).toBe('2025-08-21');
+    } finally {
+      global.Date = originalDate;
+    }
+  });
+
+  test('handles timezone offset correctly when UTC day differs', () => {
+    const originalDate = Date;
+    // Set time to just after midnight UTC (10:30 AM AEST on Aug 22)
+    const mockDate = new Date('2025-08-22T00:30:00Z');
+    global.Date = class extends originalDate {
+      constructor() {
+        super();
+        return mockDate;
+      }
+      static now() {
+        return mockDate.getTime();
+      }
+    } as any;
+
+    try {
+      // In AEST (UTC+10), it's Aug 22, so yesterday is Aug 21
+      const yesterdayAEST = getYesterdayDate(600);
+      expect(yesterdayAEST).toBe('2025-08-21');
+      
+      // In PST (UTC-8), it's still Aug 21, so yesterday is Aug 20
+      const yesterdayPST = getYesterdayDate(-480);
+      expect(yesterdayPST).toBe('2025-08-20');
+    } finally {
+      global.Date = originalDate;
+    }
+  });
+
+  test('handles negative timezone offsets', () => {
+    const originalDate = Date;
+    const mockDate = new Date('2025-08-22T12:00:00Z'); // Noon UTC
+    global.Date = class extends originalDate {
+      constructor() {
+        super();
+        return mockDate;
+      }
+      static now() {
+        return mockDate.getTime();
+      }
+    } as any;
+
+    try {
+      // In EST (UTC-5), it's 7 AM on Aug 22, so yesterday is Aug 21
+      const yesterdayEST = getYesterdayDate(-300);
+      expect(yesterdayEST).toBe('2025-08-21');
+    } finally {
+      global.Date = originalDate;
+    }
+  });
+
+  test('formats date with zero-padding', () => {
+    const originalDate = Date;
+    // Early January
+    const mockDate = new Date('2025-01-02T12:00:00Z');
+    global.Date = class extends originalDate {
+      constructor() {
+        super();
+        return mockDate;
+      }
+      static now() {
+        return mockDate.getTime();
+      }
+    } as any;
+
+    try {
+      const yesterday = getYesterdayDate(0); // UTC
+      expect(yesterday).toBe('2025-01-01');
+      expect(yesterday).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    } finally {
+      global.Date = originalDate;
+    }
+  });
+
+  test('handles year boundary correctly', () => {
+    const originalDate = Date;
+    // January 1st at noon UTC
+    const mockDate = new Date('2025-01-01T12:00:00Z');
+    global.Date = class extends originalDate {
+      constructor() {
+        super();
+        return mockDate;
+      }
+      static now() {
+        return mockDate.getTime();
+      }
+    } as any;
+
+    try {
+      const yesterday = getYesterdayDate(0); // UTC
+      expect(yesterday).toBe('2024-12-31');
+    } finally {
+      global.Date = originalDate;
+    }
+  });
+
+  test('handles month boundary correctly', () => {
+    const originalDate = Date;
+    // March 1st (testing February edge case)
+    const mockDate = new Date('2025-03-01T12:00:00Z');
+    global.Date = class extends originalDate {
+      constructor() {
+        super();
+        return mockDate;
+      }
+      static now() {
+        return mockDate.getTime();
+      }
+    } as any;
+
+    try {
+      const yesterday = getYesterdayDate(0); // UTC
+      expect(yesterday).toBe('2025-02-28'); // 2025 is not a leap year
+    } finally {
+      global.Date = originalDate;
+    }
+  });
+
+  test('requires timezone offset parameter', () => {
+    // TypeScript should enforce this, but we can test runtime behavior
+    // The function signature requires the parameter, so this is mainly
+    // for documentation purposes
+    expect(getYesterdayDate).toHaveLength(1);
   });
 });
 

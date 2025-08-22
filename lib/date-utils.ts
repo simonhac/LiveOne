@@ -45,13 +45,26 @@ export function formatDateAEST(date: CalendarDate): string {
 
 
 /**
- * Get yesterday's date in YYYY-MM-DD format
+ * Get yesterday's date in YYYY-MM-DD format in the system's timezone
+ * @param timezoneOffsetMinutes - System's timezone offset in minutes (e.g., 600 for AEST)
  * @returns Date string in YYYY-MM-DD format
  */
-export function getYesterdayDate(): string {
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  return yesterday.toISOString().split('T')[0];
+export function getYesterdayDate(timezoneOffsetMinutes: number): string {
+  // Get current UTC time
+  const nowUTC = new Date();
+  
+  // Apply timezone offset to get local time
+  const localTime = new Date(nowUTC.getTime() + timezoneOffsetMinutes * 60 * 1000);
+  
+  // Subtract one day
+  localTime.setDate(localTime.getDate() - 1);
+  
+  // Format as YYYY-MM-DD
+  const year = localTime.getFullYear();
+  const month = String(localTime.getMonth() + 1).padStart(2, '0');
+  const day = String(localTime.getDate()).padStart(2, '0');
+  
+  return `${year}-${month}-${day}`;
 }
 
 /**

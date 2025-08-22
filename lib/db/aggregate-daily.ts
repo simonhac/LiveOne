@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { readingsAgg5m, readingsAgg1d, systems } from '@/lib/db/schema';
 import { sql, eq, and, gte, lt, desc, asc } from 'drizzle-orm';
+import { getYesterdayDate } from '@/lib/date-utils';
 
 /**
  * Aggregate data for a specific day and system
@@ -192,6 +193,18 @@ export async function aggregateAllDailyData(
   endDate?: string
 ) {
   try {
+    // Get the system's timezone offset
+    const [system] = await db.select()
+      .from(systems)
+      .where(eq(systems.id, parseInt(systemId)))
+      .limit(1);
+    
+    if (!system) {
+      throw new Error(`System ${systemId} not found`);
+    }
+    
+    const timezoneOffsetMinutes = (system.timezoneOffset || 10) * 60; // Convert hours to minutes
+    
     // Get the date range
     let earliestDate = startDate;
     let latestDate = endDate;
@@ -212,10 +225,8 @@ export async function aggregateAllDailyData(
     }
     
     if (!latestDate) {
-      // Default to yesterday
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      latestDate = yesterday.toISOString().split('T')[0];
+      // Default to yesterday in the system's timezone
+      latestDate = getYesterdayDate(timezoneOffsetMinutes);
     }
     
     if (!earliestDate) {
@@ -279,10 +290,6 @@ export async function aggregateAllDailyData(
  */
 export async function aggregateYesterdayForAllSystems() {
   try {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split('T')[0];
-    
     // Get all unique system IDs from recent data  
     const sevenDaysAgo = Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1000) / 1000); // Unix timestamp
     const allSystems = await db
@@ -292,19 +299,30 @@ export async function aggregateYesterdayForAllSystems() {
     
     // Extract unique system IDs
     const uniqueSystemIds = [...new Set(allSystems.map(r => r.systemId))];
-    const systemsQuery = uniqueSystemIds.map(id => ({ systemId: id }));
     
-    console.log(`Aggregating yesterday's data (${yesterdayStr}) for ${systemsQuery.length} systems`);
+    // Get system details with timezone info
+    const systemDetails = await db
+      .select()
+      .from(systems)
+      .where(sql`${systems.id} IN (${uniqueSystemIds.join(',')})`);
+    
+    console.log(`Aggregating yesterday's data for ${systemDetails.length} systems`);
     
     const results = [];
-    for (const system of systemsQuery) {
+    for (const system of systemDetails) {
       try {
-        const result = await aggregateDailyData(system.systemId.toString(), yesterdayStr);
+        // Calculate yesterday for this specific system's timezone
+        const timezoneOffsetMinutes = (system.timezoneOffset || 10) * 60;
+        const yesterdayStr = getYesterdayDate(timezoneOffsetMinutes);
+        
+        console.log(`Aggregating ${yesterdayStr} for system ${system.id} (timezone offset: ${system.timezoneOffset || 10} hours)`);
+        
+        const result = await aggregateDailyData(system.id.toString(), yesterdayStr);
         if (result) {
           results.push(result);
         }
       } catch (error) {
-        console.error(`Failed to aggregate yesterday's data for system ${system.systemId}:`, error);
+        console.error(`Failed to aggregate yesterday's data for system ${system.id}:`, error);
       }
     }
     
