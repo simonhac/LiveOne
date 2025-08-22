@@ -16,7 +16,7 @@ export default function ChartTooltip({ solar, load, batterySOC, unit, visible }:
         <span className="w-3 h-3 bg-yellow-400"></span>
         <span className="text-gray-400">Solar</span>
         <span style={{ minWidth: '3.5rem', display: 'inline-flex', gap: '0.125rem', justifyContent: 'flex-end' }}>
-          {solar !== null ? (
+          {solar !== null && solar !== undefined ? (
             <>
               <span className="text-white" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
                 {solar.toFixed(1)}
@@ -32,7 +32,7 @@ export default function ChartTooltip({ solar, load, batterySOC, unit, visible }:
         <span className="w-3 h-3 bg-blue-400"></span>
         <span className="text-gray-400">Load</span>
         <span style={{ minWidth: '3.5rem', display: 'inline-flex', gap: '0.125rem', justifyContent: 'flex-end' }}>
-          {load !== null ? (
+          {load !== null && load !== undefined ? (
             <>
               <span className="text-white" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
                 {load.toFixed(1)}
@@ -48,7 +48,7 @@ export default function ChartTooltip({ solar, load, batterySOC, unit, visible }:
         <span className="w-3 h-3 bg-green-400"></span>
         <span className="text-gray-400">Battery</span>
         <span style={{ minWidth: '3.5rem', display: 'inline-flex', gap: '0.125rem', justifyContent: 'flex-end' }}>
-          {batterySOC !== null ? (
+          {batterySOC !== null && batterySOC !== undefined ? (
             <>
               <span className="text-white" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
                 {batterySOC.toFixed(1)}
