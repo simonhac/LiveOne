@@ -591,14 +591,14 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
     if (!date) return '';
     
     if (timeRange === '30D') {
-      // For 30D view, show date only
-      return format(date, 'EEE d MMM yyyy');
+      // For 30D view, show date only (e.g., "Friday, 22 Aug 2024")
+      return format(date, 'EEEE, d MMM yyyy');
     } else if (timeRange === '7D') {
-      // For 7D view, show date and time
-      return format(date, 'EEE d MMM, HH:mm');
+      // For 7D view, show date and time (e.g., "Friday, 22 Aug 2024 11:58PM")
+      return format(date, 'EEEE, d MMM yyyy h:mma');
     } else {
-      // For 1D view, show time only
-      return format(date, 'HH:mm');
+      // For 1D view, show time only (e.g., "11:58PM")
+      return format(date, 'h:mma');
     }
   };
 
@@ -648,7 +648,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
       <div className="flex justify-between items-center mb-1 md:mb-2 px-1 md:px-0">
         <h3 className="text-sm font-semibold text-white" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>Daylesford</h3>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-gray-400" style={{ fontFamily: 'DM Sans, system-ui, sans-serif', minWidth: '120px', textAlign: 'right' }}>
+          <span className="text-xs text-gray-400" style={{ fontFamily: 'DM Sans, system-ui, sans-serif', minWidth: '200px', textAlign: 'right' }}>
             {formatHoverTimestamp(hoveredData.timestamp)}
           </span>
           <div className="inline-flex rounded-md shadow-sm" role="group">
