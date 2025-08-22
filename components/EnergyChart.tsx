@@ -477,6 +477,38 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
     }
   }, [timeRange])
 
+  // For energy mode, pad the SOC data to extend the fill to chart edges
+  const paddedSOCData = chartData?.mode === 'energy' && chartData.batterySOCMin && chartData.batterySOCMax
+    ? (() => {
+        // Get the first and last timestamps from the data
+        const timestamps = [...chartData.timestamps];
+        const firstTime = timestamps[0];
+        const lastTime = timestamps[timestamps.length - 1];
+        
+        // Add padding timestamps (half day before/after to ensure coverage)
+        const paddedTimestamps = [
+          new Date(firstTime.getTime() - 12 * 60 * 60 * 1000), // 12 hours before
+          ...timestamps,
+          new Date(lastTime.getTime() + 12 * 60 * 60 * 1000)   // 12 hours after
+        ];
+        
+        // Extend the SOC values (use the same values at edges)
+        const paddedSOCMin = [
+          chartData.batterySOCMin[0],
+          ...chartData.batterySOCMin,
+          chartData.batterySOCMin[chartData.batterySOCMin.length - 1]
+        ];
+        
+        const paddedSOCMax = [
+          chartData.batterySOCMax[0],
+          ...chartData.batterySOCMax,
+          chartData.batterySOCMax[chartData.batterySOCMax.length - 1]
+        ];
+        
+        return { timestamps: paddedTimestamps, min: paddedSOCMin, max: paddedSOCMax };
+      })()
+    : null;
+
   const data: any = !chartData ? {} : chartData.mode === 'energy' ? {
     // Energy mode: Use bar chart data structure
     labels: chartData.timestamps,
@@ -500,12 +532,13 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         categoryPercentage: 0.8,
       },
       // Add SOC range area if we have min/max data
-      ...(chartData.batterySOCMin && chartData.batterySOCMax ? [{
+      ...(paddedSOCData ? [{
         label: 'Battery SOC Range',
         type: 'line' as const,
-        data: chartData.batterySOCMax, // Upper boundary
+        labels: paddedSOCData.timestamps,
+        data: paddedSOCData.timestamps.map((t, i) => ({ x: t, y: paddedSOCData.max[i] })), // Upper boundary with padding
         borderColor: 'transparent',
-        backgroundColor: 'rgba(74, 222, 128, 0.5)', // green-400 with 50% opacity
+        backgroundColor: 'rgba(74, 222, 128, 0.3)', // green-400 with 30% opacity
         yAxisID: 'y1',
         tension: 0.4, // Nice curved splines
         borderWidth: 0,
@@ -514,12 +547,14 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         pointHitRadius: 0, // No hit area for points
         fill: '+1', // Fill to next dataset (min line)
         showLine: true,
+        clip: false, // Don't clip at chart edges
         order: 10, // Higher number = drawn first (behind everything)
       },
       {
         label: '', // No label for min line (hidden from legend)
         type: 'line' as const,
-        data: chartData.batterySOCMin, // Lower boundary
+        labels: paddedSOCData.timestamps,
+        data: paddedSOCData.timestamps.map((t, i) => ({ x: t, y: paddedSOCData.min[i] })), // Lower boundary with padding
         borderColor: 'transparent',
         backgroundColor: 'transparent',
         yAxisID: 'y1',
@@ -530,6 +565,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
         pointHitRadius: 0, // No hit area for points
         fill: false,
         showLine: true,
+        clip: false, // Don't clip at chart edges
         order: 10, // Higher number = drawn first (behind everything)
       }] : []),
       {
