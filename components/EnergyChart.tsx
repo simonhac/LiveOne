@@ -57,10 +57,11 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [timeRange, setTimeRange] = useState<'1D' | '7D' | '30D'>('1D')
-  const [hoveredData, setHoveredData] = useState<{ solar: number | null; load: number | null; batterySOC: number | null }>({
+  const [hoveredData, setHoveredData] = useState<{ solar: number | null; load: number | null; batterySOC: number | null; timestamp: Date | null }>({
     solar: null,
     load: null,
-    batterySOC: null
+    batterySOC: null,
+    timestamp: null
   })
   const chartRef = useRef<any>(null)
   
@@ -87,14 +88,16 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
           ? chartData.load[dataIndex]
           : (chartData.load[dataIndex] !== null ? chartData.load[dataIndex] / 1000 : null) // Convert W to kW
         const batteryValue = chartData.batterySOC[dataIndex]
+        const timestamp = chartData.timestamps[dataIndex]
         
         setHoveredData({
           solar: solarValue,
           load: loadValue,
-          batterySOC: batteryValue
+          batterySOC: batteryValue,
+          timestamp: timestamp
         })
       } else {
-        setHoveredData({ solar: null, load: null, batterySOC: null })
+        setHoveredData({ solar: null, load: null, batterySOC: null, timestamp: null })
       }
     }, 10) // Small debounce delay
   }, [chartData])
@@ -474,97 +477,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
     }
   }, [timeRange])
 
-  if (loading) {
-    return (
-      <div className={`md:bg-gray-800 md:border md:border-gray-700 md:rounded py-1 px-0 md:p-4 flex flex-col ${className}`}>
-        <div className="flex justify-between items-center mb-2 px-1 md:px-0">
-          <h3 className="text-sm font-semibold text-white" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>Daylesford</h3>
-          <div className="inline-flex rounded-md shadow-sm" role="group">
-            <button
-              onClick={() => setTimeRange('1D')}
-              className={`px-3 py-1 text-xs font-medium rounded-l-md border transition-colors ${
-                timeRange === '1D' 
-                  ? 'bg-blue-600 text-white border-blue-600' 
-                  : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
-              }`}
-            >
-              1D
-            </button>
-            <button
-              onClick={() => setTimeRange('7D')}
-              className={`px-3 py-1 text-xs font-medium border-t border-b transition-colors ${
-                timeRange === '7D' 
-                  ? 'bg-blue-600 text-white border-blue-600' 
-                  : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
-              }`}
-            >
-              7D
-            </button>
-            <button
-              onClick={() => setTimeRange('30D')}
-              className={`px-3 py-1 text-xs font-medium rounded-r-md border transition-colors ${
-                timeRange === '30D' 
-                  ? 'bg-blue-600 text-white border-blue-600' 
-                  : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
-              }`}
-            >
-              30D
-            </button>
-          </div>
-        </div>
-        <div className="flex-1 flex items-center justify-center min-h-0">
-          <div className="text-gray-500">Loading chart...</div>
-        </div>
-      </div>
-    )
-  }
-
-  if (error || !chartData) {
-    return (
-      <div className={`md:bg-gray-800 md:border md:border-gray-700 md:rounded py-1 px-0 md:p-4 flex flex-col ${className}`}>
-        <div className="flex justify-between items-center mb-2 px-1 md:px-0">
-          <h3 className="text-sm font-semibold text-white" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>Daylesford</h3>
-          <div className="inline-flex rounded-md shadow-sm" role="group">
-            <button
-              onClick={() => setTimeRange('1D')}
-              className={`px-3 py-1 text-xs font-medium rounded-l-md border transition-colors ${
-                timeRange === '1D' 
-                  ? 'bg-blue-600 text-white border-blue-600' 
-                  : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
-              }`}
-            >
-              1D
-            </button>
-            <button
-              onClick={() => setTimeRange('7D')}
-              className={`px-3 py-1 text-xs font-medium border-t border-b transition-colors ${
-                timeRange === '7D' 
-                  ? 'bg-blue-600 text-white border-blue-600' 
-                  : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
-              }`}
-            >
-              7D
-            </button>
-            <button
-              onClick={() => setTimeRange('30D')}
-              className={`px-3 py-1 text-xs font-medium rounded-r-md border transition-colors ${
-                timeRange === '30D' 
-                  ? 'bg-blue-600 text-white border-blue-600' 
-                  : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
-              }`}
-            >
-              30D
-            </button>
-          </div>
-        </div>
-        <div className="flex-1 flex items-center justify-center min-h-0">
-          <div className="text-red-400">Error: {error || 'No data available'}</div>
-        </div>
-      </div>
-    )
-  }
-
-  const data: any = chartData.mode === 'energy' ? {
+  const data: any = !chartData ? {} : chartData.mode === 'energy' ? {
     // Energy mode: Use bar chart data structure
     labels: chartData.timestamps,
     datasets: [
@@ -673,11 +586,72 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
     ],
   }
 
+  // Format timestamp based on time range
+  const formatHoverTimestamp = (date: Date | null) => {
+    if (!date) return '';
+    
+    if (timeRange === '30D') {
+      // For 30D view, show date only
+      return format(date, 'EEE d MMM yyyy');
+    } else if (timeRange === '7D') {
+      // For 7D view, show date and time
+      return format(date, 'EEE d MMM, HH:mm');
+    } else {
+      // For 1D view, show time only
+      return format(date, 'HH:mm');
+    }
+  };
+
+  // Render the chart content based on state
+  const renderChartContent = () => {
+    if (loading) {
+      return (
+        <div className="flex-1 flex items-center justify-center min-h-0">
+          <div className="text-gray-500">Loading chart...</div>
+        </div>
+      );
+    }
+
+    if (error || !chartData) {
+      return (
+        <div className="flex-1 flex items-center justify-center min-h-0">
+          <div className="text-red-400">Error: {error || 'No data available'}</div>
+        </div>
+      );
+    }
+
+    // Normal chart display
+    return (
+      <>
+        <div className="flex-1 min-h-0">
+          {chartData.mode === 'energy' ? (
+            <Bar ref={chartRef} data={data} options={options} />
+          ) : (
+            <Line ref={chartRef} data={data} options={options} />
+          )}
+        </div>
+        <div className="flex justify-center mt-2">
+          <ChartTooltip
+            solar={hoveredData.solar}
+            load={hoveredData.load}
+            batterySOC={hoveredData.batterySOC}
+            unit={chartData?.mode === 'energy' ? 'kWh' : 'kW'}
+            visible={true}
+          />
+        </div>
+      </>
+    );
+  };
+
   return (
     <div className={`md:bg-gray-800 md:border md:border-gray-700 md:rounded py-1 px-0 md:p-4 flex flex-col ${className}`}>
       <div className="flex justify-between items-center mb-1 md:mb-2 px-1 md:px-0">
         <h3 className="text-sm font-semibold text-white" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>Daylesford</h3>
-        <div className="inline-flex rounded-md shadow-sm" role="group">
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-400" style={{ fontFamily: 'DM Sans, system-ui, sans-serif', minWidth: '120px', textAlign: 'right' }}>
+            {formatHoverTimestamp(hoveredData.timestamp)}
+          </span>
+          <div className="inline-flex rounded-md shadow-sm" role="group">
           <button
             onClick={() => setTimeRange('1D')}
             className={`px-3 py-1 text-xs font-medium rounded-l-md border transition-colors ${
@@ -708,24 +682,10 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
           >
             30D
           </button>
+          </div>
         </div>
       </div>
-      <div className="flex-1 min-h-0">
-        {chartData.mode === 'energy' ? (
-          <Bar ref={chartRef} data={data} options={options} />
-        ) : (
-          <Line ref={chartRef} data={data} options={options} />
-        )}
-      </div>
-      <div className="flex justify-center mt-2">
-        <ChartTooltip
-          solar={hoveredData.solar}
-          load={hoveredData.load}
-          batterySOC={hoveredData.batterySOC}
-          unit={chartData?.mode === 'energy' ? 'kWh' : 'kW'}
-          visible={true}
-        />
-      </div>
+      {renderChartContent()}
     </div>
   )
 }
