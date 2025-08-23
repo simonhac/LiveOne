@@ -3,6 +3,9 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import EnergyChart from '@/components/EnergyChart'
+import MobileMenu from '@/components/MobileMenu'
+import ConnectionStatus from '@/components/ConnectionStatus'
+import LastUpdateTime from '@/components/LastUpdateTime'
 import { 
   Sun, 
   Home, 
@@ -10,11 +13,7 @@ import {
   Zap, 
   AlertTriangle,
   Info,
-  Activity,
-  Wifi,
-  WifiOff,
-  LogOut,
-  Clock
+  LogOut
 } from 'lucide-react'
 
 interface SystemInfo {
@@ -255,33 +254,13 @@ export default function DashboardPage() {
       <header className="bg-gray-800 border-b border-gray-700">
         <div className="max-w-7xl mx-auto px-1 sm:px-6 lg:px-8 py-3 sm:py-4">
           {/* Mobile Layout */}
-          <div className="sm:hidden">
-            <div className="flex justify-between items-center">
-              <h1 className="text-lg font-bold text-white">LiveOne</h1>
-              <div className="flex items-center gap-2">
-                <span className={`${
-                  isAuthenticated ? 'text-green-400' : 'text-red-400'
-                }`}>
-                  {isAuthenticated ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-                </span>
-                <span className="text-gray-400 text-xs font-mono">
-                  {!lastUpdate ? '-' :
-                   secondsSinceUpdate < 60 ? `${secondsSinceUpdate}s` :
-                   `${Math.floor(secondsSinceUpdate / 60)}m`}
-                </span>
-                <span className="text-gray-400 text-xs">•</span>
-                <span className="text-gray-400 text-sm">
-                  {sessionStorage.getItem('displayName')}
-                </span>
-                <button
-                  onClick={handleLogout}
-                  className="text-red-400 hover:text-red-300 p-1"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </div>
+          <MobileMenu 
+            displayName={sessionStorage.getItem('displayName')}
+            isAuthenticated={isAuthenticated}
+            secondsSinceUpdate={!lastUpdate ? 0 : secondsSinceUpdate}
+            onLogout={handleLogout}
+            systemInfo={systemInfo}
+          />
 
           {/* Desktop Layout */}
           <div className="hidden sm:flex justify-between items-center">
@@ -290,16 +269,9 @@ export default function DashboardPage() {
               <p className="text-sm text-gray-400 mt-1">Selectronic SP PRO Monitoring</p>
             </div>
             <div className="flex items-center gap-4">
-              <div className="text-sm text-gray-400 flex items-center gap-2">
-                <Clock className="w-4 h-4" />
-                <span className="font-mono text-white">
-                  {!lastUpdate ? '-' :
-                   secondsSinceUpdate === 0 ? 'Just now' : 
-                   secondsSinceUpdate === 1 ? '1 second ago' : 
-                   secondsSinceUpdate < 60 ? `${secondsSinceUpdate}s ago` :
-                   `${Math.floor(secondsSinceUpdate / 60)}m ${secondsSinceUpdate % 60}s ago`}
-                </span>
-              </div>
+              <LastUpdateTime 
+                secondsSinceUpdate={!lastUpdate ? 0 : secondsSinceUpdate}
+              />
               {systemInfo && (
                 <div className="relative flex items-center">
                   <button
@@ -350,12 +322,7 @@ export default function DashboardPage() {
                   )}
                 </div>
               )}
-              <div className={`px-2 py-1 rounded text-xs flex items-center gap-1 ${
-                isAuthenticated ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
-              }`}>
-                {isAuthenticated ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-                {isAuthenticated ? 'Connected' : 'Disconnected'}
-              </div>
+              <ConnectionStatus isAuthenticated={isAuthenticated} />
               <div className="text-sm text-gray-400">
                 {sessionStorage.getItem('displayName')}
               </div>
