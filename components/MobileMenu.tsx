@@ -37,9 +37,9 @@ export default function MobileMenu({
       {/* Mobile Header Bar */}
       <div className="sm:hidden">
         <div className="flex justify-between items-center">
-          <h1 className="text-lg font-bold text-white">LiveOne</h1>
+          <h1 className="text-base font-bold text-white">LiveOne</h1>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             {/* Connection Status and Time */}
             <ConnectionStatus isAuthenticated={isAuthenticated} />
             <LastUpdateTime 
@@ -51,10 +51,10 @@ export default function MobileMenu({
             {/* Hamburger Menu Button */}
             <button
               onClick={toggleMenu}
-              className="p-2 text-gray-400 hover:text-white transition-colors"
+              className="p-1.5 text-gray-400 hover:text-white transition-colors"
               aria-label="Toggle menu"
             >
-              {isOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              {isOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
             </button>
           </div>
         </div>
