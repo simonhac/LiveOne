@@ -16,13 +16,12 @@ export default function PeriodSwitcher({ value, onChange, className = '' }: Peri
           key={period}
           onClick={() => onChange(period)}
           className={`
-            px-3 py-1 text-xs font-medium transition-colors
-            ${index === 0 ? 'rounded-l-md' : ''}
+            px-3 py-1 text-xs font-medium transition-colors border
+            ${index === 0 ? 'rounded-l-md' : '-ml-px'}
             ${index === periods.length - 1 ? 'rounded-r-md' : ''}
-            ${index !== 0 ? 'border-l-0' : ''}
             ${value === period 
-              ? 'bg-blue-900/50 text-blue-300 border border-blue-800' 
-              : 'bg-gray-700 text-gray-400 border border-gray-600 hover:bg-gray-600 hover:text-gray-300'
+              ? 'bg-blue-900/50 text-blue-300 border-blue-800 z-10' 
+              : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
             }
           `}
         >

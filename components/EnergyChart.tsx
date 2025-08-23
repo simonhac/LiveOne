@@ -624,15 +624,17 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
   }
 
   // Format timestamp based on time range
-  const formatHoverTimestamp = (date: Date | null) => {
+  const formatHoverTimestamp = (date: Date | null, isMobile: boolean = false) => {
     if (!date) return '';
     
     if (timeRange === '30D') {
-      // For 30D view, show date only (e.g., "Friday, 22 Aug 2024")
-      return format(date, 'EEEE, d MMM yyyy');
+      // For 30D view, show date only
+      // Mobile: "Fri, 22 Aug" / Desktop: "Fri, 22 Aug 2024"
+      return format(date, isMobile ? 'EEE, d MMM' : 'EEE, d MMM yyyy');
     } else if (timeRange === '7D') {
-      // For 7D view, show date and time (e.g., "Friday, 22 Aug 2024 11:58PM")
-      return format(date, 'EEEE, d MMM yyyy h:mma');
+      // For 7D view, show date and time
+      // Mobile: "Fri, 22 Aug 11:58PM" / Desktop: "Fri, 22 Aug 2024 11:58PM"
+      return format(date, isMobile ? 'EEE, d MMM h:mma' : 'EEE, d MMM yyyy h:mma');
     } else {
       // For 1D view, show time only (e.g., "11:58PM")
       return format(date, 'h:mma');
@@ -684,9 +686,12 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
     <div className={`md:bg-gray-800 md:border md:border-gray-700 md:rounded py-1 px-0 md:p-4 flex flex-col ${className}`}>
       <div className="flex justify-between items-center mb-1 md:mb-2 px-1 md:px-0">
         <h3 className="text-sm font-semibold text-white" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>Daylesford</h3>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-gray-400" style={{ fontFamily: 'DM Sans, system-ui, sans-serif', minWidth: '200px', textAlign: 'right' }}>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <span className="hidden sm:block text-xs text-gray-400 min-w-[200px] text-right whitespace-nowrap" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
             {formatHoverTimestamp(hoveredData.timestamp)}
+          </span>
+          <span className="sm:hidden text-xs text-gray-400 text-right whitespace-nowrap" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+            {formatHoverTimestamp(hoveredData.timestamp, true)}
           </span>
           <PeriodSwitcher 
             value={timeRange} 
