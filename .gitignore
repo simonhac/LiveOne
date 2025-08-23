@@ -49,6 +49,8 @@ USER_SECRETS.ts
 # Database
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 dev.db
 dev.db-journal
 
@@ -59,5 +61,3 @@ dev.db-journal
 .env.development
 .env.production.env.local
 liveone_backup.sql
-dev.db-wal
-dev.db-shm
