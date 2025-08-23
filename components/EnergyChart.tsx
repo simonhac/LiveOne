@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import ChartTooltip from './ChartTooltip'
+import PeriodSwitcher from './PeriodSwitcher'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -687,38 +688,10 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
           <span className="text-xs text-gray-400" style={{ fontFamily: 'DM Sans, system-ui, sans-serif', minWidth: '200px', textAlign: 'right' }}>
             {formatHoverTimestamp(hoveredData.timestamp)}
           </span>
-          <div className="inline-flex rounded-md shadow-sm" role="group">
-          <button
-            onClick={() => setTimeRange('1D')}
-            className={`px-3 py-1 text-xs font-medium rounded-l-md border transition-colors ${
-              timeRange === '1D' 
-                ? 'bg-blue-600 text-white border-blue-600' 
-                : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
-            }`}
-          >
-            1D
-          </button>
-          <button
-            onClick={() => setTimeRange('7D')}
-            className={`px-3 py-1 text-xs font-medium border-t border-b transition-colors ${
-              timeRange === '7D' 
-                ? 'bg-blue-600 text-white border-blue-600' 
-                : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
-            }`}
-          >
-            7D
-          </button>
-          <button
-            onClick={() => setTimeRange('30D')}
-            className={`px-3 py-1 text-xs font-medium rounded-r-md border transition-colors ${
-              timeRange === '30D' 
-                ? 'bg-blue-600 text-white border-blue-600' 
-                : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300'
-            }`}
-          >
-            30D
-          </button>
-          </div>
+          <PeriodSwitcher 
+            value={timeRange} 
+            onChange={setTimeRange}
+          />
         </div>
       </div>
       {renderChartContent()}
