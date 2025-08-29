@@ -1,21 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
 import { db } from '@/lib/db';
-import { systems, readings, pollingStatus } from '@/lib/db/schema';
-import { eq, desc, sql } from 'drizzle-orm';
+import { systems, readings, pollingStatus, userSystems } from '@/lib/db/schema';
+import { eq, desc, or } from 'drizzle-orm';
 import { formatTimeAEST, fromUnixTimestamp } from '@/lib/date-utils';
+import { isUserAdmin } from '@/lib/auth-utils';
+import { fromDate } from '@internationalized/date';
 
 export async function GET(request: NextRequest) {
   try {
-    // Check for auth token - accept either admin or regular password
-    const authToken = request.cookies.get('auth-token')?.value;
-    const validPassword = process.env.AUTH_PASSWORD;
-    const adminPassword = process.env.ADMIN_PASSWORD;
+    // Check if user is authenticated
+    const { userId } = await auth();
     
-    const isAuthorized = (validPassword && authToken === validPassword) || 
-                         (adminPassword && authToken === adminPassword);
-    
-    if (!isAuthorized) {
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    // Check if user is admin
+    const isAdmin = await isUserAdmin();
+    
+    if (!isAdmin) {
+      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
     }
     
     // Get all systems with their latest data
@@ -43,6 +48,7 @@ export async function GET(request: NextRequest) {
       
       systemsData.push({
         owner: system.userId,
+        ownerClerkUserId: system.ownerClerkUserId || '',
         displayName: system.displayName || system.userId,
         systemNumber: system.systemNumber,
         lastLogin: null, // No longer tracking user sessions
@@ -57,8 +63,10 @@ export async function GET(request: NextRequest) {
         },
         polling: {
           isActive: pollStatus?.isActive || false,
-          isAuthenticated: true, // Always true if we have data
-          lastPollTime: pollStatus?.lastPollTime ? formatTimeAEST(fromUnixTimestamp(pollStatus.lastPollTime.getTime() / 1000)) : null,
+          isAuthenticated: pollStatus?.lastSuccessTime ? 
+            ((Date.now() - new Date(pollStatus.lastSuccessTime).getTime()) / 1000 / 60) < 5 : false,
+          lastPollTime: pollStatus?.lastPollTime ? 
+            formatTimeAEST(fromDate(pollStatus.lastPollTime, 'Australia/Brisbane')) : null,
           lastError: pollStatus?.lastError || null,
         },
         data: reading ? {
@@ -67,7 +75,7 @@ export async function GET(request: NextRequest) {
           batteryPower: reading.batteryW,
           batterySOC: reading.batterySOC,
           gridPower: reading.gridW,
-          timestamp: formatTimeAEST(fromUnixTimestamp(reading.inverterTime.getTime() / 1000)),
+          timestamp: formatTimeAEST(fromDate(reading.inverterTime, 'Australia/Brisbane')),
         } : null,
       });
     }
@@ -77,14 +85,14 @@ export async function GET(request: NextRequest) {
       systems: systemsData,
       totalSystems: systemsData.length,
       activeSessions: 0, // No longer tracking sessions
-      timestamp: formatTimeAEST(fromUnixTimestamp(Date.now() / 1000)),
+      timestamp: new Date().toISOString(),
     });
     
   } catch (error) {
-    console.error('Admin API Error:', error);
+    console.error('Error fetching systems data:', error);
     return NextResponse.json({
       success: false,
-      error: 'Internal server error',
+      error: 'Failed to fetch systems data',
     }, { status: 500 });
   }
 }
