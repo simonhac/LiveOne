@@ -269,7 +269,7 @@ export default function AdminDashboardClient() {
                     key={system.systemId}
                     className="hover:bg-gray-700/50 transition-colors"
                   >
-                    <td className="px-2 md:px-6 py-4 whitespace-nowrap">
+                    <td className="px-2 md:px-6 py-4 whitespace-nowrap align-top">
                       <Link 
                         href={`/dashboard/${system.systemId}`}
                         className="block group"
@@ -292,7 +292,7 @@ export default function AdminDashboardClient() {
                         </div>
                       </Link>
                     </td>
-                    <td className="px-2 md:px-6 py-4 whitespace-nowrap">
+                    <td className="px-2 md:px-6 py-4 whitespace-nowrap align-top">
                       <div className="text-sm">
                         <div className="text-gray-300">
                           {system.owner.userName || system.owner.clerkId || 'unknown'}
