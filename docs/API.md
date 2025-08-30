@@ -477,35 +477,7 @@ Lists all users and their system access.
 
 ---
 
-### 5. Setup Endpoints
-
-#### POST /api/setup
-Initial system setup endpoint for configuring new systems.
-
-**Authentication:** Required (Clerk)
-
-**Request Body:**
-```json
-{
-  "displayName": "Home Solar",
-  "vendorType": "select.live",
-  "vendorSiteId": "1586",
-  "timezoneOffsetMin": 600
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "systemId": 1,
-  "message": "System configured successfully"
-}
-```
-
----
-
-### 6. Cron Job Endpoints
+### 5. Cron Job Endpoints
 
 These endpoints are designed to be called by scheduled jobs.
 

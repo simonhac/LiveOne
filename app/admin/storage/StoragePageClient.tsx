@@ -169,7 +169,7 @@ export default function StoragePageClient() {
   }
 
   return (
-    <div className="px-6 py-8">
+    <div className="px-2 sm:px-6 py-4 sm:py-8">
       {error && (
         <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
           <AlertCircle className="w-5 h-5" />
@@ -220,13 +220,12 @@ export default function StoragePageClient() {
       )}
       
       {/* Database Information */}
-      <div className="mb-8">
-        <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
-          <Database className="w-6 h-6 text-blue-400" />
-          Database Configuration
+      <div className="mb-8 -mx-2 sm:mx-0">
+        <h2 className="text-xl font-semibold text-white mb-4 px-2 sm:px-0">
+          Database
         </h2>
         
-        <div className="bg-gray-800 border border-gray-700 rounded-lg p-6">
+        <div className="bg-gray-800 border border-gray-700 sm:rounded-lg p-4 sm:p-6">
           {databaseInfo && (
             <div className="space-y-4">
               {/* Database Type Badge with Sync Button */}
@@ -283,11 +282,43 @@ export default function StoragePageClient() {
                     </div>
                     <div>
                       <p className="text-xs text-gray-500">Oldest Reading</p>
-                      <p className="text-sm text-white">{databaseInfo.stats.oldestReading}</p>
+                      <div className="text-sm text-white">
+                        {databaseInfo.stats.oldestReading === 'No data' ? (
+                          'No data'
+                        ) : (
+                          <>
+                            <div>{new Date(databaseInfo.stats.oldestReading).toLocaleDateString('en-AU', { 
+                              day: 'numeric', 
+                              month: 'short', 
+                              year: 'numeric' 
+                            })}</div>
+                            <div className="text-xs text-gray-400">{new Date(databaseInfo.stats.oldestReading).toLocaleTimeString('en-AU', { 
+                              hour: '2-digit', 
+                              minute: '2-digit' 
+                            })}</div>
+                          </>
+                        )}
+                      </div>
                     </div>
                     <div>
                       <p className="text-xs text-gray-500">Newest Reading</p>
-                      <p className="text-sm text-white">{databaseInfo.stats.newestReading}</p>
+                      <div className="text-sm text-white">
+                        {databaseInfo.stats.newestReading === 'No data' ? (
+                          'No data'
+                        ) : (
+                          <>
+                            <div>{new Date(databaseInfo.stats.newestReading).toLocaleDateString('en-AU', { 
+                              day: 'numeric', 
+                              month: 'short', 
+                              year: 'numeric' 
+                            })}</div>
+                            <div className="text-xs text-gray-400">{new Date(databaseInfo.stats.newestReading).toLocaleTimeString('en-AU', { 
+                              hour: '2-digit', 
+                              minute: '2-digit' 
+                            })}</div>
+                          </>
+                        )}
+                      </div>
                     </div>
                     {databaseInfo.stats.diskSize && (
                       <div>
@@ -304,7 +335,7 @@ export default function StoragePageClient() {
       </div>
 
       {/* Info Notice */}
-      <div className="mt-8 bg-blue-900/20 border border-blue-700/50 rounded-lg p-4">
+      <div className="mt-8 -mx-2 sm:mx-0 bg-blue-900/20 border border-blue-700/50 sm:rounded-lg p-4">
         <div className="flex items-start gap-3">
           <Info className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
           <div className="text-sm text-blue-300">

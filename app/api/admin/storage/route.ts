@@ -4,6 +4,8 @@ import { db } from '@/lib/db'
 import { readings } from '@/lib/db/schema'
 import { sql } from 'drizzle-orm'
 import { isUserAdmin } from '@/lib/auth-utils'
+import { fromDate } from '@internationalized/date'
+import { formatTimeAEST } from '@/lib/date-utils'
 
 export async function GET(request: NextRequest) {
   try {
@@ -22,12 +24,15 @@ export async function GET(request: NextRequest) {
     }
     
     // Determine database type based on environment variables
-    const isDevelopment = process.env.NODE_ENV === 'development'
+    // This should match the logic in lib/db/index.ts
+    const isProduction = process.env.NODE_ENV === 'production'
     const databaseUrl = process.env.DATABASE_URL || 'file:./dev.db'
     const tursoUrl = process.env.TURSO_DATABASE_URL
+    const isTursoUrl = databaseUrl.startsWith('libsql://')
     
     // Check if we're using Turso (production) or SQLite (development)
-    const isUsingTurso = tursoUrl && !databaseUrl.startsWith('file:')
+    // Match the logic from lib/db/index.ts: use Turso if URL starts with libsql:// OR in production
+    const isUsingTurso = isTursoUrl || isProduction
     
     // Mask sensitive parts of the database URL
     const maskedUrl = (() => {
@@ -71,20 +76,15 @@ export async function GET(request: NextRequest) {
       // Count tables (we know our schema has these tables)
       const tableCount = 5 // systems, readings, pollingStatus, userSystems, readingsAgg5m, readingsAgg1d
       
-      // Format date as "DD MMM YYYY"
-      const formatDate = (date: Date) => {
-        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-        const day = date.getDate().toString().padStart(2, '0')
-        const month = months[date.getMonth()]
-        const year = date.getFullYear()
-        return `${day} ${month} ${year}`
-      }
-      
       stats = {
         tables: tableCount,
         totalReadings: totalCount || 0,
-        oldestReading: oldestResults.length > 0 ? formatDate(new Date(oldestResults[0].inverterTime)) : 'No data',
-        newestReading: newestResults.length > 0 ? formatDate(new Date(newestResults[0].inverterTime)) : 'No data',
+        oldestReading: oldestResults.length > 0 
+          ? formatTimeAEST(fromDate(new Date(oldestResults[0].inverterTime), 'Australia/Brisbane'))
+          : 'No data',
+        newestReading: newestResults.length > 0 
+          ? formatTimeAEST(fromDate(new Date(newestResults[0].inverterTime), 'Australia/Brisbane'))
+          : 'No data',
       }
       
       // Try to get database size for SQLite
