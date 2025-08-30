@@ -79,12 +79,17 @@ export default function UsersPageClient() {
     }
   }
 
-  const formatDate = (date: Date) => {
+  const formatDateTime = (date: Date) => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     const day = date.getDate().toString().padStart(2, '0')
     const month = months[date.getMonth()]
     const year = date.getFullYear()
-    return `${day} ${month} ${year}`
+    const hours = date.getHours().toString().padStart(2, '0')
+    const minutes = date.getMinutes().toString().padStart(2, '0')
+    return {
+      date: `${day} ${month} ${year}`,
+      time: `${hours}:${minutes}`
+    }
   }
 
   if (loading) {
@@ -213,9 +218,14 @@ export default function UsersPageClient() {
                   </td>
                   <td className="px-2 md:px-6 py-4 whitespace-nowrap align-top">
                     {user.lastSignIn ? (
-                      <div className="flex items-center gap-1 text-xs text-gray-400">
-                        <Clock className="w-3 h-3" />
-                        {formatDate(new Date(user.lastSignIn))}
+                      <div className="text-xs text-gray-400">
+                        <div className="flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {formatDateTime(new Date(user.lastSignIn)).date}
+                        </div>
+                        <div className="ml-4 text-gray-500">
+                          {formatDateTime(new Date(user.lastSignIn)).time}
+                        </div>
                       </div>
                     ) : (
                       <span className="text-xs text-gray-500">Never</span>
