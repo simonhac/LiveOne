@@ -6,9 +6,10 @@ LiveOne provides a RESTful API for accessing solar inverter data, managing authe
 
 ## Authentication
 
-Most endpoints require authentication via a cookie-based auth token:
-- Cookie name: `auth-token`
-- Cookie value: The configured `AUTH_PASSWORD` environment variable
+Most endpoints require authentication via Clerk. Some endpoints have additional requirements:
+- Admin endpoints: Require admin role
+- Cron endpoints: Require Bearer token with `CRON_SECRET`
+- Public endpoints: No authentication required
 
 ## Base URL
 
@@ -17,12 +18,73 @@ Most endpoints require authentication via a cookie-based auth token:
 
 ## Endpoints
 
-### 1. Data Endpoints
+### 1. Public Endpoints
+
+#### GET /api/health
+Returns system health status and diagnostic information for monitoring.
+
+**Authentication:** Not required (public endpoint for monitoring)
+
+**Response:**
+```json
+{
+  "status": "healthy",  // "healthy", "degraded", or "unhealthy"
+  "timestamp": "2025-08-30T03:01:46.037Z",
+  "checks": {
+    "database": {
+      "status": "pass",  // "pass" or "fail"
+      "message": "Connected",
+      "duration": 1  // milliseconds
+    },
+    "tables": {
+      "status": "pass",
+      "message": "All required tables exist",
+      "duration": 0
+    },
+    "authentication": {
+      "status": "pass",
+      "message": "Clerk configured",
+      "duration": 0
+    },
+    "environment": {
+      "status": "pass",
+      "message": "All required variables set",
+      "duration": 0
+    }
+  },
+  "details": {
+    "tableCount": 7,
+    "missingTables": [],  // Lists any missing required tables
+    "systemCount": 2,
+    "userSystemCount": 3,
+    "environment": "development",
+    "nodeVersion": "v24.5.0"
+  }
+}
+```
+
+**Status Codes:**
+- `200 OK` - System is healthy
+- `503 Service Unavailable` - System is degraded (some checks failing)
+- `500 Internal Server Error` - System is unhealthy (critical failures)
+
+**Use Cases:**
+- Post-deployment verification
+- Continuous monitoring
+- Load balancer health checks
+- Debugging deployment issues
+
+---
+
+### 2. Data Endpoints
 
 #### GET /api/data
 Returns comprehensive current and historical energy data.
 
-**Authentication:** Not required
+**Authentication:** Required (Clerk)
+
+**Query Parameters:**
+- `systemId` (optional): Numeric ID of the system to query. If not provided, uses the first system the user has access to.
 
 **Response:**
 ```json
@@ -109,19 +171,10 @@ Returns comprehensive current and historical energy data.
 
 ---
 
-#### GET /api/data-serverless
-Lightweight version of the data endpoint optimized for serverless environments.
-
-**Authentication:** Not required
-
-**Response:** Similar structure to `/api/data` but with simplified fields.
-
----
-
 #### GET /api/history
 Returns historical time-series data for charting in OpenNEM format.
 
-**Authentication:** Required (cookie or Bearer token)
+**Authentication:** Required (Clerk)
 
 **Query Parameters:**
 - `systemId` (required): Numeric ID of the system to query
@@ -137,14 +190,6 @@ Returns historical time-series data for charting in OpenNEM format.
 - "5m" interval: Maximum 7.5 days
 - "30m" interval: Maximum 30 days
 - "1d" interval: Maximum 13 months
-
-**Date/Time Handling:**
-- For minute intervals (5m, 30m):
-  - ISO8601 datetime: Parsed with timezone if specified, otherwise assumed UTC
-  - Date-only string: Start time is 00:00:00, end time is 00:00:00 next day (in system timezone, no DST)
-- For daily interval (1d):
-  - Only accepts YYYY-MM-DD format
-  - Datetime strings will be rejected
 
 **Response (OpenNEM format):**
 ```json
@@ -174,47 +219,23 @@ Returns historical time-series data for charting in OpenNEM format.
 ```
 
 **Examples:**
-
-1. Last 30 days with daily resolution:
 ```bash
+# Last 30 days with daily resolution
 GET /api/history?systemId=1&interval=1d&fields=solar,load&last=30d
-```
 
-2. Specific date range with 5-minute resolution:
-```bash
+# Specific date range with 5-minute resolution
 GET /api/history?systemId=1&interval=5m&fields=battery,grid&startTime=2025-08-16T10:00:00Z&endTime=2025-08-16T15:00:00Z
-```
 
-3. Last 7 days with 30-minute resolution:
-```bash
+# Last 7 days with 30-minute resolution
 GET /api/history?systemId=1&interval=30m&fields=solar,load,battery,grid&last=7d
-```
-
-**Error Responses:**
-
-```json
-// Missing required parameters
-{
-  "error": "Missing required parameter: interval. Must be one of: 5m, 30m, 1d"
-}
-
-// Invalid date format for daily interval
-{
-  "error": "Invalid start date format. Expected YYYY-MM-DD, got: 2025-08-16T10:00:00"
-}
-
-// Time range exceeds limit
-{
-  "error": "Time range exceeds maximum of 13 months for 1d interval"
-}
 ```
 
 ---
 
-### 2. Authentication Endpoints
+### 3. Authentication Endpoints
 
 #### POST /api/auth/login
-Authenticates a user with email and password.
+Authenticates a user (legacy endpoint, consider using Clerk sign-in).
 
 **Request Body:**
 ```json
@@ -223,10 +244,6 @@ Authenticates a user with email and password.
   "password": "your-password"
 }
 ```
-
-**Authentication:**
-- Regular user: Uses `AUTH_PASSWORD` environment variable
-- Admin user: Uses `ADMIN_PASSWORD` environment variable
 
 **Response:**
 ```json
@@ -239,12 +256,11 @@ Authenticates a user with email and password.
   }
 }
 ```
-Sets `auth-token` cookie on success with the provided password.
 
 ---
 
 #### POST /api/auth/logout
-Logs out the current user.
+Logs out the current user (legacy endpoint, consider using Clerk sign-out).
 
 **Authentication:** Required
 
@@ -255,16 +271,32 @@ Logs out the current user.
   "message": "Logged out successfully"
 }
 ```
-Clears `auth-token` cookie.
 
 ---
 
-### 3. System Management Endpoints
+#### GET /api/auth/check-admin
+Checks if the current user has admin privileges.
+
+**Authentication:** Required (Clerk)
+
+**Response:**
+```json
+{
+  "isAdmin": true,
+  "userId": "user_31xcrIbiSrjjTIKlXShEPilRow7"
+}
+```
+
+---
+
+### 4. Admin Endpoints
+
+All admin endpoints require authentication and admin role.
 
 #### GET /api/admin/systems
 Lists all configured systems with current status and data.
 
-**Authentication:** Required (accepts both `AUTH_PASSWORD` and `ADMIN_PASSWORD`)
+**Authentication:** Required (Admin only)
 
 **Response:**
 ```json
@@ -272,12 +304,11 @@ Lists all configured systems with current status and data.
   "success": true,
   "systems": [
     {
-      "owner": "simon",
+      "systemId": 1,
+      "owner": "simon@example.com",
       "displayName": "Home Solar",
-      "systemNumber": "1586",
-      "lastLogin": null,
-      "isLoggedIn": false,
-      "activeSessions": 0,
+      "vendorType": "select.live",
+      "vendorSiteId": "1586",
       "systemInfo": {
         "model": "SP PRO GO 7.5kW",
         "serial": "240315002",
@@ -309,9 +340,174 @@ Lists all configured systems with current status and data.
 
 ---
 
-### 4. Cron Job Endpoints
+#### GET /api/admin/storage
+Returns database storage information and statistics.
 
-These endpoints are designed to be called by scheduled jobs but can be triggered manually for testing.
+**Authentication:** Required (Admin only)
+
+**Response:**
+```json
+{
+  "success": true,
+  "database": {
+    "type": "Turso",
+    "url": "libsql://liveone-tokyo.turso.io",
+    "environment": "production"
+  },
+  "storage": {
+    "totalReadings": 1440000,
+    "totalReadings5m": 8640,
+    "totalReadings1d": 365,
+    "oldestReading": "2025-01-01T00:00:00Z",
+    "newestReading": "2025-08-30T12:00:00Z",
+    "estimatedSizeMB": 180.5
+  },
+  "dataBySystem": [
+    {
+      "systemId": 1,
+      "displayName": "Home Solar",
+      "readingCount": 720000,
+      "oldestReading": "2025-01-01T00:00:00Z",
+      "newestReading": "2025-08-30T12:00:00Z",
+      "estimatedSizeMB": 90.3
+    }
+  ]
+}
+```
+
+---
+
+#### POST /api/admin/test-connection
+Tests connection to a Select.Live system.
+
+**Authentication:** Required (Admin only)
+
+**Request Body:**
+```json
+{
+  "ownerClerkUserId": "user_31xcrIbiSrjjTIKlXShEPilRow7",
+  "vendorType": "select.live",
+  "vendorSiteId": "1586"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "latest": {
+    "timestamp": "2025-08-30T12:00:00Z",
+    "power": {
+      "solarW": 2500,
+      "loadW": 1200,
+      "batteryW": -1300,
+      "gridW": 0
+    },
+    "soc": {
+      "battery": 75.5
+    },
+    "energy": {
+      "today": {
+        "solarKwh": 22.5,
+        "loadKwh": 9.3,
+        "batteryInKwh": 16.2,
+        "batteryOutKwh": 4.2
+      }
+    }
+  },
+  "systemInfo": {
+    "model": "SP PRO GO 7.5kW",
+    "serial": "240315002",
+    "solarSize": "9 kW",
+    "batterySize": "14.3 kWh"
+  }
+}
+```
+
+---
+
+#### POST /api/admin/sync-database
+Synchronizes historical data from Select.Live to the database.
+
+**Authentication:** Required (Admin only)
+
+**Request Body:**
+```json
+{
+  "systemId": 1,
+  "days": 7  // Number of days to sync
+}
+```
+
+**Response (Server-Sent Events):**
+```
+data: {"progress":10,"total":100,"message":"Fetching day 1 of 7"}
+data: {"progress":20,"total":100,"message":"Processing 1440 readings"}
+data: {"progress":100,"total":100,"message":"Sync complete","stats":{"totalReadings":10080,"newReadings":8640,"duplicates":1440}}
+```
+
+---
+
+#### GET /api/admin/users
+Lists all users and their system access.
+
+**Authentication:** Required (Admin only)
+
+**Response:**
+```json
+{
+  "success": true,
+  "users": [
+    {
+      "clerkUserId": "user_31xcrIbiSrjjTIKlXShEPilRow7",
+      "email": "simon@example.com",
+      "name": "Simon",
+      "role": "admin",
+      "systems": [
+        {
+          "systemId": 1,
+          "displayName": "Home Solar",
+          "role": "owner"
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+### 5. Setup Endpoints
+
+#### POST /api/setup
+Initial system setup endpoint for configuring new systems.
+
+**Authentication:** Required (Clerk)
+
+**Request Body:**
+```json
+{
+  "displayName": "Home Solar",
+  "vendorType": "select.live",
+  "vendorSiteId": "1586",
+  "timezoneOffsetMin": 600
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "systemId": 1,
+  "message": "System configured successfully"
+}
+```
+
+---
+
+### 6. Cron Job Endpoints
+
+These endpoints are designed to be called by scheduled jobs.
 
 #### GET /api/cron/minutely
 Polls all active systems for new data. Designed to run every minute.
@@ -358,7 +554,7 @@ Runs daily data aggregation. Designed to run at 00:05 daily.
 #### POST /api/cron/daily
 Manually trigger aggregation with various options.
 
-**Authentication:** Required (cookie auth)
+**Authentication:** Required (Admin only)
 
 **Request Body Options:**
 
@@ -421,6 +617,20 @@ All endpoints return consistent error responses:
 }
 ```
 
+### 403 Forbidden
+```json
+{
+  "error": "Admin access required"
+}
+```
+
+### 404 Not Found
+```json
+{
+  "error": "Resource not found"
+}
+```
+
 ### 500 Internal Server Error
 ```json
 {
@@ -436,6 +646,7 @@ All endpoints return consistent error responses:
 - No explicit rate limiting in development
 - Production deployment on Vercel has platform-level rate limits
 - Polling endpoints are designed for 1-minute intervals minimum
+- Sync endpoint should not be called more than once per hour per system
 
 ---
 
@@ -446,39 +657,28 @@ All endpoints return consistent error responses:
 - Daily aggregation respects system's configured timezone offset
 - Default timezone: AEST (UTC+10)
 
-
 ---
 
 ## Testing
 
-For local testing, set the `AUTH_PASSWORD` and optionally `ADMIN_PASSWORD` environment variables:
+For local testing with curl:
 
 ```bash
-# Login as regular user
-curl -X POST http://localhost:3000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email": "user@example.com", "password": "your-password"}' \
-  -c cookies.txt
+# Public endpoint (no auth required)
+curl http://localhost:3000/api/health
 
-# Login as admin user
-curl -X POST http://localhost:3000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email": "admin@example.com", "password": "admin-password"}' \
-  -c cookies.txt
+# Authenticated endpoint (use browser session or Clerk token)
+curl http://localhost:3000/api/data \
+  -H "Cookie: __session=your-clerk-session-token"
 
-# Use the cookie for authenticated requests
+# Admin endpoint
 curl http://localhost:3000/api/admin/systems \
-  -b cookies.txt
-```
+  -H "Cookie: __session=your-clerk-session-token"
 
-Or pass the auth token directly:
+# Cron endpoint (local testing)
+curl http://localhost:3000/api/cron/minutely
 
-```bash
-# Regular user
-curl http://localhost:3000/api/admin/systems \
-  -H "Cookie: auth-token=your-password"
-
-# Admin user
-curl http://localhost:3000/api/admin/systems \
-  -H "Cookie: auth-token=admin-password"
+# Cron endpoint (production)
+curl https://liveone.vercel.app/api/cron/minutely \
+  -H "Authorization: Bearer ${CRON_SECRET}"
 ```

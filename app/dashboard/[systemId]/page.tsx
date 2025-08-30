@@ -42,12 +42,36 @@ export default async function DashboardSystemPage({ params }: PageProps) {
     hasAccess = system.ownerClerkUserId === userId
   }
 
+  // Fetch available systems for the user
+  let availableSystems = []
+  
+  if (isAdmin) {
+    // Admins can see all systems - limit to 10 for the dropdown
+    availableSystems = await db.select({
+      id: systems.id,
+      displayName: systems.displayName,
+      vendorSiteId: systems.vendorSiteId,
+    })
+      .from(systems)
+      .limit(10)
+  } else {
+    // Regular users only see their own systems
+    availableSystems = await db.select({
+      id: systems.id,
+      displayName: systems.displayName,
+      vendorSiteId: systems.vendorSiteId,
+    })
+      .from(systems)
+      .where(eq(systems.ownerClerkUserId, userId))
+  }
+
   return (
     <DashboardClient 
       systemId={systemId}
       hasAccess={hasAccess}
       systemExists={systemExists}
       isAdmin={isAdmin}
+      availableSystems={availableSystems}
     />
   )
 }

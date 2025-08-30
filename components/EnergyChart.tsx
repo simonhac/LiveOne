@@ -670,7 +670,7 @@ export default function EnergyChart({ className = '', maxPowerHint, systemId }: 
             <Line ref={chartRef} data={data} options={options} />
           )}
         </div>
-        <div className="flex justify-center mt-2">
+        <div className="flex justify-center mt-2 px-2 sm:px-0">
           <ChartTooltip
             solar={hoveredData.solar}
             load={hoveredData.load}
@@ -685,8 +685,7 @@ export default function EnergyChart({ className = '', maxPowerHint, systemId }: 
 
   return (
     <div className={`md:bg-gray-800 md:border md:border-gray-700 md:rounded py-1 px-0 md:p-4 flex flex-col ${className}`}>
-      <div className="flex justify-between items-center mb-1 md:mb-2 px-1 md:px-0">
-        <h3 className="text-sm font-semibold text-white" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>Daylesford</h3>
+      <div className="flex justify-end items-center mb-2 md:mb-3 px-1 md:px-0">
         <div className="flex items-center gap-2 sm:gap-3">
           <span className="hidden sm:block text-xs text-gray-400 min-w-[200px] text-right whitespace-nowrap" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
             {formatHoverTimestamp(hoveredData.timestamp)}

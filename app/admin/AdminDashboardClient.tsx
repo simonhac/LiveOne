@@ -87,7 +87,6 @@ export default function AdminDashboardClient() {
   const [systems, setSystems] = useState<SystemData[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [testModal, setTestModal] = useState<TestModalData>({
     isOpen: false,
     loading: false,
@@ -191,7 +190,6 @@ export default function AdminDashboardClient() {
       
       if (data.success) {
         setSystems(data.systems || [])
-        setLastUpdate(new Date())
         setError(null)
       } else {
         setError(data.error || 'Failed to load systems')
@@ -224,55 +222,19 @@ export default function AdminDashboardClient() {
 
   return (
     <>
-      <div className="px-6 py-8">
-        {error && (
-          <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-6">
-            {error}
-          </div>
-        )}
-        
-        {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <div className="bg-gray-800 border border-gray-700 rounded p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-gray-400 text-sm">Total Systems</p>
-                <p className="text-2xl font-bold text-white">{systems.length}</p>
-              </div>
-              <Server className="w-8 h-8 text-blue-400" />
+      <div className="flex flex-col min-h-full">
+        <div className="flex-1 px-6 py-8">
+          {error && (
+            <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-6">
+              {error}
             </div>
-          </div>
+          )}
           
-          <div className="bg-gray-800 border border-gray-700 rounded p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-gray-400 text-sm">Active Systems</p>
-                <p className="text-2xl font-bold text-white">
-                  {systems.filter(s => s.polling.isActive).length}
-                </p>
-              </div>
-              <Activity className="w-8 h-8 text-green-400" />
+          {/* Systems Table */}
+          <div className="bg-gray-800 border border-gray-700 rounded overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-700">
+              <h2 className="text-lg font-semibold text-white">Registered Systems</h2>
             </div>
-          </div>
-          
-          <div className="bg-gray-800 border border-gray-700 rounded p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-gray-400 text-sm">Total Solar</p>
-                <p className="text-2xl font-bold text-white">
-                  {(systems.reduce((sum, s) => sum + (s.data?.solarPower || 0), 0) / 1000).toFixed(1)} kW
-                </p>
-              </div>
-              <Sun className="w-8 h-8 text-yellow-400" />
-            </div>
-          </div>
-        </div>
-        
-        {/* Systems Table */}
-        <div className="bg-gray-800 border border-gray-700 rounded overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-700">
-            <h2 className="text-lg font-semibold text-white">Registered Systems</h2>
-          </div>
           
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -305,28 +267,27 @@ export default function AdminDashboardClient() {
                     className="hover:bg-gray-700/50 transition-colors"
                   >
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div>
-                        <Link 
-                          href={`/dashboard/${system.systemId}`}
-                          className="text-sm font-medium text-white hover:text-blue-400 transition-colors"
-                        >
+                      <Link 
+                        href={`/dashboard/${system.systemId}`}
+                        className="block group"
+                      >
+                        <div className="text-sm font-medium text-white group-hover:text-blue-400 transition-colors">
                           {system.displayName}
-                        </Link>
+                        </div>
                         <div className="flex items-center gap-2">
-                          <Link 
-                            href={`/dashboard/${system.systemId}`}
-                            className="text-xs text-gray-400 hover:text-blue-400 transition-colors flex items-center gap-1"
-                          >
+                          <span className="text-xs text-gray-400 group-hover:text-blue-400 transition-colors">
                             {system.vendorType}/{system.vendorSiteId}
-                          </Link>
+                          </span>
                           {system.systemInfo && (
-                            <SystemInfoTooltip 
-                              systemInfo={system.systemInfo}
-                              systemNumber={system.vendorSiteId}
-                            />
+                            <div onClick={(e) => e.preventDefault()}>
+                              <SystemInfoTooltip 
+                                systemInfo={system.systemInfo}
+                                systemNumber={system.vendorSiteId}
+                              />
+                            </div>
                           )}
                         </div>
-                      </div>
+                      </Link>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <p className="text-sm text-gray-300">{system.owner}</p>
@@ -397,12 +358,46 @@ export default function AdminDashboardClient() {
             </table>
           </div>
         </div>
+        </div>
         
-        {lastUpdate && (
-          <div className="mt-4 text-center text-xs text-gray-500">
-            Last updated: {lastUpdate.toLocaleTimeString()}
+        {/* Summary Cards - Pinned to bottom */}
+        <div className="px-6 pb-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-gray-800 border border-gray-700 rounded p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-gray-400 text-sm">Total Systems</p>
+                  <p className="text-2xl font-bold text-white">{systems.length}</p>
+                </div>
+                <Server className="w-8 h-8 text-blue-400" />
+              </div>
+            </div>
+            
+            <div className="bg-gray-800 border border-gray-700 rounded p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-gray-400 text-sm">Active Systems</p>
+                  <p className="text-2xl font-bold text-white">
+                    {systems.filter(s => s.polling.isActive).length}
+                  </p>
+                </div>
+                <Activity className="w-8 h-8 text-green-400" />
+              </div>
+            </div>
+            
+            <div className="bg-gray-800 border border-gray-700 rounded p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-gray-400 text-sm">Total Solar</p>
+                  <p className="text-2xl font-bold text-white">
+                    {(systems.reduce((sum, s) => sum + (s.data?.solarPower || 0), 0) / 1000).toFixed(1)} kW
+                  </p>
+                </div>
+                <Sun className="w-8 h-8 text-yellow-400" />
+              </div>
+            </div>
           </div>
-        )}
+        </div>
       </div>
       
       {/* Test Connection Modal - Outside main content */}

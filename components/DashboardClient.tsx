@@ -1,11 +1,10 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { UserButton } from '@clerk/nextjs'
 import EnergyChart from '@/components/EnergyChart'
 import MobileMenu from '@/components/MobileMenu'
-import ConnectionStatus from '@/components/ConnectionStatus'
 import LastUpdateTime from '@/components/LastUpdateTime'
 import SystemInfoTooltip from '@/components/SystemInfoTooltip'
 import PowerCard from '@/components/PowerCard'
@@ -15,7 +14,8 @@ import {
   Battery, 
   Zap, 
   AlertTriangle,
-  Shield
+  Shield,
+  ChevronDown
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -109,23 +109,31 @@ interface DashboardData {
   displayName?: string;
 }
 
+interface AvailableSystem {
+  id: number;
+  displayName: string | null;
+  vendorSiteId: string | null;
+}
+
 interface DashboardClientProps {
   systemId?: string;
   hasAccess: boolean;
   systemExists: boolean;
   isAdmin: boolean;
+  availableSystems?: AvailableSystem[];
 }
 
-export default function DashboardClient({ systemId, hasAccess, systemExists, isAdmin: isAdminProp }: DashboardClientProps) {
+export default function DashboardClient({ systemId, hasAccess, systemExists, isAdmin: isAdminProp, availableSystems = [] }: DashboardClientProps) {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [secondsSinceUpdate, setSecondsSinceUpdate] = useState<number>(0)
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [showPower, setShowPower] = useState(false)
   const [isAdmin, setIsAdmin] = useState(isAdminProp)
+  const [showSystemDropdown, setShowSystemDropdown] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
 
   // Function to fetch data from API
@@ -152,12 +160,6 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
         const secondsAgo = Math.floor((Date.now() - dataTimestamp.getTime()) / 1000)
         setSecondsSinceUpdate(secondsAgo)
         
-        // Update authentication status from the polling section
-        const polling = result.polling || {}
-        // Consider authenticated if we have recent successful data
-        const lastSuccess = polling.lastSuccessTime ? new Date(polling.lastSuccessTime) : null
-        const isAuth = lastSuccess ? ((Date.now() - lastSuccess.getTime()) / 1000 / 60) < 5 : false
-        setIsAuthenticated(isAuth)
         
         setSystemInfo(result.systemInfo || null)
         setError('')
@@ -203,6 +205,23 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
     return () => clearInterval(interval)
   }, [lastUpdate, fetchData])
 
+  // Handle clicks outside of the dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowSystemDropdown(false)
+      }
+    }
+
+    if (showSystemDropdown) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showSystemDropdown])
+
   // Show access denied message if user doesn't have access
   if (!hasAccess || !systemExists) {
     return (
@@ -242,6 +261,31 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
 
   const formatPower = (watts: number) => {
     return `${(watts / 1000).toFixed(1)}\u00A0kW`
+  }
+
+  // Determine the appropriate unit for an energy value
+  const getAppropriateUnit = (kWh: number | null | undefined): string => {
+    if (kWh === null || kWh === undefined) return 'kWh'
+    
+    const absValue = Math.abs(kWh)
+    if (absValue >= 1000000) return 'GWh'
+    if (absValue >= 1000) return 'MWh'
+    return 'kWh'
+  }
+
+  // Format energy value based on the specified unit
+  const formatEnergyWithUnit = (kWh: number | null | undefined, unit: string): string => {
+    if (kWh === null || kWh === undefined) return '—'
+    
+    switch (unit) {
+      case 'GWh':
+        return (kWh / 1000000).toFixed(1)
+      case 'MWh':
+        return (kWh / 1000).toFixed(1)
+      case 'kWh':
+      default:
+        return kWh.toFixed(1)
+    }
   }
 
   // Calculate average power from energy for today
@@ -288,19 +332,53 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
           {/* Mobile Layout */}
           <MobileMenu 
             displayName={systemDisplayName}
-            isAuthenticated={isAuthenticated}
             secondsSinceUpdate={!lastUpdate ? 0 : secondsSinceUpdate}
             onLogout={handleLogout}
             systemInfo={systemInfo}
+            availableSystems={availableSystems}
+            currentSystemId={systemId as string}
           />
 
           {/* Desktop Layout */}
           <div className="hidden sm:flex justify-between items-center">
-            <div>
-              <h1 className="text-2xl font-bold text-white">{systemDisplayName}</h1>
-              <p className="text-sm text-gray-400 mt-1">
-                Selectronic SP PRO Monitoring
-              </p>
+            <div className="relative" ref={dropdownRef}>
+              {availableSystems.length > 1 ? (
+                <>
+                  <button
+                    onClick={() => setShowSystemDropdown(!showSystemDropdown)}
+                    className="flex items-center gap-2 hover:bg-gray-700 rounded-lg px-3 py-2 transition-colors"
+                  >
+                    <h1 className="text-2xl font-bold text-white">{systemDisplayName}</h1>
+                    <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${showSystemDropdown ? 'rotate-180' : ''}`} />
+                  </button>
+                  
+                  {showSystemDropdown && (
+                    <div className="absolute top-full left-0 mt-2 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
+                      <div className="py-1">
+                        {availableSystems.map((system) => (
+                          <Link
+                            key={system.id}
+                            href={`/dashboard/${system.id}`}
+                            className={`block px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 transition-colors ${
+                              system.id === parseInt(systemId || '0') ? 'bg-gray-700' : ''
+                            }`}
+                            onClick={() => setShowSystemDropdown(false)}
+                          >
+                            {system.displayName || `System ${system.vendorSiteId}`}
+                          </Link>
+                        ))}
+                        {isAdmin && availableSystems.length >= 10 && (
+                          <div className="px-4 py-2 text-xs text-gray-500 border-t border-gray-700">
+                            Showing first 10 systems
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <h1 className="text-2xl font-bold text-white">{systemDisplayName}</h1>
+              )}
             </div>
             <div className="flex items-center gap-4">
               <LastUpdateTime 
@@ -312,7 +390,6 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   systemNumber={data?.systemNumber || ""}
                 />
               )}
-              <ConnectionStatus isAuthenticated={isAuthenticated} />
               {isAdmin && (
                 <Link
                   href="/admin"
@@ -392,7 +469,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
               </div>
 
               {/* Power Cards - 1/3 width on desktop, horizontal on mobile */}
-              <div className="grid grid-cols-3 gap-2 lg:grid-cols-1 lg:gap-4">
+              <div className="grid grid-cols-3 gap-2 lg:grid-cols-1 lg:gap-4 px-1">
                 <PowerCard
                   title="Solar"
                   value={formatPower(data.latest.power.solarW)}
@@ -400,7 +477,6 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   iconColor="text-yellow-400"
                   bgColor="bg-yellow-900/20"
                   borderColor="border-yellow-700"
-                  isOffline={!isAuthenticated}
                   extra={
                     <div className="text-xs space-y-1 text-gray-400">
                       <div>Remote: {formatPower(data.latest.power.solarInverterW)}</div>
@@ -415,7 +491,6 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   iconColor="text-blue-400"
                   bgColor="bg-blue-900/20"
                   borderColor="border-blue-700"
-                  isOffline={!isAuthenticated}
                 />
                 <PowerCard
                   title="Battery"
@@ -424,7 +499,6 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   iconColor={data.latest.power.batteryW < 0 ? "text-green-400" : data.latest.power.batteryW > 0 ? "text-orange-400" : "text-gray-400"}
                   bgColor={data.latest.power.batteryW < 0 ? "bg-green-900/20" : data.latest.power.batteryW > 0 ? "bg-orange-900/20" : "bg-gray-900/20"}
                   borderColor={data.latest.power.batteryW < 0 ? "border-green-700" : data.latest.power.batteryW > 0 ? "border-orange-700" : "border-gray-700"}
-                  isOffline={!isAuthenticated}
                   extraInfo={
                     data.latest.power.batteryW !== 0 
                       ? `${data.latest.power.batteryW < 0 ? 'Charging' : 'Discharging'} ${formatPower(Math.abs(data.latest.power.batteryW))}`
@@ -439,8 +513,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                     iconColor={data.latest.power.gridW > 0 ? "text-red-400" : data.latest.power.gridW < 0 ? "text-green-400" : "text-gray-400"}
                     bgColor={data.latest.power.gridW > 0 ? "bg-red-900/20" : data.latest.power.gridW < 0 ? "bg-green-900/20" : "bg-gray-900/20"}
                     borderColor={data.latest.power.gridW > 0 ? "border-red-700" : data.latest.power.gridW < 0 ? "border-green-700" : "border-gray-700"}
-                    isOffline={!isAuthenticated}
-                    extraInfo={data.latest.power.gridW > 0 ? 'Importing' : data.latest.power.gridW < 0 ? 'Exporting' : 'Neutral'}
+                      extraInfo={data.latest.power.gridW > 0 ? 'Importing' : data.latest.power.gridW < 0 ? 'Exporting' : 'Neutral'}
                   />
                 )}
               </div>
@@ -467,8 +540,9 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                       <th className="text-right py-1 text-gray-400 font-medium text-xs sm:hidden">Battery In/Out</th>
                       {showGrid && (
                         <>
-                          <th className="text-right py-1 text-gray-400 font-medium text-xs">Grid In</th>
-                          <th className="text-right py-1 text-gray-400 font-medium text-xs">Grid Out</th>
+                          <th className="text-right py-1 text-gray-400 font-medium text-xs hidden sm:table-cell">Grid In</th>
+                          <th className="text-right py-1 text-gray-400 font-medium text-xs hidden sm:table-cell">Grid Out</th>
+                          <th className="text-right py-1 text-gray-400 font-medium text-xs sm:hidden">Grid In/Out</th>
                         </>
                       )}
                     </tr>
@@ -484,8 +558,8 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                           </>
                         ) : (
                           <>
-                            <span className="font-bold">{data.latest.energy.today.solarKwh?.toFixed(1) ?? '—'}</span>
-                            {data.latest.energy.today.solarKwh !== null && <span className="font-normal"> kWh</span>}
+                            <span className="font-bold">{formatEnergyWithUnit(data.latest.energy.today.solarKwh, getAppropriateUnit(data.latest.energy.today.solarKwh))}</span>
+                            {data.latest.energy.today.solarKwh !== null && data.latest.energy.today.solarKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.latest.energy.today.solarKwh)}</span>}
                           </>
                         )}
                       </td>
@@ -497,8 +571,8 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                           </>
                         ) : (
                           <>
-                            <span className="font-bold">{data.latest.energy.today.loadKwh?.toFixed(1) ?? '—'}</span>
-                            {data.latest.energy.today.loadKwh !== null && <span className="font-normal"> kWh</span>}
+                            <span className="font-bold">{formatEnergyWithUnit(data.latest.energy.today.loadKwh, getAppropriateUnit(data.latest.energy.today.loadKwh))}</span>
+                            {data.latest.energy.today.loadKwh !== null && data.latest.energy.today.loadKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.latest.energy.today.loadKwh)}</span>}
                           </>
                         )}
                       </td>
@@ -510,8 +584,8 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                           </>
                         ) : (
                           <>
-                            <span className="font-bold">{data.latest.energy.today.batteryInKwh?.toFixed(1) ?? '—'}</span>
-                            {data.latest.energy.today.batteryInKwh !== null && <span className="font-normal"> kWh</span>}
+                            <span className="font-bold">{formatEnergyWithUnit(data.latest.energy.today.batteryInKwh, getAppropriateUnit(data.latest.energy.today.batteryInKwh))}</span>
+                            {data.latest.energy.today.batteryInKwh !== null && data.latest.energy.today.batteryInKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.latest.energy.today.batteryInKwh)}</span>}
                           </>
                         )}
                       </td>
@@ -523,8 +597,8 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                           </>
                         ) : (
                           <>
-                            <span className="font-bold">{data.latest.energy.today.batteryOutKwh?.toFixed(1) ?? '—'}</span>
-                            {data.latest.energy.today.batteryOutKwh !== null && <span className="font-normal"> kWh</span>}
+                            <span className="font-bold">{formatEnergyWithUnit(data.latest.energy.today.batteryOutKwh, getAppropriateUnit(data.latest.energy.today.batteryOutKwh))}</span>
+                            {data.latest.energy.today.batteryOutKwh !== null && data.latest.energy.today.batteryOutKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.latest.energy.today.batteryOutKwh)}</span>}
                           </>
                         )}
                       </td>
@@ -540,21 +614,31 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                             </span>
                             {calculateTodayPower(data.latest.energy.today.batteryInKwh) !== null && <span className="font-normal"> kW</span>}
                           </>
-                        ) : (
-                          <>
-                            <span className="font-bold">
-                              {data.latest.energy.today.batteryInKwh !== null && data.latest.energy.today.batteryOutKwh !== null ? 
-                                `${data.latest.energy.today.batteryInKwh.toFixed(1)}/${data.latest.energy.today.batteryOutKwh.toFixed(1)}` : 
-                                '—'
-                              }
-                            </span>
-                            {data.latest.energy.today.batteryInKwh !== null && <span className="font-normal"> kWh</span>}
-                          </>
-                        )}
+                        ) : (() => {
+                          const inKwh = data.latest.energy.today.batteryInKwh
+                          const outKwh = data.latest.energy.today.batteryOutKwh
+                          
+                          if ((inKwh === null || inKwh === undefined) && (outKwh === null || outKwh === undefined)) {
+                            return <span className="font-bold">—</span>
+                          }
+                          
+                          // Use the unit of the larger value for both
+                          const maxValue = Math.max(Math.abs(inKwh || 0), Math.abs(outKwh || 0))
+                          const unit = getAppropriateUnit(maxValue)
+                          const inValue = formatEnergyWithUnit(inKwh, unit)
+                          const outValue = formatEnergyWithUnit(outKwh, unit)
+                          
+                          return (
+                            <>
+                              <span className="font-bold">{`${inValue}/${outValue}`}</span>
+                              {inValue !== '—' || outValue !== '—' ? <span className="font-normal"> {unit}</span> : null}
+                            </>
+                          )
+                        })()}
                       </td>
                       {showGrid && (
                         <>
-                          <td className="text-right py-1.5 text-red-400 text-sm" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+                          <td className="text-right py-1.5 text-red-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
                             {showPower ? (
                               <>
                                 <span className="font-bold">{formatAvgPower(calculateTodayPower(data.latest.energy.today.gridInKwh))}</span>
@@ -562,12 +646,12 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                               </>
                             ) : (
                               <>
-                                <span className="font-bold">{data.latest.energy.today.gridInKwh?.toFixed(1) ?? '—'}</span>
-                                {data.latest.energy.today.gridInKwh !== null && <span className="font-normal"> kWh</span>}
+                                <span className="font-bold">{formatEnergyWithUnit(data.latest.energy.today.gridInKwh, getAppropriateUnit(data.latest.energy.today.gridInKwh))}</span>
+                                {data.latest.energy.today.gridInKwh !== null && data.latest.energy.today.gridInKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.latest.energy.today.gridInKwh)}</span>}
                               </>
                             )}
                           </td>
-                          <td className="text-right py-1.5 text-green-400 text-sm" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+                          <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
                             {showPower ? (
                               <>
                                 <span className="font-bold">{formatAvgPower(calculateTodayPower(data.latest.energy.today.gridOutKwh))}</span>
@@ -575,10 +659,44 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                               </>
                             ) : (
                               <>
-                                <span className="font-bold">{data.latest.energy.today.gridOutKwh?.toFixed(1) ?? '—'}</span>
-                                {data.latest.energy.today.gridOutKwh !== null && <span className="font-normal"> kWh</span>}
+                                <span className="font-bold">{formatEnergyWithUnit(data.latest.energy.today.gridOutKwh, getAppropriateUnit(data.latest.energy.today.gridOutKwh))}</span>
+                                {data.latest.energy.today.gridOutKwh !== null && data.latest.energy.today.gridOutKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.latest.energy.today.gridOutKwh)}</span>}
                               </>
                             )}
+                          </td>
+                          <td className="text-right py-1.5 text-red-400 text-sm sm:hidden" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+                            {showPower ? (
+                              <>
+                                <span className="font-bold">
+                                  {calculateTodayPower(data.latest.energy.today.gridInKwh) !== null && 
+                                   calculateTodayPower(data.latest.energy.today.gridOutKwh) !== null ? 
+                                    `${formatAvgPower(calculateTodayPower(data.latest.energy.today.gridInKwh))}/${formatAvgPower(calculateTodayPower(data.latest.energy.today.gridOutKwh))}` : 
+                                    '—'
+                                  }
+                                </span>
+                                {calculateTodayPower(data.latest.energy.today.gridInKwh) !== null && <span className="font-normal"> kW</span>}
+                              </>
+                            ) : (() => {
+                              const inKwh = data.latest.energy.today.gridInKwh
+                              const outKwh = data.latest.energy.today.gridOutKwh
+                              
+                              if ((inKwh === null || inKwh === undefined) && (outKwh === null || outKwh === undefined)) {
+                                return <span className="font-bold">—</span>
+                              }
+                              
+                              // Use the unit of the larger value for both
+                              const maxValue = Math.max(Math.abs(inKwh || 0), Math.abs(outKwh || 0))
+                              const unit = getAppropriateUnit(maxValue)
+                              const inValue = formatEnergyWithUnit(inKwh, unit)
+                              const outValue = formatEnergyWithUnit(outKwh, unit)
+                              
+                              return (
+                                <>
+                                  <span className="font-bold">{`${inValue}/${outValue}`}</span>
+                                  {inValue !== '—' || outValue !== '—' ? <span className="font-normal"> {unit}</span> : null}
+                                </>
+                              )
+                            })()}
                           </td>
                         </>
                       )}
@@ -593,8 +711,8 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                           </>
                         ) : (
                           <>
-                            <span className="font-bold">{data.historical?.yesterday?.energy?.solarKwh?.toFixed(1) ?? '—'}</span>
-                            {data.historical?.yesterday?.energy?.solarKwh !== null && data.historical?.yesterday?.energy?.solarKwh !== undefined && <span className="font-normal"> kWh</span>}
+                            <span className="font-bold">{formatEnergyWithUnit(data.historical?.yesterday?.energy?.solarKwh, getAppropriateUnit(data.historical?.yesterday?.energy?.solarKwh))}</span>
+                            {data.historical?.yesterday?.energy?.solarKwh !== null && data.historical?.yesterday?.energy?.solarKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.historical?.yesterday?.energy?.solarKwh)}</span>}
                           </>
                         )}
                       </td>
@@ -606,8 +724,8 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                           </>
                         ) : (
                           <>
-                            <span className="font-bold">{data.historical?.yesterday?.energy?.loadKwh?.toFixed(1) ?? '—'}</span>
-                            {data.historical?.yesterday?.energy?.loadKwh !== null && data.historical?.yesterday?.energy?.loadKwh !== undefined && <span className="font-normal"> kWh</span>}
+                            <span className="font-bold">{formatEnergyWithUnit(data.historical?.yesterday?.energy?.loadKwh, getAppropriateUnit(data.historical?.yesterday?.energy?.loadKwh))}</span>
+                            {data.historical?.yesterday?.energy?.loadKwh !== null && data.historical?.yesterday?.energy?.loadKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.historical?.yesterday?.energy?.loadKwh)}</span>}
                           </>
                         )}
                       </td>
@@ -619,8 +737,8 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                           </>
                         ) : (
                           <>
-                            <span className="font-bold">{data.historical?.yesterday?.energy?.batteryChargeKwh?.toFixed(1) ?? '—'}</span>
-                            {data.historical?.yesterday?.energy?.batteryChargeKwh !== null && data.historical?.yesterday?.energy?.batteryChargeKwh !== undefined && <span className="font-normal"> kWh</span>}
+                            <span className="font-bold">{formatEnergyWithUnit(data.historical?.yesterday?.energy?.batteryChargeKwh, getAppropriateUnit(data.historical?.yesterday?.energy?.batteryChargeKwh))}</span>
+                            {data.historical?.yesterday?.energy?.batteryChargeKwh !== null && data.historical?.yesterday?.energy?.batteryChargeKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.historical?.yesterday?.energy?.batteryChargeKwh)}</span>}
                           </>
                         )}
                       </td>
@@ -632,8 +750,8 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                           </>
                         ) : (
                           <>
-                            <span className="font-bold">{data.historical?.yesterday?.energy?.batteryDischargeKwh?.toFixed(1) ?? '—'}</span>
-                            {data.historical?.yesterday?.energy?.batteryDischargeKwh !== null && data.historical?.yesterday?.energy?.batteryDischargeKwh !== undefined && <span className="font-normal"> kWh</span>}
+                            <span className="font-bold">{formatEnergyWithUnit(data.historical?.yesterday?.energy?.batteryDischargeKwh, getAppropriateUnit(data.historical?.yesterday?.energy?.batteryDischargeKwh))}</span>
+                            {data.historical?.yesterday?.energy?.batteryDischargeKwh !== null && data.historical?.yesterday?.energy?.batteryDischargeKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.historical?.yesterday?.energy?.batteryDischargeKwh)}</span>}
                           </>
                         )}
                       </td>
@@ -649,21 +767,31 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                             </span>
                             {calculateYesterdayPower(data.historical?.yesterday?.energy?.batteryChargeKwh, data.historical?.yesterday?.dataQuality?.intervalCount) !== null && <span className="font-normal"> kW</span>}
                           </>
-                        ) : (
-                          <>
-                            <span className="font-bold">
-                              {data.historical?.yesterday?.energy?.batteryChargeKwh !== null && data.historical?.yesterday?.energy?.batteryDischargeKwh !== null ? 
-                                `${data.historical?.yesterday?.energy?.batteryChargeKwh?.toFixed(1)}/${data.historical?.yesterday?.energy?.batteryDischargeKwh?.toFixed(1)}` : 
-                                '—'
-                              }
-                            </span>
-                            {data.historical?.yesterday?.energy?.batteryChargeKwh !== null && data.historical?.yesterday?.energy?.batteryChargeKwh !== undefined && <span className="font-normal"> kWh</span>}
-                          </>
-                        )}
+                        ) : (() => {
+                          const inKwh = data.historical?.yesterday?.energy?.batteryChargeKwh
+                          const outKwh = data.historical?.yesterday?.energy?.batteryDischargeKwh
+                          
+                          if ((inKwh === null || inKwh === undefined) && (outKwh === null || outKwh === undefined)) {
+                            return <span className="font-bold">—</span>
+                          }
+                          
+                          // Use the unit of the larger value for both
+                          const maxValue = Math.max(Math.abs(inKwh || 0), Math.abs(outKwh || 0))
+                          const unit = getAppropriateUnit(maxValue)
+                          const inValue = formatEnergyWithUnit(inKwh, unit)
+                          const outValue = formatEnergyWithUnit(outKwh, unit)
+                          
+                          return (
+                            <>
+                              <span className="font-bold">{`${inValue}/${outValue}`}</span>
+                              {inValue !== '—' || outValue !== '—' ? <span className="font-normal"> {unit}</span> : null}
+                            </>
+                          )
+                        })()}
                       </td>
                       {showGrid && (
                         <>
-                          <td className="text-right py-1.5 text-red-400 text-sm" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+                          <td className="text-right py-1.5 text-red-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
                             {showPower ? (
                               <>
                                 <span className="font-bold">{formatAvgPower(calculateYesterdayPower(data.historical?.yesterday?.energy?.gridImportKwh, data.historical?.yesterday?.dataQuality?.intervalCount))}</span>
@@ -671,12 +799,12 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                               </>
                             ) : (
                               <>
-                                <span className="font-bold">{data.historical?.yesterday?.energy?.gridImportKwh?.toFixed(1) ?? '—'}</span>
-                                {data.historical?.yesterday?.energy?.gridImportKwh !== null && data.historical?.yesterday?.energy?.gridImportKwh !== undefined && <span className="font-normal"> kWh</span>}
+                                <span className="font-bold">{formatEnergyWithUnit(data.historical?.yesterday?.energy?.gridImportKwh, getAppropriateUnit(data.historical?.yesterday?.energy?.gridImportKwh))}</span>
+                                {data.historical?.yesterday?.energy?.gridImportKwh !== null && data.historical?.yesterday?.energy?.gridImportKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.historical?.yesterday?.energy?.gridImportKwh)}</span>}
                               </>
                             )}
                           </td>
-                          <td className="text-right py-1.5 text-green-400 text-sm" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+                          <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
                             {showPower ? (
                               <>
                                 <span className="font-bold">{formatAvgPower(calculateYesterdayPower(data.historical?.yesterday?.energy?.gridExportKwh, data.historical?.yesterday?.dataQuality?.intervalCount))}</span>
@@ -684,10 +812,44 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                               </>
                             ) : (
                               <>
-                                <span className="font-bold">{data.historical?.yesterday?.energy?.gridExportKwh?.toFixed(1) ?? '—'}</span>
-                                {data.historical?.yesterday?.energy?.gridExportKwh !== null && data.historical?.yesterday?.energy?.gridExportKwh !== undefined && <span className="font-normal"> kWh</span>}
+                                <span className="font-bold">{formatEnergyWithUnit(data.historical?.yesterday?.energy?.gridExportKwh, getAppropriateUnit(data.historical?.yesterday?.energy?.gridExportKwh))}</span>
+                                {data.historical?.yesterday?.energy?.gridExportKwh !== null && data.historical?.yesterday?.energy?.gridExportKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.historical?.yesterday?.energy?.gridExportKwh)}</span>}
                               </>
                             )}
+                          </td>
+                          <td className="text-right py-1.5 text-red-400 text-sm sm:hidden" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+                            {showPower ? (
+                              <>
+                                <span className="font-bold">
+                                  {calculateYesterdayPower(data.historical?.yesterday?.energy?.gridImportKwh, data.historical?.yesterday?.dataQuality?.intervalCount) !== null && 
+                                   calculateYesterdayPower(data.historical?.yesterday?.energy?.gridExportKwh, data.historical?.yesterday?.dataQuality?.intervalCount) !== null ? 
+                                    `${formatAvgPower(calculateYesterdayPower(data.historical?.yesterday?.energy?.gridImportKwh, data.historical?.yesterday?.dataQuality?.intervalCount))}/${formatAvgPower(calculateYesterdayPower(data.historical?.yesterday?.energy?.gridExportKwh, data.historical?.yesterday?.dataQuality?.intervalCount))}` : 
+                                    '—'
+                                  }
+                                </span>
+                                {calculateYesterdayPower(data.historical?.yesterday?.energy?.gridImportKwh, data.historical?.yesterday?.dataQuality?.intervalCount) !== null && <span className="font-normal"> kW</span>}
+                              </>
+                            ) : (() => {
+                              const inKwh = data.historical?.yesterday?.energy?.gridImportKwh
+                              const outKwh = data.historical?.yesterday?.energy?.gridExportKwh
+                              
+                              if ((inKwh === null || inKwh === undefined) && (outKwh === null || outKwh === undefined)) {
+                                return <span className="font-bold">—</span>
+                              }
+                              
+                              // Use the unit of the larger value for both
+                              const maxValue = Math.max(Math.abs(inKwh || 0), Math.abs(outKwh || 0))
+                              const unit = getAppropriateUnit(maxValue)
+                              const inValue = formatEnergyWithUnit(inKwh, unit)
+                              const outValue = formatEnergyWithUnit(outKwh, unit)
+                              
+                              return (
+                                <>
+                                  <span className="font-bold">{`${inValue}/${outValue}`}</span>
+                                  {inValue !== '—' || outValue !== '—' ? <span className="font-normal"> {unit}</span> : null}
+                                </>
+                              )
+                            })()}
                           </td>
                         </>
                       )}
@@ -695,39 +857,76 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                     <tr>
                       <td className="py-1.5 font-medium text-gray-300 text-xs">All-time</td>
                       <td className="text-right py-1.5 text-yellow-400 text-sm" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                        <span className="font-bold">{data.latest.energy.total.solarKwh?.toFixed(0) ?? '—'}</span>
-                        {data.latest.energy.total.solarKwh !== null && <span className="font-normal"> kWh</span>}
+                        <span className="font-bold">{formatEnergyWithUnit(data.latest.energy.total.solarKwh, getAppropriateUnit(data.latest.energy.total.solarKwh))}</span>
+                        {data.latest.energy.total.solarKwh !== null && data.latest.energy.total.solarKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.latest.energy.total.solarKwh)}</span>}
                       </td>
                       <td className="text-right py-1.5 text-blue-400 text-sm" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                        <span className="font-bold">{data.latest.energy.total.loadKwh?.toFixed(0) ?? '—'}</span>
-                        {data.latest.energy.total.loadKwh !== null && <span className="font-normal"> kWh</span>}
+                        <span className="font-bold">{formatEnergyWithUnit(data.latest.energy.total.loadKwh, getAppropriateUnit(data.latest.energy.total.loadKwh))}</span>
+                        {data.latest.energy.total.loadKwh !== null && data.latest.energy.total.loadKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.latest.energy.total.loadKwh)}</span>}
                       </td>
                       <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                        <span className="font-bold">{data.latest.energy.total.batteryInKwh?.toFixed(0) ?? '—'}</span>
-                        {data.latest.energy.total.batteryInKwh !== null && <span className="font-normal"> kWh</span>}
+                        <span className="font-bold">{formatEnergyWithUnit(data.latest.energy.total.batteryInKwh, getAppropriateUnit(data.latest.energy.total.batteryInKwh))}</span>
+                        {data.latest.energy.total.batteryInKwh !== null && data.latest.energy.total.batteryInKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.latest.energy.total.batteryInKwh)}</span>}
                       </td>
                       <td className="text-right py-1.5 text-orange-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                        <span className="font-bold">{data.latest.energy.total.batteryOutKwh?.toFixed(0) ?? '—'}</span>
-                        {data.latest.energy.total.batteryOutKwh !== null && <span className="font-normal"> kWh</span>}
+                        <span className="font-bold">{formatEnergyWithUnit(data.latest.energy.total.batteryOutKwh, getAppropriateUnit(data.latest.energy.total.batteryOutKwh))}</span>
+                        {data.latest.energy.total.batteryOutKwh !== null && data.latest.energy.total.batteryOutKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.latest.energy.total.batteryOutKwh)}</span>}
                       </td>
                       <td className="text-right py-1.5 text-green-400 text-sm sm:hidden" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                        <span className="font-bold">
-                          {data.latest.energy.total.batteryInKwh !== null && data.latest.energy.total.batteryOutKwh !== null ? 
-                            `${data.latest.energy.total.batteryInKwh.toFixed(0)}/${data.latest.energy.total.batteryOutKwh.toFixed(0)}` : 
-                            '—'
+                        {(() => {
+                          const inKwh = data.latest.energy.total.batteryInKwh
+                          const outKwh = data.latest.energy.total.batteryOutKwh
+                          
+                          if ((inKwh === null || inKwh === undefined) && (outKwh === null || outKwh === undefined)) {
+                            return <span className="font-bold">—</span>
                           }
-                        </span>
-                        {data.latest.energy.total.batteryInKwh !== null && <span className="font-normal"> kWh</span>}
+                          
+                          // Use the unit of the larger value for both
+                          const maxValue = Math.max(Math.abs(inKwh || 0), Math.abs(outKwh || 0))
+                          const unit = getAppropriateUnit(maxValue)
+                          const inValue = formatEnergyWithUnit(inKwh, unit)
+                          const outValue = formatEnergyWithUnit(outKwh, unit)
+                          
+                          return (
+                            <>
+                              <span className="font-bold">{`${inValue}/${outValue}`}</span>
+                              {inValue !== '—' || outValue !== '—' ? <span className="font-normal"> {unit}</span> : null}
+                            </>
+                          )
+                        })()}
                       </td>
                       {showGrid && (
                         <>
-                          <td className="text-right py-1.5 text-red-400 text-sm" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                            <span className="font-bold">{data.latest.energy.total.gridInKwh?.toFixed(0) ?? '—'}</span>
-                            {data.latest.energy.total.gridInKwh !== null && <span className="font-normal"> kWh</span>}
+                          <td className="text-right py-1.5 text-red-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+                            <span className="font-bold">{formatEnergyWithUnit(data.latest.energy.total.gridInKwh, getAppropriateUnit(data.latest.energy.total.gridInKwh))}</span>
+                            {data.latest.energy.total.gridInKwh !== null && data.latest.energy.total.gridInKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.latest.energy.total.gridInKwh)}</span>}
                           </td>
-                          <td className="text-right py-1.5 text-green-400 text-sm" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                            <span className="font-bold">{data.latest.energy.total.gridOutKwh?.toFixed(0) ?? '—'}</span>
-                            {data.latest.energy.total.gridOutKwh !== null && <span className="font-normal"> kWh</span>}
+                          <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+                            <span className="font-bold">{formatEnergyWithUnit(data.latest.energy.total.gridOutKwh, getAppropriateUnit(data.latest.energy.total.gridOutKwh))}</span>
+                            {data.latest.energy.total.gridOutKwh !== null && data.latest.energy.total.gridOutKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(data.latest.energy.total.gridOutKwh)}</span>}
+                          </td>
+                          <td className="text-right py-1.5 text-red-400 text-sm sm:hidden" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+                            {(() => {
+                              const inKwh = data.latest.energy.total.gridInKwh
+                              const outKwh = data.latest.energy.total.gridOutKwh
+                              
+                              if ((inKwh === null || inKwh === undefined) && (outKwh === null || outKwh === undefined)) {
+                                return <span className="font-bold">—</span>
+                              }
+                              
+                              // Use the unit of the larger value for both
+                              const maxValue = Math.max(Math.abs(inKwh || 0), Math.abs(outKwh || 0))
+                              const unit = getAppropriateUnit(maxValue)
+                              const inValue = formatEnergyWithUnit(inKwh, unit)
+                              const outValue = formatEnergyWithUnit(outKwh, unit)
+                              
+                              return (
+                                <>
+                                  <span className="font-bold">{`${inValue}/${outValue}`}</span>
+                                  {inValue !== '—' || outValue !== '—' ? <span className="font-normal"> {unit}</span> : null}
+                                </>
+                              )
+                            })()}
                           </td>
                         </>
                       )}

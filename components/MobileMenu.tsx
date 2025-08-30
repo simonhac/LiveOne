@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
-import { Menu, X, User, LogOut, Info } from 'lucide-react'
-import ConnectionStatus from './ConnectionStatus'
+import { useState, useRef, useEffect } from 'react'
+import { Menu, X, User, LogOut, Info, ChevronDown } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 import LastUpdateTime from './LastUpdateTime'
 
 interface SystemInfo {
@@ -13,35 +13,95 @@ interface SystemInfo {
   batterySize?: string
 }
 
+interface AvailableSystem {
+  id: number
+  displayName: string
+}
+
 interface MobileMenuProps {
   displayName: string | null
-  isAuthenticated: boolean
   secondsSinceUpdate: number
   onLogout: () => void
   systemInfo?: SystemInfo | null
+  availableSystems?: AvailableSystem[]
+  currentSystemId?: string
 }
 
 export default function MobileMenu({ 
   displayName, 
-  isAuthenticated, 
+ 
   secondsSinceUpdate,
   onLogout,
-  systemInfo
+  systemInfo,
+  availableSystems = [],
+  currentSystemId
 }: MobileMenuProps) {
   const [isOpen, setIsOpen] = useState(false)
+  const [isSystemDropdownOpen, setIsSystemDropdownOpen] = useState(false)
+  const router = useRouter()
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
   const toggleMenu = () => setIsOpen(!isOpen)
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsSystemDropdownOpen(false)
+      }
+    }
+
+    if (isSystemDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [isSystemDropdownOpen])
+
+  const handleSystemSelect = (systemId: number) => {
+    router.push(`/dashboard/${systemId}`)
+    setIsSystemDropdownOpen(false)
+  }
 
   return (
     <>
       {/* Mobile Header Bar */}
       <div className="sm:hidden">
         <div className="flex justify-between items-center">
-          <h1 className="text-base font-bold text-white">LiveOne</h1>
+          <div className="relative" ref={dropdownRef}>
+            {availableSystems.length > 1 ? (
+              <button
+                onClick={() => setIsSystemDropdownOpen(!isSystemDropdownOpen)}
+                className="flex items-center gap-1 text-base font-bold text-white hover:text-blue-400 transition-colors"
+              >
+                {displayName || 'Select System'}
+                <ChevronDown className={`w-4 h-4 transition-transform ${isSystemDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+            ) : (
+              <h1 className="text-base font-bold text-white">{displayName || 'LiveOne'}</h1>
+            )}
+            
+            {/* System Dropdown Menu */}
+            {isSystemDropdownOpen && availableSystems.length > 1 && (
+              <div className="absolute top-full left-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
+                {availableSystems.map((system) => (
+                  <button
+                    key={system.id}
+                    onClick={() => handleSystemSelect(system.id)}
+                    className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-700 transition-colors first:rounded-t-lg last:rounded-b-lg ${
+                      system.id.toString() === currentSystemId ? 'text-blue-400 bg-gray-700/50' : 'text-white'
+                    }`}
+                  >
+                    {system.displayName}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           
           <div className="flex items-center gap-2">
             {/* Connection Status and Time */}
-            <ConnectionStatus isAuthenticated={isAuthenticated} />
             <LastUpdateTime 
               secondsSinceUpdate={secondsSinceUpdate}
               showIcon={true}

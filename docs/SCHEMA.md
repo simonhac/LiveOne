@@ -202,6 +202,33 @@ Tracks the health and status of data collection for each system.
 **Constraints:**
 - Foreign key to `systems(id)` with CASCADE delete
 
+### 6. `user_systems` - User-System Access Control
+
+Manages many-to-many relationships between users and systems, controlling access permissions.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PRIMARY KEY | Auto-incrementing unique identifier |
+| `clerk_user_id` | TEXT NOT NULL | Clerk user ID (e.g., 'user_31xcrI...') |
+| `system_id` | INTEGER NOT NULL | Foreign key to systems.id |
+| `role` | TEXT NOT NULL DEFAULT 'viewer' | User's role for this system ('owner', 'admin', 'viewer') |
+| `created_at` | INTEGER (timestamp) | Creation timestamp |
+| `updated_at` | INTEGER (timestamp) | Last update timestamp |
+
+**Indexes:**
+- `user_system_unique` UNIQUE on (`clerk_user_id`, `system_id`)
+- `user_systems_user_idx` on (`clerk_user_id`)
+- `user_systems_system_idx` on (`system_id`)
+
+**Constraints:**
+- Foreign key to `systems(id)` with CASCADE delete
+- Unique constraint prevents duplicate user-system pairs
+
+**Roles:**
+- **owner**: Full control (only one per system, must match systems.owner_clerk_user_id)
+- **admin**: Can view and manage the system
+- **viewer**: Read-only access to system data
+
 ## Data Retention
 
 Currently, no automatic retention policies are implemented:
