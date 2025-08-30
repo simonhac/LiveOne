@@ -2,8 +2,8 @@
  * Unit tests for Selectronic authentication
  */
 
-import { SelectronicFetchClient } from '../lib/selectronic-fetch-client';
-import { SELECTLIVE_CREDENTIALS } from '../USER_SECRETS';
+import { SelectronicFetchClient } from '../../selectronic-fetch-client';
+import { SELECTLIVE_CREDENTIALS } from '../../../USER_SECRETS';
 
 describe('SelectronicFetchClient Authentication', () => {
   const VALID_CREDENTIALS = {
@@ -77,8 +77,8 @@ describe('SelectronicFetchClient Authentication', () => {
         
         // Check data structure
         if (dataResult.data) {
-          expect(typeof dataResult.data.solarPower).toBe('number');
-          expect(typeof dataResult.data.loadPower).toBe('number');
+          expect(typeof dataResult.data.solarW).toBe('number');
+          expect(typeof dataResult.data.loadW).toBe('number');
           expect(typeof dataResult.data.batterySOC).toBe('number');
           expect(dataResult.data.batterySOC).toBeGreaterThanOrEqual(0);
           expect(dataResult.data.batterySOC).toBeLessThanOrEqual(100);
