@@ -7,9 +7,9 @@ import DashboardClient from '@/components/DashboardClient'
 import { isUserAdmin } from '@/lib/auth-utils'
 
 interface PageProps {
-  params: {
+  params: Promise<{
     systemId: string
-  }
+  }>
 }
 
 export default async function DashboardSystemPage({ params }: PageProps) {
