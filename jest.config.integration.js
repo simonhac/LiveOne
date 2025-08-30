@@ -4,8 +4,7 @@ module.exports = {
   testEnvironment: 'node',
   roots: ['<rootDir>/lib', '<rootDir>/app'],
   testMatch: [
-    '**/__tests__/**/*.test.ts',
-    '!**/__tests__/**/*.integration.test.ts'  // Exclude integration tests from default run
+    '**/__tests__/**/*.integration.test.ts'  // Only integration tests
   ],
   collectCoverageFrom: [
     'lib/**/*.ts',
