@@ -111,7 +111,7 @@ export default function UsersPageClient() {
         {/* Users Table */}
         <div className="bg-gray-800 border border-gray-700 md:rounded overflow-hidden flex-1 flex flex-col">
           <div className="px-2 md:px-6 py-4 border-b border-gray-700">
-            <h2 className="text-lg font-semibold text-white">User Management</h2>
+            <h2 className="text-lg font-semibold text-white">Registered Users</h2>
           </div>
         
         <div className="overflow-auto flex-1">

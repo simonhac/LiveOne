@@ -7,6 +7,11 @@ import { eq, and, desc, or } from 'drizzle-orm'
 import { formatTimeAEST, getYesterdayDate, fromUnixTimestamp } from '@/lib/date-utils'
 import { roundToThree } from '@/lib/format-opennem'
 
+// Helper function to ensure values are null instead of undefined
+function nullifyUndefined<T>(value: T | undefined): T | null {
+  return value === undefined ? null : value
+}
+
 export async function GET(request: Request) {
   try {
     // Get the authenticated user's Clerk ID
@@ -131,24 +136,24 @@ export async function GET(request: Request) {
           },
           power: {
             solar: {
-              minW: yesterdayData.solarWMin,
-              avgW: yesterdayData.solarWAvg,
-              maxW: yesterdayData.solarWMax,
+              minW: nullifyUndefined(yesterdayData.solarWMin),
+              avgW: nullifyUndefined(yesterdayData.solarWAvg),
+              maxW: nullifyUndefined(yesterdayData.solarWMax),
             },
             load: {
-              minW: yesterdayData.loadWMin,
-              avgW: yesterdayData.loadWAvg,
-              maxW: yesterdayData.loadWMax,
+              minW: nullifyUndefined(yesterdayData.loadWMin),
+              avgW: nullifyUndefined(yesterdayData.loadWAvg),
+              maxW: nullifyUndefined(yesterdayData.loadWMax),
             },
             battery: {
-              minW: yesterdayData.batteryWMin,
-              avgW: yesterdayData.batteryWAvg,
-              maxW: yesterdayData.batteryWMax,
+              minW: nullifyUndefined(yesterdayData.batteryWMin),
+              avgW: nullifyUndefined(yesterdayData.batteryWAvg),
+              maxW: nullifyUndefined(yesterdayData.batteryWMax),
             },
             grid: {
-              minW: yesterdayData.gridWMin,
-              avgW: yesterdayData.gridWAvg,
-              maxW: yesterdayData.gridWMax,
+              minW: nullifyUndefined(yesterdayData.gridWMin),
+              avgW: nullifyUndefined(yesterdayData.gridWAvg),
+              maxW: nullifyUndefined(yesterdayData.gridWMax),
             },
           },
           soc: {
@@ -158,7 +163,7 @@ export async function GET(request: Request) {
             endBattery: roundToThree(yesterdayData.batterySocEnd),
           },
           dataQuality: {
-            intervalCount: yesterdayData.intervalCount,
+            intervalCount: nullifyUndefined(yesterdayData.intervalCount),
             coverage: yesterdayData.intervalCount ? `${Math.round((yesterdayData.intervalCount / 288) * 100)}%` : null,
           },
         } : null,

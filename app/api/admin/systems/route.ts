@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
     const systemsData = [];
     
     // Get unique owner user IDs to fetch user info in batch
-    const ownerUserIds = [...new Set(allSystems.map(s => s.ownerClerkUserId).filter(Boolean))];
+    const ownerUserIds = [...new Set(allSystems.map(s => s.ownerClerkUserId).filter((id): id is string => Boolean(id)))];
     const userCache = new Map();
     
     // Batch fetch user information from Clerk

@@ -3,14 +3,34 @@
 /* Font is applied via Next.js font optimization in layout.tsx */
 /* This ensures consistent font loading and prevents preload warnings */
 
-/* Energy Panel Narrow View Styles */
-.energy-unit-narrow {
-  font-size: 0.36em;
-  opacity: 0.6;
-  font-weight: normal;
-  font-style: italic;
+/* Energy Panel Styles */
+.energy-value {
+  font-weight: bold;
+  font-family: 'DM Sans', system-ui, sans-serif;
 }
 
-.energy-value-narrow {
-  font-weight: bold;
+.energy-unit::before {
+  content: '\00A0'; /* Non-breaking space */
+  font-size: 8px;
+}
+
+.energy-unit {
+  font-size: 12px;
+  font-weight: normal;
+  opacity: 0.8;
+}
+
+.energy-table th:first-child,
+.energy-table td:first-child {
+  width: 1%; /* Minimal width for row labels */
+  white-space: nowrap; /* Prevent wrapping */
+}
+
+.energy-table th:not(:first-child),
+.energy-table td:not(:first-child) {
+  width: auto;
+}
+
+.energy-table {
+  table-layout: fixed;
 }

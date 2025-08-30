@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { formatValue, formatValuePair } from '@/lib/energy-formatting'
 
 interface EnergyData {
   today: {
@@ -22,19 +23,33 @@ interface EnergyData {
 }
 
 interface HistoricalData {
-  yesterday?: {
-    energy?: {
-      solarKwh?: number | null
-      loadKwh?: number | null
-      batteryChargeKwh?: number | null
-      batteryDischargeKwh?: number | null
-      gridImportKwh?: number | null
-      gridExportKwh?: number | null
+  yesterday: {
+    date: string
+    energy: {
+      solarKwh: number | null
+      loadKwh: number | null
+      batteryChargeKwh: number | null
+      batteryDischargeKwh: number | null
+      gridImportKwh: number | null
+      gridExportKwh: number | null
     }
-    dataQuality?: {
-      intervalCount?: number
+    power: {
+      solar: { minW: number | null; avgW: number | null; maxW: number | null }
+      load: { minW: number | null; avgW: number | null; maxW: number | null }
+      battery: { minW: number | null; avgW: number | null; maxW: number | null }
+      grid: { minW: number | null; avgW: number | null; maxW: number | null }
     }
-  }
+    soc: {
+      minBattery: number | null
+      avgBattery: number | null
+      maxBattery: number | null
+      endBattery: number | null
+    }
+    dataQuality: {
+      intervalCount: number | null
+      coverage: string | null
+    }
+  } | null
 }
 
 interface EnergyPanelProps {
@@ -46,50 +61,6 @@ interface EnergyPanelProps {
 export default function EnergyPanel({ energy, historical, showGrid }: EnergyPanelProps) {
   const [showPower, setShowPower] = useState(false)
 
-  // Helper function to render value/unit pairs for narrow view
-  const renderNarrowValue = (value: string, unit: string | null, colorClass: string) => {
-    return (
-      <>
-        <span className={`energy-value-narrow ${colorClass}`}>{value}</span>
-        {unit && <span className={`energy-unit-narrow font-normal ${colorClass}`}>{unit}</span>}
-      </>
-    )
-  }
-
-  // Helper function to render combined in/out values for narrow view
-  const renderNarrowCombined = (inValue: string, outValue: string, unit: string | null, colorClass: string) => {
-    return (
-      <>
-        <span className={`energy-value-narrow ${colorClass}`}>{`${inValue}/${outValue}`}</span>
-        {unit && <span className={`energy-unit-narrow font-normal ${colorClass}`}>{unit}</span>}
-      </>
-    )
-  }
-
-  // Determine the appropriate unit for an energy value
-  const getAppropriateUnit = (kWh: number | null | undefined): string => {
-    if (kWh === null || kWh === undefined) return 'kWh'
-    
-    const absValue = Math.abs(kWh)
-    if (absValue >= 1000000) return 'GWh'
-    if (absValue >= 1000) return 'MWh'
-    return 'kWh'
-  }
-
-  // Format energy value based on the specified unit
-  const formatEnergyWithUnit = (kWh: number | null | undefined, unit: string): string => {
-    if (kWh === null || kWh === undefined) return '—'
-    
-    switch (unit) {
-      case 'GWh':
-        return (kWh / 1000000).toFixed(1)
-      case 'MWh':
-        return (kWh / 1000).toFixed(1)
-      case 'kWh':
-      default:
-        return kWh.toFixed(1)
-    }
-  }
 
   // Calculate average power from energy for today
   const calculateTodayPower = (energyKwh: number | null | undefined): number | null => {
@@ -101,21 +72,42 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
   }
 
   // Calculate average power from energy for yesterday
-  const calculateYesterdayPower = (energyKwh: number | null | undefined, intervalCount: number | undefined): number | null => {
-    if (energyKwh === null || energyKwh === undefined || !intervalCount) return null
+  const calculateYesterdayPower = (energyKwh: number | null, intervalCount: number | null): number | null => {
+    if (energyKwh === null || !intervalCount) return null
     const hoursYesterday = (intervalCount * 5) / 60 // Each interval is 5 minutes
     if (hoursYesterday === 0) return null
     return (energyKwh * 1000) / hoursYesterday // Convert kWh to W
   }
 
-  // Format average power value
-  const formatAvgPower = (watts: number | null): string => {
-    if (watts === null) return '—'
-    if (watts >= 1000) {
-      return (watts / 1000).toFixed(1)
-    }
-    return watts.toFixed(0)
+  // Helper to safely get yesterday power values
+  const getYesterdayPower = (energyField: 'solarKwh' | 'loadKwh' | 'batteryChargeKwh' | 'batteryDischargeKwh' | 'gridImportKwh' | 'gridExportKwh'): number | null => {
+    if (!historical?.yesterday) return null
+    return calculateYesterdayPower(historical.yesterday.energy[energyField], historical.yesterday.dataQuality.intervalCount)
   }
+
+  // Helper function to convert formatted result to JSX
+  const toJSX = (formatted: { value: string; unit: string }): React.JSX.Element => {
+    if (formatted.unit === '') {
+      return <span className="energy-value">{formatted.value}</span>
+    }
+    return (
+      <>
+        <span className="energy-value">{formatted.value}</span>
+        <span className="energy-unit">{formatted.unit}</span>
+      </>
+    )
+  }
+
+  // Format value and return JSX
+  const formatValueJSX = (value: number | null | undefined, unit: string): React.JSX.Element => {
+    return toJSX(formatValue(value, unit))
+  }
+
+  // Format value pair and return JSX
+  const formatValuePairJSX = (inValue: number | null | undefined, outValue: number | null | undefined, unit: string): React.JSX.Element => {
+    return toJSX(formatValuePair(inValue, outValue, unit))
+  }
+
 
   return (
     <div className="bg-gray-800 rounded p-3">
@@ -127,7 +119,7 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
       </h3>
       
       <div className="overflow-x-auto">
-        <table className="w-full">
+        <table className="w-full energy-table">
           <thead>
             <tr className="border-b border-gray-700">
               <th className="text-left py-1 text-gray-400 font-medium text-xs"></th>
@@ -149,153 +141,55 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
             {/* Today Row */}
             <tr className="border-b border-gray-700">
               <td className="py-1.5 font-medium text-gray-300 text-xs">Today</td>
-              <td className="text-right py-1.5 text-yellow-400 text-sm" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                {showPower ? (
-                  <>
-                    <span className="font-bold">{formatAvgPower(calculateTodayPower(energy.today.solarKwh))}</span>
-                    {calculateTodayPower(energy.today.solarKwh) !== null && <span className="font-normal text-yellow-500 sm:text-yellow-400 energy-unit-narrow">{calculateTodayPower(energy.today.solarKwh)! >= 1000 ? 'kW' : 'W'}</span>}
-                  </>
-                ) : (
-                  <>
-                    <span className="font-bold">{formatEnergyWithUnit(energy.today.solarKwh, getAppropriateUnit(energy.today.solarKwh))}</span>
-                    {energy.today.solarKwh !== null && energy.today.solarKwh !== undefined && <span className="font-normal text-yellow-500 sm:text-yellow-400 energy-unit-narrow">{getAppropriateUnit(energy.today.solarKwh)}</span>}
-                  </>
-                )}
+              <td className="text-right py-1.5 text-yellow-400 text-sm">
+                {showPower ? 
+                  formatValueJSX(calculateTodayPower(energy.today.solarKwh), 'W') :
+                  formatValueJSX(energy.today.solarKwh, 'kWh')
+                }
               </td>
-              <td className="text-right py-1.5 text-blue-400 text-sm" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                {showPower ? (
-                  <>
-                    <span className="font-bold">{formatAvgPower(calculateTodayPower(energy.today.loadKwh))}</span>
-                    {calculateTodayPower(energy.today.loadKwh) !== null && <span className="font-normal text-blue-500 sm:text-blue-400 energy-unit-narrow">{calculateTodayPower(energy.today.loadKwh)! >= 1000 ? 'kW' : 'W'}</span>}
-                  </>
-                ) : (
-                  <>
-                    <span className="font-bold">{formatEnergyWithUnit(energy.today.loadKwh, getAppropriateUnit(energy.today.loadKwh))}</span>
-                    {energy.today.loadKwh !== null && energy.today.loadKwh !== undefined && <span className="font-normal text-blue-500 sm:text-blue-400 energy-unit-narrow">{getAppropriateUnit(energy.today.loadKwh)}</span>}
-                  </>
-                )}
+              <td className="text-right py-1.5 text-blue-400 text-sm">
+                {showPower ? 
+                  formatValueJSX(calculateTodayPower(energy.today.loadKwh), 'W') :
+                  formatValueJSX(energy.today.loadKwh, 'kWh')
+                }
               </td>
-              <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                {showPower ? (
-                  <>
-                    <span className="font-bold">{formatAvgPower(calculateTodayPower(energy.today.batteryInKwh))}</span>
-                    {calculateTodayPower(energy.today.batteryInKwh) !== null && <span className="font-normal text-green-500 sm:text-green-400 energy-unit-narrow">{calculateTodayPower(energy.today.batteryInKwh)! >= 1000 ? 'kW' : 'W'}</span>}
-                  </>
-                ) : (
-                  <>
-                    <span className="font-bold">{formatEnergyWithUnit(energy.today.batteryInKwh, getAppropriateUnit(energy.today.batteryInKwh))}</span>
-                    {energy.today.batteryInKwh !== null && energy.today.batteryInKwh !== undefined && <span className="font-normal text-green-500 sm:text-green-400 energy-unit-narrow">{getAppropriateUnit(energy.today.batteryInKwh)}</span>}
-                  </>
-                )}
+              <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell">
+                {showPower ? 
+                  formatValueJSX(calculateTodayPower(energy.today.batteryInKwh), 'W') :
+                  formatValueJSX(energy.today.batteryInKwh, 'kWh')
+                }
               </td>
-              <td className="text-right py-1.5 text-orange-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                {showPower ? (
-                  <>
-                    <span className="font-bold">{formatAvgPower(calculateTodayPower(energy.today.batteryOutKwh))}</span>
-                    {calculateTodayPower(energy.today.batteryOutKwh) !== null && <span className="font-normal text-orange-500 sm:text-orange-400 energy-unit-narrow">{calculateTodayPower(energy.today.batteryOutKwh)! >= 1000 ? 'kW' : 'W'}</span>}
-                  </>
-                ) : (
-                  <>
-                    <span className="font-bold">{formatEnergyWithUnit(energy.today.batteryOutKwh, getAppropriateUnit(energy.today.batteryOutKwh))}</span>
-                    {energy.today.batteryOutKwh !== null && energy.today.batteryOutKwh !== undefined && <span className="font-normal text-orange-500 sm:text-orange-400 energy-unit-narrow">{getAppropriateUnit(energy.today.batteryOutKwh)}</span>}
-                  </>
-                )}
+              <td className="text-right py-1.5 text-orange-400 text-sm hidden sm:table-cell">
+                {showPower ? 
+                  formatValueJSX(calculateTodayPower(energy.today.batteryOutKwh), 'W') :
+                  formatValueJSX(energy.today.batteryOutKwh, 'kWh')
+                }
               </td>
-              <td className="text-right py-1.5 text-green-400 text-sm sm:hidden" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                {showPower ? (
-                  <>
-                    <span className="font-bold">
-                      {calculateTodayPower(energy.today.batteryInKwh) !== null && 
-                       calculateTodayPower(energy.today.batteryOutKwh) !== null ? 
-                        `${formatAvgPower(calculateTodayPower(energy.today.batteryInKwh))}/${formatAvgPower(calculateTodayPower(energy.today.batteryOutKwh))}` : 
-                        '—'
-                      }
-                    </span>
-                    {calculateTodayPower(energy.today.batteryInKwh) !== null && <span className="font-normal text-green-500" style={{ fontSize: '0.36em', opacity: 0.6 }}>kW</span>}
-                  </>
-                ) : (() => {
-                  const inKwh = energy.today.batteryInKwh
-                  const outKwh = energy.today.batteryOutKwh
-                  
-                  if ((inKwh === null || inKwh === undefined) && (outKwh === null || outKwh === undefined)) {
-                    return <span className="font-bold">—</span>
-                  }
-                  
-                  // Use the unit of the larger value for both
-                  const maxValue = Math.max(Math.abs(inKwh || 0), Math.abs(outKwh || 0))
-                  const unit = getAppropriateUnit(maxValue)
-                  const inValue = formatEnergyWithUnit(inKwh, unit)
-                  const outValue = formatEnergyWithUnit(outKwh, unit)
-                  
-                  return (
-                    <>
-                      <span className="font-bold">{`${inValue}/${outValue}`}</span>
-                      {inValue !== '—' || outValue !== '—' ? <span className="font-normal text-green-500 energy-unit-narrow">{unit}</span> : null}
-                    </>
-                  )
-                })()}
+              <td className="text-right py-1.5 text-green-400 text-sm sm:hidden">
+                {showPower ? 
+                  formatValuePairJSX(calculateTodayPower(energy.today.batteryInKwh), calculateTodayPower(energy.today.batteryOutKwh), 'W') :
+                  formatValuePairJSX(energy.today.batteryInKwh, energy.today.batteryOutKwh, 'kWh')
+                }
               </td>
               {showGrid && (
                 <>
-                  <td className="text-right py-1.5 text-red-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                    {showPower ? (
-                      <>
-                        <span className="font-bold">{formatAvgPower(calculateTodayPower(energy.today.gridInKwh))}</span>
-                        {calculateTodayPower(energy.today.gridInKwh) !== null && <span className="font-normal"> {calculateTodayPower(energy.today.gridInKwh)! >= 1000 ? 'kW' : 'W'}</span>}
-                      </>
-                    ) : (
-                      <>
-                        <span className="font-bold">{formatEnergyWithUnit(energy.today.gridInKwh, getAppropriateUnit(energy.today.gridInKwh))}</span>
-                        {energy.today.gridInKwh !== null && energy.today.gridInKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(energy.today.gridInKwh)}</span>}
-                      </>
-                    )}
+                  <td className="text-right py-1.5 text-red-400 text-sm hidden sm:table-cell">
+                    {showPower ? 
+                      formatValueJSX(calculateTodayPower(energy.today.gridInKwh), 'W') :
+                      formatValueJSX(energy.today.gridInKwh, 'kWh')
+                    }
                   </td>
-                  <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                    {showPower ? (
-                      <>
-                        <span className="font-bold">{formatAvgPower(calculateTodayPower(energy.today.gridOutKwh))}</span>
-                        {calculateTodayPower(energy.today.gridOutKwh) !== null && <span className="font-normal"> {calculateTodayPower(energy.today.gridOutKwh)! >= 1000 ? 'kW' : 'W'}</span>}
-                      </>
-                    ) : (
-                      <>
-                        <span className="font-bold">{formatEnergyWithUnit(energy.today.gridOutKwh, getAppropriateUnit(energy.today.gridOutKwh))}</span>
-                        {energy.today.gridOutKwh !== null && energy.today.gridOutKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(energy.today.gridOutKwh)}</span>}
-                      </>
-                    )}
+                  <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell">
+                    {showPower ? 
+                      formatValueJSX(calculateTodayPower(energy.today.gridOutKwh), 'W') :
+                      formatValueJSX(energy.today.gridOutKwh, 'kWh')
+                    }
                   </td>
-                  <td className="text-right py-1.5 text-red-400 text-sm sm:hidden" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                    {showPower ? (
-                      <>
-                        <span className="font-bold">
-                          {calculateTodayPower(energy.today.gridInKwh) !== null && 
-                           calculateTodayPower(energy.today.gridOutKwh) !== null ? 
-                            `${formatAvgPower(calculateTodayPower(energy.today.gridInKwh))}/${formatAvgPower(calculateTodayPower(energy.today.gridOutKwh))}` : 
-                            '—'
-                          }
-                        </span>
-                        {calculateTodayPower(energy.today.gridInKwh) !== null && <span className="energy-unit-narrow"> kW</span>}
-                      </>
-                    ) : (() => {
-                      const inKwh = energy.today.gridInKwh
-                      const outKwh = energy.today.gridOutKwh
-                      
-                      if ((inKwh === null || inKwh === undefined) && (outKwh === null || outKwh === undefined)) {
-                        return <span className="font-bold">—</span>
-                      }
-                      
-                      // Use the unit of the larger value for both
-                      const maxValue = Math.max(Math.abs(inKwh || 0), Math.abs(outKwh || 0))
-                      const unit = getAppropriateUnit(maxValue)
-                      const inValue = formatEnergyWithUnit(inKwh, unit)
-                      const outValue = formatEnergyWithUnit(outKwh, unit)
-                      
-                      return (
-                        <>
-                          <span className="font-bold">{`${inValue}/${outValue}`}</span>
-                          {inValue !== '—' || outValue !== '—' ? <span className="font-normal text-green-500 energy-unit-narrow">{unit}</span> : null}
-                        </>
-                      )
-                    })()}
+                  <td className="text-right py-1.5 text-red-400 text-sm sm:hidden">
+                    {showPower ? 
+                      formatValuePairJSX(calculateTodayPower(energy.today.gridInKwh), calculateTodayPower(energy.today.gridOutKwh), 'W') :
+                      formatValuePairJSX(energy.today.gridInKwh, energy.today.gridOutKwh, 'kWh')
+                    }
                   </td>
                 </>
               )}
@@ -304,153 +198,55 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
             {/* Yesterday Row */}
             <tr className="border-b border-gray-700">
               <td className="py-1.5 font-medium text-gray-300 text-xs">Yesterday</td>
-              <td className="text-right py-1.5 text-yellow-400 text-sm" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                {showPower ? (
-                  <>
-                    <span className="font-bold">{formatAvgPower(calculateYesterdayPower(historical?.yesterday?.energy?.solarKwh, historical?.yesterday?.dataQuality?.intervalCount))}</span>
-                    {calculateYesterdayPower(historical?.yesterday?.energy?.solarKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null && <span className="font-normal"> {calculateYesterdayPower(historical?.yesterday?.energy?.solarKwh, historical?.yesterday?.dataQuality?.intervalCount)! >= 1000 ? 'kW' : 'W'}</span>}
-                  </>
-                ) : (
-                  <>
-                    <span className="font-bold">{formatEnergyWithUnit(historical?.yesterday?.energy?.solarKwh, getAppropriateUnit(historical?.yesterday?.energy?.solarKwh))}</span>
-                    {historical?.yesterday?.energy?.solarKwh !== null && historical?.yesterday?.energy?.solarKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(historical?.yesterday?.energy?.solarKwh)}</span>}
-                  </>
-                )}
+              <td className="text-right py-1.5 text-yellow-400 text-sm">
+                {showPower ? 
+                  formatValueJSX(getYesterdayPower('solarKwh'), 'W') :
+                  formatValueJSX(historical?.yesterday?.energy?.solarKwh, 'kWh')
+                }
               </td>
-              <td className="text-right py-1.5 text-blue-400 text-sm" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                {showPower ? (
-                  <>
-                    <span className="font-bold">{formatAvgPower(calculateYesterdayPower(historical?.yesterday?.energy?.loadKwh, historical?.yesterday?.dataQuality?.intervalCount))}</span>
-                    {calculateYesterdayPower(historical?.yesterday?.energy?.loadKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null && <span className="font-normal"> {calculateYesterdayPower(historical?.yesterday?.energy?.loadKwh, historical?.yesterday?.dataQuality?.intervalCount)! >= 1000 ? 'kW' : 'W'}</span>}
-                  </>
-                ) : (
-                  <>
-                    <span className="font-bold">{formatEnergyWithUnit(historical?.yesterday?.energy?.loadKwh, getAppropriateUnit(historical?.yesterday?.energy?.loadKwh))}</span>
-                    {historical?.yesterday?.energy?.loadKwh !== null && historical?.yesterday?.energy?.loadKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(historical?.yesterday?.energy?.loadKwh)}</span>}
-                  </>
-                )}
+              <td className="text-right py-1.5 text-blue-400 text-sm">
+                {showPower ? 
+                  formatValueJSX(getYesterdayPower('loadKwh'), 'W') :
+                  formatValueJSX(historical?.yesterday?.energy?.loadKwh, 'kWh')
+                }
               </td>
-              <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                {showPower ? (
-                  <>
-                    <span className="font-bold">{formatAvgPower(calculateYesterdayPower(historical?.yesterday?.energy?.batteryChargeKwh, historical?.yesterday?.dataQuality?.intervalCount))}</span>
-                    {calculateYesterdayPower(historical?.yesterday?.energy?.batteryChargeKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null && <span className="font-normal"> {calculateYesterdayPower(historical?.yesterday?.energy?.batteryChargeKwh, historical?.yesterday?.dataQuality?.intervalCount)! >= 1000 ? 'kW' : 'W'}</span>}
-                  </>
-                ) : (
-                  <>
-                    <span className="font-bold">{formatEnergyWithUnit(historical?.yesterday?.energy?.batteryChargeKwh, getAppropriateUnit(historical?.yesterday?.energy?.batteryChargeKwh))}</span>
-                    {historical?.yesterday?.energy?.batteryChargeKwh !== null && historical?.yesterday?.energy?.batteryChargeKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(historical?.yesterday?.energy?.batteryChargeKwh)}</span>}
-                  </>
-                )}
+              <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell">
+                {showPower ? 
+                  formatValueJSX(getYesterdayPower('batteryChargeKwh'), 'W') :
+                  formatValueJSX(historical?.yesterday?.energy?.batteryChargeKwh, 'kWh')
+                }
               </td>
-              <td className="text-right py-1.5 text-orange-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                {showPower ? (
-                  <>
-                    <span className="font-bold">{formatAvgPower(calculateYesterdayPower(historical?.yesterday?.energy?.batteryDischargeKwh, historical?.yesterday?.dataQuality?.intervalCount))}</span>
-                    {calculateYesterdayPower(historical?.yesterday?.energy?.batteryDischargeKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null && <span className="font-normal"> {calculateYesterdayPower(historical?.yesterday?.energy?.batteryDischargeKwh, historical?.yesterday?.dataQuality?.intervalCount)! >= 1000 ? 'kW' : 'W'}</span>}
-                  </>
-                ) : (
-                  <>
-                    <span className="font-bold">{formatEnergyWithUnit(historical?.yesterday?.energy?.batteryDischargeKwh, getAppropriateUnit(historical?.yesterday?.energy?.batteryDischargeKwh))}</span>
-                    {historical?.yesterday?.energy?.batteryDischargeKwh !== null && historical?.yesterday?.energy?.batteryDischargeKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(historical?.yesterday?.energy?.batteryDischargeKwh)}</span>}
-                  </>
-                )}
+              <td className="text-right py-1.5 text-orange-400 text-sm hidden sm:table-cell">
+                {showPower ? 
+                  formatValueJSX(getYesterdayPower('batteryDischargeKwh'), 'W') :
+                  formatValueJSX(historical?.yesterday?.energy?.batteryDischargeKwh, 'kWh')
+                }
               </td>
-              <td className="text-right py-1.5 text-green-400 text-sm sm:hidden" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                {showPower ? (
-                  <>
-                    <span className="font-bold">
-                      {calculateYesterdayPower(historical?.yesterday?.energy?.batteryChargeKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null && 
-                       calculateYesterdayPower(historical?.yesterday?.energy?.batteryDischargeKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null ? 
-                        `${formatAvgPower(calculateYesterdayPower(historical?.yesterday?.energy?.batteryChargeKwh, historical?.yesterday?.dataQuality?.intervalCount))}/${formatAvgPower(calculateYesterdayPower(historical?.yesterday?.energy?.batteryDischargeKwh, historical?.yesterday?.dataQuality?.intervalCount))}` : 
-                        '—'
-                      }
-                    </span>
-                    {calculateYesterdayPower(historical?.yesterday?.energy?.batteryChargeKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null && <span className="energy-unit-narrow"> kW</span>}
-                  </>
-                ) : (() => {
-                  const inKwh = historical?.yesterday?.energy?.batteryChargeKwh
-                  const outKwh = historical?.yesterday?.energy?.batteryDischargeKwh
-                  
-                  if ((inKwh === null || inKwh === undefined) && (outKwh === null || outKwh === undefined)) {
-                    return <span className="font-bold">—</span>
-                  }
-                  
-                  // Use the unit of the larger value for both
-                  const maxValue = Math.max(Math.abs(inKwh || 0), Math.abs(outKwh || 0))
-                  const unit = getAppropriateUnit(maxValue)
-                  const inValue = formatEnergyWithUnit(inKwh, unit)
-                  const outValue = formatEnergyWithUnit(outKwh, unit)
-                  
-                  return (
-                    <>
-                      <span className="font-bold">{`${inValue}/${outValue}`}</span>
-                      {inValue !== '—' || outValue !== '—' ? <span className="font-normal text-green-500 energy-unit-narrow">{unit}</span> : null}
-                    </>
-                  )
-                })()}
+              <td className="text-right py-1.5 text-green-400 text-sm sm:hidden">
+                {showPower ? 
+                  formatValuePairJSX(getYesterdayPower('batteryChargeKwh'), getYesterdayPower('batteryDischargeKwh'), 'W') :
+                  formatValuePairJSX(historical?.yesterday?.energy?.batteryChargeKwh, historical?.yesterday?.energy?.batteryDischargeKwh, 'kWh')
+                }
               </td>
               {showGrid && (
                 <>
-                  <td className="text-right py-1.5 text-red-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                    {showPower ? (
-                      <>
-                        <span className="font-bold">{formatAvgPower(calculateYesterdayPower(historical?.yesterday?.energy?.gridImportKwh, historical?.yesterday?.dataQuality?.intervalCount))}</span>
-                        {calculateYesterdayPower(historical?.yesterday?.energy?.gridImportKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null && <span className="font-normal"> {calculateYesterdayPower(historical?.yesterday?.energy?.gridImportKwh, historical?.yesterday?.dataQuality?.intervalCount)! >= 1000 ? 'kW' : 'W'}</span>}
-                      </>
-                    ) : (
-                      <>
-                        <span className="font-bold">{formatEnergyWithUnit(historical?.yesterday?.energy?.gridImportKwh, getAppropriateUnit(historical?.yesterday?.energy?.gridImportKwh))}</span>
-                        {historical?.yesterday?.energy?.gridImportKwh !== null && historical?.yesterday?.energy?.gridImportKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(historical?.yesterday?.energy?.gridImportKwh)}</span>}
-                      </>
-                    )}
+                  <td className="text-right py-1.5 text-red-400 text-sm hidden sm:table-cell">
+                    {showPower ? 
+                      formatValueJSX(getYesterdayPower('gridImportKwh'), 'W') :
+                      formatValueJSX(historical?.yesterday?.energy?.gridImportKwh, 'kWh')
+                    }
                   </td>
-                  <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                    {showPower ? (
-                      <>
-                        <span className="font-bold">{formatAvgPower(calculateYesterdayPower(historical?.yesterday?.energy?.gridExportKwh, historical?.yesterday?.dataQuality?.intervalCount))}</span>
-                        {calculateYesterdayPower(historical?.yesterday?.energy?.gridExportKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null && <span className="font-normal"> {calculateYesterdayPower(historical?.yesterday?.energy?.gridExportKwh, historical?.yesterday?.dataQuality?.intervalCount)! >= 1000 ? 'kW' : 'W'}</span>}
-                      </>
-                    ) : (
-                      <>
-                        <span className="font-bold">{formatEnergyWithUnit(historical?.yesterday?.energy?.gridExportKwh, getAppropriateUnit(historical?.yesterday?.energy?.gridExportKwh))}</span>
-                        {historical?.yesterday?.energy?.gridExportKwh !== null && historical?.yesterday?.energy?.gridExportKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(historical?.yesterday?.energy?.gridExportKwh)}</span>}
-                      </>
-                    )}
+                  <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell">
+                    {showPower ? 
+                      formatValueJSX(getYesterdayPower('gridExportKwh'), 'W') :
+                      formatValueJSX(historical?.yesterday?.energy?.gridExportKwh, 'kWh')
+                    }
                   </td>
-                  <td className="text-right py-1.5 text-red-400 text-sm sm:hidden" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                    {showPower ? (
-                      <>
-                        <span className="font-bold">
-                          {calculateYesterdayPower(historical?.yesterday?.energy?.gridImportKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null && 
-                           calculateYesterdayPower(historical?.yesterday?.energy?.gridExportKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null ? 
-                            `${formatAvgPower(calculateYesterdayPower(historical?.yesterday?.energy?.gridImportKwh, historical?.yesterday?.dataQuality?.intervalCount))}/${formatAvgPower(calculateYesterdayPower(historical?.yesterday?.energy?.gridExportKwh, historical?.yesterday?.dataQuality?.intervalCount))}` : 
-                            '—'
-                          }
-                        </span>
-                        {calculateYesterdayPower(historical?.yesterday?.energy?.gridImportKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null && <span className="energy-unit-narrow"> kW</span>}
-                      </>
-                    ) : (() => {
-                      const inKwh = historical?.yesterday?.energy?.gridImportKwh
-                      const outKwh = historical?.yesterday?.energy?.gridExportKwh
-                      
-                      if ((inKwh === null || inKwh === undefined) && (outKwh === null || outKwh === undefined)) {
-                        return <span className="font-bold">—</span>
-                      }
-                      
-                      // Use the unit of the larger value for both
-                      const maxValue = Math.max(Math.abs(inKwh || 0), Math.abs(outKwh || 0))
-                      const unit = getAppropriateUnit(maxValue)
-                      const inValue = formatEnergyWithUnit(inKwh, unit)
-                      const outValue = formatEnergyWithUnit(outKwh, unit)
-                      
-                      return (
-                        <>
-                          <span className="font-bold">{`${inValue}/${outValue}`}</span>
-                          {inValue !== '—' || outValue !== '—' ? <span className="font-normal text-green-500 energy-unit-narrow">{unit}</span> : null}
-                        </>
-                      )
-                    })()}
+                  <td className="text-right py-1.5 text-red-400 text-sm sm:hidden">
+                    {showPower ? 
+                      formatValuePairJSX(getYesterdayPower('gridImportKwh'), getYesterdayPower('gridExportKwh'), 'W') :
+                      formatValuePairJSX(historical?.yesterday?.energy?.gridImportKwh, historical?.yesterday?.energy?.gridExportKwh, 'kWh')
+                    }
                   </td>
                 </>
               )}
@@ -459,77 +255,31 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
             {/* All-time Row */}
             <tr>
               <td className="py-1.5 font-medium text-gray-300 text-xs">All-time</td>
-              <td className="text-right py-1.5 text-yellow-400 text-sm" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                <span className="font-bold">{formatEnergyWithUnit(energy.total.solarKwh, getAppropriateUnit(energy.total.solarKwh))}</span>
-                {energy.total.solarKwh !== null && energy.total.solarKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(energy.total.solarKwh)}</span>}
+              <td className="text-right py-1.5 text-yellow-400 text-sm">
+                {formatValueJSX(energy.total.solarKwh, 'kWh')}
               </td>
-              <td className="text-right py-1.5 text-blue-400 text-sm" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                <span className="font-bold">{formatEnergyWithUnit(energy.total.loadKwh, getAppropriateUnit(energy.total.loadKwh))}</span>
-                {energy.total.loadKwh !== null && energy.total.loadKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(energy.total.loadKwh)}</span>}
+              <td className="text-right py-1.5 text-blue-400 text-sm">
+                {formatValueJSX(energy.total.loadKwh, 'kWh')}
               </td>
-              <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                <span className="font-bold">{formatEnergyWithUnit(energy.total.batteryInKwh, getAppropriateUnit(energy.total.batteryInKwh))}</span>
-                {energy.total.batteryInKwh !== null && energy.total.batteryInKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(energy.total.batteryInKwh)}</span>}
+              <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell">
+                {formatValueJSX(energy.total.batteryInKwh, 'kWh')}
               </td>
-              <td className="text-right py-1.5 text-orange-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                <span className="font-bold">{formatEnergyWithUnit(energy.total.batteryOutKwh, getAppropriateUnit(energy.total.batteryOutKwh))}</span>
-                {energy.total.batteryOutKwh !== null && energy.total.batteryOutKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(energy.total.batteryOutKwh)}</span>}
+              <td className="text-right py-1.5 text-orange-400 text-sm hidden sm:table-cell">
+                {formatValueJSX(energy.total.batteryOutKwh, 'kWh')}
               </td>
-              <td className="text-right py-1.5 text-green-400 text-sm sm:hidden" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                {(() => {
-                  const inKwh = energy.total.batteryInKwh
-                  const outKwh = energy.total.batteryOutKwh
-                  
-                  if ((inKwh === null || inKwh === undefined) && (outKwh === null || outKwh === undefined)) {
-                    return <span className="font-bold">—</span>
-                  }
-                  
-                  // Use the unit of the larger value for both
-                  const maxValue = Math.max(Math.abs(inKwh || 0), Math.abs(outKwh || 0))
-                  const unit = getAppropriateUnit(maxValue)
-                  const inValue = formatEnergyWithUnit(inKwh, unit)
-                  const outValue = formatEnergyWithUnit(outKwh, unit)
-                  
-                  return (
-                    <>
-                      <span className="font-bold">{`${inValue}/${outValue}`}</span>
-                      {inValue !== '—' || outValue !== '—' ? <span className="font-normal text-green-500 energy-unit-narrow">{unit}</span> : null}
-                    </>
-                  )
-                })()}
+              <td className="text-right py-1.5 text-green-400 text-sm sm:hidden">
+                {formatValuePairJSX(energy.total.batteryInKwh, energy.total.batteryOutKwh, 'kWh')}
               </td>
               {showGrid && (
                 <>
-                  <td className="text-right py-1.5 text-red-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                    <span className="font-bold">{formatEnergyWithUnit(energy.total.gridInKwh, getAppropriateUnit(energy.total.gridInKwh))}</span>
-                    {energy.total.gridInKwh !== null && energy.total.gridInKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(energy.total.gridInKwh)}</span>}
+                  <td className="text-right py-1.5 text-red-400 text-sm hidden sm:table-cell">
+                    {formatValueJSX(energy.total.gridInKwh, 'kWh')}
                   </td>
-                  <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                    <span className="font-bold">{formatEnergyWithUnit(energy.total.gridOutKwh, getAppropriateUnit(energy.total.gridOutKwh))}</span>
-                    {energy.total.gridOutKwh !== null && energy.total.gridOutKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(energy.total.gridOutKwh)}</span>}
+                  <td className="text-right py-1.5 text-green-400 text-sm hidden sm:table-cell">
+                    {formatValueJSX(energy.total.gridOutKwh, 'kWh')}
                   </td>
-                  <td className="text-right py-1.5 text-red-400 text-sm sm:hidden" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                    {(() => {
-                      const inKwh = energy.total.gridInKwh
-                      const outKwh = energy.total.gridOutKwh
-                      
-                      if ((inKwh === null || inKwh === undefined) && (outKwh === null || outKwh === undefined)) {
-                        return <span className="font-bold">—</span>
-                      }
-                      
-                      // Use the unit of the larger value for both
-                      const maxValue = Math.max(Math.abs(inKwh || 0), Math.abs(outKwh || 0))
-                      const unit = getAppropriateUnit(maxValue)
-                      const inValue = formatEnergyWithUnit(inKwh, unit)
-                      const outValue = formatEnergyWithUnit(outKwh, unit)
-                      
-                      return (
-                        <>
-                          <span className="font-bold">{`${inValue}/${outValue}`}</span>
-                          {inValue !== '—' || outValue !== '—' ? <span className="font-normal text-green-500 energy-unit-narrow">{unit}</span> : null}
-                        </>
-                      )
-                    })()}
+                  <td className="text-right py-1.5 text-red-400 text-sm sm:hidden">
+                    {formatValuePairJSX(energy.total.gridInKwh, energy.total.gridOutKwh, 'kWh')}
                   </td>
                 </>
               )}
