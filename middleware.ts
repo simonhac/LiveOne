@@ -3,6 +3,7 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 const isPublicRoute = createRouteMatcher([
   '/sign-in(.*)',
   '/sign-up(.*)',
+  '/api/health', // Health check endpoint for monitoring
   '/api/cron(.*)', // Cron endpoints have their own authentication via CRON_SECRET
   // All other routes including /api/data will require authentication
 ])

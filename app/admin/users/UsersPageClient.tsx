@@ -8,7 +8,7 @@ interface SystemAccess {
   systemId: number
   systemNumber: string
   displayName: string
-  role: 'owner' | 'admin' | 'viewer'
+  role: 'owner' | 'viewer'
 }
 
 interface UserData {
@@ -17,7 +17,6 @@ interface UserData {
   firstName?: string
   lastName?: string
   username?: string
-  createdAt: string
   lastSignIn?: string
   systems: SystemAccess[]
   selectLiveEmail?: string
@@ -61,8 +60,6 @@ export default function UsersPageClient() {
     switch (role) {
       case 'owner':
         return <Shield className="w-4 h-4 text-purple-400" />
-      case 'admin':
-        return <Shield className="w-4 h-4 text-blue-400" />
       case 'viewer':
         return <Eye className="w-4 h-4 text-gray-400" />
       default:
@@ -74,8 +71,6 @@ export default function UsersPageClient() {
     switch (role) {
       case 'owner':
         return 'bg-purple-900/50 text-purple-300 border-purple-700'
-      case 'admin':
-        return 'bg-blue-900/50 text-blue-300 border-blue-700'
       case 'viewer':
         return 'bg-gray-900/50 text-gray-300 border-gray-700'
       default:
@@ -103,56 +98,20 @@ export default function UsersPageClient() {
   }
 
   return (
-    <div className="px-6 py-8">
-      {error && (
-        <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
-          <AlertCircle className="w-5 h-5" />
-          {error}
-        </div>
-      )}
-      
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <div className="bg-gray-800 border border-gray-700 rounded p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-gray-400 text-sm">Total Users</p>
-              <p className="text-2xl font-bold text-white">{users.length}</p>
-            </div>
-            <User className="w-8 h-8 text-blue-400" />
+    <div className="flex flex-col min-h-full">
+      <div className="flex-1 px-6 py-8">
+        {error && (
+          <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
+            <AlertCircle className="w-5 h-5" />
+            {error}
           </div>
-        </div>
+        )}
         
-        <div className="bg-gray-800 border border-gray-700 rounded p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-gray-400 text-sm">System Owners</p>
-              <p className="text-2xl font-bold text-white">
-                {users.filter(u => u.systems.some(s => s.role === 'owner')).length}
-              </p>
-            </div>
-            <Shield className="w-8 h-8 text-purple-400" />
+        {/* Users Table */}
+        <div className="bg-gray-800 border border-gray-700 rounded overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-700">
+            <h2 className="text-lg font-semibold text-white">User Management</h2>
           </div>
-        </div>
-        
-        <div className="bg-gray-800 border border-gray-700 rounded p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-gray-400 text-sm">Total Systems</p>
-              <p className="text-2xl font-bold text-white">
-                {[...new Set(users.flatMap(u => u.systems.map(s => s.systemId)))].length}
-              </p>
-            </div>
-            <Eye className="w-8 h-8 text-green-400" />
-          </div>
-        </div>
-      </div>
-      
-      {/* Users Table */}
-      <div className="bg-gray-800 border border-gray-700 rounded overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-700">
-          <h2 className="text-lg font-semibold text-white">User Management</h2>
-        </div>
         
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -161,17 +120,11 @@ export default function UsersPageClient() {
                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                   User
                 </th>
-                <th className="hidden lg:table-cell text-left px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Email
-                </th>
                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                   Select.Live
                 </th>
                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Systems & Access
-                </th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Created
+                  Systems
                 </th>
                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                   Last Sign In
@@ -184,9 +137,9 @@ export default function UsersPageClient() {
                   key={user.clerkUserId}
                   className="hover:bg-gray-700/50 transition-colors"
                 >
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <div className="w-8 h-8 bg-gray-700 rounded-full flex items-center justify-center mr-3">
+                  <td className="px-6 py-4 whitespace-nowrap align-top">
+                    <div className="flex items-start">
+                      <div className="w-8 h-8 bg-gray-700 rounded-full flex items-center justify-center mr-3 flex-shrink-0 mt-0.5">
                         <User className="w-4 h-4 text-gray-400" />
                       </div>
                       <div>
@@ -205,25 +158,26 @@ export default function UsersPageClient() {
                             </div>
                           )}
                         </div>
-                        <p className="text-xs text-gray-400">
-                          ID: {user.clerkUserId.slice(0, 12)}...
-                        </p>
+                        {user.email ? (
+                          <a 
+                            href={`mailto:${user.email}`}
+                            className="text-xs text-gray-400 hover:text-blue-400 transition-colors"
+                          >
+                            {user.email}
+                          </a>
+                        ) : (
+                          <p className="text-xs text-gray-400">No email</p>
+                        )}
                       </div>
                     </div>
                   </td>
-                  <td className="hidden lg:table-cell px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center gap-1 text-sm text-gray-300">
-                      <Mail className="w-3 h-3" />
-                      {user.email || 'No email'}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-6 py-4 whitespace-nowrap align-top">
                     <div className="flex items-center gap-1 text-sm text-gray-300">
                       <Globe className="w-3 h-3" />
                       {user.selectLiveEmail || '—'}
                     </div>
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-6 py-4 align-top">
                     <div className="space-y-1">
                       {user.systems.length > 0 ? (
                         user.systems.map((system) => (
@@ -234,7 +188,7 @@ export default function UsersPageClient() {
                             >
                               {system.displayName}
                             </Link>
-                            {system.role === 'admin' ? (
+                            {system.role === 'owner' ? (
                               <div className="relative group">
                                 <Crown className="w-3 h-3 text-purple-400 cursor-help" />
                                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10 border border-gray-700">
@@ -256,13 +210,7 @@ export default function UsersPageClient() {
                       )}
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center gap-1 text-xs text-gray-400">
-                      <Clock className="w-3 h-3" />
-                      {formatDate(new Date(user.createdAt))}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-6 py-4 whitespace-nowrap align-top">
                     {user.lastSignIn ? (
                       <div className="flex items-center gap-1 text-xs text-gray-400">
                         <Clock className="w-3 h-3" />
@@ -276,6 +224,46 @@ export default function UsersPageClient() {
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+      </div>
+      
+      {/* Summary Cards - Pinned to bottom */}
+      <div className="px-6 pb-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-gray-800 border border-gray-700 rounded p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-gray-400 text-sm">Total Users</p>
+                <p className="text-2xl font-bold text-white">{users.length}</p>
+              </div>
+              <User className="w-8 h-8 text-blue-400" />
+            </div>
+          </div>
+          
+          <div className="bg-gray-800 border border-gray-700 rounded p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-gray-400 text-sm">System Owners</p>
+                <p className="text-2xl font-bold text-white">
+                  {users.filter(u => u.systems.some(s => s.role === 'owner')).length}
+                </p>
+              </div>
+              <Shield className="w-8 h-8 text-purple-400" />
+            </div>
+          </div>
+          
+          <div className="bg-gray-800 border border-gray-700 rounded p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-gray-400 text-sm">Total Systems</p>
+                <p className="text-2xl font-bold text-white">
+                  {[...new Set(users.flatMap(u => u.systems.map(s => s.systemId)))].length}
+                </p>
+              </div>
+              <Eye className="w-8 h-8 text-green-400" />
+            </div>
+          </div>
         </div>
       </div>
     </div>

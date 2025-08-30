@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
             vendorType: us.systems.vendorType,
             vendorSiteId: us.systems.vendorSiteId,
             displayName: us.systems.displayName,
-            role: us.user_systems.role as 'owner' | 'admin' | 'viewer',
+            role: us.user_systems.role as 'owner' | 'viewer',
           }))
         
         // Extract data from private metadata
@@ -83,7 +83,7 @@ export async function GET(request: NextRequest) {
             vendorType: us.systems.vendorType,
             vendorSiteId: us.systems.vendorSiteId,
             displayName: us.systems.displayName,
-            role: us.user_systems.role as 'owner' | 'admin' | 'viewer',
+            role: us.user_systems.role as 'owner' | 'viewer',
           }))
         
         usersData.push({

@@ -10,7 +10,7 @@ interface ChartTooltipProps {
 
 export default function ChartTooltip({ solar, load, batterySOC, unit, visible }: ChartTooltipProps) {
   return (
-    <div className="flex items-center gap-10 text-xs">
+    <div className="flex items-center gap-3 sm:gap-6 md:gap-10 text-xs">
       {/* Solar */}
       <div className="flex items-center gap-1">
         <span className="w-3 h-3 bg-yellow-400"></span>
