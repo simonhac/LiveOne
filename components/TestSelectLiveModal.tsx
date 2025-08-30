@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { CheckCircle, XCircle, Loader2, X, Zap, Sun, Home, Battery, AlertCircle, RefreshCw } from 'lucide-react'
 
 interface TestSelectLiveModalProps {
@@ -74,6 +74,11 @@ export default function TestSelectLiveModal({
   const refreshTest = () => {
     testConnection(true)
   }
+
+  // Automatically test connection when modal opens
+  useEffect(() => {
+    testConnection(false)
+  }, []) // Empty dependency array means this runs once on mount
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 overflow-y-auto">
@@ -239,7 +244,14 @@ export default function TestSelectLiveModal({
 
               {/* Timestamp */}
               <div className="text-xs text-gray-500 text-center">
-                Last updated: {new Date(data.latest.timestamp).toLocaleString()}
+                Last updated: {new Date(data.latest.timestamp).toLocaleString('en-AU', { 
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit'
+                })}
               </div>
             </div>
           </div>
@@ -247,16 +259,6 @@ export default function TestSelectLiveModal({
         
         {/* Action Buttons */}
         <div className="mt-6 flex gap-3">
-          {!data && !loading && (
-            <button
-              onClick={() => testConnection(false)}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
-            >
-              <Zap className="w-4 h-4" />
-              Test Connection
-            </button>
-          )}
-          
           {data && (
             <button
               onClick={refreshTest}
