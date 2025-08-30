@@ -1,1 +1,0 @@
-ALTER TABLE `systems` ADD `timezone_offset` integer DEFAULT 10 NOT NULL;
