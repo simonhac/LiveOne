@@ -111,8 +111,8 @@ interface DashboardData {
 
 interface AvailableSystem {
   id: number;
-  displayName: string | null;
-  vendorSiteId: string | null;
+  displayName: string;
+  vendorSiteId: string;
 }
 
 interface DashboardClientProps {

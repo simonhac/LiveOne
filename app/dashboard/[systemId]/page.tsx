@@ -47,22 +47,24 @@ export default async function DashboardSystemPage({ params }: PageProps) {
   
   if (isAdmin) {
     // Admins can see all systems - limit to 10 for the dropdown
-    availableSystems = await db.select({
-      id: systems.id,
-      displayName: systems.displayName,
-      vendorSiteId: systems.vendorSiteId,
-    })
+    const allSystems = await db.select()
       .from(systems)
       .limit(10)
+    availableSystems = allSystems.filter(s => s.displayName && s.vendorSiteId).map(s => ({
+      id: s.id,
+      displayName: s.displayName!,
+      vendorSiteId: s.vendorSiteId!,
+    }))
   } else {
     // Regular users only see their own systems
-    availableSystems = await db.select({
-      id: systems.id,
-      displayName: systems.displayName,
-      vendorSiteId: systems.vendorSiteId,
-    })
+    const userSystems = await db.select()
       .from(systems)
       .where(eq(systems.ownerClerkUserId, userId))
+    availableSystems = userSystems.filter(s => s.displayName && s.vendorSiteId).map(s => ({
+      id: s.id,
+      displayName: s.displayName!,
+      vendorSiteId: s.vendorSiteId!,
+    }))
   }
 
   return (
