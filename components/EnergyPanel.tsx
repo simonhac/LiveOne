@@ -46,6 +46,26 @@ interface EnergyPanelProps {
 export default function EnergyPanel({ energy, historical, showGrid }: EnergyPanelProps) {
   const [showPower, setShowPower] = useState(false)
 
+  // Helper function to render value/unit pairs for narrow view
+  const renderNarrowValue = (value: string, unit: string | null, colorClass: string) => {
+    return (
+      <>
+        <span className={`energy-value-narrow ${colorClass}`}>{value}</span>
+        {unit && <span className={`energy-unit-narrow font-normal ${colorClass}`}>{unit}</span>}
+      </>
+    )
+  }
+
+  // Helper function to render combined in/out values for narrow view
+  const renderNarrowCombined = (inValue: string, outValue: string, unit: string | null, colorClass: string) => {
+    return (
+      <>
+        <span className={`energy-value-narrow ${colorClass}`}>{`${inValue}/${outValue}`}</span>
+        {unit && <span className={`energy-unit-narrow font-normal ${colorClass}`}>{unit}</span>}
+      </>
+    )
+  }
+
   // Determine the appropriate unit for an energy value
   const getAppropriateUnit = (kWh: number | null | undefined): string => {
     if (kWh === null || kWh === undefined) return 'kWh'
@@ -133,12 +153,12 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
                 {showPower ? (
                   <>
                     <span className="font-bold">{formatAvgPower(calculateTodayPower(energy.today.solarKwh))}</span>
-                    {calculateTodayPower(energy.today.solarKwh) !== null && <span className="font-normal"> {calculateTodayPower(energy.today.solarKwh)! >= 1000 ? 'kW' : 'W'}</span>}
+                    {calculateTodayPower(energy.today.solarKwh) !== null && <span className="font-normal text-yellow-500 sm:text-yellow-400 energy-unit-narrow">{calculateTodayPower(energy.today.solarKwh)! >= 1000 ? 'kW' : 'W'}</span>}
                   </>
                 ) : (
                   <>
                     <span className="font-bold">{formatEnergyWithUnit(energy.today.solarKwh, getAppropriateUnit(energy.today.solarKwh))}</span>
-                    {energy.today.solarKwh !== null && energy.today.solarKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(energy.today.solarKwh)}</span>}
+                    {energy.today.solarKwh !== null && energy.today.solarKwh !== undefined && <span className="font-normal text-yellow-500 sm:text-yellow-400 energy-unit-narrow">{getAppropriateUnit(energy.today.solarKwh)}</span>}
                   </>
                 )}
               </td>
@@ -146,12 +166,12 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
                 {showPower ? (
                   <>
                     <span className="font-bold">{formatAvgPower(calculateTodayPower(energy.today.loadKwh))}</span>
-                    {calculateTodayPower(energy.today.loadKwh) !== null && <span className="font-normal"> {calculateTodayPower(energy.today.loadKwh)! >= 1000 ? 'kW' : 'W'}</span>}
+                    {calculateTodayPower(energy.today.loadKwh) !== null && <span className="font-normal text-blue-500 sm:text-blue-400 energy-unit-narrow">{calculateTodayPower(energy.today.loadKwh)! >= 1000 ? 'kW' : 'W'}</span>}
                   </>
                 ) : (
                   <>
                     <span className="font-bold">{formatEnergyWithUnit(energy.today.loadKwh, getAppropriateUnit(energy.today.loadKwh))}</span>
-                    {energy.today.loadKwh !== null && energy.today.loadKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(energy.today.loadKwh)}</span>}
+                    {energy.today.loadKwh !== null && energy.today.loadKwh !== undefined && <span className="font-normal text-blue-500 sm:text-blue-400 energy-unit-narrow">{getAppropriateUnit(energy.today.loadKwh)}</span>}
                   </>
                 )}
               </td>
@@ -159,12 +179,12 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
                 {showPower ? (
                   <>
                     <span className="font-bold">{formatAvgPower(calculateTodayPower(energy.today.batteryInKwh))}</span>
-                    {calculateTodayPower(energy.today.batteryInKwh) !== null && <span className="font-normal"> {calculateTodayPower(energy.today.batteryInKwh)! >= 1000 ? 'kW' : 'W'}</span>}
+                    {calculateTodayPower(energy.today.batteryInKwh) !== null && <span className="font-normal text-green-500 sm:text-green-400 energy-unit-narrow">{calculateTodayPower(energy.today.batteryInKwh)! >= 1000 ? 'kW' : 'W'}</span>}
                   </>
                 ) : (
                   <>
                     <span className="font-bold">{formatEnergyWithUnit(energy.today.batteryInKwh, getAppropriateUnit(energy.today.batteryInKwh))}</span>
-                    {energy.today.batteryInKwh !== null && energy.today.batteryInKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(energy.today.batteryInKwh)}</span>}
+                    {energy.today.batteryInKwh !== null && energy.today.batteryInKwh !== undefined && <span className="font-normal text-green-500 sm:text-green-400 energy-unit-narrow">{getAppropriateUnit(energy.today.batteryInKwh)}</span>}
                   </>
                 )}
               </td>
@@ -172,12 +192,12 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
                 {showPower ? (
                   <>
                     <span className="font-bold">{formatAvgPower(calculateTodayPower(energy.today.batteryOutKwh))}</span>
-                    {calculateTodayPower(energy.today.batteryOutKwh) !== null && <span className="font-normal"> {calculateTodayPower(energy.today.batteryOutKwh)! >= 1000 ? 'kW' : 'W'}</span>}
+                    {calculateTodayPower(energy.today.batteryOutKwh) !== null && <span className="font-normal text-orange-500 sm:text-orange-400 energy-unit-narrow">{calculateTodayPower(energy.today.batteryOutKwh)! >= 1000 ? 'kW' : 'W'}</span>}
                   </>
                 ) : (
                   <>
                     <span className="font-bold">{formatEnergyWithUnit(energy.today.batteryOutKwh, getAppropriateUnit(energy.today.batteryOutKwh))}</span>
-                    {energy.today.batteryOutKwh !== null && energy.today.batteryOutKwh !== undefined && <span className="font-normal"> {getAppropriateUnit(energy.today.batteryOutKwh)}</span>}
+                    {energy.today.batteryOutKwh !== null && energy.today.batteryOutKwh !== undefined && <span className="font-normal text-orange-500 sm:text-orange-400 energy-unit-narrow">{getAppropriateUnit(energy.today.batteryOutKwh)}</span>}
                   </>
                 )}
               </td>
@@ -191,7 +211,7 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
                         '—'
                       }
                     </span>
-                    {calculateTodayPower(energy.today.batteryInKwh) !== null && <span className="font-normal"> kW</span>}
+                    {calculateTodayPower(energy.today.batteryInKwh) !== null && <span className="font-normal text-green-500" style={{ fontSize: '0.36em', opacity: 0.6 }}>kW</span>}
                   </>
                 ) : (() => {
                   const inKwh = energy.today.batteryInKwh
@@ -210,7 +230,7 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
                   return (
                     <>
                       <span className="font-bold">{`${inValue}/${outValue}`}</span>
-                      {inValue !== '—' || outValue !== '—' ? <span className="font-normal"> {unit}</span> : null}
+                      {inValue !== '—' || outValue !== '—' ? <span className="font-normal text-green-500 energy-unit-narrow">{unit}</span> : null}
                     </>
                   )
                 })()}
@@ -253,7 +273,7 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
                             '—'
                           }
                         </span>
-                        {calculateTodayPower(energy.today.gridInKwh) !== null && <span className="font-normal"> kW</span>}
+                        {calculateTodayPower(energy.today.gridInKwh) !== null && <span className="energy-unit-narrow"> kW</span>}
                       </>
                     ) : (() => {
                       const inKwh = energy.today.gridInKwh
@@ -272,7 +292,7 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
                       return (
                         <>
                           <span className="font-bold">{`${inValue}/${outValue}`}</span>
-                          {inValue !== '—' || outValue !== '—' ? <span className="font-normal"> {unit}</span> : null}
+                          {inValue !== '—' || outValue !== '—' ? <span className="font-normal text-green-500 energy-unit-narrow">{unit}</span> : null}
                         </>
                       )
                     })()}
@@ -346,7 +366,7 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
                         '—'
                       }
                     </span>
-                    {calculateYesterdayPower(historical?.yesterday?.energy?.batteryChargeKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null && <span className="font-normal"> kW</span>}
+                    {calculateYesterdayPower(historical?.yesterday?.energy?.batteryChargeKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null && <span className="energy-unit-narrow"> kW</span>}
                   </>
                 ) : (() => {
                   const inKwh = historical?.yesterday?.energy?.batteryChargeKwh
@@ -365,7 +385,7 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
                   return (
                     <>
                       <span className="font-bold">{`${inValue}/${outValue}`}</span>
-                      {inValue !== '—' || outValue !== '—' ? <span className="font-normal"> {unit}</span> : null}
+                      {inValue !== '—' || outValue !== '—' ? <span className="font-normal text-green-500 energy-unit-narrow">{unit}</span> : null}
                     </>
                   )
                 })()}
@@ -408,7 +428,7 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
                             '—'
                           }
                         </span>
-                        {calculateYesterdayPower(historical?.yesterday?.energy?.gridImportKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null && <span className="font-normal"> kW</span>}
+                        {calculateYesterdayPower(historical?.yesterday?.energy?.gridImportKwh, historical?.yesterday?.dataQuality?.intervalCount) !== null && <span className="energy-unit-narrow"> kW</span>}
                       </>
                     ) : (() => {
                       const inKwh = historical?.yesterday?.energy?.gridImportKwh
@@ -427,7 +447,7 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
                       return (
                         <>
                           <span className="font-bold">{`${inValue}/${outValue}`}</span>
-                          {inValue !== '—' || outValue !== '—' ? <span className="font-normal"> {unit}</span> : null}
+                          {inValue !== '—' || outValue !== '—' ? <span className="font-normal text-green-500 energy-unit-narrow">{unit}</span> : null}
                         </>
                       )
                     })()}
@@ -473,7 +493,7 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
                   return (
                     <>
                       <span className="font-bold">{`${inValue}/${outValue}`}</span>
-                      {inValue !== '—' || outValue !== '—' ? <span className="font-normal"> {unit}</span> : null}
+                      {inValue !== '—' || outValue !== '—' ? <span className="font-normal text-green-500 energy-unit-narrow">{unit}</span> : null}
                     </>
                   )
                 })()}
@@ -506,7 +526,7 @@ export default function EnergyPanel({ energy, historical, showGrid }: EnergyPane
                       return (
                         <>
                           <span className="font-bold">{`${inValue}/${outValue}`}</span>
-                          {inValue !== '—' || outValue !== '—' ? <span className="font-normal"> {unit}</span> : null}
+                          {inValue !== '—' || outValue !== '—' ? <span className="font-normal text-green-500 energy-unit-narrow">{unit}</span> : null}
                         </>
                       )
                     })()}

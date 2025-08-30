@@ -65,8 +65,10 @@ export default function AdminLayout({
                 {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
               <div>
-                <h1 className="text-2xl font-bold text-white">LiveOne Administration</h1>
-                <p className="text-sm text-gray-400 mt-1">Selectronic SP PRO Monitoring</p>
+                <h1 className="text-2xl font-bold text-white">
+                  <span className="hidden sm:inline">LiveOne </span>Administration
+                </h1>
+                <p className="text-sm text-gray-400 mt-1 hidden sm:block">Selectronic SP PRO Monitoring</p>
               </div>
             </div>
             <div className="flex items-center gap-4">
@@ -92,7 +94,7 @@ export default function AdminLayout({
 
       <div className="flex">
         {/* Sidebar - positioned under header with rounded corners */}
-        <div className={`fixed lg:relative top-[73px] lg:top-0 left-0 z-40 w-64 h-[calc(100vh-73px)] lg:h-[calc(100vh-73px)] transform transition-transform lg:translate-x-0 ${
+        <div className={`fixed lg:relative top-[73px] lg:top-0 left-0 z-40 w-[220px] h-[calc(100vh-73px)] lg:h-[calc(100vh-73px)] transform transition-transform lg:translate-x-0 ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}>
           <div className="bg-gray-800 h-full border-r border-t border-gray-700">
@@ -139,7 +141,7 @@ export default function AdminLayout({
 
         {/* Main content */}
         <div className="flex-1 lg:pl-0">
-          <main className="h-[calc(100vh-73px)]">
+          <main className="h-[calc(100vh-73px)] sm:h-[calc(100vh-89px)]">
             {children}
           </main>
         </div>
