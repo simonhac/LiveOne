@@ -3,11 +3,10 @@ import * as cheerio from 'cheerio';
 import {
   API_CONFIG,
   SELECTLIVE_CONFIG,
-  SelectronicData,
-  ApiResponse,
   POLLING_CONFIG,
   ERROR_MESSAGES,
 } from '@/config';
+import { SelectronicData, ApiResponse } from './types/selectronic';
 
 interface Credentials {
   email: string;

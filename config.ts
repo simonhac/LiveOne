@@ -1,4 +1,4 @@
-// Configuration for LiveOne - Selectronic to MQTT Bridge
+// Configuration for LiveOne
 
 // API Configuration
 export const API_CONFIG = {
@@ -11,22 +11,6 @@ export const API_CONFIG = {
   retryDelay: 1000,                   // Initial retry delay in ms
 } as const;
 
-// Server Request Queue Configuration
-export const SERVER_REQUEST_QUEUE_CONFIG = {
-  maxConcurrent: 10,                  // Max parallel requests
-  minInterval: 100,                   // Minimum 100ms between requests
-  rateLimitWindow: 60000,             // Rate limit window (1 minute)
-  maxRequestsPerWindow: 60,           // Max requests per minute
-} as const;
-
-// Session Configuration
-export const SESSION_CONFIG = {
-  sessionTimeout: 30 * 60 * 1000,     // 30 minutes session timeout
-  refreshThreshold: 5 * 60 * 1000,    // Refresh when 5 minutes remaining
-  cookieName: 'select-live-session',
-  sessionCheckInterval: 60000,        // Check session every minute
-} as const;
-
 // Polling Configuration
 export const POLLING_CONFIG = {
   defaultInterval: 60000,             // Default 1 minute polling
@@ -37,83 +21,27 @@ export const POLLING_CONFIG = {
   retryOnErrorDelay: 5000,            // Wait 5 seconds after error
 } as const;
 
-// Cache Configuration
-export const CACHE_CONFIG = {
-  defaultTTL: 60000,                  // Default cache TTL (1 minute)
-  maxCacheSize: 100,                  // Max number of cached items
-  staleWhileRevalidate: true,         // Serve stale while fetching fresh
-  cacheKeyPrefix: 'liveone:',
-} as const;
-
 // Import real secrets from separate file (optional in production)
-interface UserSystem {
-  systemNumber: string;
-  displayName: string;
-}
-
 let LIVEONE_USERS: any = {};
 let SELECTLIVE_CREDENTIALS: any = {};
-let USER_TO_SYSTEM: Record<string, UserSystem> = {};
 
 try {
   const secrets = require('./USER_SECRETS');
   LIVEONE_USERS = secrets.LIVEONE_USERS || {};
   SELECTLIVE_CREDENTIALS = secrets.SELECTLIVE_CREDENTIALS || {};
-  USER_TO_SYSTEM = secrets.USER_TO_SYSTEM || {};
 } catch (error) {
   // USER_SECRETS not available (production environment)
   console.log('[Config] USER_SECRETS not found, using environment variables');
 }
 
-// All users configuration
+// All users configuration (legacy - for old login route)
 export const APP_USERS = LIVEONE_USERS;
 
-// User to system mapping - re-export
-export { USER_TO_SYSTEM };
-
-// Select.Live API Configuration (for fetching inverter data)
+// Select.Live API Configuration (legacy - credentials now in Clerk)
 export const SELECTLIVE_CONFIG = {
   username: SELECTLIVE_CREDENTIALS.username || process.env.SELECTRONIC_EMAIL || '',
   password: SELECTLIVE_CREDENTIALS.password || process.env.SELECTRONIC_PASSWORD || '',
   systemNumber: SELECTLIVE_CREDENTIALS.systemNumber || process.env.SELECTRONIC_SYSTEM || '',
-} as const;
-
-// MQTT Configuration (for future use)
-export const MQTT_CONFIG = {
-  brokerUrl: process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883',
-  username: process.env.MQTT_USERNAME || '',
-  password: process.env.MQTT_PASSWORD || '',
-  clientId: `liveone-${Date.now()}`,
-  topicPrefix: 'liveone',
-  qos: 1,                             // QoS level for publishing
-  retain: true,                       // Retain messages
-  connectTimeout: 30000,              // Connection timeout
-} as const;
-
-// Application Configuration
-export const APP_CONFIG = {
-  appName: 'LiveOne',
-  appVersion: '0.1.0',
-  environment: process.env.NODE_ENV || 'development',
-  port: process.env.PORT || 3000,
-  logLevel: process.env.LOG_LEVEL || 'info',
-  timezone: 'Australia/Sydney',
-} as const;
-
-// Data Field Mappings
-export const DATA_FIELD_MAPPINGS = {
-  solarinverter_w: 'solarPower',
-  load_w: 'loadPower',
-  battery_soc: 'batterySOC',
-  battery_w: 'batteryPower',
-  battery_v: 'batteryVoltage',
-  grid_w: 'gridPower',
-  grid_v: 'gridVoltage',
-  grid_hz: 'gridFrequency',
-  inverter_temp: 'inverterTemperature',
-  inverter_mode: 'inverterMode',
-  solar_v: 'solarVoltage',
-  solar_a: 'solarCurrent',
 } as const;
 
 // Error Messages
@@ -126,15 +54,6 @@ export const ERROR_MESSAGES = {
   INVALID_RESPONSE: 'Invalid response from API.',
   SYSTEM_NOT_FOUND: 'System number not found.',
   RATE_LIMITED: 'Rate limited. Please try again later.',
-} as const;
-
-// Development Configuration
-export const DEV_CONFIG = {
-  enableDebugLogging: process.env.NODE_ENV === 'development',
-  mockApiResponses: process.env.MOCK_API === 'true',
-  logApiCalls: true,
-  logResponseData: false,              // Set to true to log full responses
-  useLocalStorage: true,               // Use localStorage for session in dev
 } as const;
 
 // Database Configuration
@@ -161,39 +80,3 @@ export const DATABASE_CONFIG = {
   },
 } as const;
 
-// Export type for TypeScript
-export type SelectronicData = {
-  solarW: number;           // Total solar (solarinverter_w + shunt_w) in Watts
-  solarInverterW: number;   // Remote solar generation in Watts
-  shuntW: number;           // Local solar generation in Watts
-  loadW: number;            // Load in Watts
-  batterySOC: number;
-  batteryW: number;         // Battery power in Watts (negative = charging)
-  gridW: number;            // Grid power in Watts
-  faultCode: number;
-  faultTimestamp: number;       // Unix timestamp
-  generatorStatus: number;
-  // Energy totals (kWh despite the _wh_ in API names)
-  solarKwhTotal: number;
-  loadKwhTotal: number;
-  batteryInKwhTotal: number;
-  batteryOutKwhTotal: number;
-  gridInKwhTotal: number;
-  gridOutKwhTotal: number;
-  // Daily energy (kWh despite the _wh_ in API names)
-  solarKwhToday: number;
-  loadKwhToday: number;
-  batteryInKwhToday: number;
-  batteryOutKwhToday: number;
-  gridInKwhToday: number;
-  gridOutKwhToday: number;
-  timestamp: Date;
-  raw?: Record<string, any>;
-};
-
-export type ApiResponse<T> = {
-  success: boolean;
-  data?: T;
-  error?: string;
-  timestamp: Date;
-};
