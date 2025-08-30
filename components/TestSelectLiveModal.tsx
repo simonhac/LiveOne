@@ -78,6 +78,7 @@ export default function TestSelectLiveModal({
   // Automatically test connection when modal opens
   useEffect(() => {
     testConnection(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // Empty dependency array means this runs once on mount
 
   return (
