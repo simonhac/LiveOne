@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Zap } from 'lucide-react'
 import TestSelectLiveModal from './TestSelectLiveModal'
 
@@ -34,14 +35,15 @@ export default function TestSelectLiveButton({
         Test
       </button>
 
-      {isModalOpen && (
+      {isModalOpen && typeof document !== 'undefined' && createPortal(
         <TestSelectLiveModal
           displayName={displayName}
           ownerClerkUserId={ownerClerkUserId}
           vendorType={vendorType}
           vendorSiteId={vendorSiteId}
           onClose={() => setIsModalOpen(false)}
-        />
+        />,
+        document.body
       )}
     </>
   )
