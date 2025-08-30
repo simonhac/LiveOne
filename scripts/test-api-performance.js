@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const AUTH_TOKEN = 'zefmud-2Qudca-fexbop';
+const AUTH_TOKEN = process.env.AUTH_TOKEN || 'password';
 const BASE_URL = 'http://localhost:3000';
 
 async function testAPI(endpoint, params, iterations = 10) {

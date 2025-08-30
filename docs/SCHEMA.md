@@ -8,25 +8,33 @@ LiveOne uses SQLite (locally) and Turso (production) for data storage. The datab
 
 ### 1. `systems` - Inverter System Registry
 
-Stores configuration for each monitored inverter system.
+Stores configuration for each monitored inverter system with multi-user support.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | INTEGER PRIMARY KEY | Auto-incrementing unique identifier |
-| `user_id` | TEXT NOT NULL | User identifier (e.g., 'simon') |
-| `system_number` | TEXT NOT NULL | Selectronic system number (e.g., '1586') |
-| `display_name` | TEXT | User-friendly name for the system |
+| `owner_clerk_user_id` | TEXT | **Clerk user ID** - authoritative owner (e.g., 'user_31xcrI...') |
+| `vendor_type` | TEXT NOT NULL | Vendor type (e.g., 'select.live', 'fronius', 'sma') |
+| `vendor_site_id` | TEXT NOT NULL | Vendor's site/system identifier (e.g., '1586', '648') |
+| `display_name` | TEXT | User-friendly name (e.g., 'Daylesford', 'Craig Home') |
 | `model` | TEXT | Inverter model (e.g., 'SP PRO GO 7.5kW') |
 | `serial` | TEXT | Serial number |
 | `ratings` | TEXT | Power ratings (e.g., '7.5kW, 48V') |
 | `solar_size` | TEXT | Solar array size (e.g., '9 kW') |
 | `battery_size` | TEXT | Battery capacity (e.g., '14.3 kWh') |
-| `timezone_offset` | INTEGER DEFAULT 10 | Standard timezone offset in hours (10 for AEST) |
+| `timezone_offset_min` | INTEGER NOT NULL DEFAULT 600 | Standard timezone offset in minutes (600 for AEST/UTC+10) |
 | `created_at` | INTEGER (timestamp) | Creation timestamp |
 | `updated_at` | INTEGER (timestamp) | Last update timestamp |
 
 **Indexes:**
-- `user_system_idx` on (`user_id`, `system_number`)
+- `vendor_site_unique` UNIQUE on (`vendor_type`, `vendor_site_id`)
+- `owner_clerk_user_idx` on (`owner_clerk_user_id`)
+
+**Important Notes:**
+- **`owner_clerk_user_id`** is the authoritative field for ownership (required for polling)
+- Each system owner must have Select.Live credentials stored in Clerk private metadata
+- The polling job uses the owner's credentials to fetch data from Select.Live
+- Multiple systems per user are supported (future enhancement)
 
 ### 2. `readings` - Raw Inverter Data
 
@@ -205,7 +213,7 @@ Currently, no automatic retention policies are implemented:
 
 **Critical**: All timestamps in the database are stored as Unix timestamps (seconds since epoch) in UTC.
 
-The daily aggregation uses the system's `timezone_offset` to determine day boundaries:
+The daily aggregation uses the system's `timezone_offset_min` to determine day boundaries:
 - Day starts at 00:00:00 local time (e.g., 2025-08-17T00:00:00+10:00)
 - Day ends at 00:00:00 next day local time (e.g., 2025-08-18T00:00:00+10:00)
 - Intervals use `> start_time` and `<= end_time` for proper boundary handling
@@ -226,12 +234,48 @@ The daily aggregation uses the system's `timezone_offset` to determine day bound
 3. **Unique Constraints**: Prevent duplicate data at the database level
 4. **Foreign Keys**: Maintain referential integrity with CASCADE deletes
 
+## Multi-User Architecture
+
+### User-System Relationship
+
+```sql
+-- Each system has one owner (via owner_clerk_user_id)
+-- The owner's Select.Live credentials are used for polling
+SELECT 
+  s.system_number,
+  s.display_name,
+  s.owner_clerk_user_id,
+  -- Credentials stored in Clerk, not in database
+FROM systems s
+WHERE s.owner_clerk_user_id = 'user_31xcrI...';
+```
+
+### Data Access Control
+
+- **Users** can only see systems where `owner_clerk_user_id` matches their Clerk ID
+- **Admins** can see all systems regardless of ownership
+- **Polling** uses the owner's credentials from Clerk metadata
+
+### Example Systems Setup
+
+```sql
+-- Simon's system (Daylesford)
+INSERT INTO systems (owner_clerk_user_id, vendor_type, vendor_site_id, display_name, timezone_offset_min)
+VALUES ('user_31xcrIbiSrjjTIKlXShEPilRow7', 'select.live', '1586', 'Daylesford', 600);
+
+-- Craig's system  
+INSERT INTO systems (owner_clerk_user_id, vendor_type, vendor_site_id, display_name, timezone_offset_min)
+VALUES ('user_31xhdEB9tgNk4sWNyFVg6EEpXq7', 'select.live', '648', 'Craig Home', 600);
+```
+
 ## Migration History
 
 1. **0001**: Initial schema creation
 2. **0002**: Added aggregation tables
 3. **0003**: Added polling status table
 4. **0004**: Added timezone_offset to systems table
+5. **0005**: Added owner_clerk_user_id for multi-user support
+6. **0006**: Renamed system_number to vendor_type/vendor_site_id, changed timezone_offset to timezone_offset_min
 
 ## Size Estimates
 

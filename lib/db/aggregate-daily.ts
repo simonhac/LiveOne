@@ -22,10 +22,14 @@ export async function aggregateDailyData(systemId: string, day: string) {
   }
   
   // Calculate the start and end timestamps for the day in the system's timezone
-  // For example, for timezone offset +10 (AEST):
+  // For example, for timezone offset +600 minutes (AEST):
   // 2025-08-17T00:00:00+10:00 = 2025-08-16T14:00:00 UTC
-  const offsetHours = system.timezoneOffset;
-  const offsetString = offsetHours >= 0 ? `+${String(offsetHours).padStart(2, '0')}:00` : `-${String(Math.abs(offsetHours)).padStart(2, '0')}:00`;
+  const offsetMinutes = system.timezoneOffsetMin;
+  const offsetHours = Math.floor(offsetMinutes / 60);
+  const offsetMins = Math.abs(offsetMinutes % 60);
+  const offsetString = offsetMinutes >= 0 
+    ? `+${String(offsetHours).padStart(2, '0')}:${String(offsetMins).padStart(2, '0')}`
+    : `-${String(Math.abs(offsetHours)).padStart(2, '0')}:${String(offsetMins).padStart(2, '0')}`;
   
   const dayStart = new Date(`${day}T00:00:00${offsetString}`);
   const nextDay = new Date(dayStart);
@@ -203,7 +207,7 @@ export async function aggregateAllDailyData(
       throw new Error(`System ${systemId} not found`);
     }
     
-    const timezoneOffsetMinutes = (system.timezoneOffset || 10) * 60; // Convert hours to minutes
+    const timezoneOffsetMinutes = system.timezoneOffsetMin;
     
     // Get the date range
     let earliestDate = startDate;
@@ -312,10 +316,10 @@ export async function aggregateYesterdayForAllSystems() {
     for (const system of systemDetails) {
       try {
         // Calculate yesterday for this specific system's timezone
-        const timezoneOffsetMinutes = (system.timezoneOffset || 10) * 60;
+        const timezoneOffsetMinutes = system.timezoneOffsetMin;
         const yesterdayStr = getYesterdayDate(timezoneOffsetMinutes);
         
-        console.log(`Aggregating ${yesterdayStr} for system ${system.id} (timezone offset: ${system.timezoneOffset || 10} hours)`);
+        console.log(`Aggregating ${yesterdayStr} for system ${system.id} (timezone offset: ${system.timezoneOffsetMin} minutes)`);
         
         const result = await aggregateDailyData(system.id.toString(), yesterdayStr);
         if (result) {

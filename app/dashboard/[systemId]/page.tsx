@@ -22,10 +22,10 @@ export default async function DashboardSystemPage({ params }: PageProps) {
 
   const isAdmin = await isUserAdmin()
   
-  // Check if system exists
+  // Check if system exists (systemId is our internal ID)
   const system = await db.select()
     .from(systems)
-    .where(eq(systems.systemNumber, systemId))
+    .where(eq(systems.id, parseInt(systemId)))
     .limit(1)
     .then(rows => rows[0])
 
@@ -39,8 +39,7 @@ export default async function DashboardSystemPage({ params }: PageProps) {
     hasAccess = systemExists
   } else if (system) {
     // Check if user owns this system
-    // For now, we're using a simple check - in a real app, you'd have a user_systems table
-    hasAccess = system.userId === userId
+    hasAccess = system.ownerClerkUserId === userId
   }
 
   return (

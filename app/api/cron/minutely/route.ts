@@ -5,6 +5,8 @@ import { SelectronicFetchClient } from '@/lib/selectronic-fetch-client';
 import { SELECTLIVE_CONFIG } from '@/config';
 import { eq, sql } from 'drizzle-orm';
 import { updateAggregatedData } from '@/lib/aggregation-helper';
+import { getSelectLiveCredentials } from '@/lib/secure-credentials';
+import { formatSystemId } from '@/lib/system-utils';
 
 // Verify the request is from Vercel Cron
 function validateCronRequest(request: NextRequest): boolean {
@@ -48,53 +50,37 @@ export async function GET(request: NextRequest) {
     // Poll each system
     for (const system of activeSystems) {
       try {
-        console.log(`[Cron] Polling system ${system.systemNumber}...`);
+        const systemId = formatSystemId({
+          vendorType: system.vendorType,
+          vendorSiteId: system.vendorSiteId,
+          displayName: system.displayName
+        });
+        console.log(`[Cron] Polling ${systemId}...`);
         
-        // Get credentials - try environment variables first, then fall back to config
-        let email: string | undefined;
-        let password: string | undefined;
-        
-        // Check environment variables
-        if (process.env.SELECTRONIC_EMAIL && process.env.SELECTRONIC_PASSWORD) {
-          email = process.env.SELECTRONIC_EMAIL;
-          password = process.env.SELECTRONIC_PASSWORD;
-          console.log('[Cron] Using credentials from environment variables');
-        } else {
-          // Try to get from config (will fail in production if USER_SECRETS doesn't exist)
-          try {
-            // In production, SELECTLIVE_CONFIG should have env vars
-            const credentials = SELECTLIVE_CONFIG;
-            if (credentials.username && credentials.password) {
-              email = credentials.username;
-              password = credentials.password;
-              console.log('[Cron] Using credentials from config file');
-            } else {
-              console.error('[Cron] ❌ No credentials available!');
-              console.error('[Cron] Please set SELECTRONIC_EMAIL and SELECTRONIC_PASSWORD environment variables');
-              throw new Error('Missing Selectronic credentials');
-            }
-          } catch (error) {
-            console.error('[Cron] ❌ Error getting credentials:', error);
-            throw new Error('Missing Selectronic credentials');
-          }
+        // Get the owner's Select.Live credentials from Clerk
+        if (!system.ownerClerkUserId) {
+          console.error(`[Cron] ${systemId} has no ownerClerkUserId`);
+          throw new Error('System has no owner Clerk user ID');
         }
         
-        if (!email || !password) {
-          console.error('[Cron] ❌ Credentials are incomplete!');
-          console.error('[Cron] Email present:', !!email);
-          console.error('[Cron] Password present:', !!password);
-          throw new Error('Incomplete Selectronic credentials');
+        const credentials = await getSelectLiveCredentials(system.ownerClerkUserId);
+        
+        if (!credentials) {
+          console.error(`[Cron] No credentials found for ${systemId}`);
+          throw new Error('No credentials found');
         }
+        
+        console.log(`[Cron] Using credentials for ${systemId}`);
         
         // Create client for this system
         const client = new SelectronicFetchClient({
-          email,
-          password,
-          systemNumber: system.systemNumber
+          email: credentials.email,
+          password: credentials.password,
+          systemNumber: system.vendorSiteId
         });
         
         // Authenticate if needed
-        const authCookie = await getOrRefreshAuth(system.systemNumber, client);
+        const authCookie = await getOrRefreshAuth(system.vendorSiteId, client);
         if (!authCookie) {
           throw new Error('Authentication failed');
         }
@@ -111,7 +97,7 @@ export async function GET(request: NextRequest) {
           
           // Insert reading into database
           await db.insert(readings).values({
-            systemId: system.id,
+            systemId: system.id, // ourId -> systemId for database
             inverterTime,
             receivedTime,
             delaySeconds,
@@ -140,7 +126,7 @@ export async function GET(request: NextRequest) {
           // Upsert polling status with full response
           await db.insert(pollingStatus)
             .values({
-              systemId: system.id,
+              systemId: system.id, // ourId -> systemId for database
               lastPollTime: receivedTime,
               lastSuccessTime: receivedTime,
               isActive: true,
@@ -165,22 +151,22 @@ export async function GET(request: NextRequest) {
             });
           
           results.push({
-            system: system.systemNumber,
+            system: system.vendorSiteId,
             success: true,
             solar: data.solarW,
             battery: data.batterySOC,
             delay: delaySeconds
           });
           
-          console.log(`[Cron] System ${system.systemNumber} - Success (${delaySeconds}s delay)`);
+          console.log(`[Cron] ${system.id} - Success (${delaySeconds}s delay)`);
         }
       } catch (error) {
-        console.error(`[Cron] Error polling system ${system.systemNumber}:`, error);
+        console.error(`[Cron] Error polling ${system.id}:`, error);
         
         // Upsert polling status with error
         await db.insert(pollingStatus)
           .values({
-            systemId: system.id,
+            systemId: system.id, // ourId -> systemId for database
             lastPollTime: new Date(),
             lastErrorTime: new Date(),
             isActive: true,
@@ -202,7 +188,7 @@ export async function GET(request: NextRequest) {
           });
         
         results.push({
-          system: system.systemNumber,
+          system: system.vendorSiteId,
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
         });
@@ -231,7 +217,7 @@ export async function GET(request: NextRequest) {
 }
 
 // Helper function to get or refresh authentication
-async function getOrRefreshAuth(systemNumber: string, client: SelectronicFetchClient): Promise<string | null> {
+async function getOrRefreshAuth(vendorSiteId: string, client: SelectronicFetchClient): Promise<string | null> {
   try {
     // Try to get existing session from database
     // For now, just authenticate fresh each time
@@ -240,7 +226,7 @@ async function getOrRefreshAuth(systemNumber: string, client: SelectronicFetchCl
     const authenticated = await client.authenticate();
     return authenticated ? 'authenticated' : null;
   } catch (error) {
-    console.error(`[Cron] Auth failed for system ${systemNumber}:`, error);
+    console.error(`[Cron] Auth failed for system ${vendorSiteId}:`, error);
     return null;
   }
 }

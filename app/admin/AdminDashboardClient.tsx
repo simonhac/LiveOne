@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Clock, Activity, Wifi, WifiOff, Server, Zap, Battery, Sun, Home, TrendingUp, TrendingDown, X, RefreshCw, AlertCircle } from 'lucide-react'
+import { Clock, Activity, Wifi, WifiOff, Server, Battery, Sun, Home, TrendingUp, TrendingDown, X, RefreshCw, AlertCircle, Zap } from 'lucide-react'
 import SystemInfoTooltip from '@/components/SystemInfoTooltip'
+import TestSelectLiveButton from '@/components/TestSelectLiveButton'
 
 interface SystemInfo {
   model?: string
@@ -14,10 +15,12 @@ interface SystemInfo {
 }
 
 interface SystemData {
+  systemId: number  // Our internal ID
   owner: string
   ownerClerkUserId: string
-  displayName: string
-  systemNumber: string
+  displayName: string  // Non-null from database
+  vendorType: string
+  vendorSiteId: string  // Vendor's identifier
   lastLogin: string | null
   isLoggedIn: boolean
   activeSessions: number
@@ -298,28 +301,30 @@ export default function AdminDashboardClient() {
               <tbody className="divide-y divide-gray-700">
                 {systems.map((system) => (
                   <tr 
-                    key={system.systemNumber}
+                    key={system.systemId}
                     className="hover:bg-gray-700/50 transition-colors"
                   >
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div>
                         <Link 
-                          href={`/dashboard/${system.systemNumber}`}
+                          href={`/dashboard/${system.systemId}`}
                           className="text-sm font-medium text-white hover:text-blue-400 transition-colors"
                         >
-                          {system.displayName || `System ${system.systemNumber}`}
+                          {system.displayName}
                         </Link>
                         <div className="flex items-center gap-2">
                           <Link 
-                            href={`/dashboard/${system.systemNumber}`}
+                            href={`/dashboard/${system.systemId}`}
                             className="text-xs text-gray-400 hover:text-blue-400 transition-colors flex items-center gap-1"
                           >
-                            #{system.systemNumber}
+                            {system.vendorType}/{system.vendorSiteId}
                           </Link>
-                          <SystemInfoTooltip 
-                            systemInfo={system.systemInfo}
-                            systemNumber={system.systemNumber}
-                          />
+                          {system.systemInfo && (
+                            <SystemInfoTooltip 
+                              systemInfo={system.systemInfo}
+                              systemNumber={system.vendorSiteId}
+                            />
+                          )}
                         </div>
                       </div>
                     </td>
@@ -379,18 +384,12 @@ export default function AdminDashboardClient() {
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <button
-                        onClick={() => testConnection(
-                          system.displayName || `System ${system.systemNumber}`,
-                          system.ownerClerkUserId,
-                          system.systemNumber
-                        )}
-                        disabled={!system.ownerClerkUserId}
-                        className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
-                      >
-                        <Zap className="w-4 h-4" />
-                        Test
-                      </button>
+                      <TestSelectLiveButton
+                        displayName={system.displayName}
+                        ownerClerkUserId={system.ownerClerkUserId}
+                        vendorType={system.vendorType}
+                        vendorSiteId={system.vendorSiteId}
+                      />
                     </td>
                   </tr>
                 ))}
