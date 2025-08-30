@@ -45,6 +45,8 @@ logs/
 
 # SECRETS - NEVER COMMIT
 USER_SECRETS.ts
+/sensitive/
+/backups/
 
 # Database
 *.db
