@@ -11,6 +11,8 @@
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "test": "jest",
+    "test:all": "jest --config jest.config.all.js",
+    "test:integration": "jest --config jest.config.integration.js",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "fetch-data": "tsx scripts/fetch-data.ts",

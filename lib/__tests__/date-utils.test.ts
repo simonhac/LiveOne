@@ -11,7 +11,7 @@ import {
 import { CalendarDate, ZonedDateTime } from '@internationalized/date';
 
 describe('parseTimeRange', () => {
-  const systemOffset = 10; // AEST
+  const systemOffset = 600; // AEST (10 hours * 60 minutes)
 
   test('parses ISO8601 datetime with timezone', () => {
     const [start, end] = parseTimeRange(
