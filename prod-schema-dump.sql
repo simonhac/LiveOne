@@ -1,1 +1,0 @@
-⣾  Connecting to database
