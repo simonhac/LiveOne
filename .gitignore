@@ -48,6 +48,9 @@ USER_SECRETS.ts
 /sensitive/
 /backups/
 
+# Temporary scripts
+/scripts/
+
 # Database
 *.db
 *.db-journal

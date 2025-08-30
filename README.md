@@ -210,6 +210,24 @@ npm run db:push     # Update database schema
 npm run db:studio   # Open database GUI
 ```
 
+### Utility Tools
+
+The `/tools` directory contains maintenance utilities:
+
+- **`sync-prod-to-dev.js`** - Sync production data to development database
+  ```bash
+  node tools/sync-prod-to-dev.js
+  ```
+  Copies recent data from production Turso database to local development database for testing.
+
+- **`read-vercel-build-log.ts`** - Fetch and display Vercel build logs
+  ```bash
+  npx tsx tools/read-vercel-build-log.ts
+  ```
+  Retrieves the latest build logs from Vercel deployments for debugging build issues.
+
+Note: The `/scripts` directory is gitignored and can be used for temporary scripts and experiments.
+
 ### Adding New Inverter Support
 
 1. Create adapter in `lib/adapters/`:
