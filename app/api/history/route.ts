@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
 import { db } from '@/lib/db';
 import { systems } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
@@ -6,13 +7,13 @@ import { OpenNEMResponse, OpenNEMDataSeries } from '@/types/opennem';
 import { formatDataArray, formatOpenNEMResponse } from '@/lib/format-opennem';
 import { formatTimeAEST, formatDateAEST, parseTimeRange, parseDateRange, parseRelativeTime, getDateDifferenceMs, getTimeDifferenceMs } from '@/lib/date-utils';
 import { CalendarDate, ZonedDateTime, now } from '@internationalized/date';
-import { getCurrentUser, userHasSystemAccess } from '@/lib/user-manager';
 import { fetch5MinuteData, fetch30MinuteData, fetch1DayData } from '@/lib/history-data-fetcher';
+import { isUserAdmin } from '@/lib/auth-utils';
 
 
 // Helper function to create a data series for OpenNEM response
 function createDataSeries(
-  systemNumber: string,
+  remoteSystemIdentifier: string,
   fieldName: string,
   dataExtractor: (r: any) => any,
   type: string,
@@ -24,7 +25,7 @@ function createDataSeries(
   effectiveInterval: string
 ): OpenNEMDataSeries {
   return {
-    id: `liveone.${systemNumber}.${fieldName}`,
+    id: `liveone.${remoteSystemIdentifier}.${fieldName}`,
     type,
     units,
     history: {
@@ -42,10 +43,10 @@ function createDataSeries(
 
 export async function GET(request: NextRequest) {
   try {
-    // Get current user from request
-    const user = await getCurrentUser(request);
+    // Check if user is authenticated with Clerk
+    const { userId } = await auth();
     
-    if (!user) {
+    if (!userId) {
       return NextResponse.json(
         { error: 'Unauthorized - Authentication required' },
         { status: 401 }
@@ -66,16 +67,10 @@ export async function GET(request: NextRequest) {
       );
     }
     
-    // Parse systemId as integer
+    // Parse systemId as our internal system ID
     const systemId = parseInt(systemIdParam);
-    if (isNaN(systemId)) {
-      return NextResponse.json(
-        { error: 'Invalid systemId: must be a number' },
-        { status: 400 }
-      );
-    }
     
-    // Get system from database and verify user has access
+    // Get system from database using internal ID
     const [system] = await db.select()
       .from(systems)
       .where(eq(systems.id, systemId))
@@ -89,15 +84,17 @@ export async function GET(request: NextRequest) {
     }
     
     // Check if user has access to this system
-    const hasAccess = await userHasSystemAccess(user, system.systemNumber);
-    if (!hasAccess) {
+    // Admin can access all systems, regular users can only access their own
+    const isAdmin = await isUserAdmin();
+    if (!isAdmin && system.ownerClerkUserId !== userId) {
       return NextResponse.json(
         { error: 'Access denied to system' },
         { status: 403 }
       );
     }
     
-    const systemNumber = system.systemNumber;
+    // Create remote system identifier for OpenNEM data series IDs
+    const remoteSystemIdentifier = `${system.vendorType}.${system.vendorSiteId}`;
     
     // Require interval parameter
     if (!interval) {
@@ -130,8 +127,8 @@ export async function GET(request: NextRequest) {
     const startTimeParam = searchParams.get('startTime');
     const endTimeParam = searchParams.get('endTime');
 
-    // Get system's timezone offset
-    const systemTimezoneOffset = system.timezoneOffset || 10; // Default to AEST
+    // Get system's timezone offset in minutes
+    const systemTimezoneOffsetMin = system.timezoneOffsetMin;
 
     // Parse time range based on interval type and parameters
     let startTime: ZonedDateTime | CalendarDate;
@@ -140,7 +137,7 @@ export async function GET(request: NextRequest) {
     try {
       if (lastParam) {
         // Parse relative time
-        [startTime, endTime] = parseRelativeTime(lastParam, interval, systemTimezoneOffset);
+        [startTime, endTime] = parseRelativeTime(lastParam, interval, systemTimezoneOffsetMin);
       } else if (startTimeParam && endTimeParam) {
         // Parse absolute time based on interval
         if (interval === '1d') {
@@ -148,7 +145,7 @@ export async function GET(request: NextRequest) {
           [startTime, endTime] = parseDateRange(startTimeParam, endTimeParam);
         } else {
           // For minute intervals, accept datetime or date strings
-          [startTime, endTime] = parseTimeRange(startTimeParam, endTimeParam, systemTimezoneOffset);
+          [startTime, endTime] = parseTimeRange(startTimeParam, endTimeParam, systemTimezoneOffsetMin);
         }
       } else {
         return NextResponse.json(
@@ -257,7 +254,7 @@ export async function GET(request: NextRequest) {
       const start = startTime as CalendarDate;
       const end = endTime as CalendarDate;
       
-      processedData = await fetch1DayData(systemId, start, end);
+      processedData = await fetch1DayData(system.id, start, end);
     } else {
       // ZonedDateTime objects are already properly typed
       const start = startTime as ZonedDateTime;
@@ -265,9 +262,9 @@ export async function GET(request: NextRequest) {
       
       // Fetch data based on interval
       if (interval === '30m') {
-        processedData = await fetch30MinuteData(systemId, start, end, systemTimezoneOffset);
+        processedData = await fetch30MinuteData(system.id, start, end, systemTimezoneOffsetMin);
       } else {
-        processedData = await fetch5MinuteData(systemId, start, end, systemTimezoneOffset);
+        processedData = await fetch5MinuteData(system.id, start, end, systemTimezoneOffsetMin);
       }
     }
 
@@ -325,7 +322,7 @@ export async function GET(request: NextRequest) {
     // Add requested fields
     if (fields.includes('solar')) {
       dataSeries.push(createDataSeries(
-        systemNumber,
+        remoteSystemIdentifier,
         'solar.power',
         r => r?.power?.solar?.avgW ?? r?.solar?.avgW,
         'power',
@@ -340,7 +337,7 @@ export async function GET(request: NextRequest) {
       // Add interval energy for daily data
       if (interval === '1d') {
         dataSeries.push(createDataSeries(
-          systemNumber,
+          remoteSystemIdentifier,
           'solar.energy',
           r => r?.solar?.intervalKwh,
           'energy',
@@ -356,7 +353,7 @@ export async function GET(request: NextRequest) {
 
     if (fields.includes('load')) {
       dataSeries.push(createDataSeries(
-        systemNumber,
+        remoteSystemIdentifier,
         'load.power',
         r => r?.power?.load?.avgW ?? r?.load?.avgW,
         'power',
@@ -371,7 +368,7 @@ export async function GET(request: NextRequest) {
       // Add interval energy for daily data
       if (interval === '1d') {
         dataSeries.push(createDataSeries(
-          systemNumber,
+          remoteSystemIdentifier,
           'load.energy',
           r => r?.load?.loadIntervalKwh,
           'energy',
@@ -387,7 +384,7 @@ export async function GET(request: NextRequest) {
 
     if (fields.includes('battery')) {
       dataSeries.push(createDataSeries(
-        systemNumber,
+        remoteSystemIdentifier,
         'battery.power',
         r => r?.power?.battery?.avgW ?? r?.battery?.avgW,
         'power',
@@ -401,7 +398,7 @@ export async function GET(request: NextRequest) {
       
       // Also include battery SOC - use average for daily data, last for minute data
       dataSeries.push(createDataSeries(
-        systemNumber,
+        remoteSystemIdentifier,
         interval === '1d' ? 'battery.soc.avg' : 'battery.soc.last',
         r => interval === '1d' ? r?.soc?.avgBattery : (r?.batterySOCLast ?? r?.battery?.batteryLastSOC),
         'percentage',
@@ -416,7 +413,7 @@ export async function GET(request: NextRequest) {
       // Add min and max SOC for daily intervals
       if (interval === '1d') {
         dataSeries.push(createDataSeries(
-          systemNumber,
+          remoteSystemIdentifier,
           'battery.soc.min',
           r => r?.soc?.minBattery,
           'percentage',
@@ -429,7 +426,7 @@ export async function GET(request: NextRequest) {
         ));
         
         dataSeries.push(createDataSeries(
-          systemNumber,
+          remoteSystemIdentifier,
           'battery.soc.max',
           r => r?.soc?.maxBattery,
           'percentage',
@@ -445,7 +442,7 @@ export async function GET(request: NextRequest) {
 
     if (fields.includes('grid')) {
       dataSeries.push(createDataSeries(
-        systemNumber,
+        remoteSystemIdentifier,
         'grid.power',
         r => r?.power?.grid?.avgW ?? r?.grid?.avgW,
         'power',

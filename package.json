@@ -28,6 +28,8 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@clerk/nextjs": "^6.31.6",
+    "@clerk/themes": "^2.4.15",
     "@internationalized/date": "^3.8.2",
     "@libsql/client": "^0.15.11",
     "@tailwindcss/postcss": "^4.1.12",

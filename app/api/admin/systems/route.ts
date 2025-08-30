@@ -47,10 +47,12 @@ export async function GET(request: NextRequest) {
       const pollStatus = status[0];
       
       systemsData.push({
-        owner: system.userId,
+        systemId: system.id,  // Our internal ID
+        owner: system.ownerClerkUserId || 'unknown',
         ownerClerkUserId: system.ownerClerkUserId || '',
-        displayName: system.displayName || system.userId,
-        systemNumber: system.systemNumber,
+        displayName: system.displayName,  // Non-null from database
+        vendorType: system.vendorType,
+        vendorSiteId: system.vendorSiteId,  // Vendor's identifier
         lastLogin: null, // No longer tracking user sessions
         isLoggedIn: false, // No longer tracking user sessions
         activeSessions: 0, // No longer tracking user sessions

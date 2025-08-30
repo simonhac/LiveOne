@@ -65,7 +65,7 @@ export class SelectronicFetchClient {
   /**
    * Get cookie string for requests
    */
-  private getCookieString(): string {
+  public getCookieString(): string {
     return Array.from(this.cookies.entries())
       .map(([key, value]) => `${key}=${value}`)
       .join('; ');
@@ -184,27 +184,40 @@ export class SelectronicFetchClient {
       const $ = cheerio.load(html);
       const systemInfo: SystemInfo = {};
       
+      // Debug: Check if we got a valid dashboard page
+      const pageTitle = $('title').text();
+      console.log(`[SystemInfo] Page title: ${pageTitle}`);
+      
+      // Debug: Save HTML for system 648 to inspect
+      if (this.credentials.systemNumber === '648') {
+        const fs = await import('fs');
+        fs.writeFileSync('/tmp/dashboard-648.html', html);
+        console.log('[SystemInfo] Saved HTML to /tmp/dashboard-648.html for inspection');
+      }
+      
       // Look for divs with table-cell display that contain system info
-      // The structure is: <div>Label:</div><div>Value</div>
-      $('div').each((_, element) => {
+      // The structure is: <div class="table-row"><div>Label:</div><div>Value</div></div>
+      $('div[style*="table-cell"]').each((_, element) => {
         const $el = $(element);
         const text = $el.text().trim();
         
         // Check for each field we're interested in
         if (text === 'SP PRO Model:') {
-          const value = $el.next('div').text().trim();
+          // Look for the next sibling with table-cell style
+          const value = $el.next('div[style*="table-cell"]').text().trim();
+          console.log(`[SystemInfo] Found model: ${value}`);
           if (value) systemInfo.model = value;
         } else if (text === 'SP PRO Serial:') {
-          const value = $el.next('div').text().trim();
+          const value = $el.next('div[style*="table-cell"]').text().trim();
           if (value) systemInfo.serial = value;
         } else if (text === 'SP PRO Ratings:') {
-          const value = $el.next('div').text().trim();
+          const value = $el.next('div[style*="table-cell"]').text().trim();
           if (value) systemInfo.ratings = value;
         } else if (text === 'Solar Size:') {
-          const value = $el.next('div').text().trim();
+          const value = $el.next('div[style*="table-cell"]').text().trim();
           if (value) systemInfo.solarSize = value;
         } else if (text === 'Battery Size:') {
-          const value = $el.next('div').text().trim();
+          const value = $el.next('div[style*="table-cell"]').text().trim();
           if (value) systemInfo.batterySize = value;
         }
       });
@@ -231,7 +244,7 @@ export class SelectronicFetchClient {
         if (batteryById) systemInfo.batterySize = batteryById;
       }
       
-      console.log('[SystemInfo] Extracted info:', systemInfo);
+      console.log('[SystemInfo] Extracted info:', JSON.stringify(systemInfo, null, 2));
       return systemInfo;
       
     } catch (error) {

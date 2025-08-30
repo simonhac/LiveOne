@@ -40,6 +40,7 @@ ChartJS.register(
 interface EnergyChartProps {
   className?: string
   maxPowerHint?: number // Max power in kW
+  systemId: number // System ID (e.g., 648, 1586)
 }
 
 interface ChartData {
@@ -53,7 +54,7 @@ interface ChartData {
   mode: 'power' | 'energy' // Mode based on interval: power (≤30m) or energy (≥1d)
 }
 
-export default function EnergyChart({ className = '', maxPowerHint }: EnergyChartProps) {
+export default function EnergyChart({ className = '', maxPowerHint, systemId }: EnergyChartProps) {
   const [chartData, setChartData] = useState<ChartData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -358,7 +359,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
           duration = '30d' // 30 days
         }
         
-        const response = await fetch(`/api/history?interval=${requestInterval}&last=${duration}&fields=solar,load,battery&systemId=1`, {
+        const response = await fetch(`/api/history?interval=${requestInterval}&last=${duration}&fields=solar,load,battery&systemId=${systemId.toString()}`, {
           credentials: 'same-origin', // Include cookies
           signal: abortController.signal
         })
@@ -476,7 +477,7 @@ export default function EnergyChart({ className = '', maxPowerHint }: EnergyChar
       clearInterval(interval)
       abortController.abort() // Cancel any pending requests
     }
-  }, [timeRange])
+  }, [timeRange, systemId])
 
   // For energy mode, pad the SOC data to extend the fill to chart edges
   const paddedSOCData = chartData?.mode === 'energy' && chartData.batterySOCMin && chartData.batterySOCMax

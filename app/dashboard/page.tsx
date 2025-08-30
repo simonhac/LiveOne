@@ -38,6 +38,6 @@ export default async function DashboardPage() {
 
   const primarySystem = userSystemRecords[0].systems
   
-  // Redirect to the system-specific dashboard
-  redirect(`/dashboard/${primarySystem.systemNumber}`)
+  // Redirect to the system-specific dashboard using internal system ID
+  redirect(`/dashboard/${primarySystem.id}`)
 }

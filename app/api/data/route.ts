@@ -1,23 +1,84 @@
 import { NextResponse } from 'next/server'
+import { auth } from '@clerk/nextjs/server'
 import { SELECTLIVE_CONFIG } from '@/config'
 import { db } from '@/lib/db'
-import { systems, readings, pollingStatus, readingsAgg1d } from '@/lib/db/schema'
-import { eq, and, desc } from 'drizzle-orm'
+import { systems, readings, pollingStatus, readingsAgg1d, userSystems } from '@/lib/db/schema'
+import { eq, and, desc, or } from 'drizzle-orm'
 import { formatTimeAEST, getYesterdayDate, fromUnixTimestamp } from '@/lib/date-utils'
 import { roundToThree } from '@/lib/format-opennem'
 
 export async function GET(request: Request) {
   try {
-    // In production, you'd verify the user's session here
-    // For MVP, we're using hardcoded user
-    const userId = 'simon';
-    const systemNumber = SELECTLIVE_CONFIG.systemNumber;
+    // Get the authenticated user's Clerk ID
+    const { userId } = await auth()
     
-    // Get system from database
-    const [system] = await db.select()
-      .from(systems)
-      .where(eq(systems.systemNumber, systemNumber))
-      .limit(1);
+    if (!userId) {
+      return NextResponse.json({
+        success: false,
+        error: 'Unauthorized',
+      }, { status: 401 })
+    }
+
+    // Get systemId from query parameters
+    const { searchParams } = new URL(request.url)
+    const systemId = searchParams.get('systemId')
+    
+    if (!systemId) {
+      return NextResponse.json({
+        success: false,
+        error: 'System ID is required',
+      }, { status: 400 })
+    }
+    
+    // Get the system and check user access (systemId is our internal ID)
+    const userSystemRecords = await db.select()
+      .from(userSystems)
+      .innerJoin(systems, eq(systems.id, userSystems.systemId))
+      .where(
+        and(
+          eq(userSystems.clerkUserId, userId),
+          eq(systems.id, parseInt(systemId))
+        )
+      );
+    
+    if (userSystemRecords.length === 0) {
+      // Check if user is admin
+      const isAdmin = await db.select()
+        .from(userSystems)
+        .where(
+          and(
+            eq(userSystems.clerkUserId, userId),
+            eq(userSystems.role, 'admin')
+          )
+        )
+        .limit(1);
+      
+      if (isAdmin.length > 0) {
+        // Admin can access any system
+        const [adminSystem] = await db.select()
+          .from(systems)
+          .where(eq(systems.id, parseInt(systemId)))
+          .limit(1);
+        
+        if (!adminSystem) {
+          return NextResponse.json({
+            success: false,
+            error: 'System not found or access denied',
+          }, { status: 404 });
+        }
+        
+        var system = adminSystem;
+        var userRole = 'admin';
+      } else {
+        return NextResponse.json({
+          success: false,
+          error: 'System not found or access denied',
+        }, { status: 404 });
+      }
+    } else {
+      var system = userSystemRecords[0].systems;
+      var userRole = userSystemRecords[0].user_systems.role;
+    }
     
     if (!system) {
       return NextResponse.json({
@@ -41,7 +102,7 @@ export async function GET(request: Request) {
       .limit(1);
     
     // Get yesterday's aggregated data using system's timezone
-    const systemTimezoneOffsetMinutes = (system.timezoneOffset || 10) * 60; // Convert hours to minutes (10 hours = 600 minutes for AEST)
+    const systemTimezoneOffsetMinutes = system.timezoneOffsetMin;
     const yesterdayDate = getYesterdayDate(systemTimezoneOffsetMinutes);
     const [yesterdayData] = await db.select()
       .from(readingsAgg1d)
@@ -108,7 +169,7 @@ export async function GET(request: Request) {
       
       // Structure latest data with hierarchy
       const latest = {
-        timestamp: formatTimeAEST(fromUnixTimestamp(latestReading.inverterTime.getTime() / 1000)),
+        timestamp: formatTimeAEST(fromUnixTimestamp(latestReading.inverterTime.getTime() / 1000, system.timezoneOffsetMin)),
         power: {
           solarW: latestReading.solarW,
           solarInverterW: latestReading.solarInverterW,
@@ -149,7 +210,11 @@ export async function GET(request: Request) {
         success: true,
         latest: latest,
         historical: historical,
-        timestamp: formatTimeAEST(fromUnixTimestamp((latestReading.receivedTime || latestReading.inverterTime).getTime() / 1000)),
+        inverterTime: formatTimeAEST(fromUnixTimestamp(latestReading.inverterTime.getTime() / 1000, system.timezoneOffsetMin)),
+        receivedTime: formatTimeAEST(fromUnixTimestamp(latestReading.receivedTime.getTime() / 1000, system.timezoneOffsetMin)),
+        vendorType: system.vendorType,
+        vendorSiteId: system.vendorSiteId,
+        displayName: system.displayName,
         systemInfo: {
           model: system.model,
           serial: system.serial,
@@ -158,9 +223,9 @@ export async function GET(request: Request) {
           batterySize: system.batterySize,
         },
         polling: {
-          lastPollTime: status?.lastPollTime ? formatTimeAEST(fromUnixTimestamp(status.lastPollTime.getTime() / 1000)) : null,
-          lastSuccessTime: status?.lastSuccessTime ? formatTimeAEST(fromUnixTimestamp(status.lastSuccessTime.getTime() / 1000)) : null,
-          lastErrorTime: status?.lastErrorTime ? formatTimeAEST(fromUnixTimestamp(status.lastErrorTime.getTime() / 1000)) : null,
+          lastPollTime: status?.lastPollTime ? formatTimeAEST(fromUnixTimestamp(status.lastPollTime.getTime() / 1000, system.timezoneOffsetMin)) : null,
+          lastSuccessTime: status?.lastSuccessTime ? formatTimeAEST(fromUnixTimestamp(status.lastSuccessTime.getTime() / 1000, system.timezoneOffsetMin)) : null,
+          lastErrorTime: status?.lastErrorTime ? formatTimeAEST(fromUnixTimestamp(status.lastErrorTime.getTime() / 1000, system.timezoneOffsetMin)) : null,
           lastError: status?.lastError || null,
           consecutiveErrors: status?.consecutiveErrors || 0,
           totalPolls: status?.totalPolls || 0,
@@ -174,9 +239,9 @@ export async function GET(request: Request) {
         error: status.lastError,
         timestamp: new Date(),
         polling: {
-          lastPollTime: status?.lastPollTime ? formatTimeAEST(fromUnixTimestamp(status.lastPollTime.getTime() / 1000)) : null,
-          lastSuccessTime: status?.lastSuccessTime ? formatTimeAEST(fromUnixTimestamp(status.lastSuccessTime.getTime() / 1000)) : null,
-          lastErrorTime: status?.lastErrorTime ? formatTimeAEST(fromUnixTimestamp(status.lastErrorTime.getTime() / 1000)) : null,
+          lastPollTime: status?.lastPollTime ? formatTimeAEST(fromUnixTimestamp(status.lastPollTime.getTime() / 1000, system.timezoneOffsetMin)) : null,
+          lastSuccessTime: status?.lastSuccessTime ? formatTimeAEST(fromUnixTimestamp(status.lastSuccessTime.getTime() / 1000, system.timezoneOffsetMin)) : null,
+          lastErrorTime: status?.lastErrorTime ? formatTimeAEST(fromUnixTimestamp(status.lastErrorTime.getTime() / 1000, system.timezoneOffsetMin)) : null,
           lastError: status?.lastError || null,
           consecutiveErrors: status?.consecutiveErrors || 0,
           totalPolls: status?.totalPolls || 0,

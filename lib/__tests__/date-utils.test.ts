@@ -429,7 +429,7 @@ describe('date formatting', () => {
   describe('formatTimeAEST', () => {
     test('formats UTC date to AEST correctly', () => {
       // 2025-08-16 00:36:41 UTC should be 2025-08-16 10:36:41 AEST (+10:00)
-      const utcDate = fromUnixTimestamp(new Date('2025-08-16T00:36:41.000Z').getTime() / 1000);
+      const utcDate = fromUnixTimestamp(new Date('2025-08-16T00:36:41.000Z').getTime() / 1000, 600); // 600 minutes = 10 hours for AEST
       const result = formatTimeAEST(utcDate);
       expect(result).toBe('2025-08-16T10:36:41+10:00');
     });
@@ -437,20 +437,20 @@ describe('date formatting', () => {
     test('always uses UTC+10 (no daylight saving)', () => {
       // Brisbane doesn't observe daylight saving time
       // January (summer) should still be +10:00
-      const summerDate = fromUnixTimestamp(new Date('2025-01-15T00:00:00.000Z').getTime() / 1000);
+      const summerDate = fromUnixTimestamp(new Date('2025-01-15T00:00:00.000Z').getTime() / 1000, 600);
       const result = formatTimeAEST(summerDate);
       expect(result).toBe('2025-01-15T10:00:00+10:00');
     });
 
     test('uses UTC+10 year-round', () => {
       // June (winter) should also be +10:00
-      const winterDate = fromUnixTimestamp(new Date('2025-06-15T00:00:00.000Z').getTime() / 1000);
+      const winterDate = fromUnixTimestamp(new Date('2025-06-15T00:00:00.000Z').getTime() / 1000, 600);
       const result = formatTimeAEST(winterDate);
       expect(result).toBe('2025-06-15T10:00:00+10:00');
     });
 
     test('removes milliseconds from the output', () => {
-      const dateWithMillis = fromUnixTimestamp(new Date('2025-08-16T00:36:41.999Z').getTime() / 1000);
+      const dateWithMillis = fromUnixTimestamp(new Date('2025-08-16T00:36:41.999Z').getTime() / 1000, 600);
       const result = formatTimeAEST(dateWithMillis);
       expect(result).toBe('2025-08-16T10:36:41+10:00');
       expect(result).not.toContain('.');
@@ -458,19 +458,19 @@ describe('date formatting', () => {
     });
 
     test('handles midnight correctly', () => {
-      const midnight = fromUnixTimestamp(new Date('2025-08-16T14:00:00.000Z').getTime() / 1000); // Midnight AEST
+      const midnight = fromUnixTimestamp(new Date('2025-08-16T14:00:00.000Z').getTime() / 1000, 600); // Midnight AEST
       const result = formatTimeAEST(midnight);
       expect(result).toBe('2025-08-17T00:00:00+10:00');
     });
 
     test('handles noon correctly', () => {
-      const noon = fromUnixTimestamp(new Date('2025-08-16T02:00:00.000Z').getTime() / 1000); // Noon AEST
+      const noon = fromUnixTimestamp(new Date('2025-08-16T02:00:00.000Z').getTime() / 1000, 600); // Noon AEST
       const result = formatTimeAEST(noon);
       expect(result).toBe('2025-08-16T12:00:00+10:00');
     });
 
     test('formats result with correct pattern', () => {
-      const localDate = fromUnixTimestamp(new Date(2025, 7, 16, 20, 36, 41).getTime() / 1000); // August 16, 2025, 8:36:41 PM local
+      const localDate = fromUnixTimestamp(new Date(2025, 7, 16, 20, 36, 41).getTime() / 1000, 600); // August 16, 2025, 8:36:41 PM local
       const result = formatTimeAEST(localDate);
       // Result should be in AEST with proper format
       expect(result).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[\+\-]\d{2}:\d{2}$/);
@@ -483,7 +483,7 @@ describe('date formatting', () => {
       const results = new Set();
       
       for (let i = 0; i < 100; i++) {
-        const date = fromUnixTimestamp(new Date('2025-08-16T12:30:45.000Z').getTime() / 1000);
+        const date = fromUnixTimestamp(new Date('2025-08-16T12:30:45.000Z').getTime() / 1000, 600);
         const result = formatTimeAEST(date);
         const hour = result.substring(11, 13);
         results.add(hour);
@@ -507,7 +507,7 @@ describe('date formatting', () => {
       ];
       
       for (const date of testDates) {
-        const result = formatTimeAEST(fromUnixTimestamp(date.getTime() / 1000));
+        const result = formatTimeAEST(fromUnixTimestamp(date.getTime() / 1000, 600));
         // All should format to AEST (22:30:45+10:00)
         expect(result).toBe('2025-08-16T22:30:45+10:00');
       }

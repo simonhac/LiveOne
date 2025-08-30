@@ -72,16 +72,16 @@ export function getYesterdayDate(timezoneOffsetMinutes: number): string {
  * Accepts either ISO8601 datetime or date-only strings
  * @param startStr - Start time/date string
  * @param endStr - End time/date string
- * @param systemTimezoneOffset - System's standard timezone offset in hours (e.g., 10 for AEST)
+ * @param systemTimezoneOffsetMin - System's standard timezone offset in minutes (e.g., 600 for AEST)
  * @returns Tuple of [startTime, endTime] as ZonedDateTime objects
  */
 export function parseTimeRange(
   startStr: string,
   endStr: string,
-  systemTimezoneOffset: number
+  systemTimezoneOffsetMin: number
 ): [ZonedDateTime, ZonedDateTime] {
-  const startTime = parseTimeString(startStr, systemTimezoneOffset, true);
-  const endTime = parseTimeString(endStr, systemTimezoneOffset, false);
+  const startTime = parseTimeString(startStr, systemTimezoneOffsetMin, true);
+  const endTime = parseTimeString(endStr, systemTimezoneOffsetMin, false);
   
   return [startTime, endTime];
 }
@@ -89,12 +89,12 @@ export function parseTimeRange(
 /**
  * Parse a single time/date string into ZonedDateTime
  * @param timeStr - ISO8601 datetime or date string
- * @param systemTimezoneOffset - System's standard timezone offset in hours
+ * @param systemTimezoneOffsetMin - System's standard timezone offset in minutes
  * @param isStartOfDay - If date-only, whether to use start (00:00) or end (23:59:59.999) of day
  */
 function parseTimeString(
   timeStr: string,
-  systemTimezoneOffset: number,
+  systemTimezoneOffsetMin: number,
   isStartOfDay: boolean
 ): ZonedDateTime {
   // Check if it's a date-only string (YYYY-MM-DD)
@@ -103,9 +103,9 @@ function parseTimeString(
     const date = parseDate(timeStr);
     
     // Create timezone string (e.g., "+10:00" for AEST, no DST)
-    const offsetHours = Math.floor(Math.abs(systemTimezoneOffset));
-    const offsetMinutes = Math.round((Math.abs(systemTimezoneOffset) % 1) * 60);
-    const offsetSign = systemTimezoneOffset >= 0 ? '+' : '-';
+    const offsetHours = Math.floor(Math.abs(systemTimezoneOffsetMin) / 60);
+    const offsetMinutes = Math.abs(systemTimezoneOffsetMin) % 60;
+    const offsetSign = systemTimezoneOffsetMin >= 0 ? '+' : '-';
     const tzOffset = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMinutes).padStart(2, '0')}`;
     
     // Create datetime string at start or end of day
@@ -189,10 +189,10 @@ export function toUnixTimestamp(zonedDateTime: ZonedDateTime): number {
 /**
  * Convert Unix timestamp to ZonedDateTime
  * @param unixSeconds - Unix timestamp in seconds
- * @param timezoneOffset - Timezone offset in hours (default 10 for AEST)
+ * @param timezoneOffsetMin - Timezone offset in minutes
  * @returns ZonedDateTime object
  */
-export function fromUnixTimestamp(unixSeconds: number, timezoneOffset: number = 10): ZonedDateTime {
+export function fromUnixTimestamp(unixSeconds: number, timezoneOffsetMin: number): ZonedDateTime {
   // Convert Unix seconds to milliseconds
   const epochMillis = unixSeconds * 1000;
   
@@ -201,7 +201,7 @@ export function fromUnixTimestamp(unixSeconds: number, timezoneOffset: number = 
   const date = new Date(epochMillis);
   
   // Use fromDate with the Date object
-  const timezone = timezoneOffset === 10 ? 'Australia/Brisbane' : 'UTC';
+  const timezone = timezoneOffsetMin === 600 ? 'Australia/Brisbane' : 'UTC';
   
   // Create ZonedDateTime from the Date object
   return fromDate(date, timezone);
@@ -234,13 +234,13 @@ export function getTimeDifferenceMs(start: ZonedDateTime, end: ZonedDateTime): n
  * Parse relative time (e.g., "7d", "24h", "30m")
  * @param lastParam - Relative time string
  * @param interval - The interval type (5m, 30m, 1d)
- * @param systemTimezoneOffset - System's standard timezone offset in hours
+ * @param systemTimezoneOffsetMin - System's standard timezone offset in minutes
  * @returns Tuple of [start, end] as either ZonedDateTime or CalendarDate based on interval
  */
 export function parseRelativeTime(
   lastParam: string,
   interval: string,
-  systemTimezoneOffset: number
+  systemTimezoneOffsetMin: number
 ): [ZonedDateTime | CalendarDate, ZonedDateTime | CalendarDate] {
   const match = lastParam.match(/^(\d+)([dhm])$/i);
   if (!match) {

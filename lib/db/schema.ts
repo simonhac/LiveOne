@@ -4,19 +4,21 @@ import { sql } from 'drizzle-orm';
 // Systems table - stores inverter system information
 export const systems = sqliteTable('systems', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  userId: text('user_id').notNull(),
-  systemNumber: text('system_number').notNull(),
-  displayName: text('display_name'),
+  ownerClerkUserId: text('owner_clerk_user_id'), // Clerk user ID of the owner who holds the vendor credentials
+  vendorType: text('vendor_type').notNull(), // Vendor type (e.g., 'select.live', 'fronius', 'sma')
+  vendorSiteId: text('vendor_site_id').notNull(), // Vendor's site/system identifier
+  displayName: text('display_name').notNull(),
   model: text('model'),
   serial: text('serial'),
   ratings: text('ratings'),
   solarSize: text('solar_size'),
   batterySize: text('battery_size'),
-  timezoneOffset: integer('timezone_offset').notNull().default(10), // Standard timezone offset in hours (e.g., 10 for AEST, DST calculated separately)
+  timezoneOffsetMin: integer('timezone_offset_min').notNull().default(600), // Standard timezone offset in minutes (e.g., 600 for AEST/UTC+10, DST calculated separately)
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
 }, (table) => ({
-  userSystemIdx: index('user_system_idx').on(table.userId, table.systemNumber),
+  vendorSiteUnique: uniqueIndex('vendor_site_unique').on(table.vendorType, table.vendorSiteId),
+  ownerClerkUserIdx: index('owner_clerk_user_idx').on(table.ownerClerkUserId),
 }));
 
 // Readings table - stores time-series inverter data
@@ -195,9 +197,25 @@ export const readingsAgg1d = sqliteTable('readings_agg_1d', {
   updatedIdx: index('idx_readings_agg_1d_updated').on(table.updatedAt),
 }));
 
+// User-System junction table for many-to-many relationship
+export const userSystems = sqliteTable('user_systems', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  clerkUserId: text('clerk_user_id').notNull(),
+  systemId: integer('system_id').notNull().references(() => systems.id, { onDelete: 'cascade' }),
+  role: text('role').notNull().default('viewer'), // 'owner', 'admin', 'viewer'
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => ({
+  userSystemUnique: uniqueIndex('user_system_unique').on(table.clerkUserId, table.systemId),
+  userIdx: index('user_systems_user_idx').on(table.clerkUserId),
+  systemIdx: index('user_systems_system_idx').on(table.systemId),
+}));
+
 // Type exports for TypeScript
 export type System = typeof systems.$inferSelect;
 export type NewSystem = typeof systems.$inferInsert;
 export type Reading = typeof readings.$inferSelect;
 export type NewReading = typeof readings.$inferInsert;
 export type PollingStatus = typeof pollingStatus.$inferSelect;
+export type UserSystem = typeof userSystems.$inferSelect;
+export type NewUserSystem = typeof userSystems.$inferInsert;

@@ -116,7 +116,7 @@ function fillTimeSeriesGaps<T extends { intervalEnd: ZonedDateTime }>(
 }
 
 // Fetch 5-minute aggregated data with reshaping
-export async function fetch5MinuteData(systemId: number, startTime: ZonedDateTime, endTime: ZonedDateTime, timezoneOffset: number = 10) {
+export async function fetch5MinuteData(systemId: number, startTime: ZonedDateTime, endTime: ZonedDateTime, timezoneOffsetMin: number) {
   // Convert ZonedDateTime to Unix timestamp for database query
   const startTimestamp = toUnixTimestamp(startTime);
   const endTimestamp = toUnixTimestamp(endTime);
@@ -136,7 +136,7 @@ export async function fetch5MinuteData(systemId: number, startTime: ZonedDateTim
   // Reshape 5-minute data with proper time objects
   const reshapedData = data.map(row => ({
     // Convert Unix seconds to ZonedDateTime
-    intervalEnd: fromUnixTimestamp(row.intervalEnd, timezoneOffset),
+    intervalEnd: fromUnixTimestamp(row.intervalEnd, timezoneOffsetMin),
     
     // Battery SOC
     batterySOCLast: row.batterySOCLast,
@@ -246,9 +246,9 @@ export async function fetch1DayData(systemId: number, startDate: CalendarDate, e
 }
 
 // Fetch 30-minute aggregated data by fetching 5-minute data and aggregating
-export async function fetch30MinuteData(systemId: number, startTime: ZonedDateTime, endTime: ZonedDateTime, timezoneOffset: number = 10) {
+export async function fetch30MinuteData(systemId: number, startTime: ZonedDateTime, endTime: ZonedDateTime, timezoneOffsetMin: number) {
   // First fetch the 5-minute data
-  const data5m = await fetch5MinuteData(systemId, startTime, endTime, timezoneOffset);
+  const data5m = await fetch5MinuteData(systemId, startTime, endTime, timezoneOffsetMin);
   
   if (data5m.length === 0) return [];
   
