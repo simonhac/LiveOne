@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { auth, clerkClient } from '@clerk/nextjs/server';
 import { db } from '@/lib/db';
 import { systems, readings, pollingStatus, userSystems } from '@/lib/db/schema';
 import { eq, desc, or } from 'drizzle-orm';
@@ -27,6 +27,27 @@ export async function GET(request: NextRequest) {
     const allSystems = await db.select().from(systems);
     const systemsData = [];
     
+    // Get unique owner user IDs to fetch user info in batch
+    const ownerUserIds = [...new Set(allSystems.map(s => s.ownerClerkUserId).filter(Boolean))];
+    const userCache = new Map();
+    
+    // Batch fetch user information from Clerk
+    const clerk = await clerkClient();
+    for (const userId of ownerUserIds) {
+      try {
+        const user = await clerk.users.getUser(userId);
+        userCache.set(userId, {
+          email: user.emailAddresses[0]?.emailAddress || null,
+          userName: user.username || null,
+          firstName: user.firstName || null,
+          lastName: user.lastName || null
+        });
+      } catch (error) {
+        console.warn(`Failed to fetch user ${userId}:`, error);
+        userCache.set(userId, { email: null, userName: null, firstName: null, lastName: null });
+      }
+    }
+    
     for (const system of allSystems) {
       // Get latest reading
       const latestReading = await db
@@ -46,10 +67,18 @@ export async function GET(request: NextRequest) {
       const reading = latestReading[0];
       const pollStatus = status[0];
       
+      // Get user info from cache
+      const userInfo = userCache.get(system.ownerClerkUserId);
+      
       systemsData.push({
         systemId: system.id,  // Our internal ID
-        owner: system.ownerClerkUserId || 'unknown',
-        ownerClerkUserId: system.ownerClerkUserId || '',
+        owner: {
+          clerkId: system.ownerClerkUserId || '',
+          email: userInfo?.email || null,
+          userName: userInfo?.userName || null,
+          firstName: userInfo?.firstName || null,
+          lastName: userInfo?.lastName || null
+        },
         displayName: system.displayName,  // Non-null from database
         vendorType: system.vendorType,
         vendorSiteId: system.vendorSiteId,  // Vendor's identifier

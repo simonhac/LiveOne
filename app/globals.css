@@ -2,3 +2,15 @@
 
 /* Font is applied via Next.js font optimization in layout.tsx */
 /* This ensures consistent font loading and prevents preload warnings */
+
+/* Energy Panel Narrow View Styles */
+.energy-unit-narrow {
+  font-size: 0.36em;
+  opacity: 0.6;
+  font-weight: normal;
+  font-style: italic;
+}
+
+.energy-value-narrow {
+  font-weight: bold;
+}

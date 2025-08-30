@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Clock, Activity, Wifi, WifiOff, Server, Battery, Sun, Home, TrendingUp, TrendingDown, X, RefreshCw, AlertCircle, Zap } from 'lucide-react'
 import SystemInfoTooltip from '@/components/SystemInfoTooltip'
 import TestSelectLiveButton from '@/components/TestSelectLiveButton'
+import SummaryCard from '@/components/SummaryCard'
 
 interface SystemInfo {
   model?: string
@@ -16,8 +17,13 @@ interface SystemInfo {
 
 interface SystemData {
   systemId: number  // Our internal ID
-  owner: string
-  ownerClerkUserId: string
+  owner: {
+    clerkId: string
+    email: string | null
+    userName: string | null
+    firstName: string | null
+    lastName: string | null
+  }
   displayName: string  // Non-null from database
   vendorType: string
   vendorSiteId: string  // Vendor's identifier
@@ -222,8 +228,8 @@ export default function AdminDashboardClient() {
 
   return (
     <>
-      <div className="flex flex-col min-h-full">
-        <div className="flex-1 px-6 py-8">
+      <div className="flex flex-col h-full max-h-full">
+        <div className="flex-1 px-0 md:px-6 py-8 overflow-hidden">
           {error && (
             <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-6">
               {error}
@@ -231,31 +237,28 @@ export default function AdminDashboardClient() {
           )}
           
           {/* Systems Table */}
-          <div className="bg-gray-800 border border-gray-700 rounded overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-700">
+          <div className="bg-gray-800 border border-gray-700 md:rounded overflow-hidden flex-1 flex flex-col">
+            <div className="px-2 md:px-6 py-4 border-b border-gray-700">
               <h2 className="text-lg font-semibold text-white">Registered Systems</h2>
             </div>
           
-          <div className="overflow-x-auto">
+          <div className="overflow-auto flex-1">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-700">
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                     System
                   </th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                     Owner
                   </th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
-                    Status
+                  <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
+                    Readings
                   </th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
-                    Latest Readings
-                  </th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                     Last Poll
                   </th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider hidden sm:table-cell">
                     Actions
                   </th>
                 </tr>
@@ -266,7 +269,7 @@ export default function AdminDashboardClient() {
                     key={system.systemId}
                     className="hover:bg-gray-700/50 transition-colors"
                   >
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-2 md:px-6 py-4 whitespace-nowrap">
                       <Link 
                         href={`/dashboard/${system.systemId}`}
                         className="block group"
@@ -289,33 +292,35 @@ export default function AdminDashboardClient() {
                         </div>
                       </Link>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <p className="text-sm text-gray-300">{system.owner}</p>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        {system.polling.isActive ? (
-                          <span className="flex items-center gap-1">
-                            <Wifi className="w-4 h-4 text-green-400" />
-                            <span className="text-sm text-green-400">Active</span>
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1">
-                            <WifiOff className="w-4 h-4 text-red-400" />
-                            <span className="text-sm text-red-400">Inactive</span>
-                          </span>
+                    <td className="px-2 md:px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm">
+                        <div className="text-gray-300">
+                          {system.owner.userName || system.owner.clerkId || 'unknown'}
+                          {(system.owner.firstName || system.owner.lastName) && (
+                            <span className="text-gray-400 hidden xl:inline">
+                              {' '}({system.owner.firstName || ''}{system.owner.firstName && system.owner.lastName ? ' ' : ''}{system.owner.lastName || ''})
+                            </span>
+                          )}
+                        </div>
+                        {(system.owner.firstName || system.owner.lastName) && (
+                          <div className="text-xs text-gray-400 xl:hidden">
+                            {system.owner.firstName || ''}{system.owner.firstName && system.owner.lastName ? ' ' : ''}{system.owner.lastName || ''}
+                          </div>
+                        )}
+                        {system.owner.email && (
+                          <a 
+                            href={`mailto:${system.owner.email}`}
+                            className="text-xs text-blue-400 hover:text-blue-300 hover:underline"
+                          >
+                            {system.owner.email}
+                          </a>
                         )}
                       </div>
-                      {system.polling.lastError && (
-                        <p className="text-xs text-red-400 mt-1 max-w-xs truncate" title={system.polling.lastError}>
-                          {system.polling.lastError}
-                        </p>
-                      )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-2 md:px-6 py-4 whitespace-nowrap">
                       {system.data ? (
                         <div className="text-sm">
-                          <div className="flex items-center gap-4">
+                          <div className="flex flex-col items-start gap-1 xl:flex-row xl:items-center xl:gap-4">
                             <div className="flex items-center gap-1.5">
                               <Sun className="w-3.5 h-3.5 text-yellow-400" />
                               <span className="text-yellow-400">{(system.data.solarPower / 1000).toFixed(1)} kW</span>
@@ -334,20 +339,43 @@ export default function AdminDashboardClient() {
                         <span className="text-sm text-gray-500">—</span>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {system.polling.lastPollTime ? (
-                        <div className="text-xs text-gray-400">
-                          <Clock className="w-3 h-3 inline mr-1" />
-                          {new Date(system.polling.lastPollTime).toLocaleTimeString()}
+                    <td className="px-2 md:px-6 py-4 whitespace-nowrap align-baseline">
+                      <div className="sm:block flex flex-col min-h-full">
+                        <div>
+                          {!system.polling.isActive ? (
+                            <div>
+                              <span className="text-sm text-red-400">Polling disabled</span>
+                            </div>
+                          ) : system.polling.lastPollTime ? (
+                            <div className="text-xs text-gray-400">
+                              <Clock className="w-3 h-3 inline mr-1" />
+                              {new Date(system.polling.lastPollTime).toLocaleTimeString()}
+                            </div>
+                          ) : (
+                            <span className="text-sm text-gray-500">Never</span>
+                          )}
+                          {system.polling.lastError && (
+                            <p className="text-xs text-red-400 mt-1 max-w-xs truncate" title={system.polling.lastError}>
+                              {system.polling.lastError}
+                            </p>
+                          )}
                         </div>
-                      ) : (
-                        <span className="text-sm text-gray-500">Never</span>
-                      )}
+                        <div className="sm:hidden ml-4 mt-6">
+                          <div className="scale-75 origin-left">
+                            <TestSelectLiveButton
+                              displayName={system.displayName}
+                              ownerClerkUserId={system.owner.clerkId}
+                              vendorType={system.vendorType}
+                              vendorSiteId={system.vendorSiteId}
+                            />
+                          </div>
+                        </div>
+                      </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-2 md:px-6 py-4 whitespace-nowrap hidden sm:table-cell">
                       <TestSelectLiveButton
                         displayName={system.displayName}
-                        ownerClerkUserId={system.ownerClerkUserId}
+                        ownerClerkUserId={system.owner.clerkId}
                         vendorType={system.vendorType}
                         vendorSiteId={system.vendorSiteId}
                       />
@@ -361,41 +389,26 @@ export default function AdminDashboardClient() {
         </div>
         
         {/* Summary Cards - Pinned to bottom */}
-        <div className="px-6 pb-8">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-gray-800 border border-gray-700 rounded p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-gray-400 text-sm">Total Systems</p>
-                  <p className="text-2xl font-bold text-white">{systems.length}</p>
-                </div>
-                <Server className="w-8 h-8 text-blue-400" />
-              </div>
-            </div>
-            
-            <div className="bg-gray-800 border border-gray-700 rounded p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-gray-400 text-sm">Active Systems</p>
-                  <p className="text-2xl font-bold text-white">
-                    {systems.filter(s => s.polling.isActive).length}
-                  </p>
-                </div>
-                <Activity className="w-8 h-8 text-green-400" />
-              </div>
-            </div>
-            
-            <div className="bg-gray-800 border border-gray-700 rounded p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-gray-400 text-sm">Total Solar</p>
-                  <p className="text-2xl font-bold text-white">
-                    {(systems.reduce((sum, s) => sum + (s.data?.solarPower || 0), 0) / 1000).toFixed(1)} kW
-                  </p>
-                </div>
-                <Sun className="w-8 h-8 text-yellow-400" />
-              </div>
-            </div>
+        <div className="px-4 pb-2">
+          <div className="flex gap-2 w-full">
+            <SummaryCard 
+              label="Total Systems"
+              value={systems.length}
+              icon={Server}
+              iconColor="text-blue-400"
+            />
+            <SummaryCard 
+              label="Active Systems"
+              value={systems.filter(s => s.polling.isActive).length}
+              icon={Activity}
+              iconColor="text-green-400"
+            />
+            <SummaryCard 
+              label="Total Solar"
+              value={`${(systems.reduce((sum, s) => sum + (s.data?.solarPower || 0), 0) / 1000).toFixed(1)} kW`}
+              icon={Sun}
+              iconColor="text-yellow-400"
+            />
           </div>
         </div>
       </div>
