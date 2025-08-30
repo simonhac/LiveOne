@@ -54,13 +54,13 @@ export default function AdminLayout({
     <div className="min-h-screen bg-gray-900">
       {/* Top bar - full width */}
       <header className="bg-gray-800 border-b border-gray-700">
-        <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 py-2 sm:py-4">
+        <div className="px-2 sm:px-6 lg:px-8 py-2 sm:py-4">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-4">
               {/* Mobile menu button */}
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
-                className="lg:hidden bg-gray-700 p-2 rounded-lg text-gray-400 hover:text-white"
+                className="lg:hidden p-2 text-gray-400 hover:text-white"
               >
                 {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>

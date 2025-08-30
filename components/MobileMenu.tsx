@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Menu, X, User, LogOut, Info, ChevronDown } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+import { useUser } from '@clerk/nextjs'
 import LastUpdateTime from './LastUpdateTime'
 
 interface SystemInfo {
@@ -40,6 +41,7 @@ export default function MobileMenu({
   const [isSystemDropdownOpen, setIsSystemDropdownOpen] = useState(false)
   const router = useRouter()
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const { user } = useUser()
 
   const toggleMenu = () => setIsOpen(!isOpen)
 
@@ -150,7 +152,13 @@ export default function MobileMenu({
                 <User className="w-5 h-5 text-gray-400" />
                 <div>
                   <p className="text-sm text-gray-400">Logged in as</p>
-                  <p className="text-white font-medium">{displayName || 'User'}</p>
+                  <p className="text-white font-medium">
+                    {user?.firstName && user?.lastName 
+                      ? `${user.firstName} ${user.lastName}`
+                      : user?.username 
+                      || user?.primaryEmailAddress?.emailAddress
+                      || 'User'}
+                  </p>
                 </div>
               </div>
               
