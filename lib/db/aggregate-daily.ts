@@ -296,13 +296,24 @@ export async function aggregateYesterdayForAllSystems() {
   try {
     // Get all unique system IDs from recent data  
     const sevenDaysAgo = Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1000) / 1000); // Unix timestamp
+    console.log(`[Daily] Looking for systems with data after ${new Date(sevenDaysAgo * 1000).toISOString()}`);
+    
     const allSystems = await db
       .select()
       .from(readingsAgg5m)
       .where(gte(readingsAgg5m.intervalEnd, sevenDaysAgo));
     
+    console.log(`[Daily] Found ${allSystems.length} records from ${allSystems.length > 0 ? 'systems' : 'no systems'}`);
+    
     // Extract unique system IDs
     const uniqueSystemIds = [...new Set(allSystems.map(r => r.systemId))];
+    console.log(`[Daily] Unique system IDs found: ${uniqueSystemIds.join(', ') || 'none'}`);
+    
+    // Handle empty system list
+    if (uniqueSystemIds.length === 0) {
+      console.log('[Daily] No systems with recent data found');
+      return [];
+    }
     
     // Get system details with timezone info
     const systemDetails = await db
