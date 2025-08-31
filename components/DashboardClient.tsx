@@ -9,6 +9,8 @@ import MobileMenu from '@/components/MobileMenu'
 import LastUpdateTime from '@/components/LastUpdateTime'
 import SystemInfoTooltip from '@/components/SystemInfoTooltip'
 import PowerCard from '@/components/PowerCard'
+import Settings from '@/components/Settings'
+import ConnectionNotification from '@/components/ConnectionNotification'
 import { 
   Sun, 
   Home, 
@@ -16,7 +18,8 @@ import {
   Zap, 
   AlertTriangle,
   Shield,
-  ChevronDown
+  ChevronDown,
+  Settings as SettingsIcon
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -133,6 +136,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [isAdmin, setIsAdmin] = useState(isAdminProp)
   const [showSystemDropdown, setShowSystemDropdown] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
 
@@ -276,6 +280,9 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
 
   return (
     <div className="min-h-screen bg-gray-900">
+      {/* Connection Notification */}
+      <ConnectionNotification />
+      
       {/* Header */}
       <header className="bg-gray-800 border-b border-gray-700">
         <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 py-2 sm:py-4">
@@ -349,6 +356,13 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   Admin
                 </Link>
               )}
+              <button
+                onClick={() => setShowSettings(true)}
+                className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
+                title="Settings"
+              >
+                <SettingsIcon className="w-5 h-5" />
+              </button>
               <UserButton 
                 afterSignOutUrl="/sign-in"
                 appearance={{
@@ -477,6 +491,12 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
           </div>
         )}
       </main>
+      
+      {/* Settings Modal */}
+      <Settings 
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+      />
     </div>
   )
 }

@@ -6,7 +6,8 @@
 import { db } from './db'
 import { systems } from './db/schema'
 import { eq } from 'drizzle-orm'
-import { getSelectLiveCredentials, SelectLiveCredentials } from './secure-credentials'
+import { getSelectLiveCredentials } from './selectronic/credentials'
+import type { SelectLiveCredentials } from './secure-credentials'
 
 export interface SystemWithCredentials {
   systemId: number

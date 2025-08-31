@@ -2,7 +2,7 @@
  * Unit tests for Selectronic authentication
  */
 
-import { SelectronicFetchClient } from '../../selectronic-fetch-client';
+import { SelectronicFetchClient } from '../selectronic-client';
 import { SELECTLIVE_CREDENTIALS } from '../../../USER_SECRETS';
 
 describe('SelectronicFetchClient Authentication', () => {

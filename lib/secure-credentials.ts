@@ -1,8 +1,9 @@
 /**
  * Secure credential management using Clerk's private metadata
  * 
- * This module handles storing and retrieving Select.Live credentials
- * securely in Clerk's private metadata, which is:
+ * This module handles storing and retrieving credentials for various
+ * solar system vendors (Select.Live, Enphase, etc.) securely in 
+ * Clerk's private metadata, which is:
  * - Only accessible server-side
  * - Encrypted at rest
  * - Never exposed to the frontend
@@ -10,135 +11,186 @@
 
 import { clerkClient } from '@clerk/nextjs/server'
 import { auth } from '@clerk/nextjs/server'
+import type { EnphaseCredentials, EnphaseTokens } from '@/lib/types/enphase'
+
+export type VendorType = 'select.live' | 'enphase'
 
 export interface SelectLiveCredentials {
   email: string
   password: string
+  created_at?: number  // Unix timestamp when credentials were stored
 }
 
+export type VendorCredentials = SelectLiveCredentials | EnphaseCredentials
+
 /**
- * Store Select.Live credentials in Clerk's private metadata
- * These credentials are encrypted and only accessible server-side
- * Note: A user can only have one set of Select.Live credentials
+ * Store vendor credentials in Clerk private metadata
  */
-export async function storeSelectLiveCredentials(
+export async function storeVendorCredentials(
   userId: string,
-  credentials: SelectLiveCredentials
+  vendor: VendorType,
+  credentials: VendorCredentials
 ) {
   try {
-    // Get current user's metadata
+    console.log(`[${vendor}] Storing credentials for user:`, userId)
     const client = await clerkClient()
     const user = await client.users.getUser(userId)
     
-    // Update user's private metadata with single credential set
+    // Map vendor to storage key (maintains existing Clerk metadata format)
+    const storageKey = vendor === 'select.live' ? 'selectLiveCredentials' : 'enphaseCredentials'
+    
+    // Add created_at timestamp to credentials
+    const credentialsWithTimestamp = {
+      ...credentials,
+      created_at: Math.floor(Date.now() / 1000)  // Unix timestamp in seconds
+    }
+    
     await client.users.updateUser(userId, {
       privateMetadata: {
         ...user.privateMetadata,
-        selectLiveCredentials: {
-          email: credentials.email,
-          password: credentials.password
-        }
+        [storageKey]: credentialsWithTimestamp
       }
     })
     
+    console.log(`[${vendor}] Credentials stored successfully`)
     return { success: true }
   } catch (error) {
-    console.error('Failed to store credentials:', error)
-    return { success: false, error: 'Failed to store credentials' }
+    console.error(`[${vendor}] Failed to store credentials:`, error)
+    return { success: false, error: `Failed to store ${vendor} credentials` }
   }
 }
 
 /**
- * Retrieve Select.Live credentials from Clerk's private metadata
- * Only accessible server-side
+ * Get vendor credentials from Clerk private metadata
  */
-export async function getSelectLiveCredentials(
-  userId: string
-): Promise<SelectLiveCredentials | null> {
+export async function getVendorCredentials(
+  userId: string,
+  vendor: VendorType
+): Promise<VendorCredentials | null> {
   try {
+    console.log(`[${vendor}] Retrieving credentials for user:`, userId)
     const client = await clerkClient()
     const user = await client.users.getUser(userId)
-    const credentials = user.privateMetadata?.selectLiveCredentials
+    
+    // Map vendor to storage key (maintains existing Clerk metadata format)
+    const storageKey = vendor === 'select.live' ? 'selectLiveCredentials' : 'enphaseCredentials'
+    const credentials = user.privateMetadata?.[storageKey]
     
     if (!credentials) {
+      console.log(`[${vendor}] No credentials found`)
       return null
     }
     
-    return credentials as SelectLiveCredentials
+    console.log(`[${vendor}] Credentials retrieved`)
+    return credentials as VendorCredentials
   } catch (error) {
-    console.error('Failed to retrieve credentials:', error)
+    console.error(`[${vendor}] Failed to retrieve credentials:`, error)
     return null
   }
 }
 
 /**
- * Remove Select.Live credentials
+ * Remove vendor credentials from Clerk private metadata
  */
-export async function removeSelectLiveCredentials(
-  userId: string
+export async function removeVendorCredentials(
+  userId: string,
+  vendor: VendorType
 ) {
   try {
+    console.log(`[${vendor}] Removing credentials for user:`, userId)
     const client = await clerkClient()
     const user = await client.users.getUser(userId)
     
-    // Remove selectLiveCredentials from metadata
-    const { selectLiveCredentials, ...restMetadata } = user.privateMetadata || {}
+    // Map vendor to storage key (maintains existing Clerk metadata format)
+    const storageKey = vendor === 'select.live' ? 'selectLiveCredentials' : 'enphaseCredentials'
     
-    // Update user's private metadata
+    // Create new metadata without the vendor credentials
+    const newMetadata = { ...user.privateMetadata }
+    delete newMetadata[storageKey]
+    
     await client.users.updateUser(userId, {
-      privateMetadata: restMetadata
+      privateMetadata: newMetadata
     })
     
+    console.log(`[${vendor}] Credentials removed successfully`)
     return { success: true }
   } catch (error) {
-    console.error('Failed to remove credentials:', error)
-    return { success: false, error: 'Failed to remove credentials' }
+    console.error(`[${vendor}] Failed to remove credentials:`, error)
+    return { success: false, error: `Failed to remove ${vendor} credentials` }
   }
 }
 
 /**
- * Check if a user has stored credentials
+ * Check if a user has vendor credentials
  */
-export async function hasSelectLiveCredentials(
-  userId: string
+export async function hasVendorCredentials(
+  userId: string,
+  vendor: VendorType
 ): Promise<boolean> {
-  const credentials = await getSelectLiveCredentials(userId)
+  const credentials = await getVendorCredentials(userId, vendor)
   return credentials !== null
 }
 
 /**
- * Get the current user's Select.Live credentials from auth context
+ * Get all vendor credentials for a user
  */
-export async function getCurrentUserCredentials(): Promise<SelectLiveCredentials | null> {
+export async function getAllVendorCredentials(
+  userId: string
+): Promise<{ selectLive?: SelectLiveCredentials, enphase?: EnphaseCredentials }> {
+  try {
+    const client = await clerkClient()
+    const user = await client.users.getUser(userId)
+    
+    return {
+      selectLive: user.privateMetadata?.selectLiveCredentials as SelectLiveCredentials | undefined,
+      enphase: user.privateMetadata?.enphaseCredentials as EnphaseCredentials | undefined
+    }
+  } catch (error) {
+    console.error('Failed to retrieve all credentials:', error)
+    return {}
+  }
+}
+
+/**
+ * Get the current user's credentials from auth context
+ */
+export async function getCurrentUserCredentials(
+  vendor: VendorType
+): Promise<VendorCredentials | null> {
   const { userId } = await auth()
   
   if (!userId) {
     return null
   }
   
-  return getSelectLiveCredentials(userId)
+  return getVendorCredentials(userId, vendor)
 }
 
 /**
- * Update only the password for existing credentials
+ * Get vendor-specific user ID (email for Select.Live, user ID for Enphase)
  */
-export async function updateSelectLivePassword(
+export async function getVendorUserId(
   userId: string,
-  newPassword: string
-) {
+  vendor: VendorType
+): Promise<string | null> {
   try {
-    const existingCredentials = await getSelectLiveCredentials(userId)
+    const credentials = await getVendorCredentials(userId, vendor)
     
-    if (!existingCredentials) {
-      return { success: false, error: 'No existing credentials found' }
+    if (!credentials) {
+      return null
     }
     
-    return storeSelectLiveCredentials(userId, {
-      ...existingCredentials,
-      password: newPassword
-    })
+    // Return the appropriate ID based on vendor type
+    if (vendor === 'select.live') {
+      return (credentials as SelectLiveCredentials).email
+    } else if (vendor === 'enphase') {
+      return (credentials as EnphaseCredentials).enphase_user_id || null
+    }
+    
+    return null
   } catch (error) {
-    console.error('Failed to update password:', error)
-    return { success: false, error: 'Failed to update password' }
+    console.error(`Failed to get ${vendor} user ID:`, error)
+    return null
   }
 }
+

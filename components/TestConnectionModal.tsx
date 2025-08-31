@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { CheckCircle, XCircle, Loader2, X, Zap, Sun, Home, Battery, AlertCircle, RefreshCw } from 'lucide-react'
 
-interface TestSelectLiveModalProps {
+interface TestConnectionModalProps {
   displayName?: string | null  // Optional - we might not know it yet
   ownerClerkUserId: string
   vendorType: string
@@ -11,13 +11,13 @@ interface TestSelectLiveModalProps {
   onClose: () => void
 }
 
-export default function TestSelectLiveModal({
+export default function TestConnectionModal({
   displayName,
   ownerClerkUserId,
   vendorType,
   vendorSiteId,
   onClose
-}: TestSelectLiveModalProps) {
+}: TestConnectionModalProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<any>(null)
@@ -111,7 +111,7 @@ export default function TestSelectLiveModal({
         {(loading && !data) && (
           <div className="text-center py-8">
             <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="text-gray-400">Connecting to Select.Live...</p>
+            <p className="text-gray-400">Connecting to {vendorType === 'enphase' ? 'Enphase' : 'Select.Live'}...</p>
           </div>
         )}
         

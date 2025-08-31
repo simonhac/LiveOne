@@ -50,14 +50,9 @@ export async function GET(request: NextRequest) {
           }))
         
         // Extract data from private metadata
-        let selectLiveEmail: string | undefined
         let isPlatformAdmin = false
         if (clerkUser.privateMetadata && typeof clerkUser.privateMetadata === 'object') {
           const metadata = clerkUser.privateMetadata as any
-          if (metadata.selectLiveCredentials) {
-            // Users now have a single set of credentials
-            selectLiveEmail = metadata.selectLiveCredentials.email
-          }
           isPlatformAdmin = metadata.isPlatformAdmin === true
         }
         
@@ -70,7 +65,6 @@ export async function GET(request: NextRequest) {
           createdAt: clerkUser.createdAt,
           lastSignIn: clerkUser.lastSignInAt,
           systems: userSystemAccess,
-          selectLiveEmail,
           isPlatformAdmin,
         })
       } catch (err) {

@@ -6,6 +6,8 @@ import { eq, desc, or } from 'drizzle-orm';
 import { formatTimeAEST, fromUnixTimestamp } from '@/lib/date-utils';
 import { isUserAdmin } from '@/lib/auth-utils';
 import { fromDate } from '@internationalized/date';
+import { getVendorUserId } from '@/lib/secure-credentials';
+import type { VendorType } from '@/lib/secure-credentials';
 
 export async function GET(request: NextRequest) {
   try {
@@ -70,6 +72,12 @@ export async function GET(request: NextRequest) {
       // Get user info from cache
       const userInfo = userCache.get(system.ownerClerkUserId);
       
+      // Get vendor-specific user ID
+      let vendorUserId = null;
+      if (system.ownerClerkUserId && system.vendorType) {
+        vendorUserId = await getVendorUserId(system.ownerClerkUserId, system.vendorType as VendorType);
+      }
+      
       systemsData.push({
         systemId: system.id,  // Our internal ID
         owner: {
@@ -82,6 +90,8 @@ export async function GET(request: NextRequest) {
         displayName: system.displayName,  // Non-null from database
         vendorType: system.vendorType,
         vendorSiteId: system.vendorSiteId,  // Vendor's identifier
+        vendorUserId,  // Vendor-specific user ID (email for Select.Live, user ID for Enphase)
+        status: system.status,  // System status: active, disabled, or removed
         lastLogin: null, // No longer tracking user sessions
         isLoggedIn: false, // No longer tracking user sessions
         activeSessions: 0, // No longer tracking user sessions
@@ -93,9 +103,7 @@ export async function GET(request: NextRequest) {
           batterySize: system.batterySize,
         },
         polling: {
-          isActive: pollStatus?.isActive || false,
-          isAuthenticated: pollStatus?.lastSuccessTime ? 
-            ((Date.now() - new Date(pollStatus.lastSuccessTime).getTime()) / 1000 / 60) < 5 : false,
+          isActive: system.status === 'active',
           lastPollTime: pollStatus?.lastPollTime ? 
             formatTimeAEST(fromDate(pollStatus.lastPollTime, 'Australia/Brisbane')) : null,
           lastError: pollStatus?.lastError || null,

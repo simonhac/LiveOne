@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { isUserAdmin } from '@/lib/auth-utils'
-import { getSelectLiveCredentials } from '@/lib/secure-credentials'
-import { SelectronicFetchClient } from '@/lib/selectronic-fetch-client'
+import { getSelectLiveCredentials } from '@/lib/selectronic/credentials'
+import { getEnphaseCredentials } from '@/lib/enphase/enphase-client'
+import { SelectronicFetchClient } from '@/lib/selectronic/selectronic-client'
+import { getEnphaseClient } from '@/lib/enphase/enphase-client'
 import { db } from '@/lib/db'
 import { systems } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
@@ -34,116 +36,204 @@ export async function POST(request: NextRequest) {
       }
     }
     
-    // Get the user's Select.Live credentials
-    const credentials = await getSelectLiveCredentials(ownerClerkUserId)
-    
-    if (!credentials) {
-      return NextResponse.json({ 
-        error: 'No Select.Live credentials found for this user' 
-      }, { status: 404 })
-    }
-    
-    // Create client and test connection
-    const client = new SelectronicFetchClient({
-      email: credentials.email,
-      password: credentials.password,
-      systemNumber: vendorSiteId
-    })
-    
-    // Authenticate
-    const authSuccess = await client.authenticate()
-    
-    if (!authSuccess) {
-      return NextResponse.json({ 
-        error: 'Failed to authenticate with Select.Live' 
-      }, { status: 401 })
-    }
-    
-    // Fetch current data
-    const result = await client.fetchData()
-    
-    if (!result.success || !result.data) {
-      return NextResponse.json({ 
-        error: result.error || 'Failed to fetch data from Select.Live' 
-      }, { status: 500 })
-    }
-    
-    const data = result.data
-    
-    // Also fetch system info (model, serial, ratings, etc.)
-    const systemInfo = await client.fetchSystemInfo()
-    console.log('[Test Connection] System info received:', JSON.stringify(systemInfo, null, 2))
-    
-    // If we got system info and it has data, update the database
-    if (systemInfo && (systemInfo.model || systemInfo.serial || systemInfo.ratings || 
-        systemInfo.solarSize || systemInfo.batterySize)) {
+    // Handle different vendor types
+    if (vendorType === 'enphase') {
+      // Test Enphase connection
+      const credentials = await getEnphaseCredentials(ownerClerkUserId)
+      
+      if (!credentials) {
+        return NextResponse.json({ 
+          error: 'No Enphase credentials found for this user' 
+        }, { status: 404 })
+      }
+      
+      // Check if token is expired
+      if (credentials.expires_at < Date.now()) {
+        return NextResponse.json({ 
+          error: 'Enphase token expired. Please reconnect your system.' 
+        }, { status: 401 })
+      }
+      
       try {
-        // Find the system by vendor site ID (may not exist yet)
-        const [system] = await db.select()
-          .from(systems)
-          .where(eq(systems.vendorSiteId, vendorSiteId))
-          .limit(1)
+        // Create Enphase client
+        const client = getEnphaseClient()
         
-        if (system) {
-          // Update the system with the new info
-          await db.update(systems)
-            .set({
-              model: systemInfo.model,
-              serial: systemInfo.serial,
-              ratings: systemInfo.ratings,
-              solarSize: systemInfo.solarSize,
-              batterySize: systemInfo.batterySize,
-              updatedAt: new Date()
-            })
-            .where(eq(systems.id, system.id))
-          
-          console.log(`Updated system info for system ${vendorSiteId}`)
-        }
-      } catch (error) {
-        console.error('Error updating system info in database:', error)
-        // Don't fail the request if we couldn't update the database
-      }
-    }
-    
-    // Format the response matching /api/data structure
-    return NextResponse.json({
-      success: true,
-      timestamp: data.timestamp.toISOString(),
-      credentials: {
-        email: credentials.email,
-        vendorSiteId: vendorSiteId
-      },
-      latest: {
-        timestamp: data.timestamp.toISOString(),
-        power: {
-          solarW: data.solarW,
-          loadW: data.loadW,
-          batteryW: data.batteryW,
-          gridW: data.gridW,
-        },
-        soc: {
-          battery: data.batterySOC,
-        },
-        energy: {
-          today: {
-            solarKwh: parseFloat(data.solarKwhToday.toFixed(1)),
-            loadKwh: parseFloat(data.loadKwhToday.toFixed(1)),
-            batteryInKwh: parseFloat(data.batteryInKwhToday.toFixed(1)),
-            batteryOutKwh: parseFloat(data.batteryOutKwhToday.toFixed(1)),
-            gridInKwh: parseFloat(data.gridInKwhToday.toFixed(1)),
-            gridOutKwh: parseFloat(data.gridOutKwhToday.toFixed(1)),
+        // Fetch latest telemetry data
+        const telemetry = await client.getLatestTelemetry(
+          vendorSiteId,
+          credentials.access_token
+        )
+        
+        // Extract power and energy values
+        const currentPower = telemetry.production_power || 0
+        // Note: Enphase only provides lifetime energy, not daily
+        // In a real implementation, we'd need to fetch and calculate daily values
+        const todayProduction = 0 // Would need to calculate from historical data
+        const todayConsumption = 0 // Would need to calculate from historical data
+        
+        // Format response to match test-connection format
+        return NextResponse.json({
+          success: true,
+          timestamp: new Date().toISOString(),
+          credentials: {
+            systemId: vendorSiteId,
+            vendorType: 'enphase'
+          },
+          latest: {
+            timestamp: new Date().toISOString(),
+            power: {
+              solarW: currentPower,
+              loadW: 0, // Enphase doesn't provide real-time consumption
+              batteryW: 0, // No battery data in basic Enphase API
+              gridW: 0,
+            },
+            soc: {
+              battery: 0,
+            },
+            energy: {
+              today: {
+                solarKwh: todayProduction / 1000, // Already in Wh, convert to kWh
+                loadKwh: todayConsumption / 1000, // Already in Wh, convert to kWh
+                batteryInKwh: 0,
+                batteryOutKwh: 0,
+                gridInKwh: 0,
+                gridOutKwh: 0,
+              }
+            },
+            generatorStatus: 0,
+          },
+          systemInfo: {
+            model: 'Enphase System',
+            serial: vendorSiteId,
+            ratings: null,
+            solarSize: `${(currentPower / 1000).toFixed(1)} kW capacity`,
+            batterySize: telemetry.storage_soc > 0 ? 'Battery present' : null
           }
-        },
-        generatorStatus: data.generatorStatus,
-      },
-      systemInfo: systemInfo || {
-        model: null,
-        serial: null,
-        ratings: null,
-        solarSize: null,
-        batterySize: null
+        })
+      } catch (error) {
+        console.error('Error fetching Enphase data:', error)
+        return NextResponse.json({ 
+          error: 'Failed to fetch data from Enphase',
+          details: error instanceof Error ? error.message : 'Unknown error'
+        }, { status: 500 })
       }
-    })
+      
+    } else if (vendorType === 'select.live') {
+      // Get the user's Select.Live credentials
+      const credentials = await getSelectLiveCredentials(ownerClerkUserId)
+      
+      if (!credentials) {
+        return NextResponse.json({ 
+          error: 'No Select.Live credentials found for this user' 
+        }, { status: 404 })
+      }
+      
+      // Create client and test connection
+      const client = new SelectronicFetchClient({
+        email: credentials.email,
+        password: credentials.password,
+        systemNumber: vendorSiteId
+      })
+      
+      // Authenticate
+      const authSuccess = await client.authenticate()
+      
+      if (!authSuccess) {
+        return NextResponse.json({ 
+          error: 'Failed to authenticate with Select.Live' 
+        }, { status: 401 })
+      }
+      
+      // Fetch current data
+      const result = await client.fetchData()
+      
+      if (!result.success || !result.data) {
+        return NextResponse.json({ 
+          error: result.error || 'Failed to fetch data from Select.Live' 
+        }, { status: 500 })
+      }
+      
+      const data = result.data
+      
+      // Also fetch system info (model, serial, ratings, etc.)
+      const systemInfo = await client.fetchSystemInfo()
+      console.log('[Test Connection] System info received:', JSON.stringify(systemInfo, null, 2))
+      
+      // If we got system info and it has data, update the database
+      if (systemInfo && (systemInfo.model || systemInfo.serial || systemInfo.ratings || 
+          systemInfo.solarSize || systemInfo.batterySize)) {
+        try {
+          // Find the system by vendor site ID (may not exist yet)
+          const [system] = await db.select()
+            .from(systems)
+            .where(eq(systems.vendorSiteId, vendorSiteId))
+            .limit(1)
+          
+          if (system) {
+            // Update the system with the new info
+            await db.update(systems)
+              .set({
+                model: systemInfo.model,
+                serial: systemInfo.serial,
+                ratings: systemInfo.ratings,
+                solarSize: systemInfo.solarSize,
+                batterySize: systemInfo.batterySize,
+                updatedAt: new Date()
+              })
+              .where(eq(systems.id, system.id))
+            
+            console.log(`Updated system info for system ${vendorSiteId}`)
+          }
+        } catch (error) {
+          console.error('Error updating system info in database:', error)
+          // Don't fail the request if we couldn't update the database
+        }
+      }
+      
+      // Format the response matching /api/data structure
+      return NextResponse.json({
+        success: true,
+        timestamp: data.timestamp.toISOString(),
+        credentials: {
+          email: credentials.email,
+          vendorSiteId: vendorSiteId
+        },
+        latest: {
+          timestamp: data.timestamp.toISOString(),
+          power: {
+            solarW: data.solarW,
+            loadW: data.loadW,
+            batteryW: data.batteryW,
+            gridW: data.gridW,
+          },
+          soc: {
+            battery: data.batterySOC,
+          },
+          energy: {
+            today: {
+              solarKwh: parseFloat(data.solarKwhToday.toFixed(1)),
+              loadKwh: parseFloat(data.loadKwhToday.toFixed(1)),
+              batteryInKwh: parseFloat(data.batteryInKwhToday.toFixed(1)),
+              batteryOutKwh: parseFloat(data.batteryOutKwhToday.toFixed(1)),
+              gridInKwh: parseFloat(data.gridInKwhToday.toFixed(1)),
+              gridOutKwh: parseFloat(data.gridOutKwhToday.toFixed(1)),
+            }
+          },
+          generatorStatus: data.generatorStatus,
+        },
+        systemInfo: systemInfo || {
+          model: null,
+          serial: null,
+          ratings: null,
+          solarSize: null,
+          batterySize: null
+        }
+      })
+    } else {
+      return NextResponse.json({ 
+        error: `Unsupported vendor type: ${vendorType}` 
+      }, { status: 400 })
+    }
     
   } catch (error) {
     console.error('Error testing connection:', error)

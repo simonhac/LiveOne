@@ -2,7 +2,7 @@
  * Integration test for fetching system information from select.live
  */
 
-import { SelectronicFetchClient, SystemInfo } from '../../selectronic-fetch-client';
+import { SelectronicFetchClient, SystemInfo } from '../selectronic-client';
 import { SELECTLIVE_CREDENTIALS } from '../../../USER_SECRETS';
 
 describe('SelectronicFetchClient System Info', () => {

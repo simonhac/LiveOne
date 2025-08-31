@@ -3,7 +3,7 @@
  * Authenticates with Select.Live and discovers all available systems
  */
 
-import { SelectronicFetchClient } from './selectronic-fetch-client'
+import { SelectronicFetchClient } from './selectronic-client'
 import fetch from 'node-fetch'
 
 export interface SelectLiveSystem {

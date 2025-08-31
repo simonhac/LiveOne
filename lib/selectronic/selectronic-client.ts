@@ -1,12 +1,19 @@
 import fetch, { Headers, Response } from 'node-fetch';
 import * as cheerio from 'cheerio';
 import {
-  API_CONFIG,
   SELECTLIVE_CONFIG,
-  POLLING_CONFIG,
   ERROR_MESSAGES,
 } from '@/config';
-import { SelectronicData, ApiResponse } from './types/selectronic';
+import { SelectronicData, ApiResponse } from '@/lib/types/selectronic';
+
+// Select.Live API Configuration
+const SELECTLIVE_API = {
+  baseUrl: 'https://select.live',
+  loginEndpoint: '/login',
+  dataEndpoint: '/dashboard/hfdata',
+  magicWindowStart: 48,  // API unavailable from minute 48
+  magicWindowEnd: 52,    // until minute 52 of each hour
+} as const;
 
 interface Credentials {
   email: string;
@@ -45,8 +52,8 @@ export class SelectronicFetchClient {
    */
   private isInMagicWindow(): boolean {
     const minute = new Date().getMinutes();
-    return minute >= POLLING_CONFIG.magicWindowStart && 
-           minute <= POLLING_CONFIG.magicWindowEnd;
+    return minute >= SELECTLIVE_API.magicWindowStart && 
+           minute <= SELECTLIVE_API.magicWindowEnd;
   }
 
   /**
@@ -84,7 +91,7 @@ export class SelectronicFetchClient {
 
       console.log('[Auth] Sending login request...');
       
-      const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.loginEndpoint}`, {
+      const response = await fetch(`${SELECTLIVE_API.baseUrl}${SELECTLIVE_API.loginEndpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -161,7 +168,7 @@ export class SelectronicFetchClient {
       }
 
       // Fetch dashboard page
-      const url = `${API_CONFIG.baseUrl}/dashboard/${this.credentials.systemNumber}`;
+      const url = `${SELECTLIVE_API.baseUrl}/dashboard/${this.credentials.systemNumber}`;
       console.log(`[SystemInfo] Fetching system info from ${url}`);
       
       const response = await fetch(url, {
@@ -274,7 +281,7 @@ export class SelectronicFetchClient {
       }
 
       // Fetch data
-      const url = `${API_CONFIG.baseUrl}${API_CONFIG.dataEndpoint}/${this.credentials.systemNumber}`;
+      const url = `${SELECTLIVE_API.baseUrl}${SELECTLIVE_API.dataEndpoint}/${this.credentials.systemNumber}`;
       console.log(`[API] Fetching data from ${url}`);
       
       const response = await fetch(url, {

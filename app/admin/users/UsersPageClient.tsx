@@ -20,7 +20,6 @@ interface UserData {
   username?: string
   lastSignIn?: string
   systems: SystemAccess[]
-  selectLiveEmail?: string
   isPlatformAdmin?: boolean
 }
 
@@ -126,9 +125,6 @@ export default function UsersPageClient() {
                 <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                   User
                 </th>
-                <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider hidden sm:table-cell">
-                  Select.Live
-                </th>
                 <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                   Systems
                 </th>
@@ -175,12 +171,6 @@ export default function UsersPageClient() {
                           <p className="text-xs text-gray-400">No email</p>
                         )}
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-2 md:px-6 py-4 whitespace-nowrap align-top hidden sm:table-cell">
-                    <div className="flex items-center gap-1 text-sm text-gray-300">
-                      <Globe className="w-3 h-3" />
-                      {user.selectLiveEmail || '—'}
                     </div>
                   </td>
                   <td className="px-2 md:px-6 py-4 align-top">
