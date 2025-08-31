@@ -65,8 +65,14 @@ export class EnphaseClient implements IEnphaseClient {
     const redirectUri = process.env.ENPHASE_REDIRECT_URI;
 
     if (!apiKey || !clientId || !clientSecret || !redirectUri) {
-      console.error('ENPHASE: Missing required environment variables');
-      throw new Error('Enphase configuration incomplete');
+      const missing = [];
+      if (!apiKey) missing.push('ENPHASE_API_KEY');
+      if (!clientId) missing.push('ENPHASE_CLIENT_ID');
+      if (!clientSecret) missing.push('ENPHASE_CLIENT_SECRET');
+      if (!redirectUri) missing.push('ENPHASE_REDIRECT_URI');
+      
+      console.error('ENPHASE: Missing required environment variables:', missing.join(', '));
+      throw new Error(`Enphase configuration incomplete: Missing ${missing.join(', ')}`);
     }
 
     this.apiKey = apiKey;
