@@ -91,10 +91,8 @@ export async function GET(request: NextRequest) {
         vendorType: system.vendorType,
         vendorSiteId: system.vendorSiteId,  // Vendor's identifier
         vendorUserId,  // Vendor-specific user ID (email for Select.Live, user ID for Enphase)
+        location: system.location,  // Location data (address, city/state/country, or lat/lon)
         status: system.status,  // System status: active, disabled, or removed
-        lastLogin: null, // No longer tracking user sessions
-        isLoggedIn: false, // No longer tracking user sessions
-        activeSessions: 0, // No longer tracking user sessions
         systemInfo: {
           model: system.model,
           serial: system.serial,
@@ -123,7 +121,6 @@ export async function GET(request: NextRequest) {
       success: true,
       systems: systemsData,
       totalSystems: systemsData.length,
-      activeSessions: 0, // No longer tracking sessions
       timestamp: new Date().toISOString(),
     });
     
