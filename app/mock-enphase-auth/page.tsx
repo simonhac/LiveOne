@@ -10,7 +10,7 @@ export default async function MockEnphaseAuth({
   
   // Generate the approve and deny URLs
   const approveUrl = `/api/auth/enphase/callback?code=mock_auth_code_${Date.now()}&state=${state}`
-  const denyUrl = `/dashboard?error=access_denied`
+  const denyUrl = `/api/auth/enphase/callback?error=access_denied&state=${state}`
   
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center p-4">
