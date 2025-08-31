@@ -4,6 +4,25 @@
 
 This document outlines the complete workflow for integrating Enphase solar systems into LiveOne, using the Enphase API v4 with OAuth 2.0 authorization.
 
+## Implementation Status
+
+✅ **Completed Features:**
+- OAuth 2.0 authorization flow
+- Token exchange and secure storage in Clerk
+- Mock Enphase client for development/testing
+- User feedback pages for connection success/failure
+- System registration and reactivation
+- Comprehensive logging with sensitive data masking
+- Production environment configuration
+
+🚧 **In Progress:**
+- Real-time data polling from Enphase API
+- Token refresh implementation
+- API rate limit management
+
+📋 **Planned:**
+- Sunrise/sunset based polling optimization
+
 ## Current Application Credentials
 
 We have an existing Enphase application registered:
@@ -157,15 +176,10 @@ grant_type=refresh_token
 
 ### Data Collection Strategy
 
-1. **Phase 1 - Telemetry Only**:
-   - Poll `/latest_telemetry` every 5 minutes
+1. **Telemetry Collection**:
+   - Poll `/latest_telemetry` every 30 minutes (due to API limits)
    - Store in `readings` table
    - Map Enphase fields to our existing schema
-
-2. **Future Phase - Historical Backfill**:
-   - Use telemetry endpoints with time ranges
-   - Backfill historical data on demand
-   - Use granularity parameter (5min, 15min, etc.)
 
 ## Data Mapping
 
@@ -321,13 +335,11 @@ async function checkApiLimit(systemId: number): Promise<boolean> {
 ```
 
 ### Phase 5: Future Enhancements
-1. **Historical data backfill** (when upgrading plan)
-2. **Upgrade to Kilowatt plan** (10,000 requests/month)
+1. **Upgrade to Kilowatt plan** (10,000 requests/month)
    - Enable 5-minute polling during daylight
    - Or 15-minute polling 24/7
-3. **Support for multiple Enphase systems per user**
-4. **Local Envoy API integration** (unlimited local polling)
-5. **Implement sunrise/sunset calculation** for optimal polling windows
+2. **Support for multiple Enphase systems per user**
+3. **Implement sunrise/sunset calculation** for optimal polling windows
 
 ## Security Considerations
 

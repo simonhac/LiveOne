@@ -289,6 +289,51 @@ Checks if the current user has admin privileges.
 
 ---
 
+#### POST /api/auth/enphase/connect
+Initiates Enphase OAuth 2.0 connection flow.
+
+**Authentication:** Required (Clerk)
+
+**Response:**
+```json
+{
+  "authUrl": "https://api.enphaseenergy.com/oauth/authorize?...",
+  "message": "Redirect user to authorization URL"
+}
+```
+
+---
+
+#### GET /api/auth/enphase/callback
+OAuth 2.0 callback endpoint for Enphase authorization.
+
+**Authentication:** Not required (OAuth flow)
+
+**Query Parameters:**
+- `code` - Authorization code from Enphase
+- `state` - Security state parameter
+- `error` (optional) - Error if user denied access
+
+**Response:** Redirects to `/auth/enphase/result` with status
+
+---
+
+#### GET /api/auth/enphase/disconnect
+Checks Enphase connection status and allows disconnection.
+
+**Authentication:** Required (Clerk)
+
+**Response:**
+```json
+{
+  "connected": true,
+  "systemId": "mock_system_001",
+  "lastSync": "2025-08-31T12:00:00Z"
+}
+```
+
+---
+
 ### 4. Admin Endpoints
 
 All admin endpoints require authentication and admin role.
