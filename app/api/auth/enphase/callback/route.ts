@@ -11,19 +11,27 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get('code');
   const state = searchParams.get('state');
   const error = searchParams.get('error');
+  
+  // Log all received parameters (mask sensitive data)
+  console.log('ENPHASE: Callback parameters:', {
+    code: code ? `${code.substring(0, 10)}...XXXXXX` : null,
+    state: state ? `${state.substring(0, 20)}...XXXXXX` : null,
+    error: error,
+    allParams: Array.from(searchParams.keys())
+  });
 
   // Handle denial
   if (error) {
     console.log('ENPHASE: User denied authorization:', error);
     return NextResponse.redirect(
-      new URL('/dashboard?enphase_error=access_denied', request.url)
+      new URL('/auth/enphase/result?error=access_denied', request.url)
     );
   }
 
   if (!code || !state) {
     console.error('ENPHASE: Missing code or state in callback');
     return NextResponse.redirect(
-      new URL('/dashboard?enphase_error=invalid_callback', request.url)
+      new URL('/auth/enphase/result?error=invalid_callback', request.url)
     );
   }
 
@@ -31,12 +39,19 @@ export async function GET(request: NextRequest) {
     // Decode and validate state
     const stateData = JSON.parse(Buffer.from(state, 'base64').toString());
     const { userId, timestamp } = stateData;
+    
+    console.log('ENPHASE: Decoded state:', {
+      userId: userId ? `${userId.substring(0, 10)}...XXXXXX` : null,
+      timestamp: timestamp,
+      age: Date.now() - timestamp,
+      ageMinutes: Math.round((Date.now() - timestamp) / 60000)
+    });
 
     // Check if state is not too old (15 minutes)
     if (Date.now() - timestamp > 15 * 60 * 1000) {
       console.error('ENPHASE: State expired for user:', userId);
       return NextResponse.redirect(
-        new URL('/dashboard?enphase_error=state_expired', request.url)
+        new URL('/auth/enphase/result?error=state_expired', request.url)
       );
     }
 
@@ -53,7 +68,16 @@ export async function GET(request: NextRequest) {
     
     const tokens = await client.exchangeCodeForTokens(code);
 
-    console.log('ENPHASE: Tokens obtained, fetching systems');
+    // Log token response (mask sensitive data)
+    console.log('ENPHASE: Tokens obtained:', {
+      access_token: tokens.access_token ? `${tokens.access_token.substring(0, 20)}...XXXXXX` : null,
+      refresh_token: tokens.refresh_token ? `${tokens.refresh_token.substring(0, 20)}...XXXXXX` : null,
+      expires_in: tokens.expires_in,
+      token_type: tokens.token_type,
+      hasEnlUid: !!tokens.enl_uid
+    });
+    
+    console.log('ENPHASE: Fetching systems from Enphase API');
 
     // Get user's Enphase systems
     const enphaseSystems = await client.getSystems(tokens.access_token);
@@ -61,7 +85,7 @@ export async function GET(request: NextRequest) {
     if (!enphaseSystems || enphaseSystems.length === 0) {
       console.error('ENPHASE: No systems found for user:', userId);
       return NextResponse.redirect(
-        new URL('/dashboard?enphase_error=no_systems', request.url)
+        new URL('/auth/enphase/result?error=no_systems', request.url)
       );
     }
 
@@ -137,10 +161,10 @@ export async function GET(request: NextRequest) {
     console.log('ENPHASE: Connection complete for user:', userId);
     console.log('ENPHASE: System successfully connected:', enphaseSystem.system_id);
 
-    // Redirect to dashboard with success message
-    const successUrl = new URL('/dashboard', request.url);
-    successUrl.searchParams.set('enphase_status', 'success');
-    successUrl.searchParams.set('enphase_message', `Successfully connected ${enphaseSystem.name || 'Enphase System'}`);
+    // Redirect to result page with success message
+    const successUrl = new URL('/auth/enphase/result', request.url);
+    successUrl.searchParams.set('status', 'success');
+    successUrl.searchParams.set('message', `Successfully connected ${enphaseSystem.name || 'Enphase System'}`);
     
     return NextResponse.redirect(successUrl);
   } catch (error) {
@@ -163,9 +187,9 @@ export async function GET(request: NextRequest) {
       }
     }
     
-    const errorUrl = new URL('/dashboard', request.url);
-    errorUrl.searchParams.set('enphase_status', 'error');
-    errorUrl.searchParams.set('enphase_message', errorMessage);
+    const errorUrl = new URL('/auth/enphase/result', request.url);
+    errorUrl.searchParams.set('status', 'error');
+    errorUrl.searchParams.set('message', errorMessage);
     
     return NextResponse.redirect(errorUrl);
   }
