@@ -441,6 +441,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   iconColor="text-yellow-400"
                   bgColor="bg-yellow-900/20"
                   borderColor="border-yellow-700"
+                  isOffline={secondsSinceUpdate > 300}
                   extra={
                     <div className="text-xs space-y-1 text-gray-400">
                       <div>Remote: {formatPower(data.latest.power.solarInverterW)}</div>

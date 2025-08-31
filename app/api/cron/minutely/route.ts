@@ -64,7 +64,16 @@ export async function GET(request: NextRequest) {
         
         if (!system.ownerClerkUserId) {
           console.error(`[Cron] ${systemId} has no ownerClerkUserId`);
-          throw new Error('System has no owner Clerk user ID');
+          results.push({
+            systemId: system.id,
+            displayName: system.displayName,
+            vendorType: system.vendorType,
+            vendorSiteId: system.vendorSiteId,
+            success: false,
+            error: 'No owner configured',
+            skipped: false
+          });
+          continue;
         }
 
         let data: PollingData | null = null;
@@ -79,6 +88,15 @@ export async function GET(request: NextRequest) {
             timezoneOffsetMin: system.timezoneOffsetMin
           })) {
             console.log(`[Cron] Skipping Enphase system ${systemId} - outside polling window`);
+            results.push({
+              systemId: system.id,
+              displayName: system.displayName,
+              vendorType: system.vendorType,
+              vendorSiteId: system.vendorSiteId,
+              success: true,
+              skipped: true,
+              reason: 'Outside daylight polling window'
+            });
             continue;
           }
           
@@ -157,14 +175,24 @@ export async function GET(request: NextRequest) {
             });
           
           results.push({
-            system: system.vendorSiteId,
+            systemId: system.id,
+            displayName: system.displayName,
+            vendorType: system.vendorType,
+            vendorSiteId: system.vendorSiteId,
             success: true,
-            solar: data.solarW,
-            battery: data.batterySOC,
-            delay: delaySeconds
+            skipped: false,
+            timestamp: inverterTime.toISOString(),
+            delaySeconds,
+            data: {
+              solarW: data.solarW,
+              loadW: data.loadW,
+              batteryW: data.batteryW,
+              gridW: data.gridW,
+              batterySOC: Math.round(data.batterySOC * 10) / 10
+            }
           });
           
-          console.log(`[Cron] ${system.id} - Success (${delaySeconds}s delay)`);
+          console.log(`[Cron] ${systemId} - Success (${delaySeconds}s delay)`);
         }
       } catch (error) {
         console.error(`[Cron] Error polling ${system.id}:`, error);
@@ -192,19 +220,32 @@ export async function GET(request: NextRequest) {
           });
         
         results.push({
-          system: system.vendorSiteId,
+          systemId: system.id,
+          displayName: system.displayName,
+          vendorType: system.vendorType,
+          vendorSiteId: system.vendorSiteId,
           success: false,
+          skipped: false,
           error: error instanceof Error ? error.message : 'Unknown error'
         });
       }
     }
     
-    console.log(`[Cron] Polling complete. ${results.filter(r => r.success).length}/${results.length} successful`);
+    const successCount = results.filter(r => r.success && !r.skipped).length;
+    const skippedCount = results.filter(r => r.skipped).length;
+    const failureCount = results.filter(r => !r.success && !r.skipped).length;
+    
+    console.log(`[Cron] Polling complete. Success: ${successCount}, Failed: ${failureCount}, Skipped: ${skippedCount}`);
     
     return NextResponse.json({
       success: true,
       timestamp: new Date().toISOString(),
-      count: results.length,
+      summary: {
+        total: results.length,
+        successful: successCount,
+        failed: failureCount,
+        skipped: skippedCount
+      },
       results
     });
     
