@@ -14,14 +14,16 @@ Stores configuration for each monitored inverter system with multi-user support.
 |--------|------|-------------|
 | `id` | INTEGER PRIMARY KEY | Auto-incrementing unique identifier |
 | `owner_clerk_user_id` | TEXT | **Clerk user ID** - authoritative owner (e.g., 'user_31xcrI...') |
-| `vendor_type` | TEXT NOT NULL | Vendor type (e.g., 'select.live', 'fronius', 'sma') |
+| `vendor_type` | TEXT NOT NULL | Vendor type (e.g., 'select.live', 'enphase') |
 | `vendor_site_id` | TEXT NOT NULL | Vendor's site/system identifier (e.g., '1586', '648') |
 | `display_name` | TEXT | User-friendly name (e.g., 'Daylesford', 'Craig Home') |
-| `model` | TEXT | Inverter model (e.g., 'SP PRO GO 7.5kW') |
+| `model` | TEXT | Inverter model (e.g., 'SP PRO GO 7.5kW', 'Enphase IQ') |
 | `serial` | TEXT | Serial number |
 | `ratings` | TEXT | Power ratings (e.g., '7.5kW, 48V') |
 | `solar_size` | TEXT | Solar array size (e.g., '9 kW') |
 | `battery_size` | TEXT | Battery capacity (e.g., '14.3 kWh') |
+| `status` | TEXT NOT NULL DEFAULT 'active' | System status ('active', 'disabled', 'removed') |
+| `location` | TEXT | JSON location data (e.g., {"lat": -37.123, "lng": 145.456}) |
 | `timezone_offset_min` | INTEGER NOT NULL DEFAULT 600 | Standard timezone offset in minutes (600 for AEST/UTC+10) |
 | `created_at` | INTEGER (timestamp) | Creation timestamp |
 | `updated_at` | INTEGER (timestamp) | Last update timestamp |
@@ -29,12 +31,20 @@ Stores configuration for each monitored inverter system with multi-user support.
 **Indexes:**
 - `vendor_site_unique` UNIQUE on (`vendor_type`, `vendor_site_id`)
 - `owner_clerk_user_idx` on (`owner_clerk_user_id`)
+- `systems_status_idx` on (`status`)
 
 **Important Notes:**
 - **`owner_clerk_user_id`** is the authoritative field for ownership (required for polling)
-- Each system owner must have Select.Live credentials stored in Clerk private metadata
-- The polling job uses the owner's credentials to fetch data from Select.Live
-- Multiple systems per user are supported (future enhancement)
+- Each system owner must have vendor credentials stored in Clerk private metadata:
+  - Select.Live: Username/password credentials
+  - Enphase: OAuth tokens (access_token, refresh_token)
+- The polling job uses the owner's credentials to fetch data from the vendor API
+- **`status`** field controls system visibility:
+  - `active`: System is polled and visible
+  - `disabled`: System is not polled but remains visible
+  - `removed`: System is hidden but data is preserved
+- **`location`** stores JSON data (coordinates for Select.Live, address for Enphase)
+- Multiple systems per user are supported
 
 ### 2. `readings` - Raw Inverter Data
 
@@ -303,6 +313,7 @@ VALUES ('user_31xhdEB9tgNk4sWNyFVg6EEpXq7', 'select.live', '648', 'Craig Home', 
 4. **0004**: Added timezone_offset to systems table
 5. **0005**: Added owner_clerk_user_id for multi-user support
 6. **0006**: Renamed system_number to vendor_type/vendor_site_id, changed timezone_offset to timezone_offset_min
+7. **0007**: Added status and location columns to systems table, removed is_active from polling_status
 
 ## Size Estimates
 

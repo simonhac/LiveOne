@@ -1,6 +1,6 @@
 # LiveOne — Universal Solar Monitoring Platform
 
-A modern, multi-user solar monitoring platform that bridges inverter systems to a unified dashboard. Currently supports Selectronic SP PRO inverters with an extensible architecture for additional brands.
+A modern, multi-user solar monitoring platform that bridges inverter systems to a unified dashboard. Currently supports Selectronic SP PRO and Enphase IQ inverters with an extensible architecture for additional brands.
 
 ## 🌟 Key Features
 
@@ -9,7 +9,7 @@ A modern, multi-user solar monitoring platform that bridges inverter systems to 
 - 🏠 **Multiple systems per user** - Monitor multiple sites from one account
 - 🔐 **Secure authentication** - Enterprise-grade auth via Clerk
 - 🎯 **Role-based access** - Owner and viewer roles
-- 🔗 **Extensible design** - Ready to aditional inverters
+- 🔗 **Extensible design** - Ready for additional inverters
 
 ### Real-Time Monitoring
 - ⚡ **Live power flow** - Solar, battery, load, and grid visualization
@@ -30,9 +30,10 @@ A modern, multi-user solar monitoring platform that bridges inverter systems to 
 - 📊 **Storage analytics** - Database metrics
 - 🔧 **Test connections** - Validate inverter service credentials
 
-## 🚀 Live Demo
+## 🔌 Supported Systems
 
-Visit [liveone.energy](https://liveone.energy) to see the platform in action.
+- **Selectronic SP PRO** - Via Select.Live API (real-time data)
+- **Enphase IQ** - Via OAuth 2.0 integration (15-minute data)
 
 ## 🏗️ Architecture
 
@@ -48,8 +49,8 @@ Visit [liveone.energy](https://liveone.energy) to see the platform in action.
 ### Extensible Design
 ```
 ┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│  Select.Live │     │   Fronius    │     │  SolarEdge  │
-│     API      │     │   Solar.web  │     │     API     │
+│  Select.Live │     │   Enphase    │     │   Others    │
+│     API      │     │  OAuth 2.0   │     │   (Future)  │
 └──────┬───────┘     └──────┬───────┘     └──────┬──────┘
        │                     │                     │
        └─────────────────────┼─────────────────────┘
