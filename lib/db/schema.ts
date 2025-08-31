@@ -85,6 +85,7 @@ export const pollingStatus = sqliteTable('polling_status', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
 }, (table) => ({
   systemIdx: index('polling_system_idx').on(table.systemId),
+  systemIdUnique: uniqueIndex('polling_status_system_id_unique').on(table.systemId),
 }));
 
 // 5-minute aggregated readings for fast queries (up to 30 days)
