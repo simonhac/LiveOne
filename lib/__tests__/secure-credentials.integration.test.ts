@@ -98,7 +98,8 @@ describe('Secure Credentials Integration Tests', () => {
         
         // Verify credentials were stored
         const user = await client.users.getUser(testUserId)
-        expect(user.privateMetadata?.selectLiveCredentials).toEqual(selectLiveCredentials)
+        expect(user.privateMetadata?.selectLiveCredentials).toMatchObject(selectLiveCredentials)
+        expect(user.privateMetadata?.selectLiveCredentials?.created_at).toBeDefined()
       })
 
       it('should store Enphase credentials', async () => {
@@ -112,7 +113,8 @@ describe('Secure Credentials Integration Tests', () => {
         
         // Verify credentials were stored
         const user = await client.users.getUser(testUserId)
-        expect(user.privateMetadata?.enphaseCredentials).toEqual(enphaseCredentials)
+        expect(user.privateMetadata?.enphaseCredentials).toMatchObject(enphaseCredentials)
+        expect(user.privateMetadata?.enphaseCredentials?.created_at).toBeDefined()
       })
 
       it('should preserve existing metadata when storing credentials', async () => {
@@ -124,8 +126,8 @@ describe('Secure Credentials Integration Tests', () => {
 
         // Verify both are present
         const user = await client.users.getUser(testUserId)
-        expect(user.privateMetadata?.selectLiveCredentials).toEqual(selectLiveCredentials)
-        expect(user.privateMetadata?.enphaseCredentials).toEqual(enphaseCredentials)
+        expect(user.privateMetadata?.selectLiveCredentials).toMatchObject(selectLiveCredentials)
+        expect(user.privateMetadata?.enphaseCredentials).toMatchObject(enphaseCredentials)
       })
     })
 
@@ -137,7 +139,8 @@ describe('Secure Credentials Integration Tests', () => {
         // Retrieve them
         const result = await getVendorCredentials(testUserId, 'select.live')
         
-        expect(result).toEqual(selectLiveCredentials)
+        expect(result).toMatchObject(selectLiveCredentials)
+        expect(result?.created_at).toBeDefined()
       })
 
       it('should retrieve Enphase credentials', async () => {
@@ -147,7 +150,8 @@ describe('Secure Credentials Integration Tests', () => {
         // Retrieve them
         const result = await getVendorCredentials(testUserId, 'enphase')
         
-        expect(result).toEqual(enphaseCredentials)
+        expect(result).toMatchObject(enphaseCredentials)
+        expect(result?.created_at).toBeDefined()
       })
 
       it('should return null when credentials do not exist', async () => {
@@ -169,7 +173,7 @@ describe('Secure Credentials Integration Tests', () => {
         // Verify Select.Live is gone but Enphase remains
         const user = await client.users.getUser(testUserId)
         expect(user.privateMetadata?.selectLiveCredentials).toBeUndefined()
-        expect(user.privateMetadata?.enphaseCredentials).toEqual(enphaseCredentials)
+        expect(user.privateMetadata?.enphaseCredentials).toMatchObject(enphaseCredentials)
       })
 
       it('should remove Enphase credentials while preserving others', async () => {
@@ -183,7 +187,7 @@ describe('Secure Credentials Integration Tests', () => {
         
         // Verify Enphase is gone but Select.Live remains
         const user = await client.users.getUser(testUserId)
-        expect(user.privateMetadata?.selectLiveCredentials).toEqual(selectLiveCredentials)
+        expect(user.privateMetadata?.selectLiveCredentials).toMatchObject(selectLiveCredentials)
         expect(user.privateMetadata?.enphaseCredentials).toBeUndefined()
       })
     })
@@ -209,10 +213,10 @@ describe('Secure Credentials Integration Tests', () => {
         
         const result = await getAllVendorCredentials(testUserId)
         
-        expect(result).toEqual({
-          selectLive: selectLiveCredentials,
-          enphase: enphaseCredentials
-        })
+        expect(result.selectLive).toMatchObject(selectLiveCredentials)
+        expect(result.enphase).toMatchObject(enphaseCredentials)
+        expect(result.selectLive?.created_at).toBeDefined()
+        expect(result.enphase?.created_at).toBeDefined()
       })
 
       it('should return empty object when no credentials exist', async () => {
@@ -229,10 +233,10 @@ describe('Secure Credentials Integration Tests', () => {
         
         const result = await getAllVendorCredentials(testUserId)
         
-        expect(result).toEqual({
-          selectLive: selectLiveCredentials,
-          enphase: undefined
-        })
+        expect(result.enphase).toBeUndefined()
+        expect(result.selectLive).toMatchObject(selectLiveCredentials)
+        expect(result.selectLive?.created_at).toBeDefined()
+        expect(typeof result.selectLive?.created_at).toBe('number')
       })
     })
   })
@@ -243,14 +247,16 @@ describe('Secure Credentials Integration Tests', () => {
       expect(result.success).toBe(true)
       
       const user = await client.users.getUser(testUserId)
-      expect(user.privateMetadata?.selectLiveCredentials).toEqual(selectLiveCredentials)
+      expect(user.privateMetadata?.selectLiveCredentials).toMatchObject(selectLiveCredentials)
+      expect(user.privateMetadata?.selectLiveCredentials?.created_at).toBeDefined()
     })
 
     it('getSelectLiveCredentials should work', async () => {
       await storeSelectLiveCredentials(testUserId, selectLiveCredentials)
       
       const result = await getSelectLiveCredentials(testUserId)
-      expect(result).toEqual(selectLiveCredentials)
+      expect(result).toMatchObject(selectLiveCredentials)
+      expect(result?.created_at).toBeDefined()
     })
   })
 
@@ -276,13 +282,15 @@ describe('Secure Credentials Integration Tests', () => {
       expect(stored.enphase_system_id).toBe('system_456')
       expect(stored.enphase_user_id).toBe('user_123')
       expect(stored.expires_at).toBeGreaterThan(Date.now())
+      expect(stored.created_at).toBeDefined()
     })
 
     it('should get Enphase credentials', async () => {
       await storeVendorCredentials(testUserId, 'enphase', enphaseCredentials)
       
       const result = await getEnphaseCredentials(testUserId)
-      expect(result).toEqual(enphaseCredentials)
+      expect(result).toMatchObject(enphaseCredentials)
+      expect(result?.created_at).toBeDefined()
     })
 
     it('should remove Enphase credentials', async () => {
@@ -294,7 +302,7 @@ describe('Secure Credentials Integration Tests', () => {
       
       // Verify Enphase is gone but Select.Live remains
       const user = await client.users.getUser(testUserId)
-      expect(user.privateMetadata?.selectLiveCredentials).toEqual(selectLiveCredentials)
+      expect(user.privateMetadata?.selectLiveCredentials).toMatchObject(selectLiveCredentials)
       expect(user.privateMetadata?.enphaseCredentials).toBeUndefined()
     })
   })
@@ -308,8 +316,8 @@ describe('Secure Credentials Integration Tests', () => {
       // Retrieve all credentials
       const all = await getAllVendorCredentials(testUserId)
       
-      expect(all.selectLive).toEqual(selectLiveCredentials)
-      expect(all.enphase).toEqual(enphaseCredentials)
+      expect(all.selectLive).toMatchObject(selectLiveCredentials)
+      expect(all.enphase).toMatchObject(enphaseCredentials)
       
       // Check individual existence
       expect(await hasVendorCredentials(testUserId, 'select.live')).toBe(true)

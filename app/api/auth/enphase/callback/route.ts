@@ -65,9 +65,15 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Log all available systems
+    console.log('ENPHASE: Found systems for user:', userId);
+    enphaseSystems.forEach((sys, index) => {
+      console.log(`ENPHASE: System ${index + 1}:`, JSON.stringify(sys, null, 2));
+    });
+
     // Use the first system (in future, allow user to select)
     const enphaseSystem = enphaseSystems[0];
-    console.log('ENPHASE: Found system:', enphaseSystem.system_id, enphaseSystem.name);
+    console.log('ENPHASE: Using system:', enphaseSystem.system_id, enphaseSystem.name);
 
     // Store tokens in Clerk metadata
     await client.storeTokens(userId, tokens, enphaseSystem.system_id);
@@ -106,6 +112,7 @@ export async function GET(request: NextRequest) {
         displayName: enphaseSystem.name || 'Enphase System',
         model: 'Enphase IQ',
         solarSize: enphaseSystem.system_size ? `${(enphaseSystem.system_size / 1000).toFixed(1)} kW` : null,
+        location: enphaseSystem.address || null,  // Store the address object directly
         timezoneOffsetMin: timezoneOffsetMin,
         createdAt: new Date(),
         updatedAt: new Date()
@@ -120,6 +127,7 @@ export async function GET(request: NextRequest) {
         .set({
           ownerClerkUserId: userId,
           displayName: enphaseSystem.name || existingSystem[0].displayName,
+          location: enphaseSystem.address || existingSystem[0].location,  // Update location if available
           status: 'active',  // Reactivate the system if it was removed
           updatedAt: new Date()
         })

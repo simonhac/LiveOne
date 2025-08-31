@@ -14,6 +14,7 @@ export const systems = sqliteTable('systems', {
   ratings: text('ratings'),
   solarSize: text('solar_size'),
   batterySize: text('battery_size'),
+  location: text('location', { mode: 'json' }),  // JSON object for address, city/state/country, or lat/lon
   timezoneOffsetMin: integer('timezone_offset_min').notNull().default(600), // Standard timezone offset in minutes (e.g., 600 for AEST/UTC+10, DST calculated separately)
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),

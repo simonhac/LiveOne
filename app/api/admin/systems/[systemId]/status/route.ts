@@ -7,7 +7,7 @@ import { isUserAdmin } from '@/lib/auth-utils'
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { systemId: string } }
+  { params }: { params: Promise<{ systemId: string }> }
 ) {
   try {
     // Check if user is authenticated
@@ -24,7 +24,8 @@ export async function PATCH(
       return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
     }
     
-    const systemId = parseInt(params.systemId)
+    const { systemId: systemIdParam } = await params
+    const systemId = parseInt(systemIdParam)
     if (isNaN(systemId)) {
       return NextResponse.json({ error: 'Invalid system ID' }, { status: 400 })
     }

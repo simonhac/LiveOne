@@ -42,6 +42,7 @@ export interface EnphaseSystem {
     city?: string;
     state?: string;
     country?: string;
+    postal_code?: string;
   };
   system_size?: number;
 }

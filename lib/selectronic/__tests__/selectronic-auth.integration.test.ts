@@ -1,16 +1,43 @@
 /**
- * Unit tests for Selectronic authentication
+ * Integration tests for Selectronic authentication
+ * 
+ * Requires:
+ * - CLERK_SECRET_KEY environment variable
+ * - TEST_USER_ID environment variable (Clerk user ID with Select.Live credentials)
  */
 
+// Load environment variables from .env.local for testing
+import * as dotenv from 'dotenv';
+import * as path from 'path';
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
+
 import { SelectronicFetchClient } from '../selectronic-client';
-import { SELECTLIVE_CREDENTIALS } from '../../../USER_SECRETS';
+import { getVendorCredentials } from '../../secure-credentials';
 
 describe('SelectronicFetchClient Authentication', () => {
-  const VALID_CREDENTIALS = {
-    email: SELECTLIVE_CREDENTIALS.username,
-    password: SELECTLIVE_CREDENTIALS.password,
-    systemNumber: SELECTLIVE_CREDENTIALS.systemNumber,
-  };
+  let VALID_CREDENTIALS: { email: string; password: string; systemNumber: string };
+  
+  beforeAll(async () => {
+    // Get test user ID from environment or use default
+    const testUserId = process.env.TEST_USER_ID || 'user_31xcrIbiSrjjTIKlXShEPilRow7';
+    const testSystemNumber = process.env.TEST_SYSTEM_NUMBER || '1586'; // Default to Simon's system
+    
+    // Fetch credentials from Clerk
+    const creds = await getVendorCredentials(testUserId, 'select.live');
+    
+    if (creds && 'email' in creds && 'password' in creds) {
+      VALID_CREDENTIALS = {
+        email: creds.email,
+        password: creds.password,
+        systemNumber: testSystemNumber, // System number comes from env or default
+      };
+    } else {
+      throw new Error(
+        `No Select.Live credentials found in Clerk for test user: ${testUserId}. ` +
+        `Please ensure CLERK_SECRET_KEY is set and the user has Select.Live credentials configured.`
+      );
+    }
+  });
 
   const INVALID_CREDENTIALS = {
     email: 'invalid@example.com',

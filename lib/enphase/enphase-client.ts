@@ -337,7 +337,8 @@ export class MockEnphaseClient implements IEnphaseClient {
       address: {
         city: 'Melbourne',
         state: 'VIC',
-        country: 'Australia'
+        country: 'Australia',
+        postal_code: '3000'
       },
       system_size: 5000 // 5kW
     }];
