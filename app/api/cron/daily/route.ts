@@ -1,19 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { aggregateYesterdayForAllSystems } from '@/lib/db/aggregate-daily';
-import { headers } from 'next/headers';
 import { db } from '@/lib/db';
 import { readingsAgg1d } from '@/lib/db/schema';
+
+// Verify the request is from Vercel Cron
+function validateCronRequest(request: NextRequest): boolean {
+  const authHeader = request.headers.get('authorization');
+  
+  // In production, Vercel sets CRON_SECRET
+  if (process.env.CRON_SECRET) {
+    return authHeader === `Bearer ${process.env.CRON_SECRET}`;
+  }
+  
+  // In development, allow all requests
+  return process.env.NODE_ENV === 'development';
+}
 
 // This endpoint will be called daily at 00:05 (5 minutes after midnight)
 export async function GET(request: NextRequest) {
   try {
-    // Verify the request is from Vercel Cron (in production)
-    if (process.env.NODE_ENV === 'production') {
-      const headersList = await headers();
-      const authHeader = headersList.get('authorization');
-      if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
+    // Validate cron request
+    if (!validateCronRequest(request)) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
     }
 
     console.log('[Cron] Starting daily aggregation job');
