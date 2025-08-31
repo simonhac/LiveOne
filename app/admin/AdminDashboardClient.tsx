@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Clock, Activity, Wifi, WifiOff, Server, Battery, Sun, Home, TrendingUp, TrendingDown, X, RefreshCw, AlertCircle, Zap } from 'lucide-react'
+import { Clock, Activity, Wifi, WifiOff, Server, Battery, Sun, Home, TrendingUp, TrendingDown, X, RefreshCw, AlertCircle, Zap, PauseCircle } from 'lucide-react'
 import SystemInfoTooltip from '@/components/SystemInfoTooltip'
-import TestSelectLiveButton from '@/components/TestSelectLiveButton'
 import SummaryCard from '@/components/SummaryCard'
+import SystemActionsMenu from '@/components/SystemActionsMenu'
 
 interface SystemInfo {
   model?: string
@@ -27,13 +27,14 @@ interface SystemData {
   displayName: string  // Non-null from database
   vendorType: string
   vendorSiteId: string  // Vendor's identifier
+  vendorUserId: string | null  // Vendor-specific user ID
+  status: 'active' | 'disabled' | 'removed'  // System status
   lastLogin: string | null
   isLoggedIn: boolean
   activeSessions: number
   systemInfo?: SystemInfo | null
   polling: {
     isActive: boolean
-    isAuthenticated: boolean
     lastPollTime: string | null
     lastError: string | null
   }
@@ -85,6 +86,8 @@ interface TestModalData {
   error: string | null
   systemName: string
   ownerClerkUserId: string
+  vendorType: string
+  vendorSiteId: string
   did: string
   data: TestData | null
 }
@@ -93,17 +96,20 @@ export default function AdminDashboardClient() {
   const [systems, setSystems] = useState<SystemData[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'active' | 'removed'>('active')
   const [testModal, setTestModal] = useState<TestModalData>({
     isOpen: false,
     loading: false,
     error: null,
     systemName: '',
     ownerClerkUserId: '',
+    vendorType: '',
+    vendorSiteId: '',
     did: '',
     data: null
   })
 
-  const testConnection = async (systemName: string, ownerClerkUserId: string, did: string, isRefresh: boolean = false) => {
+  const testConnection = async (systemName: string, ownerClerkUserId: string, vendorType: string, vendorSiteId: string, isRefresh: boolean = false) => {
     if (!isRefresh) {
       // Initial load - set everything
       setTestModal({
@@ -112,7 +118,9 @@ export default function AdminDashboardClient() {
         error: null,
         systemName,
         ownerClerkUserId,
-        did,
+        vendorType,
+        vendorSiteId,
+        did: `${vendorType}/${vendorSiteId}`,
         data: null
       })
     } else {
@@ -130,7 +138,7 @@ export default function AdminDashboardClient() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ clerkUserId: ownerClerkUserId, did })
+        body: JSON.stringify({ ownerClerkUserId, vendorType, vendorSiteId })
       })
 
       const result = await response.json()
@@ -163,8 +171,8 @@ export default function AdminDashboardClient() {
   }
 
   const refreshTest = () => {
-    if (testModal.ownerClerkUserId) {
-      testConnection(testModal.systemName, testModal.ownerClerkUserId, testModal.did, true)
+    if (testModal.ownerClerkUserId && testModal.vendorType && testModal.vendorSiteId) {
+      testConnection(testModal.systemName, testModal.ownerClerkUserId, testModal.vendorType, testModal.vendorSiteId, true)
     }
   }
 
@@ -175,6 +183,8 @@ export default function AdminDashboardClient() {
       error: null,
       systemName: '',
       ownerClerkUserId: '',
+      vendorType: '',
+      vendorSiteId: '',
       did: '',
       data: null
     })
@@ -208,12 +218,46 @@ export default function AdminDashboardClient() {
     }
   }
 
+  const updateSystemStatus = async (systemId: number, newStatus: 'active' | 'disabled' | 'removed') => {
+    try {
+      const response = await fetch(`/api/admin/systems/${systemId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: newStatus })
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to update status')
+      }
+
+      const result = await response.json()
+      
+      // Update local state
+      setSystems(prevSystems => 
+        prevSystems.map(sys => 
+          sys.systemId === systemId 
+            ? { ...sys, status: newStatus }
+            : sys
+        )
+      )
+      
+      return result
+    } catch (err) {
+      console.error('Error updating system status:', err)
+      alert(`Failed to update status: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    }
+  }
+
   useEffect(() => {
     fetchSystems()
     const interval = setInterval(fetchSystems, 30000) // Refresh every 30 seconds
     
     return () => clearInterval(interval)
   }, [])
+
 
   if (loading) {
     return (
@@ -238,15 +282,37 @@ export default function AdminDashboardClient() {
           
           {/* Systems Table */}
           <div className="bg-gray-800 border border-gray-700 md:rounded overflow-hidden flex-1 flex flex-col">
-            <div className="px-2 md:px-6 py-4 border-b border-gray-700">
-              <h2 className="text-lg font-semibold text-white">Registered Systems</h2>
+            <div className="border-b border-gray-700">
+              <div className="flex items-end -mb-px">
+                <button
+                  onClick={() => setActiveTab('active')}
+                  className={`px-4 md:px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
+                    activeTab === 'active' 
+                      ? 'text-white border-blue-500 bg-gray-700/50' 
+                      : 'text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600'
+                  }`}
+                >
+                  Active Systems
+                </button>
+                <button
+                  onClick={() => setActiveTab('removed')}
+                  className={`px-4 md:px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
+                    activeTab === 'removed' 
+                      ? 'text-white border-blue-500 bg-gray-700/50' 
+                      : 'text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600'
+                  }`}
+                >
+                  Removed
+                </button>
+              </div>
             </div>
           
           <div className="overflow-auto flex-1">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-700">
-                  <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="w-5"></th>
+                  <th className="text-left px-1.5 md:px-1.5 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                     System
                   </th>
                   <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
@@ -258,36 +324,70 @@ export default function AdminDashboardClient() {
                   <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                     Last Poll
                   </th>
-                  <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider hidden sm:table-cell">
-                    Actions
-                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-700">
-                {systems.map((system) => (
+                {systems
+                  .filter(system => 
+                    activeTab === 'active' 
+                      ? system.status === 'active' || system.status === 'disabled'
+                      : system.status === 'removed'
+                  )
+                  .map((system, index, filteredSystems) => (
                   <tr 
                     key={system.systemId}
-                    className="hover:bg-gray-700/50 transition-colors"
+                    className={`hover:bg-gray-700/50 transition-colors relative ${
+                      system.status === 'disabled' ? 'opacity-40' : ''
+                    }`}
+                    style={system.status === 'removed' ? {
+                      backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 10px, rgba(251,146,60,0.15) 10px, rgba(251,146,60,0.15) 20px)'
+                    } : undefined}
                   >
-                    <td className="px-2 md:px-6 py-4 whitespace-nowrap align-top">
+                    <td className="w-5 align-top pt-3 text-center">
+                      <SystemActionsMenu
+                        systemId={system.systemId}
+                        systemName={system.displayName}
+                        status={system.status}
+                        onTest={() => testConnection(system.displayName, system.owner.clerkId, system.vendorType, system.vendorSiteId)}
+                        onStatusChange={(newStatus) => updateSystemStatus(system.systemId, newStatus)}
+                      />
+                    </td>
+                    <td className="px-1.5 md:px-1.5 py-4 whitespace-nowrap align-top">
                       <Link 
                         href={`/dashboard/${system.systemId}`}
                         className="block group"
                       >
-                        <div className="text-sm font-medium text-white group-hover:text-blue-400 transition-colors">
-                          {system.displayName}
-                        </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-gray-400 group-hover:text-blue-400 transition-colors">
-                            {system.vendorType}/{system.vendorSiteId}
+                          <span className="text-sm font-medium text-white group-hover:text-blue-400 transition-colors">
+                            {system.displayName}
                           </span>
-                          {system.systemInfo && (
-                            <div onClick={(e) => e.preventDefault()}>
-                              <SystemInfoTooltip 
-                                systemInfo={system.systemInfo}
-                                systemNumber={system.vendorSiteId}
-                              />
+                          {system.status === 'disabled' && (
+                            <div className="relative group/pause">
+                              <PauseCircle className="w-4 h-4 text-orange-400" />
+                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover/pause:opacity-100 pointer-events-none transition-opacity z-10 border border-gray-700">
+                                System Disabled
+                              </div>
                             </div>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-400 group-hover:text-blue-400 transition-colors">
+                              {system.vendorType}/{system.vendorSiteId}
+                            </span>
+                            {system.systemInfo && (
+                              <div onClick={(e) => e.preventDefault()}>
+                                <SystemInfoTooltip 
+                                  systemInfo={system.systemInfo}
+                                  systemNumber={system.vendorSiteId}
+                                />
+                              </div>
+                            )}
+                          </div>
+                          {system.vendorUserId && (
+                            <span className="text-xs text-gray-500">
+                              {system.vendorUserId}
+                            </span>
                           )}
                         </div>
                       </Link>
@@ -349,7 +449,25 @@ export default function AdminDashboardClient() {
                           ) : system.polling.lastPollTime ? (
                             <div className="text-xs text-gray-400">
                               <Clock className="w-3 h-3 inline mr-1" />
-                              {new Date(system.polling.lastPollTime).toLocaleTimeString()}
+                              {(() => {
+                                const pollDate = new Date(system.polling.lastPollTime)
+                                const today = new Date()
+                                const isToday = 
+                                  pollDate.getDate() === today.getDate() &&
+                                  pollDate.getMonth() === today.getMonth() &&
+                                  pollDate.getFullYear() === today.getFullYear()
+                                
+                                if (isToday) {
+                                  return pollDate.toLocaleTimeString()
+                                } else {
+                                  return (
+                                    <>
+                                      <div>{pollDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</div>
+                                      <div className="ml-4">{pollDate.toLocaleTimeString()}</div>
+                                    </>
+                                  )
+                                }
+                              })()}
                             </div>
                           ) : (
                             <span className="text-sm text-gray-500">Never</span>
@@ -360,25 +478,7 @@ export default function AdminDashboardClient() {
                             </p>
                           )}
                         </div>
-                        <div className="sm:hidden ml-4 mt-6">
-                          <div className="scale-75 origin-left">
-                            <TestSelectLiveButton
-                              displayName={system.displayName}
-                              ownerClerkUserId={system.owner.clerkId}
-                              vendorType={system.vendorType}
-                              vendorSiteId={system.vendorSiteId}
-                            />
-                          </div>
-                        </div>
                       </div>
-                    </td>
-                    <td className="px-2 md:px-6 py-4 whitespace-nowrap hidden sm:table-cell">
-                      <TestSelectLiveButton
-                        displayName={system.displayName}
-                        ownerClerkUserId={system.owner.clerkId}
-                        vendorType={system.vendorType}
-                        vendorSiteId={system.vendorSiteId}
-                      />
                     </td>
                   </tr>
                 ))}
@@ -399,7 +499,7 @@ export default function AdminDashboardClient() {
             />
             <SummaryCard 
               label="Active Systems"
-              value={systems.filter(s => s.polling.isActive).length}
+              value={systems.filter(s => s.status === 'active').length}
               icon={Activity}
               iconColor="text-green-400"
             />

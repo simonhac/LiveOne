@@ -7,6 +7,7 @@ export const systems = sqliteTable('systems', {
   ownerClerkUserId: text('owner_clerk_user_id'), // Clerk user ID of the owner who holds the vendor credentials
   vendorType: text('vendor_type').notNull(), // Vendor type (e.g., 'select.live', 'fronius', 'sma')
   vendorSiteId: text('vendor_site_id').notNull(), // Vendor's site/system identifier
+  status: text('status').notNull().default('active'), // 'active', 'disabled', or 'removed'
   displayName: text('display_name').notNull(),
   model: text('model'),
   serial: text('serial'),
@@ -19,6 +20,7 @@ export const systems = sqliteTable('systems', {
 }, (table) => ({
   vendorSiteUnique: uniqueIndex('vendor_site_unique').on(table.vendorType, table.vendorSiteId),
   ownerClerkUserIdx: index('owner_clerk_user_idx').on(table.ownerClerkUserId),
+  statusIdx: index('systems_status_idx').on(table.status),
 }));
 
 // Readings table - stores time-series inverter data
@@ -77,7 +79,6 @@ export const pollingStatus = sqliteTable('polling_status', {
   lastError: text('last_error'),
   lastResponse: text('last_response', { mode: 'json' }), // Store full Select.Live response
   consecutiveErrors: integer('consecutive_errors').notNull().default(0),
-  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   totalPolls: integer('total_polls').notNull().default(0),
   successfulPolls: integer('successful_polls').notNull().default(0),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),

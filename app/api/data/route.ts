@@ -235,7 +235,7 @@ export async function GET(request: Request) {
           consecutiveErrors: status?.consecutiveErrors || 0,
           totalPolls: status?.totalPolls || 0,
           successfulPolls: status?.successfulPolls || 0,
-          isActive: status?.isActive || false,
+          isActive: system.status === 'active',
         }
       })
     } else if (status?.lastError) {
@@ -251,7 +251,7 @@ export async function GET(request: Request) {
           consecutiveErrors: status?.consecutiveErrors || 0,
           totalPolls: status?.totalPolls || 0,
           successfulPolls: status?.successfulPolls || 0,
-          isActive: status?.isActive || false,
+          isActive: system.status === 'active',
         }
       }, { status: 503 })
     } else {
@@ -268,7 +268,7 @@ export async function GET(request: Request) {
           consecutiveErrors: status.consecutiveErrors || 0,
           totalPolls: status.totalPolls || 0,
           successfulPolls: status.successfulPolls || 0,
-          isActive: status.isActive || false,
+          isActive: system.status === 'active',
         } : null
       }, { status: 503 })
     }

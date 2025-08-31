@@ -1,26 +1,5 @@
 // Configuration for LiveOne
 
-// API Configuration
-export const API_CONFIG = {
-  baseUrl: 'https://select.live',
-  loginEndpoint: '/login',
-  loginPageEndpoint: '/login',
-  dataEndpoint: '/dashboard/hfdata',
-  timeout: 30000,                    // 30 seconds timeout
-  retryAttempts: 3,                   // Number of retry attempts
-  retryDelay: 1000,                   // Initial retry delay in ms
-} as const;
-
-// Polling Configuration
-export const POLLING_CONFIG = {
-  defaultInterval: 60000,             // Default 1 minute polling
-  minInterval: 30000,                 // Minimum 30 seconds
-  maxInterval: 300000,                // Maximum 5 minutes
-  magicWindowStart: 48,               // Magic window starts at minute 48
-  magicWindowEnd: 52,                 // Magic window ends at minute 52
-  retryOnErrorDelay: 5000,            // Wait 5 seconds after error
-} as const;
-
 // Import real secrets from separate file (optional in production)
 let LIVEONE_USERS: any = {};
 let SELECTLIVE_CREDENTIALS: any = {};
