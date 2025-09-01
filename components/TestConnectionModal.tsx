@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { CheckCircle, XCircle, Loader2, X, Zap, Sun, Home, Battery, AlertCircle, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
-import { formatValue } from '@/lib/energy-formatting'
+import { formatValue, formatValuePair } from '@/lib/energy-formatting'
 import { JsonView, defaultStyles, darkStyles } from 'react-json-view-lite'
 import 'react-json-view-lite/dist/index.css'
 
@@ -30,7 +30,7 @@ export default function TestConnectionModal({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<any>(null)
-  const [rawResponse, setRawResponse] = useState<any>(null)
+  const [vendorResponse, setVendorResponse] = useState<any>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
 
@@ -66,8 +66,8 @@ export default function TestConnectionModal({
         // Log raw response to browser console for debugging
         console.log('[TestConnectionModal] Raw response:', result)
         
-        // Store raw response for details panel
-        setRawResponse(result)
+        // Store vendor's raw response for details panel
+        setVendorResponse(result.vendorResponse)
         
         setData({
           latest: result.latest,
@@ -215,7 +215,7 @@ export default function TestConnectionModal({
               {/* Today's Energy Section */}
               <div className="bg-gray-900 rounded-lg p-4">
                 <h4 className="text-sm font-semibold text-gray-400 mb-3">Today&apos;s Energy</h4>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
                     <p className="text-xs text-gray-400">Solar Generated</p>
                     <p className="text-lg font-semibold text-white">
@@ -231,9 +231,27 @@ export default function TestConnectionModal({
                   <div>
                     <p className="text-xs text-gray-400">Battery In/Out</p>
                     <p className="text-lg font-semibold text-white">
-                      {data.latest.energy.today.batteryInKwh !== null && data.latest.energy.today.batteryOutKwh !== null
-                        ? `+${formatPower(data.latest.energy.today.batteryInKwh, 'kWh')} / -${formatPower(data.latest.energy.today.batteryOutKwh, 'kWh')}`
-                        : '—'}
+                      {(() => {
+                        const formatted = formatValuePair(
+                          data.latest.energy.today.batteryInKwh,
+                          data.latest.energy.today.batteryOutKwh,
+                          'kWh'
+                        )
+                        return formatted.unit ? `${formatted.value} ${formatted.unit}` : formatted.value
+                      })()}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400">Grid Import/Export</p>
+                    <p className="text-lg font-semibold text-white">
+                      {(() => {
+                        const formatted = formatValuePair(
+                          data.latest.energy.today.gridInKwh,
+                          data.latest.energy.today.gridOutKwh,
+                          'kWh'
+                        )
+                        return formatted.unit ? `${formatted.value} ${formatted.unit}` : formatted.value
+                      })()}
                     </p>
                   </div>
                 </div>
@@ -298,12 +316,12 @@ export default function TestConnectionModal({
                   Details
                 </button>
                 
-                {showDetails && rawResponse && (
+                {showDetails && vendorResponse && (
                   <div className="mt-3 bg-gray-950 border border-gray-700 rounded-lg p-4">
-                    <h5 className="text-xs font-semibold text-gray-400 mb-2">Raw Server Response</h5>
+                    <h5 className="text-xs font-semibold text-gray-400 mb-2">Raw Vendor Response</h5>
                     <div className="overflow-x-auto">
                       <JsonView 
-                        data={rawResponse} 
+                        data={vendorResponse} 
                         shouldExpandNode={(level) => level < 2}
                         style={darkStyles}
                       />
