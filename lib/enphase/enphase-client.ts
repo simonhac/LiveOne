@@ -242,7 +242,7 @@ export class EnphaseClient implements IEnphaseClient {
     
     for (const endpoint of endpoints) {
       try {
-        console.log(`ENPHASE: Trying ${endpoint.name} endpoint...`);
+        console.log(`ENPHASE: Testing endpoint: ${endpoint.url}`);
         const response = await fetch(endpoint.url, {
           headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -252,7 +252,7 @@ export class EnphaseClient implements IEnphaseClient {
         
         if (response.ok) {
           const data = await response.json();
-          console.log(`ENPHASE: ${endpoint.name} response:`, JSON.stringify(data, null, 2));
+          console.log(`ENPHASE: ${endpoint.name} raw response:`, JSON.stringify(data, null, 2));
         } else {
           console.log(`ENPHASE: ${endpoint.name} failed with status ${response.status}`);
         }
