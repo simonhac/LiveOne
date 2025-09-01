@@ -452,6 +452,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
               <div className="lg:col-span-2">
                 <EnergyChart 
                   systemId={parseInt(systemId as string)}
+                  vendorType={data?.vendorType}
                   className="h-full min-h-[400px]" 
                   maxPowerHint={(() => {
                     // Parse solar size (format: "9 kW")
