@@ -91,11 +91,16 @@ export async function POST(request: NextRequest) {
         )
         
         // Extract power and energy values
-        const currentPower = telemetry.production_power || 0
+        // Use actual values or null if undefined to properly represent missing data
+        const currentPower = telemetry.production_power ?? null
+        const consumptionPower = telemetry.consumption_power ?? null
+        
         // Note: Enphase only provides lifetime energy, not daily
         // In a real implementation, we'd need to fetch and calculate daily values
-        const todayProduction = 0 // Would need to calculate from historical data
-        const todayConsumption = 0 // Would need to calculate from historical data
+        const todayProduction = null // Would need to calculate from historical data
+        const todayConsumption = null // Would need to calculate from historical data
+        
+        console.log(`[Test Connection] Enphase telemetry parsed - Production: ${currentPower}W, Consumption: ${consumptionPower}W`)
         
         // Format response to match test-connection format
         return NextResponse.json({
@@ -109,21 +114,21 @@ export async function POST(request: NextRequest) {
             timestamp: new Date().toISOString(),
             power: {
               solarW: currentPower,
-              loadW: 0, // Enphase doesn't provide real-time consumption
-              batteryW: 0, // No battery data in basic Enphase API
-              gridW: 0,
+              loadW: consumptionPower, // Use actual consumption if available
+              batteryW: null, // No battery data in basic Enphase API
+              gridW: null,
             },
             soc: {
-              battery: 0,
+              battery: null,
             },
             energy: {
               today: {
-                solarKwh: todayProduction / 1000, // Already in Wh, convert to kWh
-                loadKwh: todayConsumption / 1000, // Already in Wh, convert to kWh
-                batteryInKwh: 0,
-                batteryOutKwh: 0,
-                gridInKwh: 0,
-                gridOutKwh: 0,
+                solarKwh: todayProduction ? todayProduction / 1000 : null, // Convert to kWh if available
+                loadKwh: todayConsumption ? todayConsumption / 1000 : null, // Convert to kWh if available
+                batteryInKwh: null,
+                batteryOutKwh: null,
+                gridInKwh: null,
+                gridOutKwh: null,
               }
             },
             generatorStatus: 0,

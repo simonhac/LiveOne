@@ -2,6 +2,13 @@
 
 import { useState, useEffect } from 'react'
 import { CheckCircle, XCircle, Loader2, X, Zap, Sun, Home, Battery, AlertCircle, RefreshCw } from 'lucide-react'
+import { formatValue } from '@/lib/energy-formatting'
+
+// Helper to format value with unit in one go
+const formatPower = (value: number | null | undefined, unit: string): string => {
+  const formatted = formatValue(value, unit)
+  return formatted.unit ? `${formatted.value} ${formatted.unit}` : formatted.value
+}
 
 interface TestConnectionModalProps {
   displayName?: string | null  // Optional - we might not know it yet
@@ -138,7 +145,7 @@ export default function TestConnectionModal({
                     <div>
                       <p className="text-xs text-gray-400">Solar</p>
                       <p className="text-lg font-semibold text-yellow-400">
-                        {(data.latest.power.solarW / 1000).toFixed(1)} kW
+                        {formatPower(data.latest.power.solarW, 'W')}
                       </p>
                     </div>
                   </div>
@@ -148,7 +155,7 @@ export default function TestConnectionModal({
                     <div>
                       <p className="text-xs text-gray-400">Load</p>
                       <p className="text-lg font-semibold text-blue-400">
-                        {(data.latest.power.loadW / 1000).toFixed(1)} kW
+                        {formatPower(data.latest.power.loadW, 'W')}
                       </p>
                     </div>
                   </div>
@@ -158,14 +165,18 @@ export default function TestConnectionModal({
                     <div>
                       <p className="text-xs text-gray-400">Battery</p>
                       <p className="text-lg font-semibold text-green-400">
-                        {data.latest.soc.battery.toFixed(1)}%
+                        {data.latest.soc.battery !== null 
+                          ? `${data.latest.soc.battery.toFixed(1)}%`
+                          : '—'}
                       </p>
                       <p className="text-xs text-gray-400">
-                        {data.latest.power.batteryW < 0 
-                          ? `Charging ${Math.abs(data.latest.power.batteryW / 1000).toFixed(1)} kW`
-                          : data.latest.power.batteryW > 0
-                          ? `Discharging ${(data.latest.power.batteryW / 1000).toFixed(1)} kW`
-                          : 'Idle'}
+                        {data.latest.power.batteryW !== null
+                          ? data.latest.power.batteryW < 0 
+                            ? `Charging ${formatPower(Math.abs(data.latest.power.batteryW), 'W')}`
+                            : data.latest.power.batteryW > 0
+                            ? `Discharging ${formatPower(data.latest.power.batteryW, 'W')}`
+                            : 'Idle'
+                          : 'No data'}
                       </p>
                     </div>
                   </div>
@@ -175,10 +186,16 @@ export default function TestConnectionModal({
                     <div>
                       <p className="text-xs text-gray-400">Grid</p>
                       <p className="text-lg font-semibold text-purple-400">
-                        {Math.abs(data.latest.power.gridW / 1000).toFixed(1)} kW
+                        {formatPower(data.latest.power.gridW !== null ? Math.abs(data.latest.power.gridW) : null, 'W')}
                       </p>
                       <p className="text-xs text-gray-400">
-                        {data.latest.power.gridW > 0 ? 'Importing' : data.latest.power.gridW < 0 ? 'Exporting' : 'No flow'}
+                        {data.latest.power.gridW !== null
+                          ? data.latest.power.gridW > 0 
+                            ? 'Importing' 
+                            : data.latest.power.gridW < 0 
+                            ? 'Exporting' 
+                            : 'No flow'
+                          : 'No data'}
                       </p>
                     </div>
                   </div>
@@ -192,19 +209,21 @@ export default function TestConnectionModal({
                   <div>
                     <p className="text-xs text-gray-400">Solar Generated</p>
                     <p className="text-lg font-semibold text-white">
-                      {data.latest.energy.today.solarKwh.toFixed(1)} kWh
+                      {formatPower(data.latest.energy.today.solarKwh, 'kWh')}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-400">Load Consumed</p>
                     <p className="text-lg font-semibold text-white">
-                      {data.latest.energy.today.loadKwh.toFixed(1)} kWh
+                      {formatPower(data.latest.energy.today.loadKwh, 'kWh')}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-400">Battery In/Out</p>
                     <p className="text-lg font-semibold text-white">
-                      +{data.latest.energy.today.batteryInKwh.toFixed(1)} / -{data.latest.energy.today.batteryOutKwh.toFixed(1)} kWh
+                      {data.latest.energy.today.batteryInKwh !== null && data.latest.energy.today.batteryOutKwh !== null
+                        ? `+${formatPower(data.latest.energy.today.batteryInKwh, 'kWh')} / -${formatPower(data.latest.energy.today.batteryOutKwh, 'kWh')}`
+                        : '—'}
                     </p>
                   </div>
                 </div>
