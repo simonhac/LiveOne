@@ -85,6 +85,7 @@ export default async function DashboardSystemPage({ params }: PageProps) {
       systemExists={systemExists}
       isAdmin={isAdmin}
       availableSystems={availableSystems}
+      userId={userId}
     />
   )
 }

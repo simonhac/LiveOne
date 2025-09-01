@@ -207,6 +207,7 @@ export async function GET(request: Request) {
         vendorType: system.vendorType,
         vendorSiteId: system.vendorSiteId,
         displayName: system.displayName,
+        ownerClerkUserId: system.ownerClerkUserId,
         systemInfo: {
           model: system.model,
           serial: system.serial,
