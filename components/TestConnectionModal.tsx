@@ -59,6 +59,9 @@ export default function TestConnectionModal({
       }
 
       if (result.success && result.latest) {
+        // Log raw response to browser console for debugging
+        console.log('[TestConnectionModal] Raw response:', result)
+        
         setData({
           latest: result.latest,
           systemInfo: result.systemInfo
@@ -165,7 +168,7 @@ export default function TestConnectionModal({
                     <div>
                       <p className="text-xs text-gray-400">Battery</p>
                       <p className="text-lg font-semibold text-green-400">
-                        {data.latest.soc.battery !== null 
+                        {data.latest.soc?.battery !== null && data.latest.soc?.battery !== undefined
                           ? `${data.latest.soc.battery.toFixed(1)}%`
                           : '—'}
                       </p>
