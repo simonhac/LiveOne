@@ -61,8 +61,9 @@ export async function POST(request: NextRequest) {
     
     // Handle different vendor types
     if (vendorType === 'enphase') {
-      // Test Enphase connection
-      console.log(`[Test Connection] Testing Enphase for owner ${ownerClerkUserId}, site ${vendorSiteId}`)
+      // Clean up the system ID - remove any decimal point that might exist in the database
+      const cleanSystemId = String(vendorSiteId).replace(/\.0$/, '').split('.')[0]
+      console.log(`[Test Connection] Testing Enphase for owner ${ownerClerkUserId}, site ${vendorSiteId}${cleanSystemId !== vendorSiteId ? ` (cleaned: ${cleanSystemId})` : ''}`)
       const credentials = await getEnphaseCredentials(ownerClerkUserId)
       
       if (!credentials) {
@@ -83,9 +84,9 @@ export async function POST(request: NextRequest) {
         // Create Enphase client
         const client = getEnphaseClient()
         
-        // Fetch latest telemetry data
+        // Fetch latest telemetry data with cleaned system ID
         const telemetry = await client.getLatestTelemetry(
-          vendorSiteId,
+          cleanSystemId,
           credentials.access_token
         )
         
@@ -101,7 +102,7 @@ export async function POST(request: NextRequest) {
           success: true,
           timestamp: new Date().toISOString(),
           credentials: {
-            systemId: vendorSiteId,
+            systemId: cleanSystemId,
             vendorType: 'enphase'
           },
           latest: {
@@ -129,7 +130,7 @@ export async function POST(request: NextRequest) {
           },
           systemInfo: {
             model: 'Enphase System',
-            serial: vendorSiteId,
+            serial: cleanSystemId,
             ratings: null,
             solarSize: `${(currentPower / 1000).toFixed(1)} kW capacity`,
             batterySize: telemetry.storage_soc > 0 ? 'Battery present' : null
