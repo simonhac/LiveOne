@@ -9,8 +9,8 @@ import MobileMenu from '@/components/MobileMenu'
 import LastUpdateTime from '@/components/LastUpdateTime'
 import SystemInfoTooltip from '@/components/SystemInfoTooltip'
 import PowerCard from '@/components/PowerCard'
-import Settings from '@/components/Settings'
 import ConnectionNotification from '@/components/ConnectionNotification'
+import TestConnectionModal from '@/components/TestConnectionModal'
 import { 
   Sun, 
   Home, 
@@ -19,7 +19,9 @@ import {
   AlertTriangle,
   Shield,
   ChevronDown,
-  Settings as SettingsIcon
+  Settings as SettingsIcon,
+  Wifi,
+  Plus
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -112,6 +114,8 @@ interface DashboardData {
   systemNumber?: string;
   displayName?: string;
   vendorType?: string;
+  vendorSiteId?: string;
+  ownerClerkUserId?: string;
 }
 
 interface AvailableSystem {
@@ -126,6 +130,7 @@ interface DashboardClientProps {
   systemExists: boolean;
   isAdmin: boolean;
   availableSystems?: AvailableSystem[];
+  userId?: string;
 }
 
 // Helper function to get stale threshold based on vendor type
@@ -134,7 +139,7 @@ function getStaleThreshold(vendorType?: string): number {
   return vendorType === 'enphase' ? 2100 : 300;
 }
 
-export default function DashboardClient({ systemId, hasAccess, systemExists, isAdmin: isAdminProp, availableSystems = [] }: DashboardClientProps) {
+export default function DashboardClient({ systemId, hasAccess, systemExists, isAdmin: isAdminProp, availableSystems = [], userId }: DashboardClientProps) {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -143,8 +148,10 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [isAdmin, setIsAdmin] = useState(isAdminProp)
   const [showSystemDropdown, setShowSystemDropdown] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
+  const [showSettingsDropdown, setShowSettingsDropdown] = useState(false)
+  const [showTestConnection, setShowTestConnection] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const settingsDropdownRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
 
   // Function to fetch data from API
@@ -216,22 +223,25 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
     return () => clearInterval(interval)
   }, [lastUpdate, fetchData])
 
-  // Handle clicks outside of the dropdown
+  // Handle clicks outside of the dropdowns
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setShowSystemDropdown(false)
       }
+      if (settingsDropdownRef.current && !settingsDropdownRef.current.contains(event.target as Node)) {
+        setShowSettingsDropdown(false)
+      }
     }
 
-    if (showSystemDropdown) {
+    if (showSystemDropdown || showSettingsDropdown) {
       document.addEventListener('mousedown', handleClickOutside)
     }
 
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [showSystemDropdown])
+  }, [showSystemDropdown, showSettingsDropdown])
 
   // Show access denied message if user doesn't have access
   if (!hasAccess || !systemExists) {
@@ -363,13 +373,45 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   Admin
                 </Link>
               )}
-              <button
-                onClick={() => setShowSettings(true)}
-                className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
-                title="Settings"
-              >
-                <SettingsIcon className="w-5 h-5" />
-              </button>
+              <div className="relative" ref={settingsDropdownRef}>
+                <button
+                  onClick={() => setShowSettingsDropdown(!showSettingsDropdown)}
+                  className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
+                  title="Settings"
+                >
+                  <SettingsIcon className="w-5 h-5" />
+                </button>
+                
+                {showSettingsDropdown && (
+                  <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
+                    <button
+                      onClick={() => {
+                        setShowTestConnection(true)
+                        setShowSettingsDropdown(false)
+                      }}
+                      className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
+                    >
+                      <Wifi className="w-4 h-4" />
+                      Test Connection
+                    </button>
+                    
+                    {/* Only show Add Enphase if user doesn't have an Enphase system */}
+                    {data?.vendorType !== 'enphase' && (
+                      <>
+                        <div className="border-t border-gray-700 my-1"></div>
+                        <Link
+                          href="/auth/enphase/connect"
+                          onClick={() => setShowSettingsDropdown(false)}
+                          className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2 block"
+                        >
+                          <Plus className="w-4 h-4" />
+                          Add Enphase
+                        </Link>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
               <UserButton 
                 afterSignOutUrl="/sign-in"
                 appearance={{
@@ -507,11 +549,16 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
         )}
       </main>
       
-      {/* Settings Modal */}
-      <Settings 
-        isOpen={showSettings}
-        onClose={() => setShowSettings(false)}
-      />
+      {/* Test Connection Modal */}
+      {showTestConnection && data && (
+        <TestConnectionModal
+          displayName={data.displayName}
+          ownerClerkUserId={data.ownerClerkUserId || ''}
+          vendorType={data.vendorType || 'select.live'}
+          vendorSiteId={data.vendorSiteId || ''}
+          onClose={() => setShowTestConnection(false)}
+        />
+      )}
     </div>
   )
 }

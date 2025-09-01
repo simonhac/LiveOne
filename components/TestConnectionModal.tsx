@@ -1,8 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { CheckCircle, XCircle, Loader2, X, Zap, Sun, Home, Battery, AlertCircle, RefreshCw } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, X, Zap, Sun, Home, Battery, AlertCircle, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
 import { formatValue } from '@/lib/energy-formatting'
+import { JsonView, defaultStyles, darkStyles } from 'react-json-view-lite'
+import 'react-json-view-lite/dist/index.css'
 
 // Helper to format value with unit in one go
 const formatPower = (value: number | null | undefined, unit: string): string => {
@@ -28,7 +30,9 @@ export default function TestConnectionModal({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<any>(null)
+  const [rawResponse, setRawResponse] = useState<any>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [showDetails, setShowDetails] = useState(false)
 
   const testConnection = async (isRefresh: boolean = false) => {
     if (isRefresh) {
@@ -61,6 +65,9 @@ export default function TestConnectionModal({
       if (result.success && result.latest) {
         // Log raw response to browser console for debugging
         console.log('[TestConnectionModal] Raw response:', result)
+        
+        // Store raw response for details panel
+        setRawResponse(result)
         
         setData({
           latest: result.latest,
@@ -275,6 +282,34 @@ export default function TestConnectionModal({
                   minute: '2-digit',
                   second: '2-digit'
                 })}
+              </div>
+
+              {/* Details Disclosure */}
+              <div className="mt-4">
+                <button
+                  onClick={() => setShowDetails(!showDetails)}
+                  className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors"
+                >
+                  {showDetails ? (
+                    <ChevronDown className="w-4 h-4" />
+                  ) : (
+                    <ChevronRight className="w-4 h-4" />
+                  )}
+                  Details
+                </button>
+                
+                {showDetails && rawResponse && (
+                  <div className="mt-3 bg-gray-950 border border-gray-700 rounded-lg p-4">
+                    <h5 className="text-xs font-semibold text-gray-400 mb-2">Raw Server Response</h5>
+                    <div className="overflow-x-auto">
+                      <JsonView 
+                        data={rawResponse} 
+                        shouldExpandNode={(level) => level < 2}
+                        style={darkStyles}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
