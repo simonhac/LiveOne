@@ -104,21 +104,27 @@ export class EnphaseClient implements IEnphaseClient {
       redirect_uri: this.redirectUri,
       client_id: this.clientId.substring(0, 10) + '...',
       client_secret: this.clientSecret.substring(0, 10) + '...',
-      endpoint: `${this.baseUrl}/oauth/token`
+      endpoint: `${this.baseUrl}/oauth/token`,
+      auth_method: 'Basic Authentication'
     });
     
+    // Try Basic Authentication - encode client_id:client_secret in base64
+    const credentials = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+    
+    // Only send grant_type, code, and redirect_uri in the body
     const params = new URLSearchParams({
       grant_type: 'authorization_code',
       code,
-      redirect_uri: this.redirectUri,
-      client_id: this.clientId,
-      client_secret: this.clientSecret
+      redirect_uri: this.redirectUri
     });
 
     try {
       const response = await fetch(`${this.baseUrl}/oauth/token`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${credentials}`
+        },
         body: params
       });
 
@@ -154,17 +160,21 @@ export class EnphaseClient implements IEnphaseClient {
   async refreshTokens(refreshToken: string): Promise<EnphaseTokens> {
     console.log('ENPHASE: Refreshing access token');
     
+    // Use Basic Authentication for client credentials
+    const credentials = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+    
     const params = new URLSearchParams({
       grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      client_id: this.clientId,
-      client_secret: this.clientSecret
+      refresh_token: refreshToken
     });
 
     try {
       const response = await fetch(`${this.baseUrl}/oauth/token`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${credentials}`
+        },
         body: params
       });
 
