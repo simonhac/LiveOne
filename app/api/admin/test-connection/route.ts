@@ -21,6 +21,29 @@ export async function POST(request: NextRequest) {
     // Get the system details from the request
     const { ownerClerkUserId, vendorType, vendorSiteId } = await request.json()
     
+    // Get usernames for better logging
+    const { clerkClient: getClerkClient } = await import('@clerk/nextjs/server')
+    const clerk = await getClerkClient()
+    let currentUserName = 'unknown'
+    let ownerUserName = 'unknown'
+    
+    try {
+      const currentUser = await clerk.users.getUser(userId)
+      currentUserName = currentUser.username || currentUser.emailAddresses[0]?.emailAddress || 'unknown'
+    } catch (e) {}
+    
+    try {
+      const ownerUser = await clerk.users.getUser(ownerClerkUserId)
+      ownerUserName = ownerUser.username || ownerUser.emailAddresses[0]?.emailAddress || 'unknown'
+    } catch (e) {}
+    
+    console.log('[Test Connection] Request received:', {
+      currentUser: `${userId} (${currentUserName})`,
+      ownerUser: `${ownerClerkUserId} (${ownerUserName})`,
+      vendorType,
+      vendorSiteId
+    })
+    
     if (!ownerClerkUserId || !vendorType || !vendorSiteId) {
       return NextResponse.json({ error: 'Owner ID, vendor type, and vendor site ID required' }, { status: 400 })
     }
@@ -39,9 +62,11 @@ export async function POST(request: NextRequest) {
     // Handle different vendor types
     if (vendorType === 'enphase') {
       // Test Enphase connection
+      console.log(`[Test Connection] Testing Enphase for owner ${ownerClerkUserId}, site ${vendorSiteId}`)
       const credentials = await getEnphaseCredentials(ownerClerkUserId)
       
       if (!credentials) {
+        console.log(`[Test Connection] No Enphase credentials found for owner ${ownerClerkUserId}`)
         return NextResponse.json({ 
           error: 'No Enphase credentials found for this user' 
         }, { status: 404 })
