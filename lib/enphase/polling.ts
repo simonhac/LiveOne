@@ -85,9 +85,19 @@ export async function pollEnphaseSystem(system: EnphaseSystemForPolling): Promis
     accessToken
   );
   
+  // Use last_report_at if available, otherwise use current time
+  // (The summary endpoint doesn't provide last_report_at)
+  const timestamp = telemetry.last_report_at 
+    ? new Date(telemetry.last_report_at * 1000) 
+    : new Date();
+  
+  if (!telemetry.last_report_at) {
+    console.log('ENPHASE: No last_report_at in response, using current time');
+  }
+  
   // Transform Enphase data to our standard format
   const data: PollingData = {
-    timestamp: new Date(telemetry.last_report_at * 1000).toISOString(),
+    timestamp: timestamp.toISOString(),
     solarW: telemetry.production_power || 0,
     solarInverterW: telemetry.production_power || 0, // Enphase doesn't distinguish
     shuntW: 0, // Not available in Enphase
@@ -111,7 +121,7 @@ export async function pollEnphaseSystem(system: EnphaseSystemForPolling): Promis
     'Solar:', data.solarW, 'W',
     'Load:', data.loadW, 'W',
     'Battery:', data.batteryW, 'W',
-    'SOC:', data.batterySOC.toFixed(1), '%');
+    'SOC:', data.batterySOC ? `${data.batterySOC.toFixed(1)}%` : 'N/A');
   
   return data;
 }
