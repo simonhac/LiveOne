@@ -231,10 +231,38 @@ export class EnphaseClient implements IEnphaseClient {
   }
 
   async getLatestTelemetry(systemId: string, accessToken: string): Promise<EnphaseTelemetryResponse> {
-    console.log('ENPHASE: Fetching summary for system:', systemId);
+    console.log('ENPHASE: Fetching data from multiple endpoints for system:', systemId);
     
+    // Try all three endpoints and log their responses
+    const endpoints = [
+      { name: 'summary', url: `${this.baseUrl}/api/v4/systems/${systemId}/summary` },
+      { name: 'telemetry/production', url: `${this.baseUrl}/api/v4/systems/${systemId}/telemetry/production?size=1` },
+      { name: 'latest_telemetry', url: `${this.baseUrl}/api/v4/systems/${systemId}/latest_telemetry` }
+    ];
+    
+    for (const endpoint of endpoints) {
+      try {
+        console.log(`ENPHASE: Trying ${endpoint.name} endpoint...`);
+        const response = await fetch(endpoint.url, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'key': this.apiKey
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log(`ENPHASE: ${endpoint.name} response:`, JSON.stringify(data, null, 2));
+        } else {
+          console.log(`ENPHASE: ${endpoint.name} failed with status ${response.status}`);
+        }
+      } catch (error) {
+        console.log(`ENPHASE: ${endpoint.name} error:`, error);
+      }
+    }
+    
+    // For now, continue using summary endpoint for actual data
     try {
-      // Use the summary endpoint which provides current system data
       const response = await fetch(
         `${this.baseUrl}/api/v4/systems/${systemId}/summary`,
         {

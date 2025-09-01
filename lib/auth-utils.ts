@@ -15,6 +15,12 @@ export async function isUserAdmin() {
     const client = await clerkClient()
     const user = await client.users.getUser(userId)
     
+    console.log('[Auth] Admin check for user:', userId, {
+      hasPrivateMetadata: !!user.privateMetadata,
+      privateMetadata: user.privateMetadata,
+      isPlatformAdmin: (user.privateMetadata as any)?.isPlatformAdmin
+    })
+    
     if (user.privateMetadata && typeof user.privateMetadata === 'object') {
       const metadata = user.privateMetadata as any
       if (metadata.isPlatformAdmin === true) {
