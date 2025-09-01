@@ -111,10 +111,15 @@ export async function GET(request: NextRequest) {
 
     // Use the first system (in future, allow user to select)
     const enphaseSystem = enphaseSystems[0];
-    console.log('ENPHASE: Using system:', enphaseSystem.system_id, enphaseSystem.name);
+    
+    // Ensure system_id is a clean string without decimals
+    // Enphase may return it as a number or string with decimal
+    const cleanSystemId = String(enphaseSystem.system_id).replace(/\.0$/, '').split('.')[0];
+    console.log('ENPHASE: Using system:', cleanSystemId, enphaseSystem.name, 
+                '(raw value:', enphaseSystem.system_id, 'type:', typeof enphaseSystem.system_id, ')');
 
-    // Store tokens in Clerk metadata
-    await client.storeTokens(userId, tokens, enphaseSystem.system_id);
+    // Store tokens in Clerk metadata with clean system ID
+    await client.storeTokens(userId, tokens, cleanSystemId);
 
     // Check if system already exists in database
     const existingSystem = await db.select()
@@ -122,7 +127,7 @@ export async function GET(request: NextRequest) {
       .where(
         and(
           eq(systems.vendorType, 'enphase'),
-          eq(systems.vendorSiteId, enphaseSystem.system_id)
+          eq(systems.vendorSiteId, cleanSystemId)
         )
       )
       .limit(1);
@@ -145,7 +150,7 @@ export async function GET(request: NextRequest) {
       await db.insert(systems).values({
         ownerClerkUserId: userId,
         vendorType: 'enphase',
-        vendorSiteId: enphaseSystem.system_id,
+        vendorSiteId: cleanSystemId,
         status: 'active',
         displayName: enphaseSystem.name || 'Enphase System',
         model: 'Enphase IQ',
@@ -173,7 +178,7 @@ export async function GET(request: NextRequest) {
     }
 
     console.log('ENPHASE: Connection complete for user:', userDisplay);
-    console.log('ENPHASE: System successfully connected:', enphaseSystem.system_id);
+    console.log('ENPHASE: System successfully connected:', cleanSystemId);
 
     // Redirect to result page with success message
     const successUrl = new URL('/auth/enphase/result', request.url);
