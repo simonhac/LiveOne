@@ -8,6 +8,7 @@ interface PowerCardProps {
   bgColor: string
   borderColor: string
   secondsSinceUpdate?: number
+  staleThresholdSeconds: number
   extraInfo?: string
   extra?: React.ReactNode
 }
@@ -20,10 +21,11 @@ export default function PowerCard({
   bgColor,
   borderColor,
   secondsSinceUpdate = 0,
+  staleThresholdSeconds,
   extraInfo,
   extra
 }: PowerCardProps) {
-  const isStale = secondsSinceUpdate > 300 // 5 minutes
+  const isStale = secondsSinceUpdate > staleThresholdSeconds
   
   return (
     <div className={`${bgColor} border ${borderColor} rounded-lg p-4 relative overflow-hidden ${isStale ? 'opacity-75' : ''}`}>

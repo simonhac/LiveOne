@@ -111,6 +111,7 @@ interface DashboardData {
   systemInfo: SystemInfo;
   systemNumber?: string;
   displayName?: string;
+  vendorType?: string;
 }
 
 interface AvailableSystem {
@@ -125,6 +126,12 @@ interface DashboardClientProps {
   systemExists: boolean;
   isAdmin: boolean;
   availableSystems?: AvailableSystem[];
+}
+
+// Helper function to get stale threshold based on vendor type
+function getStaleThreshold(vendorType?: string): number {
+  // 35 minutes (2100 seconds) for Enphase, 5 minutes (300 seconds) for select.live and others
+  return vendorType === 'enphase' ? 2100 : 300;
 }
 
 export default function DashboardClient({ systemId, hasAccess, systemExists, isAdmin: isAdminProp, availableSystems = [] }: DashboardClientProps) {
@@ -442,6 +449,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   bgColor="bg-yellow-900/20"
                   borderColor="border-yellow-700"
                   secondsSinceUpdate={secondsSinceUpdate}
+                  staleThresholdSeconds={getStaleThreshold(data.vendorType)}
                   extra={
                     <div className="text-xs space-y-1 text-gray-400">
                       <div>Remote: {formatPower(data.latest.power.solarInverterW)}</div>
@@ -457,6 +465,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   bgColor="bg-blue-900/20"
                   borderColor="border-blue-700"
                   secondsSinceUpdate={secondsSinceUpdate}
+                  staleThresholdSeconds={getStaleThreshold(data.vendorType)}
                 />
                 <PowerCard
                   title="Battery"
@@ -466,6 +475,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   bgColor={data.latest.power.batteryW < 0 ? "bg-green-900/20" : data.latest.power.batteryW > 0 ? "bg-orange-900/20" : "bg-gray-900/20"}
                   borderColor={data.latest.power.batteryW < 0 ? "border-green-700" : data.latest.power.batteryW > 0 ? "border-orange-700" : "border-gray-700"}
                   secondsSinceUpdate={secondsSinceUpdate}
+                  staleThresholdSeconds={getStaleThreshold(data.vendorType)}
                   extraInfo={
                     data.latest.power.batteryW !== 0 
                       ? `${data.latest.power.batteryW < 0 ? 'Charging' : 'Discharging'} ${formatPower(Math.abs(data.latest.power.batteryW))}`
@@ -481,6 +491,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                     bgColor={data.latest.power.gridW > 0 ? "bg-red-900/20" : data.latest.power.gridW < 0 ? "bg-green-900/20" : "bg-gray-900/20"}
                     borderColor={data.latest.power.gridW > 0 ? "border-red-700" : data.latest.power.gridW < 0 ? "border-green-700" : "border-gray-700"}
                     secondsSinceUpdate={secondsSinceUpdate}
+                    staleThresholdSeconds={getStaleThreshold(data.vendorType)}
                     extraInfo={data.latest.power.gridW > 0 ? 'Importing' : data.latest.power.gridW < 0 ? 'Exporting' : 'Neutral'}
                   />
                 )}
