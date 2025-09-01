@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { MoreVertical, Play, Pause, Trash2, FlaskConical } from 'lucide-react'
+import { MoreVertical, Play, Pause, Trash2, FlaskConical, BarChart3 } from 'lucide-react'
 
 interface SystemActionsMenuProps {
   systemId: number
@@ -10,6 +10,7 @@ interface SystemActionsMenuProps {
   status: 'active' | 'disabled' | 'removed'
   onTest: () => void
   onStatusChange: (status: 'active' | 'disabled' | 'removed') => void
+  onPollingStats?: () => void
 }
 
 export default function SystemActionsMenu({ 
@@ -17,7 +18,8 @@ export default function SystemActionsMenu({
   systemName, 
   status, 
   onTest, 
-  onStatusChange 
+  onStatusChange,
+  onPollingStats 
 }: SystemActionsMenuProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 })
@@ -78,6 +80,15 @@ export default function SystemActionsMenu({
             <FlaskConical className="w-4 h-4" />
             Test
           </button>
+          {onPollingStats && (
+            <button
+              onClick={() => handleMenuClick(onPollingStats)}
+              className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+            >
+              <BarChart3 className="w-4 h-4" />
+              Polling Stats
+            </button>
+          )}
           <div className="border-t border-gray-700 my-1"></div>
           {status !== 'active' && (
             <button
