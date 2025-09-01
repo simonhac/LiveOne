@@ -127,6 +127,13 @@ export default function AdminDashboardClient() {
   })
 
   const testConnection = async (systemName: string, ownerClerkUserId: string, vendorType: string, vendorSiteId: string, isRefresh: boolean = false) => {
+    console.log('[AdminDashboard] Testing connection for:', {
+      systemName,
+      ownerClerkUserId,
+      vendorType,
+      vendorSiteId
+    })
+    
     if (!isRefresh) {
       // Initial load - set everything
       setTestModal({
