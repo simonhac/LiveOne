@@ -6,6 +6,7 @@ import { systems, readings, pollingStatus, readingsAgg1d, userSystems } from '@/
 import { eq, and, desc, or } from 'drizzle-orm'
 import { formatTimeAEST, getYesterdayDate, fromUnixTimestamp } from '@/lib/date-utils'
 import { roundToThree } from '@/lib/format-opennem'
+import { isUserAdmin } from '@/lib/auth-utils'
 
 // Helper function to ensure values are null instead of undefined
 function nullifyUndefined<T>(value: T | undefined): T | null {
@@ -35,63 +36,49 @@ export async function GET(request: Request) {
       }, { status: 400 })
     }
     
-    // Get the system and check user access (systemId is our internal ID)
-    const userSystemRecords = await db.select()
-      .from(userSystems)
-      .innerJoin(systems, eq(systems.id, userSystems.systemId))
-      .where(
-        and(
-          eq(userSystems.clerkUserId, userId),
-          eq(systems.id, parseInt(systemId))
-        )
-      );
-    
-    if (userSystemRecords.length === 0) {
-      // Check if user is admin
-      const isAdmin = await db.select()
-        .from(userSystems)
-        .where(
-          and(
-            eq(userSystems.clerkUserId, userId),
-            eq(userSystems.role, 'admin')
-          )
-        )
-        .limit(1);
-      
-      if (isAdmin.length > 0) {
-        // Admin can access any system
-        const [adminSystem] = await db.select()
-          .from(systems)
-          .where(eq(systems.id, parseInt(systemId)))
-          .limit(1);
-        
-        if (!adminSystem) {
-          return NextResponse.json({
-            success: false,
-            error: 'System not found or access denied',
-          }, { status: 404 });
-        }
-        
-        var system = adminSystem;
-        var userRole = 'admin';
-      } else {
-        return NextResponse.json({
-          success: false,
-          error: 'System not found or access denied',
-        }, { status: 404 });
-      }
-    } else {
-      var system = userSystemRecords[0].systems;
-      var userRole = userSystemRecords[0].user_systems.role;
-    }
+    // Get the system first
+    const [system] = await db.select()
+      .from(systems)
+      .where(eq(systems.id, parseInt(systemId)))
+      .limit(1);
     
     if (!system) {
       return NextResponse.json({
         success: false,
         error: 'System not found',
-        timestamp: new Date(),
       }, { status: 404 });
     }
+    
+    // Check if user has access to this system
+    // Admin can access all systems, regular users can only access their own
+    const isAdmin = await isUserAdmin();
+    
+    // Check user access via userSystems table (for non-owners who have been granted access)
+    const userSystemAccess = await db.select()
+      .from(userSystems)
+      .where(
+        and(
+          eq(userSystems.clerkUserId, userId),
+          eq(userSystems.systemId, system.id)
+        )
+      )
+      .limit(1);
+    
+    const hasDirectAccess = userSystemAccess.length > 0;
+    const isOwner = system.ownerClerkUserId === userId;
+    
+    if (!isAdmin && !isOwner && !hasDirectAccess) {
+      return NextResponse.json({
+        success: false,
+        error: 'Access denied to system',
+      }, { status: 403 });
+    }
+    
+    // Determine user role
+    const userRole = isAdmin ? 'admin' : 
+                    isOwner ? 'owner' : 
+                    hasDirectAccess ? userSystemAccess[0].role : 
+                    'viewer';
     
     // Get latest reading from database
     const [latestReading] = await db.select()
