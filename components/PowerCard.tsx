@@ -7,7 +7,7 @@ interface PowerCardProps {
   iconColor: string
   bgColor: string
   borderColor: string
-  isOffline?: boolean
+  secondsSinceUpdate?: number
   extraInfo?: string
   extra?: React.ReactNode
 }
@@ -19,13 +19,15 @@ export default function PowerCard({
   iconColor,
   bgColor,
   borderColor,
-  isOffline = false,
+  secondsSinceUpdate = 0,
   extraInfo,
   extra
 }: PowerCardProps) {
+  const isStale = secondsSinceUpdate > 300 // 5 minutes
+  
   return (
-    <div className={`${bgColor} border ${borderColor} rounded-lg p-4 relative overflow-hidden ${isOffline ? 'opacity-75' : ''}`}>
-      {isOffline && (
+    <div className={`${bgColor} border ${borderColor} rounded-lg p-4 relative overflow-hidden ${isStale ? 'opacity-75' : ''}`}>
+      {isStale && (
         <div 
           className="absolute inset-0 opacity-30 pointer-events-none"
           style={{

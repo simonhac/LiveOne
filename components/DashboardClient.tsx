@@ -441,7 +441,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   iconColor="text-yellow-400"
                   bgColor="bg-yellow-900/20"
                   borderColor="border-yellow-700"
-                  isOffline={secondsSinceUpdate > 300}
+                  secondsSinceUpdate={secondsSinceUpdate}
                   extra={
                     <div className="text-xs space-y-1 text-gray-400">
                       <div>Remote: {formatPower(data.latest.power.solarInverterW)}</div>
@@ -456,6 +456,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   iconColor="text-blue-400"
                   bgColor="bg-blue-900/20"
                   borderColor="border-blue-700"
+                  secondsSinceUpdate={secondsSinceUpdate}
                 />
                 <PowerCard
                   title="Battery"
@@ -464,6 +465,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   iconColor={data.latest.power.batteryW < 0 ? "text-green-400" : data.latest.power.batteryW > 0 ? "text-orange-400" : "text-gray-400"}
                   bgColor={data.latest.power.batteryW < 0 ? "bg-green-900/20" : data.latest.power.batteryW > 0 ? "bg-orange-900/20" : "bg-gray-900/20"}
                   borderColor={data.latest.power.batteryW < 0 ? "border-green-700" : data.latest.power.batteryW > 0 ? "border-orange-700" : "border-gray-700"}
+                  secondsSinceUpdate={secondsSinceUpdate}
                   extraInfo={
                     data.latest.power.batteryW !== 0 
                       ? `${data.latest.power.batteryW < 0 ? 'Charging' : 'Discharging'} ${formatPower(Math.abs(data.latest.power.batteryW))}`
@@ -478,7 +480,8 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                     iconColor={data.latest.power.gridW > 0 ? "text-red-400" : data.latest.power.gridW < 0 ? "text-green-400" : "text-gray-400"}
                     bgColor={data.latest.power.gridW > 0 ? "bg-red-900/20" : data.latest.power.gridW < 0 ? "bg-green-900/20" : "bg-gray-900/20"}
                     borderColor={data.latest.power.gridW > 0 ? "border-red-700" : data.latest.power.gridW < 0 ? "border-green-700" : "border-gray-700"}
-                      extraInfo={data.latest.power.gridW > 0 ? 'Importing' : data.latest.power.gridW < 0 ? 'Exporting' : 'Neutral'}
+                    secondsSinceUpdate={secondsSinceUpdate}
+                    extraInfo={data.latest.power.gridW > 0 ? 'Importing' : data.latest.power.gridW < 0 ? 'Exporting' : 'Neutral'}
                   />
                 )}
               </div>
