@@ -41,6 +41,7 @@ interface EnergyChartProps {
   className?: string
   maxPowerHint?: number // Max power in kW
   systemId: number // System ID (e.g., 648, 1586)
+  vendorType?: string // Vendor type (e.g., 'enphase', 'select.live')
 }
 
 interface ChartData {
@@ -54,7 +55,7 @@ interface ChartData {
   mode: 'power' | 'energy' // Mode based on interval: power (≤30m) or energy (≥1d)
 }
 
-export default function EnergyChart({ className = '', maxPowerHint, systemId }: EnergyChartProps) {
+export default function EnergyChart({ className = '', maxPowerHint, systemId, vendorType }: EnergyChartProps) {
   const [chartData, setChartData] = useState<ChartData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -345,12 +346,13 @@ export default function EnergyChart({ className = '', maxPowerHint, systemId }: 
       
       try {
         // Fetch will automatically include cookies
-        // Use different intervals: 5m for 1D, 30m for 7D, 1d for 30D
+        // Use different intervals based on vendor type and time range
         let requestInterval: string
         let duration: string
         
         if (timeRange === '1D') {
-          requestInterval = '5m'
+          // For Enphase, use 30m instead of 5m for 1D view
+          requestInterval = vendorType === 'enphase' ? '30m' : '5m'
           duration = '25h' // 25h for 1D
         } else if (timeRange === '7D') {
           requestInterval = '30m'
