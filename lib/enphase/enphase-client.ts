@@ -98,6 +98,14 @@ export class EnphaseClient implements IEnphaseClient {
 
   async exchangeCodeForTokens(code: string): Promise<EnphaseTokens> {
     console.log('ENPHASE: Exchanging authorization code for tokens');
+    console.log('ENPHASE: Token exchange parameters:', {
+      grant_type: 'authorization_code',
+      code: code.substring(0, 20) + '...',
+      redirect_uri: this.redirectUri,
+      client_id: this.clientId.substring(0, 10) + '...',
+      client_secret: this.clientSecret.substring(0, 10) + '...',
+      endpoint: `${this.baseUrl}/oauth/token`
+    });
     
     const params = new URLSearchParams({
       grant_type: 'authorization_code',
@@ -115,9 +123,23 @@ export class EnphaseClient implements IEnphaseClient {
       });
 
       if (!response.ok) {
-        const error = await response.text();
-        console.error('ENPHASE: Token exchange failed:', response.status, error);
-        throw new Error(`Token exchange failed: ${response.status}`);
+        const errorText = await response.text();
+        console.error('ENPHASE: Token exchange failed');
+        console.error('ENPHASE: Response status:', response.status);
+        console.error('ENPHASE: Response headers:', Object.fromEntries(response.headers.entries()));
+        console.error('ENPHASE: Response body:', errorText);
+        
+        // Try to parse error as JSON if possible
+        let errorDetail = errorText;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorDetail = errorJson.error_description || errorJson.error || errorText;
+          console.error('ENPHASE: Error detail:', errorJson);
+        } catch {
+          // Not JSON, use as is
+        }
+        
+        throw new Error(`Token exchange failed: ${response.status} - ${errorDetail}`);
       }
 
       const tokens = await response.json();
@@ -147,9 +169,21 @@ export class EnphaseClient implements IEnphaseClient {
       });
 
       if (!response.ok) {
-        const error = await response.text();
-        console.error('ENPHASE: Token refresh failed:', response.status, error);
-        throw new Error(`Token refresh failed: ${response.status}`);
+        const errorText = await response.text();
+        console.error('ENPHASE: Token refresh failed');
+        console.error('ENPHASE: Response status:', response.status);
+        console.error('ENPHASE: Response body:', errorText);
+        
+        // Try to parse error as JSON if possible
+        let errorDetail = errorText;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorDetail = errorJson.error_description || errorJson.error || errorText;
+        } catch {
+          // Not JSON, use as is
+        }
+        
+        throw new Error(`Token refresh failed: ${response.status} - ${errorDetail}`);
       }
 
       const tokens = await response.json();
