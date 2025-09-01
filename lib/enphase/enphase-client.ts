@@ -231,11 +231,12 @@ export class EnphaseClient implements IEnphaseClient {
   }
 
   async getLatestTelemetry(systemId: string, accessToken: string): Promise<EnphaseTelemetryResponse> {
-    console.log('ENPHASE: Fetching telemetry for system:', systemId);
+    console.log('ENPHASE: Fetching summary for system:', systemId);
     
     try {
+      // Use the summary endpoint which provides current system data
       const response = await fetch(
-        `${this.baseUrl}/api/v4/systems/${systemId}/latest_telemetry`,
+        `${this.baseUrl}/api/v4/systems/${systemId}/summary`,
         {
           headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -255,11 +256,29 @@ export class EnphaseClient implements IEnphaseClient {
       }
       
       const data = await response.json();
-      console.log('ENPHASE: Raw telemetry response:', JSON.stringify(data, null, 2));
-      console.log('ENPHASE: Telemetry received for system:', systemId, 
-        'Production:', data.production_power, 'W',
-        'Consumption:', data.consumption_power, 'W');
-      return data;
+      console.log('ENPHASE: Raw summary response:', JSON.stringify(data, null, 2));
+      
+      // The summary endpoint returns different data structure
+      // Convert it to match our expected telemetry response format
+      const telemetryResponse: EnphaseTelemetryResponse = {
+        system_id: systemId,
+        // Summary endpoint provides energy_today and current_power 
+        production_power: data.current_power || null,
+        consumption_power: null, // Summary endpoint doesn't provide consumption
+        storage_power: null,
+        storage_soc: null,
+        grid_power: null,
+        // Add any other summary data we might want
+        energy_today: data.energy_today || null,
+        energy_lifetime: data.energy_lifetime || null,
+        system_size: data.size_w || null
+      };
+      
+      console.log('ENPHASE: Summary received for system:', systemId, 
+        'Current Power:', telemetryResponse.production_power, 'W',
+        'Energy Today:', telemetryResponse.energy_today, 'Wh');
+      
+      return telemetryResponse;
     } catch (error) {
       console.error('ENPHASE: Error fetching telemetry:', error);
       throw error;
@@ -439,7 +458,7 @@ export class MockEnphaseClient implements IEnphaseClient {
       'Solar:', telemetry.production_power, 'W',
       'Load:', telemetry.consumption_power, 'W',
       'Battery:', telemetry.storage_power, 'W',
-      'SOC:', telemetry.storage_soc.toFixed(1), '%');
+      'SOC:', telemetry.storage_soc ? `${telemetry.storage_soc.toFixed(1)}%` : 'N/A');
     
     return telemetry;
   }

@@ -20,16 +20,21 @@ export interface EnphaseCredentials {
 }
 
 export interface EnphaseTelemetryResponse {
-  production_power: number;        // Watts
-  consumption_power: number;       // Watts  
-  storage_power: number;          // Watts (negative = charging)
-  grid_power: number;             // Watts
-  storage_energy_charged: number; // Wh
-  storage_energy_discharged: number; // Wh
-  production_energy_lifetime: number; // Wh
-  consumption_energy_lifetime: number; // Wh
-  storage_soc: number;            // Percentage
-  last_report_at: number;         // Unix timestamp
+  system_id?: string;
+  production_power?: number | null;        // Watts
+  consumption_power?: number | null;       // Watts  
+  storage_power?: number | null;          // Watts (negative = charging)
+  grid_power?: number | null;             // Watts
+  storage_energy_charged?: number | null; // Wh
+  storage_energy_discharged?: number | null; // Wh
+  production_energy_lifetime?: number | null; // Wh
+  consumption_energy_lifetime?: number | null; // Wh
+  storage_soc?: number | null;            // Percentage
+  last_report_at?: number | null;         // Unix timestamp
+  // Additional fields from summary endpoint
+  energy_today?: number | null;           // Wh for today
+  energy_lifetime?: number | null;        // Total lifetime Wh
+  system_size?: number | null;            // System size in W
 }
 
 export interface EnphaseSystem {

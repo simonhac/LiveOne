@@ -95,12 +95,11 @@ export async function POST(request: NextRequest) {
         const currentPower = telemetry.production_power ?? null
         const consumptionPower = telemetry.consumption_power ?? null
         
-        // Note: Enphase only provides lifetime energy, not daily
-        // In a real implementation, we'd need to fetch and calculate daily values
-        const todayProduction = null // Would need to calculate from historical data
-        const todayConsumption = null // Would need to calculate from historical data
+        // Enphase summary provides energy_today in Wh
+        const todayProduction = telemetry.energy_today ?? null
+        const todayConsumption = null // Summary endpoint doesn't provide consumption
         
-        console.log(`[Test Connection] Enphase telemetry parsed - Production: ${currentPower}W, Consumption: ${consumptionPower}W`)
+        console.log(`[Test Connection] Enphase telemetry parsed - Production: ${currentPower}W, Consumption: ${consumptionPower}W, Today: ${todayProduction}Wh`)
         
         // Format response to match test-connection format
         return NextResponse.json({
@@ -137,8 +136,8 @@ export async function POST(request: NextRequest) {
             model: 'Enphase System',
             serial: cleanSystemId,
             ratings: null,
-            solarSize: `${(currentPower / 1000).toFixed(1)} kW capacity`,
-            batterySize: telemetry.storage_soc > 0 ? 'Battery present' : null
+            solarSize: currentPower !== null ? `${(currentPower / 1000).toFixed(1)} kW capacity` : null,
+            batterySize: telemetry.storage_soc && telemetry.storage_soc > 0 ? 'Battery present' : null
           }
         })
       } catch (error) {
