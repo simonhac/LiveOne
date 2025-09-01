@@ -32,9 +32,11 @@ export async function storeVendorCredentials(
   credentials: VendorCredentials
 ) {
   try {
-    console.log(`[${vendor}] Storing credentials for user:`, userId)
     const client = await clerkClient()
     const user = await client.users.getUser(userId)
+    const userIdentifier = user.username || user.emailAddresses[0]?.emailAddress || 'unknown'
+    
+    console.log(`[${vendor}] Storing credentials for user: ${userId} (${userIdentifier})`)
     
     // Map vendor to storage key (maintains existing Clerk metadata format)
     const storageKey = vendor === 'select.live' ? 'selectLiveCredentials' : 'enphaseCredentials'
@@ -52,10 +54,10 @@ export async function storeVendorCredentials(
       }
     })
     
-    console.log(`[${vendor}] Credentials stored successfully`)
+    console.log(`[${vendor}] Credentials stored successfully for user: ${userId} (${userIdentifier})`)
     return { success: true }
   } catch (error) {
-    console.error(`[${vendor}] Failed to store credentials:`, error)
+    console.error(`[${vendor}] Failed to store credentials for user ${userId}:`, error)
     return { success: false, error: `Failed to store ${vendor} credentials` }
   }
 }
@@ -68,23 +70,25 @@ export async function getVendorCredentials(
   vendor: VendorType
 ): Promise<VendorCredentials | null> {
   try {
-    console.log(`[${vendor}] Retrieving credentials for user:`, userId)
     const client = await clerkClient()
     const user = await client.users.getUser(userId)
+    const userIdentifier = user.username || user.emailAddresses[0]?.emailAddress || 'unknown'
+    
+    console.log(`[${vendor}] Retrieving credentials for user: ${userId} (${userIdentifier})`)
     
     // Map vendor to storage key (maintains existing Clerk metadata format)
     const storageKey = vendor === 'select.live' ? 'selectLiveCredentials' : 'enphaseCredentials'
     const credentials = user.privateMetadata?.[storageKey]
     
     if (!credentials) {
-      console.log(`[${vendor}] No credentials found`)
+      console.log(`[${vendor}] No credentials found for user: ${userId} (${userIdentifier})`)
       return null
     }
     
-    console.log(`[${vendor}] Credentials retrieved`)
+    console.log(`[${vendor}] Credentials retrieved for user: ${userId} (${userIdentifier})`)
     return credentials as VendorCredentials
   } catch (error) {
-    console.error(`[${vendor}] Failed to retrieve credentials:`, error)
+    console.error(`[${vendor}] Failed to retrieve credentials for user ${userId}:`, error)
     return null
   }
 }

@@ -336,3 +336,4 @@ curl -X POST https://liveone.vercel.app/api/cron/daily \
 - Use environment variables for credentials
 - Rotate tokens periodically
 - Limit database access to necessary operations only
+- all test scripts should be saved in /scripts
