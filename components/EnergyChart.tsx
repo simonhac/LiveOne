@@ -273,6 +273,7 @@ export default function EnergyChart({ className = '', maxPowerHint, systemId }: 
         },
         // Use maxPowerHint for power mode, auto-scale for energy mode
         suggestedMax: chartData?.mode === 'energy' ? undefined : maxPowerHint,
+        min: 0, // Always start from zero for power/energy
         grid: {
           color: 'rgb(55, 65, 81)', // gray-700
           display: true,

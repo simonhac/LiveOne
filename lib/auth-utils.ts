@@ -15,10 +15,9 @@ export async function isUserAdmin() {
     const client = await clerkClient()
     const user = await client.users.getUser(userId)
     
+    // Only log safe information - NEVER log privateMetadata as it contains credentials
     console.log('[Auth] Admin check for user:', userId, {
-      hasPrivateMetadata: !!user.privateMetadata,
-      privateMetadata: user.privateMetadata,
-      isPlatformAdmin: (user.privateMetadata as any)?.isPlatformAdmin
+      isPlatformAdmin: (user.privateMetadata as any)?.isPlatformAdmin === true
     })
     
     if (user.privateMetadata && typeof user.privateMetadata === 'object') {
