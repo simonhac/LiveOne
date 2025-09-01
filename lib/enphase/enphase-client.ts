@@ -255,6 +255,7 @@ export class EnphaseClient implements IEnphaseClient {
       }
       
       const data = await response.json();
+      console.log('ENPHASE: Raw telemetry response:', JSON.stringify(data, null, 2));
       console.log('ENPHASE: Telemetry received for system:', systemId, 
         'Production:', data.production_power, 'W',
         'Consumption:', data.consumption_power, 'W');
