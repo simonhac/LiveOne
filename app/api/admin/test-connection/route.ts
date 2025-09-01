@@ -90,6 +90,9 @@ export async function POST(request: NextRequest) {
           credentials.access_token
         )
         
+        // Extract the raw vendor response from telemetry
+        const rawVendorResponse = telemetry.raw
+        
         // Extract power and energy values
         // Use actual values or null if undefined to properly represent missing data
         const currentPower = telemetry.production_power ?? null
@@ -105,6 +108,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: true,
           timestamp: new Date().toISOString(),
+          vendorResponse: rawVendorResponse, // Include raw vendor response
           credentials: {
             systemId: cleanSystemId,
             vendorType: 'enphase'
@@ -189,6 +193,8 @@ export async function POST(request: NextRequest) {
       }
       
       const data = result.data
+      // Extract the raw vendor response from data
+      const rawVendorResponse = data.raw
       
       // Also fetch system info (model, serial, ratings, etc.)
       const systemInfo = await client.fetchSystemInfo()
@@ -229,6 +235,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         timestamp: data.timestamp.toISOString(),
+        vendorResponse: rawVendorResponse, // Include raw vendor response
         credentials: {
           email: credentials.email,
           vendorSiteId: vendorSiteId

@@ -301,7 +301,9 @@ export class EnphaseClient implements IEnphaseClient {
         energy_lifetime: data.energy_lifetime ?? null,
         system_size: data.size_w ?? null,
         // Include the timestamp if available
-        last_report_at: data.last_report_at ?? null
+        last_report_at: data.last_report_at ?? null,
+        // Include raw vendor response for consistency with SelectronicData
+        raw: data
       };
       
       console.log('ENPHASE: Summary received for system:', systemId, 

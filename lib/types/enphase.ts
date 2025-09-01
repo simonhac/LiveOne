@@ -35,6 +35,8 @@ export interface EnphaseTelemetryResponse {
   energy_today?: number | null;           // Wh for today
   energy_lifetime?: number | null;        // Total lifetime Wh
   system_size?: number | null;            // System size in W
+  // Raw vendor response for consistency with SelectronicData
+  raw?: Record<string, any>;
 }
 
 export interface EnphaseSystem {
