@@ -84,7 +84,24 @@ function EnphaseResultContent() {
             
             {isError && error !== 'access_denied' && (
               <button
-                onClick={() => router.push('/api/auth/enphase/connect')}
+                onClick={async () => {
+                  try {
+                    const response = await fetch('/api/auth/enphase/connect', {
+                      method: 'POST'
+                    })
+                    
+                    if (!response.ok) {
+                      throw new Error('Failed to initiate Enphase connection')
+                    }
+                    
+                    const data = await response.json()
+                    if (data.authUrl) {
+                      window.location.href = data.authUrl
+                    }
+                  } catch (err) {
+                    console.error('Failed to restart Enphase connection:', err)
+                  }
+                }}
                 className="w-full px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors"
               >
                 Try Again
