@@ -262,16 +262,18 @@ export class EnphaseClient implements IEnphaseClient {
       // Convert it to match our expected telemetry response format
       const telemetryResponse: EnphaseTelemetryResponse = {
         system_id: systemId,
-        // Summary endpoint provides energy_today and current_power 
-        production_power: data.current_power || null,
+        // Use nullish coalescing (??) instead of || to preserve 0 values
+        production_power: data.current_power ?? null,
         consumption_power: null, // Summary endpoint doesn't provide consumption
         storage_power: null,
         storage_soc: null,
         grid_power: null,
         // Add any other summary data we might want
-        energy_today: data.energy_today || null,
-        energy_lifetime: data.energy_lifetime || null,
-        system_size: data.size_w || null
+        energy_today: data.energy_today ?? null,
+        energy_lifetime: data.energy_lifetime ?? null,
+        system_size: data.size_w ?? null,
+        // Include the timestamp if available
+        last_report_at: data.last_report_at ?? null
       };
       
       console.log('ENPHASE: Summary received for system:', systemId, 

@@ -136,7 +136,12 @@ export async function POST(request: NextRequest) {
             model: 'Enphase System',
             serial: cleanSystemId,
             ratings: null,
-            solarSize: currentPower !== null ? `${(currentPower / 1000).toFixed(1)} kW capacity` : null,
+            // Use system_size from telemetry if available, otherwise fallback to current power
+            solarSize: telemetry.system_size !== null && telemetry.system_size !== undefined
+              ? `${(telemetry.system_size / 1000).toFixed(1)} kW`
+              : currentPower !== null 
+              ? `${(currentPower / 1000).toFixed(1)} kW capacity` 
+              : null,
             batterySize: telemetry.storage_soc && telemetry.storage_soc > 0 ? 'Battery present' : null
           }
         })
