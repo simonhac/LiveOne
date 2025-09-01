@@ -1,9 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { auth, clerkClient } from '@clerk/nextjs/server';
 import { getEnphaseClient } from '@/lib/enphase/enphase-client';
 import { db } from '@/lib/db';
 import { systems } from '@/lib/db/schema';
 import { and, eq } from 'drizzle-orm';
+
+async function getUserDisplay(userId: string): Promise<string> {
+  try {
+    const clerk = await clerkClient();
+    const user = await clerk.users.getUser(userId);
+    const identifier = user.username || user.emailAddresses[0]?.emailAddress || 'unknown';
+    return `${userId} (${identifier})`;
+  } catch {
+    return userId;
+  }
+}
 
 export async function POST(request: NextRequest) {
   console.log('ENPHASE: Disconnect endpoint called');
@@ -16,7 +27,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    console.log('ENPHASE: User disconnecting Enphase:', userId);
+    const userDisplay = await getUserDisplay(userId);
+    console.log('ENPHASE: User disconnecting Enphase:', userDisplay);
 
     // Clear tokens from Clerk metadata
     const client = getEnphaseClient();
@@ -38,7 +50,7 @@ export async function POST(request: NextRequest) {
         )
       );
 
-    console.log('ENPHASE: Disconnected successfully for user:', userId);
+    console.log('ENPHASE: Disconnected successfully for user:', userDisplay);
 
     return NextResponse.json({ 
       success: true,

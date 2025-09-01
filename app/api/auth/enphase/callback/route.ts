@@ -3,6 +3,18 @@ import { getEnphaseClient } from '@/lib/enphase/enphase-client';
 import { db } from '@/lib/db';
 import { systems } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
+import { clerkClient } from '@clerk/nextjs/server';
+
+async function getUserDisplay(userId: string): Promise<string> {
+  try {
+    const clerk = await clerkClient();
+    const user = await clerk.users.getUser(userId);
+    const identifier = user.username || user.emailAddresses[0]?.emailAddress || 'unknown';
+    return `${userId} (${identifier})`;
+  } catch {
+    return userId;
+  }
+}
 
 export async function GET(request: NextRequest) {
   console.log('ENPHASE: OAuth callback received');
@@ -49,13 +61,15 @@ export async function GET(request: NextRequest) {
 
     // Check if state is not too old (15 minutes)
     if (Date.now() - timestamp > 15 * 60 * 1000) {
-      console.error('ENPHASE: State expired for user:', userId);
+      const userDisplay = await getUserDisplay(userId);
+      console.error('ENPHASE: State expired for user:', userDisplay);
       return NextResponse.redirect(
         new URL('/auth/enphase/result?error=state_expired', request.url)
       );
     }
 
-    console.log('ENPHASE: Processing callback for user:', userId);
+    const userDisplay = await getUserDisplay(userId);
+    console.log('ENPHASE: Processing callback for user:', userDisplay);
 
     // Exchange code for tokens
     const client = getEnphaseClient();
@@ -83,14 +97,14 @@ export async function GET(request: NextRequest) {
     const enphaseSystems = await client.getSystems(tokens.access_token);
     
     if (!enphaseSystems || enphaseSystems.length === 0) {
-      console.error('ENPHASE: No systems found for user:', userId);
+      console.error('ENPHASE: No systems found for user:', userDisplay);
       return NextResponse.redirect(
         new URL('/auth/enphase/result?error=no_systems', request.url)
       );
     }
 
     // Log all available systems
-    console.log('ENPHASE: Found systems for user:', userId);
+    console.log('ENPHASE: Found systems for user:', userDisplay);
     enphaseSystems.forEach((sys, index) => {
       console.log(`ENPHASE: System ${index + 1}:`, JSON.stringify(sys, null, 2));
     });
@@ -158,7 +172,7 @@ export async function GET(request: NextRequest) {
         .where(eq(systems.id, existingSystem[0].id));
     }
 
-    console.log('ENPHASE: Connection complete for user:', userId);
+    console.log('ENPHASE: Connection complete for user:', userDisplay);
     console.log('ENPHASE: System successfully connected:', enphaseSystem.system_id);
 
     // Redirect to result page with success message

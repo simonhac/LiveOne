@@ -1,7 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { auth, clerkClient } from '@clerk/nextjs/server';
 import { getEnphaseClient } from '@/lib/enphase/enphase-client';
 import crypto from 'crypto';
+
+async function getUserDisplay(userId: string): Promise<string> {
+  try {
+    const clerk = await clerkClient();
+    const user = await clerk.users.getUser(userId);
+    const identifier = user.username || user.emailAddresses[0]?.emailAddress || 'unknown';
+    return `${userId} (${identifier})`;
+  } catch {
+    return userId;
+  }
+}
 
 export async function POST(request: NextRequest) {
   console.log('ENPHASE: Connect endpoint called');
@@ -14,7 +25,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    console.log('ENPHASE: User initiating connection:', userId);
+    const userDisplay = await getUserDisplay(userId);
+    console.log('ENPHASE: User initiating connection:', userDisplay);
 
     // Generate a secure state parameter
     const state = crypto.randomBytes(32).toString('hex');
@@ -34,7 +46,7 @@ export async function POST(request: NextRequest) {
     const client = getEnphaseClient();
     const authUrl = client.getAuthorizationUrl(stateData, origin);
 
-    console.log('ENPHASE: Authorization URL generated for user:', userId);
+    console.log('ENPHASE: Authorization URL generated for user:', userDisplay);
 
     return NextResponse.json({ 
       authUrl,
