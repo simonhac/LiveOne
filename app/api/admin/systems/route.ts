@@ -88,9 +88,11 @@ export async function GET(request: NextRequest) {
           lastName: userInfo?.lastName || null
         },
         displayName: system.displayName,  // Non-null from database
-        vendorType: system.vendorType,
-        vendorSiteId: system.vendorSiteId,  // Vendor's identifier
-        vendorUserId,  // Vendor-specific user ID (email for Select.Live, user ID for Enphase)
+        vendor: {
+          type: system.vendorType,
+          siteId: system.vendorSiteId,  // Vendor's identifier
+          userId: vendorUserId,  // Vendor-specific user ID (email for Select.Live, user ID for Enphase)
+        },
         location: system.location,  // Location data (address, city/state/country, or lat/lon)
         status: system.status,  // System status: active, disabled, or removed
         systemInfo: {
@@ -104,7 +106,17 @@ export async function GET(request: NextRequest) {
           isActive: system.status === 'active',
           lastPollTime: pollStatus?.lastPollTime ? 
             formatTimeAEST(fromDate(pollStatus.lastPollTime, 'Australia/Brisbane')) : null,
+          lastSuccessTime: pollStatus?.lastSuccessTime ?
+            formatTimeAEST(fromDate(pollStatus.lastSuccessTime, 'Australia/Brisbane')) : null,
+          lastErrorTime: pollStatus?.lastErrorTime ?
+            formatTimeAEST(fromDate(pollStatus.lastErrorTime, 'Australia/Brisbane')) : null,
           lastError: pollStatus?.lastError || null,
+          consecutiveErrors: pollStatus?.consecutiveErrors || 0,
+          totalPolls: pollStatus?.totalPolls || 0,
+          successfulPolls: pollStatus?.successfulPolls || 0,
+          failedPolls: pollStatus?.totalPolls ? (pollStatus.totalPolls - pollStatus.successfulPolls) : 0,
+          successRate: pollStatus?.totalPolls ? 
+            Math.round((pollStatus.successfulPolls / pollStatus.totalPolls) * 100) : 0,
         },
         data: reading ? {
           solarPower: reading.solarW,

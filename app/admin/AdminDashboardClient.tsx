@@ -6,6 +6,7 @@ import { Clock, Activity, Wifi, WifiOff, Server, Battery, Sun, Home, TrendingUp,
 import SystemInfoTooltip from '@/components/SystemInfoTooltip'
 import SummaryCard from '@/components/SummaryCard'
 import SystemActionsMenu from '@/components/SystemActionsMenu'
+import PollingStatsModal from '@/components/PollingStatsModal'
 
 interface SystemInfo {
   model?: string
@@ -25,18 +26,25 @@ interface SystemData {
     lastName: string | null
   }
   displayName: string  // Non-null from database
-  vendorType: string
-  vendorSiteId: string  // Vendor's identifier
-  vendorUserId: string | null  // Vendor-specific user ID
+  vendor: {
+    type: string
+    siteId: string  // Vendor's identifier
+    userId: string | null  // Vendor-specific user ID
+  }
   status: 'active' | 'disabled' | 'removed'  // System status
-  lastLogin: string | null
-  isLoggedIn: boolean
-  activeSessions: number
+  location?: any  // Location data
   systemInfo?: SystemInfo | null
   polling: {
     isActive: boolean
     lastPollTime: string | null
+    lastSuccessTime: string | null
+    lastErrorTime: string | null
     lastError: string | null
+    consecutiveErrors: number
+    totalPolls: number
+    successfulPolls: number
+    failedPolls: number
+    successRate: number
   }
   data: {
     solarPower: number
@@ -107,6 +115,15 @@ export default function AdminDashboardClient() {
     vendorSiteId: '',
     did: '',
     data: null
+  })
+  const [pollingStatsModal, setPollingStatsModal] = useState<{
+    isOpen: boolean
+    systemName: string
+    stats: SystemData['polling'] | null
+  }>({
+    isOpen: false,
+    systemName: '',
+    stats: null
   })
 
   const testConnection = async (systemName: string, ownerClerkUserId: string, vendorType: string, vendorSiteId: string, isRefresh: boolean = false) => {
@@ -348,8 +365,15 @@ export default function AdminDashboardClient() {
                         systemId={system.systemId}
                         systemName={system.displayName}
                         status={system.status}
-                        onTest={() => testConnection(system.displayName, system.owner.clerkId, system.vendorType, system.vendorSiteId)}
+                        onTest={() => testConnection(system.displayName, system.owner.clerkId, system.vendor.type, system.vendor.siteId)}
                         onStatusChange={(newStatus) => updateSystemStatus(system.systemId, newStatus)}
+                        onPollingStats={() => {
+                          setPollingStatsModal({
+                            isOpen: true,
+                            systemName: system.displayName,
+                            stats: system.polling
+                          })
+                        }}
                       />
                     </td>
                     <td className="px-1.5 md:px-1.5 py-4 whitespace-nowrap align-top">
@@ -373,20 +397,20 @@ export default function AdminDashboardClient() {
                         <div className="flex flex-col gap-0.5">
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-gray-400 group-hover:text-blue-400 transition-colors">
-                              {system.vendorType}/{system.vendorSiteId}
+                              {system.vendor.type}/{system.vendor.siteId}
                             </span>
                             {system.systemInfo && (
                               <div onClick={(e) => e.preventDefault()}>
                                 <SystemInfoTooltip 
                                   systemInfo={system.systemInfo}
-                                  systemNumber={system.vendorSiteId}
+                                  systemNumber={system.vendor.siteId}
                                 />
                               </div>
                             )}
                           </div>
-                          {system.vendorUserId && (
+                          {system.vendor.userId && (
                             <span className="text-xs text-gray-500">
-                              {system.vendorUserId}
+                              {system.vendor.userId}
                             </span>
                           )}
                         </div>
@@ -748,6 +772,16 @@ export default function AdminDashboardClient() {
             </div>
           </div>
         )}
+
+      {/* Polling Stats Modal */}
+      {pollingStatsModal.isOpen && pollingStatsModal.stats && (
+        <PollingStatsModal
+          isOpen={pollingStatsModal.isOpen}
+          onClose={() => setPollingStatsModal({ isOpen: false, systemName: '', stats: null })}
+          systemName={pollingStatsModal.systemName}
+          stats={pollingStatsModal.stats}
+        />
+      )}
       </>
   )
 }
