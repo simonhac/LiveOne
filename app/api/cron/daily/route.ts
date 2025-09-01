@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { aggregateYesterdayForAllSystems } from '@/lib/db/aggregate-daily';
 import { db } from '@/lib/db';
 import { readingsAgg1d } from '@/lib/db/schema';
+import { isUserAdmin } from '@/lib/auth-utils';
 
 // Verify the request is from Vercel Cron
 function validateCronRequest(request: NextRequest): boolean {
@@ -54,15 +55,13 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Allow manual triggering with POST (for testing)
+// Allow manual triggering with POST (admin only)
 export async function POST(request: NextRequest) {
   try {
-    // Check for auth token in development/testing
-    const authToken = request.cookies.get('auth-token')?.value;
-    const validPassword = process.env.AUTH_PASSWORD;
-    
-    if (!validPassword || authToken !== validPassword) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // Check if user is admin (isUserAdmin checks authentication internally)
+    const userIsAdmin = await isUserAdmin();
+    if (!userIsAdmin) {
+      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
     }
 
     const body = await request.json().catch(() => ({}));
