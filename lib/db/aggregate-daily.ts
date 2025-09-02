@@ -1,7 +1,7 @@
 import { db } from '@/lib/db';
 import { readingsAgg5m, readingsAgg1d, systems } from '@/lib/db/schema';
-import { sql, eq, and, gte, lt, desc, asc, inArray } from 'drizzle-orm';
-import { getYesterdayDate, formatTimeAEST, fromUnixTimestamp } from '@/lib/date-utils';
+import { sql, eq, and, gte, lt, lte, desc, asc, inArray } from 'drizzle-orm';
+import { getYesterdayDate, formatTimeAEST, formatDateAEST, fromUnixTimestamp } from '@/lib/date-utils';
 
 /**
  * Aggregate data for a specific day and system
@@ -389,6 +389,105 @@ export async function aggregateAllMissingDaysForAllSystems() {
     return systemResults;
   } catch (error) {
     console.error('Error aggregating all missing days for all systems:', error);
+    throw error;
+  }
+}
+
+/**
+ * Aggregate the last N days for all active systems
+ * Used for updating recent data without regenerating everything
+ * @param days - Number of days to look back (default 7)
+ */
+export async function aggregateLastNDaysForAllSystems(days: number = 7) {
+  try {
+    // Get all unique system IDs from recent data
+    const daysAgo = Math.floor((Date.now() - days * 24 * 60 * 60 * 1000) / 1000); // Unix timestamp
+    console.log(`[Daily] Looking for systems with data after ${formatTimeAEST(fromUnixTimestamp(daysAgo, 600))}`);
+    
+    const allSystems = await db
+      .select()
+      .from(readingsAgg5m)
+      .where(gte(readingsAgg5m.intervalEnd, daysAgo));
+    
+    console.log(`[Daily] Found ${allSystems.length} records from systems`);
+    
+    // Extract unique system IDs
+    const uniqueSystemIds = [...new Set(allSystems.map(r => r.systemId))];
+    console.log(`[Daily] Unique system IDs found: ${uniqueSystemIds.join(', ') || 'none'}`);
+    
+    if (uniqueSystemIds.length === 0) {
+      console.log('[Daily] No systems with recent data found');
+      return [];
+    }
+    
+    // Get system details with timezone info
+    const systemDetails = await db
+      .select()
+      .from(systems)
+      .where(inArray(systems.id, uniqueSystemIds));
+    
+    console.log(`[Daily] Updating last ${days} days for ${systemDetails.length} systems`);
+    
+    const results = [];
+    for (const system of systemDetails) {
+      try {
+        // Calculate the date range for this system's timezone
+        const timezoneOffsetMinutes = system.timezoneOffsetMin;
+        const now = fromUnixTimestamp(Math.floor(Date.now() / 1000), timezoneOffsetMinutes);
+        const startDateTime = now.subtract({ days });
+        const endDateTime = now;
+        
+        // Format as YYYY-MM-DD strings (same logic as formatDateAEST but for ZonedDateTime)
+        const startDate = `${startDateTime.year}-${String(startDateTime.month).padStart(2, '0')}-${String(startDateTime.day).padStart(2, '0')}`;
+        const endDate = `${endDateTime.year}-${String(endDateTime.month).padStart(2, '0')}-${String(endDateTime.day).padStart(2, '0')}`;
+        
+        console.log(`[Daily] Updating system ${system.id} from ${startDate} to ${endDate}`);
+        
+        // Get existing days in this range
+        const existingDays = await db
+          .select()
+          .from(readingsAgg1d)
+          .where(
+            and(
+              eq(readingsAgg1d.systemId, system.id.toString()),
+              gte(readingsAgg1d.day, startDate.toString()),
+              lte(readingsAgg1d.day, endDate.toString())
+            )
+          );
+        
+        // Aggregate each day in the range
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        let aggregatedCount = 0;
+        
+        for (let d = start; d <= end; d.setDate(d.getDate() + 1)) {
+          const dayStr = d.toISOString().split('T')[0];
+          try {
+            const result = await aggregateDailyData(system.id.toString(), dayStr);
+            if (result) {
+              aggregatedCount++;
+            }
+          } catch (error) {
+            console.error(`Failed to aggregate ${dayStr} for system ${system.id}:`, error);
+          }
+        }
+        
+        results.push({
+          systemId: system.id,
+          daysUpdated: aggregatedCount,
+          existingDays: existingDays.length
+        });
+        
+        console.log(`[Daily] Updated ${aggregatedCount} days for system ${system.id}`);
+      } catch (error) {
+        console.error(`Failed to update last ${days} days for system ${system.id}:`, error);
+      }
+    }
+    
+    console.log(`[Daily] Successfully updated last ${days} days for ${results.length} systems`);
+    return results;
+  } catch (error) {
+    console.error(`Error updating last ${days} days for all systems:`, error);
     throw error;
   }
 }
