@@ -65,11 +65,11 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const { action, systemId, date, catchup } = body;
+    const { action } = body;
 
-    if (action === 'clear') {
+    if (action === 'regenerate') {
       // Clear the entire table and regenerate all historical data
-      console.log('[Daily] Clearing readings_agg_1d table and regenerating...');
+      console.log('[Daily] Regenerating all daily aggregations...');
       
       // Clear the table
       await db.delete(readingsAgg1d).execute();
@@ -81,51 +81,24 @@ export async function POST(request: NextRequest) {
       
       return NextResponse.json({
         success: true,
-        action: 'clear_and_regenerate',
-        message: `Cleared and regenerated daily aggregations`,
+        action: 'regenerate',
+        message: `Regenerated all daily aggregations`,
         systems: results,
         timestamp: new Date().toISOString()
       });
-    } else if (systemId && date) {
-      // Aggregate specific system and date
-      const { aggregateDailyData } = await import('@/lib/db/aggregate-daily');
-      const result = await aggregateDailyData(systemId, date);
-      
-      return NextResponse.json({
-        success: true,
-        message: `Aggregated data for system ${systemId} on ${date}`,
-        data: result
-      });
-    } else if (systemId) {
-      // Aggregate all missing days for a specific system
-      const { aggregateAllDailyData } = await import('@/lib/db/aggregate-daily');
-      const results = await aggregateAllDailyData(systemId);
-      
-      return NextResponse.json({
-        success: true,
-        message: `Aggregated ${results.length} days for system ${systemId}`,
-        count: results.length
-      });
-    } else if (catchup || action === 'catchup') {
-      // Aggregate ALL missing days for ALL systems
-      const { aggregateAllMissingDaysForAllSystems } = await import('@/lib/db/aggregate-daily');
-      const results = await aggregateAllMissingDaysForAllSystems();
-      
-      return NextResponse.json({
-        success: true,
-        action: 'catchup',
-        message: `Caught up all missing days for all systems`,
-        systems: results
-      });
     } else {
-      // Run the daily aggregation for yesterday only
-      console.log('[DEBUG] Using groupBy version - deployed', new Date().toISOString());
-      const results = await aggregateYesterdayForAllSystems();
+      // Default: Update last 7 days for all systems
+      console.log('[Daily] Updating last 7 days of aggregations...');
+      
+      const { aggregateLastNDaysForAllSystems } = await import('@/lib/db/aggregate-daily');
+      const results = await aggregateLastNDaysForAllSystems(7);
       
       return NextResponse.json({
         success: true,
-        message: `Aggregated yesterday's data for ${results.length} systems (v2-groupBy)`,
-        count: results.length
+        action: 'update',
+        message: `Updated last 7 days for ${results.length} systems`,
+        systems: results,
+        timestamp: new Date().toISOString()
       });
     }
   } catch (error) {

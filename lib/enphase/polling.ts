@@ -85,15 +85,11 @@ export async function pollEnphaseSystem(system: EnphaseSystemForPolling): Promis
     accessToken
   );
   
-  // Use last_report_at if available, otherwise use current time
-  // (The summary endpoint doesn't provide last_report_at)
-  const timestamp = telemetry.last_report_at 
-    ? new Date(telemetry.last_report_at * 1000) 
-    : new Date();
+  // For now, always use current time as the timestamp
+  // This aligns better with our polling schedule and aggregation
+  const timestamp = new Date();
   
-  if (!telemetry.last_report_at) {
-    console.log('ENPHASE: No last_report_at in response, using current time');
-  }
+  console.log('ENPHASE: Using current time for timestamp');
   
   // Transform Enphase data to our standard format
   const data: PollingData = {
