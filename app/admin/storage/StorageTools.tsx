@@ -196,12 +196,24 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                   total: update.total || 100
                 })
               } else if (update.type === 'complete') {
-                setSyncProgress(prev => ({
-                  ...prev,
-                  message: 'Sync completed successfully!',
-                  progress: 100,
-                  total: 100
-                }))
+                // Calculate total duration from all completed stages and update message
+                setSyncStages(prevStages => {
+                  const totalDuration = prevStages.reduce((sum, stage) => 
+                    sum + (stage.duration || 0), 0
+                  )
+                  const durationStr = totalDuration > 0 
+                    ? ` in ${totalDuration.toFixed(1)} seconds`
+                    : ''
+                  
+                  setSyncProgress(prev => ({
+                    ...prev,
+                    message: `Sync completed successfully${durationStr}!`,
+                    progress: 100,
+                    total: 100
+                  }))
+                  
+                  return prevStages // Return unchanged stages
+                })
                 // Refresh the page data
                 await fetchSettings()
                 // Don't auto-dismiss - user must close manually
