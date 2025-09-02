@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import ChartTooltip from './ChartTooltip'
 import PeriodSwitcher from './PeriodSwitcher'
+import ServerErrorModal from './ServerErrorModal'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -59,6 +60,7 @@ export default function EnergyChart({ className = '', maxPowerHint, systemId, ve
   const [chartData, setChartData] = useState<ChartData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [serverError, setServerError] = useState<{ type: 'connection' | 'server' | null, details?: string }>({ type: null })
   const [timeRange, setTimeRange] = useState<'1D' | '7D' | '30D'>('1D')
   const [hoveredData, setHoveredData] = useState<{ solar: number | null; load: number | null; batterySOC: number | null; timestamp: Date | null }>({
     solar: null,
@@ -466,7 +468,17 @@ export default function EnergyChart({ className = '', maxPowerHint, systemId, ve
           return
         }
         console.error('Error fetching chart data:', err)
-        setError(err instanceof Error ? err.message : 'Failed to load chart data')
+        
+        // Check if it's a network/connection error
+        if (err instanceof TypeError && err.message === 'Failed to fetch') {
+          setServerError({ type: 'connection' })
+          setError('Unable to connect to server')
+        } else if (err instanceof Error && err.message.includes('Failed to fetch data:')) {
+          // HTTP error (404, 500, etc.)
+          setError(err.message)
+        } else {
+          setError(err instanceof Error ? err.message : 'Failed to load chart data')
+        }
         setLoading(false)
       }
     }
@@ -703,6 +715,13 @@ export default function EnergyChart({ className = '', maxPowerHint, systemId, ve
         </div>
       </div>
       {renderChartContent()}
+      
+      <ServerErrorModal
+        isOpen={serverError.type !== null}
+        onClose={() => setServerError({ type: null })}
+        errorType={serverError.type}
+        errorDetails={serverError.details}
+      />
     </div>
   )
 }
