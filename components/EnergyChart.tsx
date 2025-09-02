@@ -492,7 +492,7 @@ export default function EnergyChart({ className = '', maxPowerHint, systemId, ve
       clearInterval(interval)
       abortController.abort() // Cancel any pending requests
     }
-  }, [timeRange, systemId])
+  }, [timeRange, systemId, vendorType])
 
   // For energy mode, pad the SOC data to extend the fill to chart edges
   const paddedSOCData = chartData?.mode === 'energy' && chartData.batterySOCMin && chartData.batterySOCMax
