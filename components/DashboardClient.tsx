@@ -11,6 +11,7 @@ import SystemInfoTooltip from '@/components/SystemInfoTooltip'
 import PowerCard from '@/components/PowerCard'
 import ConnectionNotification from '@/components/ConnectionNotification'
 import TestConnectionModal from '@/components/TestConnectionModal'
+import ServerErrorModal from '@/components/ServerErrorModal'
 import { 
   Sun, 
   Home, 
@@ -150,6 +151,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
   const [showSystemDropdown, setShowSystemDropdown] = useState(false)
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false)
   const [showTestConnection, setShowTestConnection] = useState(false)
+  const [serverError, setServerError] = useState<{ type: 'connection' | 'server' | null, details?: string }>({ type: null })
   const dropdownRef = useRef<HTMLDivElement>(null)
   const settingsDropdownRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
@@ -188,7 +190,14 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
       }
     } catch (err) {
       console.error('Error fetching data:', err)
-      setError('Failed to fetch data')
+      
+      // Check if it's a network/connection error
+      if (err instanceof TypeError && err.message === 'Failed to fetch') {
+        setServerError({ type: 'connection' })
+        setError('Unable to connect to server')
+      } else {
+        setError('Failed to fetch data')
+      }
       setLoading(false)
     }
   }, [systemId])
@@ -563,6 +572,13 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
           onClose={() => setShowTestConnection(false)}
         />
       )}
+      
+      <ServerErrorModal
+        isOpen={serverError.type !== null}
+        onClose={() => setServerError({ type: null })}
+        errorType={serverError.type}
+        errorDetails={serverError.details}
+      />
     </div>
   )
 }
