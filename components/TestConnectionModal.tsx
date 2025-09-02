@@ -6,10 +6,32 @@ import { formatValue, formatValuePair } from '@/lib/energy-formatting'
 import { JsonView, defaultStyles, darkStyles } from 'react-json-view-lite'
 import 'react-json-view-lite/dist/index.css'
 
-// Helper to format value with unit in one go
-const formatPower = (value: number | null | undefined, unit: string): string => {
+// Helper to format value with unit as JSX with proper styling
+const formatPowerJSX = (value: number | null | undefined, unit: string): React.JSX.Element => {
   const formatted = formatValue(value, unit)
-  return formatted.unit ? `${formatted.value} ${formatted.unit}` : formatted.value
+  if (!formatted.unit) {
+    return <span className="energy-value">{formatted.value}</span>
+  }
+  return (
+    <>
+      <span className="energy-value">{formatted.value}</span>
+      <span className="energy-unit">{formatted.unit}</span>
+    </>
+  )
+}
+
+// Helper to format value pair with unit as JSX with proper styling
+const formatPairJSX = (inValue: number | null | undefined, outValue: number | null | undefined, unit: string): React.JSX.Element => {
+  const formatted = formatValuePair(inValue, outValue, unit)
+  if (!formatted.unit) {
+    return <span className="energy-value">{formatted.value}</span>
+  }
+  return (
+    <>
+      <span className="energy-value">{formatted.value}</span>
+      <span className="energy-unit">{formatted.unit}</span>
+    </>
+  )
 }
 
 interface TestConnectionModalProps {
@@ -99,8 +121,8 @@ export default function TestConnectionModal({
   }, []) // Empty dependency array means this runs once on mount
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 overflow-y-auto">
-      <div className="bg-gray-800/95 backdrop-blur border border-gray-700 rounded-lg p-6 max-w-2xl w-full mx-4 my-8 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center z-50 overflow-y-auto">
+      <div className="bg-gray-800/95 backdrop-blur-sm border border-gray-700 rounded-lg p-6 max-w-2xl w-full mx-4 my-8 max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex justify-between items-start mb-4">
           <h3 className="text-lg font-semibold text-white">
@@ -155,7 +177,7 @@ export default function TestConnectionModal({
                     <div>
                       <p className="text-xs text-gray-400">Solar</p>
                       <p className="text-lg font-semibold text-yellow-400">
-                        {formatPower(data.latest.power.solarW, 'W')}
+                        {formatPowerJSX(data.latest.power.solarW, 'W')}
                       </p>
                     </div>
                   </div>
@@ -165,7 +187,7 @@ export default function TestConnectionModal({
                     <div>
                       <p className="text-xs text-gray-400">Load</p>
                       <p className="text-lg font-semibold text-blue-400">
-                        {formatPower(data.latest.power.loadW, 'W')}
+                        {formatPowerJSX(data.latest.power.loadW, 'W')}
                       </p>
                     </div>
                   </div>
@@ -182,9 +204,9 @@ export default function TestConnectionModal({
                       <p className="text-xs text-gray-400">
                         {data.latest.power.batteryW !== null
                           ? data.latest.power.batteryW < 0 
-                            ? `Charging ${formatPower(Math.abs(data.latest.power.batteryW), 'W')}`
+                            ? <><span>Charging </span>{formatPowerJSX(Math.abs(data.latest.power.batteryW), 'W')}</>
                             : data.latest.power.batteryW > 0
-                            ? `Discharging ${formatPower(data.latest.power.batteryW, 'W')}`
+                            ? <><span>Discharging </span>{formatPowerJSX(data.latest.power.batteryW, 'W')}</>
                             : 'Idle'
                           : 'No data'}
                       </p>
@@ -196,7 +218,7 @@ export default function TestConnectionModal({
                     <div>
                       <p className="text-xs text-gray-400">Grid</p>
                       <p className="text-lg font-semibold text-purple-400">
-                        {formatPower(data.latest.power.gridW !== null ? Math.abs(data.latest.power.gridW) : null, 'W')}
+                        {formatPowerJSX(data.latest.power.gridW !== null ? Math.abs(data.latest.power.gridW) : null, 'W')}
                       </p>
                       <p className="text-xs text-gray-400">
                         {data.latest.power.gridW !== null
@@ -219,39 +241,33 @@ export default function TestConnectionModal({
                   <div>
                     <p className="text-xs text-gray-400">Solar Generated</p>
                     <p className="text-lg font-semibold text-white">
-                      {formatPower(data.latest.energy.today.solarKwh, 'kWh')}
+                      {formatPowerJSX(data.latest.energy.today.solarKwh, 'kWh')}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-400">Load Consumed</p>
                     <p className="text-lg font-semibold text-white">
-                      {formatPower(data.latest.energy.today.loadKwh, 'kWh')}
+                      {formatPowerJSX(data.latest.energy.today.loadKwh, 'kWh')}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-400">Battery In/Out</p>
                     <p className="text-lg font-semibold text-white">
-                      {(() => {
-                        const formatted = formatValuePair(
-                          data.latest.energy.today.batteryInKwh,
-                          data.latest.energy.today.batteryOutKwh,
-                          'kWh'
-                        )
-                        return formatted.unit ? `${formatted.value} ${formatted.unit}` : formatted.value
-                      })()}
+                      {formatPairJSX(
+                        data.latest.energy.today.batteryInKwh,
+                        data.latest.energy.today.batteryOutKwh,
+                        'kWh'
+                      )}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-400">Grid Import/Export</p>
                     <p className="text-lg font-semibold text-white">
-                      {(() => {
-                        const formatted = formatValuePair(
-                          data.latest.energy.today.gridInKwh,
-                          data.latest.energy.today.gridOutKwh,
-                          'kWh'
-                        )
-                        return formatted.unit ? `${formatted.value} ${formatted.unit}` : formatted.value
-                      })()}
+                      {formatPairJSX(
+                        data.latest.energy.today.gridInKwh,
+                        data.latest.energy.today.gridOutKwh,
+                        'kWh'
+                      )}
                     </p>
                   </div>
                 </div>

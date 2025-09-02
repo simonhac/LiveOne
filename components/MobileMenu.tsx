@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Menu, X, User, LogOut, Info, ChevronDown } from 'lucide-react'
+import { Menu, X, User, LogOut, Info, ChevronDown, Settings, Wifi, Plus, Shield } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { useUser } from '@clerk/nextjs'
 import LastUpdateTime from './LastUpdateTime'
 
@@ -26,16 +27,21 @@ interface MobileMenuProps {
   systemInfo?: SystemInfo | null
   availableSystems?: AvailableSystem[]
   currentSystemId?: string
+  onTestConnection?: () => void
+  vendorType?: string
+  isAdmin?: boolean
 }
 
 export default function MobileMenu({ 
   displayName, 
- 
   secondsSinceUpdate,
   onLogout,
   systemInfo,
   availableSystems = [],
-  currentSystemId
+  currentSystemId,
+  onTestConnection,
+  vendorType,
+  isAdmin = false
 }: MobileMenuProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [isSystemDropdownOpen, setIsSystemDropdownOpen] = useState(false)
@@ -110,6 +116,17 @@ export default function MobileMenu({
               className="text-xs"
             />
             
+            {/* Admin Link */}
+            {isAdmin && (
+              <Link
+                href="/admin"
+                className="p-1.5 text-blue-500 hover:text-blue-400 transition-colors"
+                aria-label="Admin"
+              >
+                <Shield className="w-4 h-4" />
+              </Link>
+            )}
+            
             {/* Hamburger Menu Button */}
             <button
               onClick={toggleMenu}
@@ -160,6 +177,38 @@ export default function MobileMenu({
                       || 'User'}
                   </p>
                 </div>
+              </div>
+              
+              {/* Settings Section */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 mb-2">
+                  <Settings className="w-4 h-4 text-gray-400" />
+                  <p className="text-white font-medium text-sm">Settings</p>
+                </div>
+                
+                {onTestConnection && (
+                  <button
+                    onClick={() => {
+                      setIsOpen(false)
+                      onTestConnection()
+                    }}
+                    className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
+                  >
+                    <Wifi className="w-4 h-4" />
+                    Test Connection
+                  </button>
+                )}
+                
+                {vendorType !== 'enphase' && (
+                  <Link
+                    href="/auth/enphase/connect"
+                    onClick={() => setIsOpen(false)}
+                    className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2 block"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Enphase
+                  </Link>
+                )}
               </div>
               
               {/* System Info Section */}
