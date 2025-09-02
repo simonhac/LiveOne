@@ -294,7 +294,7 @@ async function syncReadings(ctx: SyncContext) {
   if (firstBatchTime && lastBatchTime) {
     const firstZoned = fromUnixTimestamp(Math.floor(firstBatchTime.getTime() / 1000), 600)
     const lastZoned = fromUnixTimestamp(Math.floor(lastBatchTime.getTime() / 1000), 600)
-    dateRangeStr = ` (${formatDateRange(firstZoned, lastZoned, false)})`
+    dateRangeStr = ` (${formatDateRange(firstZoned, lastZoned, true)})`  // Set includeTime to true
   }
   
   return {

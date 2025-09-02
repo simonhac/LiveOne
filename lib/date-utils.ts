@@ -322,17 +322,21 @@ export function formatDateRange(
   end: ZonedDateTime,
   includeTime = false
 ): string {
-  // Helper to format time in 12-hour format (e.g., "4:30pm")
+  // Determine if we need to show minutes (if either time has non-zero minutes)
+  const needMinutes = includeTime && (start.minute !== 0 || end.minute !== 0);
+  
+  // Helper to format time in 12-hour format (e.g., "4:30pm" or "4:00pm" if needMinutes)
   const formatTime = (zdt: ZonedDateTime): string => {
     const hour = zdt.hour;
     const minute = zdt.minute;
     const period = hour >= 12 ? 'pm' : 'am';
     const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-    const minuteStr = `:${String(minute).padStart(2, '0')}`;
+    // Include minutes if needed (either time has non-zero minutes)
+    const minuteStr = needMinutes ? `:${String(minute).padStart(2, '0')}` : (minute === 0 ? '' : `:${String(minute).padStart(2, '0')}`);
     return `${displayHour}${minuteStr}${period}`;
   };
   
-  // Helper to format month using locale (e.g., "Sept", "Oct")
+  // Helper to format month using locale (e.g., "Sep", "Oct")
   const formatMonth = (month: number): string => {
     const date = new Date(2000, month - 1, 1);
     return date.toLocaleDateString('en-AU', { month: 'short' });
@@ -351,7 +355,7 @@ export function formatDateRange(
   
   if (includeTime) {
     if (sameDay) {
-      // Same day, different times: "4:30pm – 7:35pm, 2 Sept 2025"
+      // Same day, different times: "4:30pm – 7:35pm, 2 Sep 2025"
       return `${formatTime(start)} – ${formatTime(end)}, ${start.day} ${formatMonth(start.month)} ${start.year}`;
     } else if (sameYear) {
       // Different days, same year: "4:35pm, 2 Oct – 7:10am, 11 Nov 2024"
@@ -362,10 +366,15 @@ export function formatDateRange(
     }
   } else {
     // Date-only formatting (no time)
+    if (sameDay) {
+      // Same day: "2 Sep 2025" (not "2 – 2 Sep 2025")
+      return `${start.day} ${formatMonth(start.month)} ${start.year}`;
+    }
+    
     const sameMonth = start.year === end.year && start.month === end.month;
     
     if (sameMonth) {
-      // Same month and year: "3 – 5 Sept 2025"
+      // Same month and year: "3 – 5 Sep 2025"
       return `${start.day} – ${end.day} ${formatMonth(end.month)} ${end.year}`;
     } else if (sameYear) {
       // Different months, same year: "28 Nov – 3 Dec 2025"
