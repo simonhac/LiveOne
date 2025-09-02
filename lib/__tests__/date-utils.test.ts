@@ -52,22 +52,21 @@ describe('formatDateRange', () => {
       const start = makeZonedTime('2025-12-03T10:30:00Z');
       const end = makeZonedTime('2025-12-03T10:30:00Z');
       // Note: This will be in Sydney time, so UTC 10:30 becomes Sydney time
-      expect(formatDateRange(start, end, true)).toMatch(/3 Dec 2025, \d{1,2}:\d{2}[ap]m/);
+      expect(formatDateRange(start, end, true)).toBe('9:30pm, 3 Dec 2025');
     });
 
     it('formats same day different times with shared date', () => {
-      const start = makeZonedTime('2025-12-03T00:00:00Z'); // 10am or 11am Sydney
-      const end = makeZonedTime('2025-12-03T04:00:00Z');   // 2pm or 3pm Sydney
+      const start = makeZonedTime('2025-12-03T00:00:00Z'); // 11am Sydney
+      const end = makeZonedTime('2025-12-03T04:00:00Z');   // 3pm Sydney
       const result = formatDateRange(start, end, true);
-      expect(result).toMatch(/3 Dec 2025, \d{1,2}(:\d{2})?[ap]m – \d{1,2}(:\d{2})?[ap]m/);
+      expect(result).toBe('11am – 3pm, 3 Dec 2025');
     });
 
     it('formats different days with full date and time', () => {
-      const start = makeZonedTime('2025-12-03T10:00:00Z');
-      const end = makeZonedTime('2025-12-05T14:30:00Z');
+      const start = makeZonedTime('2025-12-03T10:00:00Z'); // 9pm Sydney
+      const end = makeZonedTime('2025-12-05T14:30:00Z');   // 1:30am next day Sydney
       const result = formatDateRange(start, end, true);
-      // The dates will be in Sydney time, so they may be different from UTC dates
-      expect(result).toMatch(/\d{1,2} Dec, \d{1,2}(:\d{2})?[ap]m – \d{1,2} Dec 2025, \d{1,2}:\d{2}[ap]m/);
+      expect(result).toBe('9:00pm, 3 Dec – 1:30am, 6 Dec 2025');
     });
 
     it('formats midnight as 12am', () => {
@@ -112,7 +111,7 @@ describe('formatDateRange', () => {
     it('handles single day range', () => {
       const start = makeZonedTime('2025-06-15T00:00:00Z');
       const end = makeZonedTime('2025-06-15T23:59:59Z');
-      expect(formatDateRange(start, end, false)).toBe('15 – 16 Jun 2025'); // Different days due to timezone
+      expect(formatDateRange(start, end, false)).toBe('15 – 16 June 2025'); // Different days due to timezone
     });
 
     it('handles full year range', () => {
@@ -121,6 +120,34 @@ describe('formatDateRange', () => {
       // When converted to Sydney time, the end date becomes 1 Jan 2026 due to timezone offset
       // Since the years are different, it will show both full dates
       expect(formatDateRange(start, end, false)).toBe('1 Jan 2025 – 1 Jan 2026');
+    });
+
+    it('handles same day without time (should show single date)', () => {
+      // Both times on 2 Sept 2025
+      const start = makeZonedTime('2025-09-02T13:05:00Z'); // 11:05pm Sydney
+      const end = makeZonedTime('2025-09-02T13:10:00Z');   // 11:10pm Sydney
+      expect(formatDateRange(start, end, false)).toBe('2 Sept 2025'); // Should NOT be "2 – 2 Sept 2025"
+    });
+
+    it('handles same day with time (should collapse date)', () => {
+      // 2 Sept 2025, 11:05pm - 11:10pm Sydney time
+      const start = makeZonedTime('2025-09-02T13:05:00Z'); // 11:05pm Sydney
+      const end = makeZonedTime('2025-09-02T13:10:00Z');   // 11:10pm Sydney
+      expect(formatDateRange(start, end, true)).toBe('11:05pm – 11:10pm, 2 Sept 2025');
+    });
+
+    it('handles same day different hours with time', () => {
+      // 2 Sept 2025, 9:00am - 5:00pm Sydney time
+      const start = makeZonedTime('2025-09-01T23:00:00Z'); // 9:00am Sydney
+      const end = makeZonedTime('2025-09-02T07:00:00Z');   // 5:00pm Sydney
+      expect(formatDateRange(start, end, true)).toBe('9am – 5pm, 2 Sept 2025');
+    });
+
+    it('handles different days with time', () => {
+      // 1 Sept 11:00pm - 2 Sept 1:00am Sydney time
+      const start = makeZonedTime('2025-09-01T13:00:00Z'); // 11:00pm Sydney
+      const end = makeZonedTime('2025-09-01T15:00:00Z');   // 1:00am next day Sydney
+      expect(formatDateRange(start, end, true)).toBe('11pm, 1 Sept – 1am, 2 Sept 2025');
     });
   });
 });
