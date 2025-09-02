@@ -217,8 +217,25 @@ export const userSystems = sqliteTable('user_systems', {
 // Type exports for TypeScript
 export type System = typeof systems.$inferSelect;
 export type NewSystem = typeof systems.$inferInsert;
+// Development-only table for mapping production Clerk IDs to development Clerk IDs
+// This ensures production user IDs never leak into development databases
+// WARNING: This table should ONLY exist in development databases
+export const clerkIdMapping = sqliteTable('clerk_id_mapping', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  username: text('username').notNull(), // Username or email for identification
+  prodClerkId: text('prod_clerk_id').notNull().unique(),
+  devClerkId: text('dev_clerk_id').notNull().unique(),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 export type Reading = typeof readings.$inferSelect;
 export type NewReading = typeof readings.$inferInsert;
 export type PollingStatus = typeof pollingStatus.$inferSelect;
 export type UserSystem = typeof userSystems.$inferSelect;
 export type NewUserSystem = typeof userSystems.$inferInsert;
+export type ClerkIdMapping = typeof clerkIdMapping.$inferSelect;
