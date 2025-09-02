@@ -1,9 +1,12 @@
+// Development-only route for database syncing
+// In production builds, route.production.ts will be used instead
+
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { isUserAdmin } from '@/lib/auth-utils'
 import { db } from '@/lib/db'
-import { readings, systems, pollingStatus, userSystems } from '@/lib/db/schema'
-import { eq, sql, max, min } from 'drizzle-orm'
+import { clerkIdMapping } from '@/lib/db/schema'
+import { syncStages, type SyncContext, type StageDefinition } from './stages'
 
 // Helper to create a streaming response
 function createStreamResponse() {
@@ -28,7 +31,35 @@ function createStreamResponse() {
   return { stream, send, close }
 }
 
+// Stage status type
+interface SyncStage {
+  id: string
+  name: string
+  status: 'pending' | 'running' | 'completed' | 'error'
+  detail?: string
+  startTime?: number
+  duration?: number
+}
+
 export async function POST(request: NextRequest) {
+  // CRITICAL: This endpoint must NEVER run in production
+  // Multiple checks to ensure safety:
+  // 1. Check if we're on the production domain
+  // 2. Check if we're using the production database
+  // 3. Check Vercel environment
+  
+  const host = request.headers.get('host')
+  const isProductionDomain = host?.includes('liveone.energy') || host?.includes('liveone.vercel.app')
+  const isProductionDatabase = process.env.TURSO_DATABASE_URL?.includes('liveone-tokyo')
+  const isVercelProduction = process.env.VERCEL_ENV === 'production'
+  
+  if (isProductionDomain || (isProductionDatabase && isVercelProduction)) {
+    console.error(`CRITICAL: Attempt to run sync-database in production! Host: ${host}, Vercel Env: ${process.env.VERCEL_ENV}`)
+    return NextResponse.json({ 
+      error: 'Not found' 
+    }, { status: 404 })
+  }
+  
   try {
     // Check if user is authenticated and admin
     const { userId } = await auth()
@@ -43,16 +74,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
     }
     
-    // Check if we're in development environment
-    const isDevelopment = process.env.NODE_ENV === 'development'
     const tursoUrl = process.env.TURSO_DATABASE_URL
     const tursoToken = process.env.TURSO_AUTH_TOKEN
-    
-    if (!isDevelopment) {
-      return NextResponse.json({ 
-        error: 'Sync is only available in development environment' 
-      }, { status: 400 })
-    }
     
     if (!tursoUrl || !tursoToken) {
       return NextResponse.json({ 
@@ -78,7 +101,7 @@ export async function POST(request: NextRequest) {
     })
     
   } catch (error) {
-    console.error('Sync initialization error:', error)
+    console.error('Sync initialisation error:', error)
     return NextResponse.json({
       error: 'Failed to start sync',
     }, { status: 500 })
@@ -90,237 +113,179 @@ async function syncDatabase(
   close: () => void,
   signal: AbortSignal
 ) {
+  // Calculate total estimated duration and progress allocations
+  const totalEstimatedMs = syncStages.reduce((sum, stage) => sum + stage.estimatedDurationMs, 0)
+  let cumulativeProgress = 0
+  const progressAllocations = new Map<string, { start: number, end: number }>()
+  
+  for (const stage of syncStages) {
+    const start = cumulativeProgress
+    const end = cumulativeProgress + (stage.estimatedDurationMs / totalEstimatedMs) * 100
+    progressAllocations.set(stage.id, { start, end })
+    cumulativeProgress = end
+  }
+  
+  // Initialise all stages upfront
+  const stages: SyncStage[] = syncStages.map(def => ({
+    id: def.id,
+    name: def.name,
+    status: 'pending' as const
+  }))
+  
+  // Helper to update and send stage status
+  const updateStage = (id: string, updates: Partial<SyncStage>) => {
+    const stage = stages.find(s => s.id === id)
+    if (stage) {
+      Object.assign(stage, updates)
+      if (updates.status === 'running' && !stage.startTime) {
+        stage.startTime = Date.now()
+        console.log(`[SYNC] Stage '${stage.name}' started at ${new Date(stage.startTime).toISOString()}`)
+      }
+      if (updates.status === 'completed' && stage.startTime) {
+        const endTime = Date.now()
+        stage.duration = (endTime - stage.startTime) / 1000
+        console.log(`[SYNC] Stage '${stage.name}' completed in ${stage.duration.toFixed(3)}s (${stage.duration < 1 ? `${Math.round(stage.duration * 1000)}ms` : `${stage.duration.toFixed(1)}s`})`)
+      }
+      if (updates.status === 'error') {
+        console.log(`[SYNC] Stage '${stage.name}' failed: ${updates.detail || 'Unknown error'}`)
+      }
+    }
+    send({ type: 'stages', stages: [...stages] })
+  }
+  
+  // Format datetime helper
+  const formatDateTime = (date: Date) => {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    const day = date.getDate()
+    const month = months[date.getMonth()]
+    const year = date.getFullYear()
+    const hours = date.getHours()
+    const minutes = date.getMinutes().toString().padStart(2, '0')
+    const ampm = hours >= 12 ? 'pm' : 'am'
+    const displayHours = hours % 12 || 12
+    return `${day} ${month} ${year} ${displayHours}:${minutes}${ampm}`
+  }
+  
+  // Build initial context
+  let context: SyncContext = {
+    db,
+    prodDb: null as any,
+    signal,
+    updateStage,
+    send,
+    clerkMappings: new Map(),
+    mapClerkId: () => undefined,
+    formatDateTime
+  }
+  
   try {
-    // Step 1: Check what data we already have locally
-    send({ 
-      type: 'progress', 
-      message: 'Checking local database...', 
-      progress: 0, 
-      total: 100 
-    })
+    // Send initial stages
+    send({ type: 'stages', stages: [...stages] })
     
-    // Get the latest reading timestamp in local database
-    const allReadings = await db
-      .select()
-      .from(readings)
-      .orderBy(sql`${readings.inverterTime} DESC`)
-      .limit(1)
-    
-    const localLatestTime = allReadings.length > 0 ? allReadings[0].inverterTime : new Date(0)
-    
-    // Format date as "DD MMM YYYY"
-    const formatDate = (date: Date) => {
-      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-      const day = date.getDate().toString().padStart(2, '0')
-      const month = months[date.getMonth()]
-      const year = date.getFullYear()
-      return `${day} ${month} ${year}`
-    }
-    
-    send({ 
-      type: 'progress', 
-      message: `Latest local data: ${localLatestTime ? formatDate(new Date(localLatestTime)) : 'No data'}`, 
-      progress: 5, 
-      total: 100 
-    })
-    
-    // Step 2: Connect to production database
-    if (signal.aborted) throw new Error('Sync cancelled')
-    
-    send({ 
-      type: 'progress', 
-      message: 'Connecting to production database...', 
-      progress: 10, 
-      total: 100 
-    })
-    
-    // Import Turso client dynamically
-    const { createClient } = await import('@libsql/client')
-    
-    const prodDb = createClient({
-      url: process.env.TURSO_DATABASE_URL!,
-      authToken: process.env.TURSO_AUTH_TOKEN!,
-    })
-    
-    // Step 3: Sync systems table first
-    if (signal.aborted) throw new Error('Sync cancelled')
-    
-    send({ 
-      type: 'progress', 
-      message: 'Syncing systems...', 
-      progress: 15, 
-      total: 100 
-    })
-    
-    const prodSystems = await prodDb.execute('SELECT * FROM systems')
-    
-    for (const system of prodSystems.rows) {
-      // Check if system exists locally
-      const [existingSystem] = await db
-        .select()
-        .from(systems)
-        .where(eq(systems.id, system.id as number))
-        .limit(1)
-      
-      if (!existingSystem) {
-        // Insert new system
-        await db.insert(systems).values({
-          ownerClerkUserId: system.owner_clerk_user_id as string | undefined,
-          vendorType: system.vendor_type as string,
-          vendorSiteId: system.vendor_site_id as string,
-          displayName: system.display_name as string,
-          model: system.model as string | undefined,
-          serial: system.serial as string | undefined,
-          ratings: system.ratings as string | undefined,
-          solarSize: system.solar_size as string | undefined,
-          batterySize: system.battery_size as string | undefined,
-          timezoneOffsetMin: system.timezone_offset_min as number,
-          createdAt: new Date(system.created_at as number * 1000),
-          updatedAt: new Date(system.updated_at as number * 1000),
-        })
-      }
-    }
-    
-    // Step 4: Count total readings to sync
-    if (signal.aborted) throw new Error('Sync cancelled')
-    
-    send({ 
-      type: 'progress', 
-      message: 'Counting new data to sync...', 
-      progress: 20, 
-      total: 100 
-    })
-    
-    const countResult = await prodDb.execute(
-      `SELECT COUNT(*) as count FROM readings WHERE inverter_time > ?`,
-      [Math.floor(localLatestTime.getTime() / 1000)]
-    )
-    
-    const totalToSync = (countResult.rows[0]?.count as number) || 0
-    
-    if (totalToSync === 0) {
-      send({ 
-        type: 'progress', 
-        message: 'Local database is already up to date!', 
-        progress: 100, 
-        total: 100 
-      })
-      send({ type: 'complete' })
-      close()
-      return
-    }
-    
-    send({ 
-      type: 'progress', 
-      message: `Found ${totalToSync.toLocaleString()} new readings to sync from production`, 
-      progress: 25, 
-      total: 100 
-    })
-    
-    // Step 5: Sync readings in batches
-    const BATCH_SIZE = 1000
-    let offset = 0
-    let synced = 0
-    
-    while (synced < totalToSync) {
-      if (signal.aborted) throw new Error('Sync cancelled')
-      
-      // Calculate progress (25% to 95% for data sync)
-      const dataProgress = 25 + (synced / totalToSync) * 70
-      
-      const percentComplete = Math.round((synced / totalToSync) * 100)
-      send({ 
-        type: 'progress', 
-        message: `Syncing readings: ${synced.toLocaleString()} of ${totalToSync.toLocaleString()} (${percentComplete}%)`, 
-        progress: Math.round(dataProgress), 
-        total: 100 
-      })
-      
-      // Fetch batch from production
-      const batchResult = await prodDb.execute(
-        `SELECT * FROM readings 
-         WHERE inverter_time > ? 
-         ORDER BY inverter_time 
-         LIMIT ? OFFSET ?`,
-        [Math.floor(localLatestTime.getTime() / 1000), BATCH_SIZE, offset]
-      )
-      
-      if (batchResult.rows.length === 0) break
-      
-      // Insert batch into local database
-      const batchData = batchResult.rows.map(row => ({
-        systemId: row.system_id as number,
-        inverterTime: new Date(row.inverter_time as number * 1000),
-        receivedTime: new Date(row.received_time as number * 1000),
-        delaySeconds: row.delay_seconds as number | undefined,
-        solarW: row.solar_w as number,
-        solarInverterW: row.solar_inverter_w as number,
-        shuntW: row.shunt_w as number,
-        loadW: row.load_w as number,
-        batteryW: row.battery_w as number,
-        gridW: row.grid_w as number,
-        batterySOC: row.battery_soc as number,
-        faultCode: row.fault_code as number,
-        faultTimestamp: row.fault_timestamp as number,
-        generatorStatus: row.generator_status as number,
-        solarKwhTotal: row.solar_kwh_total as number | undefined,
-        loadKwhTotal: row.load_kwh_total as number | undefined,
-        batteryInKwhTotal: row.battery_in_kwh_total as number | undefined,
-        batteryOutKwhTotal: row.battery_out_kwh_total as number | undefined,
-        gridInKwhTotal: row.grid_in_kwh_total as number | undefined,
-        gridOutKwhTotal: row.grid_out_kwh_total as number | undefined,
-        createdAt: new Date(row.created_at as number * 1000),
-      }))
-      
-      // Insert in smaller chunks to avoid SQLite limits
-      for (let i = 0; i < batchData.length; i += 100) {
-        const chunk = batchData.slice(i, i + 100)
-        await db.insert(readings).values(chunk).onConflictDoNothing()
-      }
-      
-      synced += batchResult.rows.length
-      offset += BATCH_SIZE
-      
-      // Small delay to prevent overwhelming the database
-      await new Promise(resolve => setTimeout(resolve, 100))
-    }
-    
-    // Step 6: Sync other tables (user_systems, polling_status) if needed
-    if (signal.aborted) throw new Error('Sync cancelled')
-    
-    send({ 
-      type: 'progress', 
-      message: 'Finalizing sync...', 
-      progress: 96, 
-      total: 100 
-    })
-    
-    // Try to sync user_systems if it exists
+    // Load Clerk ID mappings upfront (needed for context)
     try {
-      const prodUserSystems = await prodDb.execute('SELECT * FROM user_systems')
-      for (const us of prodUserSystems.rows) {
-        await db.insert(userSystems).values({
-          id: us.id as number,
-          clerkUserId: us.clerk_user_id as string,
-          systemId: us.system_id as number,
-          role: us.role as string,
-          createdAt: new Date(us.created_at as number * 1000),
-          updatedAt: new Date(us.updated_at as number * 1000),
-        }).onConflictDoNothing()
+      const mappings = await db.select().from(clerkIdMapping)
+      console.log(`[SYNC] Found ${mappings.length} Clerk ID mappings`)
+      for (const mapping of mappings) {
+        context.clerkMappings.set(mapping.prodClerkId, mapping.devClerkId)
+        console.log(`[SYNC] Loaded mapping: ${mapping.username} - prod:${mapping.prodClerkId.slice(0, 15)}... -> dev:${mapping.devClerkId.slice(0, 15)}...`)
+      }
+      context.mapClerkId = (prodId: string | null | undefined): string | undefined => {
+        if (!prodId) return undefined
+        const mappedId = context.clerkMappings.get(prodId)
+        if (!mappedId) {
+          console.warn(`Warning: No dev Clerk ID mapping for production ID: ${prodId} - skipping`)
+          return undefined // CRITICAL: Never copy production IDs to dev
+        }
+        return mappedId
       }
     } catch (err: any) {
-      // Table might not exist in production yet, that's ok
-      console.log('user_systems table not found in production (expected for new tables)')
+      console.error('[SYNC] Error loading Clerk ID mappings:', err.message)
+      context.mapClerkId = (prodId: string | null | undefined): string | undefined => {
+        console.warn(`Warning: No dev Clerk ID mapping for production ID: ${prodId} - skipping`)
+        return undefined
+      }
     }
     
-    // Step 7: Complete
+    // Execute stages in sequence
+    for (const stageDef of syncStages) {
+      if (signal.aborted) throw new Error('Sync cancelled')
+      
+      const allocation = progressAllocations.get(stageDef.id)!
+      
+      // Update stage to running
+      updateStage(stageDef.id, { status: 'running' })
+      send({ 
+        type: 'progress', 
+        message: `Running: ${stageDef.name}...`, 
+        progress: Math.round(allocation.start), 
+        total: 100 
+      })
+      
+      try {
+        // Execute the stage
+        const result = await stageDef.execute(context)
+        
+        // Update context with any changes from the stage
+        if (result.context) {
+          Object.assign(context, result.context)
+        }
+        
+        // Mark stage as completed
+        updateStage(stageDef.id, { 
+          status: 'completed', 
+          detail: result.detail 
+        })
+        
+        // Special handling for early exit (no data to sync)
+        if (stageDef.id === 'count-data' && context.totalToSync === 0) {
+          // Mark remaining stages as completed/skipped
+          const remainingStages = syncStages.slice(syncStages.indexOf(stageDef) + 1)
+          for (const remaining of remainingStages) {
+            if (remaining.id === 'finalise') {
+              updateStage(remaining.id, { status: 'completed', detail: 'Complete' })
+            } else {
+              updateStage(remaining.id, { status: 'completed', detail: 'Skipped - no new data' })
+            }
+          }
+          
+          send({ 
+            type: 'progress', 
+            message: 'Local database is already up to date!', 
+            progress: 100, 
+            total: 100 
+          })
+          send({ type: 'complete' })
+          close()
+          return
+        }
+        
+        send({ 
+          type: 'progress', 
+          message: result.detail || `Completed: ${stageDef.name}`, 
+          progress: Math.round(allocation.end), 
+          total: 100 
+        })
+        
+      } catch (error: any) {
+        // Mark stage as failed
+        updateStage(stageDef.id, { 
+          status: 'error', 
+          detail: error.message 
+        })
+        
+        // Stop processing
+        throw error
+      }
+    }
+    
+    // All stages completed successfully
     send({ 
       type: 'progress', 
-      message: `Successfully synced ${synced.toLocaleString()} readings from production!`, 
+      message: `Successfully synced ${context.synced?.toLocaleString() || 0} readings from production!`, 
       progress: 100, 
       total: 100 
     })
-    
     send({ type: 'complete' })
     close()
     

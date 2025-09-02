@@ -1,79 +1,108 @@
-# CLAUDE.md - Project Management Guide
+# CLAUDE.md - Project Guidelines
+
+## Quick Reference
+
+### Key Documentation
+- **Database Schema**: See `docs/SCHEMA.md` for complete table documentation
+- **API Documentation**: See `docs/API.md` for endpoint details
+- **Database**: Turso (production: `liveone-tokyo`), SQLite (development: `dev.db`)
+- **Deployment**: Vercel (automatic from main branch)
+
+### Environment Variables
+```bash
+TURSO_DATABASE_URL=libsql://liveone-tokyo-simonhac.aws-ap-northeast-1.turso.io
+TURSO_AUTH_TOKEN=<your-token>  # Generate with: ~/.turso/turso db tokens create liveone-tokyo
+```
+
+## Testing Guidelines
+
+- **Framework**: Use Jest for all tests (not Vitest or other frameworks)
+- **Location**: Place test files in `__tests__` directories within the relevant module folder
+  - Example: `lib/__tests__/date-utils.test.ts` for testing `lib/date-utils.ts`
+  - Example: `app/api/__tests__/data.test.ts` for testing API routes
+- **Naming conventions**:
+  - **Unit tests**: `[name].test.ts` (e.g., `date-utils.test.ts`)
+  - **Integration tests**: `[name].integration.test.ts` (e.g., `api.integration.test.ts`)
+- **Test structure**: Import from `@jest/globals` for describe, it, expect
+- **Running tests**:
+  
+  | Command | Description | What it runs |
+  |---------|-------------|--------------|
+  | `npm test` | Run unit tests only | All `*.test.ts` files, excluding `*.integration.test.ts` |
+  | `npm run test:integration` | Run integration tests only | Only `*.integration.test.ts` files |
+  | `npm run test:all` | Run all tests | Both unit and integration tests |
+  | `npm test [pattern]` | Run specific tests | Tests matching the pattern (e.g., `npm test date-utils`) |
+  | `npm run test:watch` | Watch mode | Re-runs tests on file changes |
+  | `npm run test:coverage` | Coverage report | Runs tests with coverage analysis |
+
+- **Integration tests**: 
+  - Should test interactions with external services, databases, or multiple modules
+  - Are excluded from the default `npm test` command to keep it fast
+  - Should be named with `.integration.test.ts` suffix
+  - May require additional setup/teardown or environment variables
+
+## Development Scripts
+
+### Common Commands
+```bash
+npm run dev              # Start development server with TypeScript checking
+npm run build            # Build for production
+npm run type-check       # Check TypeScript types
+npm test                 # Run unit tests
+npm run db:push          # Push schema changes to database
+npm run db:studio        # Open Drizzle Studio for database exploration
+```
+
+### Database Sync (Development Only)
+```bash
+# Sync production data to development database
+# NEVER run in production - has multiple safeguards
+npm run db:sync-prod
+```
 
 ## Turso Database Management
 
-### Installing and Setting Up Turso CLI
-
+### Quick Setup
 ```bash
-# Install Turso CLI (persists in ~/.turso)
+# Install Turso CLI (one-time)
 curl -sSfL https://get.tur.so/install.sh | bash
-export PATH="$HOME/.turso:$PATH"  # Add to PATH
-echo 'export PATH="$HOME/.turso:$PATH"' >> ~/.zshrc  # Make permanent
+echo 'export PATH="$HOME/.turso:$PATH"' >> ~/.zshrc
 
-# Authenticate (one-time setup)
+# Authenticate
 ~/.turso/turso auth login
 
-# List available databases
-~/.turso/turso db list
-
-# Connect to production database shell
+# Connect to production database
 ~/.turso/turso db shell liveone-tokyo
-
-# Or use direct connection with URL
-~/.turso/turso db shell libsql://liveone-tokyo-simonhac.aws-ap-northeast-1.turso.io
 ```
 
-### Quick Database Commands
+### Common Queries
 
-```bash
-# Check recent data
-~/.turso/turso db shell liveone-tokyo "SELECT system_id, day, solar_kwh, load_kwh FROM readings_agg_1d ORDER BY day DESC LIMIT 5"
-
-# Count records
-~/.turso/turso db shell liveone-tokyo "SELECT COUNT(*) as count FROM readings_agg_5m"
-
-# Check distinct systems
-~/.turso/turso db shell liveone-tokyo "SELECT DISTINCT system_id FROM readings_agg_5m"
-
-# Get fresh auth token
-~/.turso/turso db tokens create liveone-tokyo
-```
-
-### Common SQL Operations
-
-#### Check Latest Data
+#### Check Recent Data
 ```sql
--- Get latest reading
+-- Latest readings
 SELECT datetime(inverter_time, 'unixepoch') as time, 
        solar_w, load_w, battery_w, battery_soc
 FROM readings 
 ORDER BY inverter_time DESC 
 LIMIT 5;
 
--- Check 5-minute aggregated data
-SELECT datetime(interval_end, 'unixepoch') as time,
-       solar_w_avg, load_w_avg, battery_w_avg, battery_soc_last
-FROM readings_agg_5m
-ORDER BY interval_end DESC
-LIMIT 10;
-
--- Count total readings
-SELECT COUNT(*) as total_readings,
-       datetime(MIN(inverter_time), 'unixepoch') as oldest,
-       datetime(MAX(inverter_time), 'unixepoch') as newest
-FROM readings;
+-- Check aggregation status
+SELECT 
+  datetime(MAX(interval_end), 'unixepoch') as latest_agg,
+  (strftime('%s', 'now') - MAX(interval_end)) / 60 as minutes_behind
+FROM readings_agg_5m;
 ```
 
 #### Data Health Checks
 ```sql
--- Check for duplicate timestamps (should return 0)
+-- Check for duplicate timestamps
 SELECT inverter_time, COUNT(*) as count
 FROM readings
 WHERE system_id = 1586
 GROUP BY inverter_time
 HAVING COUNT(*) > 1;
 
--- Check for data gaps larger than 2 minutes
+-- Find data gaps > 2 minutes
 WITH time_diffs AS (
   SELECT 
     inverter_time,
@@ -90,250 +119,82 @@ FROM time_diffs
 WHERE diff > 120
 ORDER BY inverter_time DESC
 LIMIT 20;
-
--- Check aggregation status
-SELECT 
-  datetime(MAX(interval_end), 'unixepoch') as latest_agg,
-  (strftime('%s', 'now') - MAX(interval_end)) / 60 as minutes_behind
-FROM readings_agg_5m;
 ```
 
-#### Performance Analysis
-```sql
--- Analyze data distribution by hour
-SELECT 
-  strftime('%H', datetime(inverter_time, 'unixepoch')) as hour,
-  COUNT(*) as count,
-  AVG(solar_w) as avg_solar_w
-FROM readings
-WHERE inverter_time > strftime('%s', 'now', '-7 days')
-GROUP BY hour
-ORDER BY hour;
-
--- Check table sizes
-SELECT 
-  name as table_name,
-  SUM(pgsize) as size_bytes,
-  ROUND(SUM(pgsize) / 1024.0 / 1024.0, 2) as size_mb
-FROM dbstat
-WHERE name IN ('readings', 'readings_agg_5m')
-GROUP BY name;
-```
-
-#### Data Cleanup
-```sql
--- NOTE: No automatic retention policies are currently implemented
--- The following commands are for manual cleanup if needed
-
--- Example: Remove old raw readings (if you want to manually clean up)
--- DELETE FROM readings 
--- WHERE inverter_time < strftime('%s', 'now', '-30 days');
-
--- Vacuum to reclaim space after manual cleanup
-VACUUM;
-
--- Analyze for query optimization
-ANALYZE;
-```
-
-### Database Schema Management
-
-#### View Current Schema
-```sql
--- List all tables
-SELECT name FROM sqlite_master WHERE type='table';
-
--- Get table schema
-.schema readings
-.schema readings_agg_5m
-
--- List all indexes
-SELECT name, tbl_name FROM sqlite_master WHERE type='index';
-```
-
-#### Apply Schema Changes
+### Backup & Restore
 ```bash
-# From project root, push schema changes
-npm run db:push
+# Backup
+turso db export liveone-tokyo > backup-$(date +%Y%m%d).sql
 
-# Or manually apply SQL files
-turso db shell liveone-prod-tokyo < scripts/recreate-agg5m-table.sql
-```
-
-### Backup and Migration
-
-#### Create Backup
-```bash
-# Export database to SQL file
-turso db export liveone-prod-tokyo > backup-$(date +%Y%m%d).sql
-
-# Download as SQLite file
-turso db export liveone-prod-tokyo --type sqlite > backup-$(date +%Y%m%d).db
-```
-
-#### Restore from Backup
-```bash
-# Create new database
+# Restore
 turso db create liveone-restored --location hnd
-
-# Import from SQL backup
 turso db shell liveone-restored < backup-20250817.sql
 ```
 
-### Performance Monitoring
+## Vercel Deployment
 
-#### Check Query Performance
-```sql
--- Enable query timing in Turso shell
-.timer on
-
--- Run your query
-SELECT COUNT(*) FROM readings WHERE inverter_time > strftime('%s', 'now', '-7 days');
-
--- Check index usage
-EXPLAIN QUERY PLAN
-SELECT * FROM readings_agg_5m 
-WHERE system_id = 1586 
-  AND interval_end BETWEEN strftime('%s', 'now', '-24 hours') AND strftime('%s', 'now');
-```
-
-### Troubleshooting Common Issues
-
-#### 1. Slow Queries
-- Check if indexes exist on commonly queried columns
-- Use EXPLAIN QUERY PLAN to verify index usage
-- Consider creating covering indexes for frequent queries
-
-#### 2. Duplicate Data
-```sql
--- Find and remove duplicates while keeping newest
-DELETE FROM readings
-WHERE rowid NOT IN (
-  SELECT MAX(rowid)
-  FROM readings
-  GROUP BY system_id, inverter_time
-);
-```
-
-#### 3. Missing Aggregated Data
-```bash
-# Manually trigger aggregation
-node scripts/aggregate-5min.js
-
-# Check cron job logs in Vercel dashboard
-```
-
-### Environment Variables
-
-Required for database access:
-```bash
-TURSO_DATABASE_URL=libsql://liveone-tokyo-simonhac.aws-ap-northeast-1.turso.io
-TURSO_AUTH_TOKEN=<your-token>  # Generate with: ~/.turso/turso db tokens create liveone-tokyo
-```
-
-### Database Locations
-
-- **Production**: Tokyo (aws-ap-northeast-1)
-- **Database Name**: liveone-tokyo
-- **Region**: Optimized for Australian users
-- **Response Time**: ~200ms from Australia
-
-## Vercel Deployment Management
-
-### Checking Build Logs
-
-**Note: Vercel CLI is installed and available**
-
-```bash
-# Use the provided script to get build logs
-./scripts/vercel-build-log.sh
-
-# Or manually check deployments
-vercel ls  # List recent deployments
-vercel inspect <deployment-url> --logs  # Get build logs for specific deployment
-
-# Check deployment status
-vercel inspect <deployment-url> | grep status
-```
-
-### Common Deployment Issues
-
-1. **Build Failures**
-   - Check TypeScript errors: `npm run type-check`
-   - Test build locally: `npm run build`
-   - View build logs: `./scripts/vercel-build-log.sh`
-
-2. **Type Errors with Drizzle**
-   - `select()` doesn't accept arguments in our version
-   - Use `select()` then filter/deduplicate in JavaScript
-   - Example: `[...new Set(results.map(r => r.systemId))]`
-
-3. **Environment Variables**
-   - Ensure TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are set in Vercel
-   - Update tokens if getting 404 errors: `~/.turso/turso db tokens create liveone-tokyo`
-
-### Useful Vercel Commands
-
+### Build & Deploy
 ```bash
 # Deploy to production
 vercel --prod
 
-# Check logs of running deployment  
-vercel logs <deployment-url>
-
-# List all deployments
+# Check recent deployments
 vercel ls
 
-# Remove a deployment
-vercel rm <deployment-url>
-
-# Pull environment variables from Vercel
-vercel env pull .env.local
+# View build logs
+./scripts/vercel-build-log.sh
 ```
 
-### Database Schema
+### Troubleshooting
 
-For complete database schema documentation, see @docs/SCHEMA.md
+**Build Failures**
+1. Check TypeScript: `npm run type-check`
+2. Test build locally: `npm run build`
+3. View logs: `./scripts/vercel-build-log.sh`
 
-### API Documentation
+**Type Errors with Drizzle**
+- `select()` doesn't accept arguments in our version
+- Use: `select()` then filter in JavaScript
+- Example: `[...new Set(results.map(r => r.systemId))]`
 
-For comprehensive API endpoint documentation, see @docs/API.md
+## Data Pipeline
 
-Key tables:
-1. **readings** - Raw minute-by-minute data
-2. **readings_agg_5m** - 5-minute aggregated data  
-3. **readings_agg_1d** - Daily aggregated data (timezone-aware as of v4)
-4. **systems** - Registered inverter systems (includes timezone_offset)
-5. **polling_status** - Health monitoring for data collection
+1. **Collection**: Cron job polls vendor APIs every minute
+2. **Storage**: Raw data → `readings` table
+3. **5-Min Aggregation**: Real-time as data arrives
+4. **Daily Aggregation**: Runs at 00:05 daily
+5. **API**: Queries use pre-aggregated data (< 1s response)
 
-Manual daily aggregation: 
+### Manual Operations
+
 ```bash
+# Trigger daily aggregation manually
 curl -X POST https://liveone.vercel.app/api/cron/daily \
   -H "Cookie: auth-token=password" \
-  -d '{"action": "catchup"}'  # or "clear" to wipe and regenerate
+  -d '{"action": "catchup"}'  # or "clear" to regenerate
 ```
 
-### Data Pipeline
+## Code Style & Conventions
 
-1. **Collection**: Vercel cron job polls Select.Live every minute
-2. **Storage**: Raw data saved to `readings` table
-3. **5-Minute Aggregation**: Created in real-time as data arrives
-4. **Daily Aggregation**: Runs at 00:05 daily via cron job
-5. **API**: Fast queries use pre-aggregated data (< 1 second response)
-6. **Cleanup**: No automatic cleanup (retention policies not implemented)
+- **TypeScript**: Strict mode enabled
+- **Imports**: Use `@/` for root imports
+- **Dates**: Store as Unix timestamps (UTC) in database
+- **Power**: Store as integers (Watts)
+- **Energy**: Store with 3 decimal places (kWh)
+- **Test Scripts**: Save in `/scripts` directory
 
-### Performance Tips
+## Security
 
-1. Always use indexes for time-based queries
-2. Query aggregated tables for historical data
-3. Use prepared statements for repeated queries
-4. Batch inserts when adding multiple records
-5. Run VACUUM periodically to optimize storage
-
-### Security Notes
-
-- Never commit auth tokens to git
-- Use environment variables for credentials
+- Never commit auth tokens
+- Use environment variables for secrets
 - Rotate tokens periodically
-- Limit database access to necessary operations only
-- all test scripts should be saved in /scripts
+- Limit database access to necessary operations
+- Production safeguards in sync operations
+
+## Performance Tips
+
+1. Use indexes for time-based queries
+2. Query aggregated tables for historical data
+3. Batch inserts (max 100 records for SQLite)
+4. Run `VACUUM` periodically
+5. Use prepared statements for repeated queries
