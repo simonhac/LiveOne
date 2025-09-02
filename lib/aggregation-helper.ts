@@ -1,6 +1,7 @@
 import { db } from './db';
 import { readingsAgg5m, readings } from './db/schema';
 import { eq, and, gte, lte } from 'drizzle-orm';
+import { formatTimeAEST, fromUnixTimestamp } from './date-utils';
 
 /**
  * Updates the 5-minute aggregated data for a specific interval
@@ -95,7 +96,9 @@ export async function updateAggregatedData(
         set: aggregatedData,
       });
     
-    console.log(`[Aggregation] Updated 5m aggregate for interval ending ${intervalEnd.toISOString()}`);
+    // Use AEST timezone (600 min offset) for logging
+    const intervalEndUnix = Math.floor(intervalEnd.getTime() / 1000);
+    console.log(`[Aggregation] Updated 5m aggregate for interval ending ${formatTimeAEST(fromUnixTimestamp(intervalEndUnix, 600))}`);
   } catch (error) {
     console.error('[Aggregation] Error updating aggregated data:', error);
     // Don't throw - we don't want aggregation failures to break the main polling
