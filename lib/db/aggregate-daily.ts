@@ -1,7 +1,7 @@
 import { db } from '@/lib/db';
 import { readingsAgg5m, readingsAgg1d, systems } from '@/lib/db/schema';
-import { sql, eq, and, gte, lt, desc, asc } from 'drizzle-orm';
-import { getYesterdayDate } from '@/lib/date-utils';
+import { sql, eq, and, gte, lt, desc, asc, inArray } from 'drizzle-orm';
+import { getYesterdayDate, formatTimeAEST, fromUnixTimestamp } from '@/lib/date-utils';
 
 /**
  * Aggregate data for a specific day and system
@@ -296,7 +296,8 @@ export async function aggregateYesterdayForAllSystems() {
   try {
     // Get all unique system IDs from recent data  
     const sevenDaysAgo = Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1000) / 1000); // Unix timestamp
-    console.log(`[Daily] Looking for systems with data after ${new Date(sevenDaysAgo * 1000).toISOString()}`);
+    // Use AEST timezone (600 min offset) for logging
+    console.log(`[Daily] Looking for systems with data after ${formatTimeAEST(fromUnixTimestamp(sevenDaysAgo, 600))}`);
     
     const allSystems = await db
       .select()
@@ -319,7 +320,7 @@ export async function aggregateYesterdayForAllSystems() {
     const systemDetails = await db
       .select()
       .from(systems)
-      .where(sql`${systems.id} IN (${uniqueSystemIds.join(',')})`);
+      .where(inArray(systems.id, uniqueSystemIds));
     
     console.log(`Aggregating yesterday's data for ${systemDetails.length} systems`);
     
