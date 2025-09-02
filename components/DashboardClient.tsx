@@ -311,6 +311,9 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
             systemInfo={systemInfo}
             availableSystems={availableSystems}
             currentSystemId={systemId as string}
+            onTestConnection={() => setShowTestConnection(true)}
+            vendorType={data?.vendorType}
+            isAdmin={isAdmin}
           />
 
           {/* Desktop Layout */}
