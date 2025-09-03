@@ -5,8 +5,8 @@ import { eq, sql } from 'drizzle-orm';
 import { updateAggregatedData } from '@/lib/aggregation-helper';
 import { formatSystemId } from '@/lib/system-utils';
 import { pollSelectronicSystem } from '@/lib/selectronic/polling';
-import { pollEnphaseSystem, shouldPollEnphase } from '@/lib/enphase/polling';
-import type { PollingData } from '@/lib/types/enphase';
+import { pollEnphaseSystems, isEnphasePollingMinute } from '@/lib/enphase/enphase-cron';
+import type { CommonPollingData } from '@/lib/types/common';
 
 // Verify the request is from Vercel Cron
 function validateCronRequest(request: NextRequest): boolean {
@@ -52,9 +52,21 @@ export async function GET(request: NextRequest) {
     }
 
     const results = [];
+    let enphaseResult = null;
     
-    // Poll each system
+    // Handle Enphase systems with smart polling schedule
+    if (isEnphasePollingMinute()) {
+      console.log('[Cron] Checking Enphase systems for polling');
+      enphaseResult = await pollEnphaseSystems();
+    }
+    
+    // Poll each non-Enphase system
     for (const system of activeSystems) {
+      // Skip Enphase systems as they're handled separately
+      if (system.vendorType === 'enphase') {
+        continue;
+      }
+      
       try {
         const systemId = formatSystemId({
           vendorType: system.vendorType,
@@ -76,43 +88,27 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        let data: PollingData | null = null;
+        let data: CommonPollingData | null = null;
         
         // Poll based on vendor type
-        if (system.vendorType === 'enphase') {
-          // Check if we should poll Enphase (daylight hours only)
-          if (!shouldPollEnphase({
-            id: system.id,
-            ownerClerkUserId: system.ownerClerkUserId,
-            vendorSiteId: system.vendorSiteId,
-            timezoneOffsetMin: system.timezoneOffsetMin
-          })) {
-            console.log(`[Cron] Skipping Enphase system ${systemId} - outside polling window`);
-            results.push({
-              systemId: system.id,
-              displayName: system.displayName,
-              vendorType: system.vendorType,
-              vendorSiteId: system.vendorSiteId,
-              success: true,
-              skipped: true,
-              reason: 'Outside daylight polling window'
-            });
-            continue;
-          }
-          
-          data = await pollEnphaseSystem({
-            id: system.id,
-            ownerClerkUserId: system.ownerClerkUserId,
-            vendorSiteId: system.vendorSiteId,
-            timezoneOffsetMin: system.timezoneOffsetMin
-          });
-        } else {
-          // Default to Selectronic polling
+        if (system.vendorType === 'selectronic' || system.vendorType === 'select.live') {
           data = await pollSelectronicSystem({
             id: system.id,
             ownerClerkUserId: system.ownerClerkUserId,
             vendorSiteId: system.vendorSiteId
           });
+        } else {
+          console.log(`[Cron] Unknown vendor type: ${system.vendorType}`);
+          results.push({
+            systemId: system.id,
+            displayName: system.displayName,
+            vendorType: system.vendorType,
+            vendorSiteId: system.vendorSiteId,
+            success: false,
+            error: `Unknown vendor type: ${system.vendorType}`,
+            skipped: true
+          });
+          continue;
         }
         
         if (data) {
@@ -235,16 +231,23 @@ export async function GET(request: NextRequest) {
     const skippedCount = results.filter(r => r.skipped).length;
     const failureCount = results.filter(r => !r.success && !r.skipped).length;
     
-    console.log(`[Cron] Polling complete. Success: ${successCount}, Failed: ${failureCount}, Skipped: ${skippedCount}`);
+    // Add Enphase results to summary
+    const totalEnphase = enphaseResult ? (enphaseResult.polled + enphaseResult.skipped + enphaseResult.errors) : 0;
+    const totalSuccessful = successCount + (enphaseResult?.polled || 0);
+    const totalSkipped = skippedCount + (enphaseResult?.skipped || 0);
+    const totalFailed = failureCount + (enphaseResult?.errors || 0);
+    
+    console.log(`[Cron] Polling complete. Success: ${totalSuccessful}, Failed: ${totalFailed}, Skipped: ${totalSkipped}`);
     
     return NextResponse.json({
       success: true,
       timestamp: new Date().toISOString(),
       summary: {
-        total: results.length,
-        successful: successCount,
-        failed: failureCount,
-        skipped: skippedCount
+        total: results.length + totalEnphase,
+        successful: totalSuccessful,
+        failed: totalFailed,
+        skipped: totalSkipped,
+        enphase: enphaseResult
       },
       results
     });

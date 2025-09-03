@@ -1,6 +1,6 @@
 import { SelectronicFetchClient } from './selectronic-client';
 import { getSelectLiveCredentials } from './credentials';
-import type { PollingData } from '@/lib/types/enphase'; // Shared type
+import type { CommonPollingData } from '@/lib/types/common';
 
 interface SelectronicSystemForPolling {
   id: number;
@@ -46,7 +46,7 @@ async function getOrRefreshAuth(
 /**
  * Poll a Selectronic system for current data
  */
-export async function pollSelectronicSystem(system: SelectronicSystemForPolling): Promise<PollingData> {
+export async function pollSelectronicSystem(system: SelectronicSystemForPolling): Promise<CommonPollingData> {
   console.log(`[Selectronic] Polling system ${system.vendorSiteId}...`);
   
   // Get the owner's Select.Live credentials from Clerk
@@ -82,7 +82,7 @@ export async function pollSelectronicSystem(system: SelectronicSystemForPolling)
   const data = response.data;
   
   // Transform to standard format
-  const pollingData: PollingData = {
+  const pollingData: CommonPollingData = {
     timestamp: data.timestamp.toString(),
     solarW: data.solarW,
     solarInverterW: data.solarInverterW,

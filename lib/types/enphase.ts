@@ -54,23 +54,3 @@ export interface EnphaseSystem {
   system_size?: number;
 }
 
-// Common polling data format (shared with Selectronic)
-export interface PollingData {
-  timestamp: string;
-  solarW: number;
-  solarInverterW: number;
-  shuntW: number;
-  loadW: number;
-  batteryW: number;
-  gridW: number;
-  batterySOC: number;
-  faultCode: number;
-  faultTimestamp: number;
-  generatorStatus: number;
-  solarKwhTotal: number;
-  loadKwhTotal: number;
-  batteryInKwhTotal: number;
-  batteryOutKwhTotal: number;
-  gridInKwhTotal: number;
-  gridOutKwhTotal: number;
-}
