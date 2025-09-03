@@ -1,5 +1,5 @@
 import { getEnphaseClient } from './enphase-client';
-import type { PollingData } from '@/lib/types/enphase';
+import type { CommonPollingData } from '@/lib/types/common';
 
 interface EnphaseSystemForPolling {
   id: number;
@@ -48,7 +48,7 @@ export function shouldPollEnphase(system: EnphaseSystemForPolling): boolean {
 /**
  * Poll an Enphase system for current data
  */
-export async function pollEnphaseSystem(system: EnphaseSystemForPolling): Promise<PollingData> {
+export async function pollEnphaseSystem(system: EnphaseSystemForPolling): Promise<CommonPollingData> {
   console.log('ENPHASE: Starting poll for system:', system.vendorSiteId);
   
   const client = getEnphaseClient();
@@ -92,7 +92,7 @@ export async function pollEnphaseSystem(system: EnphaseSystemForPolling): Promis
   console.log('ENPHASE: Using current time for timestamp');
   
   // Transform Enphase data to our standard format
-  const data: PollingData = {
+  const data: CommonPollingData = {
     timestamp: timestamp.toISOString(),
     solarW: telemetry.production_power || 0,
     solarInverterW: telemetry.production_power || 0, // Enphase doesn't distinguish
