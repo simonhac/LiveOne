@@ -353,8 +353,7 @@ export default function EnergyChart({ className = '', maxPowerHint, systemId, ve
         let duration: string
         
         if (timeRange === '1D') {
-          // For Enphase, use 30m instead of 5m for 1D view
-          requestInterval = vendorType === 'enphase' ? '30m' : '5m'
+          requestInterval = '5m'
           duration = '25h' // 25h for 1D
         } else if (timeRange === '7D') {
           requestInterval = '30m'
