@@ -5,7 +5,7 @@ import { eq, sql } from 'drizzle-orm';
 import { updateAggregatedData } from '@/lib/aggregation-helper';
 import { formatSystemId } from '@/lib/system-utils';
 import { pollSelectronicSystem } from '@/lib/selectronic/polling';
-import { pollEnphaseSystems, isEnphasePollingMinute } from '@/lib/enphase/enphase-cron';
+import { pollEnphaseSystems } from '@/lib/enphase/enphase-cron';
 import type { CommonPollingData } from '@/lib/types/common';
 
 // Verify the request is from Vercel Cron
@@ -55,10 +55,9 @@ export async function GET(request: NextRequest) {
     let enphaseResult = null;
     
     // Handle Enphase systems with smart polling schedule
-    if (isEnphasePollingMinute()) {
-      console.log('[Cron] Checking Enphase systems for polling');
-      enphaseResult = await pollEnphaseSystems();
-    }
+    // Always check Enphase systems - the polling function will decide per-system whether to poll
+    console.log('[Cron] Checking Enphase systems for polling');
+    enphaseResult = await pollEnphaseSystems();
     
     // Poll each non-Enphase system
     for (const system of activeSystems) {
