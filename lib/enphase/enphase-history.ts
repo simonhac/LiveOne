@@ -298,8 +298,11 @@ function processEnphaseData(
   
   for (const interval of productionData.intervals) {
     // Filter by time range if provided
+    // Note: end_at represents the END of the interval, so:
+    // - An interval ending at 00:00 belongs to the previous day (23:55-00:00)
+    // - We should include intervals where end_at <= endUnix (not < endUnix)
     if (startUnix && interval.end_at < startUnix) continue;
-    if (endUnix && interval.end_at >= endUnix) continue;
+    if (endUnix && interval.end_at > endUnix) continue;
     
     records.push({
       systemId: systemId,
