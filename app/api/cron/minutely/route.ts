@@ -52,8 +52,8 @@ export async function GET(request: NextRequest) {
     const testDate = searchParams.get('date'); // YYYY-MM-DD format
     const isDev = process.env.NODE_ENV === 'development';
 
-    if (isDev && testSystemId && forceTest) {
-      console.log(`[Cron] Development mode - Testing system ${testSystemId} with force=true${testDate ? ` for date ${testDate}` : ''}`);
+    if (testSystemId && forceTest) {
+      console.log(`[Cron] Testing system ${testSystemId} with force=true${testDate ? ` for date ${testDate}` : ''}`);
     }
 
     console.log('[Cron] Starting system polling...');
@@ -64,8 +64,8 @@ export async function GET(request: NextRequest) {
     
     // Get all active systems from database (exclude disabled and removed)
     let activeSystems;
-    if (isDev && testSystemId) {
-      // In dev with systemId, get just that system
+    if (testSystemId) {
+      // With systemId parameter, get just that system
       activeSystems = await db.select()
         .from(systems)
         .where(eq(systems.id, parseInt(testSystemId)));
@@ -103,8 +103,8 @@ export async function GET(request: NextRequest) {
     }
     
     enphaseResult = await pollEnphaseSystems(
-      isDev && testSystemId ? parseInt(testSystemId) : undefined,
-      isDev && forceTest,
+      testSystemId ? parseInt(testSystemId) : undefined,
+      forceTest,
       parsedTestDate
     );
     
