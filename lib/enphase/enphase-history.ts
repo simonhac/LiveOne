@@ -412,26 +412,47 @@ export async function fetchEnphaseCurrentDay(systemId: number, dryRun = false) {
     intervalMap.set(interval.end_at, interval);
   }
   
-  // Find the time range to fill
+  // Find the time range - only fill up to the last actual data point
   const startTimestamp = productionData.start_at;
-  const currentTimestamp = Math.floor(Date.now() / 1000);
-  // Round down to nearest 5-minute interval
-  const endTimestamp = Math.floor(currentTimestamp / 300) * 300;
+  const endTimestamp = productionData.end_at; // Use the last data timestamp from Enphase
   
-  console.log(`[ENPHASE-HISTORY] Filling gaps from ${new Date(startTimestamp * 1000).toISOString()} to ${new Date(endTimestamp * 1000).toISOString()}`);
+  // Find the actual last data point (including valid zeros during nighttime)
+  // We consider an interval as "real data" if it exists in the response
+  let lastDataTimestamp = startTimestamp;
+  if (productionData.intervals.length > 0) {
+    // The last interval in the array is the most recent data from Enphase
+    lastDataTimestamp = productionData.intervals[productionData.intervals.length - 1].end_at;
+  }
   
-  // Generate all 5-minute intervals from start to current time
+  console.log(`[ENPHASE-HISTORY] Data range: ${new Date(startTimestamp * 1000).toISOString()} to ${new Date(endTimestamp * 1000).toISOString()}`);
+  console.log(`[ENPHASE-HISTORY] Last actual data: ${new Date(lastDataTimestamp * 1000).toISOString()}`);
+  console.log(`[ENPHASE-HISTORY] Will only fill gaps up to last actual data point`);
+  
+  // Generate records only up to the last actual data point
   const recordsToUpsert = [];
   let filledGaps = 0;
+  let skippedFutureIntervals = 0;
   
   for (let timestamp = startTimestamp; timestamp <= endTimestamp; timestamp += 300) {
     const interval = intervalMap.get(timestamp);
+    
+    // Skip intervals after the last actual data
+    if (timestamp > lastDataTimestamp) {
+      skippedFutureIntervals++;
+      continue;
+    }
+    
+    // Only create a record if we have data OR if we're filling a gap before the last data point
+    if (!interval) {
+      // This is a gap that needs filling with zero
+      filledGaps++;
+    }
     
     recordsToUpsert.push({
       systemId: systemId,
       intervalEnd: timestamp,
       
-      // Use actual data if available, otherwise fill with 0
+      // Use actual data if available, otherwise fill with 0 (only for gaps before last data)
       solarWAvg: interval ? interval.powr : 0,
       solarWMin: interval ? interval.powr : 0,
       solarWMax: interval ? interval.powr : 0,
@@ -468,7 +489,7 @@ export async function fetchEnphaseCurrentDay(systemId: number, dryRun = false) {
     }
   }
   
-  console.log(`[ENPHASE-HISTORY] Prepared ${recordsToUpsert.length} records for upsert (${filledGaps} gaps filled with 0)`);
+  console.log(`[ENPHASE-HISTORY] Prepared ${recordsToUpsert.length} records for upsert (${filledGaps} gaps filled with 0, ${skippedFutureIntervals} future intervals skipped)`);
   
   if (dryRun) {
     console.log('[ENPHASE-HISTORY] Dry run - not upserting data');
