@@ -204,14 +204,18 @@ async function fetchEnphaseProductionData(
     // Build URL with parameters
     const params = new URLSearchParams({
       start_at: startUnix.toString(),
-      granularity: '5mins'
+      granularity: 'day'  // This returns 5-minute data for the full day
     });
     if (endUnix) {
       params.append('end_at', endUnix.toString());
     }
     const url = `/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro?${params}`;
+    console.log(`[ENPHASE-HISTORY] Enphase API URL: ${url}`);
     
-    const response = await fetch(`${prodUrl}/api/enphase-proxy?systemId=${system.id}&url=${encodeURIComponent(url)}`);
+    const fullProxyUrl = `${prodUrl}/api/enphase-proxy?systemId=${system.id}&url=${encodeURIComponent(url)}`;
+    console.log(`[ENPHASE-HISTORY] Full proxy URL: ${fullProxyUrl}`);
+    
+    const response = await fetch(fullProxyUrl);
     
     if (!response.ok) {
       const error = await response.text();
@@ -253,7 +257,7 @@ async function fetchEnphaseProductionData(
     // Build URL with parameters
     const params = new URLSearchParams({
       start_at: startUnix.toString(),
-      granularity: '5mins'
+      granularity: 'day'  // This returns 5-minute data for the full day
     });
     if (endUnix) {
       params.append('end_at', endUnix.toString());
