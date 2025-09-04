@@ -303,6 +303,94 @@ export function parseRelativeTime(
 }
 
 /**
+ * Get a ZonedDateTime for the current time adjusted to a specific timezone offset
+ * @param timezoneOffsetMin - Timezone offset in minutes from UTC (e.g., 600 for UTC+10)
+ * @returns ZonedDateTime adjusted for the timezone offset
+ */
+export function getZonedNow(timezoneOffsetMin: number): ZonedDateTime {
+  // Start with UTC time
+  const nowUTC = now('UTC');
+  // Add the timezone offset to get the correct local time
+  return nowUTC.add({ minutes: timezoneOffsetMin });
+}
+
+/**
+ * Get today's date as a CalendarDate for a given timezone
+ * @param timezoneOffsetMin - Timezone offset in minutes from UTC (e.g., 600 for UTC+10)
+ * @returns Today's CalendarDate in the given timezone
+ */
+export function getTodayInTimezone(timezoneOffsetMin: number): CalendarDate {
+  const zonedNow = getZonedNow(timezoneOffsetMin);
+  return new CalendarDate(zonedNow.year, zonedNow.month, zonedNow.day);
+}
+
+/**
+ * Get yesterday as a CalendarDate for a given timezone
+ * @param timezoneOffsetMin - Timezone offset in minutes from UTC
+ * @returns Yesterday's CalendarDate in the given timezone
+ */
+export function getYesterdayInTimezone(timezoneOffsetMin: number): CalendarDate {
+  const today = getTodayInTimezone(timezoneOffsetMin);
+  return today.subtract({ days: 1 });
+}
+
+/**
+ * Get a CalendarDate N days ago for a given timezone
+ * @param daysAgo - Number of days in the past (0 = today, 1 = yesterday, etc.)
+ * @param timezoneOffsetMin - Timezone offset in minutes from UTC
+ * @returns CalendarDate N days ago in the given timezone
+ */
+export function getCalendarDateDaysAgo(daysAgo: number, timezoneOffsetMin: number): CalendarDate {
+  const today = getTodayInTimezone(timezoneOffsetMin);
+  return daysAgo > 0 ? today.subtract({ days: daysAgo }) : today;
+}
+
+/**
+ * Convert a CalendarDate to Unix timestamps for start and end of day in a given timezone
+ * @param date - The calendar date
+ * @param timezoneOffsetMin - Timezone offset in minutes from UTC
+ * @returns Tuple of [startOfDayUnix, endOfDayUnix] in seconds
+ * Note: End of day is midnight (00:00:00) of the next day, not 23:59:59
+ */
+export function calendarDateToUnixRange(
+  date: CalendarDate,
+  timezoneOffsetMin: number
+): [number, number] {
+  // Create a ZonedDateTime at midnight UTC for the given date
+  const midnightUTC = now('UTC').set({
+    year: date.year,
+    month: date.month,
+    day: date.day,
+    hour: 0,
+    minute: 0,
+    second: 0,
+    millisecond: 0
+  });
+  
+  // Subtract the timezone offset to get the UTC time that corresponds to midnight local
+  // If the timezone is +600 (10 hours ahead), midnight local is 10 hours earlier in UTC
+  const startOfDay = midnightUTC.subtract({ minutes: timezoneOffsetMin });
+  const startUnix = Math.floor(startOfDay.toDate().getTime() / 1000);
+  
+  // End of day is start of next day (midnight of next day)
+  const nextDay = date.add({ days: 1 });
+  const nextMidnightUTC = now('UTC').set({
+    year: nextDay.year,
+    month: nextDay.month,
+    day: nextDay.day,
+    hour: 0,
+    minute: 0,
+    second: 0,
+    millisecond: 0
+  });
+  
+  const endOfDay = nextMidnightUTC.subtract({ minutes: timezoneOffsetMin });
+  const endUnix = Math.floor(endOfDay.toDate().getTime() / 1000);
+  
+  return [startUnix, endUnix];
+}
+
+/**
  * Format a date/time range intelligently to avoid redundant information
  * Uses en-dash (–) between dates as per typographic standards
  * 
