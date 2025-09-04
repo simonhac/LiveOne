@@ -2,6 +2,8 @@ import { db } from '@/lib/db';
 import { readingsAgg5m, systems } from '@/lib/db/schema';
 import { eq, and, gte, lte } from 'drizzle-orm';
 import { getEnphaseClient } from './enphase-client';
+import { CalendarDate } from '@internationalized/date';
+import { calendarDateToUnixRange, getYesterdayInTimezone, getTodayInTimezone, getZonedNow } from '@/lib/date-utils';
 
 interface EnphaseHistoryOptions {
   systemId: number;
@@ -27,15 +29,9 @@ interface EnphaseProductionResponse {
 }
 
 /**
- * Fetch historical Enphase data and insert into 5-minute aggregation table
+ * Get and validate a system from the database
  */
-export async function fetchEnphaseHistory(options: EnphaseHistoryOptions) {
-  const { systemId, startTime, endTime, dryRun = false } = options;
-  
-  console.log(`[ENPHASE-HISTORY] Fetching history for system ${systemId}`);
-  console.log(`[ENPHASE-HISTORY] Period: ${startTime.toISOString()} to ${endTime.toISOString()}`);
-  
-  // Get system details
+async function getValidatedEnphaseSystem(systemId: number) {
   const [system] = await db
     .select()
     .from(systems)
@@ -54,171 +50,62 @@ export async function fetchEnphaseHistory(options: EnphaseHistoryOptions) {
     throw new Error(`System ${systemId} has no owner`);
   }
   
-  // Determine if we're in development mode
-  const isDev = process.env.NODE_ENV === 'development' || !process.env.TURSO_DATABASE_URL;
+  // Type assertion since we've validated ownerClerkUserId is not null
+  return system as typeof system & { ownerClerkUserId: string };
+}
+
+/**
+ * Fetch historical Enphase data and insert into 5-minute aggregation table
+ */
+export async function fetchEnphaseHistory(options: EnphaseHistoryOptions) {
+  const { systemId, startTime, endTime, dryRun = false } = options;
   
-  let productionData: EnphaseProductionResponse;
+  console.log(`[ENPHASE-HISTORY] Fetching history for system ${systemId}`);
+  console.log(`[ENPHASE-HISTORY] Period: ${startTime.toISOString()} to ${endTime.toISOString()}`);
   
-  if (isDev) {
-    // In development, proxy through production
-    console.log('[ENPHASE-HISTORY] Development mode - proxying through production');
-    
-    const prodUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://liveone.vercel.app';
-    const url = `/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro`;
-    
-    const response = await fetch(`${prodUrl}/api/enphase-proxy?systemId=${systemId}&url=${encodeURIComponent(url)}`);
-    
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Failed to fetch from production proxy: ${error}`);
-    }
-    
-    const proxyResponse = await response.json();
-    
-    if (proxyResponse.response?.status !== 200) {
-      throw new Error(`Enphase API error: ${JSON.stringify(proxyResponse.response)}`);
-    }
-    
-    productionData = proxyResponse.response.data;
-    
-  } else {
-    // In production, go directly to Enphase
-    console.log('[ENPHASE-HISTORY] Production mode - direct Enphase API call');
-    
-    const client = getEnphaseClient();
-    const credentials = await client.getStoredTokens(system.ownerClerkUserId);
-    
-    if (!credentials) {
-      throw new Error(`No Enphase credentials found for user ${system.ownerClerkUserId}`);
-    }
-    
-    // Check if token needs refresh
-    let accessToken = credentials.access_token;
-    if (credentials.expires_at < Date.now() + 3600000) {
-      console.log('[ENPHASE-HISTORY] Refreshing token...');
-      const newTokens = await client.refreshTokens(credentials.refresh_token);
-      await client.storeTokens(
-        system.ownerClerkUserId,
-        newTokens,
-        credentials.enphase_system_id
-      );
-      accessToken = newTokens.access_token;
-    }
-    
-    // Fetch production data
-    const url = `https://api.enphaseenergy.com/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro`;
-    
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'key': process.env.ENPHASE_API_KEY || ''
-      }
-    });
-    
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Enphase API error: ${response.status} - ${error}`);
-    }
-    
-    productionData = await response.json();
-  }
+  // Get and validate system
+  const system = await getValidatedEnphaseSystem(systemId);
   
-  // Filter intervals to requested time range
-  const startTimestamp = Math.floor(startTime.getTime() / 1000);
-  const endTimestamp = Math.floor(endTime.getTime() / 1000);
+  // Convert to Unix timestamps
+  const startUnix = Math.floor(startTime.getTime() / 1000);
+  const endUnix = Math.floor(endTime.getTime() / 1000);
   
-  const relevantIntervals = productionData.intervals.filter(interval => 
-    interval.end_at >= startTimestamp && interval.end_at <= endTimestamp
-  );
+  // Fetch the raw data
+  const productionData = await fetchEnphaseProductionData(system, startUnix, endUnix);
   
-  console.log(`[ENPHASE-HISTORY] Found ${relevantIntervals.length} intervals in time range`);
+  console.log(`[ENPHASE-HISTORY] Found ${productionData.intervals.length} intervals`);
   
-  if (relevantIntervals.length === 0) {
-    console.log('[ENPHASE-HISTORY] No data in requested time range');
-    return { 
-      intervalCount: 0, 
-      insertedCount: 0,
-      skippedCount: 0,
-      errorCount: 0 
-    };
-  }
+  // Process the data into records
+  const records = processEnphaseProductionData(productionData, systemId, startUnix, endUnix);
   
-  // Check for existing data to avoid duplicates
+  // Check for existing data to avoid duplicates (for insert-only mode)
   const existingData = await db
     .select()
     .from(readingsAgg5m)
     .where(
       and(
         eq(readingsAgg5m.systemId, systemId),
-        gte(readingsAgg5m.intervalEnd, startTimestamp),
-        lte(readingsAgg5m.intervalEnd, endTimestamp)
+        gte(readingsAgg5m.intervalEnd, startUnix),
+        lte(readingsAgg5m.intervalEnd, endUnix)
       )
     );
   
   const existingIntervals = new Set(existingData.map(d => d.intervalEnd));
   console.log(`[ENPHASE-HISTORY] Found ${existingIntervals.size} existing intervals in database`);
   
-  // Prepare records for insertion
-  const recordsToInsert = [];
-  let skippedCount = 0;
-  
-  for (const interval of relevantIntervals) {
-    // Skip if we already have data for this interval
-    if (existingIntervals.has(interval.end_at)) {
-      skippedCount++;
-      continue;
-    }
-    
-    // Skip intervals with no production (nighttime)
-    if (interval.powr === 0 && interval.enwh === 0 && interval.devices_reporting === 0) {
-      skippedCount++;
-      continue;
-    }
-    
-    recordsToInsert.push({
-      systemId: systemId,
-      intervalEnd: interval.end_at,
-      
-      // For Enphase, we only have production (solar) data
-      solarWAvg: interval.powr,
-      solarWMin: interval.powr,
-      solarWMax: interval.powr,
-      
-      // No load, battery, or grid data from this endpoint
-      loadWAvg: null,
-      loadWMin: null,
-      loadWMax: null,
-      
-      batteryWAvg: null,
-      batteryWMin: null,
-      batteryWMax: null,
-      
-      gridWAvg: null,
-      gridWMin: null,
-      gridWMax: null,
-      
-      batterySOCLast: null,
-      
-      // Energy counters - convert Wh to kWh
-      solarKwhTotalLast: interval.enwh ? interval.enwh / 1000 : null,
-      loadKwhTotalLast: null,
-      batteryInKwhTotalLast: null,
-      batteryOutKwhTotalLast: null,
-      gridInKwhTotalLast: null,
-      gridOutKwhTotalLast: null,
-      
-      sampleCount: 1, // Each interval represents one sample from Enphase
-      createdAt: new Date()
-    });
-  }
+  // Filter out existing records (skip duplicates)
+  const recordsToInsert = records.filter(r => !existingIntervals.has(r.intervalEnd));
+  const skippedCount = records.length - recordsToInsert.length;
   
   console.log(`[ENPHASE-HISTORY] Prepared ${recordsToInsert.length} records for insertion (${skippedCount} skipped)`);
   
   if (dryRun) {
     console.log('[ENPHASE-HISTORY] Dry run - not inserting data');
-    console.log('[ENPHASE-HISTORY] Sample record:', JSON.stringify(recordsToInsert[0], null, 2));
+    if (recordsToInsert.length > 0) {
+      console.log('[ENPHASE-HISTORY] Sample record:', JSON.stringify(recordsToInsert[0], null, 2));
+    }
     return {
-      intervalCount: relevantIntervals.length,
+      intervalCount: productionData.intervals.length,
       insertedCount: 0,
       skippedCount,
       errorCount: 0,
@@ -227,7 +114,7 @@ export async function fetchEnphaseHistory(options: EnphaseHistoryOptions) {
     };
   }
   
-  // Insert records in batches
+  // Insert records (not upsert since we filtered existing)
   const batchSize = 100;
   let insertedCount = 0;
   let errorCount = 0;
@@ -248,7 +135,7 @@ export async function fetchEnphaseHistory(options: EnphaseHistoryOptions) {
   console.log(`[ENPHASE-HISTORY] Complete - Inserted: ${insertedCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`);
   
   return {
-    intervalCount: relevantIntervals.length,
+    intervalCount: productionData.intervals.length,
     insertedCount,
     skippedCount,
     errorCount
@@ -290,44 +177,37 @@ export async function fetchEnphaseHistoryForDate(systemId: number, date: Date, d
 }
 
 /**
- * Fetch the current day's full data and upsert into database
- * This is more efficient as it fetches all available data for today and upserts
+ * Fetch raw production data from Enphase API for a specific time range
+ * @param system - The system record from database
+ * @param startUnix - Start timestamp in Unix seconds
+ * @param endUnix - End timestamp in Unix seconds (optional)
+ * @returns Raw Enphase production response
  */
-export async function fetchEnphaseCurrentDay(systemId: number, dryRun = false) {
-  console.log(`[ENPHASE-HISTORY] Fetching current day's data for system ${systemId}`);
-  
-  // Get system details
-  const [system] = await db
-    .select()
-    .from(systems)
-    .where(eq(systems.id, systemId))
-    .limit(1);
-    
-  if (!system) {
-    throw new Error(`System ${systemId} not found`);
-  }
-  
-  if (system.vendorType !== 'enphase') {
-    throw new Error(`System ${systemId} is not an Enphase system (type: ${system.vendorType})`);
-  }
-  
-  if (!system.ownerClerkUserId) {
-    throw new Error(`System ${systemId} has no owner`);
-  }
-  
+async function fetchEnphaseProductionData(
+  system: { id: number; vendorSiteId: string; ownerClerkUserId: string },
+  startUnix: number,
+  endUnix?: number
+): Promise<EnphaseProductionResponse> {
   // Determine if we're in development mode
   const isDev = process.env.NODE_ENV === 'development' || !process.env.TURSO_DATABASE_URL;
-  
-  let productionData: EnphaseProductionResponse;
   
   if (isDev) {
     // In development, proxy through production
     console.log('[ENPHASE-HISTORY] Development mode - proxying through production');
     
     const prodUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://liveone.vercel.app';
-    const url = `/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro`;
     
-    const response = await fetch(`${prodUrl}/api/enphase-proxy?systemId=${systemId}&url=${encodeURIComponent(url)}`);
+    // Build URL with parameters
+    const params = new URLSearchParams({
+      start_at: startUnix.toString(),
+      granularity: 'five_minutes'
+    });
+    if (endUnix) {
+      params.append('end_at', endUnix.toString());
+    }
+    const url = `/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro?${params}`;
+    
+    const response = await fetch(`${prodUrl}/api/enphase-proxy?systemId=${system.id}&url=${encodeURIComponent(url)}`);
     
     if (!response.ok) {
       const error = await response.text();
@@ -340,7 +220,7 @@ export async function fetchEnphaseCurrentDay(systemId: number, dryRun = false) {
       throw new Error(`Enphase API error: ${JSON.stringify(proxyResponse.response)}`);
     }
     
-    productionData = proxyResponse.response.data;
+    return proxyResponse.response.data;
     
   } else {
     // In production, go directly to Enphase
@@ -366,8 +246,15 @@ export async function fetchEnphaseCurrentDay(systemId: number, dryRun = false) {
       accessToken = newTokens.access_token;
     }
     
-    // Fetch production data - no date params gives us current day
-    const url = `https://api.enphaseenergy.com/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro`;
+    // Build URL with parameters
+    const params = new URLSearchParams({
+      start_at: startUnix.toString(),
+      granularity: 'five_minutes'
+    });
+    if (endUnix) {
+      params.append('end_at', endUnix.toString());
+    }
+    const url = `https://api.enphaseenergy.com/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro?${params}`;
     
     const response = await fetch(url, {
       headers: {
@@ -381,81 +268,39 @@ export async function fetchEnphaseCurrentDay(systemId: number, dryRun = false) {
       throw new Error(`Enphase API error: ${response.status} - ${error}`);
     }
     
-    productionData = await response.json();
+    return await response.json();
   }
+}
+
+/**
+ * Process Enphase production data and prepare records for database
+ * @param productionData - Raw Enphase production response
+ * @param systemId - System ID for the records
+ * @param startUnix - Start of time range (optional, for filtering)
+ * @param endUnix - End of time range (optional, for filtering)
+ * @returns Array of records ready for database insertion
+ */
+function processEnphaseProductionData(
+  productionData: EnphaseProductionResponse,
+  systemId: number,
+  startUnix?: number,
+  endUnix?: number
+) {
+  const records = [];
   
-  console.log(`[ENPHASE-HISTORY] Received ${productionData.intervals.length} intervals`);
-  console.log(`[ENPHASE-HISTORY] Time range: ${new Date(productionData.start_at * 1000).toISOString()} to ${new Date(productionData.end_at * 1000).toISOString()}`);
-  
-  // Check if we're getting the correct day's data
-  const now = new Date();
-  const dataStartDate = new Date(productionData.start_at * 1000);
-  const localNow = new Date(now.getTime() + system.timezoneOffsetMin * 60 * 1000);
-  const localDataStart = new Date(dataStartDate.getTime() + system.timezoneOffsetMin * 60 * 1000);
-  
-  // If polling at midnight, we should get yesterday's data
-  if (localNow.getHours() === 0 && localNow.getMinutes() < 5) {
-    const yesterday = new Date(localNow);
-    yesterday.setDate(yesterday.getDate() - 1);
-    
-    if (localDataStart.getDate() !== yesterday.getDate()) {
-      console.warn(`[ENPHASE-HISTORY] WARNING: Midnight poll returned wrong day's data!`);
-      console.warn(`[ENPHASE-HISTORY] Expected data for ${yesterday.toISOString().split('T')[0]} but got ${localDataStart.toISOString().split('T')[0]}`);
-    } else {
-      console.log(`[ENPHASE-HISTORY] Midnight poll correctly returned yesterday's data (${yesterday.toISOString().split('T')[0]})`);
-    }
-  }
-  
-  // Create a map of existing intervals from Enphase data
-  const intervalMap = new Map<number, EnphaseInterval>();
   for (const interval of productionData.intervals) {
-    intervalMap.set(interval.end_at, interval);
-  }
-  
-  // Find the time range - only fill up to the last actual data point
-  const startTimestamp = productionData.start_at;
-  const endTimestamp = productionData.end_at; // Use the last data timestamp from Enphase
-  
-  // Find the actual last data point (including valid zeros during nighttime)
-  // We consider an interval as "real data" if it exists in the response
-  let lastDataTimestamp = startTimestamp;
-  if (productionData.intervals.length > 0) {
-    // The last interval in the array is the most recent data from Enphase
-    lastDataTimestamp = productionData.intervals[productionData.intervals.length - 1].end_at;
-  }
-  
-  console.log(`[ENPHASE-HISTORY] Data range: ${new Date(startTimestamp * 1000).toISOString()} to ${new Date(endTimestamp * 1000).toISOString()}`);
-  console.log(`[ENPHASE-HISTORY] Last actual data: ${new Date(lastDataTimestamp * 1000).toISOString()}`);
-  console.log(`[ENPHASE-HISTORY] Will only fill gaps up to last actual data point`);
-  
-  // Generate records only up to the last actual data point
-  const recordsToUpsert = [];
-  let filledGaps = 0;
-  let skippedFutureIntervals = 0;
-  
-  for (let timestamp = startTimestamp; timestamp <= endTimestamp; timestamp += 300) {
-    const interval = intervalMap.get(timestamp);
+    // Filter by time range if provided
+    if (startUnix && interval.end_at < startUnix) continue;
+    if (endUnix && interval.end_at >= endUnix) continue;
     
-    // Skip intervals after the last actual data
-    if (timestamp > lastDataTimestamp) {
-      skippedFutureIntervals++;
-      continue;
-    }
-    
-    // Only create a record if we have data OR if we're filling a gap before the last data point
-    if (!interval) {
-      // This is a gap that needs filling with zero
-      filledGaps++;
-    }
-    
-    recordsToUpsert.push({
+    records.push({
       systemId: systemId,
-      intervalEnd: timestamp,
+      intervalEnd: interval.end_at,
       
-      // Use actual data if available, otherwise fill with 0 (only for gaps before last data)
-      solarWAvg: interval ? interval.powr : 0,
-      solarWMin: interval ? interval.powr : 0,
-      solarWMax: interval ? interval.powr : 0,
+      // For Enphase, we only have production (solar) data
+      solarWAvg: interval.powr,
+      solarWMin: interval.powr,
+      solarWMax: interval.powr,
       
       // No load, battery, or grid data from this endpoint
       loadWAvg: null,
@@ -473,46 +318,43 @@ export async function fetchEnphaseCurrentDay(systemId: number, dryRun = false) {
       batterySOCLast: null,
       
       // Energy counters - convert Wh to kWh
-      solarKwhTotalLast: interval?.enwh ? interval.enwh / 1000 : null,
+      solarKwhTotalLast: interval.enwh ? interval.enwh / 1000 : null,
       loadKwhTotalLast: null,
       batteryInKwhTotalLast: null,
       batteryOutKwhTotalLast: null,
       gridInKwhTotalLast: null,
       gridOutKwhTotalLast: null,
       
-      sampleCount: 1, // Each interval represents one sample (real or filled)
+      sampleCount: 1,
       createdAt: new Date()
     });
-    
-    if (!interval) {
-      filledGaps++;
-    }
   }
   
-  console.log(`[ENPHASE-HISTORY] Prepared ${recordsToUpsert.length} records for upsert (${filledGaps} gaps filled with 0, ${skippedFutureIntervals} future intervals skipped)`);
-  
+  return records;
+}
+
+/**
+ * Upsert records to the database in batches
+ * @param records - Records to upsert
+ * @param dryRun - If true, don't actually insert/update data
+ * @returns Counts of upserted and error records
+ */
+async function upsertEnphaseRecords(records: any[], dryRun: boolean) {
   if (dryRun) {
     console.log('[ENPHASE-HISTORY] Dry run - not upserting data');
-    if (recordsToUpsert.length > 0) {
-      console.log('[ENPHASE-HISTORY] Sample record:', JSON.stringify(recordsToUpsert[0], null, 2));
+    if (records.length > 0) {
+      console.log('[ENPHASE-HISTORY] Sample record:', JSON.stringify(records[0], null, 2));
     }
-    return {
-      intervalCount: recordsToUpsert.length,
-      upsertedCount: 0,
-      gapsFilled: filledGaps,
-      errorCount: 0,
-      dryRun: true,
-      sampleRecord: recordsToUpsert[0]
-    };
+    return { upsertedCount: 0, errorCount: 0 };
   }
   
   // Upsert records in batches
-  const batchSize = 50; // Smaller batches for SQLite
+  const batchSize = 50;
   let upsertedCount = 0;
   let errorCount = 0;
   
-  for (let i = 0; i < recordsToUpsert.length; i += batchSize) {
-    const batch = recordsToUpsert.slice(i, i + batchSize);
+  for (let i = 0; i < records.length; i += batchSize) {
+    const batch = records.slice(i, i + batchSize);
     
     try {
       // Upsert each record individually to handle conflicts properly
@@ -533,19 +375,182 @@ export async function fetchEnphaseCurrentDay(systemId: number, dryRun = false) {
         upsertedCount++;
       }
       
-      console.log(`[ENPHASE-HISTORY] Upserted batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(recordsToUpsert.length / batchSize)} (${batch.length} records)`);
+      console.log(`[ENPHASE-HISTORY] Upserted batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(records.length / batchSize)} (${batch.length} records)`);
     } catch (error) {
       console.error(`[ENPHASE-HISTORY] Error upserting batch:`, error);
       errorCount += batch.length;
     }
   }
   
-  console.log(`[ENPHASE-HISTORY] Complete - Upserted: ${upsertedCount}, Gaps filled: ${filledGaps}, Errors: ${errorCount}`);
+  return { upsertedCount, errorCount };
+}
+
+/**
+ * Fetch 5-minute data for a specific calendar day
+ * @param systemId - The system ID in the database
+ * @param date - The calendar date to fetch
+ * @param timezoneOffsetMin - Timezone offset in minutes from UTC
+ * @param dryRun - If true, don't actually insert/update data
+ * @returns Result object with counts
+ */
+export async function fetchEnphase5MinDay(
+  systemId: number,
+  date: CalendarDate,
+  timezoneOffsetMin: number,
+  dryRun = false
+) {
+  console.log(`[ENPHASE-HISTORY] Fetching 5-minute data for ${date.year}-${String(date.month).padStart(2, '0')}-${String(date.day).padStart(2, '0')} for system ${systemId}`);
+  
+  // Get and validate system
+  const system = await getValidatedEnphaseSystem(systemId);
+  
+  // Convert calendar date to Unix timestamp range for the timezone
+  const [startUnix, endUnix] = calendarDateToUnixRange(date, timezoneOffsetMin);
+  
+  console.log(`[ENPHASE-HISTORY] Fetching data from ${new Date(startUnix * 1000).toISOString()} to ${new Date(endUnix * 1000).toISOString()}`);
+  
+  // Fetch the raw data
+  const productionData = await fetchEnphaseProductionData(system, startUnix, endUnix);
+  
+  console.log(`[ENPHASE-HISTORY] Received ${productionData.intervals.length} intervals`);
+  
+  // Process the data into records
+  const records = processEnphaseProductionData(productionData, systemId, startUnix, endUnix);
+  
+  console.log(`[ENPHASE-HISTORY] Prepared ${records.length} records for upsert`);
+  
+  // Upsert to database
+  const { upsertedCount, errorCount } = await upsertEnphaseRecords(records, dryRun);
+  
+  console.log(`[ENPHASE-HISTORY] Complete - Upserted: ${upsertedCount}, Errors: ${errorCount}`);
   
   return {
-    intervalCount: recordsToUpsert.length,
+    intervalCount: records.length,
     upsertedCount,
-    gapsFilled: filledGaps,
-    errorCount
+    errorCount,
+    dryRun
+  };
+}
+
+/**
+ * Convenience function to fetch yesterday's 5-minute data
+ * @param systemId - The system ID in the database
+ * @param timezoneOffsetMin - Timezone offset in minutes from UTC
+ * @param dryRun - If true, don't actually insert/update data
+ */
+export async function fetchEnphaseYesterday5Min(
+  systemId: number,
+  timezoneOffsetMin: number,
+  dryRun = false
+) {
+  const yesterday = getYesterdayInTimezone(timezoneOffsetMin);
+  console.log(`[ENPHASE-HISTORY] Fetching yesterday's data (${yesterday.year}-${String(yesterday.month).padStart(2, '0')}-${String(yesterday.day).padStart(2, '0')}) for system ${systemId}`);
+  
+  return fetchEnphase5MinDay(systemId, yesterday, timezoneOffsetMin, dryRun);
+}
+
+/**
+ * Fetch the current day's full data and upsert into database
+ * This is more efficient as it fetches all available data for today and upserts
+ */
+export async function fetchEnphaseCurrentDay(systemId: number, dryRun = false) {
+  console.log(`[ENPHASE-HISTORY] Fetching current day's data for system ${systemId}`);
+  
+  // Get and validate system  
+  const system = await getValidatedEnphaseSystem(systemId);
+  
+  // Get the current date in the system's timezone
+  const today = getTodayInTimezone(system.timezoneOffsetMin);
+  
+  // Check if we're polling at midnight (should get yesterday's data)
+  const now = getZonedNow(system.timezoneOffsetMin);
+  const localHour = now.hour;
+  const localMinute = now.minute;
+  
+  // If polling at midnight (first 5 minutes), fetch yesterday's data
+  if (localHour === 0 && localMinute < 5) {
+    const yesterday = getYesterdayInTimezone(system.timezoneOffsetMin);
+    console.log(`[ENPHASE-HISTORY] Midnight poll - fetching yesterday's data (${yesterday.year}-${yesterday.month}-${yesterday.day})`);
+    return await fetchEnphase5MinDay(systemId, yesterday, system.timezoneOffsetMin, dryRun);
+  }
+  
+  // Otherwise fetch today's data
+  console.log(`[ENPHASE-HISTORY] Fetching today's data (${today.year}-${today.month}-${today.day})`);
+  return await fetchEnphase5MinDay(systemId, today, system.timezoneOffsetMin, dryRun);
+}
+
+/**
+ * Check if we have sufficient evening data for a specific day (18:00-23:55)
+ * @param systemId - System ID
+ * @param date - Calendar date to check
+ * @param timezoneOffsetMin - Timezone offset in minutes
+ * @returns true if we have at least 80% of evening intervals
+ */
+export async function hasCompleteEveningData(
+  systemId: number,
+  date: CalendarDate,
+  timezoneOffsetMin: number
+): Promise<boolean> {
+  // Get Unix timestamps for the day in the system's timezone
+  const [dayStartUnix, dayEndUnix] = calendarDateToUnixRange(date, timezoneOffsetMin);
+  
+  // Calculate 18:00 and 23:55 (inclusive) - these are 5-minute interval END times
+  // 18:00 interval ends at 18:00:00
+  // 23:55 interval ends at 23:55:00  
+  const eveningStartUnix = dayStartUnix + (18 * 3600); // 18:00 (6pm)
+  const eveningEndUnix = dayEndUnix - 300;              // 23:55 (5 minutes before midnight)
+  
+  // Query for existing data in this range
+  const existingData = await db
+    .select()
+    .from(readingsAgg5m)
+    .where(
+      and(
+        eq(readingsAgg5m.systemId, systemId),
+        gte(readingsAgg5m.intervalEnd, eveningStartUnix),
+        lte(readingsAgg5m.intervalEnd, eveningEndUnix)
+      )
+    );
+  
+  // We expect 72 intervals from 18:00 to 23:55 (6 hours * 12 intervals per hour)
+  const expectedIntervals = 72;
+  const percentComplete = Math.round((existingData.length / expectedIntervals) * 100);
+  const hasEnoughData = existingData.length >= Math.floor(expectedIntervals * 0.8); // 80% threshold
+  
+  console.log(`[ENPHASE-HISTORY] Yesterday evening data is ${percentComplete}% complete (${existingData.length}/${expectedIntervals} intervals)`);
+  
+  return hasEnoughData;
+}
+
+/**
+ * Check and fetch yesterday's data if incomplete
+ * Called hourly between 01:00-05:00 in the system's timezone
+ */
+export async function checkAndFetchYesterdayIfNeeded(systemId: number, dryRun = false) {
+  console.log(`[ENPHASE-HISTORY] Checking if yesterday's data is complete for system ${systemId}`);
+  
+  // Get and validate system
+  const system = await getValidatedEnphaseSystem(systemId);
+  
+  // Get yesterday's date in the system's timezone
+  const yesterday = getYesterdayInTimezone(system.timezoneOffsetMin);
+  
+  // Check if we have complete evening data
+  const hasData = await hasCompleteEveningData(systemId, yesterday, system.timezoneOffsetMin);
+  
+  if (hasData) {
+    console.log(`[ENPHASE-HISTORY] Yesterday's data is sufficiently complete, skipping fetch`);
+    return {
+      fetched: false,
+      reason: 'Data already complete'
+    };
+  }
+  
+  console.log(`[ENPHASE-HISTORY] Yesterday's data needs updating, fetching full day`);
+  const result = await fetchEnphase5MinDay(systemId, yesterday, system.timezoneOffsetMin, dryRun);
+  
+  return {
+    fetched: true,
+    ...result
   };
 }

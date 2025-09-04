@@ -1,7 +1,8 @@
 import { db } from '@/lib/db';
 import { systems, pollingStatus } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
-import { fetchEnphaseCurrentDay } from './enphase-history';
+import { fetchEnphaseCurrentDay, checkAndFetchYesterdayIfNeeded } from './enphase-history';
+import { getZonedNow } from '@/lib/date-utils';
 import * as SunCalc from 'suncalc';
 
 // Type for systems we've already validated have an owner
@@ -109,9 +110,10 @@ export function shouldPollEnphaseNow(
     return false;
   }
   
-  // 2. Always poll at midnight for the previous day's complete data
-  if (localHour === 0 && localMinutes === 0) {
-    console.log(`[ENPHASE] Midnight polling for previous day's complete data`);
+  // 2. Hourly polls between 01:00-05:00 to check yesterday's data completeness
+  // Poll on the hour (:00) during these hours
+  if (localHour >= 1 && localHour <= 5 && localMinutes === 0) {
+    console.log(`[ENPHASE] ${localHour}:00 check for yesterday's data completeness`);
     return true;
   }
   
@@ -181,12 +183,29 @@ export async function pollEnphaseSystems(): Promise<{
       
       console.log(`[ENPHASE] Polling system ${system.id} (${system.displayName})`);
       
-      // Fetch and upsert current day's data
+      // Check if we're in the 01:00-05:00 window for yesterday's data check
+      const localTime = getZonedNow(system.timezoneOffsetMin);
+      const localHour = localTime.hour;
+      
+      let result;
       const startTime = Date.now();
-      const result = await fetchEnphaseCurrentDay(system.id, false);
+      
+      if (localHour >= 1 && localHour <= 5) {
+        // During 01:00-05:00, check and fetch yesterday's data if incomplete
+        console.log(`[ENPHASE] Checking yesterday's data completeness for system ${system.id}`);
+        result = await checkAndFetchYesterdayIfNeeded(system.id, false);
+      } else {
+        // Otherwise fetch current day's data
+        result = await fetchEnphaseCurrentDay(system.id, false);
+      }
+      
       const duration = Date.now() - startTime;
       
-      console.log(`[ENPHASE] System ${system.id}: Upserted ${result.upsertedCount} records in ${duration}ms`);
+      if ('fetched' in result && !result.fetched) {
+        console.log(`[ENPHASE] System ${system.id}: Yesterday's data already complete, skipped fetch`);
+      } else if ('upsertedCount' in result) {
+        console.log(`[ENPHASE] System ${system.id}: Upserted ${result.upsertedCount} records in ${duration}ms`);
+      }
       
       // Update polling status (without storing full response)
       const now = new Date();
