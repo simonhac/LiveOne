@@ -4,13 +4,25 @@ import { db } from '@/lib/db';
 import { readingsAgg1d } from '@/lib/db/schema';
 import { isUserAdmin } from '@/lib/auth-utils';
 
-// Verify the request is from Vercel Cron
-function validateCronRequest(request: NextRequest): boolean {
+// Verify the request is from Vercel Cron or an admin user
+async function validateCronRequest(request: NextRequest): Promise<boolean> {
   const authHeader = request.headers.get('authorization');
   
-  // In production, Vercel sets CRON_SECRET
+  // In production, check for either CRON_SECRET or admin user
   if (process.env.CRON_SECRET) {
-    return authHeader === `Bearer ${process.env.CRON_SECRET}`;
+    // First check if it's a valid cron request
+    if (authHeader === `Bearer ${process.env.CRON_SECRET}`) {
+      return true;
+    }
+    
+    // Otherwise check if it's an admin user
+    const isAdmin = await isUserAdmin();
+    if (isAdmin) {
+      console.log('[Cron] Admin user authorized to run daily aggregation');
+      return true;
+    }
+    
+    return false;
   }
   
   // In development, allow all requests
@@ -20,8 +32,8 @@ function validateCronRequest(request: NextRequest): boolean {
 // This endpoint will be called daily at 00:05 (5 minutes after midnight)
 export async function GET(request: NextRequest) {
   try {
-    // Validate cron request
-    if (!validateCronRequest(request)) {
+    // Validate cron request or admin user
+    if (!(await validateCronRequest(request))) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }

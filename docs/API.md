@@ -529,71 +529,118 @@ These endpoints are designed to be called by scheduled jobs.
 #### GET /api/cron/minutely
 Polls all active systems for new data. Designed to run every minute.
 
-**Authentication:** Required (Bearer token in production)
+**Authentication:** Required (Bearer token OR admin user in production)
 
 **Headers (production only):**
 ```
 Authorization: Bearer ${CRON_SECRET}
 ```
+OR authenticated as admin user via Clerk session.
+
+**Query Parameters (optional, development/admin only):**
+- `systemId` - Poll specific system ID only
+- `force=true` - Force polling regardless of schedule
+- `date=YYYY-MM-DD` - Fetch specific date (Enphase only, interpreted in system timezone)
 
 **Response:**
 ```json
 {
   "success": true,
+  "timestamp": "2025-09-04T06:51:41.838Z",
+  "summary": {
+    "total": 1,
+    "successful": 1,
+    "failed": 0,
+    "skipped": 0,
+    "enphase": {
+      "polled": 1,
+      "skipped": 0,
+      "errors": 0
+    }
+  },
   "results": [
     {
       "systemId": 1,
+      "displayName": "Home Solar",
+      "vendorType": "selectronic",
+      "vendorSiteId": "12345",
       "success": true,
-      "message": "Reading saved",
-      "timestamp": "2025-08-18T10:00:00Z"
+      "skipped": false,
+      "timestamp": "2025-08-18T10:00:00Z",
+      "delaySeconds": 2,
+      "data": {
+        "solarW": 3500,
+        "loadW": 1200,
+        "batteryW": 2300,
+        "gridW": 0,
+        "batterySOC": 85.5
+      }
     }
   ]
 }
 ```
 
+**Polling Behavior:**
+- **Selectronic systems**: Polled every minute
+- **Enphase systems**: Smart polling schedule
+  - Every 30 minutes from 30 mins after dawn to 30 mins after dusk
+  - Hourly between 01:00-05:00 to check yesterday's data completeness
+  - For current day: Fetches partial data (up to current time) via API without parameters
+  - For historical days: Fetches complete 288 intervals using date range parameters
+
 ---
 
 #### GET /api/cron/daily
-Runs daily data aggregation. Designed to run at 00:05 daily.
+Runs daily data aggregation. Designed to run at 00:05 daily to aggregate yesterday's data.
 
-**Authentication:** Required (Bearer token in production)
+**Authentication:** Required (Bearer token OR admin user in production)
+
+**Headers (production only):**
+```
+Authorization: Bearer ${CRON_SECRET}
+```
+OR authenticated as admin user via Clerk session.
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Aggregated data for 2 systems",
+  "message": "Aggregated yesterday's data for 2 systems",
   "duration": 234,
-  "timestamp": "2025-08-18T00:05:00Z"
+  "timestamp": "2025-08-18T00:05:00Z",
+  "results": [
+    {
+      "systemId": 1,
+      "success": true,
+      "date": "2025-08-17",
+      "recordsProcessed": 288
+    }
+  ]
 }
 ```
 
 #### POST /api/cron/daily
-Manually trigger aggregation with various options.
+Manually trigger aggregation with various maintenance options.
 
 **Authentication:** Required (Admin only)
 
 **Request Body Options:**
 
-1. Clear and regenerate all data:
+1. Regenerate all historical data (clears table first):
 ```json
 {
-  "action": "clear"
+  "action": "regenerate"
 }
 ```
 
-2. Catch up missing days:
+2. Update last 7 days (default if no action specified):
 ```json
-{
-  "action": "catchup"
-}
+{}
 ```
-
-3. Aggregate specific day:
+Or explicitly:
 ```json
 {
-  "systemId": "1",
-  "date": "2025-08-17"
+  "action": "update"
 }
 ```
 
