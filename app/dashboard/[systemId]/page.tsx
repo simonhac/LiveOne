@@ -32,15 +32,15 @@ export default async function DashboardSystemPage({ params }: PageProps) {
   const systemExists = !!system
   
   // Debug logging for admin access
-  if (isAdmin) {
-    console.log('[Dashboard] Admin access check:', {
-      userId,
-      systemId,
-      systemExists,
-      systemOwner: system?.ownerClerkUserId,
-      isAdmin
-    })
-  }
+  // if (isAdmin) {
+  //   console.log('[Dashboard] Admin access check:', {
+  //     userId,
+  //     systemId,
+  //     systemExists,
+  //     systemOwner: system?.ownerClerkUserId,
+  //     isAdmin
+  //   })
+  // }
   
   // Check if user has access to this system
   let hasAccess = false
