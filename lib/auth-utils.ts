@@ -16,9 +16,9 @@ export async function isUserAdmin() {
     const user = await client.users.getUser(userId)
     
     // Only log safe information - NEVER log privateMetadata as it contains credentials
-    console.log('[Auth] Admin check for user:', userId, {
-      isPlatformAdmin: (user.privateMetadata as any)?.isPlatformAdmin === true
-    })
+    // console.log('[Auth] Admin check for user:', userId, {
+    //   isPlatformAdmin: (user.privateMetadata as any)?.isPlatformAdmin === true
+    // })
     
     if (user.privateMetadata && typeof user.privateMetadata === 'object') {
       const metadata = user.privateMetadata as any
