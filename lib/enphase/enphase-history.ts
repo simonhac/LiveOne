@@ -200,7 +200,7 @@ async function fetchEnphaseProductionData(
     // Build URL with parameters
     const params = new URLSearchParams({
       start_at: startUnix.toString(),
-      granularity: 'five_minutes'
+      granularity: '5mins'
     });
     if (endUnix) {
       params.append('end_at', endUnix.toString());
@@ -249,7 +249,7 @@ async function fetchEnphaseProductionData(
     // Build URL with parameters
     const params = new URLSearchParams({
       start_at: startUnix.toString(),
-      granularity: 'five_minutes'
+      granularity: '5mins'
     });
     if (endUnix) {
       params.append('end_at', endUnix.toString());
