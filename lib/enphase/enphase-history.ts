@@ -189,7 +189,7 @@ export async function fetchEnphaseHistoryForDate(systemId: number, date: Date, d
  */
 async function fetchEnphaseProductionData(
   system: { id: number; vendorSiteId: string; ownerClerkUserId: string },
-  startUnix: number,
+  startUnix?: number,
   endUnix?: number
 ): Promise<EnphaseProductionResponse> {
   // Determine if we're in development mode
@@ -201,15 +201,25 @@ async function fetchEnphaseProductionData(
     
     const prodUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://liveone.vercel.app';
     
-    // Build URL with parameters
-    const params = new URLSearchParams({
-      start_at: startUnix.toString(),
-      granularity: 'day'  // This returns 5-minute data for the full day
-    });
-    if (endUnix) {
-      params.append('end_at', endUnix.toString());
+    let url: string;
+    
+    if (startUnix) {
+      // Build URL with parameters for historical data
+      const params = new URLSearchParams({
+        start_at: startUnix.toString(),
+        granularity: 'day'  // This returns 5-minute data for the full day
+      });
+      if (endUnix) {
+        params.append('end_at', endUnix.toString());
+      }
+      url = `/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro?${params}`;
+      console.log(`[ENPHASE-HISTORY] Fetching historical data with params: ${params}`);
+    } else {
+      // No parameters - gets today's partial data
+      url = `/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro`;
+      console.log(`[ENPHASE-HISTORY] Fetching today's partial data (no parameters)`);
     }
-    const url = `/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro?${params}`;
+    
     console.log(`[ENPHASE-HISTORY] Enphase API URL: ${url}`);
     
     const fullProxyUrl = `${prodUrl}/api/enphase-proxy?systemId=${system.id}&url=${encodeURIComponent(url)}`;
@@ -254,15 +264,23 @@ async function fetchEnphaseProductionData(
       accessToken = newTokens.access_token;
     }
     
-    // Build URL with parameters
-    const params = new URLSearchParams({
-      start_at: startUnix.toString(),
-      granularity: 'day'  // This returns 5-minute data for the full day
-    });
-    if (endUnix) {
-      params.append('end_at', endUnix.toString());
+    // Build URL with or without parameters
+    let url: string;
+    
+    if (startUnix) {
+      // Build URL with parameters for historical data
+      const params = new URLSearchParams({
+        start_at: startUnix.toString(),
+        granularity: 'day'  // This returns 5-minute data for the full day
+      });
+      if (endUnix) {
+        params.append('end_at', endUnix.toString());
+      }
+      url = `https://api.enphaseenergy.com/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro?${params}`;
+    } else {
+      // No parameters - gets today's partial data
+      url = `https://api.enphaseenergy.com/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro`;
     }
-    const url = `https://api.enphaseenergy.com/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro?${params}`;
     
     const response = await fetch(url, {
       headers: {
@@ -464,8 +482,8 @@ export async function fetchEnphaseYesterday5Min(
 }
 
 /**
- * Fetch the current day's full data and upsert into database
- * This is more efficient as it fetches all available data for today and upserts
+ * Fetch the current day's partial data and upsert into database
+ * This fetches today's partial data (up to current time) using the API without parameters
  */
 export async function fetchEnphaseCurrentDay(systemId: number, dryRun = false) {
   console.log(`[ENPHASE-HISTORY] Fetching current day's data for system ${systemId}`);
@@ -475,22 +493,36 @@ export async function fetchEnphaseCurrentDay(systemId: number, dryRun = false) {
   
   // Get the current date in the system's timezone
   const today = getTodayInTimezone(system.timezoneOffsetMin);
+  console.log(`[ENPHASE-HISTORY] Fetching today's partial data (${today.year}-${today.month}-${today.day})`);
   
-  // Check if we're polling at midnight (should get yesterday's data)
-  const now = getZonedNow(system.timezoneOffsetMin);
-  const localHour = now.hour;
-  const localMinute = now.minute;
+  // Fetch without parameters to get today's partial data
+  const productionData = await fetchEnphaseProductionData(system);
   
-  // If polling at midnight (first 5 minutes), fetch yesterday's data
-  if (localHour === 0 && localMinute < 5) {
-    const yesterday = getYesterdayInTimezone(system.timezoneOffsetMin);
-    console.log(`[ENPHASE-HISTORY] Midnight poll - fetching yesterday's data (${yesterday.year}-${yesterday.month}-${yesterday.day})`);
-    return await fetchEnphase5MinDay(systemId, yesterday, system.timezoneOffsetMin, dryRun);
+  if (!productionData || !productionData.intervals || productionData.intervals.length === 0) {
+    console.log(`[ENPHASE-HISTORY] No data returned for today`);
+    return {
+      upsertedCount: 0,
+      errorCount: 0
+    };
   }
   
-  // Otherwise fetch today's data
-  console.log(`[ENPHASE-HISTORY] Fetching today's data (${today.year}-${today.month}-${today.day})`);
-  return await fetchEnphase5MinDay(systemId, today, system.timezoneOffsetMin, dryRun);
+  console.log(`[ENPHASE-HISTORY] Received ${productionData.intervals.length} intervals for today`);
+  
+  // Process the data without date filtering (all data is for today)
+  const records = processEnphaseData(productionData, systemId);
+  
+  console.log(`[ENPHASE-HISTORY] Prepared ${records.length} records for upsert`);
+  
+  if (dryRun) {
+    console.log('[ENPHASE-HISTORY] Dry run - skipping database upsert');
+    return {
+      upsertedCount: records.length,
+      errorCount: 0
+    };
+  }
+  
+  // Upsert the records
+  return await upsertEnphaseRecords(records, dryRun);
 }
 
 /**
