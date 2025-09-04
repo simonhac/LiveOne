@@ -7,6 +7,7 @@ import { formatSystemId } from '@/lib/system-utils';
 import { pollSelectronicSystem } from '@/lib/selectronic/polling';
 import { pollEnphaseSystems } from '@/lib/enphase/enphase-cron';
 import type { CommonPollingData } from '@/lib/types/common';
+import { parseDate } from '@internationalized/date';
 
 // Verify the request is from Vercel Cron
 function validateCronRequest(request: NextRequest): boolean {
@@ -35,11 +36,11 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const testSystemId = searchParams.get('systemId');
     const forceTest = searchParams.get('force') === 'true';
-    const testYesterday = searchParams.get('yesterday') === 'true';
+    const testDate = searchParams.get('date'); // YYYY-MM-DD format
     const isDev = process.env.NODE_ENV === 'development';
 
     if (isDev && testSystemId && forceTest) {
-      console.log(`[Cron] Development mode - Testing system ${testSystemId} with force=true`);
+      console.log(`[Cron] Development mode - Testing system ${testSystemId} with force=true${testDate ? ` for date ${testDate}` : ''}`);
     }
 
     console.log('[Cron] Starting system polling...');
@@ -78,10 +79,20 @@ export async function GET(request: NextRequest) {
     // Handle Enphase systems with smart polling schedule
     // Always check Enphase systems - the polling function will decide per-system whether to poll
     console.log('[Cron] Checking Enphase systems for polling');
+    // Parse date string to CalendarDate if provided
+    let parsedTestDate;
+    if (isDev && testDate) {
+      try {
+        parsedTestDate = parseDate(testDate); // Parse YYYY-MM-DD string
+      } catch (error) {
+        console.error(`[Cron] Invalid date format: ${testDate}. Use YYYY-MM-DD`);
+      }
+    }
+    
     enphaseResult = await pollEnphaseSystems(
       isDev && testSystemId ? parseInt(testSystemId) : undefined,
       isDev && forceTest,
-      isDev && testYesterday
+      parsedTestDate
     );
     
     // Poll each non-Enphase system

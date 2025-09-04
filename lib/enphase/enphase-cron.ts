@@ -1,9 +1,10 @@
 import { db } from '@/lib/db';
 import { systems, pollingStatus } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
-import { fetchEnphaseCurrentDay, checkAndFetchYesterdayIfNeeded } from './enphase-history';
+import { fetchEnphaseCurrentDay, checkAndFetchYesterdayIfNeeded, fetchEnphase5MinDay } from './enphase-history';
 import { getZonedNow } from '@/lib/date-utils';
 import * as SunCalc from 'suncalc';
+import { CalendarDate } from '@internationalized/date';
 
 // Type for systems we've already validated have an owner
 interface EnphaseSystemWithOwner {
@@ -133,12 +134,12 @@ export function shouldPollEnphaseNow(
  * Poll all Enphase systems that are due for polling
  * @param testSystemId - Optional system ID to test (development only)
  * @param forceTest - Force polling regardless of schedule (development only)
- * @param testYesterday - Force checking yesterday's data (development only)
+ * @param testDate - Optional CalendarDate to fetch (development only)
  */
 export async function pollEnphaseSystems(
   testSystemId?: number,
   forceTest: boolean = false,
-  testYesterday: boolean = false
+  testDate?: CalendarDate
 ): Promise<{
   polled: number;
   skipped: number;
@@ -210,9 +211,13 @@ export async function pollEnphaseSystems(
       let result;
       const startTime = Date.now();
       
-      if (testYesterday || (localHour >= 1 && localHour <= 5)) {
-        // During 01:00-05:00, or if testYesterday flag is set, check and fetch yesterday's data if incomplete
-        console.log(`[ENPHASE] Checking yesterday's data completeness for system ${system.id}${testYesterday ? ' (forced test)' : ''}`);
+      if (testDate) {
+        // If a specific date is provided, fetch that date
+        console.log(`[ENPHASE] Fetching data for ${testDate.year}-${testDate.month}-${testDate.day} for system ${system.id}`);
+        result = await fetchEnphase5MinDay(system.id, testDate, system.timezoneOffsetMin, false);
+      } else if (localHour >= 1 && localHour <= 5) {
+        // During 01:00-05:00, check and fetch yesterday's data if incomplete
+        console.log(`[ENPHASE] Checking yesterday's data completeness for system ${system.id}`);
         result = await checkAndFetchYesterdayIfNeeded(system.id, false);
       } else {
         // Otherwise fetch current day's data
