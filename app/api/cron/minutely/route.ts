@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { systems, readings, pollingStatus } from '@/lib/db/schema';
-import { eq, sql } from 'drizzle-orm';
+import { systems, readings } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
 import { updateAggregatedData } from '@/lib/aggregation-helper';
 import { formatSystemId } from '@/lib/system-utils';
 import { pollSelectronicSystem } from '@/lib/selectronic/polling';
-import { pollEnphaseSystems } from '@/lib/enphase/enphase-cron';
+import { pollEnphaseSystem } from '@/lib/enphase/enphase-polling';
 import type { CommonPollingData } from '@/lib/types/common';
+import { 
+  getPollingStatus, 
+  updatePollingStatusSuccess, 
+  updatePollingStatusError,
+  type PollingResult 
+} from '@/lib/polling-utils';
 import { parseDate } from '@internationalized/date';
 import { isUserAdmin } from '@/lib/auth-utils';
 
@@ -86,15 +92,11 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const results = [];
-    let enphaseResult = null;
+    const results: PollingResult[] = [];
     
-    // Handle Enphase systems with smart polling schedule
-    // Always check Enphase systems - the polling function will decide per-system whether to poll
-    console.log('[Cron] Checking Enphase systems for polling');
     // Parse date string to CalendarDate if provided
     let parsedTestDate;
-    if (isDev && testDate) {
+    if (testDate) {
       try {
         parsedTestDate = parseDate(testDate); // Parse YYYY-MM-DD string
       } catch (error) {
@@ -102,16 +104,15 @@ export async function GET(request: NextRequest) {
       }
     }
     
-    enphaseResult = await pollEnphaseSystems(
-      testSystemId ? parseInt(testSystemId) : undefined,
-      forceTest,
-      parsedTestDate
-    );
-    
-    // Poll each non-Enphase system
+    // Poll each system
     for (const system of activeSystems) {
-      // Skip Enphase systems as they're handled separately
+      // Handle Enphase systems with their own polling logic
       if (system.vendorType === 'enphase') {
+        const result = await pollEnphaseSystem(system.id, {
+          force: forceTest,
+          date: parsedTestDate
+        });
+        results.push(result);
         continue;
       }
       
@@ -126,12 +127,10 @@ export async function GET(request: NextRequest) {
           console.error(`[Cron] ${systemId} has no ownerClerkUserId`);
           results.push({
             systemId: system.id,
-            displayName: system.displayName,
+            displayName: system.displayName || undefined,
             vendorType: system.vendorType,
-            vendorSiteId: system.vendorSiteId,
-            success: false,
-            error: 'No owner configured',
-            skipped: false
+            status: 'error',
+            error: 'No owner configured'
           });
           continue;
         }
@@ -145,16 +144,14 @@ export async function GET(request: NextRequest) {
             ownerClerkUserId: system.ownerClerkUserId,
             vendorSiteId: system.vendorSiteId
           });
-        } else {
+        } else if (system.vendorType !== 'enphase') {
           console.log(`[Cron] Unknown vendor type: ${system.vendorType}`);
           results.push({
             systemId: system.id,
-            displayName: system.displayName,
+            displayName: system.displayName || undefined,
             vendorType: system.vendorType,
-            vendorSiteId: system.vendorSiteId,
-            success: false,
-            error: `Unknown vendor type: ${system.vendorType}`,
-            skipped: true
+            status: 'skipped',
+            skipReason: `Unknown vendor type: ${system.vendorType}`
           });
           continue;
         }
@@ -193,41 +190,19 @@ export async function GET(request: NextRequest) {
           // Update 5-minute aggregated data
           await updateAggregatedData(system.id, inverterTime);
           
-          // Upsert polling status with full response
-          await db.insert(pollingStatus)
-            .values({
-              systemId: system.id, // ourId -> systemId for database
-              lastPollTime: receivedTime,
-              lastSuccessTime: receivedTime,
-              lastError: null,
-              lastResponse: data as any, // Store the full Select.Live response
-              consecutiveErrors: 0,
-              totalPolls: 1,
-              successfulPolls: 1,
-            })
-            .onConflictDoUpdate({
-              target: pollingStatus.systemId,
-              set: {
-                lastPollTime: receivedTime,
-                lastSuccessTime: receivedTime,
-                lastError: null,
-                lastResponse: data as any,
-                consecutiveErrors: 0,
-                totalPolls: sql`${pollingStatus.totalPolls} + 1`,
-                successfulPolls: sql`${pollingStatus.successfulPolls} + 1`,
-              },
-            });
+          // Update polling status with full response for Selectronic (they want detailed data)
+          await updatePollingStatusSuccess(system.id, data as any);
           
           results.push({
             systemId: system.id,
-            displayName: system.displayName,
+            displayName: system.displayName || undefined,
             vendorType: system.vendorType,
-            vendorSiteId: system.vendorSiteId,
-            success: true,
-            skipped: false,
-            timestamp: inverterTime.toISOString(),
-            delaySeconds,
+            status: 'polled',
+            recordsUpserted: 1,
+            durationMs: delaySeconds * 1000,
             data: {
+              timestamp: inverterTime.toISOString(),
+              delaySeconds,
               solarW: data.solarW,
               loadW: data.loadW,
               batteryW: data.batteryW,
@@ -241,61 +216,33 @@ export async function GET(request: NextRequest) {
       } catch (error) {
         console.error(`[Cron] Error polling ${system.id}:`, error);
         
-        // Upsert polling status with error
-        await db.insert(pollingStatus)
-          .values({
-            systemId: system.id, // ourId -> systemId for database
-            lastPollTime: new Date(),
-            lastErrorTime: new Date(),
-            lastError: error instanceof Error ? error.message : 'Unknown error',
-            consecutiveErrors: 1,
-            totalPolls: 1,
-            successfulPolls: 0,
-          })
-          .onConflictDoUpdate({
-            target: pollingStatus.systemId,
-            set: {
-              lastPollTime: new Date(),
-              lastErrorTime: new Date(),
-              lastError: error instanceof Error ? error.message : 'Unknown error',
-              consecutiveErrors: sql`${pollingStatus.consecutiveErrors} + 1`,
-              totalPolls: sql`${pollingStatus.totalPolls} + 1`,
-            },
-          });
+        // Update polling status with error
+        await updatePollingStatusError(system.id, error instanceof Error ? error : 'Unknown error');
         
         results.push({
           systemId: system.id,
-          displayName: system.displayName,
+          displayName: system.displayName || undefined,
           vendorType: system.vendorType,
-          vendorSiteId: system.vendorSiteId,
-          success: false,
-          skipped: false,
+          status: 'error',
           error: error instanceof Error ? error.message : 'Unknown error'
         });
       }
     }
     
-    const successCount = results.filter(r => r.success && !r.skipped).length;
-    const skippedCount = results.filter(r => r.skipped).length;
-    const failureCount = results.filter(r => !r.success && !r.skipped).length;
+    const successCount = results.filter(r => r.status === 'polled').length;
+    const skippedCount = results.filter(r => r.status === 'skipped').length;
+    const failureCount = results.filter(r => r.status === 'error').length;
     
-    // Add Enphase results to summary
-    const totalEnphase = enphaseResult ? (enphaseResult.polled + enphaseResult.skipped + enphaseResult.errors) : 0;
-    const totalSuccessful = successCount + (enphaseResult?.polled || 0);
-    const totalSkipped = skippedCount + (enphaseResult?.skipped || 0);
-    const totalFailed = failureCount + (enphaseResult?.errors || 0);
-    
-    console.log(`[Cron] Polling complete. Success: ${totalSuccessful}, Failed: ${totalFailed}, Skipped: ${totalSkipped}`);
+    console.log(`[Cron] Polling complete. Success: ${successCount}, Failed: ${failureCount}, Skipped: ${skippedCount}`);
     
     return NextResponse.json({
       success: true,
       timestamp: new Date().toISOString(),
       summary: {
-        total: results.length + totalEnphase,
-        successful: totalSuccessful,
-        failed: totalFailed,
-        skipped: totalSkipped,
-        enphase: enphaseResult
+        total: results.length,
+        successful: successCount,
+        failed: failureCount,
+        skipped: skippedCount
       },
       results
     });
