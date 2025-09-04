@@ -31,6 +31,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // In development, allow testing specific systems with force flag
+    const searchParams = request.nextUrl.searchParams;
+    const testSystemId = searchParams.get('systemId');
+    const forceTest = searchParams.get('force') === 'true';
+    const testYesterday = searchParams.get('yesterday') === 'true';
+    const isDev = process.env.NODE_ENV === 'development';
+
+    if (isDev && testSystemId && forceTest) {
+      console.log(`[Cron] Development mode - Testing system ${testSystemId} with force=true`);
+    }
+
     console.log('[Cron] Starting system polling...');
     
     // NOTE: This runs every minute for Selectronic systems
@@ -38,9 +49,19 @@ export async function GET(request: NextRequest) {
     // due to API rate limits (1000 calls/month)
     
     // Get all active systems from database (exclude disabled and removed)
-    const activeSystems = await db.select()
-      .from(systems)
-      .where(eq(systems.status, 'active'));
+    let activeSystems;
+    if (isDev && testSystemId) {
+      // In dev with systemId, get just that system
+      activeSystems = await db.select()
+        .from(systems)
+        .where(eq(systems.id, parseInt(testSystemId)));
+      console.log(`[Cron] Testing single system: ${testSystemId}`);
+    } else {
+      // Normal operation - get all active systems
+      activeSystems = await db.select()
+        .from(systems)
+        .where(eq(systems.status, 'active'));
+    }
     
     if (activeSystems.length === 0) {
       console.log('[Cron] No active systems to poll');
@@ -57,7 +78,11 @@ export async function GET(request: NextRequest) {
     // Handle Enphase systems with smart polling schedule
     // Always check Enphase systems - the polling function will decide per-system whether to poll
     console.log('[Cron] Checking Enphase systems for polling');
-    enphaseResult = await pollEnphaseSystems();
+    enphaseResult = await pollEnphaseSystems(
+      isDev && testSystemId ? parseInt(testSystemId) : undefined,
+      isDev && forceTest,
+      isDev && testYesterday
+    );
     
     // Poll each non-Enphase system
     for (const system of activeSystems) {

@@ -131,24 +131,40 @@ export function shouldPollEnphaseNow(
 
 /**
  * Poll all Enphase systems that are due for polling
+ * @param testSystemId - Optional system ID to test (development only)
+ * @param forceTest - Force polling regardless of schedule (development only)
+ * @param testYesterday - Force checking yesterday's data (development only)
  */
-export async function pollEnphaseSystems(): Promise<{
+export async function pollEnphaseSystems(
+  testSystemId?: number,
+  forceTest: boolean = false,
+  testYesterday: boolean = false
+): Promise<{
   polled: number;
   skipped: number;
   errors: number;
 }> {
   console.log('[ENPHASE] Starting polling check');
   
-  // Get all active Enphase systems
-  const enphaseSystems = await db
-    .select()
-    .from(systems)
-    .where(
-      and(
-        eq(systems.vendorType, 'enphase'),
-        eq(systems.status, 'active')
-      )
-    );
+  // Get all active Enphase systems (or just the test system)
+  let enphaseSystems;
+  if (testSystemId !== undefined) {
+    console.log(`[ENPHASE] Testing single system: ${testSystemId} (force=${forceTest})`);
+    enphaseSystems = await db
+      .select()
+      .from(systems)
+      .where(eq(systems.id, testSystemId));
+  } else {
+    enphaseSystems = await db
+      .select()
+      .from(systems)
+      .where(
+        and(
+          eq(systems.vendorType, 'enphase'),
+          eq(systems.status, 'active')
+        )
+      );
+  }
   
   console.log(`[ENPHASE] Found ${enphaseSystems.length} active systems`);
   
@@ -175,10 +191,14 @@ export async function pollEnphaseSystems(): Promise<{
       // Cast to validated type - we know ownerClerkUserId is not null now
       const validatedSystem = system as typeof system & { ownerClerkUserId: string };
       
-      // Check if we should poll
-      if (!shouldPollEnphaseNow(validatedSystem, lastPollTime)) {
+      // Check if we should poll (skip this check if force flag is set)
+      if (!forceTest && !shouldPollEnphaseNow(validatedSystem, lastPollTime)) {
         skippedCount++;
         continue;
+      }
+      
+      if (forceTest) {
+        console.log(`[ENPHASE] Force polling system ${system.id} (ignoring schedule)`);
       }
       
       console.log(`[ENPHASE] Polling system ${system.id} (${system.displayName})`);
@@ -190,9 +210,9 @@ export async function pollEnphaseSystems(): Promise<{
       let result;
       const startTime = Date.now();
       
-      if (localHour >= 1 && localHour <= 5) {
-        // During 01:00-05:00, check and fetch yesterday's data if incomplete
-        console.log(`[ENPHASE] Checking yesterday's data completeness for system ${system.id}`);
+      if (testYesterday || (localHour >= 1 && localHour <= 5)) {
+        // During 01:00-05:00, or if testYesterday flag is set, check and fetch yesterday's data if incomplete
+        console.log(`[ENPHASE] Checking yesterday's data completeness for system ${system.id}${testYesterday ? ' (forced test)' : ''}`);
         result = await checkAndFetchYesterdayIfNeeded(system.id, false);
       } else {
         // Otherwise fetch current day's data

@@ -3,7 +3,7 @@ import { readingsAgg5m, systems } from '@/lib/db/schema';
 import { eq, and, gte, lte } from 'drizzle-orm';
 import { getEnphaseClient } from './enphase-client';
 import { CalendarDate } from '@internationalized/date';
-import { calendarDateToUnixRange, getYesterdayInTimezone, getTodayInTimezone, getZonedNow } from '@/lib/date-utils';
+import { calendarDateToUnixRange, getYesterdayInTimezone, getTodayInTimezone, getZonedNow, fromUnixTimestamp, formatTimeAEST } from '@/lib/date-utils';
 
 interface EnphaseHistoryOptions {
   systemId: number;
@@ -61,7 +61,6 @@ export async function fetchEnphaseHistory(options: EnphaseHistoryOptions) {
   const { systemId, startTime, endTime, dryRun = false } = options;
   
   console.log(`[ENPHASE-HISTORY] Fetching history for system ${systemId}`);
-  console.log(`[ENPHASE-HISTORY] Period: ${startTime.toISOString()} to ${endTime.toISOString()}`);
   
   // Get and validate system
   const system = await getValidatedEnphaseSystem(systemId);
@@ -69,6 +68,11 @@ export async function fetchEnphaseHistory(options: EnphaseHistoryOptions) {
   // Convert to Unix timestamps
   const startUnix = Math.floor(startTime.getTime() / 1000);
   const endUnix = Math.floor(endTime.getTime() / 1000);
+  
+  // Log the period in readable format
+  const startFormatted = formatTimeAEST(fromUnixTimestamp(startUnix, system.timezoneOffsetMin));
+  const endFormatted = formatTimeAEST(fromUnixTimestamp(endUnix, system.timezoneOffsetMin));
+  console.log(`[ENPHASE-HISTORY] Period: ${startFormatted} to ${endFormatted}`);
   
   // Fetch the raw data
   const productionData = await fetchEnphaseProductionData(system, startUnix, endUnix);
@@ -407,7 +411,10 @@ export async function fetchEnphase5MinDay(
   // Convert calendar date to Unix timestamp range for the timezone
   const [startUnix, endUnix] = calendarDateToUnixRange(date, timezoneOffsetMin);
   
-  console.log(`[ENPHASE-HISTORY] Fetching data from ${new Date(startUnix * 1000).toISOString()} to ${new Date(endUnix * 1000).toISOString()}`);
+  // Format times for logging
+  const startTime = formatTimeAEST(fromUnixTimestamp(startUnix, timezoneOffsetMin));
+  const endTime = formatTimeAEST(fromUnixTimestamp(endUnix, timezoneOffsetMin));
+  console.log(`[ENPHASE-HISTORY] Fetching data from ${startTime} to ${endTime}`);
   
   // Fetch the raw data
   const productionData = await fetchEnphaseProductionData(system, startUnix, endUnix);
@@ -515,7 +522,7 @@ export async function hasCompleteEveningData(
   // We expect 72 intervals from 18:00 to 23:55 (6 hours * 12 intervals per hour)
   const expectedIntervals = 72;
   const percentComplete = Math.round((existingData.length / expectedIntervals) * 100);
-  const hasEnoughData = existingData.length >= Math.floor(expectedIntervals * 0.8); // 80% threshold
+  const hasEnoughData = percentComplete >= 80; // Need at least 80% complete
   
   console.log(`[ENPHASE-HISTORY] Yesterday evening data is ${percentComplete}% complete (${existingData.length}/${expectedIntervals} intervals)`);
   
