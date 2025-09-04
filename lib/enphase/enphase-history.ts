@@ -80,7 +80,7 @@ export async function fetchEnphaseHistory(options: EnphaseHistoryOptions) {
   console.log(`[ENPHASE-HISTORY] Found ${productionData.intervals.length} intervals`);
   
   // Process the data into records
-  const records = processEnphaseProductionData(productionData, systemId, startUnix, endUnix);
+  const records = processEnphaseData(productionData, systemId, startUnix, endUnix);
   
   // Check for existing data to avoid duplicates (for insert-only mode)
   const existingData = await db
@@ -284,7 +284,7 @@ async function fetchEnphaseProductionData(
  * @param endUnix - End of time range (optional, for filtering)
  * @returns Array of records ready for database insertion
  */
-function processEnphaseProductionData(
+function processEnphaseData(
   productionData: EnphaseProductionResponse,
   systemId: number,
   startUnix?: number,
@@ -422,7 +422,7 @@ export async function fetchEnphase5MinDay(
   console.log(`[ENPHASE-HISTORY] Received ${productionData.intervals.length} intervals`);
   
   // Process the data into records
-  const records = processEnphaseProductionData(productionData, systemId, startUnix, endUnix);
+  const records = processEnphaseData(productionData, systemId, startUnix, endUnix);
   
   console.log(`[ENPHASE-HISTORY] Prepared ${records.length} records for upsert`);
   
