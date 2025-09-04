@@ -25,15 +25,6 @@ export function shouldPollEnphaseNow(
     return true;
   }
   
-  // Calculate minutes since last poll
-  const minutesSinceLastPoll = Math.floor((currentTime.getTime() - lastPollTime.getTime()) / 60000);
-  
-  // Don't poll more frequently than every 25 minutes (to account for slight timing variations)
-  if (minutesSinceLastPoll < 25) {
-    console.log(`[ENPHASE] Skipping - polled ${minutesSinceLastPoll} minutes ago (minimum 25 min interval)`);
-    return false;
-  }
-  
   // Get location for sunrise/sunset calculation
   let lat = -37.8136; // Melbourne default
   let lon = 144.9631;
@@ -94,14 +85,12 @@ export function shouldPollEnphaseNow(
   
   if (localTimeMinutes >= activeStart && localTimeMinutes <= activeEnd) {
     // During active hours, poll on :00 and :30
-    if ((localMinutes === 0 || localMinutes === 30) && minutesSinceLastPoll >= 25) {
+    if (localMinutes === 0 || localMinutes === 30) {
       console.log(`[ENPHASE] Polling during active solar hours (dawn ${dawnTime}, dusk ${duskTime})`);
       return true;
     }
     // Not on a polling minute during active hours
-    if (localMinutes !== 0 && localMinutes !== 30) {
-      console.log(`[ENPHASE] Skipping - active hours but not at :00 or :30 (current :${String(localMinutes).padStart(2, '0')})`);
-    }
+    console.log(`[ENPHASE] Skipping - active hours but not at :00 or :30 (current :${String(localMinutes).padStart(2, '0')})`);
     return false;
   }
   
@@ -122,16 +111,4 @@ export function shouldPollEnphaseNow(
   }
   
   return false;
-}
-
-/**
- * Check if we're in a valid polling minute (called every minute by cron)
- * Returns true if any Enphase system might need polling
- */
-export function isEnphasePollingMinute(): boolean {
-  const now = new Date();
-  const minutes = now.getMinutes();
-  
-  // Poll on :00 and :30 for active hours, :00 for midnight
-  return minutes === 0 || minutes === 30;
 }

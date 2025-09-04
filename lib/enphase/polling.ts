@@ -121,13 +121,3 @@ export async function pollEnphaseSystem(system: EnphaseSystemForPolling): Promis
   
   return data;
 }
-
-/**
- * Track API usage for rate limiting
- */
-export async function trackEnphaseApiUsage(systemId: number): Promise<void> {
-  // TODO: Implement API usage tracking
-  // This would update a counter in the database to ensure we don't exceed
-  // the 1000 requests/month limit on the Watt plan
-  console.log('ENPHASE: API call tracked for system:', systemId);
-}
