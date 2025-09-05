@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { systems, readings } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { readings } from '@/lib/db/schema';
+import { SystemsManager } from '@/lib/systems-manager';
 import { updateAggregatedData } from '@/lib/aggregation-helper';
 import { formatSystemId } from '@/lib/system-utils';
 import { pollSelectronicSystem } from '@/lib/selectronic/polling';
@@ -11,6 +11,7 @@ import {
   getPollingStatus, 
   updatePollingStatusSuccess, 
   updatePollingStatusError,
+  validateSystemForPolling,
   type PollingResult 
 } from '@/lib/polling-utils';
 import { parseDate } from '@internationalized/date';
@@ -68,19 +69,19 @@ export async function GET(request: NextRequest) {
     // Enphase systems are only polled at :00 and :30 during daylight hours
     // due to API rate limits (1000 calls/month)
     
-    // Get all active systems from database (exclude disabled and removed)
+    // Create SystemsManager for this request
+    const systemsManager = new SystemsManager();
+    
+    // Get systems to poll
     let activeSystems;
     if (testSystemId) {
       // With systemId parameter, get just that system
-      activeSystems = await db.select()
-        .from(systems)
-        .where(eq(systems.id, parseInt(testSystemId)));
+      const system = await systemsManager.getSystem(parseInt(testSystemId));
+      activeSystems = system ? [system] : [];
       console.log(`[Cron] Testing single system: ${testSystemId}`);
     } else {
       // Normal operation - get all active systems
-      activeSystems = await db.select()
-        .from(systems)
-        .where(eq(systems.status, 'active'));
+      activeSystems = await systemsManager.getAllSystems();
     }
     
     if (activeSystems.length === 0) {
@@ -108,7 +109,7 @@ export async function GET(request: NextRequest) {
     for (const system of activeSystems) {
       // Handle Enphase systems with their own polling logic
       if (system.vendorType === 'enphase') {
-        const result = await pollEnphaseSystem(system.id, {
+        const result = await pollEnphaseSystem(system, {
           force: forceTest,
           date: parsedTestDate
         });
@@ -117,14 +118,8 @@ export async function GET(request: NextRequest) {
       }
       
       try {
-        const systemId = formatSystemId({
-          vendorType: system.vendorType,
-          vendorSiteId: system.vendorSiteId,
-          displayName: system.displayName
-        });
-        
+        // Validate system has owner
         if (!system.ownerClerkUserId) {
-          console.error(`[Cron] ${systemId} has no ownerClerkUserId`);
           results.push({
             systemId: system.id,
             displayName: system.displayName || undefined,
@@ -134,6 +129,12 @@ export async function GET(request: NextRequest) {
           });
           continue;
         }
+        
+        const systemId = formatSystemId({
+          vendorType: system.vendorType,
+          vendorSiteId: system.vendorSiteId,
+          displayName: system.displayName
+        });
 
         let data: CommonPollingData | null = null;
         

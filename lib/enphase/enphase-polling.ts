@@ -1,6 +1,3 @@
-import { db } from '@/lib/db';
-import { systems } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
 import { fetchEnphaseCurrentDay, checkAndFetchYesterdayIfNeeded, fetchEnphase5MinDay } from './enphase-history';
 import { shouldPollEnphaseNow } from './enphase-cron';
 import { getZonedNow } from '@/lib/date-utils';
@@ -9,6 +6,7 @@ import {
   getPollingStatus, 
   updatePollingStatusSuccess, 
   updatePollingStatusError,
+  validateSystemForPolling,
   type PollingResult 
 } from '@/lib/polling-utils';
 
@@ -16,7 +14,7 @@ import {
  * Poll a single Enphase system
  */
 export async function pollEnphaseSystem(
-  systemId: number,
+  system: any, // System object must be passed in
   options: {
     force?: boolean;
     date?: CalendarDate;
@@ -25,40 +23,13 @@ export async function pollEnphaseSystem(
   const startTime = Date.now();
   
   try {
-    // Get system details
-    const [system] = await db
-      .select()
-      .from(systems)
-      .where(eq(systems.id, systemId))
-      .limit(1);
-    
-    if (!system) {
-      return {
-        systemId,
-        status: 'error',
-        error: 'System not found'
-      };
+    // Validate system
+    const validationError = validateSystemForPolling(system, 'enphase');
+    if (validationError) {
+      return validationError;
     }
     
-    if (system.vendorType !== 'enphase') {
-      return {
-        systemId,
-        displayName: system.displayName || undefined,
-        vendorType: system.vendorType,
-        status: 'error',
-        error: `Not an Enphase system (type: ${system.vendorType})`
-      };
-    }
-    
-    if (!system.ownerClerkUserId) {
-      return {
-        systemId,
-        displayName: system.displayName || undefined,
-        vendorType: 'enphase',
-        status: 'error',
-        error: 'No owner configured'
-      };
-    }
+    const systemId = system.id;
     
     // Check if we should poll
     if (!options.force) {
@@ -70,15 +41,7 @@ export async function pollEnphaseSystem(
       
       if (!shouldPollEnphaseNow(validatedSystem, lastPollTime)) {
         // Get skip reason for better reporting
-        const now = new Date();
-        const minutesSinceLastPoll = lastPollTime 
-          ? Math.floor((now.getTime() - lastPollTime.getTime()) / 60000)
-          : null;
-        
-        let skipReason = 'Outside polling schedule';
-        if (minutesSinceLastPoll !== null && minutesSinceLastPoll < 25) {
-          skipReason = `Polled ${minutesSinceLastPoll} minutes ago (min 25)`;
-        }
+        const skipReason = 'Outside polling schedule';
         
         return {
           systemId,
@@ -143,13 +106,13 @@ export async function pollEnphaseSystem(
     };
     
   } catch (error) {
-    console.error(`[ENPHASE] Error polling system ${systemId}:`, error);
+    console.error(`[ENPHASE] Error polling system ${system.id}:`, error);
     
     // Update error status
-    await updatePollingStatusError(systemId, error instanceof Error ? error : 'Unknown error');
+    await updatePollingStatusError(system.id, error instanceof Error ? error : 'Unknown error');
     
     return {
-      systemId,
+      systemId: system.id,
       vendorType: 'enphase',
       status: 'error',
       error: error instanceof Error ? error.message : 'Unknown error',

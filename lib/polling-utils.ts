@@ -105,3 +105,46 @@ export interface PollingResult {
   durationMs?: number;
   data?: any; // Optional vendor-specific data
 }
+
+/**
+ * Validate a system for polling
+ * Returns a PollingResult with error if validation fails, or null if valid
+ */
+export function validateSystemForPolling(
+  system: any,
+  expectedVendorType?: string
+): PollingResult | null {
+  // Check if system exists
+  if (!system) {
+    return {
+      systemId: 0,
+      status: 'error',
+      error: 'System not found'
+    };
+  }
+  
+  // Check vendor type if specified
+  if (expectedVendorType && system.vendorType !== expectedVendorType) {
+    return {
+      systemId: system.id,
+      displayName: system.displayName || undefined,
+      vendorType: system.vendorType,
+      status: 'error',
+      error: `Not a ${expectedVendorType} system (type: ${system.vendorType})`
+    };
+  }
+  
+  // Check if owner is configured
+  if (!system.ownerClerkUserId) {
+    return {
+      systemId: system.id,
+      displayName: system.displayName || undefined,
+      vendorType: system.vendorType,
+      status: 'error',
+      error: 'No owner configured'
+    };
+  }
+  
+  // Validation passed
+  return null;
+}
