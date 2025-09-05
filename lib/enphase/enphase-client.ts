@@ -6,6 +6,52 @@ import type {
   EnphaseSystem 
 } from '@/lib/types/enphase';
 
+/**
+ * ENPHASE API IMPLEMENTATION NOTES
+ * 
+ * This client handles OAuth authentication and data fetching from the Enphase API.
+ * 
+ * KEY LEARNINGS ABOUT THE ENPHASE API:
+ * 
+ * 1. AUTHENTICATION:
+ *    - Uses OAuth 2.0 flow with authorization code grant
+ *    - Requires API key in addition to OAuth tokens for API calls
+ *    - Tokens expire after 24 hours and must be refreshed
+ *    - Basic auth (client_id:client_secret) for token exchange
+ * 
+ * 2. DATA FETCHING - PRODUCTION MICRO ENDPOINT:
+ *    We primarily use /api/v4/systems/{id}/telemetry/production_micro
+ *    
+ *    IMPORTANT BEHAVIORS:
+ *    - WITHOUT parameters: Returns today's partial data (from 00:05 until ~25 mins ago)
+ *    - WITH start_at parameter: Returns full day data (288 intervals)
+ *    - Granularity parameter quirk: granularity='day' actually returns 5-minute data
+ *    
+ * 3. DATA STRUCTURE:
+ *    - Each interval represents a 5-minute period
+ *    - `end_at` timestamp marks the END of the interval
+ *    - Complete day has 288 intervals (00:05 to 00:00 next day)
+ *    - Intervals are in watts_hours (Wh) not watts (W)
+ *    
+ * 4. TIMEZONE HANDLING:
+ *    - All timestamps are in Unix time (UTC)
+ *    - System timezone is stored separately and used for day boundaries
+ *    - For fetching a specific day: start_at = day 00:05, end_at = next day 00:00
+ *    
+ * 5. RATE LIMITING:
+ *    - API has monthly limits (typically 1000 calls/month)
+ *    - We poll every 30 minutes during daylight hours
+ *    - Check for yesterday's completeness during 01:00-05:00 local time
+ *    
+ * 6. CURRENT IMPLEMENTATION:
+ *    - Uses summary endpoint for real-time monitoring (legacy)
+ *    - Uses production_micro for historical data collection
+ *    - Stores 5-minute interval data in readings_agg_5m table
+ *    - No direct storage in readings table (unlike Selectronic)
+ * 
+ * See docs/ENPHASE_API.md for detailed API behavior documentation
+ */
+
 // ============================================
 // Helper functions for Enphase credentials
 // ============================================
