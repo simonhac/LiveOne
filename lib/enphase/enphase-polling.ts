@@ -1,5 +1,5 @@
 import { fetchEnphaseCurrentDay, checkAndFetchYesterdayIfNeeded, fetchEnphase5MinDay } from './enphase-history';
-import { shouldPollEnphaseNow } from './enphase-cron';
+import { checkEnphasePollingSchedule } from './enphase-cron';
 import { getZonedNow } from '@/lib/date-utils';
 import { CalendarDate } from '@internationalized/date';
 import { 
@@ -39,16 +39,14 @@ export async function pollEnphaseSystem(
       // Type assertion since we know ownerClerkUserId is not null
       const validatedSystem = system as typeof system & { ownerClerkUserId: string };
       
-      if (!shouldPollEnphaseNow(validatedSystem, lastPollTime)) {
-        // Get skip reason for better reporting
-        const skipReason = 'Outside polling schedule';
-        
+      const scheduleCheck = checkEnphasePollingSchedule(validatedSystem, lastPollTime);
+      if (!scheduleCheck.shouldPollNow) {
         return {
           systemId,
           displayName: system.displayName || undefined,
           vendorType: 'enphase',
           status: 'skipped',
-          skipReason
+          skipReason: scheduleCheck.skipReason || 'Outside polling schedule'
         };
       }
     }
