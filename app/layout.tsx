@@ -12,8 +12,8 @@ const dmSans = DM_Sans({
 })
 
 export const metadata: Metadata = {
-  title: 'LiveOne - Selectronic Monitor',
-  description: 'Real-time monitoring for Selectronic SP PRO inverters',
+  title: 'LiveOne',
+  description: 'Real-time solar energy monitoring and analytics',
 }
 
 export default function RootLayout({
