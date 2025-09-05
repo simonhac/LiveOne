@@ -1,6 +1,5 @@
 import { db } from '@/lib/db';
 import { systems } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
 
 /**
  * Manages system data with caching to avoid repeated database queries
@@ -15,41 +14,52 @@ import { eq } from 'drizzle-orm';
  */
 export class SystemsManager {
   private systemsMap: Map<number, any> = new Map();
-  private loaded = false;
+  private loadPromise: Promise<void>;
+  
+  constructor() {
+    // Load systems immediately on instantiation
+    this.loadPromise = this.loadSystems();
+  }
   
   /**
-   * Load all active systems into cache
+   * Load all systems into cache (called once on instantiation)
    */
   private async loadSystems() {
-    if (this.loaded) return;
-    
+    console.log('[SystemsManager] DB HIT: Loading all systems from database');
     const allSystems = await db
       .select()
-      .from(systems)
-      .where(eq(systems.status, 'active'));
+      .from(systems);
     
     // Create map for O(1) lookups
     for (const system of allSystems) {
       this.systemsMap.set(system.id, system);
     }
     
-    this.loaded = true;
-    console.log(`[SystemsManager] Loaded ${allSystems.length} active systems`);
+    const activeCount = allSystems.filter(s => s.status === 'active').length;
+    console.log(`[SystemsManager] Loaded ${allSystems.length} systems (${activeCount} active)`);
   }
   
   /**
    * Get system details by ID
    */
   async getSystem(systemId: number) {
-    await this.loadSystems();
+    await this.loadPromise;
     return this.systemsMap.get(systemId) || null;
   }
   
   /**
-   * Get all active systems
+   * Get all active systems only
+   */
+  async getActiveSystems() {
+    await this.loadPromise;
+    return Array.from(this.systemsMap.values()).filter(s => s.status === 'active');
+  }
+  
+  /**
+   * Get all systems (including inactive)
    */
   async getAllSystems() {
-    await this.loadSystems();
+    await this.loadPromise;
     return Array.from(this.systemsMap.values());
   }
   
@@ -57,7 +67,7 @@ export class SystemsManager {
    * Get multiple systems by IDs
    */
   async getSystems(systemIds: number[]) {
-    await this.loadSystems();
+    await this.loadPromise;
     return systemIds
       .map(id => this.systemsMap.get(id))
       .filter(system => system !== undefined);
@@ -66,8 +76,17 @@ export class SystemsManager {
   /**
    * Check if a system exists and is active
    */
+  async systemIsActive(systemId: number): Promise<boolean> {
+    await this.loadPromise;
+    const system = this.systemsMap.get(systemId);
+    return system ? system.status === 'active' : false;
+  }
+  
+  /**
+   * Check if a system exists (any status)
+   */
   async systemExists(systemId: number): Promise<boolean> {
-    await this.loadSystems();
+    await this.loadPromise;
     return this.systemsMap.has(systemId);
   }
 }
