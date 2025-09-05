@@ -80,8 +80,8 @@ export async function GET(request: NextRequest) {
       activeSystems = system ? [system] : [];
       console.log(`[Cron] Testing single system: ${testSystemId}`);
     } else {
-      // Normal operation - get all active systems
-      activeSystems = await systemsManager.getAllSystems();
+      // Normal operation - get only active systems
+      activeSystems = await systemsManager.getActiveSystems();
     }
     
     if (activeSystems.length === 0) {
