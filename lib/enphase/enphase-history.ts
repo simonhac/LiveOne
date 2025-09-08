@@ -49,6 +49,76 @@ async function getValidatedEnphaseSystem(systemId: number) {
 }
 
 /**
+ * Fetch wrapper that handles Enphase API authentication and proxies through production in development
+ */
+async function fetchEnphase(
+  system: { id: number; ownerClerkUserId: string },
+  url: string | URL | Request,
+  init?: RequestInit
+): Promise<Response> {
+  const isDev = process.env.NODE_ENV === 'development' || !process.env.TURSO_DATABASE_URL;
+  
+  if (isDev) {
+    // In development, proxy through production
+    const urlString = url.toString();
+    // Remove the base URL if present
+    const apiPath = urlString.replace('https://api.enphaseenergy.com', '');
+    
+    const prodUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://liveone.vercel.app';
+    const proxyUrl = `${prodUrl}/api/enphase-proxy?systemId=${system.id}&url=${encodeURIComponent(apiPath)}`;
+    
+    console.log('[ENPHASE-HISTORY] Proxying through production:', proxyUrl);
+    
+    const response = await fetch(proxyUrl);
+    
+    if (!response.ok) {
+      // Return the response as-is to let caller handle it
+      return response;
+    }
+    
+    const proxyResponse = await response.json();
+    
+    // Create a Response object from the proxy response
+    return new Response(JSON.stringify(proxyResponse.response.data), {
+      status: proxyResponse.response.status || 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
+  // In production, get auth tokens and make direct request
+  console.log('[ENPHASE-HISTORY] Production mode - getting auth tokens');
+  
+  const client = getEnphaseClient();
+  const credentials = await client.getStoredTokens(system.ownerClerkUserId);
+  
+  if (!credentials) {
+    throw new Error(`No Enphase credentials found for user ${system.ownerClerkUserId}`);
+  }
+  
+  // Check if token needs refresh
+  let accessToken = credentials.access_token;
+  if (credentials.expires_at < Date.now() + 3600000) {
+    console.log('[ENPHASE-HISTORY] Refreshing token...');
+    const newTokens = await client.refreshTokens(credentials.refresh_token);
+    await client.storeTokens(
+      system.ownerClerkUserId,
+      newTokens,
+      credentials.enphase_system_id
+    );
+    accessToken = newTokens.access_token;
+  }
+  
+  // Add auth headers to the request
+  const headers = {
+    ...init?.headers,
+    'Authorization': `Bearer ${accessToken}`,
+    'key': process.env.ENPHASE_API_KEY || ''
+  };
+  
+  return fetch(url, { ...init, headers });
+}
+
+/**
  * Fetch raw production data from Enphase API for a specific time range
  * @param system - The system record from database
  * @param startUnix - Start timestamp in Unix seconds
@@ -60,110 +130,32 @@ async function fetchEnphaseProductionData(
   startUnix?: number,
   endUnix?: number
 ): Promise<EnphaseProductionResponse> {
-  // Determine if we're in development mode
-  const isDev = process.env.NODE_ENV === 'development' || !process.env.TURSO_DATABASE_URL;
+  // Build base URL
+  let url = `https://api.enphaseenergy.com/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro`;
   
-  if (isDev) {
-    // In development, proxy through production
-    console.log('[ENPHASE-HISTORY] Development mode - proxying through production');
-    
-    const prodUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://liveone.vercel.app';
-    
-    let url: string;
-    
-    if (startUnix) {
-      // Build URL with parameters for historical data
-      const params = new URLSearchParams({
-        start_at: startUnix.toString(),
-        granularity: 'day'  // This returns 5-minute data for the full day
-      });
-      if (endUnix) {
-        params.append('end_at', endUnix.toString());
-      }
-      url = `/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro?${params}`;
-      console.log(`[ENPHASE-HISTORY] Fetching historical data with params: ${params}`);
-    } else {
-      // No parameters - gets today's partial data
-      url = `/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro`;
-      console.log(`[ENPHASE-HISTORY] Fetching today's partial data (no parameters)`);
-    }
-    
-    console.log(`[ENPHASE-HISTORY] Enphase API URL: ${url}`);
-    
-    const fullProxyUrl = `${prodUrl}/api/enphase-proxy?systemId=${system.id}&url=${encodeURIComponent(url)}`;
-    console.log(`[ENPHASE-HISTORY] Full proxy URL: ${fullProxyUrl}`);
-    
-    const response = await fetch(fullProxyUrl);
-    
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Failed to fetch from production proxy: ${error}`);
-    }
-    
-    const proxyResponse = await response.json();
-    
-    if (proxyResponse.response?.status !== 200) {
-      throw new Error(`Enphase API error: ${JSON.stringify(proxyResponse.response)}`);
-    }
-    
-    return proxyResponse.response.data;
-    
-  } else {
-    // In production, go directly to Enphase
-    console.log('[ENPHASE-HISTORY] Production mode - direct Enphase API call');
-    
-    const client = getEnphaseClient();
-    const credentials = await client.getStoredTokens(system.ownerClerkUserId);
-    
-    if (!credentials) {
-      throw new Error(`No Enphase credentials found for user ${system.ownerClerkUserId}`);
-    }
-    
-    // Check if token needs refresh
-    let accessToken = credentials.access_token;
-    if (credentials.expires_at < Date.now() + 3600000) {
-      console.log('[ENPHASE-HISTORY] Refreshing token...');
-      const newTokens = await client.refreshTokens(credentials.refresh_token);
-      await client.storeTokens(
-        system.ownerClerkUserId,
-        newTokens,
-        credentials.enphase_system_id
-      );
-      accessToken = newTokens.access_token;
-    }
-    
-    // Build URL with or without parameters
-    let url: string;
-    
-    if (startUnix) {
-      // Build URL with parameters for historical data
-      const params = new URLSearchParams({
-        start_at: startUnix.toString(),
-        granularity: 'day'  // This returns 5-minute data for the full day
-      });
-      if (endUnix) {
-        params.append('end_at', endUnix.toString());
-      }
-      url = `https://api.enphaseenergy.com/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro?${params}`;
-    } else {
-      // No parameters - gets today's partial data
-      url = `https://api.enphaseenergy.com/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro`;
-    }
-    
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'key': process.env.ENPHASE_API_KEY || ''
-      }
+  // Add parameters if fetching historical data
+  if (startUnix) {
+    const params = new URLSearchParams({
+      start_at: startUnix.toString(),
+      granularity: 'day'  // This returns 5-minute data for the full day
     });
-    
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Enphase API error: ${response.status} - ${error}`);
+    if (endUnix) {
+      params.append('end_at', endUnix.toString());
     }
-    
-    return await response.json();
+    url += `?${params}`;
+    console.log(`[ENPHASE-HISTORY] Fetching historical data with params: ${params}`);
+  } else {
+    console.log(`[ENPHASE-HISTORY] Fetching today's partial data (no parameters)`);
   }
+  
+  const response = await fetchEnphase(system, url);
+  
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Enphase API error: ${response.status} - ${error}`);
+  }
+  
+  return await response.json();
 }
 
 /**
@@ -317,14 +309,6 @@ export async function fetchEnphaseDay(
     console.log(`[ENPHASE-HISTORY] Fetching today's partial data (no end timestamp)`);
     // For today, don't pass timestamps to get partial data
     productionData = await fetchEnphaseProductionData(system);
-    
-    if (!productionData || !productionData.intervals || productionData.intervals.length === 0) {
-      console.log(`[ENPHASE-HISTORY] No data returned for today`);
-      return {
-        upsertedCount: 0,
-        errorCount: 0
-      };
-    }
   } else {
     // For historical dates, use the full day range
     [startUnix, endUnix] = calendarDateToUnixRange(actualDate, timezoneOffsetMin);
@@ -336,6 +320,15 @@ export async function fetchEnphaseDay(
     
     // Fetch the raw data
     productionData = await fetchEnphaseProductionData(system, startUnix, endUnix);
+  }
+  
+  // Check if we got data
+  if (!productionData || !productionData.intervals || productionData.intervals.length === 0) {
+    console.log(`[ENPHASE-HISTORY] No data returned for ${dateLabel}`);
+    return {
+      upsertedCount: 0,
+      errorCount: 0
+    };
   }
   
   console.log(`[ENPHASE-HISTORY] Received ${productionData.intervals.length} intervals`);
