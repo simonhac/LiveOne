@@ -58,7 +58,9 @@ USER_SECRETS.ts
 /backups/
 
 # Temporary scripts
-/scripts/
+/scripts/temp/
+# Keep utility scripts
+!/scripts/utils/
 
 # Database
 *.db
