@@ -303,7 +303,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
   // Determine the appropriate unit for an energy value
 
   // Automatically determine if grid information should be shown
-  const showGrid = data ? (
+  const showGrid = data?.latest ? (
     (data.latest.energy.total.gridInKwh || 0) > 0 || 
     (data.latest.energy.total.gridOutKwh || 0) > 0
   ) : false
@@ -453,7 +453,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
           </div>
         )}
 
-        {data && (
+        {data?.latest && (
           <div className="space-y-6">
             {/* Fault Warning */}
             {data.latest.system.faultCode && data.latest.system.faultCode !== 0 && data.latest.system.faultTimestamp && data.latest.system.faultTimestamp > 0 && (
