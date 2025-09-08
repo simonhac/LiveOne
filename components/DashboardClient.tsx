@@ -524,7 +524,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                 />
                 <PowerCard
                   title="Battery"
-                  value={`${data.latest.soc.battery.toFixed(1)}%`}
+                  value={data.latest.soc.battery !== null ? `${data.latest.soc.battery.toFixed(1)}%` : '—'}
                   icon={<Battery className="w-6 h-6" />}
                   iconColor={data.latest.power.batteryW < 0 ? "text-green-400" : data.latest.power.batteryW > 0 ? "text-orange-400" : "text-gray-400"}
                   bgColor={data.latest.power.batteryW < 0 ? "bg-green-900/20" : data.latest.power.batteryW > 0 ? "bg-orange-900/20" : "bg-gray-900/20"}

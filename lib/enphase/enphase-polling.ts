@@ -1,4 +1,4 @@
-import { fetchEnphaseCurrentDay, checkAndFetchYesterdayIfNeeded, fetchEnphase5MinDay } from './enphase-history';
+import { checkAndFetchYesterdayIfNeeded, fetchEnphaseDay } from './enphase-history';
 import { checkEnphasePollingSchedule } from './enphase-cron';
 import { getZonedNow } from '@/lib/date-utils';
 import { CalendarDate } from '@internationalized/date';
@@ -63,7 +63,7 @@ export async function pollEnphaseSystem(
     if (options.date) {
       // If a specific date is provided, fetch that date
       console.log(`[ENPHASE] Fetching data for ${options.date.year}-${options.date.month}-${options.date.day} for system ${system.id}`);
-      result = await fetchEnphase5MinDay(system.id, options.date, system.timezoneOffsetMin, false);
+      result = await fetchEnphaseDay(system.id, options.date, system.timezoneOffsetMin, false);
     } else {
       const localTime = getZonedNow(system.timezoneOffsetMin);
       const localHour = localTime.hour;
@@ -74,7 +74,7 @@ export async function pollEnphaseSystem(
         result = await checkAndFetchYesterdayIfNeeded(system.id, false);
       } else {
         // Otherwise fetch current day's data
-        result = await fetchEnphaseCurrentDay(system.id, false);
+        result = await fetchEnphaseDay(system.id, null, system.timezoneOffsetMin, false);
       }
     }
     

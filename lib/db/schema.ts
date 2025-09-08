@@ -100,6 +100,7 @@ export const readingsAgg5m = sqliteTable('readings_agg_5m', {
   solarWAvg: integer('solar_w_avg'),
   solarWMin: integer('solar_w_min'),
   solarWMax: integer('solar_w_max'),
+  solarIntervalWh: integer('solar_interval_wh'), // Energy produced in this interval (Wh)
   
   loadWAvg: integer('load_w_avg'),
   loadWMin: integer('load_w_min'),
