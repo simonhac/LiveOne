@@ -169,7 +169,8 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
       const response = await fetch(url)
       const result = await response.json()
       
-      if (result.success) {
+      // Check if we have latest data (system info is always present)
+      if (result.latest) {
         setData(result)
         
         // Parse timestamp (now in AEST format)
@@ -184,8 +185,14 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
         setSystemInfo(result.systemInfo || null)
         setError('')
         setLoading(false)
+      } else if (result.error) {
+        setError(result.error)
+        setLoading(false)
       } else {
-        setError(result.error || 'Failed to fetch data')
+        // We have system info but no readings yet
+        setData(result)
+        setSystemInfo(result.systemInfo || null)
+        setError('No readings available yet')
         setLoading(false)
       }
     } catch (err) {
