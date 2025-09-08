@@ -155,7 +155,7 @@ export default function TestConnectionModal({
         )}
         
         {/* Data Display */}
-        {data && (
+        {data?.latest && (
           <div className="relative">
             {/* Refreshing Overlay */}
             {isRefreshing && (
