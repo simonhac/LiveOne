@@ -67,9 +67,9 @@ interface DashboardData {
       };
     };
     system: {
-      faultCode: number;
-      faultTimestamp: number;
-      generatorStatus: number;
+      faultCode: number | null;
+      faultTimestamp: number | null;
+      generatorStatus: number | null;
     };
   };
   historical: {
@@ -449,7 +449,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
         {data && (
           <div className="space-y-6">
             {/* Fault Warning */}
-            {data.latest.system.faultCode !== 0 && (
+            {data.latest.system.faultCode && data.latest.system.faultCode !== 0 && data.latest.system.faultTimestamp && data.latest.system.faultTimestamp > 0 && (
               <div className="bg-yellow-900/50 border border-yellow-700 text-yellow-300 px-4 py-3 rounded flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5" />
                 <div>
