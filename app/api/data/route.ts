@@ -230,7 +230,7 @@ export async function GET(request: Request) {
           successfulPolls: status?.successfulPolls || 0,
           isActive: system.status === 'active',
         }
-      }, { status: 503 })
+      })
     } else {
       // No data yet - but still include system info
       return NextResponse.json({
@@ -257,7 +257,7 @@ export async function GET(request: Request) {
           successfulPolls: status.successfulPolls || 0,
           isActive: system.status === 'active',
         } : null
-      }, { status: 503 })
+      })
     }
     
   } catch (error) {
