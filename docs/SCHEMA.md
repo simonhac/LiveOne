@@ -102,6 +102,7 @@ Pre-aggregated 5-minute intervals for efficient querying.
 | `solar_w_avg` | INTEGER | Average solar power (W) |
 | `solar_w_min` | INTEGER | Minimum solar power (W) |
 | `solar_w_max` | INTEGER | Maximum solar power (W) |
+| `solar_interval_wh` | INTEGER | Energy produced in this interval (Wh) - Enphase only |
 | `load_w_avg` | INTEGER | Average load power (W) |
 | `load_w_min` | INTEGER | Minimum load power (W) |
 | `load_w_max` | INTEGER | Maximum load power (W) |
