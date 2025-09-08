@@ -210,6 +210,16 @@ export async function GET(request: Request) {
         success: false,
         error: status.lastError,
         timestamp: new Date(),
+        displayName: system.displayName,
+        vendorType: system.vendorType,
+        vendorSiteId: system.vendorSiteId,
+        systemInfo: {
+          model: system.model,
+          serial: system.serial,
+          ratings: system.ratings,
+          solarSize: system.solarSize,
+          batterySize: system.batterySize,
+        },
         polling: {
           lastPollTime: status?.lastPollTime ? formatTime_fromJSDate(status.lastPollTime, system.timezoneOffsetMin) : null,
           lastSuccessTime: status?.lastSuccessTime ? formatTime_fromJSDate(status.lastSuccessTime, system.timezoneOffsetMin) : null,
@@ -222,11 +232,21 @@ export async function GET(request: Request) {
         }
       }, { status: 503 })
     } else {
-      // No data yet
+      // No data yet - but still include system info
       return NextResponse.json({
         success: false,
         error: 'No data available yet.',
         timestamp: new Date(),
+        displayName: system.displayName,
+        vendorType: system.vendorType,
+        vendorSiteId: system.vendorSiteId,
+        systemInfo: {
+          model: system.model,
+          serial: system.serial,
+          ratings: system.ratings,
+          solarSize: system.solarSize,
+          batterySize: system.batterySize,
+        },
         polling: status ? {
           lastPollTime: status.lastPollTime || null,
           lastSuccessTime: status.lastSuccessTime || null,
