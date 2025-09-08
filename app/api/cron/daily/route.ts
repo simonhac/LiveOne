@@ -67,13 +67,16 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Allow manual triggering with POST (admin only)
+// Allow manual triggering with POST (admin only in production)
 export async function POST(request: NextRequest) {
   try {
-    // Check if user is admin (isUserAdmin checks authentication internally)
-    const userIsAdmin = await isUserAdmin();
-    if (!userIsAdmin) {
-      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+    // In development, allow without auth
+    if (process.env.NODE_ENV !== 'development') {
+      // Check if user is admin (isUserAdmin checks authentication internally)
+      const userIsAdmin = await isUserAdmin();
+      if (!userIsAdmin) {
+        return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+      }
     }
 
     const body = await request.json().catch(() => ({}));

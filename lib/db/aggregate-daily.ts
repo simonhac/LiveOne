@@ -4,6 +4,35 @@ import { sql, eq, and, gte, lt, lte, desc, asc, inArray } from 'drizzle-orm';
 import { getYesterdayDate, formatTimeAEST, formatDateAEST, fromUnixTimestamp } from '@/lib/date-utils';
 
 /**
+ * Convert a day (YYYY-MM-DD) to Unix timestamp range for daily aggregation
+ * Returns timestamps for 00:05 of the given day to 00:00 of the next day (inclusive)
+ * This gives us 288 5-minute intervals (00:05, 00:10, ..., 23:55, 00:00)
+ * @param day - The day in YYYY-MM-DD format
+ * @param timezoneOffsetMin - Timezone offset in minutes
+ * @returns [startUnix, endUnix] in seconds
+ */
+function dayToUnixRangeForAggregation(day: string, timezoneOffsetMin: number): [number, number] {
+  const offsetMinutes = timezoneOffsetMin;
+  const offsetHours = Math.floor(offsetMinutes / 60);
+  const offsetMins = Math.abs(offsetMinutes % 60);
+  const offsetString = offsetMinutes >= 0 
+    ? `+${String(offsetHours).padStart(2, '0')}:${String(offsetMins).padStart(2, '0')}`
+    : `-${String(Math.abs(offsetHours)).padStart(2, '0')}:${String(offsetMins).padStart(2, '0')}`;
+  
+  // Start at 00:05 of the given day
+  const dayStart = new Date(`${day}T00:05:00${offsetString}`);
+  // End at 00:00 of the next day (inclusive)
+  const nextDay = new Date(`${day}T00:00:00${offsetString}`);
+  nextDay.setDate(nextDay.getDate() + 1);
+  const dayEnd = nextDay;
+  
+  return [
+    Math.floor(dayStart.getTime() / 1000),
+    Math.floor(dayEnd.getTime() / 1000)
+  ];
+}
+
+/**
  * Aggregate data for a specific day and system
  * @param systemId - The system ID to aggregate
  * @param day - The day in YYYY-MM-DD format
@@ -21,33 +50,20 @@ export async function aggregateDailyData(systemId: string, day: string) {
     throw new Error(`System ${systemId} not found`);
   }
   
-  // Calculate the start and end timestamps for the day in the system's timezone
-  // For example, for timezone offset +600 minutes (AEST):
-  // 2025-08-17T00:00:00+10:00 = 2025-08-16T14:00:00 UTC
-  const offsetMinutes = system.timezoneOffsetMin;
-  const offsetHours = Math.floor(offsetMinutes / 60);
-  const offsetMins = Math.abs(offsetMinutes % 60);
-  const offsetString = offsetMinutes >= 0 
-    ? `+${String(offsetHours).padStart(2, '0')}:${String(offsetMins).padStart(2, '0')}`
-    : `-${String(Math.abs(offsetHours)).padStart(2, '0')}:${String(offsetMins).padStart(2, '0')}`;
-  
-  const dayStart = new Date(`${day}T00:00:00${offsetString}`);
-  const nextDay = new Date(dayStart);
-  nextDay.setDate(nextDay.getDate() + 1);
-  const dayEnd = nextDay; // 00:00:00 of the next day
+  // Get the Unix timestamp range for this day (00:05 to 00:00 inclusive)
+  const [dayStartUnix, dayEndUnix] = dayToUnixRangeForAggregation(day, system.timezoneOffsetMin);
   
   try {
     // Get all 5-minute aggregated data for the day
-    // Using > dayStart and <= dayEnd because interval_end represents the END of each 5-minute period
-    // So a period ending at 00:00:00 belongs to the previous day
+    // Using >= dayStartUnix (00:05) and <= dayEndUnix (00:00 next day) to get exactly 288 intervals
     const fiveMinData = await db
       .select()
       .from(readingsAgg5m)
       .where(
         and(
           eq(readingsAgg5m.systemId, parseInt(systemId)),
-          sql`${readingsAgg5m.intervalEnd} > ${Math.floor(dayStart.getTime() / 1000)}`,
-          sql`${readingsAgg5m.intervalEnd} <= ${Math.floor(dayEnd.getTime() / 1000)}`
+          gte(readingsAgg5m.intervalEnd, dayStartUnix),
+          lte(readingsAgg5m.intervalEnd, dayEndUnix)
         )
       )
       .orderBy(asc(readingsAgg5m.intervalEnd));
@@ -69,17 +85,18 @@ export async function aggregateDailyData(systemId: string, day: string) {
     const lastRecord = fiveMinData[fiveMinData.length - 1];
     
     // Get the previous day's last record for energy delta calculation
-    // We want the last record with interval_end <= dayStart (which is 00:00:00)
+    // We want the record at 00:00 of the current day (which is the last interval of the previous day)
+    // Since our day starts at 00:05, the 00:00 record belongs to the previous day
+    const previousDayEndUnix = dayStartUnix - 300; // 00:00 is 5 minutes before 00:05
     const previousDayData = await db
       .select()
       .from(readingsAgg5m)
       .where(
         and(
           eq(readingsAgg5m.systemId, parseInt(systemId)),
-          sql`${readingsAgg5m.intervalEnd} <= ${Math.floor(dayStart.getTime() / 1000)}`
+          eq(readingsAgg5m.intervalEnd, previousDayEndUnix)
         )
       )
-      .orderBy(desc(readingsAgg5m.intervalEnd))
       .limit(1);
     
     const previousRecord = previousDayData[0];
@@ -91,7 +108,7 @@ export async function aggregateDailyData(systemId: string, day: string) {
       return Math.round(value * factor) / factor;
     };
 
-    // Calculate daily energy totals only if we have previous day's data
+    // Calculate daily energy totals
     let dailyEnergy = {
       solarKwh: null as number | null,
       loadKwh: null as number | null,
@@ -101,8 +118,22 @@ export async function aggregateDailyData(systemId: string, day: string) {
       gridExportKwh: null as number | null,
     };
 
-    if (previousRecord) {
-      // We have previous data, so we can calculate daily totals
+    // Check if this is an Enphase system (has solarIntervalWh data)
+    const hasIntervalEnergy = fiveMinData.some(d => d.solarIntervalWh !== null && d.solarIntervalWh !== undefined);
+    
+    if (hasIntervalEnergy) {
+      // Enphase system: sum interval energy values
+      const solarIntervalWhValues = fiveMinData
+        .map(d => d.solarIntervalWh)
+        .filter(v => v !== null && v !== undefined) as number[];
+      
+      dailyEnergy.solarKwh = solarIntervalWhValues.length > 0 
+        ? roundTo(solarIntervalWhValues.reduce((a, b) => a + b, 0) / 1000, 3)
+        : null;
+      
+      // Other energy values remain null for Enphase (not available yet)
+    } else if (previousRecord) {
+      // Selectronic system: use cumulative totals difference
       dailyEnergy = {
         solarKwh: roundTo((lastRecord.solarKwhTotalLast ?? 0) - (previousRecord.solarKwhTotalLast ?? 0), 3),
         loadKwh: roundTo((lastRecord.loadKwhTotalLast ?? 0) - (previousRecord.loadKwhTotalLast ?? 0), 3),
