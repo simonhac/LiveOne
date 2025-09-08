@@ -1,18 +1,37 @@
 #!/usr/bin/env npx tsx
 /**
  * Fetch last 7 days of Enphase data for a system
- * Usage: ./scripts/fetch-enphase-week.ts [systemId] [environment]
+ * Usage: ./scripts/utils/fetch-enphase-week.ts --systemId=<id> --environment=<dev|prod>
  * Examples: 
- *   ./scripts/fetch-enphase-week.ts 3
- *   ./scripts/fetch-enphase-week.ts 3 dev
- *   ./scripts/fetch-enphase-week.ts 3 prod
+ *   ./scripts/utils/fetch-enphase-week.ts --systemId=3 --environment=dev
+ *   ./scripts/utils/fetch-enphase-week.ts --systemId=3 --environment=prod
+ *   ./scripts/utils/fetch-enphase-week.ts --systemId=5 --environment=prod
  */
 
 import { parseDate } from '@internationalized/date';
 
 async function fetchEnphaseWeek() {
-  const systemId = process.argv[2] || '3';
-  const environment = process.argv[3] || 'dev';
+  // Parse command line arguments
+  const args = process.argv.slice(2);
+  const params: Record<string, string> = {};
+  
+  for (const arg of args) {
+    const match = arg.match(/^--([^=]+)=(.+)$/);
+    if (match) {
+      params[match[1]] = match[2];
+    }
+  }
+  
+  // Check required parameters
+  if (!params.systemId || !params.environment) {
+    console.error('Error: Missing required parameters');
+    console.error('Usage: ./scripts/utils/fetch-enphase-week.ts --systemId=<id> --environment=<dev|prod>');
+    console.error('Example: ./scripts/utils/fetch-enphase-week.ts --systemId=3 --environment=dev');
+    process.exit(1);
+  }
+  
+  const systemId = params.systemId;
+  const environment = params.environment;
   
   // Validate environment
   if (environment !== 'dev' && environment !== 'prod') {
