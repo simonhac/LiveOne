@@ -473,3 +473,34 @@ export function formatDateRange(
     }
   }
 }
+
+/**
+ * Format a JavaScript Date to an ISO string with timezone offset
+ * @param date - JavaScript Date object
+ * @param timezoneOffsetMin - Timezone offset in minutes from UTC (positive for east, negative for west)
+ * @returns ISO string with timezone offset (e.g., "2025-08-16T20:36:41+10:00")
+ */
+export function formatTime_fromJSDate(date: Date, timezoneOffsetMin: number): string {
+  // Get the UTC time
+  const utcTime = date.getTime();
+  
+  // Apply the timezone offset to get local time
+  const localTime = new Date(utcTime + timezoneOffsetMin * 60 * 1000);
+  
+  // Format the date parts using UTC methods (since we've already applied the offset)
+  const year = localTime.getUTCFullYear();
+  const month = String(localTime.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(localTime.getUTCDate()).padStart(2, '0');
+  const hour = String(localTime.getUTCHours()).padStart(2, '0');
+  const minute = String(localTime.getUTCMinutes()).padStart(2, '0');
+  const second = String(localTime.getUTCSeconds()).padStart(2, '0');
+  
+  // Format the timezone offset (e.g., "+10:00" or "-05:00")
+  const offsetHours = Math.floor(Math.abs(timezoneOffsetMin) / 60);
+  const offsetMinutes = Math.abs(timezoneOffsetMin) % 60;
+  const offsetSign = timezoneOffsetMin >= 0 ? '+' : '-';
+  const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMinutes).padStart(2, '0')}`;
+  
+  // Return ISO format with timezone offset
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}${offsetStr}`;
+}

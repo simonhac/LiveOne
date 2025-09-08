@@ -4,9 +4,11 @@ import { SELECTLIVE_CONFIG } from '@/config'
 import { db } from '@/lib/db'
 import { systems, readings, pollingStatus, readingsAgg1d, userSystems } from '@/lib/db/schema'
 import { eq, and, desc, or } from 'drizzle-orm'
-import { formatTimeAEST, getYesterdayDate, fromUnixTimestamp } from '@/lib/date-utils'
+import { formatTimeAEST, formatTime_fromJSDate, getYesterdayDate, fromUnixTimestamp } from '@/lib/date-utils'
 import { roundToThree } from '@/lib/format-opennem'
 import { isUserAdmin } from '@/lib/auth-utils'
+import { getLastReading as getSelectronicLastReading } from '@/lib/selectronic/selectronic-last-reading'
+import { getLastReading as getEnphaseLastReading } from '@/lib/enphase/enphase-last-reading'
 
 // Helper function to ensure values are null instead of undefined
 function nullifyUndefined<T>(value: T | undefined): T | null {
@@ -80,12 +82,10 @@ export async function GET(request: Request) {
                     hasDirectAccess ? userSystemAccess[0].role : 
                     'viewer';
     
-    // Get latest reading from database
-    const [latestReading] = await db.select()
-      .from(readings)
-      .where(eq(readings.systemId, system.id))
-      .orderBy(desc(readings.inverterTime))
-      .limit(1);
+    // Get latest reading based on vendor type
+    const latestReadingData = system.vendorType === 'enphase' 
+      ? await getEnphaseLastReading(system.id)
+      : await getSelectronicLastReading(system.id);
     
     // Get polling status from database
     const [status] = await db.select()
@@ -106,9 +106,7 @@ export async function GET(request: Request) {
       )
       .limit(1);
     
-    if (latestReading) {
-      // Get today values from stored response if available
-      const lastResponse = status?.lastResponse as any;
+    if (latestReadingData) {
       // Build historical section
       const historical = {
         yesterday: yesterdayData ? {
@@ -161,49 +159,30 @@ export async function GET(request: Request) {
       
       // Structure latest data with hierarchy
       const latest = {
-        timestamp: formatTimeAEST(fromUnixTimestamp(latestReading.inverterTime.getTime() / 1000, system.timezoneOffsetMin)),
-        power: {
-          solarW: latestReading.solarW,
-          solarInverterW: latestReading.solarInverterW,
-          shuntW: latestReading.shuntW,
-          loadW: latestReading.loadW,
-          batteryW: latestReading.batteryW,
-          gridW: latestReading.gridW,
-        },
-        soc: {
-          battery: latestReading.batterySOC,
-        },
+        timestamp: formatTime_fromJSDate(latestReadingData.timestamp, system.timezoneOffsetMin),
+        power: latestReadingData.power,
+        soc: latestReadingData.soc,
         energy: {
-          today: {
-            solarKwh: roundToThree(lastResponse?.solarKwhToday),
-            loadKwh: roundToThree(lastResponse?.loadKwhToday),
-            batteryInKwh: roundToThree(lastResponse?.batteryInKwhToday),
-            batteryOutKwh: roundToThree(lastResponse?.batteryOutKwhToday),
-            gridInKwh: roundToThree(lastResponse?.gridInKwhToday),
-            gridOutKwh: roundToThree(lastResponse?.gridOutKwhToday),
-          },
+          today: latestReadingData.energy.today,
           total: {
-            solarKwh: latestReading.solarKwhTotal,
-            loadKwh: latestReading.loadKwhTotal,
-            batteryInKwh: latestReading.batteryInKwhTotal,
-            batteryOutKwh: latestReading.batteryOutKwhTotal,
-            gridInKwh: latestReading.gridInKwhTotal,
-            gridOutKwh: latestReading.gridOutKwhTotal,
+            // These values are no longer in latestReadingData, get from readings table if needed
+            solarKwh: null,
+            loadKwh: null,
+            batteryInKwh: null,
+            batteryOutKwh: null,
+            gridInKwh: null,
+            gridOutKwh: null,
           },
         },
-        system: {
-          faultCode: latestReading.faultCode,
-          faultTimestamp: latestReading.faultTimestamp,
-          generatorStatus: latestReading.generatorStatus,
-        },
+        system: latestReadingData.system,
       };
       
       return NextResponse.json({
         success: true,
         latest: latest,
         historical: historical,
-        inverterTime: formatTimeAEST(fromUnixTimestamp(latestReading.inverterTime.getTime() / 1000, system.timezoneOffsetMin)),
-        receivedTime: formatTimeAEST(fromUnixTimestamp(latestReading.receivedTime.getTime() / 1000, system.timezoneOffsetMin)),
+        inverterTime: formatTime_fromJSDate(latestReadingData.timestamp, system.timezoneOffsetMin),
+        receivedTime: formatTime_fromJSDate(latestReadingData.receivedTime, system.timezoneOffsetMin),
         vendorType: system.vendorType,
         vendorSiteId: system.vendorSiteId,
         displayName: system.displayName,
@@ -216,9 +195,9 @@ export async function GET(request: Request) {
           batterySize: system.batterySize,
         },
         polling: {
-          lastPollTime: status?.lastPollTime ? formatTimeAEST(fromUnixTimestamp(status.lastPollTime.getTime() / 1000, system.timezoneOffsetMin)) : null,
-          lastSuccessTime: status?.lastSuccessTime ? formatTimeAEST(fromUnixTimestamp(status.lastSuccessTime.getTime() / 1000, system.timezoneOffsetMin)) : null,
-          lastErrorTime: status?.lastErrorTime ? formatTimeAEST(fromUnixTimestamp(status.lastErrorTime.getTime() / 1000, system.timezoneOffsetMin)) : null,
+          lastPollTime: status?.lastPollTime ? formatTime_fromJSDate(status.lastPollTime, system.timezoneOffsetMin) : null,
+          lastSuccessTime: status?.lastSuccessTime ? formatTime_fromJSDate(status.lastSuccessTime, system.timezoneOffsetMin) : null,
+          lastErrorTime: status?.lastErrorTime ? formatTime_fromJSDate(status.lastErrorTime, system.timezoneOffsetMin) : null,
           lastError: status?.lastError || null,
           consecutiveErrors: status?.consecutiveErrors || 0,
           totalPolls: status?.totalPolls || 0,
@@ -232,9 +211,9 @@ export async function GET(request: Request) {
         error: status.lastError,
         timestamp: new Date(),
         polling: {
-          lastPollTime: status?.lastPollTime ? formatTimeAEST(fromUnixTimestamp(status.lastPollTime.getTime() / 1000, system.timezoneOffsetMin)) : null,
-          lastSuccessTime: status?.lastSuccessTime ? formatTimeAEST(fromUnixTimestamp(status.lastSuccessTime.getTime() / 1000, system.timezoneOffsetMin)) : null,
-          lastErrorTime: status?.lastErrorTime ? formatTimeAEST(fromUnixTimestamp(status.lastErrorTime.getTime() / 1000, system.timezoneOffsetMin)) : null,
+          lastPollTime: status?.lastPollTime ? formatTime_fromJSDate(status.lastPollTime, system.timezoneOffsetMin) : null,
+          lastSuccessTime: status?.lastSuccessTime ? formatTime_fromJSDate(status.lastSuccessTime, system.timezoneOffsetMin) : null,
+          lastErrorTime: status?.lastErrorTime ? formatTime_fromJSDate(status.lastErrorTime, system.timezoneOffsetMin) : null,
           lastError: status?.lastError || null,
           consecutiveErrors: status?.consecutiveErrors || 0,
           totalPolls: status?.totalPolls || 0,

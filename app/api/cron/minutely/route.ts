@@ -234,7 +234,7 @@ export async function GET(request: NextRequest) {
     const skippedCount = results.filter(r => r.status === 'skipped').length;
     const failureCount = results.filter(r => r.status === 'error').length;
     
-    console.log(`[Cron] Polling complete. Success: ${successCount}, Failed: ${failureCount}, Skipped: ${skippedCount}`);
+    console.log(`[Cron] Polling complete. success: ${successCount}, failed: ${failureCount}, skipped: ${skippedCount}`, results);
     
     return NextResponse.json({
       success: true,
