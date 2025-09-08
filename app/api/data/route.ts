@@ -22,7 +22,6 @@ export async function GET(request: Request) {
     
     if (!userId) {
       return NextResponse.json({
-        success: false,
         error: 'Unauthorized',
       }, { status: 401 })
     }
@@ -33,7 +32,6 @@ export async function GET(request: Request) {
     
     if (!systemId) {
       return NextResponse.json({
-        success: false,
         error: 'System ID is required',
       }, { status: 400 })
     }
@@ -46,7 +44,6 @@ export async function GET(request: Request) {
     
     if (!system) {
       return NextResponse.json({
-        success: false,
         error: 'System not found',
       }, { status: 404 });
     }
@@ -71,7 +68,6 @@ export async function GET(request: Request) {
     
     if (!isAdmin && !isOwner && !hasDirectAccess) {
       return NextResponse.json({
-        success: false,
         error: 'Access denied to system',
       }, { status: 403 });
     }
@@ -178,7 +174,6 @@ export async function GET(request: Request) {
       };
       
       return NextResponse.json({
-        success: true,
         latest: latest,
         historical: historical,
         inverterTime: formatTime_fromJSDate(latestReadingData.timestamp, system.timezoneOffsetMin),
@@ -205,41 +200,17 @@ export async function GET(request: Request) {
           isActive: system.status === 'active',
         }
       })
-    } else if (status?.lastError) {
-      return NextResponse.json({
-        success: false,
-        error: status.lastError,
-        timestamp: new Date(),
-        displayName: system.displayName,
-        vendorType: system.vendorType,
-        vendorSiteId: system.vendorSiteId,
-        systemInfo: {
-          model: system.model,
-          serial: system.serial,
-          ratings: system.ratings,
-          solarSize: system.solarSize,
-          batterySize: system.batterySize,
-        },
-        polling: {
-          lastPollTime: status?.lastPollTime ? formatTime_fromJSDate(status.lastPollTime, system.timezoneOffsetMin) : null,
-          lastSuccessTime: status?.lastSuccessTime ? formatTime_fromJSDate(status.lastSuccessTime, system.timezoneOffsetMin) : null,
-          lastErrorTime: status?.lastErrorTime ? formatTime_fromJSDate(status.lastErrorTime, system.timezoneOffsetMin) : null,
-          lastError: status?.lastError || null,
-          consecutiveErrors: status?.consecutiveErrors || 0,
-          totalPolls: status?.totalPolls || 0,
-          successfulPolls: status?.successfulPolls || 0,
-          isActive: system.status === 'active',
-        }
-      })
     } else {
-      // No data yet - but still include system info
+      // No readings data yet - return same structure with null values
       return NextResponse.json({
-        success: false,
-        error: 'No data available yet.',
-        timestamp: new Date(),
-        displayName: system.displayName,
+        latest: null,
+        historical: null,
+        inverterTime: null,
+        receivedTime: null,
         vendorType: system.vendorType,
         vendorSiteId: system.vendorSiteId,
+        displayName: system.displayName,
+        ownerClerkUserId: system.ownerClerkUserId,
         systemInfo: {
           model: system.model,
           serial: system.serial,
@@ -248,13 +219,13 @@ export async function GET(request: Request) {
           batterySize: system.batterySize,
         },
         polling: status ? {
-          lastPollTime: status.lastPollTime || null,
-          lastSuccessTime: status.lastSuccessTime || null,
-          lastErrorTime: status.lastErrorTime || null,
-          lastError: status.lastError || null,
-          consecutiveErrors: status.consecutiveErrors || 0,
-          totalPolls: status.totalPolls || 0,
-          successfulPolls: status.successfulPolls || 0,
+          lastPollTime: status?.lastPollTime ? formatTime_fromJSDate(status.lastPollTime, system.timezoneOffsetMin) : null,
+          lastSuccessTime: status?.lastSuccessTime ? formatTime_fromJSDate(status.lastSuccessTime, system.timezoneOffsetMin) : null,
+          lastErrorTime: status?.lastErrorTime ? formatTime_fromJSDate(status.lastErrorTime, system.timezoneOffsetMin) : null,
+          lastError: status?.lastError || null,
+          consecutiveErrors: status?.consecutiveErrors || 0,
+          totalPolls: status?.totalPolls || 0,
+          successfulPolls: status?.successfulPolls || 0,
           isActive: system.status === 'active',
         } : null
       })
@@ -263,7 +234,6 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error('API Error:', error)
     return NextResponse.json({
-      success: false,
       error: 'Internal server error',
       timestamp: new Date(),
     }, { status: 500 })
