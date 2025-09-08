@@ -1,11 +1,15 @@
 #!/usr/bin/env npx tsx
 /**
  * Fetch last 7 days of Enphase data for a system
- * Usage: ./scripts/utils/fetch-enphase-week.ts --systemId=<id> --environment=<dev|prod>
+ * Usage: ./scripts/utils/fetch-enphase-week.ts --systemId=<id> --environment=<dev|prod> [--cronSecret=<secret>]
+ * 
  * Examples: 
+ *   # Development (no auth required)
  *   ./scripts/utils/fetch-enphase-week.ts --systemId=3 --environment=dev
- *   ./scripts/utils/fetch-enphase-week.ts --systemId=3 --environment=prod
- *   ./scripts/utils/fetch-enphase-week.ts --systemId=5 --environment=prod
+ *   
+ *   # Production (requires CRON_SECRET)
+ *   ./scripts/utils/fetch-enphase-week.ts --systemId=3 --environment=prod --cronSecret=<secret>
+ *   CRON_SECRET=<secret> ./scripts/utils/fetch-enphase-week.ts --systemId=3 --environment=prod
  */
 
 import { parseDate } from '@internationalized/date';
@@ -25,17 +29,28 @@ async function fetchEnphaseWeek() {
   // Check required parameters
   if (!params.systemId || !params.environment) {
     console.error('Error: Missing required parameters');
-    console.error('Usage: ./scripts/utils/fetch-enphase-week.ts --systemId=<id> --environment=<dev|prod>');
+    console.error('Usage: ./scripts/utils/fetch-enphase-week.ts --systemId=<id> --environment=<dev|prod> [--cronSecret=<secret>]');
     console.error('Example: ./scripts/utils/fetch-enphase-week.ts --systemId=3 --environment=dev');
+    console.error('Example: ./scripts/utils/fetch-enphase-week.ts --systemId=3 --environment=prod --cronSecret=<secret>');
     process.exit(1);
   }
   
   const systemId = params.systemId;
   const environment = params.environment;
+  const cronSecret = params.cronSecret || process.env.CRON_SECRET;
   
   // Validate environment
   if (environment !== 'dev' && environment !== 'prod') {
     console.error('Error: environment must be "dev" or "prod"');
+    process.exit(1);
+  }
+  
+  // Check auth for production
+  if (environment === 'prod' && !cronSecret) {
+    console.error('Error: CRON_SECRET is required for production environment');
+    console.error('You can either:');
+    console.error('1. Pass it as a parameter: --cronSecret=<secret>');
+    console.error('2. Set it as an environment variable: CRON_SECRET=<secret> ./scripts/utils/fetch-enphase-week.ts ...');
     process.exit(1);
   }
   
@@ -67,7 +82,12 @@ async function fetchEnphaseWeek() {
     try {
       const url = `${baseUrl}/api/cron/minutely?systemId=${systemId}&force=true&date=${dateStr}`;
       
-      const response = await fetch(url);
+      const headers: HeadersInit = {};
+      if (environment === 'prod' && cronSecret) {
+        headers['Authorization'] = `Bearer ${cronSecret}`;
+      }
+      
+      const response = await fetch(url, { headers });
       
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
