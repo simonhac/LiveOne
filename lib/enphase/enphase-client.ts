@@ -126,7 +126,7 @@ export class EnphaseClient implements IEnphaseClient {
     this.clientSecret = clientSecret;
     this.redirectUri = redirectUri;
 
-    console.log('ENPHASE: Client initialized with redirect URI:', this.redirectUri);
+    // Client initialized
   }
 
   getAuthorizationUrl(state: string, origin?: string): string {
@@ -138,21 +138,12 @@ export class EnphaseClient implements IEnphaseClient {
       state
     });
     const url = `${this.baseUrl}/oauth/authorize?${params}`;
-    console.log('ENPHASE: Generated authorization URL:', url);
+    // Generated authorization URL
     return url;
   }
 
   async exchangeCodeForTokens(code: string): Promise<EnphaseTokens> {
-    console.log('ENPHASE: Exchanging authorization code for tokens');
-    console.log('ENPHASE: Token exchange parameters:', {
-      grant_type: 'authorization_code',
-      code: code.substring(0, 20) + '...',
-      redirect_uri: this.redirectUri,
-      client_id: this.clientId.substring(0, 10) + '...',
-      client_secret: this.clientSecret.substring(0, 10) + '...',
-      endpoint: `${this.baseUrl}/oauth/token`,
-      auth_method: 'Basic Authentication'
-    });
+    // Exchanging authorization code for tokens
     
     // Try Basic Authentication - encode client_id:client_secret in base64
     const credentials = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
@@ -195,7 +186,7 @@ export class EnphaseClient implements IEnphaseClient {
       }
 
       const tokens = await response.json();
-      console.log('ENPHASE: Successfully obtained tokens, expires in:', tokens.expires_in);
+      // Successfully obtained tokens
       return tokens;
     } catch (error) {
       console.error('ENPHASE: Error exchanging code for tokens:', error);
@@ -204,7 +195,7 @@ export class EnphaseClient implements IEnphaseClient {
   }
 
   async refreshTokens(refreshToken: string): Promise<EnphaseTokens> {
-    console.log('ENPHASE: Refreshing access token');
+    // Refreshing access token
     
     // Use Basic Authentication for client credentials
     const credentials = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
@@ -243,7 +234,7 @@ export class EnphaseClient implements IEnphaseClient {
       }
 
       const tokens = await response.json();
-      console.log('ENPHASE: Successfully refreshed tokens');
+      // Successfully refreshed tokens
       return tokens;
     } catch (error) {
       console.error('ENPHASE: Error refreshing tokens:', error);
@@ -252,7 +243,7 @@ export class EnphaseClient implements IEnphaseClient {
   }
 
   async getSystems(accessToken: string): Promise<EnphaseSystem[]> {
-    console.log('ENPHASE: Fetching user systems');
+    // Fetching user systems
     
     try {
       const response = await fetch(`${this.baseUrl}/api/v4/systems`, {
@@ -268,7 +259,7 @@ export class EnphaseClient implements IEnphaseClient {
       }
 
       const data = await response.json();
-      console.log('ENPHASE: Found', data.systems?.length || 0, 'systems');
+      // Found systems
       return data.systems || [];
     } catch (error) {
       console.error('ENPHASE: Error fetching systems:', error);
@@ -277,7 +268,7 @@ export class EnphaseClient implements IEnphaseClient {
   }
 
   async getLatestTelemetry(systemId: string, accessToken: string): Promise<EnphaseTelemetryResponse> {
-    console.log('ENPHASE: Fetching data from multiple endpoints for system:', systemId);
+    // Fetching data from multiple endpoints
     
     // Try all three endpoints and log their responses
     const endpoints = [
@@ -288,7 +279,7 @@ export class EnphaseClient implements IEnphaseClient {
     
     for (const endpoint of endpoints) {
       try {
-        console.log(`ENPHASE: Testing endpoint: ${endpoint.url}`);
+        // Testing endpoint
         const response = await fetch(endpoint.url, {
           headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -298,12 +289,12 @@ export class EnphaseClient implements IEnphaseClient {
         
         if (response.ok) {
           const data = await response.json();
-          console.log(`ENPHASE: ${endpoint.name} raw response:`, JSON.stringify(data, null, 2));
+          // Got response
         } else {
-          console.log(`ENPHASE: ${endpoint.name} failed with status ${response.status}`);
+          // Request failed
         }
       } catch (error) {
-        console.log(`ENPHASE: ${endpoint.name} error:`, error);
+        // Request error
       }
     }
     
@@ -330,7 +321,7 @@ export class EnphaseClient implements IEnphaseClient {
       }
       
       const data = await response.json();
-      console.log('ENPHASE: Raw summary response:', JSON.stringify(data, null, 2));
+      // Got summary response
       
       // The summary endpoint returns different data structure
       // Convert it to match our expected telemetry response format
@@ -352,9 +343,7 @@ export class EnphaseClient implements IEnphaseClient {
         raw: data
       };
       
-      console.log('ENPHASE: Summary received for system:', systemId, 
-        'Current Power:', telemetryResponse.production_power, 'W',
-        'Energy Today:', telemetryResponse.energy_today, 'Wh');
+      // Summary received
       
       return telemetryResponse;
     } catch (error) {
@@ -364,14 +353,14 @@ export class EnphaseClient implements IEnphaseClient {
   }
 
   async storeTokens(userId: string, tokens: EnphaseTokens, systemId: string): Promise<void> {
-    console.log('ENPHASE: Storing tokens for user:', userId, 'system:', systemId);
+    // Storing tokens
     
     try {
       const result = await storeEnphaseTokens(userId, tokens, systemId);
       if (!result.success) {
         throw new Error(result.error || 'Failed to store tokens');
       }
-      console.log('ENPHASE: Tokens stored successfully');
+      // Tokens stored
     } catch (error) {
       console.error('ENPHASE: Error storing tokens:', error);
       throw error;
@@ -379,17 +368,17 @@ export class EnphaseClient implements IEnphaseClient {
   }
 
   async getStoredTokens(userId: string): Promise<EnphaseCredentials | null> {
-    console.log('ENPHASE: Retrieving stored tokens for user:', userId);
+    // Retrieving stored tokens
     
     try {
       const credentials = await getEnphaseCredentials(userId);
       
       if (!credentials) {
-        console.log('ENPHASE: No stored tokens found for user:', userId);
+        // No stored tokens found
         return null;
       }
 
-      console.log('ENPHASE: Found stored tokens for system:', credentials.enphase_system_id);
+      // Found stored tokens
       return credentials;
     } catch (error) {
       console.error('ENPHASE: Error retrieving tokens:', error);
@@ -398,14 +387,14 @@ export class EnphaseClient implements IEnphaseClient {
   }
 
   async clearTokens(userId: string): Promise<void> {
-    console.log('ENPHASE: Clearing tokens for user:', userId);
+    // Clearing tokens
     
     try {
       const result = await removeVendorCredentials(userId, 'enphase');
       if (!result.success) {
         throw new Error(result.error || 'Failed to clear tokens');
       }
-      console.log('ENPHASE: Tokens cleared successfully');
+      // Tokens cleared
     } catch (error) {
       console.error('ENPHASE: Error clearing tokens:', error);
       throw error;

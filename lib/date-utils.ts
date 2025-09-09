@@ -504,3 +504,26 @@ export function formatTime_fromJSDate(date: Date, timezoneOffsetMin: number): st
   // Return ISO format with timezone offset
   return `${year}-${month}-${day}T${hour}:${minute}:${second}${offsetStr}`;
 }
+
+/**
+ * Format a Date as HH:mm+TZ in the system's timezone
+ * @param date - JavaScript Date object (in UTC)
+ * @param timezoneOffsetMin - Timezone offset in minutes (positive for east of UTC)
+ * @returns Time string in HH:mm+TZ format (e.g., "14:30+10:00")
+ */
+export function formatJustTime_fromJSDate(date: Date, timezoneOffsetMin: number): string {
+  // Apply the timezone offset to get local time
+  const localTime = new Date(date.getTime() + timezoneOffsetMin * 60 * 1000);
+  
+  // Format time as HH:mm using UTC methods (since we've already applied the offset)
+  const hour = String(localTime.getUTCHours()).padStart(2, '0');
+  const minute = String(localTime.getUTCMinutes()).padStart(2, '0');
+  
+  // Format the timezone offset (e.g., "+10:00" or "-05:00")
+  const offsetHours = Math.floor(Math.abs(timezoneOffsetMin) / 60);
+  const offsetMinutes = Math.abs(timezoneOffsetMin) % 60;
+  const offsetSign = timezoneOffsetMin >= 0 ? '+' : '-';
+  const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMinutes).padStart(2, '0')}`;
+  
+  return `${hour}:${minute}${offsetStr}`;
+}

@@ -9,6 +9,7 @@ import { roundToThree } from '@/lib/format-opennem'
 import { isUserAdmin } from '@/lib/auth-utils'
 import { getLastReading as getSelectronicLastReading } from '@/lib/selectronic/selectronic-last-reading'
 import { getLastReading as getEnphaseLastReading } from '@/lib/enphase/enphase-last-reading'
+import { getLastReading as getCraighackLastReading } from '@/lib/craighack/craighack-last-reading'
 
 // Helper function to ensure values are null instead of undefined
 function nullifyUndefined<T>(value: T | undefined): T | null {
@@ -81,6 +82,8 @@ export async function GET(request: Request) {
     // Get latest reading based on vendor type
     const latestReadingData = system.vendorType === 'enphase' 
       ? await getEnphaseLastReading(system.id)
+      : system.vendorType === 'craighack'
+      ? await getCraighackLastReading(system.id)
       : await getSelectronicLastReading(system.id);
     
     // Get polling status from database

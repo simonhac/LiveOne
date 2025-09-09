@@ -8,6 +8,7 @@ import { formatDataArray, formatOpenNEMResponse } from '@/lib/format-opennem';
 import { formatTimeAEST, formatDateAEST, parseTimeRange, parseDateRange, parseRelativeTime, getDateDifferenceMs, getTimeDifferenceMs } from '@/lib/date-utils';
 import { CalendarDate, ZonedDateTime, now } from '@internationalized/date';
 import { fetch5MinuteData, fetch30MinuteData, fetch1DayData } from '@/lib/history-data-fetcher';
+import { fetchCraighackHistory } from '@/lib/craighack/craighack-history';
 import { isUserAdmin } from '@/lib/auth-utils';
 
 
@@ -249,22 +250,34 @@ export async function GET(request: NextRequest) {
     let processedData: any[];
     let effectiveInterval: string = interval;
     
-    if (interval === '1d') {
-      // CalendarDate objects are already properly typed
-      const start = startTime as CalendarDate;
-      const end = endTime as CalendarDate;
-      
-      processedData = await fetch1DayData(system.id, start, end);
+    // Check if this is a craighack system that needs special handling
+    if (system.vendorType === 'craighack') {
+      processedData = await fetchCraighackHistory(
+        system.id,
+        startTime,
+        endTime,
+        interval,
+        systemTimezoneOffsetMin
+      );
     } else {
-      // ZonedDateTime objects are already properly typed
-      const start = startTime as ZonedDateTime;
-      const end = endTime as ZonedDateTime;
-      
-      // Fetch data based on interval
-      if (interval === '30m') {
-        processedData = await fetch30MinuteData(system.id, start, end, systemTimezoneOffsetMin);
+      // Normal system - fetch data directly
+      if (interval === '1d') {
+        // CalendarDate objects are already properly typed
+        const start = startTime as CalendarDate;
+        const end = endTime as CalendarDate;
+        
+        processedData = await fetch1DayData(system.id, start, end);
       } else {
-        processedData = await fetch5MinuteData(system.id, start, end, systemTimezoneOffsetMin);
+        // ZonedDateTime objects are already properly typed
+        const start = startTime as ZonedDateTime;
+        const end = endTime as ZonedDateTime;
+        
+        // Fetch data based on interval
+        if (interval === '30m') {
+          processedData = await fetch30MinuteData(system.id, start, end, systemTimezoneOffsetMin);
+        } else {
+          processedData = await fetch5MinuteData(system.id, start, end, systemTimezoneOffsetMin);
+        }
       }
     }
 

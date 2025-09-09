@@ -6,6 +6,7 @@ import { updateAggregatedData } from '@/lib/aggregation-helper';
 import { formatSystemId } from '@/lib/system-utils';
 import { pollSelectronicSystem } from '@/lib/selectronic/polling';
 import { pollEnphaseSystem } from '@/lib/enphase/enphase-polling';
+import { pollCraighackSystem } from '@/lib/craighack/polling';
 import type { CommonPollingData } from '@/lib/types/common';
 import { 
   getPollingStatus, 
@@ -107,6 +108,8 @@ export async function GET(request: NextRequest) {
     
     // Poll each system
     for (const system of activeSystems) {
+      console.log(`[Cron] Processing system ${system.id} (${system.displayName})`);
+      
       // Handle Enphase systems with their own polling logic
       if (system.vendorType === 'enphase') {
         const result = await pollEnphaseSystem(system, {
@@ -114,6 +117,18 @@ export async function GET(request: NextRequest) {
           date: parsedTestDate
         });
         results.push(result);
+        continue;
+      }
+      
+      // Skip craighack systems - they don't poll, they combine data from other systems
+      if (system.vendorType === 'craighack') {
+        results.push({
+          systemId: system.id,
+          displayName: system.displayName || undefined,
+          vendorType: system.vendorType,
+          status: 'skipped',
+          skipReason: 'Craighack systems combine data from other systems'
+        });
         continue;
       }
       

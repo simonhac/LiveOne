@@ -67,7 +67,7 @@ async function fetchEnphase(
     const prodUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://liveone.vercel.app';
     const proxyUrl = `${prodUrl}/api/enphase-proxy?systemId=${system.id}&url=${encodeURIComponent(apiPath)}`;
     
-    console.log('[ENPHASE-HISTORY] Proxying through production:', proxyUrl);
+    // Proxying through production
     
     const response = await fetch(proxyUrl);
     
@@ -86,7 +86,7 @@ async function fetchEnphase(
   }
   
   // In production, get auth tokens and make direct request
-  console.log('[ENPHASE-HISTORY] Production mode - getting auth tokens');
+  // Production mode - getting auth tokens
   
   const client = getEnphaseClient();
   const credentials = await client.getStoredTokens(system.ownerClerkUserId);
@@ -98,7 +98,7 @@ async function fetchEnphase(
   // Check if token needs refresh
   let accessToken = credentials.access_token;
   if (credentials.expires_at < Date.now() + 3600000) {
-    console.log('[ENPHASE-HISTORY] Refreshing token...');
+    // Refreshing token
     const newTokens = await client.refreshTokens(credentials.refresh_token);
     await client.storeTokens(
       system.ownerClerkUserId,
@@ -143,11 +143,12 @@ async function fetchEnphaseProductionData(
       params.append('end_at', endUnix.toString());
     }
     url += `?${params}`;
-    console.log(`[ENPHASE-HISTORY] Fetching historical data with params: ${params}`);
+    console.log(`[Enphase] Fetching historical data with params: ${params}`);
   } else {
-    console.log(`[ENPHASE-HISTORY] Fetching today's partial data (no parameters)`);
+    console.log(`[Enphase] Fetching today's partial data (no parameters)`);
   }
   
+  console.log(`[Enphase] Fetching data from ${url}`);
   const response = await fetchEnphase(system, url);
   
   if (!response.ok) {
@@ -231,15 +232,15 @@ function processEnphaseData(
  */
 async function upsertEnphaseRecords(records: any[], dryRun: boolean) {
   if (dryRun) {
-    console.log('[ENPHASE-HISTORY] Dry run - not upserting data');
+    console.log('[Enphase] Dry run - not upserting data');
     if (records.length > 0) {
-      console.log('[ENPHASE-HISTORY] Sample record:', JSON.stringify(records[0], null, 2));
+      console.log('[Enphase] Sample record:', JSON.stringify(records[0], null, 2));
     }
     return { upsertedCount: 0, errorCount: 0 };
   }
   
   // Upsert records in batches
-  const batchSize = 50;
+  const batchSize = 300;
   let upsertedCount = 0;
   let errorCount = 0;
   
@@ -266,9 +267,9 @@ async function upsertEnphaseRecords(records: any[], dryRun: boolean) {
         upsertedCount++;
       }
       
-      console.log(`[ENPHASE-HISTORY] Upserted batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(records.length / batchSize)} (${batch.length} records)`);
+      console.log(`[Enphase] Upserted batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(records.length / batchSize)} (${batch.length} records)`);
     } catch (error) {
-      console.error(`[ENPHASE-HISTORY] Error upserting batch:`, error);
+      console.error(`[Enphase] Error upserting batch:`, error);
       errorCount += batch.length;
     }
   }
@@ -299,14 +300,14 @@ export async function fetchEnphaseDay(
   const isToday = actualDate.compare(today) === 0;
   const dateLabel = isToday ? "today" : actualDate.toString();
   
-  console.log(`[ENPHASE-HISTORY] Fetching 5-minute data for ${dateLabel} for system ${systemId}`);
+  console.log(`[Enphase] Fetching 5-minute data for ${dateLabel} for system ${systemId} (${system.displayName})`);
   
   let productionData: EnphaseProductionResponse;
   let startUnix: number | undefined;
   let endUnix: number | undefined;
   
   if (isToday) {
-    console.log(`[ENPHASE-HISTORY] Fetching today's partial data (no end timestamp)`);
+    console.log(`[Enphase] Fetching today's partial data`);
     // For today, don't pass timestamps to get partial data
     productionData = await fetchEnphaseProductionData(system);
   } else {
@@ -316,7 +317,7 @@ export async function fetchEnphaseDay(
     // Format times for logging
     const startTime = formatTimeAEST(fromUnixTimestamp(startUnix, timezoneOffsetMin));
     const endTime = formatTimeAEST(fromUnixTimestamp(endUnix, timezoneOffsetMin));
-    console.log(`[ENPHASE-HISTORY] Fetching data from ${startTime} to ${endTime}`);
+    console.log(`[Enphase] Fetching data from ${startTime} to ${endTime}`);
     
     // Fetch the raw data
     productionData = await fetchEnphaseProductionData(system, startUnix, endUnix);
@@ -324,14 +325,14 @@ export async function fetchEnphaseDay(
   
   // Check if we got data
   if (!productionData || !productionData.intervals || productionData.intervals.length === 0) {
-    console.log(`[ENPHASE-HISTORY] No data returned for ${dateLabel}`);
+    console.log(`[Enphase] No data returned for ${dateLabel}`);
     return {
       upsertedCount: 0,
       errorCount: 0
     };
   }
   
-  console.log(`[ENPHASE-HISTORY] Received ${productionData.intervals.length} intervals`);
+  console.log(`[Enphase] Received ${productionData.intervals.length} intervals`);
   
   // Process the data into records
   // For today, don't pass date filters; for historical dates, use the range
@@ -339,12 +340,12 @@ export async function fetchEnphaseDay(
     ? processEnphaseData(productionData, systemId)
     : processEnphaseData(productionData, systemId, startUnix, endUnix);
   
-  console.log(`[ENPHASE-HISTORY] Prepared ${records.length} records for upsert`);
+  console.log(`[Enphase] Prepared ${records.length} records for upsert`);
   
   // Upsert to database
   const { upsertedCount, errorCount } = await upsertEnphaseRecords(records, dryRun);
   
-  console.log(`[ENPHASE-HISTORY] Complete - Upserted: ${upsertedCount}, Errors: ${errorCount}`);
+  // Complete - details logged in polling.ts
   
   return {
     intervalCount: records.length,
@@ -366,7 +367,7 @@ export async function fetchEnphaseYesterday5Min(
   dryRun = false
 ) {
   const yesterday = getYesterdayInTimezone(timezoneOffsetMin);
-  console.log(`[ENPHASE-HISTORY] Fetching yesterday's data (${yesterday.year}-${String(yesterday.month).padStart(2, '0')}-${String(yesterday.day).padStart(2, '0')}) for system ${systemId}`);
+  console.log(`[Enphase] Fetching yesterday's data (${yesterday.year}-${String(yesterday.month).padStart(2, '0')}-${String(yesterday.day).padStart(2, '0')}) for system ${systemId}`);
   
   return fetchEnphaseDay(systemId, yesterday, timezoneOffsetMin, dryRun);
 }
@@ -410,7 +411,7 @@ export async function hasCompleteEveningData(
   const percentComplete = Math.round((existingData.length / expectedIntervals) * 100);
   const hasEnoughData = percentComplete >= 80; // Need at least 80% complete
   
-  console.log(`[ENPHASE-HISTORY] Yesterday evening data is ${percentComplete}% complete (${existingData.length}/${expectedIntervals} intervals)`);
+  console.log(`[Enphase] Yesterday evening data is ${percentComplete}% complete (${existingData.length}/${expectedIntervals} intervals)`);
   
   return hasEnoughData;
 }
@@ -420,10 +421,10 @@ export async function hasCompleteEveningData(
  * Called hourly between 01:00-05:00 in the system's timezone
  */
 export async function checkAndFetchYesterdayIfNeeded(systemId: number, dryRun = false) {
-  console.log(`[ENPHASE-HISTORY] Checking if yesterday's data is complete for system ${systemId}`);
-  
   // Get and validate system
   const system = await getValidatedEnphaseSystem(systemId);
+  
+  console.log(`[Enphase] Checking if yesterday's data is complete for system ${systemId} (${system.displayName})`);
   
   // Get yesterday's date in the system's timezone
   const yesterday = getYesterdayInTimezone(system.timezoneOffsetMin);
@@ -432,14 +433,14 @@ export async function checkAndFetchYesterdayIfNeeded(systemId: number, dryRun = 
   const hasData = await hasCompleteEveningData(systemId, yesterday, system.timezoneOffsetMin);
   
   if (hasData) {
-    console.log(`[ENPHASE-HISTORY] Yesterday's data is sufficiently complete, skipping fetch`);
+    console.log(`[Enphase] Yesterday's data is sufficiently complete, skipping fetch`);
     return {
       fetched: false,
       reason: 'Data already complete'
     };
   }
   
-  console.log(`[ENPHASE-HISTORY] Yesterday's data needs updating, fetching full day`);
+  console.log(`[Enphase] Yesterday's data needs updating, fetching full day`);
   const result = await fetchEnphaseDay(systemId, yesterday, system.timezoneOffsetMin, dryRun);
   
   return {

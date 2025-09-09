@@ -1,4 +1,8 @@
 import * as SunCalc from 'suncalc';
+import { formatJustTime_fromJSDate } from '@/lib/date-utils';
+
+// Configuration constants
+const ENPHASE_POLLING_INTERVAL_MINUTES = 60; // How often to poll during daylight hours
 
 // Type for systems we've already validated have an owner
 interface EnphaseSystemWithOwner {
@@ -17,7 +21,7 @@ export interface PollingScheduleResult {
 
 /**
  * Check if we should poll an Enphase system based on smart schedule
- * Poll every 30 mins from 30 mins after dawn to 30 mins after dusk,
+ * Poll every ENPHASE_POLLING_INTERVAL_MINUTES from 30 mins after dawn to 30 mins after dusk,
  * then hourly from 01:00-05:00 for yesterday's data
  */
 export function checkEnphasePollingSchedule(
@@ -27,7 +31,7 @@ export function checkEnphasePollingSchedule(
 ): PollingScheduleResult {
   // Always poll if never polled before
   if (!lastPollTime) {
-    console.log(`[ENPHASE] Never polled, polling now`);
+    console.log(`[Enphase] Never polled, polling now`);
     return { shouldPollNow: true };
   }
   
@@ -45,7 +49,7 @@ export function checkEnphasePollingSchedule(
         lon = loc.lon;
       }
     } catch (e) {
-      console.log(`[ENPHASE] Using default location`);
+      console.log(`[Enphase] Using default location`);
     }
   }
   
@@ -83,33 +87,31 @@ export function checkEnphasePollingSchedule(
   const dawnTime = `${Math.floor(dawnMinutes/60)%24}:${String(dawnMinutes%60).padStart(2, '0')}`;
   const duskTime = `${Math.floor(duskMinutes/60)%24}:${String(duskMinutes%60).padStart(2, '0')} ${duskMinutes > 24*60 ? '(+1d)' : ''}`;
   
-  // Helper to format local time
-  const formatLocalTime = (date: Date): string => {
-    const localDate = new Date(date.getTime() + localOffset);
-    const h = localDate.getUTCHours();
-    const m = localDate.getUTCMinutes();
-    return `${h}:${String(m).padStart(2, '0')}`;
-  };
-  
   // Check if we're in one of the polling windows
   
-  // 1. Every 30 mins from 30 mins after dawn to 30 mins after dusk
+  // 1. Every ENPHASE_POLLING_INTERVAL_MINUTES from 30 mins after dawn to 30 mins after dusk
   const activeStart = dawnMinutes + 30;  // Start 30 mins after dawn
   const activeEnd = duskMinutes + 30;    // End 30 mins after dusk
   
   if (localTimeMinutes >= activeStart && localTimeMinutes <= activeEnd) {
-    // During active hours, poll on :00 and :30
-    if (localMinutes === 0 || localMinutes === 30) {
-      console.log(`[ENPHASE] Polling during active solar hours (dawn ${dawnTime}, dusk ${duskTime})`);
+    // During active hours, poll at intervals aligned to midnight
+    // Check if current time is aligned to the polling interval
+    const isAlignedToInterval = localTimeMinutes % ENPHASE_POLLING_INTERVAL_MINUTES === 0;
+    
+    if (isAlignedToInterval) {
+      console.log(`[Enphase] Polling during active solar hours (dawn ${dawnTime}, dusk ${duskTime})`);
       return { shouldPollNow: true };
     }
-    // Not on a polling minute during active hours - calculate next poll time
-    const nextMinute = localMinutes < 30 ? 30 : 60; // Next :30 or :00
-    const minutesToNext = nextMinute - localMinutes;
-    const nextPollDate = new Date(currentTime.getTime() + minutesToNext * 60 * 1000);
-    const nextPollTimeStr = formatLocalTime(nextPollDate);
     
-    console.log(`[ENPHASE] Skipping - active hours but not at :00 or :30 (current :${String(localMinutes).padStart(2, '0')})`);
+    // Not on a polling minute - calculate next poll time
+    // Find next interval boundary after current time
+    const minutesIntoInterval = localTimeMinutes % ENPHASE_POLLING_INTERVAL_MINUTES;
+    const minutesToNext = ENPHASE_POLLING_INTERVAL_MINUTES - minutesIntoInterval;
+    
+    const nextPollDate = new Date(currentTime.getTime() + minutesToNext * 60 * 1000);
+    const nextPollTimeStr = formatJustTime_fromJSDate(nextPollDate, system.timezoneOffsetMin);
+    
+    console.log(`[Enphase] Skipping - active hours but not at ${ENPHASE_POLLING_INTERVAL_MINUTES}-minute interval (current ${formatJustTime_fromJSDate(currentTime, system.timezoneOffsetMin)})`);
     return {
       shouldPollNow: false,
       skipReason: `Outside polling schedule (next poll in ${minutesToNext} minutes at ${nextPollTimeStr})`,
@@ -121,13 +123,13 @@ export function checkEnphasePollingSchedule(
   // Poll on the hour (:00) during these hours
   if (localHour >= 1 && localHour <= 5) {
     if (localMinutes === 0) {
-      console.log(`[ENPHASE] ${localHour}:00 check for yesterday's data completeness`);
+      console.log(`[Enphase] ${localHour}:00 check for yesterday's data completeness`);
       return { shouldPollNow: true };
     }
     // Calculate next hour
     const minutesToNextHour = 60 - localMinutes;
     const nextPollDate = new Date(currentTime.getTime() + minutesToNextHour * 60 * 1000);
-    const nextPollTimeStr = formatLocalTime(nextPollDate);
+    const nextPollTimeStr = formatJustTime_fromJSDate(nextPollDate, system.timezoneOffsetMin);
     
     return {
       shouldPollNow: false,
@@ -151,7 +153,7 @@ export function checkEnphasePollingSchedule(
     } else {
       skipReason = `Outside polling schedule (next poll at dawn+30min in ${minsUntil}m)`;
     }
-    console.log(`[ENPHASE] Skipping - ${minutesUntilNext} minutes before sunrise+30min (dawn at ${dawnTime})`);
+    console.log(`[Enphase] Skipping - ${minutesUntilNext} minutes before sunrise+30min (dawn at ${dawnTime})`);
   } else {
     // After dusk - next poll is tomorrow at 01:00 or dawn+30min, whichever is earlier
     const tomorrow1AM = 25 * 60; // 01:00 tomorrow in minutes from midnight today
@@ -166,13 +168,13 @@ export function checkEnphasePollingSchedule(
     } else {
       skipReason = `Outside polling schedule (next poll in ${minsUntil}m)`;
     }
-    console.log(`[ENPHASE] Skipping - ${localTimeMinutes - activeEnd} minutes after sunset+30min (dusk at ${duskTime})`);
+    console.log(`[Enphase] Skipping - ${localTimeMinutes - activeEnd} minutes after sunset+30min (dusk at ${duskTime})`);
   }
   
   // Calculate the actual next poll date/time
   const minutesUntilNext = nextPollMinutes - localTimeMinutes;
   const nextPollDate = new Date(currentTime.getTime() + minutesUntilNext * 60 * 1000);
-  const nextPollTimeStr = formatLocalTime(nextPollDate);
+  const nextPollTimeStr = formatJustTime_fromJSDate(nextPollDate, system.timezoneOffsetMin);
   
   return {
     shouldPollNow: false,
