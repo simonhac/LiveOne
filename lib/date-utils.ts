@@ -275,11 +275,11 @@ export function parseRelativeTime(
     // For minute intervals, align end time to interval boundary
     const intervalMinutes = interval === '30m' ? 30 : 5;
     
-    // Align current time to next interval boundary
+    // Align current time to previous interval boundary (not future)
     const endMinute = nowTime.minute;
-    const endAlignedMinute = Math.ceil(endMinute / intervalMinutes) * intervalMinutes;
-    const minutesToAdd = endAlignedMinute - endMinute;
-    const endTime = nowTime.add({ minutes: minutesToAdd }).set({ second: 0, millisecond: 0 });
+    const endAlignedMinute = Math.floor(endMinute / intervalMinutes) * intervalMinutes;
+    const minutesToSubtract = endMinute - endAlignedMinute;
+    const endTime = nowTime.subtract({ minutes: minutesToSubtract }).set({ second: 0, millisecond: 0 });
     
     // Calculate start time based on the aligned end time
     let startTime: ZonedDateTime;
