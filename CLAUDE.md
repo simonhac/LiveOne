@@ -60,6 +60,22 @@ npm run db:studio        # Open Drizzle Studio for database exploration
 npm run db:sync-prod
 ```
 
+### Scripts Directory
+
+The project has utility scripts in `/scripts`:
+- `/scripts/temp/` - Temporary scripts for one-off tasks
+- `/scripts/utils/` - Reusable utility scripts
+
+#### Authentication for Testing
+```bash
+# Generate a test session token for API testing (development only)
+# Requires CLERK_SECRET_KEY in .env.local
+npx tsx scripts/utils/get-test-token.ts
+
+# This generates a Bearer token that authenticates as simon (admin)
+# Use it with: curl -H "Authorization: Bearer <token>" http://localhost:3000/api/...
+```
+
 ## Turso Database Management
 
 ### Quick Setup
