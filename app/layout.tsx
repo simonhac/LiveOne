@@ -21,10 +21,15 @@ export default function RootLayout({
 }: {
   children: React.ReactNode
 }) {
+  const isDev = process.env.NODE_ENV === 'development'
+  
   return (
     <ClerkProvider>
       <html lang="en">
         <body className={dmSans.className}>
+          {isDev && (
+            <div className="fixed top-0 left-0 right-0 h-1 bg-orange-500 z-[9999]" />
+          )}
           {children}
           <Analytics />
         </body>
