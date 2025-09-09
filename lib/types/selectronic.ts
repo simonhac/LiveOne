@@ -1,9 +1,9 @@
 // Type definitions for Selectronic inverter data
 
 export type SelectronicData = {
-  solarW: number;           // Total solar (solarinverter_w + shunt_w) in Watts
-  solarInverterW: number;   // Remote solar generation in Watts
-  shuntW: number;           // Local solar generation in Watts
+  solarW: number | null;    // Total solar (solarinverter_w + shunt_w) in Watts
+  solarInverterW: number | null;   // Remote solar generation in Watts
+  shuntW: number | null;    // Local solar generation in Watts
   loadW: number;            // Load in Watts
   batterySOC: number;
   batteryW: number;         // Battery power in Watts (negative = charging)

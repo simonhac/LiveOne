@@ -28,8 +28,8 @@ export async function getLastReading(systemId: number) {
       receivedTime: batteryData.receivedTime,
       power: {
         solarW: solarData.power.solarW,
-        solarInverterW: batteryData.power.solarInverterW, // From system 2
-        shuntW: batteryData.power.shuntW, // From system 2
+        solarInverterW: solarData.power.solarInverterW, // From system 3 (Enphase)
+        shuntW: solarData.power.shuntW, // From system 3 (Enphase)
         loadW: batteryData.power.loadW,
         batteryW: batteryData.power.batteryW,
         gridW: batteryData.power.gridW,

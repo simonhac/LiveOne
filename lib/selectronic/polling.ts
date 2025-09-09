@@ -84,9 +84,9 @@ export async function pollSelectronicSystem(system: SelectronicSystemForPolling)
   // Transform to standard format
   const pollingData: CommonPollingData = {
     timestamp: data.timestamp.toString(),
-    solarW: data.solarW,
-    solarInverterW: data.solarInverterW,
-    shuntW: data.shuntW,
+    solarW: data.solarW ?? null,
+    solarInverterW: data.solarInverterW ?? null,
+    shuntW: data.shuntW ?? null,
     loadW: data.loadW,
     batteryW: data.batteryW,
     gridW: data.gridW,

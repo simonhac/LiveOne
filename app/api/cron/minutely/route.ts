@@ -183,9 +183,9 @@ export async function GET(request: NextRequest) {
             inverterTime,
             receivedTime,
             delaySeconds,
-            solarW: data.solarW,
-            solarInverterW: data.solarInverterW,
-            shuntW: data.shuntW,
+            solarW: data.solarW ?? 0,  // Default to 0 if null
+            solarInverterW: data.solarInverterW ?? 0,  // Default to 0 if null
+            shuntW: data.shuntW ?? 0,  // Default to 0 if null
             loadW: data.loadW,
             batteryW: data.batteryW,
             gridW: data.gridW,

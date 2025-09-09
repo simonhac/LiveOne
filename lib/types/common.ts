@@ -8,9 +8,9 @@
  */
 export interface CommonPollingData {
   timestamp: string;
-  solarW: number;
-  solarInverterW: number;
-  shuntW: number;
+  solarW: number | null;
+  solarInverterW: number | null;
+  shuntW: number | null;
   loadW: number;
   batteryW: number;
   gridW: number;
