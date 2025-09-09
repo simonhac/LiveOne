@@ -596,6 +596,62 @@ function buildResponse(
 }
 
 // ============================================================================
+// Combined History Data Function
+// ============================================================================
+
+async function getSystemHistoryInOpenNEMFormat(
+  system: SystemAccess['system'],
+  startTime: ZonedDateTime | CalendarDate,
+  endTime: ZonedDateTime | CalendarDate,
+  interval: '5m' | '30m' | '1d',
+  fields: string[]
+): Promise<OpenNEMDataSeries[]> {
+  // Step 6: Fetch data
+  const systemTimezoneOffsetMin = system.timezoneOffsetMin;
+  const processedData = await fetchHistoryData(
+    system,
+    startTime,
+    endTime,
+    interval,
+    systemTimezoneOffsetMin
+  );
+  
+  // Step 7: Build data series
+  const remoteSystemIdentifier = `${system.vendorType}.${system.vendorSiteId}`;
+  
+  // Format date strings for data series
+  let startStr: string;
+  let lastStr: string;
+  
+  switch (interval) {
+    case '1d':
+      startStr = formatDateAEST(startTime as CalendarDate);
+      lastStr = formatDateAEST(endTime as CalendarDate);
+      break;
+      
+    case '30m':
+    case '5m':
+      startStr = formatTimeAEST(startTime as ZonedDateTime);
+      lastStr = formatTimeAEST(endTime as ZonedDateTime);
+      break;
+      
+    default:
+      throw new Error(`Unsupported interval: ${interval}`);
+  }
+  
+  const dataSeries = buildDataSeries(
+    fields,
+    processedData,
+    interval,
+    remoteSystemIdentifier,
+    startStr,
+    lastStr
+  );
+  
+  return dataSeries;
+}
+
+// ============================================================================
 // Main Handler
 // ============================================================================
 
@@ -628,13 +684,12 @@ export async function GET(request: NextRequest) {
     }
     
     const { system } = systemAccess;
-    const systemTimezoneOffsetMin = system.timezoneOffsetMin;
     
     // Step 4: Parse time range
     const timeRange = parseTimeRangeParams(
       searchParams,
       basicParams.interval as '5m' | '30m' | '1d',
-      systemTimezoneOffsetMin
+      system.timezoneOffsetMin
     );
     if (!timeRange.isValid) {
       return NextResponse.json(
@@ -656,45 +711,13 @@ export async function GET(request: NextRequest) {
       );
     }
     
-    // Step 6: Fetch data
-    const processedData = await fetchHistoryData(
+    // Steps 6 & 7: Fetch data and build data series
+    const dataSeries = await getSystemHistoryInOpenNEMFormat(
       system,
       timeRange.startTime!,
       timeRange.endTime!,
       basicParams.interval as '5m' | '30m' | '1d',
-      systemTimezoneOffsetMin
-    );
-    
-    // Step 7: Build data series
-    const remoteSystemIdentifier = `${system.vendorType}.${system.vendorSiteId}`;
-    
-    // Format date strings for data series
-    let startStr: string;
-    let lastStr: string;
-    
-    switch (basicParams.interval) {
-      case '1d':
-        startStr = formatDateAEST(timeRange.startTime as CalendarDate);
-        lastStr = formatDateAEST(timeRange.endTime as CalendarDate);
-        break;
-        
-      case '30m':
-      case '5m':
-        startStr = formatTimeAEST(timeRange.startTime as ZonedDateTime);
-        lastStr = formatTimeAEST(timeRange.endTime as ZonedDateTime);
-        break;
-        
-      default:
-        throw new Error(`Unsupported interval: ${basicParams.interval}`);
-    }
-    
-    const dataSeries = buildDataSeries(
-      basicParams.fields!,
-      processedData,
-      basicParams.interval as '5m' | '30m' | '1d',
-      remoteSystemIdentifier,
-      startStr,
-      lastStr
+      basicParams.fields!
     );
     
     // Step 8: Build and return response
