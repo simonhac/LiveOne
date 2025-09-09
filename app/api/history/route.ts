@@ -16,7 +16,7 @@ import {
 } from '@/lib/date-utils';
 import { CalendarDate, ZonedDateTime, now } from '@internationalized/date';
 import { fetch5MinuteData, fetch30MinuteData, fetch1DayData } from '@/lib/history-data-fetcher';
-import { fetchCraighackHistory } from '@/lib/craighack/craighack-history';
+import { getCraigHackSystemHistoryInOpenNEMFormat } from '@/lib/craighack/craighack-history';
 import { isUserAdmin } from '@/lib/auth-utils';
 
 // ============================================================================
@@ -324,18 +324,13 @@ async function fetchHistoryData(
   interval: '5m' | '30m' | '1d',
   systemTimezoneOffsetMin: number
 ): Promise<any[]> {
-  // Check if this is a craighack system that needs special handling
+  // This function should not be called for craighack systems
+  // They should be handled by getSystemHistoryInOpenNEMFormatHack
   if (system.vendorType === 'craighack') {
-    return await fetchCraighackHistory(
-      system.id,
-      startTime,
-      endTime,
-      interval,
-      systemTimezoneOffsetMin
-    );
+    throw new Error('fetchHistoryData should not be called for craighack systems. Use getSystemHistoryInOpenNEMFormatHack instead.');
   }
   
-  // Normal system - fetch data directly
+  // Fetch data based on interval type
   switch (interval) {
     case '1d': {
       const start = startTime as CalendarDate;
@@ -651,6 +646,39 @@ async function getSystemHistoryInOpenNEMFormat(
   return dataSeries;
 }
 
+/**
+ * Wrapper function that checks for craighack vendorType and delegates appropriately
+ */
+async function getSystemHistoryInOpenNEMFormatHack(
+  system: SystemAccess['system'],
+  startTime: ZonedDateTime | CalendarDate,
+  endTime: ZonedDateTime | CalendarDate,
+  interval: '5m' | '30m' | '1d',
+  fields: string[]
+): Promise<OpenNEMDataSeries[]> {
+  // Check if this is a craighack system
+  if (system.vendorType === 'craighack') {
+    // Use the special craighack function that combines systems 2 and 3
+    return getCraigHackSystemHistoryInOpenNEMFormat(
+      system,
+      startTime,
+      endTime,
+      interval,
+      fields,
+      getSystemHistoryInOpenNEMFormat // Pass the original function as a parameter
+    );
+  }
+  
+  // For all other systems, use the normal function
+  return getSystemHistoryInOpenNEMFormat(
+    system,
+    startTime,
+    endTime,
+    interval,
+    fields
+  );
+}
+
 // ============================================================================
 // Main Handler
 // ============================================================================
@@ -712,7 +740,7 @@ export async function GET(request: NextRequest) {
     }
     
     // Steps 6 & 7: Fetch data and build data series
-    const dataSeries = await getSystemHistoryInOpenNEMFormat(
+    const dataSeries = await getSystemHistoryInOpenNEMFormatHack(
       system,
       timeRange.startTime!,
       timeRange.endTime!,
