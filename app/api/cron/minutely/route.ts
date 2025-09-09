@@ -6,7 +6,6 @@ import { updateAggregatedData } from '@/lib/aggregation-helper';
 import { formatSystemId } from '@/lib/system-utils';
 import { pollSelectronicSystem } from '@/lib/selectronic/polling';
 import { pollEnphaseSystem } from '@/lib/enphase/enphase-polling';
-import { pollCraighackSystem } from '@/lib/craighack/polling';
 import type { CommonPollingData } from '@/lib/types/common';
 import { 
   getPollingStatus, 
