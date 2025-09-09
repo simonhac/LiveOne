@@ -331,13 +331,13 @@ export class SelectronicFetchClient {
       console.log('[Selectronic] Data received successfully');
       
       // Transform the data - only fields that actually exist in the API
-      const solarInverterW = data.items?.solarinverter_w || 0;
-      const shuntW = data.items?.shunt_w || 0;
+      const solarInverterW = data.items?.solarinverter_w ?? null;
+      const shuntW = data.items?.shunt_w ?? null;
       
       const transformed: SelectronicData = {
-        solarW: Math.round(solarInverterW + shuntW),  // Total solar = remote + local
-        solarInverterW: Math.round(solarInverterW),   // Remote solar
-        shuntW: Math.round(shuntW),                   // Local solar
+        solarW: (solarInverterW !== null && shuntW !== null) ? Math.round(solarInverterW + shuntW) : null,  // Total solar = remote + local
+        solarInverterW: solarInverterW !== null ? Math.round(solarInverterW) : null,   // Remote solar
+        shuntW: shuntW !== null ? Math.round(shuntW) : null,                   // Local solar
         loadW: Math.round(data.items?.load_w || 0),
         batterySOC: data.items?.battery_soc || 0,
         batteryW: Math.round(data.items?.battery_w || 0),

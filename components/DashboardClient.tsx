@@ -39,8 +39,8 @@ interface DashboardData {
     timestamp: string;
     power: {
       solarW: number;
-      solarInverterW: number;
-      shuntW: number;
+      solarInverterW: number | null;
+      shuntW: number | null;
       loadW: number;
       batteryW: number;
       gridW: number;
@@ -513,10 +513,16 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   secondsSinceUpdate={secondsSinceUpdate}
                   staleThresholdSeconds={getStaleThreshold(data.vendorType)}
                   extra={
-                    <div className="text-xs space-y-1 text-gray-400">
-                      <div>Remote: {formatPower(data.latest.power.solarInverterW)}</div>
-                      <div>Local: {formatPower(data.latest.power.shuntW)}</div>
-                    </div>
+                    (data.latest.power.solarInverterW !== null || data.latest.power.shuntW !== null) ? (
+                      <div className="text-xs space-y-1 text-gray-400">
+                        {data.latest.power.solarInverterW !== null && (
+                          <div>Remote: {formatPower(data.latest.power.solarInverterW)}</div>
+                        )}
+                        {data.latest.power.shuntW !== null && (
+                          <div>Local: {formatPower(data.latest.power.shuntW)}</div>
+                        )}
+                      </div>
+                    ) : undefined
                   }
                 />
                 <PowerCard
