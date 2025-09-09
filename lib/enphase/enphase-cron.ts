@@ -111,7 +111,7 @@ export function checkEnphasePollingSchedule(
     const nextPollDate = new Date(currentTime.getTime() + minutesToNext * 60 * 1000);
     const nextPollTimeStr = formatJustTime_fromJSDate(nextPollDate, system.timezoneOffsetMin);
     
-    console.log(`[Enphase] Skipping - active hours but not at ${ENPHASE_POLLING_INTERVAL_MINUTES}-minute interval (current ${formatJustTime_fromJSDate(currentTime, system.timezoneOffsetMin)})`);
+    console.log(`[Enphase] Skipping - active hours but not at ${ENPHASE_POLLING_INTERVAL_MINUTES}-minute interval (remote system time ${formatJustTime_fromJSDate(currentTime, system.timezoneOffsetMin)}, next scheduled update in ${minutesToNext} minutes)`);
     return {
       shouldPollNow: false,
       skipReason: `Outside polling schedule (next poll in ${minutesToNext} minutes at ${nextPollTimeStr})`,
