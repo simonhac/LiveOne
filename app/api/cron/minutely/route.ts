@@ -108,7 +108,7 @@ export async function GET(request: NextRequest) {
     
     // Poll each system
     for (const system of activeSystems) {
-      console.log(`[Cron] Processing system ${system.id} (${system.displayName})`);
+      console.log(`[Cron] Updating systemId=${system.id} (${system.vendorType}/${system.vendorSiteId} '${system.displayName}')`);
       
       // Handle Enphase systems with their own polling logic
       if (system.vendorType === 'enphase') {
