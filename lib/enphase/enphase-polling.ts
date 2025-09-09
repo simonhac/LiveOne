@@ -52,17 +52,17 @@ export async function pollEnphaseSystem(
     }
     
     if (options.force) {
-      console.log(`[ENPHASE] Force polling system ${system.id} (ignoring schedule)`);
+      console.log(`[Enphase] Force polling system ${system.id} (ignoring schedule)`);
     }
     
-    console.log(`[ENPHASE] Polling system ${system.id} (${system.displayName})`);
+    console.log(`[Enphase] Polling system ${system.id} (${system.displayName})`);
     
     // Determine what to fetch
     let result;
     
     if (options.date) {
       // If a specific date is provided, fetch that date
-      console.log(`[ENPHASE] Fetching data for ${options.date.year}-${options.date.month}-${options.date.day} for system ${system.id}`);
+      console.log(`[Enphase] Fetching data for ${options.date.year}-${options.date.month}-${options.date.day} for system ${system.id}`);
       result = await fetchEnphaseDay(system.id, options.date, system.timezoneOffsetMin, false);
     } else {
       const localTime = getZonedNow(system.timezoneOffsetMin);
@@ -70,7 +70,7 @@ export async function pollEnphaseSystem(
       
       if (localHour >= 1 && localHour <= 5) {
         // During 01:00-05:00, check and fetch yesterday's data if incomplete
-        console.log(`[ENPHASE] Checking yesterday's data completeness for system ${system.id}`);
+        console.log(`[Enphase] Checking yesterday's data completeness for system ${system.id}`);
         result = await checkAndFetchYesterdayIfNeeded(system.id, false);
       } else {
         // Otherwise fetch current day's data
@@ -92,7 +92,7 @@ export async function pollEnphaseSystem(
       recordsUpserted = 0;
     }
     
-    console.log(`[ENPHASE] System ${system.id}: Upserted ${recordsUpserted} records in ${duration}ms`);
+    console.log(`[Enphase] System ${system.id}: Upserted ${recordsUpserted} records in ${duration}ms`);
     
     return {
       systemId,
@@ -104,7 +104,7 @@ export async function pollEnphaseSystem(
     };
     
   } catch (error) {
-    console.error(`[ENPHASE] Error polling system ${system.id}:`, error);
+    console.error(`[Enphase] Error polling system ${system.id}:`, error);
     
     // Update error status
     await updatePollingStatusError(system.id, error instanceof Error ? error : 'Unknown error');

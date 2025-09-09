@@ -36,7 +36,7 @@ export async function storeVendorCredentials(
     const user = await client.users.getUser(userId)
     const userIdentifier = user.username || user.emailAddresses[0]?.emailAddress || 'unknown'
     
-    console.log(`[${vendor}] Storing credentials for user: ${userId} (${userIdentifier})`)
+    // Storing credentials
     
     // Map vendor to storage key (maintains existing Clerk metadata format)
     const storageKey = vendor === 'select.live' ? 'selectLiveCredentials' : 'enphaseCredentials'
@@ -54,7 +54,7 @@ export async function storeVendorCredentials(
       }
     })
     
-    console.log(`[${vendor}] Credentials stored successfully for user: ${userId} (${userIdentifier})`)
+    // Credentials stored successfully
     return { success: true }
   } catch (error) {
     console.error(`[${vendor}] Failed to store credentials for user ${userId}:`, error)
@@ -74,18 +74,18 @@ export async function getVendorCredentials(
     const user = await client.users.getUser(userId)
     const userIdentifier = user.username || user.emailAddresses[0]?.emailAddress || 'unknown'
     
-    console.log(`[${vendor}] Retrieving credentials for user: ${userId} (${userIdentifier})`)
+    // Retrieving credentials
     
     // Map vendor to storage key (maintains existing Clerk metadata format)
     const storageKey = vendor === 'select.live' ? 'selectLiveCredentials' : 'enphaseCredentials'
     const credentials = user.privateMetadata?.[storageKey]
     
     if (!credentials) {
-      console.log(`[${vendor}] No credentials found for user: ${userId} (${userIdentifier})`)
+      // No credentials found
       return null
     }
     
-    console.log(`[${vendor}] Credentials retrieved for user: ${userId} (${userIdentifier})`)
+    // Credentials retrieved
     return credentials as VendorCredentials
   } catch (error) {
     console.error(`[${vendor}] Failed to retrieve credentials for user ${userId}:`, error)
@@ -101,7 +101,7 @@ export async function removeVendorCredentials(
   vendor: VendorType
 ) {
   try {
-    console.log(`[${vendor}] Removing credentials for user:`, userId)
+    // Removing credentials
     const client = await clerkClient()
     const user = await client.users.getUser(userId)
     
@@ -116,7 +116,7 @@ export async function removeVendorCredentials(
       privateMetadata: newMetadata
     })
     
-    console.log(`[${vendor}] Credentials removed successfully`)
+    // Credentials removed successfully
     return { success: true }
   } catch (error) {
     console.error(`[${vendor}] Failed to remove credentials:`, error)

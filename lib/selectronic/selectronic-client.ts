@@ -82,14 +82,14 @@ export class SelectronicFetchClient {
    */
   public async authenticate(): Promise<boolean> {
     try {
-      console.log('[Auth] Authenticating with select.live...');
+      console.log('[Selectronic] Authenticating with select.live...');
       
       // Prepare form data - matching what SelectronicMQTT does
       const params = new URLSearchParams();
       params.append('email', this.credentials.email);
       params.append('pwd', this.credentials.password);
 
-      console.log('[Auth] Sending login request...');
+      console.log('[Selectronic] Sending login request...');
       
       const response = await fetch(`${SELECTLIVE_API.baseUrl}${SELECTLIVE_API.loginEndpoint}`, {
         method: 'POST',
@@ -102,25 +102,24 @@ export class SelectronicFetchClient {
         redirect: 'manual', // Don't auto-follow to see the redirect
       });
 
-      console.log(`[Auth] Response status: ${response.status}`);
-      console.log(`[Auth] Response headers:`, response.headers.raw());
+      console.log(`[Selectronic] Response status: ${response.status}`);
 
       // Handle cookies from response
       const setCookieHeaders = response.headers.raw()['set-cookie'];
       if (setCookieHeaders) {
         this.parseCookies(setCookieHeaders);
-        console.log(`[Auth] Cookies received: ${this.cookies.size}`);
-        console.log('[Auth] Cookie names:', Array.from(this.cookies.keys()));
+        console.log(`[Selectronic] Cookies received: ${this.cookies.size}`);
+        console.log('[Selectronic] Cookie names:', Array.from(this.cookies.keys()));
       }
 
       // Check for redirect (which indicates successful login)
       if (response.status === 302 || response.status === 301) {
         const location = response.headers.get('location');
-        console.log(`[Auth] Redirect to: ${location}`);
+        console.log(`[Selectronic] Redirect to: ${location}`);
         
         if (location && (location.includes('dashboard') || location.includes('systems'))) {
           this.lastAuthTime = new Date();
-          console.log('[Auth] Login successful - redirected to systems/dashboard');
+          console.log('[Selectronic] Login successful - redirected to systems/dashboard');
           return true;
         }
       }
@@ -139,11 +138,11 @@ export class SelectronicFetchClient {
         // Check if we have session cookies (unlikely with 200 response)
         if (this.cookies.size > 0) {
           this.lastAuthTime = new Date();
-          console.log('[Auth] Login successful - got session cookies');
+          console.log('[Selectronic] Login successful - got session cookies');
           return true;
         }
         
-        console.log('[Auth] Got login page without error message - unexpected state');
+        console.log('[Selectronic] Got login page without error message - unexpected state');
         return false;
       }
 
@@ -269,7 +268,7 @@ export class SelectronicFetchClient {
 
       // Ensure we have cookies
       if (this.cookies.size === 0) {
-        console.log('[API] No cookies, authenticating...');
+        console.log('[Selectronic] No cookies, authenticating...');
         const authSuccess = await this.authenticate();
         if (!authSuccess) {
           return {
@@ -282,7 +281,7 @@ export class SelectronicFetchClient {
 
       // Fetch data
       const url = `${SELECTLIVE_API.baseUrl}${SELECTLIVE_API.dataEndpoint}/${this.credentials.systemNumber}`;
-      console.log(`[API] Fetching data from ${url}`);
+      console.log(`[Selectronic] Fetching data from ${url}`);
       
       const response = await fetch(url, {
         headers: {
@@ -292,10 +291,10 @@ export class SelectronicFetchClient {
         },
       });
 
-      console.log(`[API] Response status: ${response.status}`);
+      console.log(`[Selectronic] Response status: ${response.status}`);
 
       if (response.status === 401) {
-        console.log('[API] Session expired, re-authenticating...');
+        console.log('[Selectronic] Session expired, re-authenticating...');
         this.cookies.clear();
         
         const authSuccess = await this.authenticate();
@@ -329,7 +328,7 @@ export class SelectronicFetchClient {
       }
 
       const data = await response.json();
-      console.log('[API] Data received successfully');
+      console.log('[Selectronic] Data received successfully');
       
       // Transform the data - only fields that actually exist in the API
       const solarInverterW = data.items?.solarinverter_w || 0;
@@ -369,7 +368,7 @@ export class SelectronicFetchClient {
         const dataTime = new Date(data.items.timestamp * 1000);
         const now = new Date();
         const delaySeconds = Math.floor((now.getTime() - dataTime.getTime()) / 1000);
-        console.log(`[API] Data timestamp: ${dataTime.toLocaleTimeString()} (${delaySeconds}s delay from inverter)`);
+        console.log(`[Selectronic] Data timestamp: ${dataTime.toLocaleTimeString()} (${delaySeconds}s delay from inverter)`);
       }
 
       return {
