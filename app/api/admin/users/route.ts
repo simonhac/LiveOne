@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { userSystems, systems } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { isUserAdmin } from '@/lib/auth-utils'
+import { SystemsManager } from '@/lib/systems-manager'
 
 export async function GET(request: NextRequest) {
   try {
@@ -21,14 +22,22 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
     }
     
-    // Get all user-system relationships
+    // Get all user-system relationships from userSystems table
     const allUserSystems = await db
       .select()
       .from(userSystems)
       .innerJoin(systems, eq(userSystems.systemId, systems.id))
     
-    // Get unique user IDs
-    const uniqueUserIds = [...new Set(allUserSystems.map(us => us.user_systems.clerkUserId))]
+    // Get all systems to find owners
+    const systemsManager = new SystemsManager()
+    const allSystems = await systemsManager.getAllSystems()
+    
+    // Get unique user IDs from both userSystems and system owners
+    const userIdsFromUserSystems = allUserSystems.map(us => us.user_systems.clerkUserId)
+    const userIdsFromOwners = allSystems
+      .map(s => s.ownerClerkUserId)
+      .filter(id => id !== null) as string[]
+    const uniqueUserIds = [...new Set([...userIdsFromUserSystems, ...userIdsFromOwners])]
     
     // Fetch user details from Clerk
     const usersData = []
@@ -38,8 +47,19 @@ export async function GET(request: NextRequest) {
         const client = await clerkClient()
         const clerkUser = await client.users.getUser(clerkUserId)
         
-        // Get all systems this user has access to
-        const userSystemAccess = allUserSystems
+        // Get all systems this user owns
+        const ownedSystems = allSystems
+          .filter(s => s.ownerClerkUserId === clerkUserId)
+          .map(s => ({
+            systemId: s.id,
+            vendorType: s.vendorType,
+            vendorSiteId: s.vendorSiteId,
+            displayName: s.displayName,
+            role: 'owner' as const,
+          }))
+        
+        // Get all systems this user has access to via userSystems table
+        const additionalAccess = allUserSystems
           .filter(us => us.user_systems.clerkUserId === clerkUserId)
           .map(us => ({
             systemId: us.systems.id,
@@ -48,6 +68,13 @@ export async function GET(request: NextRequest) {
             displayName: us.systems.displayName,
             role: us.user_systems.role as 'owner' | 'viewer',
           }))
+        
+        // Combine and deduplicate (owned systems take precedence)
+        const ownedSystemIds = new Set(ownedSystems.map(s => s.systemId))
+        const userSystemAccess = [
+          ...ownedSystems,
+          ...additionalAccess.filter(s => !ownedSystemIds.has(s.systemId))
+        ]
         
         // Extract data from private metadata
         let isPlatformAdmin = false
@@ -70,7 +97,20 @@ export async function GET(request: NextRequest) {
       } catch (err) {
         console.error(`Failed to fetch Clerk user ${clerkUserId}:`, err)
         // Include user even if Clerk fetch fails
-        const userSystemAccess = allUserSystems
+        
+        // Get all systems this user owns
+        const ownedSystems = allSystems
+          .filter(s => s.ownerClerkUserId === clerkUserId)
+          .map(s => ({
+            systemId: s.id,
+            vendorType: s.vendorType,
+            vendorSiteId: s.vendorSiteId,
+            displayName: s.displayName,
+            role: 'owner' as const,
+          }))
+        
+        // Get all systems this user has access to via userSystems table
+        const additionalAccess = allUserSystems
           .filter(us => us.user_systems.clerkUserId === clerkUserId)
           .map(us => ({
             systemId: us.systems.id,
@@ -79,6 +119,13 @@ export async function GET(request: NextRequest) {
             displayName: us.systems.displayName,
             role: us.user_systems.role as 'owner' | 'viewer',
           }))
+        
+        // Combine and deduplicate (owned systems take precedence)
+        const ownedSystemIds = new Set(ownedSystems.map(s => s.systemId))
+        const userSystemAccess = [
+          ...ownedSystems,
+          ...additionalAccess.filter(s => !ownedSystemIds.has(s.systemId))
+        ]
         
         usersData.push({
           clerkUserId,
