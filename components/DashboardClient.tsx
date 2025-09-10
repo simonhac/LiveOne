@@ -12,6 +12,7 @@ import PowerCard from '@/components/PowerCard'
 import ConnectionNotification from '@/components/ConnectionNotification'
 import TestConnectionModal from '@/components/TestConnectionModal'
 import ServerErrorModal from '@/components/ServerErrorModal'
+import SessionTimeoutModal from '@/components/SessionTimeoutModal'
 import { 
   Sun, 
   Home, 
@@ -155,6 +156,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false)
   const [showTestConnection, setShowTestConnection] = useState(false)
   const [serverError, setServerError] = useState<{ type: 'connection' | 'server' | null, details?: string }>({ type: null })
+  const [showSessionTimeout, setShowSessionTimeout] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const settingsDropdownRef = useRef<HTMLDivElement>(null)
 
@@ -169,6 +171,32 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
       }
       const url = `/api/data?systemId=${systemId}`
       const response = await fetch(url)
+      
+      // Check for token expiration specifically
+      if (response.status === 404) {
+        // Check the Clerk auth headers to see if this is due to token expiration
+        const authStatus = response.headers.get('x-clerk-auth-status')
+        const authReason = response.headers.get('x-clerk-auth-reason')
+        const authMessage = response.headers.get('x-clerk-auth-message')
+        
+        if (authStatus === 'signed-out' || 
+            authReason?.includes('token-expired') || 
+            authMessage?.includes('expired')) {
+          console.log('Session token expired')
+          console.log('Auth message:', authMessage)
+          // Show session timeout modal
+          setShowSessionTimeout(true)
+          setLoading(false)
+          return
+        }
+        // Otherwise it's a real 404 - system doesn't exist
+      }
+      
+      // Check for other non-OK responses
+      if (!response.ok) {
+        throw new Error(`Failed to fetch data: ${response.status}`)
+      }
+      
       const result = await response.json()
       
       // Check if we have latest data (system info is always present)
@@ -202,6 +230,15 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
       }
     } catch (err) {
       console.error('Error fetching data:', err)
+      
+      // Check if error message indicates a 404 (which might mean token expired)
+      if (err instanceof Error && err.message.includes('404')) {
+        console.log('Session might be expired (404 error)')
+        // Show session timeout modal
+        setShowSessionTimeout(true)
+        setLoading(false)
+        return
+      }
       
       // Check if it's a network/connection error
       if (err instanceof TypeError && err.message === 'Failed to fetch') {
@@ -622,6 +659,14 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
         onClose={() => setServerError({ type: null })}
         errorType={serverError.type}
         errorDetails={serverError.details}
+      />
+      
+      <SessionTimeoutModal
+        isOpen={showSessionTimeout}
+        onReconnect={() => {
+          setShowSessionTimeout(false)
+          window.location.reload()
+        }}
       />
     </div>
   )
