@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { UserButton } from '@clerk/nextjs'
 import EnergyChart from '@/components/EnergyChart'
 import EnergyPanel from '@/components/EnergyPanel'
@@ -142,6 +142,8 @@ function getStaleThreshold(vendorType?: string): number {
 }
 
 export default function DashboardClient({ systemId, system, hasAccess, systemExists, isAdmin: isAdminProp, availableSystems = [], userId }: DashboardClientProps) {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -155,7 +157,6 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
   const [serverError, setServerError] = useState<{ type: 'connection' | 'server' | null, details?: string }>({ type: null })
   const dropdownRef = useRef<HTMLDivElement>(null)
   const settingsDropdownRef = useRef<HTMLDivElement>(null)
-  const router = useRouter()
 
   // Function to fetch data from API
   const fetchData = useCallback(async () => {
@@ -353,18 +354,23 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                   {showSystemDropdown && (
                     <div className="absolute top-full left-0 mt-2 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
                       <div className="py-1">
-                        {availableSystems.map((system) => (
-                          <Link
-                            key={system.id}
-                            href={`/dashboard/${system.id}`}
-                            className={`block px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 transition-colors ${
-                              system.id === parseInt(systemId || '0') ? 'bg-gray-700' : ''
-                            }`}
-                            onClick={() => setShowSystemDropdown(false)}
-                          >
-                            {system.displayName || `System ${system.vendorSiteId}`}
-                          </Link>
-                        ))}
+                        {availableSystems.map((system) => {
+                          // Preserve period parameter when switching systems
+                          const period = searchParams.get('period')
+                          const href = period ? `/dashboard/${system.id}?period=${period}` : `/dashboard/${system.id}`
+                          return (
+                            <Link
+                              key={system.id}
+                              href={href}
+                              className={`block px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 transition-colors ${
+                                systemId && system.id === parseInt(systemId) ? 'bg-gray-700' : ''
+                              }`}
+                              onClick={() => setShowSystemDropdown(false)}
+                            >
+                              {system.displayName || `System ${system.vendorSiteId}`}
+                            </Link>
+                          )
+                        })}
                         {isAdmin && availableSystems.length >= 10 && (
                           <div className="px-4 py-2 text-xs text-gray-500 border-t border-gray-700">
                             Showing first 10 systems

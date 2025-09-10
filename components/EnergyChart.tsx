@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import ChartTooltip from './ChartTooltip'
 import PeriodSwitcher from './PeriodSwitcher'
 import ServerErrorModal from './ServerErrorModal'
@@ -43,6 +44,7 @@ interface EnergyChartProps {
   maxPowerHint?: number // Max power in kW
   systemId: number // System ID (e.g., 648, 1586)
   vendorType?: string // Vendor type (e.g., 'enphase', 'select.live')
+  initialPeriod?: '1D' | '7D' | '30D' // Initial period from URL
 }
 
 interface ChartData {
@@ -56,12 +58,24 @@ interface ChartData {
   mode: 'power' | 'energy' // Mode based on interval: power (≤30m) or energy (≥1d)
 }
 
-export default function EnergyChart({ className = '', maxPowerHint, systemId, vendorType }: EnergyChartProps) {
+export default function EnergyChart({ className = '', maxPowerHint, systemId, vendorType, initialPeriod }: EnergyChartProps) {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const [chartData, setChartData] = useState<ChartData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [serverError, setServerError] = useState<{ type: 'connection' | 'server' | null, details?: string }>({ type: null })
-  const [timeRange, setTimeRange] = useState<'1D' | '7D' | '30D'>('1D')
+  
+  // Initialize timeRange from URL param or prop
+  const getInitialTimeRange = () => {
+    const urlPeriod = searchParams.get('period') as '1D' | '7D' | '30D' | null
+    if (urlPeriod && ['1D', '7D', '30D'].includes(urlPeriod)) {
+      return urlPeriod
+    }
+    return initialPeriod || '1D'
+  }
+  
+  const [timeRange, setTimeRange] = useState<'1D' | '7D' | '30D'>(getInitialTimeRange())
   const [hoveredData, setHoveredData] = useState<{ solar: number | null; load: number | null; batterySOC: number | null; timestamp: Date | null }>({
     solar: null,
     load: null,
@@ -709,7 +723,13 @@ export default function EnergyChart({ className = '', maxPowerHint, systemId, ve
           </span>
           <PeriodSwitcher 
             value={timeRange} 
-            onChange={setTimeRange}
+            onChange={(newPeriod) => {
+              setTimeRange(newPeriod)
+              // Update URL with new period
+              const params = new URLSearchParams(searchParams.toString())
+              params.set('period', newPeriod)
+              router.push(`?${params.toString()}`, { scroll: false })
+            }}
           />
         </div>
       </div>
