@@ -12,7 +12,7 @@ const dmSans = DM_Sans({
 })
 
 export const metadata: Metadata = {
-  title: 'LiveOne',
+  title: process.env.NODE_ENV === 'development' ? 'LiveOne — Dev' : 'LiveOne',
   description: 'Real-time solar energy monitoring and analytics',
 }
 
