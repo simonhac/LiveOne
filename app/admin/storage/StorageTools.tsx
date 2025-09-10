@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { Database, Server, CheckCircle, XCircle, Info, AlertCircle, Globe, Shield, Download, X, ChevronDown, ChevronRight, ChevronUp, Check } from 'lucide-react'
+import { Database, Server, CheckCircle, XCircle, Info, AlertCircle, Globe, Shield, Download, X, ChevronDown, ChevronRight, ChevronUp, Check, RefreshCw } from 'lucide-react'
 
 interface DatabaseInfo {
   type: 'development' | 'production'
@@ -120,6 +120,38 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
       endTime: undefined,
       duration: undefined
     })))
+  }
+
+  const recreateDailies = async () => {
+    if (!confirm('This will regenerate all daily aggregations. This may take a while. Continue?')) {
+      return
+    }
+    
+    try {
+      const response = await fetch('/api/cron/daily', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'regenerate' })
+      })
+      
+      const data = await response.json()
+      
+      // Always log the response to console for debugging
+      console.log('[Recreate Dailies] Server response:', data)
+      
+      if (data.success) {
+        const systemCount = data.systems ? data.systems.length : 0
+        alert(`Successfully regenerated daily aggregations for ${systemCount} systems`)
+      } else {
+        console.error('[Recreate Dailies] Error from server:', data)
+        alert(`Error: ${data.error || 'Failed to regenerate daily aggregations'}`)
+      }
+    } catch (err) {
+      console.error('[Recreate Dailies] Error regenerating dailies:', err)
+      alert('Failed to regenerate daily aggregations')
+    }
   }
 
   const startSync = async () => {
@@ -561,35 +593,21 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
         <div className="bg-gray-800 border border-gray-700 sm:rounded-lg p-4 sm:p-6">
           {databaseInfo && (
             <div className="space-y-4">
-              {/* Database Type Badge with Sync Button */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <span className="text-gray-400">Environment:</span>
-                  <span className={`inline-flex items-center gap-1 px-3 py-1 text-sm font-medium border rounded-full ${
-                    databaseInfo.type === 'production' 
-                      ? 'bg-green-900/50 text-green-300 border-green-700' 
-                      : 'bg-yellow-900/50 text-yellow-300 border-yellow-700'
-                  }`}>
-                    {databaseInfo.type === 'production' ? (
-                      <Globe className="w-4 h-4" />
-                    ) : (
-                      <Server className="w-4 h-4" />
-                    )}
-                    {databaseInfo.type === 'production' ? 'Production' : 'Development'}
-                  </span>
-                </div>
-                
-                {/* Sync Button for Development */}
-                {databaseInfo.type === 'development' && (
-                  <button
-                    onClick={openSyncDialog}
-                    disabled={syncProgress.isActive}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white rounded-lg transition-colors text-sm"
-                  >
-                    <Download className="w-4 h-4" />
-                    Sync...
-                  </button>
-                )}
+              {/* Database Type Badge */}
+              <div className="flex items-center gap-4">
+                <span className="text-gray-400">Environment:</span>
+                <span className={`inline-flex items-center gap-1 px-3 py-1 text-sm font-medium border rounded-full ${
+                  databaseInfo.type === 'production' 
+                    ? 'bg-green-900/50 text-green-300 border-green-700' 
+                    : 'bg-yellow-900/50 text-yellow-300 border-yellow-700'
+                }`}>
+                  {databaseInfo.type === 'production' ? (
+                    <Globe className="w-4 h-4" />
+                  ) : (
+                    <Server className="w-4 h-4" />
+                  )}
+                  {databaseInfo.type === 'production' ? 'Production' : 'Development'}
+                </span>
               </div>
 
               {/* Database Provider */}
@@ -662,6 +680,30 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                   </div>
                 </div>
               )}
+
+              {/* Actions Section */}
+              <div className="mt-6 pt-6 border-t border-gray-700">
+                <h3 className="text-sm font-semibold text-gray-400 mb-3">Actions</h3>
+                <div className="flex flex-wrap gap-3">
+                  {databaseInfo.type === 'development' && (
+                    <button
+                      onClick={openSyncDialog}
+                      disabled={syncProgress.isActive}
+                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white rounded-lg transition-colors text-sm"
+                    >
+                      <Download className="w-4 h-4" />
+                      Sync from Production
+                    </button>
+                  )}
+                  <button
+                    onClick={recreateDailies}
+                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors text-sm"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    Recreate Dailies
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>
