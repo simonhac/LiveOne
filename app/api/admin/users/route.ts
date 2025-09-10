@@ -4,7 +4,19 @@ import { db } from '@/lib/db'
 import { userSystems, systems } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { isUserAdmin } from '@/lib/auth-utils'
-import { SystemsManager } from '@/lib/systems-manager'
+import { getSystemsManager } from '@/lib/get-systems-manager'
+
+// Helper function to map system data
+function mapSystemAccess(system: any, role: 'owner' | 'viewer') {
+  return {
+    systemId: system.id,
+    vendorType: system.vendorType,
+    vendorSiteId: system.vendorSiteId,
+    displayName: system.displayName,
+    status: system.status,
+    role,
+  }
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -29,7 +41,7 @@ export async function GET(request: NextRequest) {
       .innerJoin(systems, eq(userSystems.systemId, systems.id))
     
     // Get all systems to find owners
-    const systemsManager = new SystemsManager()
+    const systemsManager = await getSystemsManager()
     const allSystems = await systemsManager.getAllSystems()
     
     // Get unique user IDs from both userSystems and system owners
@@ -50,24 +62,12 @@ export async function GET(request: NextRequest) {
         // Get all systems this user owns
         const ownedSystems = allSystems
           .filter(s => s.ownerClerkUserId === clerkUserId)
-          .map(s => ({
-            systemId: s.id,
-            vendorType: s.vendorType,
-            vendorSiteId: s.vendorSiteId,
-            displayName: s.displayName,
-            role: 'owner' as const,
-          }))
+          .map(s => mapSystemAccess(s, 'owner'))
         
         // Get all systems this user has access to via userSystems table
         const additionalAccess = allUserSystems
           .filter(us => us.user_systems.clerkUserId === clerkUserId)
-          .map(us => ({
-            systemId: us.systems.id,
-            vendorType: us.systems.vendorType,
-            vendorSiteId: us.systems.vendorSiteId,
-            displayName: us.systems.displayName,
-            role: us.user_systems.role as 'owner' | 'viewer',
-          }))
+          .map(us => mapSystemAccess(us.systems, us.user_systems.role as 'owner' | 'viewer'))
         
         // Combine and deduplicate (owned systems take precedence)
         const ownedSystemIds = new Set(ownedSystems.map(s => s.systemId))
@@ -101,24 +101,12 @@ export async function GET(request: NextRequest) {
         // Get all systems this user owns
         const ownedSystems = allSystems
           .filter(s => s.ownerClerkUserId === clerkUserId)
-          .map(s => ({
-            systemId: s.id,
-            vendorType: s.vendorType,
-            vendorSiteId: s.vendorSiteId,
-            displayName: s.displayName,
-            role: 'owner' as const,
-          }))
+          .map(s => mapSystemAccess(s, 'owner'))
         
         // Get all systems this user has access to via userSystems table
         const additionalAccess = allUserSystems
           .filter(us => us.user_systems.clerkUserId === clerkUserId)
-          .map(us => ({
-            systemId: us.systems.id,
-            vendorType: us.systems.vendorType,
-            vendorSiteId: us.systems.vendorSiteId,
-            displayName: us.systems.displayName,
-            role: us.user_systems.role as 'owner' | 'viewer',
-          }))
+          .map(us => mapSystemAccess(us.systems, us.user_systems.role as 'owner' | 'viewer'))
         
         // Combine and deduplicate (owned systems take precedence)
         const ownedSystemIds = new Set(ownedSystems.map(s => s.systemId))

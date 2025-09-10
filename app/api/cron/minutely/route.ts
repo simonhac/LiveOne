@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { readings } from '@/lib/db/schema';
-import { SystemsManager } from '@/lib/systems-manager';
+import { getSystemsManager } from '@/lib/get-systems-manager';
 import { updateAggregatedData } from '@/lib/aggregation-helper';
 import { formatSystemId } from '@/lib/system-utils';
 import { pollSelectronicSystem } from '@/lib/selectronic/polling';
@@ -69,8 +69,8 @@ export async function GET(request: NextRequest) {
     // Enphase systems are only polled at :00 and :30 during daylight hours
     // due to API rate limits (1000 calls/month)
     
-    // Create SystemsManager for this request
-    const systemsManager = new SystemsManager();
+    // Get cached SystemsManager for this request
+    const systemsManager = await getSystemsManager();
     
     // Get systems to poll
     let activeSystems;

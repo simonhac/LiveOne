@@ -9,6 +9,7 @@ interface SystemAccess {
   systemId: number
   systemNumber: string
   displayName: string
+  status?: 'active' | 'disabled' | 'removed'
   role: 'owner' | 'viewer'
 }
 
@@ -176,31 +177,48 @@ export default function UsersPageClient() {
                   <td className="px-2 md:px-6 py-4 align-top">
                     <div className="space-y-1">
                       {user.systems.length > 0 ? (
-                        user.systems.map((system) => (
-                          <div key={system.systemId} className="flex items-center gap-1.5">
-                            <Link
-                              href={`/dashboard/${system.systemId}`}
-                              className="text-sm text-gray-300 hover:text-blue-400 transition-colors whitespace-nowrap"
-                            >
-                              {system.displayName}
-                            </Link>
-                            {system.role === 'owner' ? (
-                              <div className="relative group">
-                                <Crown className="w-3 h-3 text-purple-400 cursor-help" />
-                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10 border border-gray-700">
-                                  Owner
+                        // Sort systems: non-removed first, then removed
+                        user.systems
+                          .sort((a, b) => {
+                            // Sort by status first (non-removed before removed)
+                            if (a.status === 'removed' && b.status !== 'removed') return 1
+                            if (a.status !== 'removed' && b.status === 'removed') return -1
+                            // Then sort by name
+                            return a.displayName.localeCompare(b.displayName)
+                          })
+                          .map((system) => (
+                            <div key={system.systemId} className="flex items-center gap-1.5">
+                              <Link
+                                href={`/dashboard/${system.systemId}`}
+                                className={`text-sm transition-colors whitespace-nowrap ${
+                                  system.status === 'removed' 
+                                    ? 'text-gray-500 line-through italic hover:text-gray-400' 
+                                    : 'text-gray-300 hover:text-blue-400'
+                                }`}
+                              >
+                                {system.displayName}
+                              </Link>
+                              {system.role === 'owner' ? (
+                                <div className="relative group">
+                                  <Crown className={`w-3 h-3 cursor-help ${
+                                    system.status === 'removed' ? 'text-purple-700' : 'text-purple-400'
+                                  }`} />
+                                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10 border border-gray-700">
+                                    Owner
+                                  </div>
                                 </div>
-                              </div>
-                            ) : system.role === 'viewer' ? (
-                              <div className="relative group">
-                                <Eye className="w-3 h-3 text-gray-400 cursor-help" />
-                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10 border border-gray-700">
-                                  Viewer
+                              ) : system.role === 'viewer' ? (
+                                <div className="relative group">
+                                  <Eye className={`w-3 h-3 cursor-help ${
+                                    system.status === 'removed' ? 'text-gray-600' : 'text-gray-400'
+                                  }`} />
+                                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10 border border-gray-700">
+                                    Viewer
+                                  </div>
                                 </div>
-                              </div>
-                            ) : null}
-                          </div>
-                        ))
+                              ) : null}
+                            </div>
+                          ))
                       ) : (
                         <span className="text-sm text-gray-500">No system access</span>
                       )}
