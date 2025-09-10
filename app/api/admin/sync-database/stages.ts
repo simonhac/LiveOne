@@ -14,11 +14,11 @@ function createTimeBasedProgressCallback(
       const rangeStartZoned = fromUnixTimestamp(Math.floor(rangeStart.getTime() / 1000), 600)
       const rangeEndZoned = fromUnixTimestamp(Math.floor(rangeEnd.getTime() / 1000), 600)
       const rangeStr = formatDateRange(rangeStartZoned, rangeEndZoned, true)
-      const percentComplete = Math.round((synced / ctx.totalToSync) * 100)
+      const proportionComplete = synced / ctx.totalToSync
       
       ctx.updateStage(stageId, { 
-        detail: `Downloading ${batchSize} records from ${rangeStr} (${percentComplete}%)`,
-        progress: percentComplete
+        detail: `Downloading ${batchSize} records from ${rangeStr} (${Math.round(proportionComplete * 100)}%)`,
+        progress: proportionComplete
       })
     }
   }
@@ -283,6 +283,9 @@ async function syncSystems(ctx: SyncContext) {
     const key = `${devSys.vendorType}:${devSys.vendorSiteId}`
     devSystemsMap.set(key, devSys)
   }
+  
+  const totalSystems = prodSystems.rows.length
+  let processed = 0
   
   for (const sys of prodSystems.rows) {
     const prodSystemId = sys.id as number
@@ -619,10 +622,10 @@ async function syncDailyAggregations(ctx: SyncContext) {
     },
     onProgress: (synced, total) => {
       if (ctx.totalToSync) {
-        const percentComplete = Math.round((synced / ctx.totalToSync) * 100)
+        const proportionComplete = synced / ctx.totalToSync
         ctx.updateStage('sync-daily-agg', { 
-          detail: `Syncing: ${synced.toLocaleString()} of ${ctx.totalToSync.toLocaleString()} (${percentComplete}%)`,
-          progress: percentComplete
+          detail: `Syncing: ${synced.toLocaleString()} of ${ctx.totalToSync.toLocaleString()} (${Math.round(proportionComplete * 100)}%)`,
+          progress: proportionComplete
         })
       }
     }

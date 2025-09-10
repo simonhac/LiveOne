@@ -37,7 +37,7 @@ interface SyncStage {
   name: string
   status: 'pending' | 'running' | 'completed' | 'error'
   detail?: string
-  progress?: number  // 0-100 for percentage progress within the stage
+  progress?: number  // 0-1 for proportion complete within the stage
   startTime?: number
   duration?: number
 }
@@ -150,7 +150,8 @@ async function syncDatabase(
       if (updates.status === 'error') {
         console.log(`[SYNC] Stage '${stage.name}' failed: ${updates.detail || 'Unknown error'}`)
       }
-      // Send only the updated stage, not the entire array
+      
+      // Send the updated stage
       send({ 
         type: 'stage-update', 
         stage: {
@@ -163,6 +164,20 @@ async function syncDatabase(
           duration: stage.duration
         }
       })
+      
+      // Update overall progress bar based on stage's internal progress
+      if (updates.progress !== undefined) {
+        const allocation = progressAllocations.get(id)
+        if (allocation) {
+          const overallProgress = allocation.start + (updates.progress * (allocation.end - allocation.start))
+          send({ 
+            type: 'progress', 
+            message: stage.detail || `${stage.name}: ${Math.round(updates.progress * 100)}%`, 
+            progress: Math.round(overallProgress), 
+            total: 100 
+          })
+        }
+      }
     }
   }
   
@@ -228,14 +243,8 @@ async function syncDatabase(
       
       const allocation = progressAllocations.get(stageDef.id)!
       
-      // Update stage to running
-      updateStage(stageDef.id, { status: 'running' })
-      send({ 
-        type: 'progress', 
-        message: `Running: ${stageDef.name}...`, 
-        progress: Math.round(allocation.start), 
-        total: 100 
-      })
+      // Update stage to running (progress will be sent by updateStage)
+      updateStage(stageDef.id, { status: 'running', progress: 0 })
       
       try {
         // Execute the stage
@@ -246,10 +255,11 @@ async function syncDatabase(
           Object.assign(context, result.context)
         }
         
-        // Mark stage as completed
+        // Mark stage as completed (100% progress)
         updateStage(stageDef.id, { 
           status: 'completed', 
-          detail: result.detail 
+          detail: result.detail,
+          progress: 1
         })
         
         // Special handling for early exit (no data to sync)
@@ -258,9 +268,9 @@ async function syncDatabase(
           const remainingStages = syncStages.slice(syncStages.indexOf(stageDef) + 1)
           for (const remaining of remainingStages) {
             if (remaining.id === 'finalise') {
-              updateStage(remaining.id, { status: 'completed', detail: 'Complete' })
+              updateStage(remaining.id, { status: 'completed', detail: 'Complete', progress: 1 })
             } else {
-              updateStage(remaining.id, { status: 'completed', detail: 'Skipped - no new data' })
+              updateStage(remaining.id, { status: 'completed', detail: 'Skipped - no new data', progress: 1 })
             }
           }
           
@@ -274,13 +284,6 @@ async function syncDatabase(
           close()
           return
         }
-        
-        send({ 
-          type: 'progress', 
-          message: result.detail || `Completed: ${stageDef.name}`, 
-          progress: Math.round(allocation.end), 
-          total: 100 
-        })
         
       } catch (error: any) {
         // Mark stage as failed
