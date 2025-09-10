@@ -1,5 +1,7 @@
 import { db } from '@/lib/db';
-import { systems } from '@/lib/db/schema';
+import { systems, userSystems } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
+import { isUserAdmin } from '@/lib/auth-utils';
 
 /**
  * Manages system data with caching to avoid repeated database queries
@@ -88,5 +90,60 @@ export class SystemsManager {
   async systemExists(systemId: number): Promise<boolean> {
     await this.loadPromise;
     return this.systemsMap.has(systemId);
+  }
+  
+  /**
+   * Get all systems visible to a user (for dropdown menus, etc.)
+   * - Admins see all active systems
+   * - Regular users see their own active systems and systems they have access to
+   * @param userId - The clerk user ID
+   * @param activeOnly - Whether to filter to only active systems (default: true)
+   */
+  async getSystemsVisibleByUser(userId: string, activeOnly: boolean = true) {
+    await this.loadPromise;
+    const isAdmin = await isUserAdmin();
+    
+    let visibleSystems: any[] = [];
+    const allSystemsArray = Array.from(this.systemsMap.values());
+    
+    if (isAdmin) {
+      // Admins see all systems (optionally filtered by status)
+      visibleSystems = allSystemsArray
+        .filter(s => !activeOnly || s.status === 'active')
+        .filter(s => s.displayName && s.vendorSiteId); // Must have display name and vendor site ID
+    } else {
+      // Get systems the user owns
+      const ownedSystems = allSystemsArray.filter(s => s.ownerClerkUserId === userId);
+      
+      // Get systems the user has been granted access to
+      const grantedAccess = await db
+        .select()
+        .from(userSystems)
+        .where(eq(userSystems.clerkUserId, userId));
+      
+      const grantedSystemIds = new Set(grantedAccess.map(ua => ua.systemId));
+      
+      // Combine owned and granted systems
+      const userVisibleSystems = [
+        ...ownedSystems,
+        ...allSystemsArray.filter(s => grantedSystemIds.has(s.id) && s.ownerClerkUserId !== userId)
+      ];
+      
+      // Filter by status and required fields
+      visibleSystems = userVisibleSystems
+        .filter(s => !activeOnly || s.status === 'active')
+        .filter(s => s.displayName && s.vendorSiteId);
+    }
+    
+    // Sort by display name and return simplified objects
+    return visibleSystems
+      .sort((a, b) => a.displayName.localeCompare(b.displayName))
+      .map(s => ({
+        id: s.id,
+        displayName: s.displayName,
+        vendorSiteId: s.vendorSiteId,
+        vendorType: s.vendorType,
+        status: s.status
+      }));
   }
 }

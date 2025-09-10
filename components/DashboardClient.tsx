@@ -127,6 +127,7 @@ interface AvailableSystem {
 
 interface DashboardClientProps {
   systemId?: string;
+  system?: any;  // System object from database
   hasAccess: boolean;
   systemExists: boolean;
   isAdmin: boolean;
@@ -140,7 +141,7 @@ function getStaleThreshold(vendorType?: string): number {
   return vendorType === 'enphase' ? 2100 : 300;
 }
 
-export default function DashboardClient({ systemId, hasAccess, systemExists, isAdmin: isAdminProp, availableSystems = [], userId }: DashboardClientProps) {
+export default function DashboardClient({ systemId, system, hasAccess, systemExists, isAdmin: isAdminProp, availableSystems = [], userId }: DashboardClientProps) {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -192,7 +193,10 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
         // We have system info but no readings yet
         setData(result)
         setSystemInfo(result.systemInfo || null)
-        setError('No readings available yet')
+        // Don't show error for removed systems
+        if (system?.status !== 'removed') {
+          setError('No readings available yet')
+        }
         setLoading(false)
       }
     } catch (err) {
@@ -330,6 +334,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
             onTestConnection={() => setShowTestConnection(true)}
             vendorType={data?.vendorType}
             isAdmin={isAdmin}
+            systemStatus={system?.status}
           />
 
           {/* Desktop Layout */}
@@ -392,6 +397,8 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   Admin
                 </Link>
               )}
+              {/* Settings dropdown - Only show for admin or non-removed systems */}
+              {(isAdmin || system?.status !== 'removed') && (
               <div className="relative" ref={settingsDropdownRef}>
                 <button
                   onClick={() => setShowSettingsDropdown(!showSettingsDropdown)}
@@ -431,6 +438,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                   </div>
                 )}
               </div>
+              )}
               <UserButton 
                 afterSignOutUrl="/sign-in"
                 appearance={{
@@ -446,6 +454,17 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-1 sm:px-6 lg:px-8 py-4">
+        {/* Removed System Banner - Show regardless of data availability */}
+        {system?.status === 'removed' && (
+          <div className="mb-4 p-4 bg-orange-900/50 border border-orange-700 text-orange-300 rounded-lg flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+            <div>
+              <span className="font-semibold">This system has been marked as removed.</span>
+              {!isAdmin && <span> Limited access is available.</span>}
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
             <AlertTriangle className="w-5 h-5" />
@@ -455,6 +474,7 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
 
         {data?.latest && (
           <div className="space-y-6">
+
             {/* Fault Warning */}
             {data.latest.system.faultCode && data.latest.system.faultCode !== 0 && data.latest.system.faultTimestamp && data.latest.system.faultTimestamp > 0 && (
               <div className="bg-yellow-900/50 border border-yellow-700 text-yellow-300 px-4 py-3 rounded flex items-center gap-2">
@@ -465,7 +485,8 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
               </div>
             )}
 
-            {/* Main Dashboard Grid */}
+            {/* Main Dashboard Grid - Only show for admin or non-removed systems */}
+            {(isAdmin || system?.status !== 'removed') && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               {/* Energy Chart - 2/3 width */}
               <div className="lg:col-span-2">
@@ -565,12 +586,16 @@ export default function DashboardClient({ systemId, hasAccess, systemExists, isA
                 )}
               </div>
             </div>
+            )}
 
-            <EnergyPanel 
-              energy={data.latest.energy}
-              historical={data.historical}
-              showGrid={showGrid}
-            />
+            {/* Energy Panel - Only show for admin or non-removed systems */}
+            {(isAdmin || system?.status !== 'removed') && (
+              <EnergyPanel 
+                energy={data.latest.energy}
+                historical={data.historical}
+                showGrid={showGrid}
+              />
+            )}
           </div>
         )}
       </main>

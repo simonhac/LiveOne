@@ -30,6 +30,7 @@ interface MobileMenuProps {
   onTestConnection?: () => void
   vendorType?: string
   isAdmin?: boolean
+  systemStatus?: 'active' | 'disabled' | 'removed'
 }
 
 export default function MobileMenu({ 
@@ -41,7 +42,8 @@ export default function MobileMenu({
   currentSystemId,
   onTestConnection,
   vendorType,
-  isAdmin = false
+  isAdmin = false,
+  systemStatus
 }: MobileMenuProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [isSystemDropdownOpen, setIsSystemDropdownOpen] = useState(false)
@@ -186,7 +188,8 @@ export default function MobileMenu({
                   <p className="text-white font-medium text-sm">Settings</p>
                 </div>
                 
-                {onTestConnection && (
+                {/* Test Connection - Only show for admin or non-removed systems */}
+                {onTestConnection && (isAdmin || systemStatus !== 'removed') && (
                   <button
                     onClick={() => {
                       setIsOpen(false)

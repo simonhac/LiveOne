@@ -8,6 +8,7 @@ import SummaryCard from '@/components/SummaryCard'
 import SystemActionsMenu from '@/components/SystemActionsMenu'
 import PollingStatsModal from '@/components/PollingStatsModal'
 import TestConnectionModal from '@/components/TestConnectionModal'
+import SystemSettingsDialog from '@/components/SystemSettingsDialog'
 
 interface SystemInfo {
   model?: string
@@ -84,6 +85,13 @@ export default function AdminDashboardClient() {
     isOpen: false,
     systemName: '',
     stats: null
+  })
+  const [settingsDialog, setSettingsDialog] = useState<{
+    isOpen: boolean
+    system: SystemData | null
+  }>({
+    isOpen: false,
+    system: null
   })
 
   const openTestModal = (displayName: string, ownerClerkUserId: string, vendorType: string, vendorSiteId: string) => {
@@ -164,6 +172,42 @@ export default function AdminDashboardClient() {
     } catch (err) {
       console.error('Error updating system status:', err)
       alert(`Failed to update status: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    }
+  }
+
+  const renameSystem = async (systemId: number, newName: string) => {
+    try {
+      const response = await fetch(`/api/admin/systems/${systemId}/rename`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ displayName: newName }),
+      })
+      
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to rename system')
+      }
+      
+      const result = await response.json()
+      
+      // Update the system in the local state
+      setSystems(prev => prev.map(s => 
+        s.systemId === systemId ? { ...s, displayName: newName } : s
+      ))
+      
+      // Update the settings dialog state if it's the same system
+      setSettingsDialog(prev => 
+        prev.system?.systemId === systemId 
+          ? { ...prev, system: { ...prev.system, displayName: newName } }
+          : prev
+      )
+      
+      return result
+    } catch (err) {
+      console.error('Error renaming system:', err)
+      throw err  // Re-throw to be handled by the dialog
     }
   }
 
@@ -271,6 +315,12 @@ export default function AdminDashboardClient() {
                             isOpen: true,
                             systemName: system.displayName,
                             stats: system.polling
+                          })
+                        }}
+                        onSettings={() => {
+                          setSettingsDialog({
+                            isOpen: true,
+                            system: system
                           })
                         }}
                       />
@@ -456,6 +506,14 @@ export default function AdminDashboardClient() {
           stats={pollingStatsModal.stats}
         />
       )}
+
+      {/* System Settings Dialog */}
+      <SystemSettingsDialog
+        isOpen={settingsDialog.isOpen}
+        onClose={() => setSettingsDialog({ isOpen: false, system: null })}
+        system={settingsDialog.system}
+        onRename={renameSystem}
+      />
       </>
   )
 }

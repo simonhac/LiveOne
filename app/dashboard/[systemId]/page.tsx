@@ -5,6 +5,7 @@ import { systems } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import DashboardClient from '@/components/DashboardClient'
 import { isUserAdmin } from '@/lib/auth-utils'
+import { getSystemsManager } from '@/lib/get-systems-manager'
 
 interface PageProps {
   params: Promise<{
@@ -53,34 +54,14 @@ export default async function DashboardSystemPage({ params }: PageProps) {
     hasAccess = system.ownerClerkUserId === userId
   }
 
-  // Fetch available systems for the user
-  let availableSystems = []
-  
-  if (isAdmin) {
-    // Admins can see all systems - limit to 10 for the dropdown
-    const allSystems = await db.select()
-      .from(systems)
-      .limit(10)
-    availableSystems = allSystems.filter(s => s.displayName && s.vendorSiteId).map(s => ({
-      id: s.id,
-      displayName: s.displayName!,
-      vendorSiteId: s.vendorSiteId!,
-    }))
-  } else {
-    // Regular users only see their own systems
-    const userSystems = await db.select()
-      .from(systems)
-      .where(eq(systems.ownerClerkUserId, userId))
-    availableSystems = userSystems.filter(s => s.displayName && s.vendorSiteId).map(s => ({
-      id: s.id,
-      displayName: s.displayName!,
-      vendorSiteId: s.vendorSiteId!,
-    }))
-  }
+  // Fetch available systems for the user - only active systems
+  const systemsManager = await getSystemsManager()
+  const availableSystems = await systemsManager.getSystemsVisibleByUser(userId, true) // true = active only
 
   return (
     <DashboardClient 
       systemId={systemId}
+      system={system}
       hasAccess={hasAccess}
       systemExists={systemExists}
       isAdmin={isAdmin}
