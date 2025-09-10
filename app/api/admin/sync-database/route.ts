@@ -37,6 +37,7 @@ interface SyncStage {
   name: string
   status: 'pending' | 'running' | 'completed' | 'error'
   detail?: string
+  progress?: number  // 0-100 for percentage progress within the stage
   startTime?: number
   duration?: number
 }
@@ -149,8 +150,20 @@ async function syncDatabase(
       if (updates.status === 'error') {
         console.log(`[SYNC] Stage '${stage.name}' failed: ${updates.detail || 'Unknown error'}`)
       }
+      // Send only the updated stage, not the entire array
+      send({ 
+        type: 'stage-update', 
+        stage: {
+          id: stage.id,
+          name: stage.name,
+          status: stage.status,
+          detail: stage.detail,
+          progress: stage.progress,
+          startTime: stage.startTime,
+          duration: stage.duration
+        }
+      })
     }
-    send({ type: 'stages', stages: [...stages] })
   }
   
   // Format datetime helper
@@ -175,12 +188,14 @@ async function syncDatabase(
     send,
     clerkMappings: new Map(),
     mapClerkId: () => undefined,
+    systemIdMappings: new Map(),
+    mapSystemId: () => undefined,
     formatDateTime
   }
   
   try {
-    // Send initial stages
-    send({ type: 'stages', stages: [...stages] })
+    // Send initial stages (all at once for initialization)
+    send({ type: 'stages-init', stages: [...stages] })
     
     // Load Clerk ID mappings upfront (needed for context)
     try {

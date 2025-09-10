@@ -1,9 +1,170 @@
 import { sql, and, eq, gte, lte } from 'drizzle-orm'
-import { systems, readings, userSystems, clerkIdMapping, pollingStatus } from '@/lib/db/schema'
-import { aggregateDailyData } from '@/lib/db/aggregate-daily'
-import { updateAggregatedData } from '@/lib/aggregation-helper'
+import { systems, readings, userSystems, clerkIdMapping, pollingStatus, readingsAgg5m, readingsAgg1d } from '@/lib/db/schema'
 import { createClient } from '@libsql/client'
 import { formatDateRange, fromUnixTimestamp } from '@/lib/date-utils'
+
+// Helper function to create a progress callback for time-based data syncing
+function createTimeBasedProgressCallback(
+  ctx: SyncContext,
+  stageId: string
+) {
+  return (synced: number, total: number, rangeStart?: Date, rangeEnd?: Date, batchSize?: number) => {
+    if (rangeStart && rangeEnd && ctx.totalToSync) {
+      // Format the range for display
+      const rangeStartZoned = fromUnixTimestamp(Math.floor(rangeStart.getTime() / 1000), 600)
+      const rangeEndZoned = fromUnixTimestamp(Math.floor(rangeEnd.getTime() / 1000), 600)
+      const rangeStr = formatDateRange(rangeStartZoned, rangeEndZoned, true)
+      const percentComplete = Math.round((synced / ctx.totalToSync) * 100)
+      
+      ctx.updateStage(stageId, { 
+        detail: `Downloading ${batchSize} records from ${rangeStr} (${percentComplete}%)`,
+        progress: percentComplete
+      })
+    }
+  }
+}
+
+// Generic function for syncing data between tables using raw SQL
+interface SyncTableOptions {
+  query: string
+  queryParams: any[]
+  mapRow?: (row: any) => any | null  // Optional: transform/filter rows (return null to skip)
+  batchSize?: number
+  chunkSize?: number
+  delayBetweenBatches?: number  // Optional delay in ms between batches
+  timestampField?: string  // Field to use for date range tracking (e.g., 'inverter_time')
+  onProgress?: (synced: number, total: number, rangeStart?: Date, rangeEnd?: Date, batchSize?: number) => void
+  onComplete?: (synced: number, firstTime?: Date, lastTime?: Date) => string  // Returns detail message
+}
+
+async function syncTableData(
+  ctx: SyncContext,
+  sourceTable: string,
+  targetTable: string,
+  options: SyncTableOptions
+): Promise<{ synced: number, skipped: number, detail?: string }> {
+  const {
+    query,
+    queryParams,
+    mapRow,
+    batchSize = 1000,
+    chunkSize = 250,
+    delayBetweenBatches = 0,
+    timestampField,
+    onProgress,
+    onComplete
+  } = options
+  
+  let offset = 0
+  let totalSynced = 0
+  let totalSkipped = 0
+  let batchNum = 0
+  let firstBatchTime: Date | null = null
+  let lastBatchTime: Date | null = null
+  const startTime = Date.now()
+  
+  while (!ctx.signal.aborted) {
+    batchNum++
+    const batchStartTime = Date.now()
+    
+    // Fetch batch from production
+    console.log(`[SYNC] Fetching batch ${batchNum}: offset=${offset}, limit=${batchSize}`)
+    const fetchStart = Date.now()
+    
+    const batchResult = await ctx.prodDb.execute(
+      `${query} LIMIT ? OFFSET ?`,
+      [...queryParams, batchSize, offset]
+    )
+    
+    const fetchTime = Date.now() - fetchStart
+    console.log(`[SYNC] Fetched ${batchResult.rows.length} rows in ${fetchTime}ms`)
+    
+    if (batchResult.rows.length === 0) {
+      console.log('[SYNC] No more rows to fetch, ending sync')
+      break
+    }
+    
+    // Track date range if timestamp field specified
+    let batchRangeStart: Date | undefined
+    let batchRangeEnd: Date | undefined
+    
+    if (timestampField && batchResult.rows.length > 0) {
+      batchRangeStart = new Date((batchResult.rows[0][timestampField] as number) * 1000)
+      batchRangeEnd = new Date((batchResult.rows[batchResult.rows.length - 1][timestampField] as number) * 1000)
+      
+      if (!firstBatchTime) firstBatchTime = batchRangeStart
+      lastBatchTime = batchRangeEnd
+    }
+    
+    // Call progress callback before processing batch
+    if (onProgress) {
+      onProgress(totalSynced, totalSynced + offset, batchRangeStart, batchRangeEnd, batchResult.rows.length)
+    }
+    
+    // Map rows and filter out nulls
+    const batchData = []
+    for (const row of batchResult.rows) {
+      const mappedRow = mapRow ? mapRow(row) : row
+      if (mappedRow) {
+        batchData.push(mappedRow)
+      } else {
+        totalSkipped++
+      }
+    }
+    
+    if (batchData.length === 0) {
+      offset += batchSize
+      continue
+    }
+    
+    // Insert in chunks using raw SQL
+    const insertStart = Date.now()
+    let chunksInserted = 0
+    
+    for (let i = 0; i < batchData.length; i += chunkSize) {
+      const chunk = batchData.slice(i, i + chunkSize)
+      
+      if (chunk.length > 0) {
+        // Get column names from first row
+        const columns = Object.keys(chunk[0])
+        
+        // Build multi-row insert statement
+        const values = chunk.map(row => 
+          `(${columns.map(col => {
+            const val = row[col]
+            if (val === null || val === undefined) return 'NULL'
+            if (typeof val === 'string') return `'${val.replace(/'/g, "''")}'`
+            return val
+          }).join(',')})`
+        ).join(',')
+        
+        // Execute raw SQL insert
+        const insertQuery = sql`INSERT OR IGNORE INTO ${sql.raw(targetTable)} (${sql.raw(columns.join(','))}) VALUES ${sql.raw(values)}`
+        await ctx.db.run(insertQuery)
+        chunksInserted++
+      }
+    }
+    
+    const insertTime = Date.now() - insertStart
+    console.log(`[SYNC] Inserted ${batchData.length} ${targetTable} records in ${chunksInserted} chunks (${insertTime}ms)`)
+    
+    totalSynced += batchData.length
+    offset += batchSize
+    
+    // Add delay between batches if specified
+    if (delayBetweenBatches > 0 && batchResult.rows.length === batchSize) {
+      await new Promise(resolve => setTimeout(resolve, delayBetweenBatches))
+    }
+  }
+  
+  // Call onComplete callback with date range if available
+  let detail: string | undefined
+  if (onComplete) {
+    detail = onComplete(totalSynced, firstBatchTime || undefined, lastBatchTime || undefined)
+  }
+  
+  return { synced: totalSynced, skipped: totalSkipped, detail }
+}
 
 export interface SyncContext {
   db: any
@@ -13,7 +174,10 @@ export interface SyncContext {
   send: (data: any) => void
   clerkMappings: Map<string, string>
   mapClerkId: (prodId: string | null | undefined) => string | undefined
+  systemIdMappings: Map<number, number>  // Map prod systemId → dev systemId
+  mapSystemId: (prodSystemId: number) => number | undefined
   localLatestTime?: Date
+  syncFromTime?: Date  // The actual time to sync from (min 7 days back)
   totalToSync?: number
   synced?: number
   formatDateTime: (date: Date) => string
@@ -107,40 +271,64 @@ async function loadClerkMappings(ctx: SyncContext) {
 // Stage 4: Sync systems
 async function syncSystems(ctx: SyncContext) {
   const prodSystems = await ctx.prodDb.execute('SELECT * FROM systems')
-  let synced = 0
+  const systemIdMappings = new Map<number, number>()
+  let inserted = 0
+  let updated = 0
   let skipped = 0
   
+  // First, get all existing dev systems to check for duplicates
+  const devSystems = await ctx.db.select().from(systems)
+  const devSystemsMap = new Map<string, typeof devSystems[0]>()
+  for (const devSys of devSystems) {
+    const key = `${devSys.vendorType}:${devSys.vendorSiteId}`
+    devSystemsMap.set(key, devSys)
+  }
+  
   for (const sys of prodSystems.rows) {
+    const prodSystemId = sys.id as number
+    const vendorType = sys.vendor_type as string
+    const vendorSiteId = sys.vendor_site_id as string
+    const key = `${vendorType}:${vendorSiteId}`
+    
     const mappedOwnerId = ctx.mapClerkId(sys.owner_clerk_user_id as string | null)
     
     if (!mappedOwnerId) {
-      console.log(`Skipping system ${sys.id} - no dev mapping for owner ${sys.owner_clerk_user_id}`)
+      console.log(`Skipping system ${prodSystemId} - no dev mapping for owner ${sys.owner_clerk_user_id}`)
       skipped++
       continue
     }
     
-    await ctx.db.insert(systems).values({
-      id: sys.id as number,
-      ownerClerkUserId: mappedOwnerId,
-      vendorType: sys.vendor_type as string,
-      vendorSiteId: sys.vendor_site_id as string,
-      status: sys.status as string,
-      displayName: sys.display_name as string,
-      model: sys.model as string | undefined,
-      serial: sys.serial as string | undefined,
-      ratings: sys.ratings as string | undefined,
-      solarSize: sys.solar_size as string | undefined,
-      batterySize: sys.battery_size as string | undefined,
-      location: sys.location as any,
-      timezoneOffsetMin: sys.timezone_offset_min as number,
-      createdAt: new Date(sys.created_at as number * 1000),
-      updatedAt: new Date(sys.updated_at as number * 1000),
-    }).onConflictDoUpdate({
-      target: systems.id,
-      set: {
+    // Check if this system already exists in dev
+    const existingDevSystem = devSystemsMap.get(key)
+    
+    if (existingDevSystem) {
+      // System exists - just update it and map the IDs
+      systemIdMappings.set(prodSystemId, existingDevSystem.id)
+      
+      await ctx.db
+        .update(systems)
+        .set({
+          ownerClerkUserId: mappedOwnerId,
+          status: sys.status as string,
+          displayName: sys.display_name as string,
+          model: sys.model as string | undefined,
+          serial: sys.serial as string | undefined,
+          ratings: sys.ratings as string | undefined,
+          solarSize: sys.solar_size as string | undefined,
+          batterySize: sys.battery_size as string | undefined,
+          location: sys.location as any,
+          timezoneOffsetMin: sys.timezone_offset_min as number,
+          updatedAt: new Date(),
+        })
+        .where(eq(systems.id, existingDevSystem.id))
+      
+      updated++
+    } else {
+      // System doesn't exist - insert it
+      const result = await ctx.db.insert(systems).values({
         ownerClerkUserId: mappedOwnerId,
-        vendorType: sys.vendor_type as string,
-        vendorSiteId: sys.vendor_site_id as string,
+        vendorType: vendorType,
+        vendorSiteId: vendorSiteId,
         status: sys.status as string,
         displayName: sys.display_name as string,
         model: sys.model as string | undefined,
@@ -150,156 +338,122 @@ async function syncSystems(ctx: SyncContext) {
         batterySize: sys.battery_size as string | undefined,
         location: sys.location as any,
         timezoneOffsetMin: sys.timezone_offset_min as number,
-        updatedAt: new Date(),
+        createdAt: new Date(sys.created_at as number * 1000),
+        updatedAt: new Date(sys.updated_at as number * 1000),
+      }).returning({ id: systems.id })
+      
+      if (result.length > 0) {
+        systemIdMappings.set(prodSystemId, result[0].id)
+        inserted++
       }
-    })
-    synced++
+    }
+  }
+  
+  // Send mapping tables to frontend
+  const systemMappingData = Array.from(systemIdMappings.entries()).map(([prodId, devId]) => ({
+    'Prod ID': prodId,
+    'Dev ID': devId,
+    'System': devSystemsMap.get(
+      Array.from(devSystemsMap.entries()).find(([_, sys]) => sys.id === devId)?.[0] || ''
+    )?.displayName || 'Unknown'
+  }))
+  
+  const clerkMappingData = Array.from(ctx.clerkMappings.entries()).map(([prodId, devId]) => ({
+    'Prod Clerk ID': prodId.slice(0, 20) + '...',
+    'Dev Clerk ID': devId.slice(0, 20) + '...',
+  }))
+  
+  // Send to frontend
+  ctx.send({
+    type: 'mappings',
+    systemMappings: systemMappingData,
+    clerkMappings: clerkMappingData
+  })
+  
+  // Create mapSystemId function
+  const mapSystemId = (prodSystemId: number): number | undefined => {
+    const mapped = systemIdMappings.get(prodSystemId)
+    if (!mapped) {
+      console.warn(`Warning: No dev system ID mapping for production ID: ${prodSystemId}`)
+    }
+    return mapped
   }
   
   return {
-    detail: `Synced ${synced} systems${skipped > 0 ? `, skipped ${skipped}` : ''}`
+    detail: `Inserted ${inserted}, updated ${updated}${skipped > 0 ? `, skipped ${skipped}` : ''}`,
+    context: { systemIdMappings, mapSystemId }
   }
 }
 
 // Stage 5: Count new data
 async function countNewData(ctx: SyncContext) {
+  // Force minimum 7 days of data
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+  const syncFromTime = ctx.localLatestTime! > sevenDaysAgo ? sevenDaysAgo : ctx.localLatestTime!
+  
   const countResult = await ctx.prodDb.execute(
     `SELECT COUNT(*) as count FROM readings WHERE inverter_time > ?`,
-    [Math.floor(ctx.localLatestTime!.getTime() / 1000)]
+    [Math.floor(syncFromTime.getTime() / 1000)]
   )
   
   const totalToSync = countResult.rows[0]?.count as number || 0
   
+  // Store the actual sync start time in context
+  const context = { 
+    totalToSync,
+    syncFromTime 
+  }
+  
   return {
-    detail: `${totalToSync.toLocaleString()} new readings to sync`,
-    context: { totalToSync }
+    detail: `${totalToSync.toLocaleString()} readings to sync (min 7 days)`,
+    context
   }
 }
 
 // Stage 6: Sync readings
 async function syncReadings(ctx: SyncContext) {
-  const BATCH_SIZE = 500
-  let offset = 0
-  let synced = 0
-  let firstBatchTime: Date | null = null
-  let lastBatchTime: Date | null = null
+  // Use syncFromTime if available (from countNewData), otherwise fall back to localLatestTime
+  const syncFromTime = ctx.syncFromTime || ctx.localLatestTime!
+  const syncFromTimestamp = Math.floor(syncFromTime.getTime() / 1000)
   
-  console.log(`[SYNC] Starting readings sync: ${ctx.totalToSync} readings to download`)
-  const syncStartTime = Date.now()
+  console.log(`[SYNC] Starting readings sync: ${ctx.totalToSync} readings to download from ${syncFromTime.toISOString()}`)
   
-  while (synced < ctx.totalToSync!) {
-    const batchStartTime = Date.now()
-    if (ctx.signal.aborted) throw new Error('Sync cancelled')
-    
-    const dataProgress = 25 + (synced / ctx.totalToSync!) * 50
-    const percentComplete = Math.round((synced / ctx.totalToSync!) * 100)
-    
-    // Fetch batch from production
-    console.log(`[SYNC] Fetching batch ${Math.floor(offset / BATCH_SIZE) + 1}: offset=${offset}, limit=${BATCH_SIZE}`)
-    const fetchStart = Date.now()
-    
-    const batchResult = await ctx.prodDb.execute(
-      `SELECT * FROM readings 
-       WHERE inverter_time > ? 
-       ORDER BY inverter_time 
-       LIMIT ? OFFSET ?`,
-      [Math.floor(ctx.localLatestTime!.getTime() / 1000), BATCH_SIZE, offset]
-    )
-    
-    const fetchTime = Date.now() - fetchStart
-    console.log(`[SYNC] Fetched ${batchResult.rows.length} rows in ${fetchTime}ms`)
-    
-    if (batchResult.rows.length === 0) {
-      console.log('[SYNC] No more rows to fetch, ending sync')
-      break
+  // Use generic sync function with progress tracking
+  const result = await syncTableData(ctx, 'readings', 'readings', {
+    query: `SELECT * FROM readings WHERE inverter_time > ? ORDER BY inverter_time`,
+    queryParams: [syncFromTimestamp],
+    mapRow: (row) => {
+      // Map system IDs
+      const mappedSystemId = ctx.mapSystemId(row.system_id as number)
+      if (!mappedSystemId) {
+        console.warn(`Skipping reading for unmapped system ${row.system_id}`)
+        return null
+      }
+      return {
+        ...row,
+        system_id: mappedSystemId
+      }
+    },
+    batchSize: 1000,
+    chunkSize: 250,  // SQLite has a 999 variable limit
+    delayBetweenBatches: 100,  // Small delay to prevent overwhelming the database
+    timestampField: 'inverter_time',
+    onProgress: createTimeBasedProgressCallback(ctx, 'sync-readings'),
+    onComplete: (synced, firstTime, lastTime) => {
+      // Format the date range if we have data
+      let dateRangeStr = ''
+      if (firstTime && lastTime) {
+        const firstZoned = fromUnixTimestamp(Math.floor(firstTime.getTime() / 1000), 600)
+        const lastZoned = fromUnixTimestamp(Math.floor(lastTime.getTime() / 1000), 600)
+        dateRangeStr = ` (${formatDateRange(firstZoned, lastZoned, true)})`
+      }
+      return `Synced ${synced.toLocaleString()} readings${dateRangeStr}`
     }
-    
-    // Track batch time range
-    const batchFirstTime = new Date(batchResult.rows[0].inverter_time as number * 1000)
-    const batchLastTime = new Date(batchResult.rows[batchResult.rows.length - 1].inverter_time as number * 1000)
-    
-    if (!firstBatchTime) firstBatchTime = batchFirstTime
-    lastBatchTime = batchLastTime
-    
-    // Convert to ZonedDateTime for formatting (assuming Sydney timezone)
-    const batchFirstZoned = fromUnixTimestamp(batchResult.rows[0].inverter_time as number, 600)
-    const batchLastZoned = fromUnixTimestamp(batchResult.rows[batchResult.rows.length - 1].inverter_time as number, 600)
-    
-    // Update progress
-    ctx.updateStage('sync-readings', { 
-      detail: `Downloading batch from ${formatDateRange(batchFirstZoned, batchLastZoned, true)} (${percentComplete}%)`
-    })
-    
-    ctx.send({ 
-      type: 'progress', 
-      message: `Syncing readings: ${synced.toLocaleString()} of ${ctx.totalToSync!.toLocaleString()} (${percentComplete}%)`, 
-      progress: Math.round(dataProgress), 
-      total: 100 
-    })
-    
-    // Convert and insert batch
-    const batchData = batchResult.rows.map((row: any) => ({
-      systemId: row.system_id as number,
-      inverterTime: new Date(row.inverter_time as number * 1000),
-      receivedTime: new Date(row.received_time as number * 1000),
-      delaySeconds: row.delay_seconds as number | undefined,
-      solarW: row.solar_w as number,
-      solarInverterW: row.solar_inverter_w as number,
-      shuntW: row.shunt_w as number,
-      loadW: row.load_w as number,
-      batteryW: row.battery_w as number,
-      gridW: row.grid_w as number,
-      batterySOC: row.battery_soc as number,
-      faultCode: row.fault_code as number,
-      faultTimestamp: row.fault_timestamp as number,
-      generatorStatus: row.generator_status as number,
-      solarKwhTotal: row.solar_kwh_total as number | undefined,
-      loadKwhTotal: row.load_kwh_total as number | undefined,
-      batteryInKwhTotal: row.battery_in_kwh_total as number | undefined,
-      batteryOutKwhTotal: row.battery_out_kwh_total as number | undefined,
-      gridInKwhTotal: row.grid_in_kwh_total as number | undefined,
-      gridOutKwhTotal: row.grid_out_kwh_total as number | undefined,
-      createdAt: new Date(row.created_at as number * 1000),
-    }))
-    
-    // Insert in chunks (SQLite has limits)
-    const INSERT_CHUNK_SIZE = 100
-    const insertStart = Date.now()
-    let chunksInserted = 0
-    
-    for (let i = 0; i < batchData.length; i += INSERT_CHUNK_SIZE) {
-      const chunk = batchData.slice(i, i + INSERT_CHUNK_SIZE)
-      await ctx.db.insert(readings).values(chunk).onConflictDoNothing()
-      chunksInserted++
-    }
-    
-    const insertTime = Date.now() - insertStart
-    console.log(`[SYNC] Inserted ${batchData.length} rows in ${chunksInserted} chunks (${insertTime}ms)`)
-    
-    synced += batchResult.rows.length
-    offset += BATCH_SIZE
-    
-    const batchTime = Date.now() - batchStartTime
-    console.log(`[SYNC] Batch complete: ${synced}/${ctx.totalToSync} synced (${Math.round((synced / ctx.totalToSync!) * 100)}%), batch took ${batchTime}ms`)
-    
-    // Small delay to prevent overwhelming the database
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  
-  const totalSyncTime = Date.now() - syncStartTime
-  console.log(`[SYNC] Readings sync complete: ${synced} readings in ${(totalSyncTime / 1000).toFixed(1)}s (${(synced / (totalSyncTime / 1000)).toFixed(0)} readings/sec)`)
-  
-  // Format the date range if we have data
-  let dateRangeStr = ''
-  if (firstBatchTime && lastBatchTime) {
-    const firstZoned = fromUnixTimestamp(Math.floor(firstBatchTime.getTime() / 1000), 600)
-    const lastZoned = fromUnixTimestamp(Math.floor(lastBatchTime.getTime() / 1000), 600)
-    dateRangeStr = ` (${formatDateRange(firstZoned, lastZoned, true)})`  // Set includeTime to true
-  }
+  })
   
   return {
-    detail: `Synced ${synced.toLocaleString()} readings${dateRangeStr}`,
-    context: { synced }
+    detail: result.detail,
+    context: { synced: result.synced }
   }
 }
 
@@ -312,9 +466,16 @@ async function syncUserSystems(ctx: SyncContext) {
   
   for (const us of prodUserSystems.rows) {
     const mappedClerkId = ctx.mapClerkId(us.clerk_user_id as string)
+    const mappedSystemId = ctx.mapSystemId(us.system_id as number)
     
     if (!mappedClerkId) {
       console.log(`Skipping user_system ${us.id} - no dev mapping for user ${us.clerk_user_id}`)
+      skipped++
+      continue
+    }
+    
+    if (!mappedSystemId) {
+      console.log(`Skipping user_system ${us.id} - no dev mapping for system ${us.system_id}`)
       skipped++
       continue
     }
@@ -326,7 +487,7 @@ async function syncUserSystems(ctx: SyncContext) {
       .where(
         and(
           eq(userSystems.clerkUserId, mappedClerkId),
-          eq(userSystems.systemId, us.system_id as number)
+          eq(userSystems.systemId, mappedSystemId)
         )
       )
       .limit(1)
@@ -341,10 +502,10 @@ async function syncUserSystems(ctx: SyncContext) {
         })
         .where(eq(userSystems.id, existing[0].id))
     } else {
-      // Insert new record (don't copy the ID from production)
+      // Insert new record with mapped system ID
       await ctx.db.insert(userSystems).values({
         clerkUserId: mappedClerkId,
-        systemId: us.system_id as number,
+        systemId: mappedSystemId,
         role: us.role as string,
         createdAt: new Date(us.created_at as number * 1000),
         updatedAt: new Date(us.updated_at as number * 1000),
@@ -357,94 +518,117 @@ async function syncUserSystems(ctx: SyncContext) {
   return { detail: `Synced ${userSystemsProcessed} user-system mappings${skipped > 0 ? ` (${skipped} skipped)` : ''}` }
 }
 
-// Stage 8: Create 5-minute aggregations
-async function create5MinAggregations(ctx: SyncContext) {
-  const aggregationStart = Date.now()
+// Stage 8: Sync 5-minute aggregations from production
+async function sync5MinAggregations(ctx: SyncContext) {
+  // Force minimum 7 days of aggregated data
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+  const syncFromTime = ctx.syncFromTime || sevenDaysAgo
   
-  // Get the date range of synced data - use Drizzle query instead of raw SQL
-  const newReadings = await ctx.db
-    .select({
-      minTime: sql<number>`MIN(inverter_time)`,
-      maxTime: sql<number>`MAX(inverter_time)`,
-      systemCount: sql<number>`COUNT(DISTINCT system_id)`,
-      count: sql<number>`COUNT(*)`
-    })
-    .from(readings)
-    .where(gte(readings.inverterTime, ctx.localLatestTime!))
+  console.log(`[SYNC] Syncing 5-minute aggregations from ${syncFromTime.toISOString()}`)
   
-  if (newReadings.length > 0 && newReadings[0].count > 0) {
-    const minTime = newReadings[0].minTime
-    const maxTime = newReadings[0].maxTime
-    const systemCount = newReadings[0].systemCount
-    
-    console.log(`[SYNC] Creating 5-minute aggregations for ${newReadings[0].count} new readings across ${systemCount} systems`)
-    
-    // Get all unique 5-minute intervals that need aggregation
-    const intervalMs = 5 * 60 * 1000
-    const startInterval = new Date(Math.floor(minTime * 1000 / intervalMs) * intervalMs)
-    const endInterval = new Date(Math.ceil(maxTime * 1000 / intervalMs) * intervalMs)
-    
-    // Get all systems that have new data
-    const systemsWithNewData = await ctx.db
-      .selectDistinct({ systemId: readings.systemId })
-      .from(readings)
-      .where(gte(readings.inverterTime, ctx.localLatestTime!))
-    
-    let aggregatedIntervals = 0
-    for (const row of systemsWithNewData) {
-      const systemId = row.systemId
-      
-      // Process each 5-minute interval for this system
-      for (let intervalTime = startInterval.getTime(); intervalTime <= endInterval.getTime(); intervalTime += intervalMs) {
-        await updateAggregatedData(systemId, new Date(intervalTime))
-        aggregatedIntervals++
-      }
-    }
-    
-    const aggregationTime = (Date.now() - aggregationStart) / 1000
-    return { 
-      detail: `Created ${aggregatedIntervals} aggregations in ${aggregationTime.toFixed(1)}s` 
-    }
-  } else {
-    return { detail: 'No new data to aggregate' }
+  // Count total to sync
+  const countResult = await ctx.prodDb.execute(
+    `SELECT COUNT(*) as count FROM readings_agg_5m WHERE interval_end > ?`,
+    [Math.floor(syncFromTime.getTime() / 1000)]
+  )
+  
+  const totalToSync = countResult.rows[0]?.count as number || 0
+  
+  if (totalToSync === 0) {
+    return { detail: 'No 5-minute aggregations to sync' }
   }
+  
+  console.log(`[SYNC] Syncing ${totalToSync} 5-minute aggregations`)
+  
+  // Set totalToSync in context for consistent progress tracking
+  ctx.totalToSync = totalToSync
+  
+  // Clear existing aggregations in the sync range
+  const syncFromTimestamp = Math.floor(syncFromTime.getTime() / 1000)
+  const deleteResult = await ctx.db
+    .delete(readingsAgg5m)
+    .where(gte(readingsAgg5m.intervalEnd, syncFromTimestamp))
+  
+  // Use generic sync function
+  const result = await syncTableData(ctx, 'readings_agg_5m', 'readings_agg_5m', {
+    query: `SELECT * FROM readings_agg_5m WHERE interval_end > ? ORDER BY interval_end`,
+    queryParams: [Math.floor(syncFromTime.getTime() / 1000)],
+    mapRow: (row) => {
+      // Map system IDs
+      const mappedSystemId = ctx.mapSystemId(row.system_id as number)
+      if (!mappedSystemId) {
+        console.warn(`Skipping 5-min aggregation for unmapped system ${row.system_id}`)
+        return null
+      }
+      return {
+        ...row,
+        system_id: mappedSystemId
+      }
+    },
+    batchSize: 1000,
+    timestampField: 'interval_end',  // 5-min aggregations use interval_end for timestamps
+    onProgress: createTimeBasedProgressCallback(ctx, 'sync-5min-agg')
+  })
+  
+  return { detail: `Synced ${result.synced.toLocaleString()} 5-minute aggregations` }
 }
 
-// Stage 9: Create daily aggregations
-async function createDailyAggregations(ctx: SyncContext) {
-  const dailyAggStart = Date.now()
+
+// Stage 9: Sync ALL daily aggregations from production
+async function syncDailyAggregations(ctx: SyncContext) {
+  const BATCH_SIZE = 1000
+  let synced = 0
   
-  // Get distinct days that need aggregation using Drizzle
-  const daysResult = await ctx.db
-    .select({
-      day: sql<string>`date(inverter_time, 'unixepoch', 'localtime')`,
-      count: sql<number>`COUNT(*)`
-    })
-    .from(readings)
-    .where(gte(readings.inverterTime, ctx.localLatestTime!))
-    .groupBy(sql`date(inverter_time, 'unixepoch', 'localtime')`)
-    .orderBy(sql`date(inverter_time, 'unixepoch', 'localtime')`)
+  console.log(`[SYNC] Syncing ALL daily aggregations from production`)
   
-  if (daysResult.length > 0) {
-    console.log(`[SYNC] Creating daily aggregations for ${daysResult.length} days`)
-    
-    // Get all systems
-    const systemsList = await ctx.db.select().from(systems)
-    
-    // Aggregate each day for each system
-    for (const system of systemsList) {
-      for (const row of daysResult) {
-        await aggregateDailyData(system.id.toString(), row.day)
+  // Count total daily aggregations in production
+  const countResult = await ctx.prodDb.execute(
+    `SELECT COUNT(*) as count FROM readings_agg_1d`
+  )
+  
+  const totalToSync = countResult.rows[0]?.count as number || 0
+  
+  if (totalToSync === 0) {
+    return { detail: 'No daily aggregations to sync' }
+  }
+  
+  console.log(`[SYNC] Syncing ${totalToSync} daily aggregations`)
+  
+  // Set totalToSync in context for consistent progress tracking
+  ctx.totalToSync = totalToSync
+  
+  // Clear ALL existing daily aggregations to replace with production data
+  await ctx.db.delete(readingsAgg1d)
+  
+  // Use generic sync function
+  const result = await syncTableData(ctx, 'readings_agg_1d', 'readings_agg_1d', {
+    query: `SELECT * FROM readings_agg_1d ORDER BY system_id, day`,
+    queryParams: [],
+    mapRow: (row) => {
+      // Map system IDs (system_id is TEXT in daily aggregations)
+      const prodSystemId = parseInt(row.system_id as string)
+      const mappedSystemId = ctx.mapSystemId(prodSystemId)
+      if (!mappedSystemId) {
+        console.warn(`Skipping daily aggregation for unmapped system ${prodSystemId}`)
+        return null
+      }
+      return {
+        ...row,
+        system_id: mappedSystemId.toString() // Convert back to string for TEXT column
+      }
+    },
+    onProgress: (synced, total) => {
+      if (ctx.totalToSync) {
+        const percentComplete = Math.round((synced / ctx.totalToSync) * 100)
+        ctx.updateStage('sync-daily-agg', { 
+          detail: `Syncing: ${synced.toLocaleString()} of ${ctx.totalToSync.toLocaleString()} (${percentComplete}%)`,
+          progress: percentComplete
+        })
       }
     }
-    
-    const dailyAggTime = (Date.now() - dailyAggStart) / 1000
-    return { 
-      detail: `Aggregated ${daysResult.length} days in ${dailyAggTime.toFixed(1)}s` 
-    }
-  } else {
-    return { detail: 'No days to aggregate' }
-  }
+  })
+  
+  return { detail: `Synced ${result.synced.toLocaleString()} daily aggregations` }
 }
 
 // Combined stage: Prepare for sync (combines check local, connect to prod, load mappings)
@@ -521,92 +705,6 @@ async function prepareForSync(ctx: SyncContext) {
   }
 }
 
-// Combined stage: Update aggregations (combines 5-minute and daily aggregations)
-async function updateAggregations(ctx: SyncContext) {
-  const aggregationStart = Date.now()
-  let details: string[] = []
-  
-  // Part 1: Create 5-minute aggregations
-  const newReadings = await ctx.db
-    .select({
-      minTime: sql<number>`MIN(inverter_time)`,
-      maxTime: sql<number>`MAX(inverter_time)`,
-      systemCount: sql<number>`COUNT(DISTINCT system_id)`,
-      count: sql<number>`COUNT(*)`
-    })
-    .from(readings)
-    .where(gte(readings.inverterTime, ctx.localLatestTime!))
-  
-  let aggregatedIntervals = 0
-  if (newReadings.length > 0 && newReadings[0].count > 0) {
-    const minTime = newReadings[0].minTime
-    const maxTime = newReadings[0].maxTime
-    const systemCount = newReadings[0].systemCount
-    
-    console.log(`[SYNC] Creating 5-minute aggregations for ${newReadings[0].count} new readings across ${systemCount} systems`)
-    
-    // Get all unique 5-minute intervals that need aggregation
-    const intervalMs = 5 * 60 * 1000
-    const startInterval = new Date(Math.floor(minTime * 1000 / intervalMs) * intervalMs)
-    const endInterval = new Date(Math.ceil(maxTime * 1000 / intervalMs) * intervalMs)
-    
-    // Get all systems that have new data
-    const systemsWithNewData = await ctx.db
-      .selectDistinct({ systemId: readings.systemId })
-      .from(readings)
-      .where(gte(readings.inverterTime, ctx.localLatestTime!))
-    
-    for (const row of systemsWithNewData) {
-      const systemId = row.systemId
-      
-      // Process each 5-minute interval for this system
-      for (let intervalTime = startInterval.getTime(); intervalTime <= endInterval.getTime(); intervalTime += intervalMs) {
-        await updateAggregatedData(systemId, new Date(intervalTime))
-        aggregatedIntervals++
-      }
-    }
-    
-    const intervalText = aggregatedIntervals === 1 ? '1 5-min interval' : `${aggregatedIntervals} 5-min intervals`
-    details.push(intervalText)
-  }
-  
-  // Part 2: Create daily aggregations
-  const dailyAggStart = Date.now()
-  
-  // Get distinct days that need aggregation using Drizzle
-  const daysResult = await ctx.db
-    .select({
-      day: sql<string>`date(inverter_time, 'unixepoch', 'localtime')`,
-      count: sql<number>`COUNT(*)`
-    })
-    .from(readings)
-    .where(gte(readings.inverterTime, ctx.localLatestTime!))
-    .groupBy(sql`date(inverter_time, 'unixepoch', 'localtime')`)
-    .orderBy(sql`date(inverter_time, 'unixepoch', 'localtime')`)
-  
-  if (daysResult.length > 0) {
-    console.log(`[SYNC] Creating daily aggregations for ${daysResult.length} days`)
-    
-    // Get all systems
-    const systemsList = await ctx.db.select().from(systems)
-    
-    // Aggregate each day for each system
-    for (const system of systemsList) {
-      for (const row of daysResult) {
-        await aggregateDailyData(system.id.toString(), row.day)
-      }
-    }
-    
-    const dayText = daysResult.length === 1 ? '1 day' : `${daysResult.length} days`
-    details.push(dayText)
-  }
-  
-  const aggregationTime = (Date.now() - aggregationStart) / 1000
-  return { 
-    detail: details.length > 0 ? details.join(', ') : 'No aggregations needed'
-  }
-}
-
 // Stage 10: Finalise - cleanup and verification
 async function finaliseSync(ctx: SyncContext) {
   // Close the production database connection
@@ -637,7 +735,8 @@ export const syncStages: StageDefinition[] = [
   { id: 'sync-systems', name: 'Sync systems', estimatedDurationMs: 200, execute: syncSystems },
   { id: 'count-data', name: 'Count new data', estimatedDurationMs: 300, execute: countNewData },
   { id: 'sync-readings', name: 'Sync readings', estimatedDurationMs: 30000, execute: syncReadings }, // 30 seconds for bulk of data
+  { id: 'sync-5min-agg', name: 'Sync 5-min aggregations', estimatedDurationMs: 5000, execute: sync5MinAggregations },
+  { id: 'sync-daily-agg', name: 'Sync daily aggregations', estimatedDurationMs: 3000, execute: syncDailyAggregations },
   { id: 'sync-users', name: 'Sync user systems', estimatedDurationMs: 100, execute: syncUserSystems },
-  { id: 'update-aggregations', name: 'Update aggregations', estimatedDurationMs: 700, execute: updateAggregations },
   { id: 'finalise', name: 'Finalise', estimatedDurationMs: 50, execute: finaliseSync },
 ]

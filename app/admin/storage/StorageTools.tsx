@@ -172,10 +172,8 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
           for (const line of lines) {
             try {
               const update = JSON.parse(line)
-              console.log('[SYNC UI] Received update:', update.type, update)
-              
-              if (update.type === 'stages') {
-                // Update all stages from backend
+              if (update.type === 'stages-init') {
+                // Initialize all stages at once
                 const mappedStages = update.stages.map((backendStage: any) => ({
                   id: backendStage.id,
                   name: backendStage.name,
@@ -186,8 +184,38 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                   startTime: backendStage.startTime,
                   duration: backendStage.duration
                 }))
-                console.log('[SYNC UI] Updating stages:', mappedStages)
                 setSyncStages(mappedStages)
+              } else if (update.type === 'stage-update') {
+                // Update a single stage
+                const stageUpdate = update.stage
+                setSyncStages(prevStages => {
+                  const newStages = prevStages.map(stage => 
+                    stage.id === stageUpdate.id 
+                      ? {
+                          ...stage,
+                          name: stageUpdate.name,
+                          details: stageUpdate.detail,
+                          status: (stageUpdate.status === 'running' ? 'in_progress' : 
+                                  stageUpdate.status === 'completed' ? 'completed' :
+                                  stageUpdate.status === 'error' ? 'error' : 'pending') as 'pending' | 'in_progress' | 'completed' | 'error',
+                          startTime: stageUpdate.startTime,
+                          duration: stageUpdate.duration
+                        }
+                      : stage
+                  )
+                  
+                  // Log the update
+                  const updatedStage = newStages.find(s => s.id === stageUpdate.id)
+                  if (updatedStage) {
+                    console.log('[SYNC]', { 
+                      stage: updatedStage.name, 
+                      status: updatedStage.status,
+                      details: updatedStage.details || undefined 
+                    })
+                  }
+                  
+                  return newStages
+                })
               } else if (update.type === 'progress') {
                 setSyncProgress({
                   isActive: true,
@@ -195,6 +223,16 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                   progress: update.progress || 0,
                   total: update.total || 100
                 })
+              } else if (update.type === 'mappings') {
+                // Display mapping tables in console
+                if (update.clerkMappings && update.clerkMappings.length > 0) {
+                  console.log('[SYNC] Clerk ID Mappings:')
+                  console.table(update.clerkMappings)
+                }
+                if (update.systemMappings && update.systemMappings.length > 0) {
+                  console.log('[SYNC] System ID Mappings:')
+                  console.table(update.systemMappings)
+                }
               } else if (update.type === 'complete') {
                 // Calculate total duration from all completed stages and update message
                 setSyncStages(prevStages => {
