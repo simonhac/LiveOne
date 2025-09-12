@@ -194,6 +194,15 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
       
       // Check for other non-OK responses
       if (!response.ok) {
+        // Check if the response is HTML (like a 404 page) instead of JSON
+        const contentType = response.headers.get('content-type')
+        if (contentType && !contentType.includes('application/json')) {
+          // If we get an HTML response, it's likely a token expiration that wasn't caught above
+          console.log('Non-JSON response received, likely token expired')
+          setShowSessionTimeout(true)
+          setLoading(false)
+          return
+        }
         throw new Error(`Failed to fetch data: ${response.status}`)
       }
       

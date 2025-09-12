@@ -383,6 +383,13 @@ export default function EnergyChart({ className = '', maxPowerHint, systemId, ve
         })
 
         if (!response.ok) {
+          // Check if the response is HTML (like a 404 page) instead of JSON
+          const contentType = response.headers.get('content-type')
+          if (contentType && !contentType.includes('application/json')) {
+            // If we get an HTML response, it's likely a token expiration
+            console.log('Non-JSON response received in chart fetch, likely token expired')
+            throw new Error('Session expired - please refresh the page')
+          }
           if (response.status === 401) {
             throw new Error('Not authenticated - please log in')
           }
