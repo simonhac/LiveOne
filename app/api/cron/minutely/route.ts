@@ -206,8 +206,8 @@ export async function GET(request: NextRequest) {
               }
             }
             
-            // Update polling status
-            await updatePollingStatusSuccess(system.id);
+            // Update polling status with response data
+            await updatePollingStatusSuccess(system.id, result.data);
             
             results.push({
               systemId: system.id,

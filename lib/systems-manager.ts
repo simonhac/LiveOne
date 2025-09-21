@@ -50,6 +50,19 @@ export class SystemsManager {
   }
   
   /**
+   * Get system by vendor site ID
+   */
+  async getSystemByVendorSiteId(vendorSiteId: string) {
+    await this.loadPromise;
+    for (const system of this.systemsMap.values()) {
+      if (system.vendorSiteId === vendorSiteId) {
+        return system;
+      }
+    }
+    return null;
+  }
+  
+  /**
    * Get all active systems only
    */
   async getActiveSystems() {

@@ -8,6 +8,7 @@ import { isUserAdmin } from '@/lib/auth-utils';
 import { fromDate } from '@internationalized/date';
 import { getVendorUserId } from '@/lib/secure-credentials';
 import type { VendorType } from '@/lib/secure-credentials';
+import { VendorRegistry } from '@/lib/vendors/registry';
 
 export async function GET(request: NextRequest) {
   try {
@@ -92,6 +93,7 @@ export async function GET(request: NextRequest) {
           type: system.vendorType,
           siteId: system.vendorSiteId,  // Vendor's identifier
           userId: vendorUserId,  // Vendor-specific user ID (email for Select.Live, user ID for Enphase)
+          supportsPolling: VendorRegistry.supportsPolling(system.vendorType),
         },
         location: system.location,  // Location data (address, city/state/country, or lat/lon)
         status: system.status,  // System status: active, disabled, or removed
@@ -111,6 +113,7 @@ export async function GET(request: NextRequest) {
           lastErrorTime: pollStatus?.lastErrorTime ?
             formatTimeAEST(fromDate(pollStatus.lastErrorTime, 'Australia/Brisbane')) : null,
           lastError: pollStatus?.lastError || null,
+          lastResponse: pollStatus?.lastResponse || null,
           consecutiveErrors: pollStatus?.consecutiveErrors || 0,
           totalPolls: pollStatus?.totalPolls || 0,
           successfulPolls: pollStatus?.successfulPolls || 0,
