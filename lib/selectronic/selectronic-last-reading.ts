@@ -52,9 +52,9 @@ export async function getLastReading(systemId: number): Promise<LatestReadingDat
       },
     },
     system: {
-      faultCode: latestReading.faultCode,
-      faultTimestamp: latestReading.faultTimestamp,
-      generatorStatus: latestReading.generatorStatus,
+      faultCode: latestReading.faultCode != null ? String(latestReading.faultCode) : null,
+      faultTimestamp: latestReading.faultTimestamp || null,  // Convert 0 to null when no fault
+      generatorStatus: latestReading.generatorStatus || null,  // Convert 0 to null when no generator
     },
   };
 }

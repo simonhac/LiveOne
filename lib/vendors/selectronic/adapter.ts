@@ -149,9 +149,9 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       batteryW: vendorData.batteryW,
       gridW: vendorData.gridW,
       batterySOC: vendorData.batterySOC,
-      faultCode: vendorData.faultCode,
-      faultTimestamp: vendorData.faultTimestamp,
-      generatorStatus: vendorData.generatorStatus,
+      faultCode: vendorData.faultCode != null ? String(vendorData.faultCode) : null,
+      faultTimestamp: vendorData.faultTimestamp || null,  // Convert 0 to null when no fault
+      generatorStatus: vendorData.generatorStatus || null,  // Convert 0 to null when no generator
       // Lifetime totals
       solarKwhTotal: vendorData.solarKwhTotal,
       loadKwhTotal: vendorData.loadKwhTotal,

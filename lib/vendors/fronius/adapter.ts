@@ -50,9 +50,9 @@ export class FroniusAdapter extends BaseVendorAdapter {
         batteryW: recentReading.batteryW,
         gridW: recentReading.gridW,
         batterySOC: recentReading.batterySOC,
-        faultCode: recentReading.faultCode,
-        faultTimestamp: recentReading.faultTimestamp,
-        generatorStatus: recentReading.generatorStatus,
+        faultCode: recentReading.faultCode != null ? String(recentReading.faultCode) : null,
+        faultTimestamp: recentReading.faultTimestamp || null,  // Convert 0 to null when no fault
+        generatorStatus: recentReading.generatorStatus || null,  // Convert 0 to null when no generator
         // Lifetime totals
         solarKwhTotal: recentReading.solarKwhTotal,
         loadKwhTotal: recentReading.loadKwhTotal,

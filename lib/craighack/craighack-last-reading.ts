@@ -51,8 +51,8 @@ export async function getLastReading(systemId: number) {
       system: {
         // System info from system 2 (Selectronic)
         faultCode: batteryData.system.faultCode,
-        faultTimestamp: batteryData.system.faultTimestamp,
-        generatorStatus: batteryData.system.generatorStatus,
+        faultTimestamp: batteryData.system.faultTimestamp || null,  // Convert 0 to null when no fault
+        generatorStatus: batteryData.system.generatorStatus || null,  // Convert 0 to null when no generator
       },
     };
     

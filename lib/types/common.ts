@@ -22,7 +22,7 @@ export interface CommonPollingData {
   batterySOC?: number | null;  // State of charge (0-100%)
   
   // System status
-  faultCode?: number | null;
+  faultCode?: string | null;
   faultTimestamp?: number | null;  // Unix timestamp of fault
   generatorStatus?: number | null;
   

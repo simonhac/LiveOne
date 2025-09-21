@@ -27,7 +27,7 @@ export interface LatestReadingData {
     };
   };
   system: {
-    faultCode: number | null;
+    faultCode: string | null;
     faultTimestamp: number | null;
     generatorStatus: number | null;
   };
