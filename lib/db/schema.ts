@@ -35,22 +35,30 @@ export const readings = sqliteTable('readings', {
   delaySeconds: integer('delay_seconds'), // receivedTime - inverterTime (for monitoring API lag)
   
   // Power readings (Watts, stored as integers)
-  solarW: integer('solar_w').notNull(), // Calculated: solarinverter_w + shunt_w
-  solarInverterW: integer('solar_inverter_w').notNull(), // Remote solar (solarinverter_w)
-  shuntW: integer('shunt_w').notNull(), // Local solar (shunt_w)
-  loadW: integer('load_w').notNull(),
-  batteryW: integer('battery_w').notNull(),
-  gridW: integer('grid_w').notNull(),
+  solarW: integer('solar_w'), // Total solar: solarLocalW + solarRemoteW
+  solarLocalW: integer('solar_local_w'), // Local solar (from local shunt/CT)
+  solarRemoteW: integer('solar_remote_w'), // Remote solar (from remote inverter)
+  loadW: integer('load_w'),
+  batteryW: integer('battery_w'),
+  gridW: integer('grid_w'),
   
   // Battery data
-  batterySOC: real('battery_soc').notNull(),
+  batterySOC: real('battery_soc'),
   
   // System status
-  faultCode: integer('fault_code').notNull(),
-  faultTimestamp: integer('fault_timestamp').notNull(), // Unix timestamp of fault
-  generatorStatus: integer('generator_status').notNull(),
+  faultCode: integer('fault_code'),
+  faultTimestamp: integer('fault_timestamp'), // Unix timestamp of fault
+  generatorStatus: integer('generator_status'),
   
-  // Energy counters (kWh) - lifetime totals only
+  // Energy counters (Wh) - interval values (energy in this period)
+  solarWhInterval: integer('solar_wh_interval'),
+  loadWhInterval: integer('load_wh_interval'),
+  batteryInWhInterval: integer('battery_in_wh_interval'),
+  batteryOutWhInterval: integer('battery_out_wh_interval'),
+  gridInWhInterval: integer('grid_in_wh_interval'),
+  gridOutWhInterval: integer('grid_out_wh_interval'),
+  
+  // Energy counters (kWh) - lifetime totals
   solarKwhTotal: real('solar_kwh_total'),
   loadKwhTotal: real('load_kwh_total'),
   batteryInKwhTotal: real('battery_in_kwh_total'),

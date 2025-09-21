@@ -32,8 +32,8 @@ export async function getLastReading(systemId: number): Promise<LatestReadingDat
     receivedTime: latestReading.receivedTime,
     power: {
       solarW: latestReading.solarW,
-      solarInverterW: latestReading.solarInverterW,
-      shuntW: latestReading.shuntW,
+      solarLocalW: latestReading.solarLocalW,
+      solarRemoteW: latestReading.solarRemoteW,
       loadW: latestReading.loadW,
       batteryW: latestReading.batteryW,
       gridW: latestReading.gridW,

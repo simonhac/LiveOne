@@ -7,8 +7,8 @@ export interface LatestReadingData {
   receivedTime: Date;
   power: {
     solarW: number | null;
-    solarInverterW: number | null;
-    shuntW: number | null;
+    solarLocalW: number | null;
+    solarRemoteW: number | null;
     loadW: number | null;
     batteryW: number | null;
     gridW: number | null;

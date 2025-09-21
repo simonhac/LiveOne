@@ -38,8 +38,8 @@ export async function getLastReading(systemId: number): Promise<LatestReadingDat
     receivedTime: latestAgg.createdAt || timestamp,
     power: {
       solarW: latestAgg.solarWAvg,
-      solarInverterW: null, // Not available for Enphase
-      shuntW: null, // Not available for Enphase
+      solarLocalW: latestAgg.solarWAvg, // Enphase measures locally
+      solarRemoteW: null, // Not available for Enphase
       loadW: latestAgg.loadWAvg,
       batteryW: latestAgg.batteryWAvg,
       gridW: latestAgg.gridWAvg,
