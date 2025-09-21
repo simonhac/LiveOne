@@ -52,14 +52,7 @@ export class FroniusAdapter extends BaseVendorAdapter {
         batterySOC: recentReading.batterySOC,
         faultCode: recentReading.faultCode != null ? String(recentReading.faultCode) : null,
         faultTimestamp: recentReading.faultTimestamp || null,  // Convert 0 to null when no fault
-        generatorStatus: recentReading.generatorStatus || null,  // Convert 0 to null when no generator
-        // Lifetime totals
-        solarKwhTotal: recentReading.solarKwhTotal,
-        loadKwhTotal: recentReading.loadKwhTotal,
-        batteryInKwhTotal: recentReading.batteryInKwhTotal,
-        batteryOutKwhTotal: recentReading.batteryOutKwhTotal,
-        gridInKwhTotal: recentReading.gridInKwhTotal,
-        gridOutKwhTotal: recentReading.gridOutKwhTotal
+        generatorStatus: recentReading.generatorStatus || null  // Convert 0 to null when no generator
       };
     } catch (error) {
       console.error(`[Fronius] Error getting recent readings: ${error}`);

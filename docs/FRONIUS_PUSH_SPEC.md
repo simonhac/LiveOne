@@ -17,11 +17,13 @@ Include these fields in every request body:
 {
   "siteId": "your-site-id",
   "apiKey": "your-api-key", 
-  "timestamp": "2025-01-21T06:00:00.000Z"
+  "timestamp": "2025-01-21T06:00:00.000Z",
+  "sequence": "unique-sequence-id"
 }
 ```
 
 - `timestamp` (string, required): ISO 8601 format timestamp in UTC when the reading was taken
+- `sequence` (string, required): Unique sequence identifier for this reading (helps track and debug data flow)
 
 ### Optional Power Fields (Watts)
 All power values should be integers representing instantaneous power in Watts. Positive values indicate flow in the expected direction, negative values indicate reverse flow.
@@ -48,7 +50,7 @@ All power values should be integers representing instantaneous power in Watts. P
 ```json
 {
   "faultCode": "E102",      // Fault code as string (or null if no fault)
-  "faultTimestamp": 1737442800,  // Unix timestamp when fault occurred (or null)
+  "faultTimestamp": "2025-01-21T06:00:00.000Z",  // ISO8601 timestamp when fault occurred (or null)
   "generatorStatus": 1      // Generator status code (or null if no generator)
 }
 ```
@@ -74,6 +76,7 @@ Energy accumulated during this reporting interval in Watt-hours (integers):
   "siteId": "fronius-site-001",
   "apiKey": "my-api-key",
   "timestamp": "2025-01-21T06:00:00.000Z",
+  "sequence": "abcd/1",
   "solarW": 2500,
   "solarLocalW": 1500,
   "solarRemoteW": 1000,
@@ -192,6 +195,7 @@ curl -X POST https://liveone.vercel.app/api/push/fronius \
     "siteId": "test-fronius-001",
     "apiKey": "test-key",
     "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")'",
+    "sequence": "test/'$(date +%s)'",
     "solarW": 2500,
     "loadW": 1800,
     "batteryW": -700,

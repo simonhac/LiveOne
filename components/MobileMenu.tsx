@@ -29,6 +29,7 @@ interface MobileMenuProps {
   currentSystemId?: string
   onTestConnection?: () => void
   vendorType?: string
+  supportsPolling?: boolean
   isAdmin?: boolean
   systemStatus?: 'active' | 'disabled' | 'removed'
 }
@@ -42,6 +43,7 @@ export default function MobileMenu({
   currentSystemId,
   onTestConnection,
   vendorType,
+  supportsPolling = false,
   isAdmin = false,
   systemStatus
 }: MobileMenuProps) {
@@ -188,8 +190,8 @@ export default function MobileMenu({
                   <p className="text-white font-medium text-sm">Settings</p>
                 </div>
                 
-                {/* Test Connection - Only show for admin or non-removed systems */}
-                {onTestConnection && (isAdmin || systemStatus !== 'removed') && (
+                {/* Test Connection - Only show for vendors that support polling and for admin or non-removed systems */}
+                {onTestConnection && supportsPolling && (isAdmin || systemStatus !== 'removed') && (
                   <button
                     onClick={() => {
                       setIsOpen(false)

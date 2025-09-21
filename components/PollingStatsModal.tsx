@@ -1,7 +1,9 @@
 'use client';
 
-import React from 'react';
-import { X } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, ChevronRight, ChevronDown } from 'lucide-react';
+import { JsonView, darkStyles, allExpanded } from 'react-json-view-lite';
+import 'react-json-view-lite/dist/index.css';
 
 interface PollingStats {
   isActive: boolean;
@@ -9,6 +11,7 @@ interface PollingStats {
   lastSuccessTime: string | null;
   lastErrorTime: string | null;
   lastError: string | null;
+  lastResponse: any | null;
   consecutiveErrors: number;
   totalPolls: number;
   successfulPolls: number;
@@ -24,6 +27,8 @@ interface PollingStatsModalProps {
 }
 
 export default function PollingStatsModal({ isOpen, onClose, systemName, stats }: PollingStatsModalProps) {
+  const [showResponse, setShowResponse] = useState(false);
+  
   if (!isOpen) return null;
 
   const formatDateTime = (dateTimeStr: string | null) => {
@@ -43,7 +48,7 @@ export default function PollingStatsModal({ isOpen, onClose, systemName, stats }
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800/95 backdrop-blur border border-gray-700 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-auto">
+      <div className="bg-gray-800/95 backdrop-blur border border-gray-700 rounded-lg max-w-3xl w-full max-h-[90vh] overflow-auto">
         <div className="sticky top-0 bg-gray-800/95 backdrop-blur border-b border-gray-700 p-4 flex justify-between items-center">
           <h2 className="text-xl font-semibold text-white">
             Polling Statistics — {systemName}
@@ -62,7 +67,7 @@ export default function PollingStatsModal({ isOpen, onClose, systemName, stats }
             <table className="w-full text-left">
               <tbody className="divide-y divide-gray-700">
                 <tr>
-                  <td className="py-3 px-4 text-gray-400 font-medium">Status</td>
+                  <td className="py-3 px-4 text-gray-400 font-medium w-[200px]">Status</td>
                   <td className="py-3 px-4 text-white">
                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                       stats.isActive 
@@ -75,21 +80,46 @@ export default function PollingStatsModal({ isOpen, onClose, systemName, stats }
                 </tr>
                 
                 <tr>
-                  <td className="py-3 px-4 text-gray-400 font-medium">Last Poll</td>
+                  <td className="py-3 px-4 text-gray-400 font-medium align-top w-[200px]">
+                    <button
+                      onClick={() => setShowResponse(!showResponse)}
+                      className="flex items-center gap-1 hover:text-white transition-colors text-left"
+                      type="button"
+                    >
+                      Last&nbsp;Comms
+                      {stats.lastResponse && (
+                        showResponse ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />
+                      )}
+                    </button>
+                  </td>
                   <td className="py-3 px-4 text-white">
-                    {formatDateTime(stats.lastPollTime) || 'Never'}
+                    <div>
+                      {formatDateTime(stats.lastPollTime) || 'Never'}
+                      {showResponse && stats.lastResponse && (
+                        <div className="mt-3 bg-gray-950 border border-gray-700 rounded-lg p-4">
+                          <div className="overflow-x-auto font-mono text-sm">
+                            <JsonView 
+                              data={stats.lastResponse} 
+                              shouldExpandNode={allExpanded}
+                              style={darkStyles}
+                              clickToExpandCollapse={false}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </td>
                 </tr>
                 
                 <tr>
-                  <td className="py-3 px-4 text-gray-400 font-medium">Last Success</td>
+                  <td className="py-3 px-4 text-gray-400 font-medium w-[200px]">Last Success</td>
                   <td className="py-3 px-4 text-white">
                     {formatDateTime(stats.lastSuccessTime) || 'Never'}
                   </td>
                 </tr>
                 
                 <tr>
-                  <td className="py-3 px-4 text-gray-400 font-medium">Last Error</td>
+                  <td className="py-3 px-4 text-gray-400 font-medium w-[200px]">Last Error</td>
                   <td className="py-3 px-4 text-white">
                     {stats.lastErrorTime ? (
                       <div>
@@ -105,7 +135,7 @@ export default function PollingStatsModal({ isOpen, onClose, systemName, stats }
                 </tr>
                 
                 <tr>
-                  <td className="py-3 px-4 text-gray-400 font-medium">Consecutive Errors</td>
+                  <td className="py-3 px-4 text-gray-400 font-medium w-[200px]">Consecutive Errors</td>
                   <td className="py-3 px-4 text-white">
                     <span className={stats.consecutiveErrors > 0 ? 'text-yellow-400' : ''}>
                       {stats.consecutiveErrors}
@@ -114,19 +144,19 @@ export default function PollingStatsModal({ isOpen, onClose, systemName, stats }
                 </tr>
                 
                 <tr>
-                  <td className="py-3 px-4 text-gray-400 font-medium">Total Polls</td>
+                  <td className="py-3 px-4 text-gray-400 font-medium w-[200px]">Total Polls</td>
                   <td className="py-3 px-4 text-white">{stats.totalPolls.toLocaleString()}</td>
                 </tr>
                 
                 <tr>
-                  <td className="py-3 px-4 text-gray-400 font-medium">Successful</td>
+                  <td className="py-3 px-4 text-gray-400 font-medium w-[200px]">Successful</td>
                   <td className="py-3 px-4 text-white">
                     <span className="text-green-400">{stats.successfulPolls.toLocaleString()}</span>
                   </td>
                 </tr>
                 
                 <tr>
-                  <td className="py-3 px-4 text-gray-400 font-medium">Failed</td>
+                  <td className="py-3 px-4 text-gray-400 font-medium w-[200px]">Failed</td>
                   <td className="py-3 px-4 text-white">
                     <span className={stats.failedPolls > 0 ? 'text-red-400' : ''}>
                       {stats.failedPolls.toLocaleString()}
@@ -135,7 +165,7 @@ export default function PollingStatsModal({ isOpen, onClose, systemName, stats }
                 </tr>
                 
                 <tr>
-                  <td className="py-3 px-4 text-gray-400 font-medium">Success Rate</td>
+                  <td className="py-3 px-4 text-gray-400 font-medium w-[200px]">Success Rate</td>
                   <td className="py-3 px-4 text-white">
                     <div className="flex items-center gap-3">
                       <span className={`font-semibold ${

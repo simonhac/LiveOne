@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { readings, systems } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { readings } from '@/lib/db/schema';
+import { getSystemsManager } from '@/lib/get-systems-manager';
 import { updateAggregatedData } from '@/lib/aggregation-helper';
 import { updatePollingStatusSuccess, updatePollingStatusError } from '@/lib/polling-utils';
 
@@ -10,12 +10,13 @@ import { updatePollingStatusSuccess, updatePollingStatusError } from '@/lib/poll
  * Contains all CommonPollingData fields except totals
  */
 interface FroniusPushData {
-  // Authentication
-  siteId: string;
-  apiKey: string;
+  // Authentication and action
+  apiKey: string;  // This is actually the site ID (vendorSiteId in database)
+  action: 'test' | 'store';  // Action to perform: 'test' for auth check, 'store' to save data
   
-  // Timestamp
-  timestamp: string;
+  // Timestamp and sequence (required for 'store' action)
+  timestamp?: string;
+  sequence?: string;  // Required unique sequence identifier for 'store' action
   
   // Power readings (Watts) - instantaneous values
   solarW?: number | null;
@@ -30,7 +31,7 @@ interface FroniusPushData {
   
   // System status
   faultCode?: string | null;
-  faultTimestamp?: number | null;  // Unix timestamp of fault
+  faultTimestamp?: string | null;  // ISO8601 timestamp of fault
   generatorStatus?: number | null;
   
   // Energy counters (Wh) - interval values (energy in this period)
@@ -42,11 +43,7 @@ interface FroniusPushData {
   gridOutWhInterval?: number | null;
 }
 
-function validateApiKey(siteId: string, apiKey: string): boolean {
-  // TODO: Implement per-site API key validation
-  // For now, accept any non-empty API key
-  return Boolean(apiKey && apiKey.length > 0);
-}
+// Removed validateApiKey function - we now use apiKey as the site identifier
 
 export async function POST(request: NextRequest) {
   try {
@@ -54,37 +51,45 @@ export async function POST(request: NextRequest) {
     const data: FroniusPushData = await request.json();
     
     // Validate required fields
-    if (!data.siteId || !data.apiKey) {
+    if (!data.apiKey) {
       return NextResponse.json(
-        { error: 'Missing siteId or apiKey' },
+        { error: 'Missing apiKey' },
         { status: 400 }
       );
     }
     
-    if (!data.timestamp) {
+    if (!data.action || (data.action !== 'test' && data.action !== 'store')) {
       return NextResponse.json(
-        { error: 'Missing timestamp' },
+        { error: 'Missing or invalid action. Must be "test" or "store"' },
         { status: 400 }
       );
     }
     
-    // Validate API key
-    if (!validateApiKey(data.siteId, data.apiKey)) {
-      console.error(`[Fronius Push] Invalid API key for site ${data.siteId}`);
-      return NextResponse.json(
-        { error: 'Invalid API key' },
-        { status: 401 }
-      );
+    // For 'store' action, validate additional required fields
+    if (data.action === 'store') {
+      if (!data.timestamp) {
+        return NextResponse.json(
+          { error: 'Missing timestamp (required for store action)' },
+          { status: 400 }
+        );
+      }
+      
+      if (!data.sequence) {
+        return NextResponse.json(
+          { error: 'Missing sequence (required for store action)' },
+          { status: 400 }
+        );
+      }
     }
     
-    // Find the system by vendorSiteId
-    const [system] = await db.select()
-      .from(systems)
-      .where(eq(systems.vendorSiteId, data.siteId))
-      .limit(1);
+    // Get SystemsManager instance
+    const systemsManager = await getSystemsManager();
+    
+    // Find the system by vendorSiteId (using apiKey as the site identifier)
+    const system = await systemsManager.getSystemByVendorSiteId(data.apiKey);
     
     if (!system) {
-      console.error(`[Fronius Push] System not found for siteId: ${data.siteId}`);
+      console.error(`[Fronius Push] System not found for apiKey: ${data.apiKey}`);
       return NextResponse.json(
         { error: 'System not found' },
         { status: 404 }
@@ -100,14 +105,27 @@ export async function POST(request: NextRequest) {
       );
     }
     
+    // If action is 'test', return success without storing data
+    if (data.action === 'test') {
+      console.log(`[Fronius Push] Test authentication successful for system ${system.id} (${system.displayName})`);
+      return NextResponse.json({
+        success: true,
+        action: 'test',
+        message: 'Authentication successful',
+        systemId: system.id,
+        displayName: system.displayName
+      });
+    }
+    
+    // For 'store' action, proceed with data storage
     // Calculate timestamps and delay
-    const inverterTime = new Date(data.timestamp);
+    const inverterTime = new Date(data.timestamp!);
     const receivedTime = new Date();
     const delaySeconds = Math.floor((receivedTime.getTime() - inverterTime.getTime()) / 1000);
     
     // Log the push
     console.log(`[Fronius Push] Received data for system ${system.id} (${system.displayName})`);
-    console.log(`[Fronius Push] Timestamp: ${data.timestamp}, Delay: ${delaySeconds}s`);
+    console.log(`[Fronius Push] Timestamp: ${data.timestamp}, Sequence: ${data.sequence}, Delay: ${delaySeconds}s`);
     console.log(`[Fronius Push] Power - Solar: ${data.solarW}W (Local: ${data.solarLocalW}W, Remote: ${data.solarRemoteW}W), Load: ${data.loadW}W, Battery: ${data.batteryW}W, Grid: ${data.gridW}W`);
     
     try {
@@ -115,6 +133,7 @@ export async function POST(request: NextRequest) {
       await db.insert(readings).values({
         systemId: system.id,
         inverterTime,
+        sequence: data.sequence,
         receivedTime,
         delaySeconds,
         solarW: data.solarW ?? null,
@@ -125,7 +144,7 @@ export async function POST(request: NextRequest) {
         gridW: data.gridW ?? null,
         batterySOC: data.batterySOC != null ? Math.round(data.batterySOC * 10) / 10 : null,
         faultCode: data.faultCode ?? null,
-        faultTimestamp: data.faultTimestamp || null,
+        faultTimestamp: data.faultTimestamp ? Math.floor(new Date(data.faultTimestamp).getTime() / 1000) : null,
         generatorStatus: data.generatorStatus || null,
         // Energy interval counters (Wh) - integers
         solarWhInterval: data.solarWhInterval != null ? Math.round(data.solarWhInterval) : null,
@@ -147,12 +166,14 @@ export async function POST(request: NextRequest) {
       await updateAggregatedData(system.id, inverterTime);
       
       // Update polling status to show successful data receipt
-      await updatePollingStatusSuccess(system.id);
+      // Store the push data as the response
+      await updatePollingStatusSuccess(system.id, data);
       
       console.log(`[Fronius Push] Successfully stored data for system ${system.id}`);
       
       return NextResponse.json({
         success: true,
+        action: 'store',
         message: 'Data received and stored',
         systemId: system.id,
         timestamp: inverterTime.toISOString(),
@@ -200,8 +221,8 @@ export async function GET(request: NextRequest) {
     endpoint: '/api/push/fronius',
     method: 'POST',
     requiredFields: {
-      authentication: ['siteId', 'apiKey'],
-      data: ['timestamp'],
+      always: ['apiKey', 'action'],  // apiKey is used as the site identifier, action is 'test' or 'store'
+      forStoreAction: ['timestamp', 'sequence'],
       optional: [
         'solarW', 'solarLocalW', 'solarRemoteW', 
         'loadW', 'batteryW', 'gridW',
@@ -211,6 +232,6 @@ export async function GET(request: NextRequest) {
         'gridInWhInterval', 'gridOutWhInterval'
       ]
     },
-    note: 'Currently accepts any non-empty API key. Per-site keys will be implemented later.'
+    note: 'The apiKey field is used as the site identifier (vendorSiteId). Use action="test" to validate authentication, action="store" to save data.'
   });
 }

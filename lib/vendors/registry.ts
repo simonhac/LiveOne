@@ -65,4 +65,16 @@ export class VendorRegistry {
     this.adapters.set(vendorType.toLowerCase(), adapter);
     console.log(`[VendorRegistry] Registered adapter for ${vendorType}`);
   }
+  
+  /**
+   * Check if a vendor type supports polling (for Test Connection feature)
+   * @param vendorType The vendor type to check
+   * @returns true if the vendor supports polling, false if push-only
+   */
+  static supportsPolling(vendorType: string): boolean {
+    this.initialize();
+    const adapter = this.adapters.get(vendorType.toLowerCase());
+    if (!adapter) return false;
+    return adapter.dataSource === 'poll' || adapter.dataSource === 'combined';
+  }
 }

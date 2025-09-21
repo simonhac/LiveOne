@@ -380,6 +380,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
             currentSystemId={systemId as string}
             onTestConnection={() => setShowTestConnection(true)}
             vendorType={data?.vendorType}
+            supportsPolling={data?.supportsPolling}
             isAdmin={isAdmin}
             systemStatus={system?.status}
           />
@@ -462,31 +463,40 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                 
                 {showSettingsDropdown && (
                   <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
-                    <button
-                      onClick={() => {
-                        setShowTestConnection(true)
-                        setShowSettingsDropdown(false)
-                      }}
-                      className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
-                    >
-                      <Wifi className="w-4 h-4" />
-                      Test Connection
-                    </button>
-                    
-                    {/* Only show Add Enphase if user doesn't have an Enphase system */}
-                    {data?.vendorType !== 'enphase' && (
-                      <>
-                        <div className="border-t border-gray-700 my-1"></div>
-                        <Link
-                          href="/auth/enphase/connect"
-                          onClick={() => setShowSettingsDropdown(false)}
-                          className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2 block"
-                        >
-                          <Plus className="w-4 h-4" />
-                          Add Enphase
-                        </Link>
-                      </>
-                    )}
+                    {/* Track if we have any items above the divider */}
+                    {(() => {
+                      const hasItemsAbove = data?.supportsPolling;
+                      return (
+                        <>
+                          {/* Test Connection - Only show for vendors that support polling */}
+                          {data?.supportsPolling && (
+                            <button
+                              onClick={() => {
+                                setShowTestConnection(true)
+                                setShowSettingsDropdown(false)
+                              }}
+                              className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
+                            >
+                              <Wifi className="w-4 h-4" />
+                              Test Connection
+                            </button>
+                          )}
+                          
+                          {/* Show divider if there are items above */}
+                          {hasItemsAbove && <div className="border-t border-gray-700 my-1"></div>}
+                          
+                          {/* Always show Add Enphase */}
+                          <Link
+                            href="/auth/enphase/connect"
+                            onClick={() => setShowSettingsDropdown(false)}
+                            className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2 block"
+                          >
+                            <Plus className="w-4 h-4" />
+                            Add Enphase
+                          </Link>
+                        </>
+                      );
+                    })()}
                   </div>
                 )}
               </div>

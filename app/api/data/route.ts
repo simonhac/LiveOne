@@ -10,6 +10,7 @@ import { isUserAdmin } from '@/lib/auth-utils'
 import { getLastReading as getSelectronicLastReading } from '@/lib/selectronic/selectronic-last-reading'
 import { getLastReading as getEnphaseLastReading } from '@/lib/enphase/enphase-last-reading'
 import { getLastReading as getCraighackLastReading } from '@/lib/craighack/craighack-last-reading'
+import { VendorRegistry } from '@/lib/vendors/registry'
 
 // Helper function to ensure values are null instead of undefined
 function nullifyUndefined<T>(value: T | undefined): T | null {
@@ -105,6 +106,32 @@ export async function GET(request: Request) {
       )
       .limit(1);
     
+    // Build the common metadata structure
+    const metadata = {
+      vendorType: system.vendorType,
+      vendorSiteId: system.vendorSiteId,
+      displayName: system.displayName,
+      ownerClerkUserId: system.ownerClerkUserId,
+      supportsPolling: VendorRegistry.supportsPolling(system.vendorType),
+      systemInfo: {
+        model: system.model,
+        serial: system.serial,
+        ratings: system.ratings,
+        solarSize: system.solarSize,
+        batterySize: system.batterySize,
+      },
+      polling: status ? {
+        lastPollTime: status?.lastPollTime ? formatTime_fromJSDate(status.lastPollTime, system.timezoneOffsetMin) : null,
+        lastSuccessTime: status?.lastSuccessTime ? formatTime_fromJSDate(status.lastSuccessTime, system.timezoneOffsetMin) : null,
+        lastErrorTime: status?.lastErrorTime ? formatTime_fromJSDate(status.lastErrorTime, system.timezoneOffsetMin) : null,
+        lastError: status?.lastError || null,
+        consecutiveErrors: status?.consecutiveErrors || 0,
+        totalPolls: status?.totalPolls || 0,
+        successfulPolls: status?.successfulPolls || 0,
+        isActive: system.status === 'active',
+      } : null
+    };
+
     if (latestReadingData) {
       // Build historical section
       const historical = {
@@ -181,27 +208,7 @@ export async function GET(request: Request) {
         historical: historical,
         inverterTime: formatTime_fromJSDate(latestReadingData.timestamp, system.timezoneOffsetMin),
         receivedTime: formatTime_fromJSDate(latestReadingData.receivedTime, system.timezoneOffsetMin),
-        vendorType: system.vendorType,
-        vendorSiteId: system.vendorSiteId,
-        displayName: system.displayName,
-        ownerClerkUserId: system.ownerClerkUserId,
-        systemInfo: {
-          model: system.model,
-          serial: system.serial,
-          ratings: system.ratings,
-          solarSize: system.solarSize,
-          batterySize: system.batterySize,
-        },
-        polling: {
-          lastPollTime: status?.lastPollTime ? formatTime_fromJSDate(status.lastPollTime, system.timezoneOffsetMin) : null,
-          lastSuccessTime: status?.lastSuccessTime ? formatTime_fromJSDate(status.lastSuccessTime, system.timezoneOffsetMin) : null,
-          lastErrorTime: status?.lastErrorTime ? formatTime_fromJSDate(status.lastErrorTime, system.timezoneOffsetMin) : null,
-          lastError: status?.lastError || null,
-          consecutiveErrors: status?.consecutiveErrors || 0,
-          totalPolls: status?.totalPolls || 0,
-          successfulPolls: status?.successfulPolls || 0,
-          isActive: system.status === 'active',
-        }
+        ...metadata
       })
     } else {
       // No readings data yet - return same structure with null values
@@ -210,27 +217,7 @@ export async function GET(request: Request) {
         historical: null,
         inverterTime: null,
         receivedTime: null,
-        vendorType: system.vendorType,
-        vendorSiteId: system.vendorSiteId,
-        displayName: system.displayName,
-        ownerClerkUserId: system.ownerClerkUserId,
-        systemInfo: {
-          model: system.model,
-          serial: system.serial,
-          ratings: system.ratings,
-          solarSize: system.solarSize,
-          batterySize: system.batterySize,
-        },
-        polling: status ? {
-          lastPollTime: status?.lastPollTime ? formatTime_fromJSDate(status.lastPollTime, system.timezoneOffsetMin) : null,
-          lastSuccessTime: status?.lastSuccessTime ? formatTime_fromJSDate(status.lastSuccessTime, system.timezoneOffsetMin) : null,
-          lastErrorTime: status?.lastErrorTime ? formatTime_fromJSDate(status.lastErrorTime, system.timezoneOffsetMin) : null,
-          lastError: status?.lastError || null,
-          consecutiveErrors: status?.consecutiveErrors || 0,
-          totalPolls: status?.totalPolls || 0,
-          successfulPolls: status?.successfulPolls || 0,
-          isActive: system.status === 'active',
-        } : null
+        ...metadata
       })
     }
     

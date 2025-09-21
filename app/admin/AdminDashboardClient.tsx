@@ -42,6 +42,7 @@ interface SystemData {
     lastSuccessTime: string | null
     lastErrorTime: string | null
     lastError: string | null
+    lastResponse: any | null
     consecutiveErrors: number
     totalPolls: number
     successfulPolls: number
@@ -308,6 +309,8 @@ export default function AdminDashboardClient() {
                         systemId={system.systemId}
                         systemName={system.displayName}
                         status={system.status}
+                        vendorType={system.vendor.type}
+                        supportsPolling={system.vendor.supportsPolling}
                         onTest={() => openTestModal(system.displayName, system.owner.clerkId, system.vendor.type, system.vendor.siteId)}
                         onStatusChange={(newStatus) => updateSystemStatus(system.systemId, newStatus)}
                         onPollingStats={() => {

@@ -8,6 +8,8 @@ interface SystemActionsMenuProps {
   systemId: number
   systemName: string
   status: 'active' | 'disabled' | 'removed'
+  vendorType?: string
+  supportsPolling?: boolean
   onTest: () => void
   onStatusChange: (status: 'active' | 'disabled' | 'removed') => void
   onPollingStats?: () => void
@@ -18,6 +20,8 @@ export default function SystemActionsMenu({
   systemId, 
   systemName, 
   status, 
+  vendorType,
+  supportsPolling = false,
   onTest, 
   onStatusChange,
   onPollingStats,
@@ -84,13 +88,16 @@ export default function SystemActionsMenu({
               Settings
             </button>
           )}
-          <button
-            onClick={() => handleMenuClick(onTest)}
-            className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
-          >
-            <FlaskConical className="w-4 h-4" />
-            Test
-          </button>
+          {/* Test - Only show for vendors that support polling */}
+          {supportsPolling && (
+            <button
+              onClick={() => handleMenuClick(onTest)}
+              className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+            >
+              <FlaskConical className="w-4 h-4" />
+              Test
+            </button>
+          )}
           {onPollingStats && (
             <button
               onClick={() => handleMenuClick(onPollingStats)}

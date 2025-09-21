@@ -50,6 +50,9 @@ export const readings = sqliteTable('readings', {
   faultTimestamp: integer('fault_timestamp'), // Unix timestamp of fault
   generatorStatus: integer('generator_status'),
   
+  // Sequence identifier (for push-based systems like Fronius)
+  sequence: text('sequence'),
+  
   // Energy counters (Wh) - interval values (energy in this period)
   solarWhInterval: integer('solar_wh_interval'),
   loadWhInterval: integer('load_wh_interval'),
