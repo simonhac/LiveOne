@@ -189,9 +189,9 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       batteryW: batteryPower,
       gridW: gridPower,
       batterySOC: batterySOC,
-      faultCode: 0,
-      faultTimestamp: 0,
-      generatorStatus: 0,
+      faultCode: null,  // Enphase doesn't provide fault codes
+      faultTimestamp: null,  // No fault timestamp when no faults
+      generatorStatus: null,  // Enphase doesn't provide generator status
       // Energy totals - Enphase provides these in Wh, convert to kWh
       solarKwhTotal: telemetry.production_energy_lifetime 
         ? telemetry.production_energy_lifetime / 1000 : 0,

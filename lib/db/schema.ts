@@ -46,7 +46,7 @@ export const readings = sqliteTable('readings', {
   batterySOC: real('battery_soc'),
   
   // System status
-  faultCode: integer('fault_code'),
+  faultCode: text('fault_code'),
   faultTimestamp: integer('fault_timestamp'), // Unix timestamp of fault
   generatorStatus: integer('generator_status'),
   

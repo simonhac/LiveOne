@@ -5,6 +5,7 @@ const isPublicRoute = createRouteMatcher([
   '/sign-up(.*)',
   '/api/health', // Health check endpoint for monitoring
   '/api/cron(.*)', // Cron endpoints have their own authentication via CRON_SECRET
+  '/api/push(.*)', // Push endpoints authenticate via API key in request body
   '/api/enphase-proxy', // Debug endpoint - WARNING: No access controls
   // All other routes including /api/data will require authentication
 ])

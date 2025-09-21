@@ -60,9 +60,9 @@ export class CraigHackAdapter extends BaseVendorAdapter {
         batteryW: system2Reading.batteryW,
         gridW: system2Reading.gridW,
         batterySOC: system2Reading.batterySOC,
-        faultCode: system2Reading.faultCode,
-        faultTimestamp: system2Reading.faultTimestamp,
-        generatorStatus: system2Reading.generatorStatus,
+        faultCode: system2Reading.faultCode != null ? String(system2Reading.faultCode) : null,
+        faultTimestamp: system2Reading.faultTimestamp || null,  // Convert 0 to null when no fault
+        generatorStatus: system2Reading.generatorStatus || null,  // Convert 0 to null when no generator
         // Lifetime totals
         solarKwhTotal: system3Reading?.solarKwhTotal ?? system2Reading.solarKwhTotal,
         loadKwhTotal: system2Reading.loadKwhTotal,
