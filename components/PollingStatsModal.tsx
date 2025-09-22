@@ -102,7 +102,7 @@ export default function PollingStatsModal({ isOpen, onClose, systemName, stats }
                               data={stats.lastResponse} 
                               shouldExpandNode={allExpanded}
                               style={darkStyles}
-                              clickToExpandCollapse={false}
+                              clickToExpandNode={false}
                             />
                           </div>
                         </div>
