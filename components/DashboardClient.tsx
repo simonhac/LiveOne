@@ -118,6 +118,7 @@ interface DashboardData {
   vendorType?: string;
   vendorSiteId?: string;
   ownerClerkUserId?: string;
+  supportsPolling?: boolean;
 }
 
 interface AvailableSystem {

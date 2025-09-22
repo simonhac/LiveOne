@@ -32,6 +32,7 @@ interface SystemData {
     type: string
     siteId: string  // Vendor's identifier
     userId: string | null  // Vendor-specific user ID
+    supportsPolling?: boolean
   }
   status: 'active' | 'disabled' | 'removed'  // System status
   location?: any  // Location data
