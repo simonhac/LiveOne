@@ -12,15 +12,9 @@ import { eq, desc } from 'drizzle-orm';
 export class CraigHackAdapter extends BaseVendorAdapter {
   readonly vendorType = 'craighack';
   readonly displayName = 'CraigHack';
-  readonly dataSource = 'combined' as const;
+  readonly dataSource = 'push' as const;  // CraigHack doesn't poll, it aggregates from other systems
   
-  async poll(system: SystemForVendor, credentials: any): Promise<PollingResult> {
-    // CraigHack doesn't poll - it combines data from other systems
-    return this.skipped(
-      'CraigHack systems combine data from other systems',
-      undefined // Never polls
-    );
-  }
+  // CraigHack is combined-source, poll() is not implemented (handled by base class)
   
   async getMostRecentReadings(system: SystemForVendor, credentials: any): Promise<CommonPollingData | null> {
     try {

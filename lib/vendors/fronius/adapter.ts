@@ -15,16 +15,7 @@ export class FroniusAdapter extends BaseVendorAdapter {
   readonly displayName = 'Fronius';
   readonly dataSource = 'push' as const;
   
-  async poll(system: SystemForVendor, credentials: any): Promise<PollingResult> {
-    // Fronius systems use push-based data collection
-    // The inverter pushes data to our endpoint, we queue it, and process it here
-    // TODO: Implement queue checking for pending push data
-    
-    return this.skipped(
-      'Fronius push endpoint not yet implemented',
-      new Date(Date.now() + 5 * 60 * 1000) // Check again in 5 minutes
-    );
-  }
+  // Fronius is push-only, poll() is not implemented (handled by base class)
   
   async getMostRecentReadings(system: SystemForVendor, credentials: any): Promise<CommonPollingData | null> {
     try {

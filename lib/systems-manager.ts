@@ -27,7 +27,6 @@ export class SystemsManager {
    * Load all systems into cache (called once on instantiation)
    */
   private async loadSystems() {
-    console.log('[SystemsManager] DB HIT: Loading all systems from database');
     const allSystems = await db
       .select()
       .from(systems);
@@ -38,7 +37,7 @@ export class SystemsManager {
     }
     
     const activeCount = allSystems.filter(s => s.status === 'active').length;
-    console.log(`[SystemsManager] Loaded ${allSystems.length} systems (${activeCount} active)`);
+    console.log(`[SystemsManager] DB HIT: Loaded ${allSystems.length} systems (${activeCount} active) from database`);
   }
   
   /**

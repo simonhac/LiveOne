@@ -43,11 +43,12 @@ export interface SystemForVendor {
  */
 export interface PollingResult {
   action: 'POLLED' | 'SKIPPED' | 'ERROR';
-  reason?: string;  // For SKIPPED or ERROR
-  nextPoll?: Date;  // When to poll next
+  data?: CommonPollingData | CommonPollingData[];  // The transformed data
+  rawResponse?: any;  // Raw vendor response for storage
   recordsProcessed?: number;  // For POLLED
-  data?: CommonPollingData | CommonPollingData[];  // The actual data
+  reason?: string;  // For SKIPPED or ERROR
   error?: string;  // For ERROR
+  nextPoll?: Date;  // When to poll next
 }
 
 /**
