@@ -89,9 +89,7 @@ export async function GET(request: NextRequest) {
     
     // Poll each system using the new vendor adapter architecture
     for (const system of activeSystems) {
-      console.log(`[Cron] Processing systemId=${system.id} (${system.vendorType}/${system.vendorSiteId} '${system.displayName}')`);
-      
-      // Get the vendor adapter
+      // Get the vendor adapter first to check if it supports polling
       const adapter = VendorRegistry.getAdapter(system.vendorType);
       
       if (!adapter) {
@@ -105,6 +103,14 @@ export async function GET(request: NextRequest) {
         });
         continue;
       }
+      
+      // Skip push-only systems (they don't need polling)
+      if (adapter.dataSource === 'push') {
+        continue;  // Don't add to results at all, don't log
+      }
+      
+      console.log(`[Cron] Processing systemId=${system.id} (${system.vendorType}/${system.vendorSiteId} '${system.displayName}')`);
+      
       
       // Check if system has an owner
       if (!system.ownerClerkUserId) {
