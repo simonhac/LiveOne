@@ -61,7 +61,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         transformed,
         1,
         new Date(Date.now() + 60 * 1000), // Poll again in 1 minute
-        response.rawJson  // Include raw JSON string for storage
+        response.rawResponse  // Pass the raw response object
       );
     } catch (error) {
       console.error(`[Selectronic] Error polling system ${system.id}:`, error);

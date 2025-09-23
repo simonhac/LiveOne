@@ -375,7 +375,7 @@ export class SelectronicFetchClient {
       return {
         success: true,
         data: transformed,
-        rawJson: responseText,  // Include the raw JSON string
+        rawResponse: data,  // Include the parsed JSON object
         timestamp: new Date(),
       };
 
