@@ -32,7 +32,7 @@ export type SelectronicData = {
 export type ApiResponse<T> = {
   success: boolean;
   data?: T;
-  rawJson?: string;
+  rawResponse?: any;  // Raw response object from API
   error?: string;
   timestamp: Date;
 };

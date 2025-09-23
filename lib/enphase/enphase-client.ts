@@ -342,8 +342,8 @@ export class EnphaseClient implements IEnphaseClient {
         last_report_at: data.last_report_at ?? null,
         // Include raw vendor response for consistency with SelectronicData
         raw: data,
-        // Include raw JSON string for storage
-        rawJson: responseText
+        // Include raw response object for storage
+        rawResponse: data
       };
       
       // Summary received
