@@ -212,8 +212,8 @@ export async function GET(request: NextRequest) {
               }
             }
             
-            // Update polling status with response data
-            await updatePollingStatusSuccess(system.id, result.data);
+            // Update polling status with raw response
+            await updatePollingStatusSuccess(system.id, result.rawResponse);
             
             results.push({
               systemId: system.id,

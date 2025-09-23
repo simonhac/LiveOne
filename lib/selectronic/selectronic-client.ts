@@ -327,7 +327,8 @@ export class SelectronicFetchClient {
         };
       }
 
-      const data = await response.json();
+      const responseText = await response.text();
+      const data = JSON.parse(responseText);
       console.log('[Selectronic] Data received successfully');
       
       // Transform the data - only fields that actually exist in the API
@@ -374,6 +375,7 @@ export class SelectronicFetchClient {
       return {
         success: true,
         data: transformed,
+        rawJson: responseText,  // Include the raw JSON string
         timestamp: new Date(),
       };
 

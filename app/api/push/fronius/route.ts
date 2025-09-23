@@ -47,8 +47,10 @@ interface FroniusPushData {
 
 export async function POST(request: NextRequest) {
   try {
-    // Parse request body
-    const data: FroniusPushData = await request.json();
+    // Get raw body text first
+    const rawBody = await request.text();
+    // Then parse it
+    const data: FroniusPushData = JSON.parse(rawBody);
     
     // Validate required fields
     if (!data.apiKey) {
@@ -166,8 +168,8 @@ export async function POST(request: NextRequest) {
       await updateAggregatedData(system.id, inverterTime);
       
       // Update polling status to show successful data receipt
-      // Store the push data as the response
-      await updatePollingStatusSuccess(system.id, data);
+      // Store the raw JSON string
+      await updatePollingStatusSuccess(system.id, rawBody);
       
       console.log(`[Fronius Push] Successfully stored data for system ${system.id}`);
       

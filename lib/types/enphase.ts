@@ -37,6 +37,7 @@ export interface EnphaseTelemetryResponse {
   system_size?: number | null;            // System size in W
   // Raw vendor response for consistency with SelectronicData
   raw?: Record<string, any>;
+  rawJson?: string;                       // Raw JSON response string
 }
 
 export interface EnphaseSystem {

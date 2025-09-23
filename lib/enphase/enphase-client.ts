@@ -320,7 +320,8 @@ export class EnphaseClient implements IEnphaseClient {
         throw new Error(`Telemetry fetch failed: ${response.status}`);
       }
       
-      const data = await response.json();
+      const responseText = await response.text();
+      const data = JSON.parse(responseText);
       // Got summary response
       
       // The summary endpoint returns different data structure
@@ -340,7 +341,9 @@ export class EnphaseClient implements IEnphaseClient {
         // Include the timestamp if available
         last_report_at: data.last_report_at ?? null,
         // Include raw vendor response for consistency with SelectronicData
-        raw: data
+        raw: data,
+        // Include raw JSON string for storage
+        rawJson: responseText
       };
       
       // Summary received

@@ -10,7 +10,19 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   abstract readonly displayName: string;
   abstract readonly dataSource: 'poll' | 'push' | 'combined';
   
-  abstract poll(system: SystemForVendor, credentials: any): Promise<PollingResult>;
+  /**
+   * Poll for new data. Only applicable for poll-based systems.
+   * Push-only systems should not override this method.
+   */
+  async poll(system: SystemForVendor, credentials: any): Promise<PollingResult> {
+    if (this.dataSource === 'push') {
+      console.error(`[${this.vendorType}] poll() called on push-only system ${system.id}. This should never happen.`);
+      return this.error(`${this.vendorType} is a push-only system and should not be polled`);
+    }
+    // Polling adapters must override this method
+    throw new Error(`poll() not implemented for ${this.vendorType}`);
+  }
+  
   abstract getMostRecentReadings(system: SystemForVendor, credentials: any): Promise<CommonPollingData | null>;
   abstract testConnection(system: SystemForVendor, credentials: any): Promise<TestConnectionResult>;
   
@@ -41,11 +53,13 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   protected polled(
     data: CommonPollingData | CommonPollingData[], 
     recordsProcessed: number,
-    nextPoll?: Date
+    nextPoll?: Date,
+    rawResponse?: any
   ): PollingResult {
     return {
       action: 'POLLED',
       data,
+      rawResponse,
       recordsProcessed,
       nextPoll
     };
