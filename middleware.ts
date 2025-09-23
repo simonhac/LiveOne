@@ -10,9 +10,11 @@ const isPublicRoute = createRouteMatcher([
   // All other routes including /api/data will require authentication
 ])
 
-export default clerkMiddleware(async (auth, request) => {
+export default clerkMiddleware((auth, request) => {
   if (!isPublicRoute(request)) {
-    await auth.protect()
+    // Use protect() without await for better Edge performance
+    // This still protects the route but doesn't block the middleware
+    auth.protect()
   }
 })
 

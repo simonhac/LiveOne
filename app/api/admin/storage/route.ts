@@ -16,8 +16,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     
-    // Check if user is admin
-    const isAdmin = await isUserAdmin()
+    // Check if user is admin - pass userId to avoid duplicate auth() call
+    const isAdmin = await isUserAdmin(userId)
     
     if (!isAdmin) {
       return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
