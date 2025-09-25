@@ -160,29 +160,34 @@ Energy accumulated during this reporting interval in Watt-hours (integers):
    - Use `0` for actual zero values
    - This distinction is important for proper data analysis
 
-4. **Power Sign Convention**:
+4. **Data Storage**:
+   - Raw JSON payload is stored in `polling_status.last_response` for debugging
+   - Parsed data is stored in normalized tables
+   - Interval energy values are aggregated into 5-minute windows
+
+5. **Power Sign Convention**:
    - Solar: Always positive (generation)
    - Load: Always positive (consumption)
    - Battery: Positive = charging, Negative = discharging
    - Grid: Positive = import, Negative = export
 
-5. **Solar Fields**:
+6. **Solar Fields**:
    - If you have both local (shunt/CT) and remote (string inverter) measurements, provide both `solarLocalW` and `solarRemoteW`
    - If you only have total solar, just provide `solarW`
    - The system will calculate total from local+remote if both are provided
 
-6. **Energy Intervals**:
+7. **Energy Intervals**:
    - Report energy accumulated since the last push
    - Use Watt-hours (Wh) as integers
    - Reset counters after each successful push
 
-7. **Retry Logic**:
+8. **Retry Logic**:
    - On network failure: Retry with exponential backoff
    - On 409 (duplicate): Skip this reading (already stored)
    - On 401: Check API key configuration
    - On 404: Check siteId configuration
 
-8. **Testing**:
+9. **Testing**:
    - Test endpoint: `http://localhost:3000/api/push/fronius` (development)
    - Use GET request to check endpoint status and see required fields
 

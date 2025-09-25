@@ -102,7 +102,7 @@ Pre-aggregated 5-minute intervals for efficient querying.
 | `solar_w_avg` | INTEGER | Average solar power (W) |
 | `solar_w_min` | INTEGER | Minimum solar power (W) |
 | `solar_w_max` | INTEGER | Maximum solar power (W) |
-| `solar_interval_wh` | INTEGER | Energy produced in this interval (Wh) - Enphase only |
+| `solar_interval_wh` | INTEGER | Energy produced in this interval (Wh) |
 | `load_w_avg` | INTEGER | Average load power (W) |
 | `load_w_min` | INTEGER | Minimum load power (W) |
 | `load_w_max` | INTEGER | Maximum load power (W) |
@@ -112,6 +112,12 @@ Pre-aggregated 5-minute intervals for efficient querying.
 | `grid_w_avg` | INTEGER | Average grid power (W) |
 | `grid_w_min` | INTEGER | Minimum grid power (W) |
 | `grid_w_max` | INTEGER | Maximum grid power (W) |
+| **Interval Energy (TODO)** | | |
+| `load_wh_interval` | INTEGER | ⚠️ MISSING - Energy consumed in interval (Wh) |
+| `battery_in_wh_interval` | INTEGER | ⚠️ MISSING - Energy charged in interval (Wh) |
+| `battery_out_wh_interval` | INTEGER | ⚠️ MISSING - Energy discharged in interval (Wh) |
+| `grid_in_wh_interval` | INTEGER | ⚠️ MISSING - Energy imported in interval (Wh) |
+| `grid_out_wh_interval` | INTEGER | ⚠️ MISSING - Energy exported in interval (Wh) |
 | **End-of-Interval Values** | | |
 | `battery_soc_last` | REAL | Battery SOC at end of interval (%) |
 | `solar_kwh_total_last` | REAL | Solar total at end of interval (kWh) |
@@ -200,7 +206,7 @@ Tracks the health and status of data collection for each system.
 | `last_success_time` | INTEGER (timestamp) | Last successful poll |
 | `last_error_time` | INTEGER (timestamp) | Last error occurrence |
 | `last_error` | TEXT | Last error message |
-| `last_response` | TEXT (JSON) | Complete last response from Select.Live |
+| `last_response` | TEXT (JSON) | Raw JSON response from vendor API |
 | `consecutive_errors` | INTEGER DEFAULT 0 | Current error streak |
 | `is_active` | BOOLEAN DEFAULT true | Whether polling is enabled |
 | `total_polls` | INTEGER DEFAULT 0 | Total polling attempts |
