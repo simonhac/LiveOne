@@ -1,28 +1,23 @@
 import { auth } from '@clerk/nextjs/server'
 import { redirect } from 'next/navigation'
-import { db } from '@/lib/db'
-import { userSystems, systems } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { SystemsManager } from '@/lib/systems-manager'
 import DashboardClient from '@/components/DashboardClient'
 import { isUserAdmin } from '@/lib/auth-utils'
 
 export default async function DashboardPage() {
   const { userId } = await auth()
-  
+
   if (!userId) {
     redirect('/sign-in')
   }
 
   const isAdmin = await isUserAdmin()
-  
-  // Get the user's primary system
-  const userSystemRecords = await db.select()
-    .from(userSystems)
-    .innerJoin(systems, eq(systems.id, userSystems.systemId))
-    .where(eq(userSystems.clerkUserId, userId))
-    .limit(1)
+  const systemsManager = SystemsManager.getInstance()
 
-  if (userSystemRecords.length === 0) {
+  // Get all systems visible to the user (owned + granted access)
+  const visibleSystems = await systemsManager.getSystemsVisibleByUser(userId, true)
+
+  if (visibleSystems.length === 0) {
     // No systems found for this user
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
@@ -36,7 +31,7 @@ export default async function DashboardPage() {
     )
   }
 
-  const primarySystem = userSystemRecords[0].systems
+  const primarySystem = visibleSystems[0]
   
   // Redirect to the system-specific dashboard using internal system ID
   redirect(`/dashboard/${primarySystem.id}`)
