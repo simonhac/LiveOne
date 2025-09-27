@@ -669,12 +669,10 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
       </main>
       
       {/* Test Connection Modal */}
-      {showTestConnection && data && (
+      {showTestConnection && systemId && (
         <TestConnectionModal
-          displayName={data.displayName}
-          ownerClerkUserId={data.ownerClerkUserId || ''}
-          vendorType={data.vendorType || 'select.live'}
-          vendorSiteId={data.vendorSiteId || ''}
+          systemId={parseInt(systemId)}
+          displayName={data?.displayName || systemDisplayName}
           onClose={() => setShowTestConnection(false)}
         />
       )}

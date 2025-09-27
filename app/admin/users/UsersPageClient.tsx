@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Clock, Mail, AlertCircle, Globe, Crown } from 'lucide-react'
+import { Clock, Mail, AlertCircle, Globe, Crown, Shield, Eye, User } from 'lucide-react'
 
 interface SystemAccess {
   systemId: number
