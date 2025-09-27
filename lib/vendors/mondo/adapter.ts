@@ -5,7 +5,6 @@ import { db } from '@/lib/db';
 import {
   pointInfo,
   pointReadings,
-  measurementSessions,
   pointSubGroups
 } from '@/lib/db/schema-monitoring-points';
 import { eq, desc } from 'drizzle-orm';
@@ -183,19 +182,6 @@ export class MondoAdapter extends BaseVendorAdapter {
       // Authenticate
       const accessToken = await this.authenticate(credentials);
 
-      // Create measurement session
-      const [session] = await db.insert(measurementSessions)
-        .values({
-          groupId: systemId,
-          sessionType: 'scheduled',
-          startedAt: Date.now(),
-          pointsQueried: 0,
-          pointsSuccess: 0,
-          pointsFailed: 0,
-          apiCallCount: 0
-        })
-        .returning();
-
       const sessionStartTime = Date.now();
       let apiCallCount = 0;
       let recordsProcessed = 0;
@@ -242,7 +228,7 @@ export class MondoAdapter extends BaseVendorAdapter {
           await db.insert(pointReadings)
             .values({
               pointId: point.id,
-              sessionId: session.id,
+              sessionId: null,  // No longer using measurement_sessions
               measurementTime,
               receivedTime,
               delayMs: receivedTime - measurementTime,
@@ -274,19 +260,6 @@ export class MondoAdapter extends BaseVendorAdapter {
           recordsProcessed++;
         }
 
-        // Update session with results
-        await db.update(measurementSessions)
-          .set({
-            completedAt: Date.now(),
-            pointsQueried: rows.length,
-            pointsSuccess: recordsProcessed,
-            pointsFailed: rows.length - recordsProcessed,
-            apiCallCount,
-            totalDurationMs: Date.now() - sessionStartTime,
-            vendorResponseMetadata: { rowCount: rows.length }
-          })
-          .where(eq(measurementSessions.id, session.id));
-
         console.log(`[Mondo] Poll complete: ${recordsProcessed} records processed`);
 
         return this.polled(
@@ -296,15 +269,6 @@ export class MondoAdapter extends BaseVendorAdapter {
         );
 
       } catch (error) {
-        // Update session with error
-        await db.update(measurementSessions)
-          .set({
-            completedAt: Date.now(),
-            totalDurationMs: Date.now() - sessionStartTime,
-            errorMessages: [error instanceof Error ? error.message : String(error)]
-          })
-          .where(eq(measurementSessions.id, session.id));
-
         throw error;
       }
 

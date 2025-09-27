@@ -85,6 +85,7 @@ export default function ActivityViewer() {
     if (loading) {
       fetchSessions()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleRefresh = () => {
