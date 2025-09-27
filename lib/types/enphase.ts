@@ -13,10 +13,10 @@ export interface EnphaseTokens {
 export interface EnphaseCredentials {
   access_token: string;
   refresh_token: string;
-  expires_at: number;
+  expires_at: Date;  // Date object for token expiry
   enphase_system_id: string;
   enphase_user_id?: string;
-  created_at?: number;  // Unix timestamp when credentials were stored
+  created_at?: Date;  // Date object for when credentials were stored
 }
 
 export interface EnphaseTelemetryResponse {

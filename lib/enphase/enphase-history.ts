@@ -95,9 +95,10 @@ async function fetchEnphase(
     throw new Error(`No Enphase credentials found for user ${system.ownerClerkUserId}`);
   }
   
-  // Check if token needs refresh
+  // Check if token needs refresh (expires_at is now a Date object)
   let accessToken = credentials.access_token;
-  if (credentials.expires_at < Date.now() + 3600000) {
+  const oneHourFromNow = new Date(Date.now() + 3600000);
+  if (credentials.expires_at < oneHourFromNow) {
     // Refreshing token
     const newTokens = await client.refreshTokens(credentials.refresh_token);
     await client.storeTokens(

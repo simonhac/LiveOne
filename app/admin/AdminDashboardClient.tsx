@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Clock, Activity, Wifi, WifiOff, Server, Battery, Sun, Home, PauseCircle } from 'lucide-react'
+import { Clock, Wifi, WifiOff, Battery, Home, PauseCircle, Sun } from 'lucide-react'
 import SystemInfoTooltip from '@/components/SystemInfoTooltip'
-import SummaryCard from '@/components/SummaryCard'
 import SystemActionsMenu from '@/components/SystemActionsMenu'
 import PollingStatsModal from '@/components/PollingStatsModal'
 import TestConnectionModal from '@/components/TestConnectionModal'
@@ -68,16 +67,17 @@ export default function AdminDashboardClient() {
   const [activeTab, setActiveTab] = useState<'active' | 'removed'>('active')
   const [testModal, setTestModal] = useState<{
     isOpen: boolean
-    displayName: string
-    ownerClerkUserId: string
-    vendorType: string
-    vendorSiteId: string
-  }>({ 
-    isOpen: false, 
-    displayName: '', 
-    ownerClerkUserId: '', 
-    vendorType: '', 
-    vendorSiteId: '' 
+    system: {
+      id: number
+      displayName: string | null
+      vendorType: string
+      vendorSiteId: string
+      ownerClerkUserId: string | null
+      status?: string
+    } | null
+  }>({
+    isOpen: false,
+    system: null
   })
   const [pollingStatsModal, setPollingStatsModal] = useState<{
     isOpen: boolean
@@ -96,23 +96,24 @@ export default function AdminDashboardClient() {
     system: null
   })
 
-  const openTestModal = (displayName: string, ownerClerkUserId: string, vendorType: string, vendorSiteId: string) => {
+  const openTestModal = (system: SystemData) => {
     setTestModal({
       isOpen: true,
-      displayName,
-      ownerClerkUserId,
-      vendorType,
-      vendorSiteId
+      system: {
+        id: system.systemId,
+        displayName: system.displayName,
+        vendorType: system.vendor.type,
+        vendorSiteId: system.vendor.siteId,
+        ownerClerkUserId: system.owner.clerkId,
+        status: system.status
+      }
     })
   }
 
   const closeTestModal = () => {
-    setTestModal({ 
-      isOpen: false, 
-      displayName: '', 
-      ownerClerkUserId: '', 
-      vendorType: '', 
-      vendorSiteId: '' 
+    setTestModal({
+      isOpen: false,
+      system: null
     })
   }
 
@@ -312,7 +313,7 @@ export default function AdminDashboardClient() {
                         status={system.status}
                         vendorType={system.vendor.type}
                         supportsPolling={system.vendor.supportsPolling}
-                        onTest={() => openTestModal(system.displayName, system.owner.clerkId, system.vendor.type, system.vendor.siteId)}
+                        onTest={() => openTestModal(system)}
                         onStatusChange={(newStatus) => updateSystemStatus(system.systemId, newStatus)}
                         onPollingStats={() => {
                           setPollingStatsModal({
@@ -464,39 +465,12 @@ export default function AdminDashboardClient() {
           </div>
         </div>
         </div>
-        
-        {/* Summary Cards - Pinned to bottom */}
-        <div className="px-4 pb-2">
-          <div className="flex gap-2 w-full">
-            <SummaryCard 
-              label="Total Systems"
-              value={systems.length}
-              icon={Server}
-              iconColor="text-blue-400"
-            />
-            <SummaryCard 
-              label="Active Systems"
-              value={systems.filter(s => s.status === 'active').length}
-              icon={Activity}
-              iconColor="text-green-400"
-            />
-            <SummaryCard 
-              label="Total Solar"
-              value={`${(systems.reduce((sum, s) => sum + (s.data?.solarPower || 0), 0) / 1000).toFixed(1)} kW`}
-              icon={Sun}
-              iconColor="text-yellow-400"
-            />
-          </div>
-        </div>
       </div>
       
       {/* Test Connection Modal - Using TestConnectionModal component */}
-      {testModal.isOpen && (
+      {testModal.isOpen && testModal.system && (
         <TestConnectionModal
-          displayName={testModal.displayName}
-          ownerClerkUserId={testModal.ownerClerkUserId}
-          vendorType={testModal.vendorType}
-          vendorSiteId={testModal.vendorSiteId}
+          system={testModal.system}
           onClose={closeTestModal}
         />
       )}

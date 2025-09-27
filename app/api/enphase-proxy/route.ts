@@ -70,9 +70,10 @@ async function handleRequest(request: NextRequest, defaultMethod: string) {
       return NextResponse.json({ error: 'No Enphase credentials found for user' }, { status: 401 });
     }
     
-    // Check if token needs refresh
+    // Check if token needs refresh (expires_at is now a Date object)
     let accessToken = credentials.access_token;
-    if (credentials.expires_at < Date.now() + 3600000) {
+    const oneHourFromNow = new Date(Date.now() + 3600000);
+    if (credentials.expires_at < oneHourFromNow) {
       console.log('Token expiring soon, refreshing...');
       try {
         const newTokens = await client.refreshTokens(credentials.refresh_token);

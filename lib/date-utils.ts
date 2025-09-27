@@ -1,6 +1,26 @@
 import { parseAbsolute, toZoned, CalendarDate, ZonedDateTime, parseDate, now, fromDate } from '@internationalized/date';
 
 /**
+ * Get current time formatted as ISO8601 with fixed AEST offset (+10:00)
+ * This uses a fixed offset rather than timezone to avoid DST complications
+ * @returns ISO string with +10:00 offset (e.g., "2025-08-16T20:36:41+10:00")
+ */
+export function getNowFormattedAEST(): string {
+  const nowDate = new Date();
+  // Add 10 hours to UTC to get AEST
+  const aestTime = new Date(nowDate.getTime() + (10 * 60 * 60 * 1000));
+
+  const year = aestTime.getUTCFullYear();
+  const month = String(aestTime.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(aestTime.getUTCDate()).padStart(2, '0');
+  const hour = String(aestTime.getUTCHours()).padStart(2, '0');
+  const minute = String(aestTime.getUTCMinutes()).padStart(2, '0');
+  const second = String(aestTime.getUTCSeconds()).padStart(2, '0');
+
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}+10:00`;
+}
+
+/**
  * Format a Date to AEST/AEDT timezone string without milliseconds
  * @param date - JavaScript Date object
  * @returns ISO string with timezone offset (e.g., "2025-08-16T20:36:41+10:00")
@@ -472,6 +492,30 @@ export function formatDateRange(
       return `${start.day} ${formatMonth(start.month)} ${start.year} – ${end.day} ${formatMonth(end.month)} ${end.year}`;
     }
   }
+}
+
+/**
+ * Convert Unix timestamp to ISO8601 with fixed AEST offset (+10:00)
+ * @param unixTimestamp - Unix timestamp (can be in seconds or milliseconds)
+ * @param isMilliseconds - Whether the timestamp is in milliseconds (default: false for seconds)
+ * @returns ISO string with +10:00 offset (e.g., "2025-08-16T20:36:41+10:00")
+ */
+export function unixToFormattedAEST(unixTimestamp: number, isMilliseconds = false): string {
+  // Convert to milliseconds if needed
+  const epochMillis = isMilliseconds ? unixTimestamp : unixTimestamp * 1000;
+  const date = new Date(epochMillis);
+
+  // Add 10 hours to UTC to get AEST
+  const aestTime = new Date(date.getTime() + (10 * 60 * 60 * 1000));
+
+  const year = aestTime.getUTCFullYear();
+  const month = String(aestTime.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(aestTime.getUTCDate()).padStart(2, '0');
+  const hour = String(aestTime.getUTCHours()).padStart(2, '0');
+  const minute = String(aestTime.getUTCMinutes()).padStart(2, '0');
+  const second = String(aestTime.getUTCSeconds()).padStart(2, '0');
+
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}+10:00`;
 }
 
 /**

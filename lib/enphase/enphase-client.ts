@@ -67,10 +67,10 @@ export async function storeEnphaseTokens(
   const credentials: EnphaseCredentials = {
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
-    expires_at: Date.now() + (tokens.expires_in * 1000),
+    expires_at: new Date(Date.now() + (tokens.expires_in * 1000)),  // Date object
     enphase_system_id: systemId,
     enphase_user_id: tokens.enl_uid,
-    created_at: Math.floor(Date.now() / 1000)  // Unix timestamp in seconds
+    created_at: new Date()  // Date object
   }
   
   return storeVendorCredentials(userId, 'enphase', credentials)
@@ -540,9 +540,10 @@ export class MockEnphaseClient implements IEnphaseClient {
     const credentials: EnphaseCredentials = {
       access_token: tokens.access_token,
       refresh_token: tokens.refresh_token,
-      expires_at: Date.now() + (tokens.expires_in * 1000),
+      expires_at: new Date(Date.now() + (tokens.expires_in * 1000)),  // Date object
       enphase_system_id: systemId,
-      enphase_user_id: tokens.enl_uid
+      enphase_user_id: tokens.enl_uid,
+      created_at: new Date()  // Date object
     };
     
     // Store in memory for quick access

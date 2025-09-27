@@ -13,17 +13,19 @@ import ConnectionNotification from '@/components/ConnectionNotification'
 import TestConnectionModal from '@/components/TestConnectionModal'
 import ServerErrorModal from '@/components/ServerErrorModal'
 import SessionTimeoutModal from '@/components/SessionTimeoutModal'
-import { 
-  Sun, 
-  Home, 
-  Battery, 
-  Zap, 
+import { AddSystemDialog } from '@/components/AddSystemDialog'
+import {
+  Sun,
+  Home,
+  Battery,
+  Zap,
   AlertTriangle,
   Shield,
   ChevronDown,
   Settings as SettingsIcon,
   Wifi,
-  Plus
+  Plus,
+  MoreHorizontal
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -156,6 +158,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
   const [showSystemDropdown, setShowSystemDropdown] = useState(false)
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false)
   const [showTestConnection, setShowTestConnection] = useState(false)
+  const [showAddSystemDialog, setShowAddSystemDialog] = useState(false)
   const [serverError, setServerError] = useState<{ type: 'connection' | 'server' | null, details?: string }>({ type: null })
   const [showSessionTimeout, setShowSessionTimeout] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -259,7 +262,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
       }
       setLoading(false)
     }
-  }, [systemId])
+  }, [systemId, system?.status])
 
   useEffect(() => {
     // Initial fetch
@@ -486,15 +489,17 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                           {/* Show divider if there are items above */}
                           {hasItemsAbove && <div className="border-t border-gray-700 my-1"></div>}
                           
-                          {/* Always show Add Enphase */}
-                          <Link
-                            href="/auth/enphase/connect"
-                            onClick={() => setShowSettingsDropdown(false)}
-                            className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2 block"
+                          {/* Always show Add System */}
+                          <button
+                            onClick={() => {
+                              setShowSettingsDropdown(false);
+                              setShowAddSystemDialog(true);
+                            }}
+                            className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
                           >
                             <Plus className="w-4 h-4" />
-                            Add Enphase
-                          </Link>
+                            Add System…
+                          </button>
                         </>
                       );
                     })()}
@@ -673,6 +678,12 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
           onClose={() => setShowTestConnection(false)}
         />
       )}
+
+      {/* Add System Dialog */}
+      <AddSystemDialog
+        open={showAddSystemDialog}
+        onOpenChange={setShowAddSystemDialog}
+      />
       
       <ServerErrorModal
         isOpen={serverError.type !== null}

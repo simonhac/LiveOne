@@ -259,6 +259,73 @@ export class SelectronicFetchClient {
   }
 
   /**
+   * Get list of available systems for the authenticated user
+   */
+  public async getSystemsList(): Promise<Array<{systemNumber: string, name?: string, model?: string, serialNumber?: string}> | null> {
+    try {
+      // Ensure we're authenticated
+      if (this.cookies.size === 0) {
+        const authSuccess = await this.authenticate();
+        if (!authSuccess) {
+          return null;
+        }
+      }
+
+      // Fetch the dashboard page to get system list
+      const response = await fetch(`${SELECTLIVE_API.baseUrl}/dashboard`, {
+        headers: {
+          'Cookie': this.getCookieString(),
+          'User-Agent': 'LiveOne/1.0',
+        },
+      });
+
+      if (!response.ok) {
+        console.error('[SystemsList] Failed to fetch dashboard');
+        return null;
+      }
+
+      const html = await response.text();
+      const $ = cheerio.load(html);
+
+      // Look for system selector or system information
+      const systems: Array<{systemNumber: string, name?: string, model?: string, serialNumber?: string}> = [];
+
+      // Try to find system selector dropdown or similar
+      $('select[name="system"], .system-selector option').each((_, el) => {
+        const value = $(el).val() as string;
+        const text = $(el).text().trim();
+        if (value && value !== '') {
+          systems.push({
+            systemNumber: value,
+            name: text
+          });
+        }
+      });
+
+      // If no selector, look for single system info
+      if (systems.length === 0) {
+        // Try to extract from the current system being displayed
+        const systemNumber = $('[data-system-id], .system-number').first().text().trim() ||
+                           this.credentials.systemNumber;
+
+        if (systemNumber) {
+          systems.push({
+            systemNumber,
+            name: $('[data-system-name], .system-name').first().text().trim() || 'System 1'
+          });
+        }
+      }
+
+      console.log('[SystemsList] Found systems:', systems);
+      return systems.length > 0 ? systems : null;
+
+    } catch (error) {
+      console.error('[SystemsList] Error getting systems list:', error);
+      return null;
+    }
+  }
+
+  /**
    * Fetch data from select.live
    */
   public async fetchData(): Promise<ApiResponse<SelectronicData>> {

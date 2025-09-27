@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { readings } from '@/lib/db/schema';
-import { getSystemsManager } from '@/lib/get-systems-manager';
+import { SystemsManager } from '@/lib/systems-manager';
 import { updateAggregatedData } from '@/lib/aggregation-helper';
 import { updatePollingStatusSuccess, updatePollingStatusError } from '@/lib/polling-utils';
 
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
     }
     
     // Get SystemsManager instance
-    const systemsManager = await getSystemsManager();
+    const systemsManager = SystemsManager.getInstance();
     
     // Find the system by vendorSiteId (using apiKey as the site identifier)
     const system = await systemsManager.getSystemByVendorSiteId(data.apiKey);

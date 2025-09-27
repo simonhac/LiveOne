@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { User, Shield, Eye, Clock, Mail, AlertCircle, Globe, Crown } from 'lucide-react'
-import SummaryCard from '@/components/SummaryCard'
+import { Clock, Mail, AlertCircle, Globe, Crown } from 'lucide-react'
 
 interface SystemAccess {
   systemId: number
@@ -245,30 +244,6 @@ export default function UsersPageClient() {
           </table>
         </div>
       </div>
-      </div>
-      
-      {/* Summary Cards - Pinned to bottom */}
-      <div className="px-4 pb-2">
-        <div className="flex gap-2 w-full">
-          <SummaryCard 
-            label="Total Users"
-            value={users.length}
-            icon={User}
-            iconColor="text-blue-400"
-          />
-          <SummaryCard 
-            label="System Owners"
-            value={users.filter(u => u.systems.some(s => s.role === 'owner')).length}
-            icon={Shield}
-            iconColor="text-purple-400"
-          />
-          <SummaryCard 
-            label="Total Systems"
-            value={[...new Set(users.flatMap(u => u.systems.map(s => s.systemId)))].length}
-            icon={Eye}
-            iconColor="text-green-400"
-          />
-        </div>
       </div>
     </div>
   )

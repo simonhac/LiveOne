@@ -1,5 +1,5 @@
 import { BaseVendorAdapter } from '../base-adapter';
-import type { SystemForVendor, PollingResult, TestConnectionResult } from '../types';
+import type { SystemForVendor, PollingResult, TestConnectionResult, CredentialField } from '../types';
 import type { CommonPollingData } from '@/lib/types/common';
 import { SelectronicFetchClient } from '@/lib/selectronic/selectronic-client';
 import { getSelectLiveCredentials } from '@/lib/selectronic/credentials';
@@ -11,6 +11,26 @@ export class SelectronicAdapter extends BaseVendorAdapter {
   readonly vendorType = 'selectronic';
   readonly displayName = 'Selectronic';
   readonly dataSource = 'poll' as const;
+  readonly supportsAddSystem = true;
+
+  readonly credentialFields: CredentialField[] = [
+    {
+      name: 'email',
+      label: 'Email',
+      type: 'email',
+      placeholder: 'your@email.com',
+      required: true,
+      helpText: 'Your Select.Live account email'
+    },
+    {
+      name: 'password',
+      label: 'Password',
+      type: 'password',
+      placeholder: 'Enter your password',
+      required: true,
+      helpText: 'Your Select.Live account password'
+    }
+  ];
   
   // Cache for auth cookies
   private static authCache = new Map<string, { cookie: string; expires: number }>();
@@ -92,12 +112,78 @@ export class SelectronicAdapter extends BaseVendorAdapter {
   
   async testConnection(system: SystemForVendor, credentials: any): Promise<TestConnectionResult> {
     try {
+      // If no vendorSiteId provided, we need to discover available systems
+      if (!system.vendorSiteId) {
+        const discoveryClient = new SelectronicFetchClient({
+          email: credentials.email,
+          password: credentials.password,
+          systemNumber: '' // Empty to discover systems
+        });
+
+        // Authenticate first
+        const authSuccess = await discoveryClient.authenticate();
+        if (!authSuccess) {
+          return {
+            success: false,
+            error: 'Failed to authenticate with Select.Live'
+          };
+        }
+
+        // Get available systems
+        const availableSystems = await discoveryClient.getSystemsList();
+
+        if (!availableSystems || availableSystems.length === 0) {
+          return {
+            success: false,
+            error: 'No systems found for this Select.Live account'
+          };
+        }
+
+        // Use the first system (in future we could let user choose)
+        const firstSystem = availableSystems[0];
+        const vendorSiteId = firstSystem.serialNumber || firstSystem.systemNumber;
+
+        // Now test with the discovered system
+        const client = new SelectronicFetchClient({
+          email: credentials.email,
+          password: credentials.password,
+          systemNumber: vendorSiteId
+        });
+
+        const result = await client.fetchData();
+        if (!result.success || !result.data) {
+          return {
+            success: false,
+            error: result.error || 'Failed to fetch data from Select.Live'
+          };
+        }
+
+        const systemInfo = await client.fetchSystemInfo();
+        const latestData = this.transformData(result.data);
+
+        return {
+          success: true,
+          systemInfo: {
+            vendorSiteId,
+            displayName: firstSystem.name || `Selectronic ${vendorSiteId}`,
+            model: systemInfo?.model || firstSystem.model || 'SP PRO',
+            serial: systemInfo?.serial || firstSystem.serialNumber,
+            solarSize: systemInfo?.solarSize,
+            batterySize: systemInfo?.batterySize,
+            ratings: systemInfo?.ratings
+          },
+          latestData,
+          vendorResponse: { systems: availableSystems, data: result.data.raw }
+        };
+      }
+
+      // Normal flow when vendorSiteId is provided
       const client = new SelectronicFetchClient({
         email: credentials.email,
         password: credentials.password,
         systemNumber: system.vendorSiteId
       });
-      
+
       // Authenticate
       const authSuccess = await client.authenticate();
       if (!authSuccess) {
@@ -106,7 +192,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
           error: 'Failed to authenticate with Select.Live'
         };
       }
-      
+
       // Fetch current data
       const result = await client.fetchData();
       if (!result.success || !result.data) {
@@ -115,13 +201,13 @@ export class SelectronicAdapter extends BaseVendorAdapter {
           error: result.error || 'Failed to fetch data from Select.Live'
         };
       }
-      
+
       // Also fetch system info
       const systemInfo = await client.fetchSystemInfo();
       console.log('[Selectronic] System info received:', JSON.stringify(systemInfo, null, 2));
-      
+
       const latestData = this.transformData(result.data);
-      
+
       return {
         success: true,
         systemInfo: systemInfo || undefined,

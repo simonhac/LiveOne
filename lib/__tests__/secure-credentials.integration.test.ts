@@ -35,7 +35,7 @@ describe('Secure Credentials Integration Tests', () => {
   const enphaseCredentials: EnphaseCredentials = {
     access_token: 'test_access_token',
     refresh_token: 'test_refresh_token',
-    expires_at: Date.now() + 86400000, // 24 hours from now
+    expires_at: new Date(Date.now() + 86400000), // 24 hours from now
     enphase_system_id: 'system_123',
     enphase_user_id: 'enphase_user_456'
   }
@@ -281,7 +281,7 @@ describe('Secure Credentials Integration Tests', () => {
       expect(stored.refresh_token).toBe('new_refresh')
       expect(stored.enphase_system_id).toBe('system_456')
       expect(stored.enphase_user_id).toBe('user_123')
-      expect(stored.expires_at).toBeGreaterThan(Date.now())
+      expect(stored.expires_at.getTime()).toBeGreaterThan(Date.now())
       expect(stored.created_at).toBeDefined()
     })
 

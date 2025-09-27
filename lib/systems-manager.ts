@@ -2,11 +2,12 @@ import { db } from '@/lib/db';
 import { systems, userSystems } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { isUserAdmin } from '@/lib/auth-utils';
+import { clerkClient } from '@clerk/nextjs/server';
 
 /**
  * Manages system data with caching to avoid repeated database queries
  * during a single request/operation.
- * 
+ *
  * NOTE: Currently fetches all systems at once for simplicity.
  * This approach works well for small-to-medium deployments (< 1000 systems).
  * For larger deployments, consider:
@@ -15,12 +16,23 @@ import { isUserAdmin } from '@/lib/auth-utils';
  * - Fetching only required systems per request
  */
 export class SystemsManager {
+  private static instance: SystemsManager | null = null;
   private systemsMap: Map<number, any> = new Map();
   private loadPromise: Promise<void>;
-  
-  constructor() {
+
+  private constructor() {
     // Load systems immediately on instantiation
     this.loadPromise = this.loadSystems();
+  }
+
+  /**
+   * Get the singleton instance of SystemsManager
+   */
+  static getInstance(): SystemsManager {
+    if (!SystemsManager.instance) {
+      SystemsManager.instance = new SystemsManager();
+    }
+    return SystemsManager.instance;
   }
   
   /**
