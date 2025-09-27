@@ -64,6 +64,7 @@ export interface PollingResult {
   recordsProcessed?: number;  // For POLLED
   reason?: string;  // For SKIPPED or ERROR
   error?: string;  // For ERROR
+  errorCode?: string;  // HTTP status code or other error code for ERROR
   nextPoll?: Date;  // When to poll next
 }
 
@@ -84,4 +85,5 @@ export interface TestConnectionResult {
   latestData?: CommonPollingData;
   vendorResponse?: any;  // Raw vendor response for debugging
   error?: string;
+  errorCode?: string;  // HTTP status code or other error code
 }

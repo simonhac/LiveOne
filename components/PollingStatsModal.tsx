@@ -96,7 +96,7 @@ export default function PollingStatsModal({ isOpen, onClose, systemName, stats }
                     <div>
                       {formatDateTime(stats.lastPollTime) || 'Never'}
                       {showResponse && stats.lastResponse && (
-                        <div className="mt-3 bg-gray-950 border border-gray-700 rounded-lg p-4">
+                        <div className="mt-3 bg-gray-950 border border-gray-700 rounded-lg">
                           <div className="overflow-x-auto font-mono text-sm">
                             <JsonView 
                               data={stats.lastResponse} 
