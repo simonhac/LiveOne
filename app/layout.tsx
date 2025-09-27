@@ -26,7 +26,7 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en">
-        <body className={dmSans.className}>
+        <body className={`${dmSans.className} bg-gray-900`}>
           {isDev && (
             <div className="fixed top-0 left-0 right-0 h-1 bg-orange-500 z-[9999]" />
           )}
