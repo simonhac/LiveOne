@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Menu, X, User, LogOut, Info, ChevronDown, Settings, Wifi, Plus, Shield } from 'lucide-react'
+import { Menu, X, User, LogOut, Info, ChevronDown, Settings, FlaskConical, Plus, Shield } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useUser } from '@clerk/nextjs'
@@ -199,7 +199,7 @@ export default function MobileMenu({
                     }}
                     className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
                   >
-                    <Wifi className="w-4 h-4" />
+                    <FlaskConical className="w-4 h-4" />
                     Test Connection
                   </button>
                 )}

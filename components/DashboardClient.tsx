@@ -23,7 +23,7 @@ import {
   Shield,
   ChevronDown,
   Settings as SettingsIcon,
-  Wifi,
+  FlaskConical,
   Plus,
   MoreHorizontal
 } from 'lucide-react'
@@ -481,7 +481,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                               }}
                               className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
                             >
-                              <Wifi className="w-4 h-4" />
+                              <FlaskConical className="w-4 h-4" />
                               Test Connection
                             </button>
                           )}
