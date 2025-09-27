@@ -10,6 +10,19 @@ export async function getCredentialsForVendor(
   ownerClerkUserId: string,
   liveoneSiteId?: string
 ): Promise<any> {
+  // In development mode, return dummy credentials for Enphase
+  if (process.env.NODE_ENV === 'development' && vendorType.toLowerCase() === 'enphase') {
+    console.log('[Enphase] Development mode: Using dummy credentials for testing');
+    return {
+      access_token: 'dummy_token_for_dev',
+      refresh_token: 'dummy_refresh_token',
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
+      enphase_system_id: liveoneSiteId || 'dummy_system_id',
+      enphase_user_id: 'dev_user',
+      created_at: new Date()
+    };
+  }
+
   // Map vendor types to their credential keys in Clerk
   const credentialKey = getCredentialKey(vendorType);
 

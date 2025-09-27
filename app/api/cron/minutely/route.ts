@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { readings } from '@/lib/db/schema';
-import { pointGroups } from '@/lib/db/schema-monitoring-points';
 import { SystemsManager } from '@/lib/systems-manager';
 import { updateAggregatedData } from '@/lib/aggregation-helper';
 import { formatSystemId } from '@/lib/system-utils';
@@ -16,7 +15,7 @@ import {
   type PollingResult as PollingStatusResult
 } from '@/lib/polling-utils';
 import { isUserAdmin } from '@/lib/auth-utils';
-import { eq, and } from 'drizzle-orm';
+import { and } from 'drizzle-orm';
 
 // Verify the request is from Vercel Cron or an admin user
 async function validateCronRequest(request: NextRequest): Promise<boolean> {
@@ -312,85 +311,6 @@ export async function GET(request: NextRequest) {
           systemId: system.id,
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
-          status: 'error',
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
-      }
-    }
-    
-    // Poll monitoring point groups (Mondo Power and future UBI devices)
-    console.log('[Cron] Polling monitoring point groups...');
-
-    const activePointGroups = await db.select()
-      .from(pointGroups)
-      .where(eq(pointGroups.pollingEnabled, true));
-
-    for (const pointGroup of activePointGroups) {
-      try {
-        const adapter = VendorRegistry.getAdapter(pointGroup.vendorType);
-
-        if (!adapter) {
-          console.error(`[Cron] Unknown vendor type for point group: ${pointGroup.vendorType}`);
-          continue;
-        }
-
-        if (adapter.dataSource === 'push') {
-          console.log(`[Cron] Skipping push-only point group: ${pointGroup.name}`);
-          continue;
-        }
-
-        // Get credentials for the owner, with optional site-specific matching
-        const credentials = await getCredentialsForVendor(
-          pointGroup.vendorType,
-          pointGroup.ownerClerkUserId || '',
-          pointGroup.id.toString()  // Use point group ID (same as system ID) as liveoneSiteId
-        );
-
-        if (!credentials) {
-          console.error(`[Cron] No credentials for point group ${pointGroup.name} (${pointGroup.vendorType})`);
-          continue;
-        }
-
-        // Create a pseudo-system for the adapter
-        const systemForVendor: SystemForVendor = {
-          id: -pointGroup.id, // Negative ID to distinguish from regular systems
-          vendorType: pointGroup.vendorType,
-          vendorSiteId: pointGroup.vendorId,
-          ownerClerkUserId: pointGroup.ownerClerkUserId || '',
-          displayName: pointGroup.displayName || pointGroup.name,
-          timezoneOffsetMin: pointGroup.timezoneOffsetMin,
-          isActive: true
-        };
-
-        // Poll the point group
-        const result = await adapter.poll(systemForVendor, credentials);
-
-        // Log result
-        if (result.action === 'POLLED') {
-          console.log(`[Cron] Point group ${pointGroup.name} - Success (${result.recordsProcessed} records)`);
-          results.push({
-            systemId: -pointGroup.id,
-            displayName: pointGroup.displayName || pointGroup.name,
-            vendorType: pointGroup.vendorType,
-            status: 'polled',
-            recordsUpserted: result.recordsProcessed
-          });
-        } else if (result.action === 'ERROR') {
-          console.error(`[Cron] Point group ${pointGroup.name} - Error: ${result.error}`);
-          results.push({
-            systemId: -pointGroup.id,
-            displayName: pointGroup.displayName || pointGroup.name,
-            vendorType: pointGroup.vendorType,
-            status: 'error',
-            error: result.error
-          });
-        }
-      } catch (error) {
-        console.error(`[Cron] Error polling point group ${pointGroup.name}:`, error);
-        results.push({
-          systemId: -pointGroup.id,
-          displayName: pointGroup.displayName || pointGroup.name,
-          vendorType: pointGroup.vendorType,
           status: 'error',
           error: error instanceof Error ? error.message : 'Unknown error'
         });

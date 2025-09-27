@@ -1,47 +1,15 @@
 import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
+import { systems } from './schema';
 
-// Point Groups table - stores vendor organizations/sites
-export const pointGroups = sqliteTable('point_groups', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-
-  // Vendor identification
-  vendorType: text('vendor_type').notNull(), // 'mondo_power', 'ubi_devices', etc.
-  vendorId: text('vendor_id').notNull(), // Vendor's unique identifier
-
-  // Basic information
-  name: text('name').notNull(),
-  displayName: text('display_name'),
-  description: text('description'),
-
-  // Location & timezone
-  location: text('location', { mode: 'json' }), // JSON for address/coords
-  timezoneOffsetMin: integer('timezone_offset_min').notNull().default(600), // AEST default
-
-  // Access control
-  ownerClerkUserId: text('owner_clerk_user_id'), // User who owns this group
-  sharedWithClerkUserIds: text('shared_with_clerk_user_ids', { mode: 'json' }), // Array of user IDs
-
-  // Configuration
-  pollingEnabled: integer('polling_enabled', { mode: 'boolean' }).notNull().default(true),
-  pollingIntervalSeconds: integer('polling_interval_seconds').notNull().default(60),
-
-  // Metadata
-  vendorMetadata: text('vendor_metadata', { mode: 'json' }), // Vendor-specific data
-  createdAt: integer('created_at').notNull().default(sql`(unixepoch() * 1000)`), // Milliseconds
-  updatedAt: integer('updated_at').notNull().default(sql`(unixepoch() * 1000)`), // Milliseconds
-}, (table) => ({
-  vendorUnique: uniqueIndex('pg_vendor_unique').on(table.vendorType, table.vendorId),
-  ownerIdx: index('pg_owner_idx').on(table.ownerClerkUserId),
-  pollingIdx: index('pg_polling_idx').on(table.pollingEnabled),
-}));
+// Note: pointGroups table has been removed - now using systems table directly
 
 // Point Sub-Groups table - stores monitoring point groups/subcircuits
 export const pointSubGroups: any = sqliteTable('point_sub_groups', {
   id: integer('id').primaryKey({ autoIncrement: true }),
 
   // Relationships
-  groupId: integer('group_id').notNull().references(() => pointGroups.id, { onDelete: 'cascade' }),
+  groupId: integer('group_id').notNull().references(() => systems.id, { onDelete: 'cascade' }),
   parentSubGroupId: integer('parent_sub_group_id'),
 
   // Identification
@@ -72,7 +40,7 @@ export const pointInfo = sqliteTable('point_info', {
   id: integer('id').primaryKey({ autoIncrement: true }),
 
   // Relationships
-  groupId: integer('group_id').notNull().references(() => pointGroups.id, { onDelete: 'cascade' }),
+  groupId: integer('group_id').notNull().references(() => systems.id, { onDelete: 'cascade' }),
   subGroupId: integer('sub_group_id').references(() => pointSubGroups.id, { onDelete: 'set null' }),
 
   // Identification
@@ -113,7 +81,7 @@ export const measurementSessions = sqliteTable('measurement_sessions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
 
   // Session identification
-  groupId: integer('group_id').notNull().references(() => pointGroups.id, { onDelete: 'cascade' }),
+  groupId: integer('group_id').notNull().references(() => systems.id, { onDelete: 'cascade' }),
   sessionType: text('session_type').notNull(), // 'scheduled', 'manual', 'catchup'
 
   // Timing
@@ -224,30 +192,13 @@ export const pointReadingsAgg5m = sqliteTable('point_readings_agg_5m', {
   pointTimeIdx: index('pr5m_point_time_idx').on(table.pointId, table.intervalStart),
 }));
 
-// Relations for Drizzle ORM query builder
-export const pointGroupsRelations = {
-  subGroups: {
-    relation: 'one-to-many',
-    to: pointSubGroups,
-    references: [(pointSubGroups as any).groupId],
-  },
-  points: {
-    relation: 'one-to-many',
-    to: pointInfo,
-    references: [(pointInfo as any).groupId],
-  },
-  sessions: {
-    relation: 'one-to-many',
-    to: measurementSessions,
-    references: [(measurementSessions as any).groupId],
-  },
-};
+// Note: pointGroupsRelations removed - relationships now through systems table
 
 export const pointSubGroupsRelations = {
   group: {
     relation: 'many-to-one',
-    to: pointGroups,
-    references: [(pointGroups as any).id],
+    to: systems,
+    references: [(systems as any).id],
   },
   parent: {
     relation: 'many-to-one',
@@ -269,8 +220,8 @@ export const pointSubGroupsRelations = {
 export const pointInfoRelations = {
   group: {
     relation: 'many-to-one',
-    to: pointGroups,
-    references: [(pointGroups as any).id],
+    to: systems,
+    references: [(systems as any).id],
   },
   subGroup: {
     relation: 'many-to-one',
@@ -305,8 +256,8 @@ export const pointReadingsRelations = {
 export const measurementSessionsRelations = {
   group: {
     relation: 'many-to-one',
-    to: pointGroups,
-    references: [(pointGroups as any).id],
+    to: systems,
+    references: [(systems as any).id],
   },
   readings: {
     relation: 'one-to-many',

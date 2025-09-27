@@ -3,13 +3,12 @@ import type { SystemForVendor, PollingResult, TestConnectionResult, CredentialFi
 import type { CommonPollingData } from '@/lib/types/common';
 import { db } from '@/lib/db';
 import {
-  pointGroups,
   pointInfo,
   pointReadings,
   measurementSessions,
   pointSubGroups
 } from '@/lib/db/schema-monitoring-points';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
 
 interface MondoCredentials {
   email: string;
@@ -178,20 +177,8 @@ export class MondoAdapter extends BaseVendorAdapter {
     try {
       console.log(`[Mondo] Starting poll for system ${system.id}`);
 
-      // Find the corresponding point group
-      const [pointGroup] = await db.select()
-        .from(pointGroups)
-        .where(
-          and(
-            eq(pointGroups.vendorType, 'mondo'),
-            eq(pointGroups.vendorId, system.vendorSiteId)
-          )
-        )
-        .limit(1);
-
-      if (!pointGroup) {
-        return this.error('No monitoring point group found for this system');
-      }
+      // Use the system ID directly (previously was the same as pointGroup.id)
+      const systemId = system.id;
 
       // Authenticate
       const accessToken = await this.authenticate(credentials);
@@ -199,7 +186,7 @@ export class MondoAdapter extends BaseVendorAdapter {
       // Create measurement session
       const [session] = await db.insert(measurementSessions)
         .values({
-          groupId: pointGroup.id,
+          groupId: systemId,
           sessionType: 'scheduled',
           startedAt: Date.now(),
           pointsQueried: 0,
@@ -216,7 +203,7 @@ export class MondoAdapter extends BaseVendorAdapter {
       try {
         // Get subcircuit details
         const subcircuitResponse = await fetch(
-          `${this.baseUrl}/subcircuit/${pointGroup.vendorId}`,
+          `${this.baseUrl}/subcircuit/${system.vendorSiteId}`,
           {
             headers: {
               'Authorization': `Bearer ${accessToken}`,
@@ -233,10 +220,10 @@ export class MondoAdapter extends BaseVendorAdapter {
         const subcircuitData = await subcircuitResponse.json();
         const rows: MondoMonitoringPoint[] = subcircuitData.rows || [];
 
-        // Get all points for this group
+        // Get all points for this system
         const points = await db.select()
           .from(pointInfo)
-          .where(eq(pointInfo.groupId, pointGroup.id));
+          .where(eq(pointInfo.groupId, systemId));
 
         const pointMap = new Map(points.map(p => [p.vendorId, p]));
         const measurementTime = Date.now();
@@ -331,30 +318,16 @@ export class MondoAdapter extends BaseVendorAdapter {
     try {
       console.log(`[Mondo] getMostRecentReadings for system ${system.id}, vendorSiteId: ${system.vendorSiteId}`);
 
-      // Find the point group
-      const [pointGroup] = await db.select()
-        .from(pointGroups)
-        .where(
-          and(
-            eq(pointGroups.vendorType, 'mondo'),
-            eq(pointGroups.vendorId, system.vendorSiteId)
-          )
-        )
-        .limit(1);
-
-      if (!pointGroup) {
-        console.log(`[Mondo] No point group found for vendorSiteId: ${system.vendorSiteId}`);
-        return null;
-      }
-
-      console.log(`[Mondo] Found point group ${pointGroup.id} for ${system.vendorSiteId}`);
+      // Use the system ID directly
+      const systemId = system.id;
+      console.log(`[Mondo] Using system ${systemId} for vendorSiteId: ${system.vendorSiteId}`);
 
       // Get most recent readings for all points
       const points = await db.select()
         .from(pointInfo)
-        .where(eq(pointInfo.groupId, pointGroup.id));
+        .where(eq(pointInfo.groupId, systemId));
 
-      console.log(`[Mondo] Found ${points.length} points for group ${pointGroup.id}`);
+      console.log(`[Mondo] Found ${points.length} points for system ${systemId}`);
 
       if (points.length === 0) {
         return null;

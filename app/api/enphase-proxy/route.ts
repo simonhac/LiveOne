@@ -20,21 +20,24 @@ async function handleRequest(request: NextRequest, defaultMethod: string) {
     // Get parameters from URL params or body
     const searchParams = request.nextUrl.searchParams;
     let systemId = searchParams.get('systemId');
-    let method = searchParams.get('method') || defaultMethod;
+    let method = searchParams.get('method');
     let url = searchParams.get('url');
-    
+
     // Also check body for POST requests
     if (request.method === 'POST') {
       try {
         const body = await request.json();
         systemId = systemId || body.systemId;
-        method = method || body.method || defaultMethod;
+        method = method || body.method;
         url = url || body.url;
       } catch (e) {
         // Body might not be JSON
       }
     }
-    
+
+    // Default method if not specified
+    method = method || defaultMethod;
+
     if (!systemId || !url) {
       return NextResponse.json({
         error: 'Missing required parameters',

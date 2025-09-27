@@ -98,7 +98,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!adapter.supportsAddSystem) {
+    // Only check supportsAddSystem for new systems (not testing existing systems)
+    if (!systemId && !adapter.supportsAddSystem) {
       return NextResponse.json(
         { error: `${adapter.displayName} does not support automatic system addition` },
         { status: 400 }

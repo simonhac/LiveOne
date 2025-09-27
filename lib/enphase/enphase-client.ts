@@ -485,52 +485,44 @@ export class MockEnphaseClient implements IEnphaseClient {
   }
 
   async getLatestTelemetry(systemId: string, accessToken: string): Promise<EnphaseTelemetryResponse> {
-    console.log('ENPHASE MOCK: Generating telemetry for system:', systemId);
-    await this.delay();
-    
-    // Generate realistic-looking data based on time of day
-    const now = new Date();
-    const hour = now.getHours();
-    
-    // Solar production curve (peaks at noon)
-    let solarW = 0;
-    if (hour >= 6 && hour <= 18) {
-      const peakHour = 12;
-      const distanceFromPeak = Math.abs(hour - peakHour);
-      solarW = Math.max(0, (5000 - distanceFromPeak * 500) * (0.8 + Math.random() * 0.4));
+    console.log('ENPHASE MOCK: Proxying to production for Enphase system:', systemId);
+
+    // In dev mode, proxy through production to get real data
+    const prodUrl = process.env.NEXT_PUBLIC_PROD_URL || 'https://liveone.vercel.app';
+    const proxyUrl = `${prodUrl}/api/enphase-proxy`;
+
+    // Use the summary endpoint for current telemetry
+    const summaryUrl = `/api/v4/systems/${systemId}/summary`;
+    console.log('ENPHASE MOCK: Fetching summary data via proxy:', summaryUrl);
+
+    // For dev, we need to map to the production database system ID
+    // Hardcode the known mapping for now (Jeffery Solar = ID 3 in both dev and prod)
+    const prodDbSystemId = '3'; // TODO: Make this dynamic based on vendor_site_id
+
+    const response = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        systemId: prodDbSystemId,  // Use production database ID
+        url: summaryUrl,
+        method: 'GET'
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('ENPHASE MOCK: Proxy request failed:', response.status, errorText);
+      throw new Error(`Proxy request failed: ${response.status}`);
     }
 
-    // Consumption varies throughout the day
-    const consumptionW = 500 + Math.random() * 2000;
-    
-    // Battery behavior
-    const batteryW = solarW > consumptionW 
-      ? -(solarW - consumptionW) * 0.9  // Charging (negative)
-      : (consumptionW - solarW) * 0.8;   // Discharging (positive)
-    
-    // Grid supplements when needed
-    const gridW = Math.max(0, consumptionW - solarW - Math.max(0, batteryW));
+    const proxyResponse = await response.json();
+    console.log('ENPHASE MOCK: Got real data from production');
 
-    const telemetry: EnphaseTelemetryResponse = {
-      production_power: Math.round(solarW),
-      consumption_power: Math.round(consumptionW),
-      storage_power: Math.round(batteryW),
-      grid_power: Math.round(gridW),
-      storage_energy_charged: Math.round(Math.random() * 20000),
-      storage_energy_discharged: Math.round(Math.random() * 15000),
-      production_energy_lifetime: Math.round(Math.random() * 1000000),
-      consumption_energy_lifetime: Math.round(Math.random() * 900000),
-      storage_soc: 20 + Math.random() * 60, // 20-80%
-      last_report_at: Math.floor(Date.now() / 1000)
-    };
-
-    console.log('ENPHASE MOCK: Generated telemetry -',
-      'Solar:', telemetry.production_power, 'W',
-      'Load:', telemetry.consumption_power, 'W',
-      'Battery:', telemetry.storage_power, 'W',
-      'SOC:', telemetry.storage_soc ? `${telemetry.storage_soc.toFixed(1)}%` : 'N/A');
-    
-    return telemetry;
+    // Return the actual response from production
+    // The proxy returns the response in a 'response' field with 'data' inside
+    return proxyResponse.response?.data || proxyResponse;
   }
 
   async storeTokens(userId: string, tokens: EnphaseTokens, systemId: string): Promise<void> {
