@@ -225,8 +225,8 @@ export default function AdminDashboardClient() {
 
   return (
     <>
-      <div className="flex flex-col h-full">
-        <div className="flex-1 px-0 md:px-6 pt-3 pb-0 overflow-hidden flex flex-col">
+      <div className="flex flex-col">
+        <div className="px-0 md:px-6 pt-3 pb-0">
           {error && (
             <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-4">
               {error}
@@ -234,7 +234,7 @@ export default function AdminDashboardClient() {
           )}
           
           {/* Systems Table */}
-          <div className="bg-gray-800 border-t md:border border-gray-700 md:rounded-t overflow-hidden flex flex-col min-h-0 flex-1">
+          <div className="bg-gray-800 border-t md:border border-gray-700 md:rounded-t overflow-hidden">
             <div className="border-b border-gray-700">
               <div className="flex items-end -mb-px">
                 <button
@@ -260,7 +260,7 @@ export default function AdminDashboardClient() {
               </div>
             </div>
           
-          <div className="overflow-auto flex-1">
+          <div className="overflow-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-700">
@@ -408,7 +408,7 @@ export default function AdminDashboardClient() {
                       )}
                     </td>
                     <td className="px-2 md:px-6 py-4 whitespace-nowrap align-baseline">
-                      <div className="sm:block flex flex-col min-h-full">
+                      <div className="sm:block flex flex-col">
                         <div>
                           {!system.polling.isActive ? (
                             <div>

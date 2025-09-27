@@ -121,45 +121,59 @@ export class EnphaseAdapter extends BaseVendorAdapter {
           error: 'Enphase token expired. Please reconnect your system.'
         };
       }
-      
-      // Create Enphase client
+
+      console.log(`[Enphase] Testing connection for system ${system.id}`);
+
+      // For test connection, just fetch the summary endpoint to verify connectivity
+      // This uses the existing fetchEnphase which handles dev mode proxying
       const client = getEnphaseClient();
-      
+
       // Clean up the system ID
       const cleanSystemId = String(system.vendorSiteId).replace(/\.0$/, '').split('.')[0];
-      
+
       // Fetch latest telemetry data
       const telemetry = await client.getLatestTelemetry(
         cleanSystemId,
         credentials.access_token
       );
-      
-      const latestData = this.transformTelemetryData(telemetry);
-      
-      // Extract system info from telemetry
+
+      // Only use real data - no made up values
+      const latestData = telemetry ? {
+        timestamp: new Date().toISOString(),
+        solarW: telemetry.production_power || null,
+        solarLocalW: telemetry.production_power || null,
+        loadW: telemetry.consumption_power || null,
+        batteryW: telemetry.storage_power || null,
+        gridW: telemetry.grid_power || null,
+        batterySOC: telemetry.storage_soc || null,
+        faultCode: null,
+        faultTimestamp: null,
+        generatorStatus: null,
+        solarKwhTotal: telemetry.production_energy_lifetime ? telemetry.production_energy_lifetime / 1000 : null,
+        loadKwhTotal: telemetry.consumption_energy_lifetime ? telemetry.consumption_energy_lifetime / 1000 : null,
+        batteryInKwhTotal: telemetry.storage_energy_charged ? telemetry.storage_energy_charged / 1000 : null,
+        batteryOutKwhTotal: telemetry.storage_energy_discharged ? telemetry.storage_energy_discharged / 1000 : null,
+        gridInKwhTotal: null,
+        gridOutKwhTotal: null
+      } : null;
+
+      // System info - only real data
       const systemInfo = {
         model: 'Enphase System',
         serial: cleanSystemId,
         ratings: null,
-        solarSize: telemetry.system_size 
-          ? `${(telemetry.system_size / 1000).toFixed(1)} kW`
-          : latestData?.solarW 
-          ? `${(latestData.solarW / 1000).toFixed(1)} kW capacity` 
-          : null,
-        batterySize: telemetry.storage_soc && telemetry.storage_soc > 0 
-          ? 'Battery present' 
-          : null
+        solarSize: null,
+        batterySize: null
       };
-      
+
       console.log(`[Enphase] Test connection successful for system ${cleanSystemId}`);
-      
+
       return {
         success: true,
         systemInfo,
         latestData: latestData || undefined,
-        vendorResponse: telemetry.raw // Include raw vendor response
+        vendorResponse: telemetry // Return the raw response from the server
       };
-      
     } catch (error) {
       console.error('Error testing Enphase connection:', error);
       return {
