@@ -67,17 +67,12 @@ export default function AdminDashboardClient() {
   const [activeTab, setActiveTab] = useState<'active' | 'removed'>('active')
   const [testModal, setTestModal] = useState<{
     isOpen: boolean
-    system: {
-      id: number
-      displayName: string | null
-      vendorType: string
-      vendorSiteId: string
-      ownerClerkUserId: string | null
-      status?: string
-    } | null
+    systemId: number | null
+    displayName: string | null
   }>({
     isOpen: false,
-    system: null
+    systemId: null,
+    displayName: null
   })
   const [pollingStatsModal, setPollingStatsModal] = useState<{
     isOpen: boolean
@@ -99,21 +94,16 @@ export default function AdminDashboardClient() {
   const openTestModal = (system: SystemData) => {
     setTestModal({
       isOpen: true,
-      system: {
-        id: system.systemId,
-        displayName: system.displayName,
-        vendorType: system.vendor.type,
-        vendorSiteId: system.vendor.siteId,
-        ownerClerkUserId: system.owner.clerkId,
-        status: system.status
-      }
+      systemId: system.systemId,
+      displayName: system.displayName
     })
   }
 
   const closeTestModal = () => {
     setTestModal({
       isOpen: false,
-      system: null
+      systemId: null,
+      displayName: null
     })
   }
 
@@ -235,16 +225,16 @@ export default function AdminDashboardClient() {
 
   return (
     <>
-      <div className="flex flex-col h-full max-h-full">
-        <div className="flex-1 px-0 md:px-6 py-8 overflow-hidden">
+      <div className="flex flex-col h-full">
+        <div className="flex-1 px-0 md:px-6 pt-3 pb-0 overflow-hidden flex flex-col">
           {error && (
-            <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-6">
+            <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-4">
               {error}
             </div>
           )}
           
           {/* Systems Table */}
-          <div className="bg-gray-800 border border-gray-700 md:rounded overflow-hidden flex-1 flex flex-col">
+          <div className="bg-gray-800 border-t md:border border-gray-700 md:rounded-t overflow-hidden flex flex-col min-h-0 flex-1">
             <div className="border-b border-gray-700">
               <div className="flex items-end -mb-px">
                 <button
@@ -426,25 +416,54 @@ export default function AdminDashboardClient() {
                             </div>
                           ) : system.polling.lastPollTime ? (
                             <div className="text-xs text-gray-400">
-                              <Clock className="w-3 h-3 inline mr-1" />
+                              <div>
+                                <Clock className="w-3 h-3 inline mr-1" />
+                                {(() => {
+                                  const pollDate = new Date(system.polling.lastPollTime)
+                                  const today = new Date()
+                                  const isToday =
+                                    pollDate.getDate() === today.getDate() &&
+                                    pollDate.getMonth() === today.getMonth() &&
+                                    pollDate.getFullYear() === today.getFullYear()
+
+                                  // Format time as "7:24:12pm" (12-hour, no leading zero, lowercase am/pm)
+                                  const formatTime = (date: Date) => {
+                                    const hours = date.getHours()
+                                    const minutes = date.getMinutes()
+                                    const seconds = date.getSeconds()
+                                    const ampm = hours >= 12 ? 'pm' : 'am'
+                                    const displayHours = hours % 12 || 12 // Convert to 12-hour, no leading zero
+
+                                    return `${displayHours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}${ampm}`
+                                  }
+
+                                  if (isToday) {
+                                    return formatTime(pollDate)
+                                  } else {
+                                    return pollDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                                  }
+                                })()}
+                              </div>
                               {(() => {
                                 const pollDate = new Date(system.polling.lastPollTime)
                                 const today = new Date()
-                                const isToday = 
+                                const isToday =
                                   pollDate.getDate() === today.getDate() &&
                                   pollDate.getMonth() === today.getMonth() &&
                                   pollDate.getFullYear() === today.getFullYear()
-                                
-                                if (isToday) {
-                                  return pollDate.toLocaleTimeString()
-                                } else {
+
+                                if (!isToday) {
+                                  const hours = pollDate.getHours()
+                                  const minutes = pollDate.getMinutes()
+                                  const seconds = pollDate.getSeconds()
+                                  const ampm = hours >= 12 ? 'pm' : 'am'
+                                  const displayHours = hours % 12 || 12
+
                                   return (
-                                    <>
-                                      <div>{pollDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</div>
-                                      <div className="ml-4">{pollDate.toLocaleTimeString()}</div>
-                                    </>
+                                    <div className="ml-4">{displayHours}:{minutes.toString().padStart(2, '0')}:{seconds.toString().padStart(2, '0')}{ampm}</div>
                                   )
                                 }
+                                return null
                               })()}
                             </div>
                           ) : (
@@ -468,9 +487,10 @@ export default function AdminDashboardClient() {
       </div>
       
       {/* Test Connection Modal - Using TestConnectionModal component */}
-      {testModal.isOpen && testModal.system && (
+      {testModal.isOpen && testModal.systemId && (
         <TestConnectionModal
-          system={testModal.system}
+          systemId={testModal.systemId}
+          displayName={testModal.displayName}
           onClose={closeTestModal}
         />
       )}

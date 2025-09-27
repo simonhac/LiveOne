@@ -34,22 +34,21 @@ const formatPairJSX = (inValue: number | null | undefined, outValue: number | nu
   )
 }
 
-interface System {
-  id: number
-  displayName: string | null
-  vendorType: string
-  vendorSiteId: string
-  ownerClerkUserId: string | null
-  status?: string
-}
-
 interface TestConnectionModalProps {
-  system: System
+  // For existing systems (from dashboard or admin)
+  systemId?: number
+  displayName?: string | null
+
+  // For new systems (from add system dialog) - not implemented yet
+  // vendorType?: string
+  // credentials would be passed another way
+
   onClose: () => void
 }
 
 export default function TestConnectionModal({
-  system,
+  systemId,
+  displayName,
   onClose
 }: TestConnectionModalProps) {
   const [loading, setLoading] = useState(false)
@@ -68,11 +67,14 @@ export default function TestConnectionModal({
     }
     setError(null)
 
+    if (!systemId) {
+      setError('No system ID provided')
+      return
+    }
+
     console.log('[TestConnectionModal] Testing connection for system:', {
-      id: system.id,
-      displayName: system.displayName,
-      vendorType: system.vendorType,
-      vendorSiteId: system.vendorSiteId
+      id: systemId,
+      displayName: displayName
     });
 
     try {
@@ -82,7 +84,7 @@ export default function TestConnectionModal({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          systemId: system.id
+          systemId: systemId
         }),
       })
 
@@ -141,7 +143,7 @@ export default function TestConnectionModal({
         {/* Header */}
         <div className="flex justify-between items-start mb-4">
           <h3 className="text-lg font-semibold text-white">
-            {system.displayName || 'System'} — Test Connection
+            {displayName || 'System'} — Test Connection
           </h3>
           <button
             onClick={onClose}
@@ -165,7 +167,7 @@ export default function TestConnectionModal({
         {(loading && !data) && (
           <div className="text-center py-8">
             <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="text-gray-400">Connecting to {system.vendorType}...</p>
+            <p className="text-gray-400">Testing connection...</p>
           </div>
         )}
         

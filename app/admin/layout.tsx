@@ -138,7 +138,7 @@ export default function AdminLayout({
 
         {/* Main content */}
         <div className="flex-1 lg:pl-0">
-          <main className="h-[calc(100vh-73px)] sm:h-[calc(100vh-89px)]">
+          <main className="h-[calc(100vh-73px)] sm:h-[calc(100vh-73px)]">
             {children}
           </main>
         </div>

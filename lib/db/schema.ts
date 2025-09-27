@@ -19,7 +19,7 @@ export const systems = sqliteTable('systems', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
 }, (table) => ({
-  vendorSiteUnique: uniqueIndex('vendor_site_unique').on(table.vendorType, table.vendorSiteId),
+  // Note: vendor_site_unique index removed to allow multiple systems with same vendorSiteId (e.g., for removed/inactive systems)
   ownerClerkUserIdx: index('owner_clerk_user_idx').on(table.ownerClerkUserId),
   statusIdx: index('systems_status_idx').on(table.status),
 }));
