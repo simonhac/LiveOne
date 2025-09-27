@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { CheckCircle, XCircle, Loader2, X, Zap, Sun, Home, Battery, AlertCircle, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
 import { formatValue, formatValuePair } from '@/lib/energy-formatting'
 import { JsonView, defaultStyles, darkStyles } from 'react-json-view-lite'
@@ -57,6 +57,7 @@ export default function TestConnectionModal({
   const [vendorResponse, setVendorResponse] = useState<any>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
+  const hasInitiatedTest = useRef(false)
 
   const testConnection = async (isRefresh: boolean = false) => {
     if (isRefresh) {
@@ -131,9 +132,13 @@ export default function TestConnectionModal({
     testConnection(true)
   }
 
-  // Automatically test connection when modal opens
+  // Test connection when modal opens - but only once
   useEffect(() => {
-    testConnection(false)
+    // Use ref to ensure test only happens once, even in StrictMode
+    if (!hasInitiatedTest.current) {
+      hasInitiatedTest.current = true
+      testConnection(false)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // Empty dependency array means this runs once on mount
 
@@ -350,7 +355,7 @@ export default function TestConnectionModal({
                 </button>
                 
                 {showDetails && vendorResponse && (
-                  <div className="mt-3 bg-gray-950 border border-gray-700 rounded-lg p-4">
+                  <div className="mt-3 bg-gray-950 border border-gray-700 rounded-lg">
                     <div className="overflow-x-auto font-mono text-sm">
                       <JsonView
                         data={vendorResponse}

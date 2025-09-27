@@ -481,7 +481,8 @@ export class MondoAdapter extends BaseVendorAdapter {
         console.log(`[Mondo] Failed to fetch monitoring points: ${response.status}`);
         return {
           success: false,
-          error: `Failed to fetch monitoring points: ${response.status} ${response.statusText}`
+          error: `Failed to fetch monitoring points: ${response.status} ${response.statusText}`,
+          errorCode: response.status.toString()
         };
       }
 

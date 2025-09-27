@@ -4,6 +4,7 @@ import { readings } from '@/lib/db/schema';
 import { SystemsManager } from '@/lib/systems-manager';
 import { updateAggregatedData } from '@/lib/aggregation-helper';
 import { updatePollingStatusSuccess, updatePollingStatusError } from '@/lib/polling-utils';
+import { sessionManager } from '@/lib/session-manager';
 
 /**
  * Expected request body for Fronius push data
@@ -45,7 +46,37 @@ interface FroniusPushData {
 
 // Removed validateApiKey function - we now use apiKey as the site identifier
 
+// Helper function to record failed sessions
+async function recordFailedSession(
+  sessionStart: Date,
+  systemId: number,
+  vendorType: string,
+  systemName: string,
+  errorCode: string | null,
+  error: string,
+  requestData: any,
+  sessionLabel?: string
+) {
+  const duration = Date.now() - sessionStart.getTime();
+  await sessionManager.recordSession({
+    sessionLabel,
+    systemId,
+    vendorType,
+    systemName,
+    cause: 'PUSH',
+    started: sessionStart,
+    duration,
+    successful: false,
+    errorCode,
+    error,
+    response: requestData,
+    numRows: 0,
+  });
+}
+
 export async function POST(request: NextRequest) {
+  const sessionStart = new Date();
+
   try {
     // Parse JSON directly
     const data: FroniusPushData = await request.json();
@@ -90,6 +121,17 @@ export async function POST(request: NextRequest) {
     
     if (!system) {
       console.error(`[Fronius Push] System not found for apiKey: ${data.apiKey}`);
+
+      await recordFailedSession(
+        sessionStart,
+        0, // Unknown system
+        'fronius',
+        `Unknown (apiKey: ${data.apiKey})`,
+        '404',
+        'System not found',
+        { action: data.action, apiKey: data.apiKey }
+      );
+
       return NextResponse.json(
         { error: 'System not found' },
         { status: 404 }
@@ -99,6 +141,17 @@ export async function POST(request: NextRequest) {
     // Verify it's a Fronius system
     if (system.vendorType !== 'fronius') {
       console.error(`[Fronius Push] System ${system.id} is not a Fronius system (type: ${system.vendorType})`);
+
+      await recordFailedSession(
+        sessionStart,
+        system.id,
+        system.vendorType,
+        system.displayName || `System ${system.id}`,
+        '400',
+        `System is configured as ${system.vendorType}, not fronius`,
+        { action: data.action, apiKey: data.apiKey }
+      );
+
       return NextResponse.json(
         { error: 'System is not configured as Fronius type' },
         { status: 400 }
@@ -108,6 +161,21 @@ export async function POST(request: NextRequest) {
     // If action is 'test', return success without storing data
     if (data.action === 'test') {
       console.log(`[Fronius Push] Test authentication successful for system ${system.id} (${system.displayName})`);
+
+      // Record successful test session
+      const duration = Date.now() - sessionStart.getTime();
+      await sessionManager.recordSession({
+        systemId: system.id,
+        vendorType: system.vendorType,
+        systemName: system.displayName || `System ${system.id}`,
+        cause: 'PUSH',
+        started: sessionStart,
+        duration,
+        successful: true,
+        response: { action: 'test', apiKey: data.apiKey },
+        numRows: 0,
+      });
+
       return NextResponse.json({
         success: true,
         action: 'test',
@@ -168,9 +236,24 @@ export async function POST(request: NextRequest) {
       // Update polling status to show successful data receipt
       // Store the parsed JSON object
       await updatePollingStatusSuccess(system.id, data);
-      
+
+      // Record successful push session
+      const duration = Date.now() - sessionStart.getTime();
+      await sessionManager.recordSession({
+        sessionLabel: data.sequence, // Store the sequence identifier
+        systemId: system.id,
+        vendorType: system.vendorType,
+        systemName: system.displayName || `System ${system.id}`,
+        cause: 'PUSH',
+        started: sessionStart,
+        duration,
+        successful: true,
+        response: data,
+        numRows: 1,
+      });
+
       console.log(`[Fronius Push] Successfully stored data for system ${system.id}`);
-      
+
       return NextResponse.json({
         success: true,
         action: 'store',
@@ -182,15 +265,29 @@ export async function POST(request: NextRequest) {
       
     } catch (dbError) {
       console.error(`[Fronius Push] Database error for system ${system.id}:`, dbError);
-      
+
       // Update polling status with error
       await updatePollingStatusError(system.id, dbError instanceof Error ? dbError : 'Database error');
-      
-      // Check if it's a duplicate entry error
+
+      // Record failed session
       const errorMessage = dbError instanceof Error ? dbError.message : String(dbError);
-      if (errorMessage.includes('UNIQUE constraint failed')) {
+      const isDuplicate = errorMessage.includes('UNIQUE constraint failed');
+
+      await recordFailedSession(
+        sessionStart,
+        system.id,
+        system.vendorType,
+        system.displayName || `System ${system.id}`,
+        isDuplicate ? '409' : null,
+        errorMessage,
+        data,
+        data.sequence // Store the sequence identifier
+      );
+
+      // Check if it's a duplicate entry error
+      if (isDuplicate) {
         return NextResponse.json(
-          { 
+          {
             success: false,
             error: 'Duplicate timestamp - data already exists for this time',
             timestamp: inverterTime.toISOString()
@@ -198,7 +295,7 @@ export async function POST(request: NextRequest) {
           { status: 409 }  // Conflict
         );
       }
-      
+
       throw dbError;  // Re-throw for generic error handling
     }
     

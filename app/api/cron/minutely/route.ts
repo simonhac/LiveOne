@@ -7,6 +7,7 @@ import { updateAggregatedData } from '@/lib/aggregation-helper';
 import { formatSystemId } from '@/lib/system-utils';
 import { VendorRegistry } from '@/lib/vendors/registry';
 import { getCredentialsForVendor } from '@/lib/vendors/credentials';
+import { sessionManager } from '@/lib/session-manager';
 import type { SystemForVendor } from '@/lib/vendors/types';
 import type { CommonPollingData } from '@/lib/types/common';
 import {
@@ -161,9 +162,15 @@ export async function GET(request: NextRequest) {
           solarSize: system.solarSize,
           batterySize: system.batterySize
         };
-        
+
+        // Start timing for session recording
+        const sessionStart = new Date();
+
         // Let the adapter handle the polling logic
         const result = await adapter.poll(systemForVendor, credentials);
+
+        // Calculate duration
+        const duration = Date.now() - sessionStart.getTime();
         
         // Process the result
         switch (result.action) {
@@ -171,13 +178,13 @@ export async function GET(request: NextRequest) {
             // Store the data if provided
             if (result.data) {
               const dataArray = Array.isArray(result.data) ? result.data : [result.data];
-              
+
               for (const data of dataArray) {
                 // Calculate delay
                 const inverterTime = new Date(data.timestamp);
                 const receivedTime = new Date();
                 const delaySeconds = Math.floor((receivedTime.getTime() - inverterTime.getTime()) / 1000);
-                
+
                 // Insert reading into database
                 await db.insert(readings).values({
                   systemId: system.id,
@@ -209,15 +216,28 @@ export async function GET(request: NextRequest) {
                   gridInKwhTotal: data.gridInKwhTotal != null ? Math.round(data.gridInKwhTotal * 1000) / 1000 : null,
                   gridOutKwhTotal: data.gridOutKwhTotal != null ? Math.round(data.gridOutKwhTotal * 1000) / 1000 : null,
                 });
-                
+
                 // Update 5-minute aggregated data
                 await updateAggregatedData(system.id, inverterTime);
               }
             }
-            
+
             // Update polling status with raw response
             await updatePollingStatusSuccess(system.id, result.rawResponse);
-            
+
+            // Record successful session
+            await sessionManager.recordSession({
+              systemId: system.id,
+              vendorType: system.vendorType,
+              systemName: system.displayName || `System ${system.id}`,
+              cause: 'POLL',
+              started: sessionStart,
+              duration,
+              successful: true,
+              response: result.rawResponse,
+              numRows: result.recordsProcessed || 0,
+            });
+
             results.push({
               systemId: system.id,
               displayName: system.displayName || undefined,
@@ -225,7 +245,7 @@ export async function GET(request: NextRequest) {
               status: 'polled',
               recordsUpserted: result.recordsProcessed
             });
-            
+
             console.log(`[Cron] ${formatSystemId(system)} - Success (${result.recordsProcessed} records)`);
             break;
             
@@ -243,7 +263,21 @@ export async function GET(request: NextRequest) {
           case 'ERROR':
             // Update error status
             await updatePollingStatusError(system.id, result.error || 'Unknown error');
-            
+
+            // Record failed session
+            await sessionManager.recordSession({
+              systemId: system.id,
+              vendorType: system.vendorType,
+              systemName: system.displayName || `System ${system.id}`,
+              cause: 'POLL',
+              started: sessionStart,
+              duration,
+              successful: false,
+              errorCode: result.errorCode || null,
+              error: result.error || null,
+              numRows: 0,
+            });
+
             results.push({
               systemId: system.id,
               displayName: system.displayName || undefined,
@@ -257,10 +291,23 @@ export async function GET(request: NextRequest) {
         
       } catch (error) {
         console.error(`[Cron] Error polling ${system.id}:`, error);
-        
+
         // Update polling status with error
         await updatePollingStatusError(system.id, error instanceof Error ? error : 'Unknown error');
-        
+
+        // Record failed session for unexpected errors
+        await sessionManager.recordSession({
+          systemId: system.id,
+          vendorType: system.vendorType,
+          systemName: system.displayName || `System ${system.id}`,
+          cause: 'POLL',
+          started: new Date(), // Use current time as we might not have sessionStart
+          duration: 0, // Unknown duration for unexpected errors
+          successful: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          numRows: 0,
+        });
+
         results.push({
           systemId: system.id,
           displayName: system.displayName || undefined,

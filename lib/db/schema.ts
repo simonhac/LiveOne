@@ -226,6 +226,28 @@ export const userSystems = sqliteTable('user_systems', {
   systemIdx: index('user_systems_system_idx').on(table.systemId),
 }));
 
+// Sessions table - tracks all communication sessions with energy systems
+export const sessions = sqliteTable('sessions', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  sessionLabel: text('session_label'), // nullable - provided by remote system if available
+  systemId: integer('system_id').notNull().references(() => systems.id, { onDelete: 'cascade' }),
+  vendorType: text('vendor_type').notNull(), // e.g., 'select.live', 'fronius', 'mondo', 'enphase'
+  systemName: text('system_name').notNull(),
+  cause: text('cause').notNull(), // 'POLL', 'ADMIN', 'USER', etc.
+  started: integer('started', { mode: 'timestamp' }).notNull(),
+  duration: integer('duration').notNull(), // milliseconds
+  successful: integer('successful', { mode: 'boolean' }).notNull(),
+  errorCode: text('error_code'), // nullable - short error code/number
+  error: text('error'), // nullable - detailed error message
+  response: text('response', { mode: 'json' }), // nullable - full server response as JSON
+  numRows: integer('num_rows').notNull(), // 0 if no data rows, otherwise count
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => ({
+  systemIdx: index('sessions_system_idx').on(table.systemId),
+  startedIdx: index('sessions_started_idx').on(table.started),
+  causeIdx: index('sessions_cause_idx').on(table.cause),
+}));
+
 // Type exports for TypeScript
 export type System = typeof systems.$inferSelect;
 export type NewSystem = typeof systems.$inferInsert;
@@ -250,4 +272,6 @@ export type NewReading = typeof readings.$inferInsert;
 export type PollingStatus = typeof pollingStatus.$inferSelect;
 export type UserSystem = typeof userSystems.$inferSelect;
 export type NewUserSystem = typeof userSystems.$inferInsert;
+export type Session = typeof sessions.$inferSelect;
+export type NewSession = typeof sessions.$inferInsert;
 export type ClerkIdMapping = typeof clerkIdMapping.$inferSelect;

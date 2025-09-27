@@ -4,6 +4,7 @@ import { VendorRegistry } from '@/lib/vendors/registry';
 import { isUserAdmin } from '@/lib/auth-utils';
 import { SystemsManager } from '@/lib/systems-manager';
 import { getCredentialsForVendor } from '@/lib/vendors/credentials';
+import { sessionManager } from '@/lib/session-manager';
 import type { SystemForVendor } from '@/lib/vendors/types';
 
 export async function POST(request: NextRequest) {
@@ -25,6 +26,7 @@ export async function POST(request: NextRequest) {
     let finalVendorType = vendorType;
     let finalOwnerUserId = userId;
     let vendorSiteId = '';
+    let system: any = null;  // Define system variable at outer scope
 
     // Use case 1: Testing a new system with provided credentials
     if (credentials && vendorType) {
@@ -35,7 +37,7 @@ export async function POST(request: NextRequest) {
     else if (systemId) {
       // Use SystemsManager to get the system
       const manager = SystemsManager.getInstance();
-      const system = await manager.getSystem(systemId);
+      system = await manager.getSystem(systemId);
 
       if (!system) {
         return NextResponse.json(
@@ -125,12 +127,35 @@ export async function POST(request: NextRequest) {
 
     // Let the adapter handle the connection test and system discovery
     console.log(`[Test Connection] Calling adapter.testConnection for ${finalVendorType}`);
+
+    // Start timing for session recording
+    const sessionStart = new Date();
     const result = await adapter.testConnection(tempSystem, finalCredentials);
+    const duration = Date.now() - sessionStart.getTime();
+
     console.log(`[Test Connection] Result:`, {
       success: result.success,
       hasLatestData: !!result.latestData,
       hasSystemInfo: !!result.systemInfo,
       error: result.error
+    });
+
+    // Record session - determine cause based on who initiated
+    const sessionCause = isAdmin && system?.ownerClerkUserId !== userId ? 'ADMIN' : 'USER';
+    const systemName = system?.displayName || tempSystem.displayName || `${finalVendorType} System`;
+
+    await sessionManager.recordSession({
+      systemId: systemId || 0, // Use 0 for new systems being tested
+      vendorType: finalVendorType,
+      systemName,
+      cause: sessionCause,
+      started: sessionStart,
+      duration,
+      successful: result.success,
+      errorCode: result.errorCode || null,
+      error: result.success ? null : result.error || null,
+      response: result.vendorResponse,
+      numRows: result.latestData ? 1 : 0,
     });
 
     if (!result.success) {
