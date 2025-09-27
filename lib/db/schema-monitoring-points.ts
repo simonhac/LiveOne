@@ -77,36 +77,7 @@ export const pointInfo = sqliteTable('point_info', {
 }));
 
 // Measurement Sessions table - tracks API fetch sessions
-export const measurementSessions = sqliteTable('measurement_sessions', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-
-  // Session identification
-  groupId: integer('group_id').notNull().references(() => systems.id, { onDelete: 'cascade' }),
-  sessionType: text('session_type').notNull(), // 'scheduled', 'manual', 'catchup'
-
-  // Timing
-  startedAt: integer('started_at').notNull().default(sql`(unixepoch() * 1000)`),
-  completedAt: integer('completed_at'),
-
-  // Results
-  pointsQueried: integer('points_queried').notNull().default(0),
-  pointsSuccess: integer('points_success').notNull().default(0),
-  pointsFailed: integer('points_failed').notNull().default(0),
-
-  // Performance metrics
-  apiCallCount: integer('api_call_count').notNull().default(0),
-  totalDurationMs: integer('total_duration_ms'),
-
-  // Error tracking
-  errorMessages: text('error_messages', { mode: 'json' }), // Array of error messages
-
-  // Metadata
-  vendorResponseMetadata: text('vendor_response_metadata', { mode: 'json' }),
-}, (table) => ({
-  groupIdx: index('ms_group_idx').on(table.groupId),
-  startedAtIdx: index('ms_started_at_idx').on(table.startedAt),
-  sessionTypeIdx: index('ms_session_type_idx').on(table.sessionType),
-}));
+// Note: measurementSessions table removed - using the main sessions table instead
 
 // Point Readings table - stores time-series data
 export const pointReadings = sqliteTable('point_readings', {
@@ -114,7 +85,7 @@ export const pointReadings = sqliteTable('point_readings', {
 
   // Relationships
   pointId: integer('point_id').notNull().references(() => pointInfo.id, { onDelete: 'cascade' }),
-  sessionId: integer('session_id').references(() => measurementSessions.id, { onDelete: 'set null' }),
+  sessionId: integer('session_id'),  // No longer references measurementSessions
 
   // Timestamps (milliseconds for sub-second precision)
   measurementTime: integer('measurement_time').notNull(), // When device recorded
@@ -246,25 +217,10 @@ export const pointReadingsRelations = {
     to: pointInfo,
     references: [(pointInfo as any).id],
   },
-  session: {
-    relation: 'many-to-one',
-    to: measurementSessions,
-    references: [(measurementSessions as any).id],
-  },
+  // session relation removed - no longer using measurementSessions
 };
 
-export const measurementSessionsRelations = {
-  group: {
-    relation: 'many-to-one',
-    to: systems,
-    references: [(systems as any).id],
-  },
-  readings: {
-    relation: 'one-to-many',
-    to: pointReadings,
-    references: [(pointReadings as any).sessionId],
-  },
-};
+// Note: measurementSessionsRelations removed - using the main sessions table
 
 export const pointReadingsAgg5mRelations = {
   point: {
