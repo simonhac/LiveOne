@@ -5,7 +5,7 @@ import { systems } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import DashboardClient from '@/components/DashboardClient'
 import { isUserAdmin } from '@/lib/auth-utils'
-import { getSystemsManager } from '@/lib/get-systems-manager'
+import { SystemsManager } from '@/lib/systems-manager'
 
 interface PageProps {
   params: Promise<{
@@ -55,7 +55,7 @@ export default async function DashboardSystemPage({ params }: PageProps) {
   }
 
   // Fetch available systems for the user - only active systems
-  const systemsManager = await getSystemsManager()
+  const systemsManager = SystemsManager.getInstance()
   const availableSystems = await systemsManager.getSystemsVisibleByUser(userId, true) // true = active only
 
   return (

@@ -3,6 +3,7 @@ import { SelectronicAdapter } from './selectronic/adapter';
 import { EnphaseAdapter } from './enphase/adapter';
 import { CraigHackAdapter } from './craighack/adapter';
 import { FroniusAdapter } from './fronius/adapter';
+import { MondoAdapter } from './mondo/adapter';
 
 /**
  * Registry for all vendor adapters
@@ -22,10 +23,11 @@ export class VendorRegistry {
     const selectronic = new SelectronicAdapter();
     this.adapters.set('selectronic', selectronic);
     this.adapters.set('select.live', selectronic); // Alias for backward compatibility
-    
+
     this.adapters.set('enphase', new EnphaseAdapter());
     this.adapters.set('craighack', new CraigHackAdapter());
     this.adapters.set('fronius', new FroniusAdapter());
+    this.adapters.set('mondo', new MondoAdapter());
     
     this.initialized = true;
     
@@ -66,6 +68,19 @@ export class VendorRegistry {
     console.log(`[VendorRegistry] Registered adapter for ${vendorType}`);
   }
   
+  /**
+   * Get all registered adapters
+   */
+  static getAllAdapters(): VendorAdapter[] {
+    this.initialize();
+    // Return unique adapters (avoid duplicates from aliases)
+    const uniqueAdapters = new Map<VendorAdapter, boolean>();
+    for (const adapter of this.adapters.values()) {
+      uniqueAdapters.set(adapter, true);
+    }
+    return Array.from(uniqueAdapters.keys());
+  }
+
   /**
    * Check if a vendor type supports polling (for Test Connection feature)
    * @param vendorType The vendor type to check

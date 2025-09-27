@@ -73,10 +73,10 @@ export async function POST(request: NextRequest) {
         }, { status: 404 })
       }
       
-      // Check if token is expired
-      if (credentials.expires_at < Date.now()) {
-        return NextResponse.json({ 
-          error: 'Enphase token expired. Please reconnect your system.' 
+      // Check if token is expired (expires_at is now a Date object)
+      if (credentials.expires_at < new Date()) {
+        return NextResponse.json({
+          error: 'Enphase token expired. Please reconnect your system.'
         }, { status: 401 })
       }
       

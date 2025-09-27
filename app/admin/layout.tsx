@@ -64,12 +64,9 @@ export default function AdminLayout({
               >
                 {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
-              <div>
-                <h1 className="text-2xl font-bold text-white">
-                  <span className="hidden sm:inline">LiveOne </span>Administration
-                </h1>
-                <p className="text-sm text-gray-400 mt-1 hidden sm:block">Selectronic SP PRO Monitoring</p>
-              </div>
+              <h1 className="text-2xl font-bold text-white">
+                <span className="hidden sm:inline">LiveOne </span>Administration
+              </h1>
             </div>
             <div className="flex items-center gap-4">
               <Link

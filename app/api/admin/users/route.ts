@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 import { userSystems, systems } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { isUserAdmin } from '@/lib/auth-utils'
-import { getSystemsManager } from '@/lib/get-systems-manager'
+import { SystemsManager } from '@/lib/systems-manager'
 
 // Helper function to map system data
 function mapSystemAccess(system: any, role: 'owner' | 'viewer') {
@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
       .innerJoin(systems, eq(userSystems.systemId, systems.id))
     
     // Get all systems to find owners
-    const systemsManager = await getSystemsManager()
+    const systemsManager = SystemsManager.getInstance()
     const allSystems = await systemsManager.getAllSystems()
     
     // Get unique user IDs from both userSystems and system owners

@@ -1,6 +1,18 @@
 import type { CommonPollingData } from '@/lib/types/common';
 
 /**
+ * Field definition for credential requirements
+ */
+export interface CredentialField {
+  name: string;
+  label: string;
+  type: 'text' | 'email' | 'password' | 'url' | 'number';
+  placeholder?: string;
+  required?: boolean;
+  helpText?: string;
+}
+
+/**
  * Vendor adapter interface for all energy system vendors
  */
 export interface VendorAdapter {
@@ -8,13 +20,17 @@ export interface VendorAdapter {
   readonly vendorType: string;
   readonly displayName: string;
   readonly dataSource: 'poll' | 'push' | 'combined';
-  
+
+  // Credential requirements for this vendor
+  readonly credentialFields?: CredentialField[];
+  readonly supportsAddSystem?: boolean;  // Whether this vendor supports the Add System flow
+
   // Main polling function - handles all data collection
   poll(system: SystemForVendor, credentials: any): Promise<PollingResult>;
-  
+
   // Get most recent readings for real-time display
   getMostRecentReadings(system: SystemForVendor, credentials: any): Promise<CommonPollingData | null>;
-  
+
   // Test connection with vendor
   testConnection(system: SystemForVendor, credentials: any): Promise<TestConnectionResult>;
 }
@@ -57,6 +73,8 @@ export interface PollingResult {
 export interface TestConnectionResult {
   success: boolean;
   systemInfo?: {
+    vendorSiteId?: string;  // Discovered vendor site ID
+    displayName?: string;   // Suggested display name
     model?: string | null;
     serial?: string | null;
     ratings?: string | null;

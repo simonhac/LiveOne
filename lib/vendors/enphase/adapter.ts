@@ -16,6 +16,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
   readonly vendorType = 'enphase';
   readonly displayName = 'Enphase';
   readonly dataSource = 'poll' as const;
+  readonly supportsAddSystem = false;  // Enphase uses OAuth flow, not supported in Add System dialog yet
   
   async poll(system: SystemForVendor, credentials: any): Promise<PollingResult> {
     const startTime = Date.now();
@@ -87,8 +88,8 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       // For Enphase, we fetch current telemetry from the API
       const client = getEnphaseClient();
       
-      // Check if token is expired
-      if (credentials.expires_at < Date.now()) {
+      // Check if token is expired (expires_at is now a Date object)
+      if (credentials.expires_at < new Date()) {
         console.error('[Enphase] Token expired');
         return null;
       }
@@ -113,8 +114,8 @@ export class EnphaseAdapter extends BaseVendorAdapter {
   
   async testConnection(system: SystemForVendor, credentials: any): Promise<TestConnectionResult> {
     try {
-      // Check if token is expired
-      if (credentials.expires_at < Date.now()) {
+      // Check if token is expired (expires_at is now a Date object)
+      if (credentials.expires_at < new Date()) {
         return {
           success: false,
           error: 'Enphase token expired. Please reconnect your system.'

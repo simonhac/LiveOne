@@ -34,19 +34,22 @@ const formatPairJSX = (inValue: number | null | undefined, outValue: number | nu
   )
 }
 
-interface TestConnectionModalProps {
-  displayName?: string | null  // Optional - we might not know it yet
-  ownerClerkUserId: string
+interface System {
+  id: number
+  displayName: string | null
   vendorType: string
   vendorSiteId: string
+  ownerClerkUserId: string | null
+  status?: string
+}
+
+interface TestConnectionModalProps {
+  system: System
   onClose: () => void
 }
 
 export default function TestConnectionModal({
-  displayName,
-  ownerClerkUserId,
-  vendorType,
-  vendorSiteId,
+  system,
   onClose
 }: TestConnectionModalProps) {
   const [loading, setLoading] = useState(false)
@@ -65,41 +68,53 @@ export default function TestConnectionModal({
     }
     setError(null)
 
+    console.log('[TestConnectionModal] Testing connection for system:', {
+      id: system.id,
+      displayName: system.displayName,
+      vendorType: system.vendorType,
+      vendorSiteId: system.vendorSiteId
+    });
+
     try {
-      const response = await fetch('/api/admin/test-connection', {
+      const response = await fetch('/api/test-connection', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          ownerClerkUserId,
-          vendorType,
-          vendorSiteId
+          systemId: system.id
         }),
       })
 
+      console.log('[TestConnectionModal] Response status:', response.status)
+
       const result = await response.json()
+      console.log('[TestConnectionModal] Response data:', result)
 
       if (!response.ok) {
+        // Log as info instead of error for expected failures
+        console.log('[TestConnectionModal] Test failed:', result.error)
         throw new Error(result.error || 'Connection test failed')
       }
 
       if (result.success && result.latest) {
         // Log raw response to browser console for debugging
-        console.log('[TestConnectionModal] Raw response:', result)
-        
+        console.log('[TestConnectionModal] Success! Raw response:', result)
+
         // Store vendor's raw response for details panel
         setVendorResponse(result.vendorResponse)
-        
+
         setData({
           latest: result.latest,
           systemInfo: result.systemInfo
         })
         setError(null)
       } else {
+        console.log('[TestConnectionModal] No data received. Result:', result)
         throw new Error(result.error || 'No data received')
       }
     } catch (err) {
+      console.log('[TestConnectionModal] Test connection issue:', err instanceof Error ? err.message : 'Connection test failed')
       setError(err instanceof Error ? err.message : 'Connection test failed')
       if (!isRefresh) {
         setData(null)
@@ -126,7 +141,7 @@ export default function TestConnectionModal({
         {/* Header */}
         <div className="flex justify-between items-start mb-4">
           <h3 className="text-lg font-semibold text-white">
-            {displayName || 'System'} — Test Connection
+            {system.displayName || 'System'} — Test Connection
           </h3>
           <button
             onClick={onClose}
@@ -150,7 +165,7 @@ export default function TestConnectionModal({
         {(loading && !data) && (
           <div className="text-center py-8">
             <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="text-gray-400">Connecting to {vendorType === 'enphase' ? 'Enphase' : 'Select.Live'}...</p>
+            <p className="text-gray-400">Connecting to {system.vendorType}...</p>
           </div>
         )}
         
@@ -177,7 +192,7 @@ export default function TestConnectionModal({
                     <div>
                       <p className="text-xs text-gray-400">Solar</p>
                       <p className="text-lg font-semibold text-yellow-400">
-                        {formatPowerJSX(data.latest.power.solarW, 'W')}
+                        {formatPowerJSX(data.latest.solarW, 'W')}
                       </p>
                     </div>
                   </div>
@@ -187,7 +202,7 @@ export default function TestConnectionModal({
                     <div>
                       <p className="text-xs text-gray-400">Load</p>
                       <p className="text-lg font-semibold text-blue-400">
-                        {formatPowerJSX(data.latest.power.loadW, 'W')}
+                        {formatPowerJSX(data.latest.loadW, 'W')}
                       </p>
                     </div>
                   </div>
@@ -197,16 +212,16 @@ export default function TestConnectionModal({
                     <div>
                       <p className="text-xs text-gray-400">Battery</p>
                       <p className="text-lg font-semibold text-green-400">
-                        {data.latest.soc?.battery !== null && data.latest.soc?.battery !== undefined
-                          ? `${data.latest.soc.battery.toFixed(1)}%`
+                        {data.latest.batterySOC !== null && data.latest.batterySOC !== undefined
+                          ? `${data.latest.batterySOC.toFixed(1)}%`
                           : '—'}
                       </p>
                       <p className="text-xs text-gray-400">
-                        {data.latest.power.batteryW !== null
-                          ? data.latest.power.batteryW < 0 
-                            ? <><span>Charging </span>{formatPowerJSX(Math.abs(data.latest.power.batteryW), 'W')}</>
-                            : data.latest.power.batteryW > 0
-                            ? <><span>Discharging </span>{formatPowerJSX(data.latest.power.batteryW, 'W')}</>
+                        {data.latest.batteryW !== null
+                          ? data.latest.batteryW < 0
+                            ? <><span>Charging </span>{formatPowerJSX(Math.abs(data.latest.batteryW), 'W')}</>
+                            : data.latest.batteryW > 0
+                            ? <><span>Discharging </span>{formatPowerJSX(data.latest.batteryW, 'W')}</>
                             : 'Idle'
                           : 'No data'}
                       </p>
@@ -218,14 +233,14 @@ export default function TestConnectionModal({
                     <div>
                       <p className="text-xs text-gray-400">Grid</p>
                       <p className="text-lg font-semibold text-purple-400">
-                        {formatPowerJSX(data.latest.power.gridW !== null ? Math.abs(data.latest.power.gridW) : null, 'W')}
+                        {formatPowerJSX(data.latest.gridW !== null ? Math.abs(data.latest.gridW) : null, 'W')}
                       </p>
                       <p className="text-xs text-gray-400">
-                        {data.latest.power.gridW !== null
-                          ? data.latest.power.gridW > 0 
-                            ? 'Importing' 
-                            : data.latest.power.gridW < 0 
-                            ? 'Exporting' 
+                        {data.latest.gridW !== null
+                          ? data.latest.gridW > 0
+                            ? 'Importing'
+                            : data.latest.gridW < 0
+                            ? 'Exporting'
                             : 'No flow'
                           : 'No data'}
                       </p>
@@ -234,28 +249,28 @@ export default function TestConnectionModal({
                 </div>
               </div>
 
-              {/* Today's Energy Section */}
+              {/* Lifetime Energy Section */}
               <div className="bg-gray-900 rounded-lg p-4">
-                <h4 className="text-sm font-semibold text-gray-400 mb-3">Today&apos;s Energy</h4>
+                <h4 className="text-sm font-semibold text-gray-400 mb-3">Lifetime Energy</h4>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
                     <p className="text-xs text-gray-400">Solar Generated</p>
                     <p className="text-lg font-semibold text-white">
-                      {formatPowerJSX(data.latest.energy.today.solarKwh, 'kWh')}
+                      {formatPowerJSX(data.latest.solarKwhTotal, 'kWh')}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-400">Load Consumed</p>
                     <p className="text-lg font-semibold text-white">
-                      {formatPowerJSX(data.latest.energy.today.loadKwh, 'kWh')}
+                      {formatPowerJSX(data.latest.loadKwhTotal, 'kWh')}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-400">Battery In/Out</p>
                     <p className="text-lg font-semibold text-white">
                       {formatPairJSX(
-                        data.latest.energy.today.batteryInKwh,
-                        data.latest.energy.today.batteryOutKwh,
+                        data.latest.batteryInKwhTotal,
+                        data.latest.batteryOutKwhTotal,
                         'kWh'
                       )}
                     </p>
@@ -264,8 +279,8 @@ export default function TestConnectionModal({
                     <p className="text-xs text-gray-400">Grid Import/Export</p>
                     <p className="text-lg font-semibold text-white">
                       {formatPairJSX(
-                        data.latest.energy.today.gridInKwh,
-                        data.latest.energy.today.gridOutKwh,
+                        data.latest.gridInKwhTotal,
+                        data.latest.gridOutKwhTotal,
                         'kWh'
                       )}
                     </p>
@@ -334,10 +349,9 @@ export default function TestConnectionModal({
                 
                 {showDetails && vendorResponse && (
                   <div className="mt-3 bg-gray-950 border border-gray-700 rounded-lg p-4">
-                    <h5 className="text-xs font-semibold text-gray-400 mb-2">Raw Vendor Response</h5>
-                    <div className="overflow-x-auto">
-                      <JsonView 
-                        data={vendorResponse} 
+                    <div className="overflow-x-auto font-mono text-sm">
+                      <JsonView
+                        data={vendorResponse}
                         shouldExpandNode={(level) => level < 2}
                         style={darkStyles}
                       />
