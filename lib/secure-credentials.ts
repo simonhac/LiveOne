@@ -11,57 +11,28 @@
 
 import { clerkClient } from '@clerk/nextjs/server'
 import { auth } from '@clerk/nextjs/server'
-import type { EnphaseCredentials } from '@/lib/types/enphase'
-import { getNowFormattedAEST, unixToFormattedAEST } from '@/lib/date-utils'
 
 export type VendorType = 'select.live' | 'selectronic' | 'enphase' | 'mondo'
 
-export interface BaseCredentials {
-  vendor?: VendorType  // Optional in v1, required in v2
-  email?: string
-  password?: string
+// Generic credentials interface - vendors define their own specific shapes
+export interface VendorCredentials {
+  vendor?: VendorType
   liveoneSiteId?: string  // Optional site-specific ID
   created_at?: string | Date  // ISO8601 timestamp or Date when credentials were stored
+  [key: string]: any  // Allow vendor-specific fields
 }
 
-export interface SelectLiveCredentials extends BaseCredentials {
-  email: string
-  password: string
-}
-
-export interface MondoCredentials extends BaseCredentials {
-  email: string
-  password: string
-}
-
-export type VendorCredentials = SelectLiveCredentials | EnphaseCredentials | MondoCredentials
-
-// v1.1 metadata structure (new unified format)
+// v1.1 metadata structure
 export interface CredentialsMetadataV11 {
   version: string  // "1.1" or later
   credentials: Array<VendorCredentials & { vendor: VendorType }>
 }
 
-// Check if metadata is v1.1 format (new unified format)
+// Check if metadata is v1.1 format
 function isV11Format(metadata: any): metadata is CredentialsMetadataV11 {
   return metadata?.version && metadata?.credentials && Array.isArray(metadata.credentials)
 }
 
-/**
- * Get storage key for vendor credentials
- */
-function getStorageKey(vendor: VendorType): string {
-  switch (vendor) {
-    case 'select.live':
-      return 'selectLiveCredentials'
-    case 'enphase':
-      return 'enphaseCredentials'
-    case 'mondo':
-      return 'mondoCredentials'
-    default:
-      return `${vendor}Credentials`
-  }
-}
 
 /**
  * Store vendor credentials in Clerk private metadata
@@ -79,10 +50,9 @@ export async function storeVendorCredentials(
 
     let metadata = user.privateMetadata
 
-    // Migrate to v1.1 if needed
+    // Initialize v1.1 format if needed
     if (!isV11Format(metadata)) {
-      const migrated = await migrateToV11(userId, metadata)
-      metadata = (migrated || { version: '1.1', credentials: [] }) as unknown as Record<string, unknown>
+      metadata = { version: '1.1', credentials: [] } as unknown as Record<string, unknown>
     }
 
     const v11Metadata = metadata as unknown as CredentialsMetadataV11
@@ -93,42 +63,39 @@ export async function storeVendorCredentials(
     // Serialize any Date objects to ISO8601 strings for storage
     const serializedCredentials = { ...credentials }
 
-    // For Enphase, convert Date objects to proper formats for storage
-    if (vendor === 'enphase') {
-      const enphaseCredentials = serializedCredentials as any
-
-      // Convert expires_at Date to ISO8601 string
-      if (enphaseCredentials.expires_at instanceof Date) {
-        enphaseCredentials.expires_at = unixToFormattedAEST(enphaseCredentials.expires_at.getTime(), true)
+    // Convert any Date objects to ISO8601 strings
+    Object.keys(serializedCredentials).forEach(key => {
+      if (serializedCredentials[key] instanceof Date) {
+        serializedCredentials[key] = serializedCredentials[key].toISOString()
       }
-
-      // Convert created_at Date to ISO8601 string
-      if (enphaseCredentials.created_at instanceof Date) {
-        enphaseCredentials.created_at = unixToFormattedAEST(enphaseCredentials.created_at.getTime(), true)
-      }
-    }
+    })
 
     // Add vendor and created_at to credentials
     const credentialsWithMetadata = {
       vendor: normalizedVendor,
       ...serializedCredentials,
-      created_at: serializedCredentials.created_at || getNowFormattedAEST()
+      created_at: serializedCredentials.created_at || new Date().toISOString()
     }
 
     // Filter out existing credentials for this vendor/site combination
     let filteredCredentials = v11Metadata.credentials
 
-    const siteId = (credentialsWithMetadata as any).liveoneSiteId
+    // Check for siteId using both old and new field names
+    const siteId = (credentialsWithMetadata as any).liveoneSiteId || (credentialsWithMetadata as any).systemId
     if (siteId) {
       // Remove existing credentials for this vendor and site
-      filteredCredentials = filteredCredentials.filter(c =>
-        !(c.vendor === normalizedVendor && (c as any).liveoneSiteId === siteId)
-      )
+      filteredCredentials = filteredCredentials.filter(c => {
+        const credVendor = c.vendor || c.vendorType
+        const credSiteId = (c as any).liveoneSiteId || (c as any).systemId
+        return !(credVendor === normalizedVendor && credSiteId === siteId)
+      })
     } else {
       // Remove existing credentials for this vendor without a site ID
-      filteredCredentials = filteredCredentials.filter(c =>
-        !(c.vendor === normalizedVendor && !(c as any).liveoneSiteId)
-      )
+      filteredCredentials = filteredCredentials.filter(c => {
+        const credVendor = c.vendor || c.vendorType
+        const credSiteId = (c as any).liveoneSiteId || (c as any).systemId
+        return !(credVendor === normalizedVendor && !credSiteId)
+      })
     }
 
     // Add the new credentials
@@ -150,107 +117,6 @@ export async function storeVendorCredentials(
 }
 
 /**
- * Migrate v1.0 credentials to v1.1 format
- */
-async function migrateToV11(userId: string, privateMetadata: any): Promise<CredentialsMetadataV11 | null> {
-  try {
-    const client = await clerkClient()
-    const credentials: Array<VendorCredentials & { vendor: VendorType }> = []
-
-    // Migrate select.live/selectronic credentials
-    if (privateMetadata.selectLiveCredentials) {
-      const creds = privateMetadata.selectLiveCredentials
-      const credsList = Array.isArray(creds) ? creds : [creds]
-      for (const cred of credsList) {
-        // Normalize created_at if it exists and is a number (unlikely but defensive)
-        let createdAt = cred.created_at
-        if (createdAt && typeof createdAt === 'number') {
-          createdAt = unixToFormattedAEST(createdAt, false) // Assume seconds if numeric
-        } else if (!createdAt) {
-          createdAt = getNowFormattedAEST()
-        }
-
-        credentials.push({
-          vendor: 'selectronic' as VendorType,
-          ...cred,
-          created_at: createdAt
-        })
-      }
-    }
-
-    // Migrate mondo credentials
-    if (privateMetadata.mondoCredentials) {
-      const creds = privateMetadata.mondoCredentials
-      const credsList = Array.isArray(creds) ? creds : [creds]
-      for (const cred of credsList) {
-        // Normalize created_at if it exists and is a number (unlikely but defensive)
-        let createdAt = cred.created_at
-        if (createdAt && typeof createdAt === 'number') {
-          createdAt = unixToFormattedAEST(createdAt, false) // Assume seconds if numeric
-        } else if (!createdAt) {
-          createdAt = getNowFormattedAEST()
-        }
-
-        credentials.push({
-          vendor: 'mondo' as VendorType,
-          ...cred,
-          created_at: createdAt
-        })
-      }
-    }
-
-    // Migrate enphase credentials
-    if (privateMetadata.enphaseCredentials) {
-      const creds = privateMetadata.enphaseCredentials
-      const credsList = Array.isArray(creds) ? creds : [creds]
-      for (const cred of credsList) {
-        // Normalize timestamps from Unix to ISO8601
-        let normalizedCred = { ...cred }
-
-        // Convert created_at from Unix seconds to ISO8601
-        if (cred.created_at && typeof cred.created_at === 'number') {
-          normalizedCred.created_at = unixToFormattedAEST(cred.created_at, false) // false = seconds
-        } else if (!cred.created_at) {
-          normalizedCred.created_at = getNowFormattedAEST()
-        }
-
-        // Convert expires_at from Unix milliseconds to ISO8601
-        if (cred.expires_at && typeof cred.expires_at === 'number') {
-          normalizedCred.expires_at = unixToFormattedAEST(cred.expires_at, true) // true = milliseconds
-        }
-
-        credentials.push({
-          vendor: 'enphase' as VendorType,
-          ...normalizedCred
-        })
-      }
-    }
-
-    // Only migrate if we found credentials
-    if (credentials.length === 0) {
-      return null
-    }
-
-    const v11Metadata: CredentialsMetadataV11 = {
-      version: '1.1',
-      credentials
-    }
-
-    // Save the migrated format
-    await client.users.updateUser(userId, {
-      privateMetadata: v11Metadata as unknown as Record<string, unknown>
-    })
-
-    console.log(`[Credentials] Migrated user ${userId} to v1.1 format with ${credentials.length} credentials`)
-    return v11Metadata
-
-  } catch (error) {
-    console.error(`[Credentials] Failed to migrate to v1.1 for user ${userId}:`, error)
-    return null
-  }
-}
-
-/**
  * Get vendor credentials from Clerk private metadata
  * Supports matching by liveoneSiteId when provided
  * Automatically migrates v1.0 format to v1.1 on first access
@@ -265,43 +131,11 @@ export async function getVendorCredentials(
     const user = await client.users.getUser(userId)
     const userIdentifier = user.username || user.emailAddresses[0]?.emailAddress || 'unknown'
 
-    let metadata = user.privateMetadata
+    const metadata = user.privateMetadata
 
-    // Check if we need to migrate from v1.0 to v1.1
+    // All instances should be v1.1 now
     if (!isV11Format(metadata)) {
-      // Try to migrate
-      const migrated = await migrateToV11(userId, metadata)
-      if (migrated) {
-        metadata = migrated as unknown as Record<string, unknown>
-      } else {
-        // Fall back to v1.0 format handling
-        const storageKey = getStorageKey(vendor === 'selectronic' ? 'select.live' : vendor)
-        const stored = metadata?.[storageKey]
-
-        if (!stored) {
-          return null
-        }
-
-        // Handle both single credential and array of credentials
-        const credentialsList = Array.isArray(stored) ? stored : [stored]
-
-        // If liveoneSiteId is provided, find exact match
-        if (liveoneSiteId) {
-          const match = credentialsList.find((cred: any) =>
-            cred.liveoneSiteId === liveoneSiteId
-          )
-          if (match) {
-            return match as VendorCredentials
-          }
-        }
-
-        // Return first credential that either has no liveoneSiteId or matches
-        const defaultCred = credentialsList.find((cred: any) =>
-          !cred.liveoneSiteId || cred.liveoneSiteId === liveoneSiteId
-        )
-
-        return defaultCred as VendorCredentials || credentialsList[0] as VendorCredentials || null
-      }
+      return null
     }
 
     // Handle v1.1 format
@@ -310,8 +144,11 @@ export async function getVendorCredentials(
     // Normalize vendor name (select.live -> selectronic)
     const normalizedVendor = vendor === 'select.live' ? 'selectronic' : vendor
 
-    // Filter credentials by vendor
-    const vendorCreds = v11Metadata.credentials.filter(c => c.vendor === normalizedVendor)
+    // Filter credentials by vendor (check both vendor and vendorType fields)
+    const vendorCreds = v11Metadata.credentials.filter(c => {
+      const credVendor = c.vendor || c.vendorType
+      return credVendor === normalizedVendor
+    })
 
     if (vendorCreds.length === 0) {
       return null
@@ -320,47 +157,39 @@ export async function getVendorCredentials(
     // Find the matching credential
     let credential: VendorCredentials | null = null
 
-    // If liveoneSiteId is provided, find exact match
+    // If liveoneSiteId is provided, find exact match (check both field names)
     if (liveoneSiteId) {
-      const match = vendorCreds.find(cred => (cred as any).liveoneSiteId === liveoneSiteId)
+      const match = vendorCreds.find(cred => {
+        const credSiteId = (cred as any).liveoneSiteId || (cred as any).systemId
+        return credSiteId === liveoneSiteId
+      })
       if (match) {
         credential = match as VendorCredentials
       }
     }
 
-    // If no match yet, return first credential that either has no liveoneSiteId or matches
+    // If no match yet, return first credential that either has no site ID or matches
     if (!credential) {
-      const defaultCred = vendorCreds.find(cred =>
-        !(cred as any).liveoneSiteId || (cred as any).liveoneSiteId === liveoneSiteId
-      )
+      const defaultCred = vendorCreds.find(cred => {
+        const credSiteId = (cred as any).liveoneSiteId || (cred as any).systemId
+        return !credSiteId || credSiteId === liveoneSiteId
+      })
       credential = defaultCred as VendorCredentials || vendorCreds[0] as VendorCredentials || null
     }
 
-    // Normalize timestamps to Date objects for Enphase credentials
-    if (credential && vendor === 'enphase') {
-      const enphaseCredential = credential as any
-
-      // Convert expires_at to Date object
-      if (enphaseCredential.expires_at) {
-        if (typeof enphaseCredential.expires_at === 'string') {
-          // ISO8601 string from v1.1
-          enphaseCredential.expires_at = new Date(enphaseCredential.expires_at)
-        } else if (typeof enphaseCredential.expires_at === 'number') {
-          // Milliseconds from v1.0
-          enphaseCredential.expires_at = new Date(enphaseCredential.expires_at)
+    // Convert string timestamps back to Date objects if needed
+    if (credential) {
+      Object.keys(credential).forEach(key => {
+        const value = (credential as any)[key]
+        // Check if it looks like an ISO8601 date string
+        if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
+          try {
+            (credential as any)[key] = new Date(value)
+          } catch {
+            // Keep as string if conversion fails
+          }
         }
-      }
-
-      // Convert created_at to Date object
-      if (enphaseCredential.created_at) {
-        if (typeof enphaseCredential.created_at === 'string') {
-          // ISO8601 string from v1.1
-          enphaseCredential.created_at = new Date(enphaseCredential.created_at)
-        } else if (typeof enphaseCredential.created_at === 'number') {
-          // Unix seconds from v1.0
-          enphaseCredential.created_at = new Date(enphaseCredential.created_at * 1000)
-        }
-      }
+      })
     }
 
     return credential
@@ -376,25 +205,48 @@ export async function getVendorCredentials(
  */
 export async function removeVendorCredentials(
   userId: string,
-  vendor: VendorType
+  vendor: VendorType,
+  liveoneSiteId?: string
 ) {
   try {
-    // Removing credentials
     const client = await clerkClient()
     const user = await client.users.getUser(userId)
-    
-    // Map vendor to storage key (maintains existing Clerk metadata format)
-    const storageKey = vendor === 'select.live' ? 'selectLiveCredentials' : 'enphaseCredentials'
-    
-    // Create new metadata without the vendor credentials
-    const newMetadata = { ...user.privateMetadata }
-    delete newMetadata[storageKey]
-    
+    const metadata = user.privateMetadata
+
+    if (!isV11Format(metadata)) {
+      return { success: true } // Nothing to remove
+    }
+
+    const v11Metadata = metadata as unknown as CredentialsMetadataV11
+    const normalizedVendor = vendor === 'select.live' ? 'selectronic' : vendor
+
+    // Filter out credentials for this vendor/site combination
+    let filteredCredentials = v11Metadata.credentials
+
+    if (liveoneSiteId) {
+      // Remove specific vendor/site combination (check both field names)
+      filteredCredentials = filteredCredentials.filter(c => {
+        const credVendor = c.vendor || c.vendorType
+        const credSiteId = (c as any).liveoneSiteId || (c as any).systemId
+        return !(credVendor === normalizedVendor && credSiteId === liveoneSiteId)
+      })
+    } else {
+      // Remove all credentials for this vendor (check both field names)
+      filteredCredentials = filteredCredentials.filter(c => {
+        const credVendor = c.vendor || c.vendorType
+        return credVendor !== normalizedVendor
+      })
+    }
+
+    const updatedMetadata: CredentialsMetadataV11 = {
+      version: '1.1',
+      credentials: filteredCredentials
+    }
+
     await client.users.updateUser(userId, {
-      privateMetadata: newMetadata
+      privateMetadata: updatedMetadata as unknown as Record<string, unknown>
     })
-    
-    // Credentials removed successfully
+
     return { success: true }
   } catch (error) {
     console.error(`[${vendor}] Failed to remove credentials:`, error)
@@ -418,15 +270,29 @@ export async function hasVendorCredentials(
  */
 export async function getAllVendorCredentials(
   userId: string
-): Promise<{ selectLive?: SelectLiveCredentials, enphase?: EnphaseCredentials }> {
+): Promise<{ [key in VendorType]?: VendorCredentials[] }> {
   try {
     const client = await clerkClient()
     const user = await client.users.getUser(userId)
-    
-    return {
-      selectLive: user.privateMetadata?.selectLiveCredentials as SelectLiveCredentials | undefined,
-      enphase: user.privateMetadata?.enphaseCredentials as EnphaseCredentials | undefined
+    const metadata = user.privateMetadata
+
+    if (!isV11Format(metadata)) {
+      return {}
     }
+
+    const v11Metadata = metadata as unknown as CredentialsMetadataV11
+    const result: { [key in VendorType]?: VendorCredentials[] } = {}
+
+    // Group credentials by vendor
+    for (const cred of v11Metadata.credentials) {
+      const vendor = (cred.vendor === 'selectronic' ? 'select.live' : cred.vendor) as VendorType
+      if (!result[vendor]) {
+        result[vendor] = []
+      }
+      result[vendor]!.push(cred)
+    }
+
+    return result
   } catch (error) {
     console.error('Failed to retrieve all credentials:', error)
     return {}
@@ -449,7 +315,8 @@ export async function getCurrentUserCredentials(
 }
 
 /**
- * Get vendor-specific user ID (email for Select.Live, user ID for Enphase)
+ * Get vendor-specific user ID
+ * Each vendor module should know how to extract its user ID from credentials
  */
 export async function getVendorUserId(
   userId: string,
@@ -457,22 +324,17 @@ export async function getVendorUserId(
 ): Promise<string | null> {
   try {
     const credentials = await getVendorCredentials(userId, vendor)
-    
+
     if (!credentials) {
       return null
     }
-    
-    // Return the appropriate ID based on vendor type
-    if (vendor === 'select.live') {
-      return (credentials as SelectLiveCredentials).email
-    } else if (vendor === 'enphase') {
-      return (credentials as EnphaseCredentials).enphase_user_id || null
-    }
-    
-    return null
+
+    // Return vendor-specific ID field if it exists
+    // Vendors should use standard field names like 'email' or 'user_id'
+    const creds = credentials as any
+    return creds.email || creds.user_id || creds.enphase_user_id || null
   } catch (error) {
     console.error(`Failed to get ${vendor} user ID:`, error)
     return null
   }
 }
-
