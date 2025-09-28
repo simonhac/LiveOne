@@ -357,24 +357,6 @@ export async function fetchEnphaseDay(
 }
 
 /**
- * Convenience function to fetch yesterday's 5-minute data
- * @param systemId - The system ID in the database
- * @param timezoneOffsetMin - Timezone offset in minutes from UTC
- * @param dryRun - If true, don't actually insert/update data
- */
-export async function fetchEnphaseYesterday5Min(
-  systemId: number,
-  timezoneOffsetMin: number,
-  dryRun = false
-) {
-  const yesterday = getYesterdayInTimezone(timezoneOffsetMin);
-  console.log(`[Enphase] Fetching yesterday's data (${yesterday.year}-${String(yesterday.month).padStart(2, '0')}-${String(yesterday.day).padStart(2, '0')}) for system ${systemId}`);
-  
-  return fetchEnphaseDay(systemId, yesterday, timezoneOffsetMin, dryRun);
-}
-
-
-/**
  * Check if we have sufficient evening data for a specific day (18:00-23:55)
  * @param systemId - System ID
  * @param date - Calendar date to check

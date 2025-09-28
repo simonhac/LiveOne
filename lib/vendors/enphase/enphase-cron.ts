@@ -182,12 +182,3 @@ export function checkEnphasePollingSchedule(
     nextPollTimeStr
   };
 }
-
-// Backward compatibility wrapper
-export function shouldPollEnphaseNow(
-  system: EnphaseSystemWithOwner,
-  lastPollTime: Date | null,
-  currentTime: Date = new Date()
-): boolean {
-  return checkEnphasePollingSchedule(system, lastPollTime, currentTime).shouldPollNow;
-}

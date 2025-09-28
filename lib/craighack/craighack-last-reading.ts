@@ -1,6 +1,6 @@
 import { roundToThree } from '@/lib/format-opennem';
 import { getLastReading as getSelectronicLastReading } from '@/lib/selectronic/selectronic-last-reading';
-import { getLastReading as getEnphaseLastReading } from '@/lib/enphase/enphase-last-reading';
+import { getLastReading as getEnphaseLastReading } from '@/lib/vendors/enphase/enphase-last-reading';
 
 /**
  * Fetch data from systems 2 and 3 and combine results

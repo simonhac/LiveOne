@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth, clerkClient } from '@clerk/nextjs/server';
-import { getEnphaseClient } from '@/lib/enphase/enphase-client';
+import { getEnphaseClient } from '@/lib/vendors/enphase/enphase-client';
 import { db } from '@/lib/db';
 import { systems } from '@/lib/db/schema';
 import { and, eq } from 'drizzle-orm';
