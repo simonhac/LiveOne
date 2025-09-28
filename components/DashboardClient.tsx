@@ -14,6 +14,7 @@ import TestConnectionModal from '@/components/TestConnectionModal'
 import ServerErrorModal from '@/components/ServerErrorModal'
 import SessionTimeoutModal from '@/components/SessionTimeoutModal'
 import { AddSystemDialog } from '@/components/AddSystemDialog'
+import SystemsMenu from '@/components/SystemsMenu'
 import {
   Sun,
   Home,
@@ -127,6 +128,7 @@ interface AvailableSystem {
   id: number;
   displayName: string;
   vendorSiteId: string;
+  ownerClerkUserId?: string | null;
 }
 
 interface DashboardClientProps {
@@ -375,7 +377,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
       <header className="bg-gray-800 border-b border-gray-700">
         <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 py-2 sm:py-4">
           {/* Mobile Layout */}
-          <MobileMenu 
+          <MobileMenu
             displayName={systemDisplayName}
             secondsSinceUpdate={!lastUpdate ? 0 : secondsSinceUpdate}
             onLogout={handleLogout}
@@ -387,6 +389,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
             supportsPolling={data?.supportsPolling}
             isAdmin={isAdmin}
             systemStatus={system?.status}
+            userId={userId}
           />
 
           {/* Desktop Layout */}
@@ -405,28 +408,13 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                   {showSystemDropdown && (
                     <div className="absolute top-full left-0 mt-2 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
                       <div className="py-1">
-                        {availableSystems.map((system) => {
-                          // Preserve period parameter when switching systems
-                          const period = searchParams.get('period')
-                          const href = period ? `/dashboard/${system.id}?period=${period}` : `/dashboard/${system.id}`
-                          return (
-                            <Link
-                              key={system.id}
-                              href={href}
-                              className={`block px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 transition-colors ${
-                                systemId && system.id === parseInt(systemId) ? 'bg-gray-700' : ''
-                              }`}
-                              onClick={() => setShowSystemDropdown(false)}
-                            >
-                              {system.displayName || `System ${system.vendorSiteId}`}
-                            </Link>
-                          )
-                        })}
-                        {isAdmin && availableSystems.length >= 10 && (
-                          <div className="px-4 py-2 text-xs text-gray-500 border-t border-gray-700">
-                            Showing first 10 systems
-                          </div>
-                        )}
+                        <SystemsMenu
+                          availableSystems={availableSystems}
+                          currentSystemId={systemId}
+                          userId={userId}
+                          isAdmin={isAdmin}
+                          onSystemSelect={() => setShowSystemDropdown(false)}
+                        />
                       </div>
                     </div>
                   )}
