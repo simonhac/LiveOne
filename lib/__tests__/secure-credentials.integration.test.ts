@@ -21,7 +21,8 @@ import {
 } from '../secure-credentials'
 import { getSelectLiveCredentials, storeSelectLiveCredentials } from '../selectronic/credentials'
 import { storeEnphaseTokens, getEnphaseCredentials } from '../vendors/enphase/enphase-client'
-import type { EnphaseCredentials, EnphaseTokens } from '../types/enphase'
+import type { EnphaseCredentials } from '../types/enphase'
+import type { EnphaseTokens } from '../vendors/enphase/types'
 
 describe('Secure Credentials Integration Tests', () => {
   let testUserId: string
