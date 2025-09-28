@@ -23,6 +23,14 @@ interface Session {
   createdAt: string
 }
 
+// Helper function to format duration
+const formatDuration = (durationMs: number): string => {
+  if (durationMs >= 2000) {
+    return `${(durationMs / 1000).toFixed(1)}s`
+  }
+  return `${durationMs}ms`
+}
+
 export default function ActivityViewer() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
@@ -240,7 +248,7 @@ export default function ActivityViewer() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-300">
-                    {session.duration}ms
+                    {formatDuration(session.duration)}
                   </td>
                   <td className="px-4 py-3 text-sm">
                     {getStatusBadge(session.successful, session.errorCode)}
@@ -273,7 +281,7 @@ export default function ActivityViewer() {
             {/* Modal header */}
             <div className="flex items-center justify-between p-4 border-b border-gray-700">
               <h3 className="text-lg font-medium text-white">
-                Session Details - {selectedSession.systemName}
+                Session Details — {selectedSession.systemName}
               </h3>
               <button
                 onClick={() => {
@@ -296,7 +304,7 @@ export default function ActivityViewer() {
                 <div>
                   <span className="text-gray-400">Time:</span>{' '}
                   <span className="text-gray-200">
-                    {format(new Date(selectedSession.started), 'h:mm:ss aa').toLowerCase()} ({selectedSession.duration}ms)
+                    {format(new Date(selectedSession.started), 'h:mm:ss aa').toLowerCase()} ({formatDuration(selectedSession.duration)})
                   </span>
                 </div>
                 <div>
