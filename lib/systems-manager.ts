@@ -167,7 +167,8 @@ export class SystemsManager {
         displayName: s.displayName,
         vendorSiteId: s.vendorSiteId,
         vendorType: s.vendorType,
-        status: s.status
+        status: s.status,
+        ownerClerkUserId: s.ownerClerkUserId
       }));
   }
 }

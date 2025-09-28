@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useUser } from '@clerk/nextjs'
 import LastUpdateTime from './LastUpdateTime'
+import SystemsMenu from './SystemsMenu'
 
 interface SystemInfo {
   model?: string
@@ -18,6 +19,8 @@ interface SystemInfo {
 interface AvailableSystem {
   id: number
   displayName: string
+  vendorSiteId: string
+  ownerClerkUserId?: string | null
 }
 
 interface MobileMenuProps {
@@ -32,10 +35,11 @@ interface MobileMenuProps {
   supportsPolling?: boolean
   isAdmin?: boolean
   systemStatus?: 'active' | 'disabled' | 'removed'
+  userId?: string
 }
 
-export default function MobileMenu({ 
-  displayName, 
+export default function MobileMenu({
+  displayName,
   secondsSinceUpdate,
   onLogout,
   systemInfo,
@@ -45,7 +49,8 @@ export default function MobileMenu({
   vendorType,
   supportsPolling = false,
   isAdmin = false,
-  systemStatus
+  systemStatus,
+  userId
 }: MobileMenuProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [isSystemDropdownOpen, setIsSystemDropdownOpen] = useState(false)
@@ -97,17 +102,19 @@ export default function MobileMenu({
             {/* System Dropdown Menu */}
             {isSystemDropdownOpen && availableSystems.length > 1 && (
               <div className="absolute top-full left-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
-                {availableSystems.map((system) => (
-                  <button
-                    key={system.id}
-                    onClick={() => handleSystemSelect(system.id)}
-                    className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-700 transition-colors first:rounded-t-lg last:rounded-b-lg ${
-                      system.id.toString() === currentSystemId ? 'text-blue-400 bg-gray-700/50' : 'text-white'
-                    }`}
-                  >
-                    {system.displayName}
-                  </button>
-                ))}
+                <SystemsMenu
+                  availableSystems={availableSystems}
+                  currentSystemId={currentSystemId}
+                  userId={userId}
+                  isAdmin={isAdmin}
+                  onSystemSelect={(systemId) => {
+                    handleSystemSelect(systemId)
+                    setIsSystemDropdownOpen(false)
+                  }}
+                  isMobile={true}
+                  itemClassName="w-full text-left px-4 py-2 text-sm hover:bg-gray-700 transition-colors first:rounded-t-lg last:rounded-b-lg text-white"
+                  activeItemClassName="text-blue-400 bg-gray-700/50"
+                />
               </div>
             )}
           </div>
