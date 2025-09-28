@@ -16,10 +16,9 @@ import {
   removeVendorCredentials,
   hasVendorCredentials,
   getAllVendorCredentials,
-  type SelectLiveCredentials,
   type VendorType
 } from '../secure-credentials'
-import { getSelectLiveCredentials, storeSelectLiveCredentials } from '../selectronic/credentials'
+import { getSelectLiveCredentials, storeSelectLiveCredentials, type SelectLiveCredentials } from '../selectronic/credentials'
 import { storeEnphaseTokens, getEnphaseCredentials } from '../vendors/enphase/enphase-client'
 import type { EnphaseCredentials } from '../types/enphase'
 import type { EnphaseTokens } from '../vendors/enphase/types'
@@ -214,19 +213,16 @@ describe('Secure Credentials Integration Tests', () => {
         
         const result = await getAllVendorCredentials(testUserId)
         
-        expect(result.selectLive).toMatchObject(selectLiveCredentials)
-        expect(result.enphase).toMatchObject(enphaseCredentials)
-        expect(result.selectLive?.created_at).toBeDefined()
-        expect(result.enphase?.created_at).toBeDefined()
+        expect(result['select.live']?.[0]).toMatchObject(selectLiveCredentials)
+        expect(result.enphase?.[0]).toMatchObject(enphaseCredentials)
+        expect(result['select.live']?.[0]?.created_at).toBeDefined()
+        expect(result.enphase?.[0]?.created_at).toBeDefined()
       })
 
       it('should return empty object when no credentials exist', async () => {
         const result = await getAllVendorCredentials(testUserId)
         
-        expect(result).toEqual({
-          selectLive: undefined,
-          enphase: undefined
-        })
+        expect(result).toEqual({})
       })
 
       it('should return partial credentials when only some exist', async () => {
@@ -235,9 +231,9 @@ describe('Secure Credentials Integration Tests', () => {
         const result = await getAllVendorCredentials(testUserId)
         
         expect(result.enphase).toBeUndefined()
-        expect(result.selectLive).toMatchObject(selectLiveCredentials)
-        expect(result.selectLive?.created_at).toBeDefined()
-        expect(typeof result.selectLive?.created_at).toBe('number')
+        expect(result['select.live']?.[0]).toMatchObject(selectLiveCredentials)
+        expect(result['select.live']?.[0]?.created_at).toBeDefined()
+        expect(typeof result['select.live']?.[0]?.created_at).toBe('string')
       })
     })
   })
@@ -317,8 +313,8 @@ describe('Secure Credentials Integration Tests', () => {
       // Retrieve all credentials
       const all = await getAllVendorCredentials(testUserId)
       
-      expect(all.selectLive).toMatchObject(selectLiveCredentials)
-      expect(all.enphase).toMatchObject(enphaseCredentials)
+      expect(all['select.live']?.[0]).toMatchObject(selectLiveCredentials)
+      expect(all.enphase?.[0]).toMatchObject(enphaseCredentials)
       
       // Check individual existence
       expect(await hasVendorCredentials(testUserId, 'select.live')).toBe(true)

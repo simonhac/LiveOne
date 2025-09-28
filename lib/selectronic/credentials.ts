@@ -2,8 +2,13 @@
  * Helper functions for Select.Live credentials
  */
 
-import { getVendorCredentials, storeVendorCredentials, removeVendorCredentials } from '@/lib/secure-credentials';
-import type { SelectLiveCredentials } from '@/lib/secure-credentials';
+import { getVendorCredentials, storeVendorCredentials, removeVendorCredentials, type VendorCredentials } from '@/lib/secure-credentials';
+
+// Select.Live specific credential shape
+export interface SelectLiveCredentials extends VendorCredentials {
+  email: string;
+  password: string;
+}
 
 /**
  * Get Select.Live credentials specifically
