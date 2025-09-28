@@ -73,13 +73,6 @@ export async function GET(request: NextRequest) {
 
     // Exchange code for tokens
     const client = getEnphaseClient();
-    
-    // In mock mode, accept any code starting with "mock_"
-    if (process.env.ENPHASE_USE_MOCK === 'true' || 
-        (process.env.NODE_ENV === 'development' && code.startsWith('mock_'))) {
-      console.log('ENPHASE: Using mock mode for callback');
-    }
-    
     const tokens = await client.exchangeCodeForTokens(code);
 
     // Log token response (mask sensitive data)
