@@ -11,7 +11,7 @@
 
 import { clerkClient } from '@clerk/nextjs/server'
 import { auth } from '@clerk/nextjs/server'
-import type { EnphaseCredentials, EnphaseTokens } from '@/lib/types/enphase'
+import type { EnphaseCredentials } from '@/lib/types/enphase'
 import { getNowFormattedAEST, unixToFormattedAEST } from '@/lib/date-utils'
 
 export type VendorType = 'select.live' | 'selectronic' | 'enphase' | 'mondo'

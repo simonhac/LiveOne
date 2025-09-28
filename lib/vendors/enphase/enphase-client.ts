@@ -1,10 +1,10 @@
 import { storeVendorCredentials, getVendorCredentials, removeVendorCredentials } from '@/lib/secure-credentials';
-import type { 
-  EnphaseTokens, 
-  EnphaseCredentials, 
-  EnphaseTelemetryResponse, 
-  EnphaseSystem 
-} from '@/lib/types/enphase';
+import type { EnphaseCredentials } from '@/lib/types/enphase';
+import type {
+  EnphaseTokens,
+  EnphaseTelemetryResponse,
+  EnphaseSystem
+} from './types';
 
 /**
  * ENPHASE API IMPLEMENTATION NOTES
