@@ -226,15 +226,15 @@ export default function AdminDashboardClient() {
   return (
     <>
       <div className="flex flex-col">
-        <div className="px-0 md:px-6 pt-3 pb-0">
+        <div className="px-0 md:px-6 pt-3 pb-0 flex flex-col">
           {error && (
             <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-4">
               {error}
             </div>
           )}
-          
+
           {/* Systems Table */}
-          <div className="bg-gray-800 border-t md:border border-gray-700 md:rounded-t overflow-hidden">
+          <div className="bg-gray-800 border-t md:border border-gray-700 md:rounded-t overflow-hidden flex flex-col">
             <div className="border-b border-gray-700">
               <div className="flex items-end -mb-px">
                 <button
@@ -259,10 +259,10 @@ export default function AdminDashboardClient() {
                 </button>
               </div>
             </div>
-          
-          <div className="overflow-auto">
-            <table className="w-full">
-              <thead>
+
+            <div className="overflow-auto bg-gray-900 max-h-[calc(100vh-100px)]">
+              <table className="w-full">
+              <thead className="sticky top-0 bg-gray-800 z-10">
                 <tr className="border-b border-gray-700">
                   <th className="w-5"></th>
                   <th className="text-left px-1.5 md:px-1.5 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
@@ -279,17 +279,19 @@ export default function AdminDashboardClient() {
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-700">
+              <tbody>
                 {systems
-                  .filter(system => 
-                    activeTab === 'active' 
+                  .filter(system =>
+                    activeTab === 'active'
                       ? system.status === 'active' || system.status === 'disabled'
                       : system.status === 'removed'
                   )
                   .map((system, index, filteredSystems) => (
-                  <tr 
+                  <tr
                     key={system.systemId}
-                    className={`hover:bg-gray-700/50 transition-colors relative ${
+                    className={`${
+                      index % 2 === 0 ? 'bg-gray-900/50' : 'bg-gray-800/50'
+                    } hover:bg-gray-700/50 transition-colors border-b border-gray-700 relative ${
                       system.status === 'disabled' ? 'opacity-40' : ''
                     }`}
                     style={system.status === 'removed' ? {
@@ -481,8 +483,8 @@ export default function AdminDashboardClient() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
-        </div>
         </div>
       </div>
       

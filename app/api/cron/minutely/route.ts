@@ -179,7 +179,7 @@ export async function GET(request: NextRequest) {
 
               for (const data of dataArray) {
                 // Calculate delay
-                const inverterTime = new Date(data.timestamp);
+                const inverterTime = data.timestamp;
                 const receivedTime = new Date();
                 const delaySeconds = Math.floor((receivedTime.getTime() - inverterTime.getTime()) / 1000);
 
@@ -197,7 +197,9 @@ export async function GET(request: NextRequest) {
                   gridW: data.gridW ?? null,
                   batterySOC: data.batterySOC != null ? Math.round(data.batterySOC * 10) / 10 : null,
                   faultCode: data.faultCode ?? null,
-                  faultTimestamp: data.faultTimestamp ?? null,
+                  faultTimestamp: data.faultTimestamp
+                    ? Math.floor(data.faultTimestamp.getTime() / 1000)
+                    : null,
                   generatorStatus: data.generatorStatus ?? null,
                   // Energy interval counters (Wh) - integers, preserve nulls
                   solarWhInterval: data.solarWhInterval != null ? Math.round(data.solarWhInterval) : null,

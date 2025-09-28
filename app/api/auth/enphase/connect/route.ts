@@ -46,16 +46,16 @@ export async function POST(request: NextRequest) {
     const client = getEnphaseClient();
     const authUrl = client.getAuthorizationUrl(stateData, origin);
 
-    console.log('ENPHASE: Authorization URL generated for user:', userDisplay);
+    console.log('ENPHASE: Authorisation URL generated for user:', userDisplay);
 
     return NextResponse.json({ 
       authUrl,
-      message: 'Redirect user to authorization URL'
+      message: 'Redirect user to authorisation URL'
     });
   } catch (error) {
     console.error('ENPHASE: Error in connect endpoint:', error);
     return NextResponse.json(
-      { error: 'Failed to initialize Enphase connection' },
+      { error: 'Failed to initialise Enphase connection' },
       { status: 500 }
     );
   }

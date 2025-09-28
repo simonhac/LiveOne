@@ -56,7 +56,6 @@ export interface IEnphaseClient {
   getAuthorizationUrl(state: string, origin?: string): string;
   exchangeCodeForTokens(code: string): Promise<EnphaseTokens>;
   refreshTokens(refreshToken: string): Promise<EnphaseTokens>;
-  getLatestTelemetry(systemId: string, accessToken: string): Promise<EnphaseTelemetryResponse>;
   getSystems(accessToken: string): Promise<EnphaseSystem[]>;
 }
 
@@ -208,7 +207,7 @@ export class EnphaseClient implements IEnphaseClient {
 
   async getSystems(accessToken: string): Promise<EnphaseSystem[]> {
     // Fetching user systems
-    
+
     try {
       const response = await fetch(`${this.baseUrl}/api/v4/systems`, {
         headers: {
@@ -227,64 +226,6 @@ export class EnphaseClient implements IEnphaseClient {
       return data.systems || [];
     } catch (error) {
       console.error('ENPHASE: Error fetching systems:', error);
-      throw error;
-    }
-  }
-
-  async getLatestTelemetry(systemId: string, accessToken: string): Promise<EnphaseTelemetryResponse> {
-    // Fetch system summary for current telemetry data
-    try {
-      const response = await fetch(
-        `${this.baseUrl}/api/v4/systems/${systemId}/summary`,
-        {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'key': this.apiKey
-          }
-        }
-      );
-      
-      if (response.status === 401) {
-        console.warn('ENPHASE: Access token expired for system:', systemId);
-        throw new Error('TOKEN_EXPIRED');
-      }
-
-      if (!response.ok) {
-        console.error('ENPHASE: Telemetry fetch failed:', response.status);
-        throw new Error(`Telemetry fetch failed: ${response.status}`);
-      }
-      
-      const responseText = await response.text();
-      const data = JSON.parse(responseText);
-      // Got summary response
-      
-      // The summary endpoint returns different data structure
-      // Convert it to match our expected telemetry response format
-      const telemetryResponse: EnphaseTelemetryResponse = {
-        system_id: systemId,
-        // Use nullish coalescing (??) instead of || to preserve 0 values
-        production_power: data.current_power ?? null,
-        consumption_power: null, // Summary endpoint doesn't provide consumption
-        storage_power: null,
-        storage_soc: null,
-        grid_power: null,
-        // Add any other summary data we might want
-        energy_today: data.energy_today ?? null,
-        energy_lifetime: data.energy_lifetime ?? null,
-        system_size: data.size_w ?? null,
-        // Include the timestamp if available
-        last_report_at: data.last_report_at ?? null,
-        // Include raw vendor response for consistency with SelectronicData
-        raw: data,
-        // Include raw response object for storage
-        rawResponse: data
-      };
-      
-      // Summary received
-      
-      return telemetryResponse;
-    } catch (error) {
-      console.error('ENPHASE: Error fetching telemetry:', error);
       throw error;
     }
   }

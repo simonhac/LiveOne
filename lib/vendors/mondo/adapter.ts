@@ -445,7 +445,7 @@ export class MondoAdapter extends BaseVendorAdapter {
 
       // Create CommonPollingData from the aggregated monitoring points
       const latestData: CommonPollingData = {
-        timestamp: new Date().toISOString(),
+        timestamp: new Date(),
         solarW,
         loadW,
         batteryW,

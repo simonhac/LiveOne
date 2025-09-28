@@ -105,12 +105,8 @@ export async function GET(request: NextRequest) {
 
     // Use the first system (in future, allow user to select)
     const enphaseSystem = enphaseSystems[0];
-    
-    // Ensure system_id is a clean string without decimals
-    // Enphase may return it as a number or string with decimal
-    const cleanSystemId = String(enphaseSystem.system_id).replace(/\.0$/, '').split('.')[0];
-    console.log('ENPHASE: Using system:', cleanSystemId, enphaseSystem.name, 
-                '(raw value:', enphaseSystem.system_id, 'type:', typeof enphaseSystem.system_id, ')');
+    const systemId = String(enphaseSystem.system_id);
+    console.log('ENPHASE: Using system:', systemId, enphaseSystem.name);
 
     // Check if system already exists in database FIRST (before storing tokens)
     const existingSystem = await db.select()
@@ -118,7 +114,7 @@ export async function GET(request: NextRequest) {
       .where(
         and(
           eq(systems.vendorType, 'enphase'),
-          eq(systems.vendorSiteId, cleanSystemId)
+          eq(systems.vendorSiteId, systemId)
         )
       )
       .limit(1);
@@ -126,12 +122,12 @@ export async function GET(request: NextRequest) {
     if (existingSystem.length === 0) {
       // Create new system in database
       console.log('ENPHASE: Creating new system in database');
-      
+
       // Calculate timezone offset from timezone string
       let timezoneOffsetMin = 600; // Default to AEST (UTC+10)
       if (enphaseSystem.timezone) {
         // This is simplified - in production, use a proper timezone library
-        if (enphaseSystem.timezone.includes('Melbourne') || 
+        if (enphaseSystem.timezone.includes('Melbourne') ||
             enphaseSystem.timezone.includes('Sydney')) {
           timezoneOffsetMin = 600; // UTC+10
         }
@@ -141,7 +137,7 @@ export async function GET(request: NextRequest) {
       const [newSystem] = await db.insert(systems).values({
         ownerClerkUserId: userId,
         vendorType: 'enphase',
-        vendorSiteId: cleanSystemId,
+        vendorSiteId: systemId,
         status: 'active',
         displayName: enphaseSystem.name || 'Enphase System',
         model: 'Enphase IQ',
@@ -155,7 +151,7 @@ export async function GET(request: NextRequest) {
       console.log('ENPHASE: System created successfully with ID:', newSystem.id);
 
       // Now store tokens with the new system ID
-      const storeResult = await storeEnphaseTokens(userId, tokens, newSystem.id, cleanSystemId);
+      const storeResult = await storeEnphaseTokens(userId, tokens, newSystem.id);
       if (!storeResult.success) {
         throw new Error(storeResult.error || 'Failed to store tokens');
       }
@@ -163,7 +159,7 @@ export async function GET(request: NextRequest) {
     } else {
       // Update existing system (reactivate if it was removed)
       console.log('ENPHASE: Updating existing system');
-      
+
       await db.update(systems)
         .set({
           ownerClerkUserId: userId,
@@ -175,7 +171,7 @@ export async function GET(request: NextRequest) {
         .where(eq(systems.id, existingSystem[0].id));
 
       // Store tokens with the existing system ID
-      const storeResult = await storeEnphaseTokens(userId, tokens, existingSystem[0].id, cleanSystemId);
+      const storeResult = await storeEnphaseTokens(userId, tokens, existingSystem[0].id);
       if (!storeResult.success) {
         throw new Error(storeResult.error || 'Failed to store tokens');
       }
@@ -183,7 +179,7 @@ export async function GET(request: NextRequest) {
     }
 
     console.log('ENPHASE: Connection complete for user:', userDisplay);
-    console.log('ENPHASE: System successfully connected:', cleanSystemId);
+    console.log('ENPHASE: System successfully connected:', systemId);
 
     // Redirect to result page with success message
     const successUrl = new URL('/auth/enphase/result', request.url);
@@ -199,9 +195,9 @@ export async function GET(request: NextRequest) {
     let errorMessage = 'Connection failed';
     if (error instanceof Error) {
       if (error.message.includes('Invalid state')) {
-        errorMessage = 'Invalid authorization state. Please try connecting again.';
+        errorMessage = 'Invalid authorisation state. Please try connecting again.';
       } else if (error.message.includes('No code')) {
-        errorMessage = 'Authorization was denied or cancelled.';
+        errorMessage = 'Authorisation was denied or cancelled.';
       } else if (error.message.includes('token')) {
         errorMessage = 'Failed to obtain access token. Please try again.';
       } else if (error.message.includes('system')) {

@@ -8,10 +8,7 @@ import { eq, desc } from 'drizzle-orm';
 import { checkEnphasePollingSchedule } from '@/lib/vendors/enphase/enphase-cron';
 import { checkAndFetchYesterdayIfNeeded, fetchEnphaseDay } from '@/lib/vendors/enphase/enphase-history';
 import { getZonedNow } from '@/lib/date-utils';
-import { fetchWithEnphaseAuth } from '@/lib/vendors/enphase/enphase-auth';
 import { getPollingStatus } from '@/lib/polling-utils';
-import { CalendarDate } from '@internationalized/date';
-import type { EnphaseTelemetryResponse } from './types';
 
 /**
  * Vendor adapter for Enphase systems
@@ -71,50 +68,6 @@ export class EnphaseAdapter extends BaseVendorAdapter {
     };
   }
 
-  /**
-   * Fetch latest telemetry using centralized auth (handles token refresh)
-   */
-  private async fetchTelemetryWithAuth(system: SystemForVendor): Promise<EnphaseTelemetryResponse> {
-    // Clean up the system ID
-    const cleanSystemId = String(system.vendorSiteId).replace(/\.0$/, '').split('.')[0];
-
-    // Build the URL
-    const url = `https://api.enphaseenergy.com/api/v4/systems/${cleanSystemId}/summary`;
-
-    // Fetch with automatic token refresh
-    const response = await fetchWithEnphaseAuth(
-      {
-        id: system.id,
-        ownerClerkUserId: system.ownerClerkUserId,
-        vendorSiteId: system.vendorSiteId
-      },
-      url
-    );
-
-    if (!response.ok) {
-      throw new Error(`Telemetry fetch failed: ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    // Convert to our expected telemetry response format
-    const telemetryResponse: EnphaseTelemetryResponse = {
-      system_id: cleanSystemId,
-      production_power: data.current_power ?? null,
-      consumption_power: null, // Summary endpoint doesn't provide consumption
-      storage_power: null,
-      storage_soc: null,
-      grid_power: null,
-      energy_today: data.energy_today ?? null,
-      energy_lifetime: data.energy_lifetime ?? null,
-      system_size: data.size_w ?? null,
-      last_report_at: data.last_report_at ?? null,
-      raw: data,
-      rawResponse: data
-    };
-
-    return telemetryResponse;
-  }
   
   async poll(system: SystemForVendor, credentials: any): Promise<PollingResult> {
     const startTime = Date.now();
@@ -187,48 +140,56 @@ export class EnphaseAdapter extends BaseVendorAdapter {
     try {
       console.log(`[Enphase] Testing connection for system ${system.id}`);
 
-      // Fetch telemetry with automatic token refresh
-      const telemetry = await this.fetchTelemetryWithAuth(system);
+      // Fetch today's data to verify connection works
+      const result = await fetchEnphaseDay(
+        system.id,
+        null, // null means fetch today
+        system.timezoneOffsetMin,
+        true  // dryRun - don't actually save to database during test
+      );
 
-      // Clean up the system ID for display
-      const cleanSystemId = String(system.vendorSiteId).replace(/\.0$/, '').split('.')[0];
+      // Get the most recent reading from the database to show current status
+      const latestReading = await this.getLastReading(system.id);
 
-      // Only use real data - no made up values
-      const latestData = telemetry ? {
-        timestamp: new Date().toISOString(),
-        solarW: telemetry.production_power || null,
-        solarLocalW: telemetry.production_power || null,
-        loadW: telemetry.consumption_power || null,
-        batteryW: telemetry.storage_power || null,
-        gridW: telemetry.grid_power || null,
-        batterySOC: telemetry.storage_soc || null,
-        faultCode: null,
-        faultTimestamp: null,
-        generatorStatus: null,
-        solarKwhTotal: telemetry.production_energy_lifetime ? telemetry.production_energy_lifetime / 1000 : null,
-        loadKwhTotal: telemetry.consumption_energy_lifetime ? telemetry.consumption_energy_lifetime / 1000 : null,
-        batteryInKwhTotal: telemetry.storage_energy_charged ? telemetry.storage_energy_charged / 1000 : null,
-        batteryOutKwhTotal: telemetry.storage_energy_discharged ? telemetry.storage_energy_discharged / 1000 : null,
+      // Convert to test connection format
+      const latestData = latestReading ? {
+        timestamp: latestReading.timestamp,
+        solarW: latestReading.solar?.powerW || null,
+        solarLocalW: latestReading.solar?.localW || null,
+        loadW: latestReading.load?.powerW || null,
+        batteryW: latestReading.battery?.powerW || null,
+        gridW: latestReading.grid?.powerW || null,
+        batterySOC: latestReading.battery?.soc || null,
+        faultCode: latestReading.connection?.faultCode || null,
+        faultTimestamp: latestReading.connection?.faultTimestamp
+          ? new Date(latestReading.connection.faultTimestamp * 1000)  // Convert Unix seconds to Date
+          : null,
+        generatorStatus: latestReading.grid?.generatorStatus || null,
+        solarKwhTotal: null,
+        loadKwhTotal: null,
+        batteryInKwhTotal: null,
+        batteryOutKwhTotal: null,
         gridInKwhTotal: null,
         gridOutKwhTotal: null
       } : null;
 
-      // System info - only real data
+      // System info
       const systemInfo = {
         model: 'Enphase System',
-        serial: cleanSystemId,
+        serial: system.vendorSiteId,
         ratings: null,
         solarSize: null,
         batterySize: null
       };
 
-      console.log(`[Enphase] Test connection successful for system ${cleanSystemId}`);
+      console.log(`[Enphase] Test connection successful for system ${system.vendorSiteId}`);
+      console.log(`[Enphase] Would have fetched ${result.intervalCount} intervals`);
 
       return {
         success: true,
         systemInfo,
         latestData: latestData || undefined,
-        vendorResponse: telemetry // Return the raw response from the server
+        vendorResponse: result.rawResponse  // Return the raw Enphase production data
       };
     } catch (error) {
       console.error('Error testing Enphase connection:', error);
@@ -239,41 +200,4 @@ export class EnphaseAdapter extends BaseVendorAdapter {
     }
   }
   
-  /**
-   * Transform Enphase telemetry data to common format
-   */
-  private transformTelemetryData(telemetry: any): CommonPollingData | null {
-    if (!telemetry) return null;
-    
-    // Use actual values or 0 for missing data
-    const currentPower = telemetry.production_power ?? 0;
-    const consumptionPower = telemetry.consumption_power ?? 0;
-    const batteryPower = telemetry.storage_power ?? 0;
-    const gridPower = telemetry.grid_power ?? 0;
-    const batterySOC = telemetry.storage_soc ?? 0;
-    
-    return {
-      timestamp: new Date().toISOString(),
-      solarW: currentPower,
-      solarLocalW: currentPower,  // Enphase measures at the panels/microinverters
-      loadW: consumptionPower,
-      batteryW: batteryPower,
-      gridW: gridPower,
-      batterySOC: batterySOC,
-      faultCode: null,  // Enphase doesn't provide fault codes
-      faultTimestamp: null,  // No fault timestamp when no faults
-      generatorStatus: null,  // Enphase doesn't provide generator status
-      // Energy totals - Enphase provides these in Wh, convert to kWh
-      solarKwhTotal: telemetry.production_energy_lifetime 
-        ? telemetry.production_energy_lifetime / 1000 : 0,
-      loadKwhTotal: telemetry.consumption_energy_lifetime 
-        ? telemetry.consumption_energy_lifetime / 1000 : 0,
-      batteryInKwhTotal: telemetry.storage_energy_charged 
-        ? telemetry.storage_energy_charged / 1000 : 0,
-      batteryOutKwhTotal: telemetry.storage_energy_discharged 
-        ? telemetry.storage_energy_discharged / 1000 : 0,
-      gridInKwhTotal: 0, // Enphase doesn't provide separate grid in/out
-      gridOutKwhTotal: 0
-    };
-  }
 }

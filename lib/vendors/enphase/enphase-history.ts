@@ -48,45 +48,6 @@ async function getValidatedEnphaseSystem(systemId: number) {
   return system as typeof system & { ownerClerkUserId: string };
 }
 
-/**
- * Fetch wrapper that handles Enphase API authentication and proxies through production in development
- */
-async function fetchEnphase(
-  system: { id: number; ownerClerkUserId: string; vendorSiteId: string },
-  url: string,
-  init?: RequestInit
-): Promise<Response> {
-  const isDev = process.env.NODE_ENV === 'development' || !process.env.TURSO_DATABASE_URL;
-
-  if (isDev) {
-    // In development, proxy through production
-    // Remove the base URL if present
-    const apiPath = url.replace('https://api.enphaseenergy.com', '');
-
-    const prodUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://liveone.vercel.app';
-    const proxyUrl = `${prodUrl}/api/enphase-proxy?systemId=${system.id}&url=${encodeURIComponent(apiPath)}`;
-
-    // Proxying through production
-
-    const response = await fetch(proxyUrl);
-
-    if (!response.ok) {
-      // Return the response as-is to let caller handle it
-      return response;
-    }
-
-    const proxyResponse = await response.json();
-
-    // Create a Response object from the proxy response
-    return new Response(JSON.stringify(proxyResponse.response.data), {
-      status: proxyResponse.response.status || 200,
-      headers: { 'Content-Type': 'application/json' }
-    });
-  }
-
-  // In production, use the centralized auth handler
-  return fetchWithEnphaseAuth(system, url, init);
-}
 
 /**
  * Fetch raw production data from Enphase API for a specific time range
@@ -119,7 +80,7 @@ async function fetchEnphaseProductionData(
   }
   
   console.log(`[Enphase] Fetching data from ${url}`);
-  const response = await fetchEnphase(system, url);
+  const response = await fetchWithEnphaseAuth(system, url);
   
   if (!response.ok) {
     const error = await response.text();
@@ -298,7 +259,10 @@ export async function fetchEnphaseDay(
     console.log(`[Enphase] No data returned for ${dateLabel}`);
     return {
       upsertedCount: 0,
-      errorCount: 0
+      errorCount: 0,
+      intervalCount: 0,
+      dryRun,
+      rawResponse: productionData
     };
   }
   
@@ -316,12 +280,13 @@ export async function fetchEnphaseDay(
   const { upsertedCount, errorCount } = await upsertEnphaseRecords(records, dryRun);
   
   // Complete - details logged in polling.ts
-  
+
   return {
     intervalCount: records.length,
     upsertedCount,
     errorCount,
-    dryRun
+    dryRun,
+    rawResponse: productionData  // Include raw Enphase response
   };
 }
 

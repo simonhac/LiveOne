@@ -21,14 +21,12 @@ export interface EnphaseAuthResult {
 export async function storeEnphaseTokens(
   userId: string,
   tokens: EnphaseTokens,
-  systemId: number,  // Our database system ID
-  vendorSystemId: string  // Enphase's system ID
+  systemId: number  // Our database system ID
 ) {
   const credentials = {
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
     expires_at: new Date(Date.now() + (tokens.expires_in * 1000)),  // Convert to Date
-    enphase_system_id: vendorSystemId,  // Enphase's system ID
     enphase_user_id: tokens.enl_uid || ''
   };
 
@@ -85,7 +83,7 @@ export async function getValidEnphaseToken(
     const newTokens = await client.refreshTokens(enphaseCredentials.refresh_token);
 
     // Store the new tokens
-    const storeResult = await storeEnphaseTokens(userId, newTokens, systemId, vendorSiteId);
+    const storeResult = await storeEnphaseTokens(userId, newTokens, systemId);
     if (!storeResult.success) {
       throw new Error(storeResult.error || 'Failed to store refreshed tokens');
     }
@@ -112,20 +110,48 @@ export async function getValidEnphaseToken(
  * Make an authenticated request to the Enphase API
  *
  * This is a convenience wrapper that:
- * 1. Gets a valid access token (refreshing if needed)
- * 2. Makes the API request with proper authentication headers
- * 3. Returns the response
+ * 1. In development, proxies through production's enphase-proxy endpoint
+ * 2. In production, gets a valid access token (refreshing if needed)
+ * 3. Makes the API request with proper authentication headers
+ * 4. Returns the response
  *
  * @param system - System object with id, ownerClerkUserId, and vendorSiteId
  * @param url - The Enphase API URL to request
- * @param init - Optional fetch init options
  * @returns The fetch Response object
  */
 export async function fetchWithEnphaseAuth(
   system: { id: number; ownerClerkUserId: string; vendorSiteId: string },
-  url: string | URL,
-  init?: RequestInit
+  url: string
 ): Promise<Response> {
+  const isDev = process.env.NODE_ENV === 'development';
+
+  if (isDev) {
+    // In development, proxy through production
+    // Remove the base URL if present
+    const apiPath = url.replace('https://api.enphaseenergy.com', '');
+
+    const prodUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://liveone.vercel.app';
+    const proxyUrl = `${prodUrl}/api/enphase-proxy?systemId=${system.id}&url=${encodeURIComponent(apiPath)}`;
+
+    console.log(`[Enphase] Proxying through production: ${apiPath}`);
+
+    const response = await fetch(proxyUrl);
+
+    if (!response.ok) {
+      // Return the response as-is to let caller handle it
+      return response;
+    }
+
+    const proxyResponse = await response.json();
+
+    // Create a Response object from the proxy response
+    return new Response(JSON.stringify(proxyResponse.response.data), {
+      status: proxyResponse.response.status || 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  // In production, use direct API call with authentication
   // Get valid access token
   const { accessToken } = await getValidEnphaseToken(
     system.ownerClerkUserId,
@@ -135,10 +161,9 @@ export async function fetchWithEnphaseAuth(
 
   // Add auth headers to the request
   const headers = {
-    ...init?.headers,
     'Authorization': `Bearer ${accessToken}`,
     'key': process.env.ENPHASE_API_KEY || ''
   };
 
-  return fetch(url, { ...init, headers });
+  return fetch(url, { headers });
 }

@@ -79,15 +79,6 @@ export default function SystemActionsMenu({
             left: `${menuPosition.left}px`
           }}
         >
-          {onSettings && (
-            <button
-              onClick={() => handleMenuClick(onSettings)}
-              className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
-            >
-              <Settings className="w-4 h-4" />
-              Settings
-            </button>
-          )}
           {/* Test - Only show for vendors that support polling */}
           {supportsPolling && (
             <button
@@ -134,6 +125,18 @@ export default function SystemActionsMenu({
               <Trash2 className="w-4 h-4" />
               Mark Removed
             </button>
+          )}
+          {onSettings && (
+            <>
+              <div className="border-t border-gray-700 my-1"></div>
+              <button
+                onClick={() => handleMenuClick(onSettings)}
+                className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+              >
+                <Settings className="w-4 h-4" />
+                Settings
+              </button>
+            </>
           )}
         </div>,
         document.body

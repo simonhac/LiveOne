@@ -8,8 +8,8 @@
  */
 export interface CommonPollingData {
   // Timestamp
-  timestamp: string;
-  
+  timestamp: Date;
+
   // Power readings (Watts) - instantaneous values
   solarW?: number | null;        // Total solar (solarLocalW + solarRemoteW)
   solarLocalW?: number | null;   // Local solar from shunt/CT
@@ -17,13 +17,13 @@ export interface CommonPollingData {
   loadW?: number | null;
   batteryW?: number | null;
   gridW?: number | null;
-  
+
   // Battery state
   batterySOC?: number | null;  // State of charge (0-100%)
-  
+
   // System status
   faultCode?: string | null;
-  faultTimestamp?: number | null;  // Unix timestamp of fault
+  faultTimestamp?: Date | null;  // Date of fault
   generatorStatus?: number | null;
   
   // Energy counters (Wh) - interval values (energy in this period)
