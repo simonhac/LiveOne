@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { systems } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
-import { getEnphaseClient } from '@/lib/vendors/enphase/enphase-client';
+import { getValidEnphaseToken } from '@/lib/vendors/enphase/enphase-auth';
 
 // WARNING: This endpoint has no access controls and is for debugging only
 // TODO: Remove or secure before production use
@@ -65,33 +65,20 @@ async function handleRequest(request: NextRequest, defaultMethod: string) {
       return NextResponse.json({ error: 'System has no owner' }, { status: 400 });
     }
     
-    // Get Enphase client and credentials
-    const client = getEnphaseClient();
-    const credentials = await client.getStoredTokens(system.ownerClerkUserId);
-    
-    if (!credentials) {
-      return NextResponse.json({ error: 'No Enphase credentials found for user' }, { status: 401 });
-    }
-    
-    // Check if token needs refresh (expires_at is now a Date object)
-    let accessToken = credentials.access_token;
-    const oneHourFromNow = new Date(Date.now() + 3600000);
-    if (credentials.expires_at < oneHourFromNow) {
-      console.log('Token expiring soon, refreshing...');
-      try {
-        const newTokens = await client.refreshTokens(credentials.refresh_token);
-        await client.storeTokens(
-          system.ownerClerkUserId,
-          newTokens,
-          credentials.enphase_system_id
-        );
-        accessToken = newTokens.access_token;
-      } catch (error) {
-        return NextResponse.json({ 
-          error: 'Failed to refresh token', 
-          details: error instanceof Error ? error.message : 'Unknown error'
-        }, { status: 401 });
-      }
+    // Get valid access token (handles refresh if needed)
+    let accessToken: string;
+    try {
+      const authResult = await getValidEnphaseToken(
+        system.ownerClerkUserId,
+        system.id,
+        system.vendorSiteId
+      );
+      accessToken = authResult.accessToken;
+    } catch (error) {
+      return NextResponse.json({
+        error: 'Authentication failed',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      }, { status: 401 });
     }
     
     // Replace {systemId} in URL with actual vendor site ID

@@ -1,9 +1,8 @@
 import { BaseVendorAdapter } from '../base-adapter';
 import type { SystemForVendor, PollingResult, TestConnectionResult } from '../types';
 import type { CommonPollingData } from '@/lib/types/common';
-import { db } from '@/lib/db';
-import { readings } from '@/lib/db/schema';
-import { eq, desc } from 'drizzle-orm';
+import type { LatestReadingData } from '@/lib/types/readings';
+import { VendorRegistry } from '@/lib/vendors/registry';
 
 /**
  * Vendor adapter for CraigHack systems
@@ -13,122 +12,79 @@ export class CraigHackAdapter extends BaseVendorAdapter {
   readonly vendorType = 'craighack';
   readonly displayName = 'CraigHack';
   readonly dataSource = 'push' as const;  // CraigHack doesn't poll, it aggregates from other systems
-  
-  // CraigHack is combined-source, poll() is not implemented (handled by base class)
-  
-  async getMostRecentReadings(system: SystemForVendor, credentials: any): Promise<CommonPollingData | null> {
+
+  /**
+   * Override getLastReading to combine data from systems 2 and 3
+   * Solar data from systemId=3 (Enphase), battery/load/grid from systemId=2 (Selectronic)
+   */
+  async getLastReading(systemId: number): Promise<LatestReadingData | null> {
     try {
-      // CraigHack combines data from systems 2 (Selectronic) and 3 (Enphase)
-      // Get the most recent readings from both systems
-      
-      const [system2Reading] = await db
-        .select()
-        .from(readings)
-        .where(eq(readings.systemId, 2))
-        .orderBy(desc(readings.inverterTime))
-        .limit(1);
-      
-      const [system3Reading] = await db
-        .select()
-        .from(readings)
-        .where(eq(readings.systemId, 3))
-        .orderBy(desc(readings.inverterTime))
-        .limit(1);
-      
-      if (!system2Reading) {
-        console.log('[CraigHack] No recent data from system 2 (Selectronic)');
+      // Get adapters for systems 2 and 3 using the registry
+      const solarAdapter = await VendorRegistry.getAdapterForSystem(3);
+      const batteryAdapter = await VendorRegistry.getAdapterForSystem(2);
+
+      if (!solarAdapter || !batteryAdapter) {
+        console.error('[Craighack] Could not get adapters for systems 2 and 3');
         return null;
       }
-      
-      // Combine the data
-      // Use solar from system 3 (Enphase) if available, otherwise from system 2
-      const solarW = system3Reading?.solarW ?? system2Reading.solarW;
-      
-      // Use all other data from system 2 (Selectronic)
-      return {
-        timestamp: system2Reading.inverterTime.toISOString(),
-        solarW: solarW,
-        solarRemoteW: system2Reading.solarRemoteW,
-        solarLocalW: system2Reading.solarLocalW,
-        loadW: system2Reading.loadW,
-        batteryW: system2Reading.batteryW,
-        gridW: system2Reading.gridW,
-        batterySOC: system2Reading.batterySOC,
-        faultCode: system2Reading.faultCode != null ? String(system2Reading.faultCode) : null,
-        faultTimestamp: system2Reading.faultTimestamp || null,  // Convert 0 to null when no fault
-        generatorStatus: system2Reading.generatorStatus || null,  // Convert 0 to null when no generator
-        // Lifetime totals
-        solarKwhTotal: system3Reading?.solarKwhTotal ?? system2Reading.solarKwhTotal,
-        loadKwhTotal: system2Reading.loadKwhTotal,
-        batteryInKwhTotal: system2Reading.batteryInKwhTotal,
-        batteryOutKwhTotal: system2Reading.batteryOutKwhTotal,
-        gridInKwhTotal: system2Reading.gridInKwhTotal,
-        gridOutKwhTotal: system2Reading.gridOutKwhTotal
+
+      // Fetch data using adapter methods
+      const solarData = await solarAdapter.getLastReading(3);  // System 3 (Enphase)
+      const batteryData = await batteryAdapter.getLastReading(2);  // System 2 (Selectronic)
+
+      if (!solarData) {
+        console.error('[Craighack] No solar data available from system 3');
+        return null;
+      }
+
+      if (!batteryData) {
+        console.error('[Craighack] No battery/load/grid data available from system 2');
+        return null;
+      }
+
+      // Combine the data - solar from system 3, everything else from system 2
+      const combinedData: LatestReadingData = {
+        timestamp: batteryData.timestamp,
+        receivedTime: batteryData.receivedTime,
+
+        solar: {
+          powerW: solarData.solar.powerW,
+          localW: solarData.solar.localW, // From system 3 (Enphase)
+          remoteW: solarData.solar.remoteW, // From system 3 (Enphase) - null
+        },
+
+        battery: {
+          powerW: batteryData.battery.powerW,
+          soc: batteryData.battery.soc,
+        },
+
+        load: {
+          powerW: batteryData.load.powerW,
+        },
+
+        grid: {
+          powerW: batteryData.grid.powerW,
+          generatorStatus: batteryData.grid.generatorStatus || null,  // Convert 0 to null when no generator
+        },
+
+        connection: {
+          faultCode: batteryData.connection.faultCode,
+          faultTimestamp: batteryData.connection.faultTimestamp || null,  // Convert 0 to null when no fault
+        },
       };
-      
+
+      console.log('[Craighack] Combined data -',
+        'Solar:', combinedData.solar.powerW, 'W (from system 3)',
+        'Load:', combinedData.load.powerW, 'W (from system 2)',
+        'Battery:', combinedData.battery.powerW, 'W (from system 2)',
+        'SOC:', combinedData.battery.soc?.toFixed(1) ?? 'N/A', '%');
+
+      return combinedData;
     } catch (error) {
-      console.error(`[CraigHack] Error getting recent readings: ${error}`);
+      console.error('[Craighack] Error fetching combined data:', error);
       return null;
     }
   }
-  
-  async testConnection(system: SystemForVendor, credentials: any): Promise<TestConnectionResult> {
-    try {
-      // Check if source systems have recent data (within last 5 minutes)
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-      
-      const [system2Recent] = await db
-        .select()
-        .from(readings)
-        .where(eq(readings.systemId, 2))
-        .orderBy(desc(readings.inverterTime))
-        .limit(1);
-      
-      const [system3Recent] = await db
-        .select()
-        .from(readings)
-        .where(eq(readings.systemId, 3))
-        .orderBy(desc(readings.inverterTime))
-        .limit(1);
-      
-      const system2HasRecentData = system2Recent && system2Recent.inverterTime > fiveMinutesAgo;
-      const system3HasRecentData = system3Recent && system3Recent.inverterTime > fiveMinutesAgo;
-      
-      if (!system2HasRecentData && !system3HasRecentData) {
-        return {
-          success: false,
-          error: 'Both source systems missing recent data'
-        };
-      }
-      
-      if (!system2HasRecentData) {
-        return {
-          success: false,
-          error: 'System 2 (Selectronic) missing recent data'
-        };
-      }
-      
-      // Get combined data
-      const latestData = await this.getMostRecentReadings(system, credentials);
-      
-      return {
-        success: true,
-        systemInfo: {
-          model: 'Combined System',
-          serial: `CRAIG-${system.vendorSiteId}`,
-          ratings: null,
-          solarSize: null,
-          batterySize: null
-        },
-        latestData: latestData || undefined
-      };
-      
-    } catch (error) {
-      console.error('Error testing CraigHack connection:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      };
-    }
-  }
+
+  // CraigHack doesn't support test connection - it's a combined system that aggregates data
 }

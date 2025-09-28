@@ -4,6 +4,7 @@ import { EnphaseAdapter } from './enphase/adapter';
 import { CraigHackAdapter } from './craighack/adapter';
 import { FroniusAdapter } from './fronius/adapter';
 import { MondoAdapter } from './mondo/adapter';
+import { SystemsManager } from '@/lib/systems-manager';
 
 /**
  * Registry for all vendor adapters
@@ -91,5 +92,27 @@ export class VendorRegistry {
     const adapter = this.adapters.get(vendorType.toLowerCase());
     if (!adapter) return false;
     return adapter.dataSource === 'poll' || adapter.dataSource === 'combined';
+  }
+
+  /**
+   * Get an adapter for a specific system by its ID
+   * Uses SystemsManager to look up the system's vendor type
+   */
+  static async getAdapterForSystem(systemId: number): Promise<VendorAdapter | null> {
+    const systemsManager = SystemsManager.getInstance();
+    const system = await systemsManager.getSystem(systemId);
+
+    if (!system) {
+      console.error(`[VendorRegistry] System ${systemId} not found`);
+      return null;
+    }
+
+    const adapter = this.getAdapter(system.vendorType);
+    if (!adapter) {
+      console.error(`[VendorRegistry] No adapter found for vendor type: ${system.vendorType}`);
+      return null;
+    }
+
+    return adapter;
   }
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getEnphaseClient } from '@/lib/vendors/enphase/enphase-client';
+import { storeEnphaseTokens } from '@/lib/vendors/enphase/enphase-auth';
 import { db } from '@/lib/db';
 import { systems } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
@@ -111,10 +112,7 @@ export async function GET(request: NextRequest) {
     console.log('ENPHASE: Using system:', cleanSystemId, enphaseSystem.name, 
                 '(raw value:', enphaseSystem.system_id, 'type:', typeof enphaseSystem.system_id, ')');
 
-    // Store tokens in Clerk metadata with clean system ID
-    await client.storeTokens(userId, tokens, cleanSystemId);
-
-    // Check if system already exists in database
+    // Check if system already exists in database FIRST (before storing tokens)
     const existingSystem = await db.select()
       .from(systems)
       .where(
@@ -140,7 +138,7 @@ export async function GET(request: NextRequest) {
         // Add more timezone mappings as needed
       }
 
-      await db.insert(systems).values({
+      const [newSystem] = await db.insert(systems).values({
         ownerClerkUserId: userId,
         vendorType: 'enphase',
         vendorSiteId: cleanSystemId,
@@ -152,9 +150,16 @@ export async function GET(request: NextRequest) {
         timezoneOffsetMin: timezoneOffsetMin,
         createdAt: new Date(),
         updatedAt: new Date()
-      });
+      }).returning();
 
-      console.log('ENPHASE: System created successfully');
+      console.log('ENPHASE: System created successfully with ID:', newSystem.id);
+
+      // Now store tokens with the new system ID
+      const storeResult = await storeEnphaseTokens(userId, tokens, newSystem.id, cleanSystemId);
+      if (!storeResult.success) {
+        throw new Error(storeResult.error || 'Failed to store tokens');
+      }
+      console.log('ENPHASE: Tokens stored for new system');
     } else {
       // Update existing system (reactivate if it was removed)
       console.log('ENPHASE: Updating existing system');
@@ -168,6 +173,13 @@ export async function GET(request: NextRequest) {
           updatedAt: new Date()
         })
         .where(eq(systems.id, existingSystem[0].id));
+
+      // Store tokens with the existing system ID
+      const storeResult = await storeEnphaseTokens(userId, tokens, existingSystem[0].id, cleanSystemId);
+      if (!storeResult.success) {
+        throw new Error(storeResult.error || 'Failed to store tokens');
+      }
+      console.log('ENPHASE: Tokens stored for existing system');
     }
 
     console.log('ENPHASE: Connection complete for user:', userDisplay);

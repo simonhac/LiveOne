@@ -6,8 +6,7 @@ import { eq, desc, or } from 'drizzle-orm';
 import { formatTimeAEST, fromUnixTimestamp } from '@/lib/date-utils';
 import { isUserAdmin } from '@/lib/auth-utils';
 import { fromDate } from '@internationalized/date';
-import { getVendorUserId } from '@/lib/secure-credentials';
-import type { VendorType } from '@/lib/secure-credentials';
+import { getSystemCredentials, type VendorType } from '@/lib/secure-credentials';
 import { VendorRegistry } from '@/lib/vendors/registry';
 
 export async function GET(request: NextRequest) {
@@ -73,10 +72,15 @@ export async function GET(request: NextRequest) {
       // Get user info from cache
       const userInfo = userCache.get(system.ownerClerkUserId);
       
-      // Get vendor-specific user ID
+      // Get vendor-specific user ID from credentials
       let vendorUserId = null;
-      if (system.ownerClerkUserId && system.vendorType) {
-        vendorUserId = await getVendorUserId(system.ownerClerkUserId, system.vendorType as VendorType);
+      if (system.ownerClerkUserId) {
+        const credentials = await getSystemCredentials(system.ownerClerkUserId, system.id);
+        if (credentials) {
+          // Extract vendor-specific user ID based on vendor type
+          const creds = credentials as any;
+          vendorUserId = creds.email || creds.user_id || creds.enphase_user_id || null;
+        }
       }
       
       systemsData.push({

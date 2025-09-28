@@ -3,7 +3,7 @@ import { auth } from '@clerk/nextjs/server';
 import { VendorRegistry } from '@/lib/vendors/registry';
 import { isUserAdmin } from '@/lib/auth-utils';
 import { SystemsManager } from '@/lib/systems-manager';
-import { getCredentialsForVendor } from '@/lib/vendors/credentials';
+import { getSystemCredentials } from '@/lib/secure-credentials';
 import { sessionManager } from '@/lib/session-manager';
 import type { SystemForVendor } from '@/lib/vendors/types';
 
@@ -54,14 +54,14 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      finalOwnerUserId = system.ownerClerkUserId || userId;
+      finalOwnerUserId = system.ownerClerkUserId;
       finalVendorType = system.vendorType;
       vendorSiteId = system.vendorSiteId;
 
       // Get credentials for the system
-      finalCredentials = await getCredentialsForVendor(
-        system.vendorType,
-        system.ownerClerkUserId || userId
+      finalCredentials = await getSystemCredentials(
+        system.ownerClerkUserId,
+        systemId
       );
 
       console.log(`[Test Connection] ${isAdmin && system.ownerClerkUserId !== userId ? 'Admin' : 'User'} testing existing ${finalVendorType} system ${systemId}`);

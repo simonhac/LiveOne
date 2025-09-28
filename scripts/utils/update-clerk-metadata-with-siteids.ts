@@ -14,8 +14,17 @@
 import * as dotenv from 'dotenv'
 import * as path from 'path'
 
-// Load environment variables from .env.local
-dotenv.config({ path: path.resolve(process.cwd(), '.env.local') })
+// Check if we're running in production mode
+const isProduction = process.argv.includes('--production')
+
+// Load environment variables from appropriate file
+if (isProduction) {
+  console.log('Running in PRODUCTION mode')
+  dotenv.config({ path: path.resolve(process.cwd(), '.env.production') })
+} else {
+  console.log('Running in DEVELOPMENT mode')
+  dotenv.config({ path: path.resolve(process.cwd(), '.env.local') })
+}
 
 // Verify CLERK_SECRET_KEY is loaded
 if (!process.env.CLERK_SECRET_KEY) {
@@ -44,7 +53,8 @@ interface CredentialsMetadataV11 {
 
 async function main() {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const backupPath = path.join(process.cwd(), 'db-backups', `clerk-metadata-backup-${timestamp}.json`)
+  const envPrefix = isProduction ? 'prod' : 'dev'
+  const backupPath = path.join(process.cwd(), 'db-backups', `clerk-metadata-backup-${envPrefix}-${timestamp}.json`)
 
   console.log('Starting Clerk metadata update process...')
   console.log(`Backup will be saved to: ${backupPath}`)
@@ -154,8 +164,33 @@ async function main() {
         const credentialVendor = updatedCredential.vendorType
         console.log(`   Checking ${credentialVendor} credential...`)
 
+        // Manual mapping for production (since prod Clerk IDs don't match prod database)
+        if (isProduction) {
+          // Production manual mappings based on known relationships
+          if (user.id === 'user_320RQvQkpGD7OUFhBQgirK8cAiW') { // craig
+            if (credentialVendor === 'selectronic') {
+              updatedCredential.systemId = 2; // Craig Home
+              console.log(`      ✅ Manually set systemId: 2 (Craig Home) for production`);
+              needsUpdate = true;
+            } else if (credentialVendor === 'enphase' && updatedCredential.enphase_system_id === 364880) {
+              updatedCredential.systemId = 3; // Jeffery Solar
+              console.log(`      ✅ Manually set systemId: 3 (Jeffery Solar) for production`);
+              needsUpdate = true;
+            }
+          } else if (user.id === 'user_320RNHYT03KKO3S7XB24AYZqlLc') { // simon
+            if (credentialVendor === 'selectronic') {
+              updatedCredential.systemId = 1; // Daylesford
+              console.log(`      ✅ Manually set systemId: 1 (Daylesford) for production`);
+              needsUpdate = true;
+            } else if (credentialVendor === 'mondo' && updatedCredential.systemId === '8') {
+              updatedCredential.systemId = 8; // Convert string to number
+              console.log(`      ✅ Converted systemId to number: 8 for production`);
+              needsUpdate = true;
+            }
+          }
+        }
         // For Selectronic credentials, we need to find the corresponding system
-        if (credentialVendor === 'selectronic' || credentialVendor === 'select.live') {
+        else if (credentialVendor === 'selectronic' || credentialVendor === 'select.live') {
           if (!updatedCredential.systemId || typeof updatedCredential.systemId === 'string') {
             if (updatedCredential.systemId) {
               console.log(`      ⚠️  Has systemId but it's a string (vendorSiteId), needs to be numeric system ID`)

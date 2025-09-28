@@ -1,4 +1,3 @@
-import { storeVendorCredentials, getVendorCredentials, removeVendorCredentials } from '@/lib/secure-credentials';
 import type { EnphaseCredentials } from '@/lib/types/enphase';
 import type {
   EnphaseTokens,
@@ -52,39 +51,6 @@ import type {
  * See docs/ENPHASE_API.md for detailed API behavior documentation
  */
 
-// ============================================
-// Helper functions for Enphase credentials
-// ============================================
-
-/**
- * Store Enphase OAuth tokens (transforms to credential format)
- */
-export async function storeEnphaseTokens(
-  userId: string,
-  tokens: EnphaseTokens,
-  systemId: string
-) {
-  const credentials: EnphaseCredentials = {
-    access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token,
-    expires_at: new Date(Date.now() + (tokens.expires_in * 1000)),  // Date object
-    enphase_system_id: systemId,
-    enphase_user_id: tokens.enl_uid,
-    created_at: new Date()  // Date object
-  }
-  
-  return storeVendorCredentials(userId, 'enphase', credentials)
-}
-
-/**
- * Get Enphase credentials specifically
- */
-export async function getEnphaseCredentials(
-  userId: string
-): Promise<EnphaseCredentials | null> {
-  return getVendorCredentials(userId, 'enphase') as Promise<EnphaseCredentials | null>
-}
-
 // Base client interface
 export interface IEnphaseClient {
   getAuthorizationUrl(state: string, origin?: string): string;
@@ -92,8 +58,6 @@ export interface IEnphaseClient {
   refreshTokens(refreshToken: string): Promise<EnphaseTokens>;
   getLatestTelemetry(systemId: string, accessToken: string): Promise<EnphaseTelemetryResponse>;
   getSystems(accessToken: string): Promise<EnphaseSystem[]>;
-  storeTokens(userId: string, tokens: EnphaseTokens, systemId: string): Promise<void>;
-  getStoredTokens(userId: string): Promise<EnphaseCredentials | null>;
 }
 
 // Real Enphase Client
@@ -325,54 +289,7 @@ export class EnphaseClient implements IEnphaseClient {
     }
   }
 
-  async storeTokens(userId: string, tokens: EnphaseTokens, systemId: string): Promise<void> {
-    // Storing tokens
-    
-    try {
-      const result = await storeEnphaseTokens(userId, tokens, systemId);
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to store tokens');
-      }
-      // Tokens stored
-    } catch (error) {
-      console.error('ENPHASE: Error storing tokens:', error);
-      throw error;
-    }
-  }
-
-  async getStoredTokens(userId: string): Promise<EnphaseCredentials | null> {
-    // Retrieving stored tokens
-    
-    try {
-      const credentials = await getEnphaseCredentials(userId);
-      
-      if (!credentials) {
-        // No stored tokens found
-        return null;
-      }
-
-      // Found stored tokens
-      return credentials;
-    } catch (error) {
-      console.error('ENPHASE: Error retrieving tokens:', error);
-      return null;
-    }
-  }
-
-  async clearTokens(userId: string): Promise<void> {
-    // Clearing tokens
-    
-    try {
-      const result = await removeVendorCredentials(userId, 'enphase');
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to clear tokens');
-      }
-      // Tokens cleared
-    } catch (error) {
-      console.error('ENPHASE: Error clearing tokens:', error);
-      throw error;
-    }
-  }
+  // Methods removed - use storeEnphaseTokens and getSystemCredentials directly
 }
 
 // Factory function to get the Enphase client

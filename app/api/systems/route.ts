@@ -3,7 +3,7 @@ import { auth } from '@clerk/nextjs/server';
 import { db } from '@/lib/db';
 import { systems } from '@/lib/db/schema';
 import { eq, desc } from 'drizzle-orm';
-import { storeVendorCredentials } from '@/lib/secure-credentials';
+import { storeSystemCredentials } from '@/lib/secure-credentials';
 import { VendorRegistry } from '@/lib/vendors/registry';
 
 export async function POST(request: NextRequest) {
@@ -84,16 +84,11 @@ export async function POST(request: NextRequest) {
     console.log(`[Create System] Created system ${newSystem.id} for user ${userId}`);
 
     // Store the credentials in Clerk
-    // Add liveoneSiteId to credentials for site-specific storage
-    const credentialsWithSiteId = {
-      ...credentials,
-      liveoneSiteId: newSystem.id.toString()
-    };
-
-    const credentialResult = await storeVendorCredentials(
+    const credentialResult = await storeSystemCredentials(
       userId,
+      newSystem.id,
       vendorType === 'selectronic' ? 'select.live' : vendorType,
-      credentialsWithSiteId
+      credentials
     );
 
     if (!credentialResult.success) {

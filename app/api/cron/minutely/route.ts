@@ -5,7 +5,7 @@ import { SystemsManager } from '@/lib/systems-manager';
 import { updateAggregatedData } from '@/lib/aggregation-helper';
 import { formatSystemId } from '@/lib/system-utils';
 import { VendorRegistry } from '@/lib/vendors/registry';
-import { getCredentialsForVendor } from '@/lib/vendors/credentials';
+import { getSystemCredentials } from '@/lib/secure-credentials';
 import { sessionManager } from '@/lib/session-manager';
 import type { SystemForVendor } from '@/lib/vendors/types';
 import type { CommonPollingData } from '@/lib/types/common';
@@ -126,11 +126,10 @@ export async function GET(request: NextRequest) {
         continue;
       }
       
-      // Get credentials for this vendor/owner, with optional site-specific matching
-      const credentials = await getCredentialsForVendor(
-        system.vendorType,
+      // Get credentials for this system
+      const credentials = await getSystemCredentials(
         system.ownerClerkUserId,
-        system.id.toString()  // Use system ID as liveoneSiteId for site-specific credentials
+        system.id
       );
       
       if (!credentials && adapter.vendorType !== 'craighack' && adapter.vendorType !== 'fronius') {

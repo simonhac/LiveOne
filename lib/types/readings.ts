@@ -1,34 +1,33 @@
 /**
  * Common interface for latest reading data
- * Used by both Selectronic and Enphase systems
+ * Used by all vendor adapters
  */
 export interface LatestReadingData {
   timestamp: Date;
   receivedTime: Date;
-  power: {
-    solarW: number | null;
-    solarLocalW: number | null;
-    solarRemoteW: number | null;
-    loadW: number | null;
-    batteryW: number | null;
-    gridW: number | null;
+
+  solar: {
+    powerW: number | null;
+    localW: number | null;
+    remoteW: number | null;
   };
-  soc: {
-    battery: number | null;
+
+  battery: {
+    powerW: number | null;
+    soc: number | null;
   };
-  energy: {
-    today: {
-      solarKwh: number | null;
-      loadKwh: number | null;
-      batteryInKwh: number | null;
-      batteryOutKwh: number | null;
-      gridInKwh: number | null;
-      gridOutKwh: number | null;
-    };
+
+  load: {
+    powerW: number | null;
   };
-  system: {
+
+  grid: {
+    powerW: number | null;
+    generatorStatus: number | null;
+  };
+
+  connection: {
     faultCode: string | null;
     faultTimestamp: number | null;
-    generatorStatus: number | null;
   };
 }
