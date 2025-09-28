@@ -8,7 +8,7 @@ import { formatTimeAEST, formatTime_fromJSDate, getYesterdayDate, fromUnixTimest
 import { roundToThree } from '@/lib/format-opennem'
 import { isUserAdmin } from '@/lib/auth-utils'
 import { getLastReading as getSelectronicLastReading } from '@/lib/selectronic/selectronic-last-reading'
-import { getLastReading as getEnphaseLastReading } from '@/lib/enphase/enphase-last-reading'
+import { getLastReading as getEnphaseLastReading } from '@/lib/vendors/enphase/enphase-last-reading'
 import { getLastReading as getCraighackLastReading } from '@/lib/craighack/craighack-last-reading'
 import { VendorRegistry } from '@/lib/vendors/registry'
 

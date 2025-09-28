@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { systems } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
-import { getEnphaseClient } from '@/lib/enphase/enphase-client';
+import { getEnphaseClient } from '@/lib/vendors/enphase/enphase-client';
 
 // WARNING: This endpoint has no access controls and is for debugging only
 // TODO: Remove or secure before production use

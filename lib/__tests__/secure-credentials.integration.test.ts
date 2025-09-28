@@ -20,7 +20,7 @@ import {
   type VendorType
 } from '../secure-credentials'
 import { getSelectLiveCredentials, storeSelectLiveCredentials } from '../selectronic/credentials'
-import { storeEnphaseTokens, getEnphaseCredentials } from '../enphase/enphase-client'
+import { storeEnphaseTokens, getEnphaseCredentials } from '../vendors/enphase/enphase-client'
 import type { EnphaseCredentials, EnphaseTokens } from '../types/enphase'
 
 describe('Secure Credentials Integration Tests', () => {

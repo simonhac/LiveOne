@@ -1,10 +1,10 @@
 import { BaseVendorAdapter } from '../base-adapter';
 import type { SystemForVendor, PollingResult, TestConnectionResult } from '../types';
 import type { CommonPollingData } from '@/lib/types/common';
-import { checkEnphasePollingSchedule } from '@/lib/enphase/enphase-cron';
-import { checkAndFetchYesterdayIfNeeded, fetchEnphaseDay } from '@/lib/enphase/enphase-history';
+import { checkEnphasePollingSchedule } from '@/lib/vendors/enphase/enphase-cron';
+import { checkAndFetchYesterdayIfNeeded, fetchEnphaseDay } from '@/lib/vendors/enphase/enphase-history';
 import { getZonedNow } from '@/lib/date-utils';
-import { getEnphaseClient } from '@/lib/enphase/enphase-client';
+import { getEnphaseClient } from '@/lib/vendors/enphase/enphase-client';
 import { getPollingStatus } from '@/lib/polling-utils';
 import { CalendarDate } from '@internationalized/date';
 
