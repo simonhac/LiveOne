@@ -1,7 +1,7 @@
 import { db } from '@/lib/db';
 import { readingsAgg5m, systems } from '@/lib/db/schema';
 import { eq, and, gte, lte } from 'drizzle-orm';
-import { getEnphaseClient } from './enphase-client';
+import { fetchWithEnphaseAuth } from './enphase-auth';
 import { CalendarDate } from '@internationalized/date';
 import { calendarDateToUnixRange, getYesterdayInTimezone, getTodayInTimezone, getZonedNow, fromUnixTimestamp, formatTimeAEST } from '@/lib/date-utils';
 
@@ -52,71 +52,40 @@ async function getValidatedEnphaseSystem(systemId: number) {
  * Fetch wrapper that handles Enphase API authentication and proxies through production in development
  */
 async function fetchEnphase(
-  system: { id: number; ownerClerkUserId: string },
-  url: string | URL | Request,
+  system: { id: number; ownerClerkUserId: string; vendorSiteId: string },
+  url: string,
   init?: RequestInit
 ): Promise<Response> {
   const isDev = process.env.NODE_ENV === 'development' || !process.env.TURSO_DATABASE_URL;
-  
+
   if (isDev) {
     // In development, proxy through production
-    const urlString = url.toString();
     // Remove the base URL if present
-    const apiPath = urlString.replace('https://api.enphaseenergy.com', '');
-    
+    const apiPath = url.replace('https://api.enphaseenergy.com', '');
+
     const prodUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://liveone.vercel.app';
     const proxyUrl = `${prodUrl}/api/enphase-proxy?systemId=${system.id}&url=${encodeURIComponent(apiPath)}`;
-    
+
     // Proxying through production
-    
+
     const response = await fetch(proxyUrl);
-    
+
     if (!response.ok) {
       // Return the response as-is to let caller handle it
       return response;
     }
-    
+
     const proxyResponse = await response.json();
-    
+
     // Create a Response object from the proxy response
     return new Response(JSON.stringify(proxyResponse.response.data), {
       status: proxyResponse.response.status || 200,
       headers: { 'Content-Type': 'application/json' }
     });
   }
-  
-  // In production, get auth tokens and make direct request
-  // Production mode - getting auth tokens
-  
-  const client = getEnphaseClient();
-  const credentials = await client.getStoredTokens(system.ownerClerkUserId);
-  
-  if (!credentials) {
-    throw new Error(`No Enphase credentials found for user ${system.ownerClerkUserId}`);
-  }
-  
-  // Check if token needs refresh (expires_at is now a Date object)
-  let accessToken = credentials.access_token;
-  const oneHourFromNow = new Date(Date.now() + 3600000);
-  if (credentials.expires_at < oneHourFromNow) {
-    // Refreshing token
-    const newTokens = await client.refreshTokens(credentials.refresh_token);
-    await client.storeTokens(
-      system.ownerClerkUserId,
-      newTokens,
-      credentials.enphase_system_id
-    );
-    accessToken = newTokens.access_token;
-  }
-  
-  // Add auth headers to the request
-  const headers = {
-    ...init?.headers,
-    'Authorization': `Bearer ${accessToken}`,
-    'key': process.env.ENPHASE_API_KEY || ''
-  };
-  
-  return fetch(url, { ...init, headers });
+
+  // In production, use the centralized auth handler
+  return fetchWithEnphaseAuth(system, url, init);
 }
 
 /**

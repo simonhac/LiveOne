@@ -7,9 +7,6 @@ import { eq, and, desc, or } from 'drizzle-orm'
 import { formatTimeAEST, formatTime_fromJSDate, getYesterdayDate, fromUnixTimestamp } from '@/lib/date-utils'
 import { roundToThree } from '@/lib/format-opennem'
 import { isUserAdmin } from '@/lib/auth-utils'
-import { getLastReading as getSelectronicLastReading } from '@/lib/selectronic/selectronic-last-reading'
-import { getLastReading as getEnphaseLastReading } from '@/lib/vendors/enphase/enphase-last-reading'
-import { getLastReading as getCraighackLastReading } from '@/lib/craighack/craighack-last-reading'
 import { VendorRegistry } from '@/lib/vendors/registry'
 
 // Helper function to ensure values are null instead of undefined
@@ -80,12 +77,9 @@ export async function GET(request: Request) {
                     hasDirectAccess ? userSystemAccess[0].role : 
                     'viewer';
     
-    // Get latest reading based on vendor type
-    const latestReadingData = system.vendorType === 'enphase' 
-      ? await getEnphaseLastReading(system.id)
-      : system.vendorType === 'craighack'
-      ? await getCraighackLastReading(system.id)
-      : await getSelectronicLastReading(system.id);
+    // Get latest reading using the appropriate adapter
+    const adapter = await VendorRegistry.getAdapterForSystem(system.id);
+    const latestReadingData = adapter ? await adapter.getLastReading(system.id) : null;
     
     // Get polling status from database
     const [status] = await db.select()
@@ -183,15 +177,32 @@ export async function GET(request: Request) {
         // lastMonth: null,
       };
       
-      // Structure latest data with hierarchy
+      // Structure latest data with hierarchy - map new structure to API response
       const latest = {
         timestamp: formatTime_fromJSDate(latestReadingData.timestamp, system.timezoneOffsetMin),
-        power: latestReadingData.power,
-        soc: latestReadingData.soc,
+        power: {
+          solarW: latestReadingData.solar.powerW,
+          solarLocalW: latestReadingData.solar.localW,
+          solarRemoteW: latestReadingData.solar.remoteW,
+          loadW: latestReadingData.load.powerW,
+          batteryW: latestReadingData.battery.powerW,
+          gridW: latestReadingData.grid.powerW,
+        },
+        soc: {
+          battery: latestReadingData.battery.soc,
+        },
         energy: {
-          today: latestReadingData.energy.today,
+          today: {
+            // Today's energy is no longer in LatestReadingData - set to null or fetch separately if needed
+            solarKwh: null,
+            loadKwh: null,
+            batteryInKwh: null,
+            batteryOutKwh: null,
+            gridInKwh: null,
+            gridOutKwh: null,
+          },
           total: {
-            // These values are no longer in latestReadingData, get from readings table if needed
+            // Lifetime totals also not in LatestReadingData
             solarKwh: null,
             loadKwh: null,
             batteryInKwh: null,
@@ -200,7 +211,11 @@ export async function GET(request: Request) {
             gridOutKwh: null,
           },
         },
-        system: latestReadingData.system,
+        system: {
+          faultCode: latestReadingData.connection.faultCode,
+          faultTimestamp: latestReadingData.connection.faultTimestamp,
+          generatorStatus: latestReadingData.grid.generatorStatus,
+        },
       };
       
       return NextResponse.json({

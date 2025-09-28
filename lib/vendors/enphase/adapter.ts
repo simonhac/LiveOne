@@ -1,12 +1,17 @@
 import { BaseVendorAdapter } from '../base-adapter';
 import type { SystemForVendor, PollingResult, TestConnectionResult } from '../types';
 import type { CommonPollingData } from '@/lib/types/common';
+import type { LatestReadingData } from '@/lib/types/readings';
+import { db } from '@/lib/db';
+import { readingsAgg5m } from '@/lib/db/schema';
+import { eq, desc } from 'drizzle-orm';
 import { checkEnphasePollingSchedule } from '@/lib/vendors/enphase/enphase-cron';
 import { checkAndFetchYesterdayIfNeeded, fetchEnphaseDay } from '@/lib/vendors/enphase/enphase-history';
 import { getZonedNow } from '@/lib/date-utils';
-import { getEnphaseClient } from '@/lib/vendors/enphase/enphase-client';
+import { fetchWithEnphaseAuth } from '@/lib/vendors/enphase/enphase-auth';
 import { getPollingStatus } from '@/lib/polling-utils';
 import { CalendarDate } from '@internationalized/date';
+import type { EnphaseTelemetryResponse } from './types';
 
 /**
  * Vendor adapter for Enphase systems
@@ -17,6 +22,99 @@ export class EnphaseAdapter extends BaseVendorAdapter {
   readonly displayName = 'Enphase';
   readonly dataSource = 'poll' as const;
   readonly supportsAddSystem = false;  // Enphase uses OAuth flow, not supported in Add System dialog yet
+
+  /**
+   * Override getLastReading to read from readings_agg_5m table
+   */
+  async getLastReading(systemId: number): Promise<LatestReadingData | null> {
+    const [latestAgg] = await db.select()
+      .from(readingsAgg5m)
+      .where(eq(readingsAgg5m.systemId, systemId))
+      .orderBy(desc(readingsAgg5m.intervalEnd))
+      .limit(1);
+
+    if (!latestAgg) {
+      return null;
+    }
+
+    // Convert Unix timestamp to Date
+    const timestamp = new Date(latestAgg.intervalEnd * 1000);
+
+    return {
+      timestamp: timestamp,
+      receivedTime: latestAgg.createdAt,
+
+      solar: {
+        powerW: latestAgg.solarWAvg,
+        localW: latestAgg.solarWAvg,  // Enphase measures at the panels
+        remoteW: null,  // Enphase doesn't have remote solar
+      },
+
+      battery: {
+        powerW: latestAgg.batteryWAvg,
+        soc: latestAgg.batterySOCLast,
+      },
+
+      load: {
+        powerW: latestAgg.loadWAvg,
+      },
+
+      grid: {
+        powerW: latestAgg.gridWAvg,
+        generatorStatus: null,  // Enphase doesn't have generator status
+      },
+
+      connection: {
+        faultCode: null,  // Enphase doesn't provide fault codes
+        faultTimestamp: null,
+      },
+    };
+  }
+
+  /**
+   * Fetch latest telemetry using centralized auth (handles token refresh)
+   */
+  private async fetchTelemetryWithAuth(system: SystemForVendor): Promise<EnphaseTelemetryResponse> {
+    // Clean up the system ID
+    const cleanSystemId = String(system.vendorSiteId).replace(/\.0$/, '').split('.')[0];
+
+    // Build the URL
+    const url = `https://api.enphaseenergy.com/api/v4/systems/${cleanSystemId}/summary`;
+
+    // Fetch with automatic token refresh
+    const response = await fetchWithEnphaseAuth(
+      {
+        id: system.id,
+        ownerClerkUserId: system.ownerClerkUserId,
+        vendorSiteId: system.vendorSiteId
+      },
+      url
+    );
+
+    if (!response.ok) {
+      throw new Error(`Telemetry fetch failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    // Convert to our expected telemetry response format
+    const telemetryResponse: EnphaseTelemetryResponse = {
+      system_id: cleanSystemId,
+      production_power: data.current_power ?? null,
+      consumption_power: null, // Summary endpoint doesn't provide consumption
+      storage_power: null,
+      storage_soc: null,
+      grid_power: null,
+      energy_today: data.energy_today ?? null,
+      energy_lifetime: data.energy_lifetime ?? null,
+      system_size: data.size_w ?? null,
+      last_report_at: data.last_report_at ?? null,
+      raw: data,
+      rawResponse: data
+    };
+
+    return telemetryResponse;
+  }
   
   async poll(system: SystemForVendor, credentials: any): Promise<PollingResult> {
     const startTime = Date.now();
@@ -83,59 +181,17 @@ export class EnphaseAdapter extends BaseVendorAdapter {
     }
   }
   
-  async getMostRecentReadings(system: SystemForVendor, credentials: any): Promise<CommonPollingData | null> {
-    try {
-      // For Enphase, we fetch current telemetry from the API
-      const client = getEnphaseClient();
-      
-      // Check if token is expired (expires_at is now a Date object)
-      if (credentials.expires_at < new Date()) {
-        console.error('[Enphase] Token expired');
-        return null;
-      }
-      
-      // Clean up the system ID
-      const cleanSystemId = String(system.vendorSiteId).replace(/\.0$/, '').split('.')[0];
-      
-      // Fetch latest telemetry
-      const telemetry = await client.getLatestTelemetry(
-        cleanSystemId,
-        credentials.access_token
-      );
-      
-      // Transform to common format
-      return this.transformTelemetryData(telemetry);
-      
-    } catch (error) {
-      console.error(`[Enphase] Error getting recent readings: ${error}`);
-      return null;
-    }
-  }
+  // getMostRecentReadings removed - not used externally
   
   async testConnection(system: SystemForVendor, credentials: any): Promise<TestConnectionResult> {
     try {
-      // Check if token is expired (expires_at is now a Date object)
-      if (credentials.expires_at < new Date()) {
-        return {
-          success: false,
-          error: 'Enphase token expired. Please reconnect your system.'
-        };
-      }
-
       console.log(`[Enphase] Testing connection for system ${system.id}`);
 
-      // For test connection, just fetch the summary endpoint to verify connectivity
-      // This uses the existing fetchEnphase which handles dev mode proxying
-      const client = getEnphaseClient();
+      // Fetch telemetry with automatic token refresh
+      const telemetry = await this.fetchTelemetryWithAuth(system);
 
-      // Clean up the system ID
+      // Clean up the system ID for display
       const cleanSystemId = String(system.vendorSiteId).replace(/\.0$/, '').split('.')[0];
-
-      // Fetch latest telemetry data
-      const telemetry = await client.getLatestTelemetry(
-        cleanSystemId,
-        credentials.access_token
-      );
 
       // Only use real data - no made up values
       const latestData = telemetry ? {

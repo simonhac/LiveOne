@@ -1,5 +1,9 @@
 import type { VendorAdapter, SystemForVendor, PollingResult, TestConnectionResult } from './types';
 import type { CommonPollingData } from '@/lib/types/common';
+import type { LatestReadingData } from '@/lib/types/readings';
+import { db } from '@/lib/db';
+import { readings } from '@/lib/db/schema';
+import { eq, desc } from 'drizzle-orm';
 
 /**
  * Base adapter class that provides common functionality
@@ -22,9 +26,67 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     // Polling adapters must override this method
     throw new Error(`poll() not implemented for ${this.vendorType}`);
   }
-  
-  abstract getMostRecentReadings(system: SystemForVendor, credentials: any): Promise<CommonPollingData | null>;
-  abstract testConnection(system: SystemForVendor, credentials: any): Promise<TestConnectionResult>;
+
+  /**
+   * Get the latest reading for this system.
+   * Default implementation reads from the readings table.
+   * Adapters can override for custom behavior (e.g., CraigHack combines systems).
+   */
+  async getLastReading(systemId: number): Promise<LatestReadingData | null> {
+    const [latestReading] = await db.select()
+      .from(readings)
+      .where(eq(readings.systemId, systemId))
+      .orderBy(desc(readings.inverterTime))
+      .limit(1);
+
+    if (!latestReading) {
+      return null;
+    }
+
+    return {
+      timestamp: latestReading.inverterTime,
+      receivedTime: latestReading.createdAt,
+
+      solar: {
+        powerW: latestReading.solarW,
+        localW: latestReading.solarLocalW,
+        remoteW: latestReading.solarRemoteW,
+      },
+
+      battery: {
+        powerW: latestReading.batteryW,
+        soc: latestReading.batterySOC,
+      },
+
+      load: {
+        powerW: latestReading.loadW,
+      },
+
+      grid: {
+        powerW: latestReading.gridW,
+        generatorStatus: latestReading.generatorStatus,
+      },
+
+      connection: {
+        faultCode: latestReading.faultCode != null ? String(latestReading.faultCode) : null,
+        faultTimestamp: latestReading.faultTimestamp,
+      },
+    };
+  }
+
+  /**
+   * Test connection with vendor. Push-only systems return an error by default.
+   */
+  async testConnection(system: SystemForVendor, credentials: any): Promise<TestConnectionResult> {
+    if (this.dataSource === 'push') {
+      return {
+        success: false,
+        error: `${this.displayName} systems are push-only and cannot test outgoing connections`
+      };
+    }
+    // Polling adapters must override this method
+    throw new Error(`testConnection() not implemented for ${this.vendorType}`);
+  }
   
   /**
    * Helper to create a SKIPPED result

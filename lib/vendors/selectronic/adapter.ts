@@ -1,8 +1,7 @@
 import { BaseVendorAdapter } from '../base-adapter';
 import type { SystemForVendor, PollingResult, TestConnectionResult, CredentialField } from '../types';
 import type { CommonPollingData } from '@/lib/types/common';
-import { SelectronicFetchClient } from '@/lib/selectronic/selectronic-client';
-import { getSelectLiveCredentials } from '@/lib/selectronic/credentials';
+import { SelectronicFetchClient } from './selectronic-client';
 
 /**
  * Vendor adapter for Selectronic/Select.Live systems
@@ -88,28 +87,6 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       return this.error(error instanceof Error ? error : 'Unknown error');
     }
   }
-  
-  async getMostRecentReadings(system: SystemForVendor, credentials: any): Promise<CommonPollingData | null> {
-    try {
-      const client = new SelectronicFetchClient({
-        email: credentials.email,
-        password: credentials.password,
-        systemNumber: system.vendorSiteId
-      });
-      
-      const authSuccess = await client.authenticate();
-      if (!authSuccess) return null;
-      
-      const response = await client.fetchData();
-      if (!response.success || !response.data) return null;
-      
-      return this.transformData(response.data);
-    } catch (error) {
-      console.error(`[Selectronic] Error getting recent readings: ${error}`);
-      return null;
-    }
-  }
-  
   async testConnection(system: SystemForVendor, credentials: any): Promise<TestConnectionResult> {
     try {
       // If no vendorSiteId provided, we need to discover available systems

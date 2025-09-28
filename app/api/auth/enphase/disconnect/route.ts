@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth, clerkClient } from '@clerk/nextjs/server';
-import { getEnphaseClient } from '@/lib/vendors/enphase/enphase-client';
+import { getSystemCredentials } from '@/lib/secure-credentials';
 import { db } from '@/lib/db';
 import { systems } from '@/lib/db/schema';
 import { and, eq } from 'drizzle-orm';
+import { SystemsManager } from '@/lib/systems-manager';
 
 async function getUserDisplay(userId: string): Promise<string> {
   try {
@@ -30,11 +31,8 @@ export async function POST(request: NextRequest) {
     const userDisplay = await getUserDisplay(userId);
     console.log('ENPHASE: User disconnecting Enphase:', userDisplay);
 
-    // Clear tokens from Clerk metadata
-    const client = getEnphaseClient();
-    if ('clearTokens' in client) {
-      await (client as any).clearTokens(userId);
-    }
+    // Note: We don't clear tokens anymore - systems are just marked as removed
+    // and credentials are ignored for removed systems
 
     // Mark Enphase systems as removed instead of deleting
     const result = await db.update(systems)
@@ -75,31 +73,32 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ connected: false });
     }
 
-    // Check if user has Enphase credentials
-    const client = getEnphaseClient();
-    const credentials = await client.getStoredTokens(userId);
-    
-    if (!credentials) {
+    const searchParams = request.nextUrl.searchParams;
+    const systemId = searchParams.get('systemId');
+
+    if (!systemId) {
+      return NextResponse.json({ error: 'systemId parameter required' }, { status: 400 });
+    }
+
+    // Use SystemsManager to get the system
+    const systemsManager = SystemsManager.getInstance();
+    const system = await systemsManager.getSystem(parseInt(systemId));
+
+    if (!system ||
+        system.ownerClerkUserId !== userId ||
+        system.vendorType !== 'enphase' ||
+        system.status !== 'active') {
       return NextResponse.json({ connected: false });
     }
 
-    // Check if active system exists in database
-    const system = await db.select()
-      .from(systems)
-      .where(
-        and(
-          eq(systems.ownerClerkUserId, userId),
-          eq(systems.vendorType, 'enphase'),
-          eq(systems.vendorSiteId, credentials.enphase_system_id),
-          eq(systems.status, 'active')
-        )
-      )
-      .limit(1);
+    // Check if credentials exist for this system
+    const credentials = await getSystemCredentials(userId, system.id);
 
-    return NextResponse.json({ 
-      connected: system.length > 0,
-      systemId: credentials.enphase_system_id,
-      expiresAt: credentials.expires_at
+    return NextResponse.json({
+      connected: credentials !== null,
+      systemId: system.id,
+      systemName: system.displayName,
+      expiresAt: (credentials as any)?.expires_at
     });
   } catch (error) {
     console.error('ENPHASE: Error checking status:', error);

@@ -1,4 +1,5 @@
 import type { CommonPollingData } from '@/lib/types/common';
+import type { LatestReadingData } from '@/lib/types/readings';
 
 /**
  * Field definition for credential requirements
@@ -28,8 +29,8 @@ export interface VendorAdapter {
   // Main polling function - handles all data collection
   poll(system: SystemForVendor, credentials: any): Promise<PollingResult>;
 
-  // Get most recent readings for real-time display
-  getMostRecentReadings(system: SystemForVendor, credentials: any): Promise<CommonPollingData | null>;
+  // Get the latest reading for this system
+  getLastReading(systemId: number): Promise<LatestReadingData | null>;
 
   // Test connection with vendor
   testConnection(system: SystemForVendor, credentials: any): Promise<TestConnectionResult>;

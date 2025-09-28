@@ -1,6 +1,7 @@
 import { BaseVendorAdapter } from '../base-adapter';
 import type { SystemForVendor, PollingResult, TestConnectionResult, CredentialField } from '../types';
 import type { CommonPollingData } from '@/lib/types/common';
+import type { LatestReadingData } from '@/lib/types/readings';
 import { db } from '@/lib/db';
 import {
   pointInfo,
@@ -37,6 +38,14 @@ export class MondoAdapter extends BaseVendorAdapter {
   readonly displayName = 'Mondo Power';
   readonly dataSource = 'poll' as const;
   readonly supportsAddSystem = true;
+
+  /**
+   * Override getLastReading - returns null for now
+   * TODO: Implement reading from monitoring points tables
+   */
+  async getLastReading(systemId: number): Promise<LatestReadingData | null> {
+    return null;
+  }
 
   readonly credentialFields: CredentialField[] = [
     {
@@ -278,77 +287,7 @@ export class MondoAdapter extends BaseVendorAdapter {
     }
   }
 
-  async getMostRecentReadings(system: SystemForVendor, credentials: MondoCredentials): Promise<CommonPollingData | null> {
-    try {
-      console.log(`[Mondo] getMostRecentReadings for system ${system.id}, vendorSiteId: ${system.vendorSiteId}`);
-
-      // Use the system ID directly
-      const systemId = system.id;
-      console.log(`[Mondo] Using system ${systemId} for vendorSiteId: ${system.vendorSiteId}`);
-
-      // Get most recent readings for all points
-      const points = await db.select()
-        .from(pointInfo)
-        .where(eq(pointInfo.groupId, systemId));
-
-      console.log(`[Mondo] Found ${points.length} points for system ${systemId}`);
-
-      if (points.length === 0) {
-        return null;
-      }
-
-      // Get the latest reading for each point type
-      let solarW = 0;
-      let batteryW = 0;
-      let gridW = 0;
-      let loadW = 0;
-      let batterySOC = null;
-
-      for (const point of points) {
-        const [latestReading] = await db.select()
-          .from(pointReadings)
-          .where(eq(pointReadings.pointId, point.id))
-          .orderBy(desc(pointReadings.measurementTime))
-          .limit(1);
-
-        if (latestReading?.powerW) {
-          switch (point.pointType) {
-            case 'solar':
-              solarW += latestReading.powerW;
-              break;
-            case 'battery':
-              batteryW = latestReading.powerW;
-              batterySOC = latestReading.batterySOC;
-              break;
-            case 'grid':
-              gridW = latestReading.powerW;
-              break;
-            case 'load':
-            case 'hvac':
-            case 'ev_charger':
-              loadW += latestReading.powerW;
-              break;
-          }
-        }
-      }
-
-      // Return aggregated data in CommonPollingData format
-      return {
-        timestamp: new Date().toISOString(),
-        solarW: Math.round(solarW),
-        loadW: Math.round(loadW),
-        batteryW: Math.round(batteryW),
-        gridW: Math.round(gridW),
-        batterySOC: batterySOC || undefined
-      };
-
-    } catch (error) {
-      console.error('[Mondo] Error getting recent readings:', error);
-      return null;
-    }
-  }
-
-  /**
+/**
    * Fetch organizations from Mondo API
    */
   private async fetchOrganizations(accessToken: string): Promise<any[]> {

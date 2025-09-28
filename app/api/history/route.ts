@@ -16,7 +16,7 @@ import {
 } from '@/lib/date-utils';
 import { CalendarDate, ZonedDateTime, now } from '@internationalized/date';
 import { fetch5MinuteData, fetch30MinuteData, fetch1DayData } from '@/lib/history-data-fetcher';
-import { getCraigHackSystemHistoryInOpenNEMFormat } from '@/lib/craighack/craighack-history';
+import { getCraigHackSystemHistoryInOpenNEMFormat } from '@/lib/vendors/craighack/craighack-history';
 import { isUserAdmin } from '@/lib/auth-utils';
 
 // ============================================================================
