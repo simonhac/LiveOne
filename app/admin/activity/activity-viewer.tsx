@@ -224,7 +224,7 @@ export default function ActivityViewer() {
                 <tr key={session.id} className={`${index % 2 === 0 ? 'bg-gray-900/50' : 'bg-gray-800/50'} hover:bg-gray-700 transition-colors`}>
                   <td className="px-4 py-3 text-sm text-gray-300 align-top">
                     <div className="flex items-start gap-1">
-                      <span>{format(new Date(session.started), 'h:mm:ss aa').toLowerCase()}</span>
+                      <span>{format(new Date(session.started), 'h:mm:ss aa').toLowerCase().replace(' ', '\u00A0')}</span>
                       <button
                         onClick={() => setSelectedSession(session)}
                         className="text-gray-500 hover:text-gray-300 transition-colors"
@@ -236,7 +236,7 @@ export default function ActivityViewer() {
                   </td>
                   <td className="px-4 py-3 text-sm">
                     <div className="text-gray-300">
-                      {session.systemName} <span className="text-gray-500">ID: {session.systemId}</span>
+                      {session.systemName} <span className="text-gray-500">ID:&nbsp;{session.systemId}</span>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-300">
@@ -304,7 +304,7 @@ export default function ActivityViewer() {
                 <div>
                   <span className="text-gray-400">Time:</span>{' '}
                   <span className="text-gray-200">
-                    {format(new Date(selectedSession.started), 'h:mm:ss aa').toLowerCase()} ({formatDuration(selectedSession.duration)})
+                    {format(new Date(selectedSession.started), 'h:mm:ss aa').toLowerCase().replace(' ', '\u00A0')} ({formatDuration(selectedSession.duration)})
                   </span>
                 </div>
                 <div>
