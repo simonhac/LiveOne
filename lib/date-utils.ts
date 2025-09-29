@@ -571,3 +571,47 @@ export function formatJustTime_fromJSDate(date: Date, timezoneOffsetMin: number)
   
   return `${hour}:${minute}${offsetStr}`;
 }
+
+/**
+ * Calculate the next time at a specific minute boundary
+ * @param intervalMinutes - The interval in minutes (e.g., 1, 5, 15, 30, 60)
+ * @param timezoneOffsetMin - Timezone offset in minutes from UTC (e.g., 600 for UTC+10)
+ * @returns ZonedDateTime for the next boundary
+ *
+ * Examples:
+ * - intervalMinutes=1: Returns next minute (:00 seconds)
+ * - intervalMinutes=5: Returns next 5-minute boundary (:00, :05, :10, etc.)
+ * - intervalMinutes=60: Returns next hour (:00:00)
+ */
+export function getNextMinuteBoundary(
+  intervalMinutes: number,
+  timezoneOffsetMin: number = 600
+): ZonedDateTime {
+  const now = new Date();
+
+  // Convert to milliseconds since epoch
+  const nowMs = now.getTime();
+  const intervalMs = intervalMinutes * 60 * 1000; // Convert minutes to milliseconds
+
+  // Calculate periods and next boundary
+  // Always advance to the next boundary
+  const periods = Math.floor(nowMs / intervalMs);
+  const nextMs = (periods + 1) * intervalMs;
+
+  // Create new Date at the next boundary
+  const next = new Date(nextMs);
+
+  // Convert offset to IANA fixed offset timezone string
+  // Note: IANA uses inverted signs (Etc/GMT-10 = UTC+10)
+  const offsetHours = timezoneOffsetMin / 60;
+  let timezone: string;
+  if (offsetHours === 0) {
+    timezone = 'Etc/UTC';
+  } else {
+    // Invert the sign for IANA Etc/GMT zones
+    const etcOffset = -offsetHours;
+    timezone = etcOffset >= 0 ? `Etc/GMT+${etcOffset}` : `Etc/GMT${etcOffset}`;
+  }
+
+  return fromDate(next, timezone);
+}

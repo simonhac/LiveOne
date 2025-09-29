@@ -2,7 +2,7 @@ import { BaseVendorAdapter } from '../base-adapter';
 import type { SystemForVendor, PollingResult, TestConnectionResult, CredentialField } from '../types';
 import type { CommonPollingData } from '@/lib/types/common';
 import { SelectronicFetchClient, type SelectronicData } from './selectronic-client';
-import { fromDate } from '@internationalized/date';
+import { getNextMinuteBoundary } from '@/lib/date-utils';
 
 /**
  * Vendor adapter for Selectronic/Select.Live systems
@@ -79,12 +79,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         'SOC:', transformed.batterySOC != null ? transformed.batterySOC.toFixed(1) + '%' : 'N/A');
       
       // Calculate next poll time at the beginning of the next minute
-      const now = new Date();
-      const nextMinute = new Date(now);
-      nextMinute.setSeconds(0, 0); // Reset seconds and milliseconds to 0
-      nextMinute.setMinutes(nextMinute.getMinutes() + 1); // Add 1 minute
-
-      const nextPollTime = fromDate(nextMinute, 'Australia/Brisbane');
+      const nextPollTime = getNextMinuteBoundary(1, system.timezoneOffsetMin); // 1-minute interval
 
       return this.polled(
         transformed,

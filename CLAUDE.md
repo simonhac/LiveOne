@@ -224,3 +224,4 @@ curl -X POST https://liveone.vercel.app/api/cron/daily \
 4. Run `VACUUM` periodically
 5. Use prepared statements for repeated queries
 - when backing up prod, use @scripts/utils/backup-prod-db.sh and check that the file is at least 6MB in size
+- don't use NPM run to check for typescript errors

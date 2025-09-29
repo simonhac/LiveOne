@@ -8,6 +8,7 @@ import {
   pointReadings,
   pointSubGroups
 } from '@/lib/db/schema-monitoring-points';
+import { getNextMinuteBoundary } from '@/lib/date-utils';
 import { eq, desc } from 'drizzle-orm';
 
 interface MondoCredentials {
@@ -271,10 +272,13 @@ export class MondoAdapter extends BaseVendorAdapter {
 
         console.log(`[Mondo] Poll complete: ${recordsProcessed} records processed`);
 
+        // Calculate next poll time at the next 5-minute boundary
+        const nextPollTime = getNextMinuteBoundary(5, system.timezoneOffsetMin); // 5-minute interval
+
         return this.polled(
           {} as CommonPollingData, // Not used for monitoring points
           recordsProcessed,
-          new Date(Date.now() + 5 * 60 * 1000) // Poll again in 5 minutes
+          nextPollTime
         );
 
       } catch (error) {

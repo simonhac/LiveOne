@@ -328,7 +328,15 @@ export async function GET(request: NextRequest) {
     const skippedCount = results.filter(r => r.status === 'skipped').length;
     const failureCount = results.filter(r => r.status === 'error').length;
 
-    console.log(`[Cron] Polling complete. success: ${successCount}, failed: ${failureCount}, skipped: ${skippedCount}`, results);
+    // Create sanitized results for logging (truncate rawResponse to first 60 chars)
+    const resultsForLogging = results.map(r => ({
+      ...r,
+      rawResponse: r.rawResponse ?
+        (JSON.stringify(r.rawResponse).substring(0, 60) + '...') :
+        undefined
+    }));
+
+    console.log(`[Cron] Polling complete. success: ${successCount}, failed: ${failureCount}, skipped: ${skippedCount}`, resultsForLogging);
 
     return NextResponse.json({
       success: true,
