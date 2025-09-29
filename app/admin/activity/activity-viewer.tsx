@@ -281,7 +281,7 @@ export default function ActivityViewer() {
             {/* Header */}
             <div className="flex justify-between items-start mb-4">
               <h3 className="text-lg font-semibold text-white">
-                Session Details — {selectedSession.systemName}
+                Session with {selectedSession.systemName} <span className="text-gray-500">ID: {selectedSession.systemId}</span> — {selectedSession.vendorType}
               </h3>
               <button
                 onClick={() => {
@@ -298,52 +298,46 @@ export default function ActivityViewer() {
             </div>
 
             <div className="space-y-4">
-              {/* Session Metrics - No title, just 4 core metrics */}
-              <div className="bg-gray-900 rounded-lg p-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex items-start gap-2">
-                    <Clock className="w-4 h-4 text-gray-500 mt-0.5" />
-                    <div>
-                      <p className="text-xs text-gray-500">Time</p>
-                      <p className="text-sm font-medium text-white">
-                        {formatTime(selectedSession.started)}
-                      </p>
-                      <p className="text-xs text-gray-400">
-                        Duration: {formatDuration(selectedSession.duration)}
-                      </p>
-                    </div>
+              {/* Session Metrics - 4 core metrics in one row */}
+              <div className="bg-gray-900/50 rounded-lg p-4">
+                <div className="grid grid-cols-4 gap-4">
+                  <div>
+                    <p className="text-sm text-gray-400 mb-1">Time</p>
+                    <p className="text-lg font-bold text-white">
+                      {formatTime(selectedSession.started)}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Duration: {formatDuration(selectedSession.duration)}
+                    </p>
                   </div>
 
-                  <div className="flex items-start gap-2">
-                    <Activity className="w-4 h-4 text-gray-500 mt-0.5" />
-                    <div>
-                      <p className="text-xs text-gray-500">Cause</p>
-                      <p className={`text-sm font-medium ${getCauseColor(selectedSession.cause)}`}>
-                        {selectedSession.cause}
-                      </p>
-                    </div>
+                  <div>
+                    <p className="text-sm text-gray-400 mb-1">Cause</p>
+                    <p className={`text-lg font-bold ${getCauseColor(selectedSession.cause)}`}>
+                      {selectedSession.cause}
+                    </p>
                   </div>
 
-                  <div className="flex items-start gap-2">
-                    <Database className="w-4 h-4 text-gray-500 mt-0.5" />
-                    <div>
-                      <p className="text-xs text-gray-500">Vendor</p>
-                      <p className="text-sm font-medium text-white">{selectedSession.vendorType}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start gap-2">
-                    <CheckCircle className="w-4 h-4 text-gray-500 mt-0.5" />
-                    <div>
-                      <p className="text-xs text-gray-500">Status</p>
-                      <p className={`text-sm font-medium ${selectedSession.successful ? 'text-green-400' : 'text-red-400'}`}>
-                        {selectedSession.successful ? 'Success' : 'Failed'}
-                        {selectedSession.errorCode && ` (${selectedSession.errorCode})`}
-                      </p>
-                      {selectedSession.numRows > 0 && (
-                        <p className="text-xs text-gray-400">{selectedSession.numRows} rows</p>
+                  <div>
+                    <p className="text-sm text-gray-400 mb-1">Session ID</p>
+                    <p className="text-lg font-bold text-white">
+                      {selectedSession.sessionLabel ? (
+                        <span className="font-mono">{selectedSession.sessionLabel}</span>
+                      ) : (
+                        <span className="text-gray-500">—</span>
                       )}
-                    </div>
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-sm text-gray-400 mb-1">Status</p>
+                    <p className={`text-lg font-bold ${selectedSession.successful ? 'text-green-400' : 'text-red-400'}`}>
+                      {selectedSession.successful ? 'Success' : 'Failed'}
+                      {selectedSession.errorCode && ` (${selectedSession.errorCode})`}
+                    </p>
+                    {selectedSession.numRows > 0 && (
+                      <p className="text-xs text-gray-400 mt-1">{selectedSession.numRows} rows</p>
+                    )}
                   </div>
                 </div>
               </div>
