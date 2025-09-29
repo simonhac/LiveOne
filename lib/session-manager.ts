@@ -36,8 +36,11 @@ export class SessionManager {
    */
   async recordSession(data: SessionData): Promise<void> {
     try {
+      // Use sessionLabel if provided, otherwise fallback to VERCEL_DEPLOYMENT_ID
+      const sessionLabel = data.sessionLabel || process.env.VERCEL_DEPLOYMENT_ID || null;
+
       const sessionRecord: NewSession = {
-        sessionLabel: data.sessionLabel || null,
+        sessionLabel,
         systemId: data.systemId,
         vendorType: data.vendorType,
         systemName: data.systemName,

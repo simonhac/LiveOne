@@ -80,11 +80,17 @@ export default function AdminDashboardClient() {
   })
   const [pollingStatsModal, setPollingStatsModal] = useState<{
     isOpen: boolean
+    systemId: number | null
     systemName: string
+    vendorType: string
+    status: 'active' | 'disabled' | 'removed' | null
     stats: SystemData['polling'] | null
   }>({
     isOpen: false,
+    systemId: null,
     systemName: '',
+    vendorType: '',
+    status: null,
     stats: null
   })
   const [settingsModal, setSettingsDialog] = useState<{
@@ -386,7 +392,10 @@ export default function AdminDashboardClient() {
                         onPollingStats={() => {
                           setPollingStatsModal({
                             isOpen: true,
+                            systemId: system.systemId,
                             systemName: system.displayName,
+                            vendorType: system.vendor.type,
+                            status: system.status,
                             stats: system.polling
                           })
                         }}
@@ -578,8 +587,11 @@ export default function AdminDashboardClient() {
       {pollingStatsModal.isOpen && pollingStatsModal.stats && (
         <PollingStatsModal
           isOpen={pollingStatsModal.isOpen}
-          onClose={() => setPollingStatsModal({ isOpen: false, systemName: '', stats: null })}
+          onClose={() => setPollingStatsModal({ isOpen: false, systemId: null, systemName: '', vendorType: '', status: null, stats: null })}
+          systemId={pollingStatsModal.systemId}
           systemName={pollingStatsModal.systemName}
+          vendorType={pollingStatsModal.vendorType}
+          status={pollingStatsModal.status}
           stats={pollingStatsModal.stats}
         />
       )}
