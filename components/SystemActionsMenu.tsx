@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { MoreVertical, Play, Pause, Trash2, FlaskConical, BarChart3, Settings } from 'lucide-react'
+import { MoreVertical, Play, Pause, Trash2, FlaskConical, BarChart3, Settings, RefreshCw } from 'lucide-react'
 
 interface SystemActionsMenuProps {
   systemId: number
@@ -11,21 +11,23 @@ interface SystemActionsMenuProps {
   vendorType?: string
   supportsPolling?: boolean
   onTest: () => void
+  onPollNow?: () => void
   onStatusChange: (status: 'active' | 'disabled' | 'removed') => void
   onPollingStats?: () => void
   onSettings?: () => void
 }
 
-export default function SystemActionsMenu({ 
-  systemId, 
-  systemName, 
-  status, 
+export default function SystemActionsMenu({
+  systemId,
+  systemName,
+  status,
   vendorType,
   supportsPolling = false,
-  onTest, 
+  onTest,
+  onPollNow,
   onStatusChange,
   onPollingStats,
-  onSettings 
+  onSettings
 }: SystemActionsMenuProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 })
@@ -79,14 +81,24 @@ export default function SystemActionsMenu({
             left: `${menuPosition.left}px`
           }}
         >
-          {/* Test - Only show for vendors that support polling */}
+          {/* Test Connection - Only show for vendors that support polling */}
           {supportsPolling && (
             <button
               onClick={() => handleMenuClick(onTest)}
               className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
             >
               <FlaskConical className="w-4 h-4" />
-              Test
+              Test Connection
+            </button>
+          )}
+          {/* Poll Now - Only show for vendors that support polling */}
+          {supportsPolling && onPollNow && (
+            <button
+              onClick={() => handleMenuClick(onPollNow)}
+              className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Poll Now
             </button>
           )}
           {onPollingStats && (

@@ -8,6 +8,7 @@ import SystemActionsMenu from '@/components/SystemActionsMenu'
 import PollingStatsModal from '@/components/PollingStatsModal'
 import TestConnectionModal from '@/components/TestConnectionModal'
 import SystemSettingsDialog from '@/components/SystemSettingsDialog'
+import PollNowModal from '@/components/PollNowModal'
 
 interface SystemInfo {
   model?: string
@@ -90,6 +91,15 @@ export default function AdminDashboardClient() {
     isOpen: false,
     system: null
   })
+  const [pollNowModal, setPollNowModal] = useState<{
+    isOpen: boolean
+    systemId: number | null
+    displayName: string | null
+  }>({
+    isOpen: false,
+    systemId: null,
+    displayName: null
+  })
 
   const openTestModal = (system: SystemData) => {
     setTestModal({
@@ -101,6 +111,22 @@ export default function AdminDashboardClient() {
 
   const closeTestModal = () => {
     setTestModal({
+      isOpen: false,
+      systemId: null,
+      displayName: null
+    })
+  }
+
+  const openPollNowModal = (system: SystemData) => {
+    setPollNowModal({
+      isOpen: true,
+      systemId: system.systemId,
+      displayName: system.displayName
+    })
+  }
+
+  const closePollNowModal = () => {
+    setPollNowModal({
       isOpen: false,
       systemId: null,
       displayName: null
@@ -306,6 +332,7 @@ export default function AdminDashboardClient() {
                         vendorType={system.vendor.type}
                         supportsPolling={system.vendor.supportsPolling}
                         onTest={() => openTestModal(system)}
+                        onPollNow={() => openPollNowModal(system)}
                         onStatusChange={(newStatus) => updateSystemStatus(system.systemId, newStatus)}
                         onPollingStats={() => {
                           setPollingStatsModal({
@@ -514,6 +541,15 @@ export default function AdminDashboardClient() {
         system={settingsDialog.system}
         onRename={renameSystem}
       />
+
+      {/* Poll Now Modal */}
+      {pollNowModal.isOpen && pollNowModal.systemId && (
+        <PollNowModal
+          systemId={pollNowModal.systemId}
+          displayName={pollNowModal.displayName}
+          onClose={closePollNowModal}
+        />
+      )}
       </>
   )
 }

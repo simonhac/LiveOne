@@ -178,15 +178,15 @@ export async function GET(request: NextRequest) {
               const dataArray = Array.isArray(result.data) ? result.data : [result.data];
 
               for (const data of dataArray) {
-                // Calculate delay
+                // Calculate delay (timestamp should be a Date object from adapters)
                 const inverterTime = data.timestamp;
                 const receivedTime = new Date();
                 const delaySeconds = Math.floor((receivedTime.getTime() - inverterTime.getTime()) / 1000);
 
-                // Insert reading into database
+                // Insert reading into database (Drizzle handles Date -> Unix conversion)
                 await db.insert(readings).values({
                   systemId: system.id,
-                  inverterTime,
+                  inverterTime, // Pass Date directly - Drizzle converts to Unix timestamp
                   receivedTime,
                   delaySeconds,
                   solarW: data.solarW ?? null,  // Preserve null, don't convert to 0
