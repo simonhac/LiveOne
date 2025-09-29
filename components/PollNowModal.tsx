@@ -257,7 +257,7 @@ export default function PollNowModal({ systemId, displayName, vendorType, onClos
                       <div className="overflow-x-auto font-mono text-sm">
                         <JsonView
                           data={result.rawResponse}
-                          shouldExpandNode={(level) => level < 2}
+                          shouldExpandNode={(level) => level < 3}
                           style={darkStyles}
                         />
                       </div>
