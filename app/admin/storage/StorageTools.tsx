@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { Database, Server, CheckCircle, XCircle, Info, AlertCircle, Globe, Shield, Download, X, ChevronDown, ChevronRight, ChevronUp, Check, RefreshCw } from 'lucide-react'
+import { formatDateTime } from '@/lib/fe-date-format'
 
 interface DatabaseInfo {
   type: 'development' | 'production'
@@ -643,10 +644,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                               month: 'short', 
                               year: 'numeric' 
                             })}</div>
-                            <div className="text-xs text-gray-400">{new Date(databaseInfo.stats.oldestReading).toLocaleTimeString('en-AU', { 
-                              hour: '2-digit', 
-                              minute: '2-digit' 
-                            })}</div>
+                            <div className="text-xs text-gray-400">{formatDateTime(databaseInfo.stats.oldestReading, { includeSeconds: false }).time}</div>
                           </>
                         )}
                       </div>
@@ -663,10 +661,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                               month: 'short', 
                               year: 'numeric' 
                             })}</div>
-                            <div className="text-xs text-gray-400">{new Date(databaseInfo.stats.newestReading).toLocaleTimeString('en-AU', { 
-                              hour: '2-digit', 
-                              minute: '2-digit' 
-                            })}</div>
+                            <div className="text-xs text-gray-400">{formatDateTime(databaseInfo.stats.newestReading, { includeSeconds: false }).time}</div>
                           </>
                         )}
                       </div>

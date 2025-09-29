@@ -16,6 +16,8 @@ import {
 } from '@/lib/polling-utils';
 import { isUserAdmin } from '@/lib/auth-utils';
 import { and } from 'drizzle-orm';
+import { fromDate } from '@internationalized/date';
+import { formatTimeAEST } from '@/lib/date-utils';
 
 // Verify the request is from Vercel Cron or an admin user
 async function validateCronRequest(request: NextRequest): Promise<boolean> {
@@ -56,6 +58,7 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const testSystemId = searchParams.get('systemId');
     const forceTest = searchParams.get('force') === 'true';
+    const includeRaw = searchParams.get('includeRaw') === 'true';
 
     if (testSystemId && forceTest) {
       console.log(`[Cron] Testing system ${testSystemId} with force=true`);
@@ -165,7 +168,7 @@ export async function GET(request: NextRequest) {
         const sessionStart = new Date();
 
         // Let the adapter handle the polling logic
-        const result = await adapter.poll(systemForVendor, credentials);
+        const result = await adapter.poll(systemForVendor, credentials, forceTest);
 
         // Calculate duration
         const duration = Date.now() - sessionStart.getTime();
@@ -243,7 +246,9 @@ export async function GET(request: NextRequest) {
               displayName: system.displayName || undefined,
               vendorType: system.vendorType,
               status: 'polled',
-              recordsUpserted: result.recordsProcessed
+              recordsUpserted: result.recordsProcessed,
+              nextPoll: result.nextPoll ? formatTimeAEST(result.nextPoll) : undefined,
+              ...(includeRaw && result.rawResponse ? { rawResponse: result.rawResponse } : {})
             });
 
             console.log(`[Cron] ${formatSystemId(system)} - Success (${result.recordsProcessed} records)`);
@@ -255,7 +260,8 @@ export async function GET(request: NextRequest) {
               displayName: system.displayName || undefined,
               vendorType: system.vendorType,
               status: 'skipped',
-              skipReason: result.reason
+              skipReason: result.reason,
+              nextPoll: result.nextPoll ? formatTimeAEST(result.nextPoll) : undefined
             });
             console.log(`[Cron] ${formatSystemId(system)} - Skipped: ${result.reason}`);
             break;

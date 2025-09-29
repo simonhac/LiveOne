@@ -1,5 +1,6 @@
 import type { CommonPollingData } from '@/lib/types/common';
 import type { LatestReadingData } from '@/lib/types/readings';
+import type { ZonedDateTime } from '@internationalized/date';
 
 /**
  * Field definition for credential requirements
@@ -27,7 +28,7 @@ export interface VendorAdapter {
   readonly supportsAddSystem?: boolean;  // Whether this vendor supports the Add System flow
 
   // Main polling function - handles all data collection
-  poll(system: SystemForVendor, credentials: any): Promise<PollingResult>;
+  poll(system: SystemForVendor, credentials: any, force?: boolean): Promise<PollingResult>;
 
   // Get the latest reading for this system
   getLastReading(systemId: number): Promise<LatestReadingData | null>;
@@ -66,7 +67,7 @@ export interface PollingResult {
   reason?: string;  // For SKIPPED or ERROR
   error?: string;  // For ERROR
   errorCode?: string;  // HTTP status code or other error code for ERROR
-  nextPoll?: Date;  // When to poll next
+  nextPoll?: ZonedDateTime;  // When to poll next
 }
 
 /**

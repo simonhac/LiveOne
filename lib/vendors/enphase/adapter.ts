@@ -8,6 +8,7 @@ import { eq, desc } from 'drizzle-orm';
 import { checkEnphasePollingSchedule } from '@/lib/vendors/enphase/enphase-cron';
 import { checkAndFetchYesterdayIfNeeded, fetchEnphaseDay } from '@/lib/vendors/enphase/enphase-history';
 import { getZonedNow } from '@/lib/date-utils';
+import { fromDate } from '@internationalized/date';
 import { getPollingStatus } from '@/lib/polling-utils';
 
 /**
@@ -69,28 +70,33 @@ export class EnphaseAdapter extends BaseVendorAdapter {
   }
 
   
-  async poll(system: SystemForVendor, credentials: any): Promise<PollingResult> {
+  async poll(system: SystemForVendor, credentials: any, force?: boolean): Promise<PollingResult> {
     const startTime = Date.now();
-    
+
     try {
-      // Check polling schedule (every 30 minutes during daylight hours)
+      // Always check polling schedule to get nextPoll time
       const status = await getPollingStatus(system.id);
       const lastPollTime = status?.lastPollTime || null;
-      
+
       const scheduleCheck = checkEnphasePollingSchedule(
         system as any, // System has ownerClerkUserId
         lastPollTime
       );
-      
-      if (!scheduleCheck.shouldPollNow) {
+
+      // If not forcing and schedule says don't poll, skip
+      if (!force && !scheduleCheck.shouldPollNow) {
         return this.skipped(
           scheduleCheck.skipReason || 'Outside polling schedule',
-          undefined // TODO: Convert nextPollTimeStr to Date if needed
+          scheduleCheck.nextPoll
         );
       }
       
-      console.log(`[Enphase] Polling system ${system.id} (${system.displayName})`);
-      
+      if (force) {
+        console.log(`[Enphase] Force polling system ${system.id} (${system.displayName}) - bypassing schedule`);
+      } else {
+        console.log(`[Enphase] Polling system ${system.id} (${system.displayName})`);
+      }
+
       // Determine what to fetch
       let result;
       const localTime = getZonedNow(system.timezoneOffsetMin);
@@ -116,16 +122,18 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       
       const duration = Date.now() - startTime;
       console.log(`[Enphase] System ${system.id}: Upserted ${recordsUpserted} records in ${duration}ms`);
-      
-      // Calculate next poll time (30 minutes during daylight)
-      const nextPoll = new Date(Date.now() + 30 * 60 * 1000);
-      
+
+      // Get raw response if available
+      const rawResponse = 'rawResponse' in result ? result.rawResponse : undefined;
+
       // Note: Enphase returns multiple records (5-minute intervals)
       // The data is already stored by fetchEnphaseDay, so we don't return it here
+      // Use nextPoll from scheduleCheck which follows the proper schedule algorithm
       return this.polled(
         [], // Data already stored by fetchEnphaseDay
         recordsUpserted,
-        nextPoll
+        scheduleCheck.nextPoll,
+        rawResponse
       );
       
     } catch (error) {

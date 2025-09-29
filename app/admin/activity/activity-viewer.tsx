@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { format } from 'date-fns'
-import { Info, X, RefreshCw } from 'lucide-react'
+import { formatTime } from '@/lib/fe-date-format'
+import { Info, X, RefreshCw, Clock, Activity, CheckCircle, AlertCircle, Database, Hash, ChevronRight, ChevronDown } from 'lucide-react'
 import { JsonView, darkStyles, allExpanded } from 'react-json-view-lite'
 import 'react-json-view-lite/dist/index.css'
 
@@ -224,7 +224,7 @@ export default function ActivityViewer() {
                 <tr key={session.id} className={`${index % 2 === 0 ? 'bg-gray-900/50' : 'bg-gray-800/50'} hover:bg-gray-700 transition-colors`}>
                   <td className="px-4 py-3 text-sm text-gray-300 align-top">
                     <div className="flex items-start gap-1">
-                      <span>{format(new Date(session.started), 'h:mm:ss aa').toLowerCase().replace(' ', '\u00A0')}</span>
+                      <span>{formatTime(session.started)}</span>
                       <button
                         onClick={() => setSelectedSession(session)}
                         className="text-gray-500 hover:text-gray-300 transition-colors"
@@ -276,11 +276,11 @@ export default function ActivityViewer() {
 
       {/* Modal for session details */}
       {selectedSession && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-700 rounded-lg max-w-4xl w-full max-h-[80vh] flex flex-col">
-            {/* Modal header */}
-            <div className="flex items-center justify-between p-4 border-b border-gray-700">
-              <h3 className="text-lg font-medium text-white">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center z-50 overflow-y-auto">
+          <div className="bg-gray-800/95 backdrop-blur-sm border border-gray-700 rounded-lg p-6 max-w-2xl w-full mx-4 my-8 max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex justify-between items-start mb-4">
+              <h3 className="text-lg font-semibold text-white">
                 Session Details — {selectedSession.systemName}
               </h3>
               <button
@@ -293,68 +293,114 @@ export default function ActivityViewer() {
                 }}
                 className="text-gray-400 hover:text-white transition-colors"
               >
-                <X className="h-6 w-6" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Modal body */}
-            <div className="p-4 overflow-auto flex-1">
-              {/* Collapsed info line */}
-              <div className="text-sm mb-4 flex justify-between items-center">
-                <div>
-                  <span className="text-gray-400">Time:</span>{' '}
-                  <span className="text-gray-200">
-                    {format(new Date(selectedSession.started), 'h:mm:ss aa').toLowerCase().replace(' ', '\u00A0')} ({formatDuration(selectedSession.duration)})
-                  </span>
-                </div>
-                <div>
-                  <span className="text-gray-400">Cause:</span>{' '}
-                  <span className={getCauseColor(selectedSession.cause)}>
-                    {selectedSession.cause}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-gray-400">Status:</span>{' '}
-                  <span className={selectedSession.successful ? 'text-green-400' : 'text-red-400'}>
-                    {selectedSession.successful ? 'Success' : 'Failed'}
-                    {selectedSession.errorCode && ` (${selectedSession.errorCode})`}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-gray-400">Rows:</span>{' '}
-                  <span className="text-gray-200">{selectedSession.numRows}</span>
-                </div>
-                {selectedSession.sessionLabel && (
-                  <div>
-                    <span className="text-gray-400">Label:</span>{' '}
-                    <span className="text-gray-200 font-mono">{selectedSession.sessionLabel}</span>
+            <div className="space-y-4">
+              {/* Session Metrics - No title, just 4 core metrics */}
+              <div className="bg-gray-900 rounded-lg p-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex items-start gap-2">
+                    <Clock className="w-4 h-4 text-gray-500 mt-0.5" />
+                    <div>
+                      <p className="text-xs text-gray-500">Time</p>
+                      <p className="text-sm font-medium text-white">
+                        {formatTime(selectedSession.started)}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        Duration: {formatDuration(selectedSession.duration)}
+                      </p>
+                    </div>
                   </div>
-                )}
+
+                  <div className="flex items-start gap-2">
+                    <Activity className="w-4 h-4 text-gray-500 mt-0.5" />
+                    <div>
+                      <p className="text-xs text-gray-500">Cause</p>
+                      <p className={`text-sm font-medium ${getCauseColor(selectedSession.cause)}`}>
+                        {selectedSession.cause}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-2">
+                    <Database className="w-4 h-4 text-gray-500 mt-0.5" />
+                    <div>
+                      <p className="text-xs text-gray-500">Vendor</p>
+                      <p className="text-sm font-medium text-white">{selectedSession.vendorType}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-2">
+                    <CheckCircle className="w-4 h-4 text-gray-500 mt-0.5" />
+                    <div>
+                      <p className="text-xs text-gray-500">Status</p>
+                      <p className={`text-sm font-medium ${selectedSession.successful ? 'text-green-400' : 'text-red-400'}`}>
+                        {selectedSession.successful ? 'Success' : 'Failed'}
+                        {selectedSession.errorCode && ` (${selectedSession.errorCode})`}
+                      </p>
+                      {selectedSession.numRows > 0 && (
+                        <p className="text-xs text-gray-400">{selectedSession.numRows} rows</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Error details if present */}
               {selectedSession.error && (
-                <div className="text-sm mb-4 bg-red-500/10 border border-red-500/20 rounded p-3">
-                  <span className="text-gray-400">Error:</span>{' '}
-                  <span className="text-red-400">{selectedSession.error}</span>
+                <div className="bg-red-900/20 border border-red-700 rounded-lg p-4">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-red-400 mb-1">Error Details</p>
+                      <p className="text-sm text-red-300">{selectedSession.error}</p>
+                    </div>
+                  </div>
                 </div>
               )}
 
               {/* Response data */}
               {selectedSession.response && (
                 <div>
-                  <h4 className="text-sm font-medium text-gray-400 mb-2">Raw Remote Data:</h4>
+                  <button
+                    onClick={() => {
+                      // Toggle JSON expansion
+                      const button = document.activeElement as HTMLElement
+                      button?.blur()
+                    }}
+                    className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors mb-3"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                    Raw Server Response
+                  </button>
                   <div className="bg-gray-950 border border-gray-700 rounded-lg">
                     <div className="overflow-x-auto font-mono text-sm">
                       <JsonView
                         data={selectedSession.response}
-                        shouldExpandNode={allExpanded}
+                        shouldExpandNode={(level) => level < 2}
                         style={darkStyles}
                       />
                     </div>
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="mt-6">
+              <button
+                onClick={() => {
+                  setSelectedSession(null)
+                  if (document.activeElement instanceof HTMLElement) {
+                    document.activeElement.blur()
+                  }
+                }}
+                className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>

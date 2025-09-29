@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, ChevronRight, ChevronDown } from 'lucide-react';
+import { formatDateTime as formatDateTimeFE } from '@/lib/fe-date-format';
 import { JsonView, darkStyles, allExpanded } from 'react-json-view-lite';
 import 'react-json-view-lite/dist/index.css';
 
@@ -28,22 +29,25 @@ interface PollingStatsModalProps {
 
 export default function PollingStatsModal({ isOpen, onClose, systemName, stats }: PollingStatsModalProps) {
   const [showResponse, setShowResponse] = useState(false);
-  
+
+  // Handle Escape key to close modal
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', handleEscape)
+    return () => document.removeEventListener('keydown', handleEscape)
+  }, [isOpen, onClose])
+
   if (!isOpen) return null;
 
   const formatDateTime = (dateTimeStr: string | null) => {
     if (!dateTimeStr) return null;
-    const date = new Date(dateTimeStr);
-    // Use the browser's default locale (undefined) which automatically uses the user's system locale
-    return date.toLocaleString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false
-    });
+    return formatDateTimeFE(dateTimeStr).display;
   };
 
   return (

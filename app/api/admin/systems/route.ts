@@ -6,7 +6,6 @@ import { eq, desc, or } from 'drizzle-orm';
 import { formatTimeAEST, fromUnixTimestamp } from '@/lib/date-utils';
 import { isUserAdmin } from '@/lib/auth-utils';
 import { fromDate } from '@internationalized/date';
-import { getSystemCredentials, type VendorType } from '@/lib/secure-credentials';
 import { VendorRegistry } from '@/lib/vendors/registry';
 
 export async function GET(request: NextRequest) {
@@ -28,11 +27,11 @@ export async function GET(request: NextRequest) {
     // Get all systems with their latest data
     const allSystems = await db.select().from(systems);
     const systemsData = [];
-    
+
     // Get unique owner user IDs to fetch user info in batch
     const ownerUserIds = [...new Set(allSystems.map(s => s.ownerClerkUserId).filter((id): id is string => Boolean(id)))];
     const userCache = new Map();
-    
+
     // Batch fetch user information from Clerk
     const clerk = await clerkClient();
     for (const userId of ownerUserIds) {
@@ -68,21 +67,10 @@ export async function GET(request: NextRequest) {
       
       const reading = latestReading[0];
       const pollStatus = status[0];
-      
+
       // Get user info from cache
       const userInfo = userCache.get(system.ownerClerkUserId);
-      
-      // Get vendor-specific user ID from credentials
-      let vendorUserId = null;
-      if (system.ownerClerkUserId) {
-        const credentials = await getSystemCredentials(system.ownerClerkUserId, system.id);
-        if (credentials) {
-          // Extract vendor-specific user ID based on vendor type
-          const creds = credentials as any;
-          vendorUserId = creds.email || creds.user_id || creds.enphase_user_id || null;
-        }
-      }
-      
+
       systemsData.push({
         systemId: system.id,  // Our internal ID
         owner: {
@@ -96,7 +84,7 @@ export async function GET(request: NextRequest) {
         vendor: {
           type: system.vendorType,
           siteId: system.vendorSiteId,  // Vendor's identifier
-          userId: vendorUserId,  // Vendor-specific user ID (email for Select.Live, user ID for Enphase)
+          userId: null,  // Don't fetch credentials to reduce API calls
           supportsPolling: VendorRegistry.supportsPolling(system.vendorType),
         },
         location: system.location,  // Location data (address, city/state/country, or lat/lon)

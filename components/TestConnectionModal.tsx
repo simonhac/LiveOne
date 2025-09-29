@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { CheckCircle, XCircle, Loader2, X, Zap, Sun, Home, Battery, AlertCircle, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
 import { formatValue, formatValuePair } from '@/lib/energy-formatting'
+import { formatDateTime } from '@/lib/fe-date-format'
 import { JsonView, defaultStyles, darkStyles } from 'react-json-view-lite'
 import 'react-json-view-lite/dist/index.css'
 
@@ -38,9 +39,9 @@ interface TestConnectionModalProps {
   // For existing systems (from dashboard or admin)
   systemId?: number
   displayName?: string | null
+  vendorType?: string | null
 
   // For new systems (from add system dialog) - not implemented yet
-  // vendorType?: string
   // credentials would be passed another way
 
   onClose: () => void
@@ -49,6 +50,7 @@ interface TestConnectionModalProps {
 export default function TestConnectionModal({
   systemId,
   displayName,
+  vendorType,
   onClose
 }: TestConnectionModalProps) {
   const [loading, setLoading] = useState(false)
@@ -58,6 +60,17 @@ export default function TestConnectionModal({
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
   const hasInitiatedTest = useRef(false)
+
+  // Handle Escape key to close modal
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', handleEscape)
+    return () => document.removeEventListener('keydown', handleEscape)
+  }, [onClose])
 
   const testConnection = async (isRefresh: boolean = false) => {
     if (isRefresh) {
@@ -148,7 +161,7 @@ export default function TestConnectionModal({
         {/* Header */}
         <div className="flex justify-between items-start mb-4">
           <h3 className="text-lg font-semibold text-white">
-            {displayName || 'System'} — Test Connection
+            {displayName || 'System'} {systemId ? <span className="text-gray-500">ID: {systemId}</span> : ''} — {vendorType || 'Test Connection'}
           </h3>
           <button
             onClick={onClose}
@@ -299,7 +312,7 @@ export default function TestConnectionModal({
               {data.systemInfo && (
                 <div className="bg-gray-900 rounded-lg p-4">
                   <h4 className="text-sm font-semibold text-gray-400 mb-3">System Information</h4>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-4 gap-4">
                     {data.systemInfo.model && (
                       <div>
                         <p className="text-xs text-gray-400">Model</p>
@@ -328,19 +341,8 @@ export default function TestConnectionModal({
                 </div>
               )}
 
-              {/* Timestamp */}
-              <div className="text-xs text-gray-500 text-center">
-                Last updated: {new Date(data.latest.timestamp).toLocaleString('en-AU', { 
-                  day: 'numeric',
-                  month: 'short',
-                  year: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit'
-                })}
-              </div>
 
-              {/* Details Disclosure */}
+              {/* Raw Comms Disclosure */}
               <div className="mt-4">
                 <button
                   onClick={() => setShowDetails(!showDetails)}
@@ -351,7 +353,7 @@ export default function TestConnectionModal({
                   ) : (
                     <ChevronRight className="w-4 h-4" />
                   )}
-                  Details
+                  Raw Comms
                 </button>
                 
                 {showDetails && vendorResponse && (

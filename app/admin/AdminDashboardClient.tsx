@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import Link from 'next/link'
 import { Clock, Wifi, WifiOff, Battery, Home, PauseCircle, Sun } from 'lucide-react'
 import SystemInfoTooltip from '@/components/SystemInfoTooltip'
@@ -9,6 +9,7 @@ import PollingStatsModal from '@/components/PollingStatsModal'
 import TestConnectionModal from '@/components/TestConnectionModal'
 import SystemSettingsDialog from '@/components/SystemSettingsDialog'
 import PollNowModal from '@/components/PollNowModal'
+import { formatDateTime } from '@/lib/fe-date-format'
 
 interface SystemInfo {
   model?: string
@@ -70,10 +71,12 @@ export default function AdminDashboardClient() {
     isOpen: boolean
     systemId: number | null
     displayName: string | null
+    vendorType: string | null
   }>({
     isOpen: false,
     systemId: null,
-    displayName: null
+    displayName: null,
+    vendorType: null
   })
   const [pollingStatsModal, setPollingStatsModal] = useState<{
     isOpen: boolean
@@ -84,7 +87,7 @@ export default function AdminDashboardClient() {
     systemName: '',
     stats: null
   })
-  const [settingsDialog, setSettingsDialog] = useState<{
+  const [settingsModal, setSettingsDialog] = useState<{
     isOpen: boolean
     system: SystemData | null
   }>({
@@ -95,17 +98,20 @@ export default function AdminDashboardClient() {
     isOpen: boolean
     systemId: number | null
     displayName: string | null
+    vendorType: string | null
   }>({
     isOpen: false,
     systemId: null,
-    displayName: null
+    displayName: null,
+    vendorType: null
   })
 
   const openTestModal = (system: SystemData) => {
     setTestModal({
       isOpen: true,
       systemId: system.systemId,
-      displayName: system.displayName
+      displayName: system.displayName,
+      vendorType: system.vendor.type
     })
   }
 
@@ -113,7 +119,8 @@ export default function AdminDashboardClient() {
     setTestModal({
       isOpen: false,
       systemId: null,
-      displayName: null
+      displayName: null,
+      vendorType: null
     })
   }
 
@@ -121,7 +128,8 @@ export default function AdminDashboardClient() {
     setPollNowModal({
       isOpen: true,
       systemId: system.systemId,
-      displayName: system.displayName
+      displayName: system.displayName,
+      vendorType: system.vendor.type
     })
   }
 
@@ -129,11 +137,26 @@ export default function AdminDashboardClient() {
     setPollNowModal({
       isOpen: false,
       systemId: null,
-      displayName: null
+      displayName: null,
+      vendorType: null
     })
   }
 
+  // Track if any modal is open
+  const isAnyModalOpen = () => {
+    return testModal.isOpen ||
+           pollingStatsModal.isOpen ||
+           settingsModal.isOpen ||
+           pollNowModal.isOpen;
+  }
+
   const fetchSystems = async () => {
+    // Skip fetch if any modal is open
+    if (isAnyModalOpen()) {
+      console.log('[AdminDashboard] Skipping fetch - modal is open');
+      return;
+    }
+
     try {
       const response = await fetch('/api/admin/systems')
       
@@ -230,12 +253,38 @@ export default function AdminDashboardClient() {
     }
   }
 
+  // Use ref to store interval ID so we can access it in cleanup
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     fetchSystems()
-    const interval = setInterval(fetchSystems, 30000) // Refresh every 30 seconds
-    
-    return () => clearInterval(interval)
+    intervalRef.current = setInterval(fetchSystems, 30000) // Refresh every 30 seconds
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+      }
+    }
   }, [])
+
+  // Pause/resume fetching based on modal state
+  useEffect(() => {
+    if (isAnyModalOpen()) {
+      // Modal opened - clear interval
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+        console.log('[AdminDashboard] Paused auto-refresh - modal opened')
+      }
+    } else {
+      // No modals open - restart interval if it's not running
+      if (!intervalRef.current) {
+        fetchSystems() // Fetch immediately
+        intervalRef.current = setInterval(fetchSystems, 30000)
+        console.log('[AdminDashboard] Resumed auto-refresh - modals closed')
+      }
+    }
+  }, [testModal.isOpen, pollingStatsModal.isOpen, settingsModal.isOpen, pollNowModal.isOpen])
 
 
   if (loading) {
@@ -520,6 +569,7 @@ export default function AdminDashboardClient() {
         <TestConnectionModal
           systemId={testModal.systemId}
           displayName={testModal.displayName}
+          vendorType={testModal.vendorType}
           onClose={closeTestModal}
         />
       )}
@@ -536,9 +586,9 @@ export default function AdminDashboardClient() {
 
       {/* System Settings Dialog */}
       <SystemSettingsDialog
-        isOpen={settingsDialog.isOpen}
+        isOpen={settingsModal.isOpen}
         onClose={() => setSettingsDialog({ isOpen: false, system: null })}
-        system={settingsDialog.system}
+        system={settingsModal.system}
         onRename={renameSystem}
       />
 
@@ -547,6 +597,7 @@ export default function AdminDashboardClient() {
         <PollNowModal
           systemId={pollNowModal.systemId}
           displayName={pollNowModal.displayName}
+          vendorType={pollNowModal.vendorType}
           onClose={closePollNowModal}
         />
       )}

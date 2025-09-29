@@ -1,20 +1,37 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { X, Loader2, Check, AlertCircle, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
+import { X, Check, AlertCircle, RefreshCw, ChevronRight, ChevronDown, Server, Activity, Database, FileJson, Clock, Hash } from 'lucide-react'
+import { formatDateTime, formatDuration } from '@/lib/fe-date-format'
+import { JsonView, darkStyles } from 'react-json-view-lite'
+import 'react-json-view-lite/dist/index.css'
 
 interface PollNowModalProps {
   systemId: number
   displayName: string | null
+  vendorType?: string | null
   onClose: () => void
 }
 
-export default function PollNowModal({ systemId, displayName, onClose }: PollNowModalProps) {
+interface PollResult {
+  systemId: number
+  displayName: string
+  vendorType: string
+  status: 'polled' | 'skipped' | 'error'
+  recordsUpserted?: number
+  skipReason?: string
+  error?: string
+  rawResponse?: any
+  nextPoll?: string  // ISO string from server
+}
+
+export default function PollNowModal({ systemId, displayName, vendorType, onClose }: PollNowModalProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<any>(null)
+  const [result, setResult] = useState<PollResult | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [showDetails, setShowDetails] = useState(false)
+  const [showRawResponse, setShowRawResponse] = useState(false)
+  const [pollDuration, setPollDuration] = useState<number | null>(null)
   const hasInitiatedPoll = useRef(false)
 
   useEffect(() => {
@@ -45,9 +62,15 @@ export default function PollNowModal({ systemId, displayName, onClose }: PollNow
     }
     setError(null)
 
+    const startTime = Date.now()
+
     try {
-      const response = await fetch(`/api/cron/minutely?systemId=${systemId}&force=true`)
+      const response = await fetch(`/api/cron/minutely?systemId=${systemId}&force=true&includeRaw=true`)
       const data = await response.json()
+
+      // Calculate duration
+      const duration = Date.now() - startTime
+      setPollDuration(duration)
 
       if (!response.ok) {
         throw new Error(data.error || `Failed to poll: ${response.status}`)
@@ -72,64 +95,32 @@ export default function PollNowModal({ systemId, displayName, onClose }: PollNow
     pollNow(true)
   }
 
-  // Format JSON with syntax highlighting
-  const formatJson = (obj: any, indent = 0): React.ReactElement => {
-    if (obj === null) return <span className="text-gray-500">null</span>
-    if (obj === undefined) return <span className="text-gray-500">undefined</span>
-    if (typeof obj === 'boolean') return <span className="text-yellow-400">{String(obj)}</span>
-    if (typeof obj === 'number') return <span className="text-blue-400">{obj}</span>
-    if (typeof obj === 'string') {
-      // Check if it's a date string
-      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(obj)) {
-        return <span className="text-green-400">"{obj}"</span>
-      }
-      return <span className="text-green-400">"{obj}"</span>
+  // Get status color
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'polled':
+        return 'text-green-400'
+      case 'skipped':
+        return 'text-yellow-400'
+      case 'error':
+        return 'text-red-400'
+      default:
+        return 'text-gray-400'
     }
+  }
 
-    const spaces = '  '.repeat(indent)
-    const nextIndent = indent + 1
-    const nextSpaces = '  '.repeat(nextIndent)
-
-    if (Array.isArray(obj)) {
-      if (obj.length === 0) return <><span>[</span><span>]</span></>
-
-      return (
-        <>
-          <span>[</span>
-          {obj.map((item, i) => (
-            <div key={i}>
-              <span>{nextSpaces}</span>
-              {formatJson(item, nextIndent)}
-              {i < obj.length - 1 && <span>,</span>}
-            </div>
-          ))}
-          <span>{spaces}]</span>
-        </>
-      )
+  // Get status icon
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'polled':
+        return <Check className="w-6 h-6 text-green-500" />
+      case 'skipped':
+        return <AlertCircle className="w-6 h-6 text-yellow-500" />
+      case 'error':
+        return <AlertCircle className="w-6 h-6 text-red-500" />
+      default:
+        return null
     }
-
-    if (typeof obj === 'object') {
-      const entries = Object.entries(obj)
-      if (entries.length === 0) return <><span>{'{'}</span><span>{'}'}</span></>
-
-      return (
-        <>
-          <span>{'{'}</span>
-          {entries.map(([key, value], i) => (
-            <div key={key}>
-              <span>{nextSpaces}</span>
-              <span className="text-cyan-400">"{key}"</span>
-              <span>: </span>
-              {formatJson(value, nextIndent)}
-              {i < entries.length - 1 && <span>,</span>}
-            </div>
-          ))}
-          <span>{spaces}{'}'}</span>
-        </>
-      )
-    }
-
-    return <span>{String(obj)}</span>
   }
 
   return (
@@ -138,7 +129,7 @@ export default function PollNowModal({ systemId, displayName, onClose }: PollNow
         {/* Header */}
         <div className="flex justify-between items-start mb-4">
           <h3 className="text-lg font-semibold text-white">
-            {displayName || `System ${systemId}`} — Poll Now
+            Poll {displayName || 'System'} <span className="text-gray-500">ID: {systemId}</span> — {vendorType || result?.vendorType || 'System'}
           </h3>
           <button
             onClick={onClose}
@@ -180,67 +171,101 @@ export default function PollNowModal({ systemId, displayName, onClose }: PollNow
             )}
 
             <div className={`space-y-4 transition-opacity ${isRefreshing ? 'opacity-40' : ''}`}>
-              {/* Status Section */}
+              {/* Error or Skip Reason Section - Only show if there's an error or skip */}
+              {(result.status === 'skipped' || result.status === 'error') && (
+                <div className="bg-gray-900 rounded-lg p-4">
+                  <div className="flex items-center gap-3">
+                    {getStatusIcon(result.status)}
+                    <div className="flex-1">
+                      <p className={`font-semibold ${getStatusColor(result.status)}`}>
+                        {result.status === 'skipped' && 'Skipped'}
+                        {result.status === 'error' && 'Error'}
+                      </p>
+                      {result.status === 'skipped' && result.skipReason && (
+                        <p className="text-sm text-gray-400">{result.skipReason}</p>
+                      )}
+                      {result.status === 'error' && result.error && (
+                        <p className="text-sm text-gray-400">{result.error}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Poll Metrics - No title */}
               <div className="bg-gray-900 rounded-lg p-4">
-                <div className="flex items-center gap-3">
-                  {result.status === 'polled' ? (
-                    <>
-                      <Check className="w-6 h-6 text-green-500" />
-                      <div className="flex-1">
-                        <p className="text-green-400 font-semibold">Successfully Polled</p>
-                        {result.recordsUpserted !== undefined && (
-                          <p className="text-sm text-gray-400">
-                            {result.recordsUpserted} records processed
-                          </p>
-                        )}
-                      </div>
-                    </>
-                  ) : result.status === 'skipped' ? (
-                    <>
-                      <AlertCircle className="w-6 h-6 text-yellow-500" />
-                      <div className="flex-1">
-                        <p className="text-yellow-400 font-semibold">Skipped</p>
-                        {result.skipReason && (
-                          <p className="text-sm text-gray-400">{result.skipReason}</p>
-                        )}
-                      </div>
-                    </>
-                  ) : result.status === 'error' ? (
-                    <>
-                      <AlertCircle className="w-6 h-6 text-red-500" />
-                      <div className="flex-1">
-                        <p className="text-red-400 font-semibold">Error</p>
-                        {result.error && (
-                          <p className="text-sm text-gray-400">{result.error}</p>
-                        )}
-                      </div>
-                    </>
-                  ) : null}
+                <div className="grid grid-cols-4 gap-4">
+                  <div className="flex items-start gap-2">
+                    <FileJson className="w-4 h-4 text-gray-500 mt-0.5" />
+                    <div>
+                      <p className="text-xs text-gray-500">Status</p>
+                      <p className={`text-sm font-medium capitalize ${getStatusColor(result.status)}`}>
+                        {result.status}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-2">
+                    <Hash className="w-4 h-4 text-gray-500 mt-0.5" />
+                    <div>
+                      <p className="text-xs text-gray-500">Records Processed</p>
+                      <p className="text-sm font-medium text-white">
+                        {result.recordsUpserted !== undefined ? result.recordsUpserted : '—'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-2">
+                    <Activity className="w-4 h-4 text-gray-500 mt-0.5" />
+                    <div>
+                      <p className="text-xs text-gray-500">Duration</p>
+                      <p className="text-sm font-medium text-white">
+                        {pollDuration !== null ? formatDuration(pollDuration) : '—'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-2">
+                    <Clock className="w-4 h-4 text-gray-500 mt-0.5" />
+                    <div>
+                      <p className="text-xs text-gray-500">Next Poll</p>
+                      <p className="text-sm font-medium text-white">
+                        {result.nextPoll ? formatDateTime(result.nextPoll, { includeSeconds: true }).time : '—'}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              {/* Details Disclosure */}
-              <div>
-                <button
-                  onClick={() => setShowDetails(!showDetails)}
-                  className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors"
-                >
-                  {showDetails ? (
-                    <ChevronDown className="w-4 h-4" />
-                  ) : (
-                    <ChevronRight className="w-4 h-4" />
-                  )}
-                  Details
-                </button>
+              {/* Raw Response Section */}
+              {result.rawResponse && (
+                <div>
+                  <button
+                    onClick={() => setShowRawResponse(!showRawResponse)}
+                    className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors"
+                  >
+                    {showRawResponse ? (
+                      <ChevronDown className="w-4 h-4" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4" />
+                    )}
+                    Raw Comms
+                  </button>
 
-                {showDetails && (
-                  <div className="mt-3 bg-gray-950 border border-gray-700 rounded-lg p-4">
-                    <pre className="font-mono text-sm text-gray-300 overflow-x-auto">
-                      {formatJson(result)}
-                    </pre>
-                  </div>
-                )}
-              </div>
+                  {showRawResponse && (
+                    <div className="mt-3 bg-gray-950 border border-gray-700 rounded-lg">
+                      <div className="overflow-x-auto font-mono text-sm">
+                        <JsonView
+                          data={result.rawResponse}
+                          shouldExpandNode={(level) => level < 2}
+                          style={darkStyles}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
             </div>
           </div>
         )}

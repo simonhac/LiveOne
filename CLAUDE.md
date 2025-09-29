@@ -1,5 +1,14 @@
 # CLAUDE.md - Project Guidelines
 
+## Important: Type Checking During Development
+
+**Never run `npm run build` while the dev server is running** - it will interfere with the dev server.
+
+Instead, to check if TypeScript compiles:
+- Check the dev server output - look for `[1]` prefixed lines showing TypeScript status
+- The dev server runs `tsc --noEmit --watch` automatically, showing errors in real-time
+- If needed, run `npm run type-check` in a separate terminal (doesn't build, just checks types)
+
 ## Quick Reference
 
 ### Key Documentation

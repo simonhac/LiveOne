@@ -1,6 +1,7 @@
 import type { VendorAdapter, SystemForVendor, PollingResult, TestConnectionResult } from './types';
 import type { CommonPollingData } from '@/lib/types/common';
 import type { LatestReadingData } from '@/lib/types/readings';
+import type { ZonedDateTime } from '@internationalized/date';
 import { db } from '@/lib/db';
 import { readings } from '@/lib/db/schema';
 import { eq, desc } from 'drizzle-orm';
@@ -17,8 +18,9 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   /**
    * Poll for new data. Only applicable for poll-based systems.
    * Push-only systems should not override this method.
+   * @param force - If true, bypass rate limiting and poll immediately
    */
-  async poll(system: SystemForVendor, credentials: any): Promise<PollingResult> {
+  async poll(system: SystemForVendor, credentials: any, force?: boolean): Promise<PollingResult> {
     if (this.dataSource === 'push') {
       console.error(`[${this.vendorType}] poll() called on push-only system ${system.id}. This should never happen.`);
       return this.error(`${this.vendorType} is a push-only system and should not be polled`);
@@ -91,14 +93,14 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   /**
    * Helper to create a SKIPPED result
    */
-  protected skipped(reason: string, nextPoll?: Date): PollingResult {
+  protected skipped(reason: string, nextPoll?: ZonedDateTime): PollingResult {
     return {
       action: 'SKIPPED',
       reason,
       nextPoll
     };
   }
-  
+
   /**
    * Helper to create an ERROR result
    */
@@ -108,14 +110,14 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       error: error instanceof Error ? error.message : error
     };
   }
-  
+
   /**
    * Helper to create a POLLED result
    */
   protected polled(
-    data: CommonPollingData | CommonPollingData[], 
+    data: CommonPollingData | CommonPollingData[],
     recordsProcessed: number,
-    nextPoll?: Date,
+    nextPoll?: ZonedDateTime,
     rawResponse?: any
   ): PollingResult {
     return {

@@ -1,5 +1,7 @@
 import * as SunCalc from 'suncalc';
 import { formatJustTime_fromJSDate } from '@/lib/date-utils';
+import { fromDate } from '@internationalized/date';
+import type { ZonedDateTime } from '@internationalized/date';
 
 // Configuration constants
 const ENPHASE_POLLING_INTERVAL_MINUTES = 60; // How often to poll during daylight hours
@@ -16,7 +18,7 @@ interface EnphaseSystemWithOwner {
 export interface PollingScheduleResult {
   shouldPollNow: boolean;
   skipReason?: string;
-  nextPollTimeStr?: string;
+  nextPoll?: ZonedDateTime;
 }
 
 /**
@@ -32,7 +34,12 @@ export function checkEnphasePollingSchedule(
   // Always poll if never polled before
   if (!lastPollTime) {
     console.log(`[Enphase] Never polled, polling now`);
-    return { shouldPollNow: true };
+    // Next poll will be at the next scheduled interval
+    const nextHour = new Date(currentTime);
+    nextHour.setMinutes(0, 0, 0); // Reset to start of current hour
+    nextHour.setHours(nextHour.getHours() + 1); // Move to next hour
+    const nextPoll = fromDate(nextHour, 'Australia/Brisbane');
+    return { shouldPollNow: true, nextPoll };
   }
   
   // Get location for sunrise/sunset calculation
@@ -100,22 +107,26 @@ export function checkEnphasePollingSchedule(
     
     if (isAlignedToInterval) {
       console.log(`[Enphase] Polling during active solar hours (dawn ${dawnTime}, dusk ${duskTime})`);
-      return { shouldPollNow: true };
+      // Next poll will be in ENPHASE_POLLING_INTERVAL_MINUTES minutes
+      const nextPollDate = new Date(currentTime.getTime() + ENPHASE_POLLING_INTERVAL_MINUTES * 60 * 1000);
+      const nextPoll = fromDate(nextPollDate, 'Australia/Brisbane');
+      return { shouldPollNow: true, nextPoll };
     }
     
     // Not on a polling minute - calculate next poll time
     // Find next interval boundary after current time
     const minutesIntoInterval = localTimeMinutes % ENPHASE_POLLING_INTERVAL_MINUTES;
     const minutesToNext = ENPHASE_POLLING_INTERVAL_MINUTES - minutesIntoInterval;
-    
+
     const nextPollDate = new Date(currentTime.getTime() + minutesToNext * 60 * 1000);
     const nextPollTimeStr = formatJustTime_fromJSDate(nextPollDate, system.timezoneOffsetMin);
-    
+    const nextPoll = fromDate(nextPollDate, 'Australia/Brisbane');
+
     console.log(`[Enphase] Skipping - active hours but not at ${ENPHASE_POLLING_INTERVAL_MINUTES}-minute interval (remote system time ${formatJustTime_fromJSDate(currentTime, system.timezoneOffsetMin)}, next scheduled update in ${minutesToNext} minutes)`);
     return {
       shouldPollNow: false,
       skipReason: `Outside polling schedule (next poll in ${minutesToNext} minutes at ${nextPollTimeStr})`,
-      nextPollTimeStr
+      nextPoll
     };
   }
   
@@ -124,17 +135,22 @@ export function checkEnphasePollingSchedule(
   if (localHour >= 1 && localHour <= 5) {
     if (localMinutes === 0) {
       console.log(`[Enphase] ${localHour}:00 check for yesterday's data completeness`);
-      return { shouldPollNow: true };
+      // Next poll will be in 1 hour
+      const nextPollDate = new Date(currentTime);
+      nextPollDate.setHours(nextPollDate.getHours() + 1, 0, 0, 0);
+      const nextPoll = fromDate(nextPollDate, 'Australia/Brisbane');
+      return { shouldPollNow: true, nextPoll };
     }
     // Calculate next hour
     const minutesToNextHour = 60 - localMinutes;
     const nextPollDate = new Date(currentTime.getTime() + minutesToNextHour * 60 * 1000);
     const nextPollTimeStr = formatJustTime_fromJSDate(nextPollDate, system.timezoneOffsetMin);
-    
+    const nextPoll = fromDate(nextPollDate, 'Australia/Brisbane');
+
     return {
       shouldPollNow: false,
       skipReason: `Outside polling schedule (next poll at ${nextPollTimeStr})`,
-      nextPollTimeStr
+      nextPoll
     };
   }
   
@@ -174,11 +190,11 @@ export function checkEnphasePollingSchedule(
   // Calculate the actual next poll date/time
   const minutesUntilNext = nextPollMinutes - localTimeMinutes;
   const nextPollDate = new Date(currentTime.getTime() + minutesUntilNext * 60 * 1000);
-  const nextPollTimeStr = formatJustTime_fromJSDate(nextPollDate, system.timezoneOffsetMin);
-  
+  const nextPoll = fromDate(nextPollDate, 'Australia/Brisbane');
+
   return {
     shouldPollNow: false,
     skipReason,
-    nextPollTimeStr
+    nextPoll
   };
 }

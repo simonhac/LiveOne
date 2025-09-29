@@ -15,6 +15,7 @@ import ServerErrorModal from '@/components/ServerErrorModal'
 import SessionTimeoutModal from '@/components/SessionTimeoutModal'
 import { AddSystemDialog } from '@/components/AddSystemDialog'
 import SystemsMenu from '@/components/SystemsMenu'
+import { formatDateTime } from '@/lib/fe-date-format'
 import {
   Sun,
   Home,
@@ -536,7 +537,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
               <div className="bg-yellow-900/50 border border-yellow-700 text-yellow-300 px-4 py-3 rounded flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5" />
                 <div>
-                  <span className="font-semibold">Fault Code {data.latest.system.faultCode}</span> encountered at {new Date(data.latest.system.faultTimestamp * 1000).toLocaleString()}
+                  <span className="font-semibold">Fault Code {data.latest.system.faultCode}</span> encountered at {formatDateTime(new Date(data.latest.system.faultTimestamp * 1000)).display}
                 </div>
               </div>
             )}
@@ -661,6 +662,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
         <TestConnectionModal
           systemId={parseInt(systemId)}
           displayName={data?.displayName || systemDisplayName}
+          vendorType={data?.vendorType}
           onClose={() => setShowTestConnection(false)}
         />
       )}

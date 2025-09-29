@@ -4,7 +4,46 @@ import {
   SELECTLIVE_CONFIG,
   ERROR_MESSAGES,
 } from '@/config';
-import { SelectronicData, ApiResponse } from '@/lib/types/selectronic';
+
+/**
+ * Internal type for Selectronic data from the API
+ */
+export interface SelectronicData {
+  solarW: number | null;    // Total solar (solarinverter_w + shunt_w) in Watts
+  solarInverterW: number | null;   // Remote solar generation in Watts
+  shuntW: number | null;    // Local solar generation in Watts
+  loadW: number;            // Load in Watts
+  batterySOC: number;
+  batteryW: number;         // Battery power in Watts (negative = charging)
+  gridW: number;            // Grid power in Watts
+  faultCode: number;
+  faultTimestamp: number;   // Unix timestamp
+  generatorStatus: number;
+  // Energy totals (kWh despite the _wh_ in API names)
+  solarKwhTotal: number;
+  loadKwhTotal: number;
+  batteryInKwhTotal: number;
+  batteryOutKwhTotal: number;
+  gridInKwhTotal: number;
+  gridOutKwhTotal: number;
+  // Daily energy (kWh despite the _wh_ in API names)
+  solarKwhToday: number;
+  loadKwhToday: number;
+  batteryInKwhToday: number;
+  batteryOutKwhToday: number;
+  gridInKwhToday: number;
+  gridOutKwhToday: number;
+  timestamp: Date;
+  raw?: Record<string, any>;
+}
+
+export interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  rawResponse?: any;  // Raw response object from API
+  error?: string;
+  timestamp: Date;
+}
 
 // Select.Live API Configuration
 const SELECTLIVE_API = {

@@ -1,7 +1,8 @@
 import { BaseVendorAdapter } from '../base-adapter';
 import type { SystemForVendor, PollingResult, TestConnectionResult, CredentialField } from '../types';
 import type { CommonPollingData } from '@/lib/types/common';
-import { SelectronicFetchClient } from './selectronic-client';
+import { SelectronicFetchClient, type SelectronicData } from './selectronic-client';
+import { fromDate } from '@internationalized/date';
 
 /**
  * Vendor adapter for Selectronic/Select.Live systems
@@ -34,8 +35,9 @@ export class SelectronicAdapter extends BaseVendorAdapter {
   // Cache for auth cookies
   private static authCache = new Map<string, { cookie: string; expires: number }>();
   
-  async poll(system: SystemForVendor, credentials: any): Promise<PollingResult> {
+  async poll(system: SystemForVendor, credentials: any, force?: boolean): Promise<PollingResult> {
     // Selectronic polls every minute with no restrictions
+    // The force flag is available but not needed for Selectronic as it has no rate limiting
     try {
       const client = new SelectronicFetchClient({
         email: credentials.email,
@@ -76,10 +78,18 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         'Battery:', transformed.batteryW, 'W',
         'SOC:', transformed.batterySOC != null ? transformed.batterySOC.toFixed(1) + '%' : 'N/A');
       
+      // Calculate next poll time at the beginning of the next minute
+      const now = new Date();
+      const nextMinute = new Date(now);
+      nextMinute.setSeconds(0, 0); // Reset seconds and milliseconds to 0
+      nextMinute.setMinutes(nextMinute.getMinutes() + 1); // Add 1 minute
+
+      const nextPollTime = fromDate(nextMinute, 'Australia/Brisbane');
+
       return this.polled(
         transformed,
         1,
-        new Date(Date.now() + 60 * 1000), // Poll again in 1 minute
+        nextPollTime,
         response.rawResponse  // Pass the raw response object
       );
     } catch (error) {
@@ -203,9 +213,9 @@ export class SelectronicAdapter extends BaseVendorAdapter {
   /**
    * Transform Selectronic vendor data to common format
    */
-  private transformData(vendorData: any): CommonPollingData {
+  private transformData(vendorData: SelectronicData): CommonPollingData {
     return {
-      timestamp: vendorData.timestamp.toString(),
+      timestamp: vendorData.timestamp, // Already a Date object from client
       solarW: vendorData.solarW,
       solarLocalW: vendorData.shuntW,           // Map old field name
       solarRemoteW: vendorData.solarInverterW,  // Map old field name
@@ -214,7 +224,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       gridW: vendorData.gridW,
       batterySOC: vendorData.batterySOC,
       faultCode: vendorData.faultCode != null ? String(vendorData.faultCode) : null,
-      faultTimestamp: vendorData.faultTimestamp || null,  // Convert 0 to null when no fault
+      faultTimestamp: vendorData.faultTimestamp ? new Date(vendorData.faultTimestamp * 1000) : null,  // Convert Unix timestamp to Date, 0 to null
       generatorStatus: vendorData.generatorStatus || null,  // Convert 0 to null when no generator
       // Lifetime totals
       solarKwhTotal: vendorData.solarKwhTotal,
