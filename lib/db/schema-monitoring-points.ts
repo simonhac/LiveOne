@@ -2,82 +2,33 @@ import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey } from
 import { sql } from 'drizzle-orm';
 import { systems } from './schema';
 
-// Note: pointGroups table has been removed - now using systems table directly
-
-// Point Sub-Groups table - stores monitoring point groups/subcircuits
-export const pointSubGroups: any = sqliteTable('point_sub_groups', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-
-  // Relationships
-  groupId: integer('group_id').notNull().references(() => systems.id, { onDelete: 'cascade' }),
-  parentSubGroupId: integer('parent_sub_group_id'),
-
-  // Identification
-  vendorId: text('vendor_id').notNull(), // Vendor's subcircuit/group ID
-  name: text('name').notNull(),
-  displayName: text('display_name'),
-  description: text('description'),
-
-  // Type information
-  groupType: text('group_type'), // 'location', 'subcircuit', 'device_group', etc.
-
-  // Configuration
-  pollingEnabled: integer('polling_enabled', { mode: 'boolean' }).notNull().default(true),
-
-  // Metadata
-  vendorMetadata: text('vendor_metadata', { mode: 'json' }),
-  createdAt: integer('created_at').notNull().default(sql`(unixepoch() * 1000)`),
-  updatedAt: integer('updated_at').notNull().default(sql`(unixepoch() * 1000)`),
-}, (table) => ({
-  groupSubGroupUnique: uniqueIndex('psg_group_vendor_unique').on(table.groupId, table.vendorId),
-  groupIdx: index('psg_group_idx').on(table.groupId),
-  parentIdx: index('psg_parent_idx').on(table.parentSubGroupId),
-  pollingIdx: index('psg_polling_idx').on(table.pollingEnabled),
-}));
-
 // Point Info table - stores individual monitoring points
 export const pointInfo = sqliteTable('point_info', {
   id: integer('id').primaryKey({ autoIncrement: true }),
 
   // Relationships
-  groupId: integer('group_id').notNull().references(() => systems.id, { onDelete: 'cascade' }),
-  subGroupId: integer('sub_group_id').references(() => pointSubGroups.id, { onDelete: 'set null' }),
+  systemId: integer('system_id').notNull().references(() => systems.id, { onDelete: 'cascade' }),
 
   // Identification
-  vendorId: text('vendor_id').notNull(), // Vendor's point ID
-  name: text('name').notNull(),
-  displayName: text('display_name'),
-  description: text('description'),
+  pointId: text('point_id').notNull(), // eg. "5ecacac2-3cc3-447a-b3b5-423e333031e6"
+  pointSubId: text('point_sub_id'), // eg. "energyNowW"
 
-  // Type and metrics
-  pointType: text('point_type').notNull(), // 'solar', 'battery', 'grid', 'load', 'hvac', etc.
-  deviceType: text('device_type'), // 'PvInverter', 'HybridPv', 'HeatPump', etc.
-  measurementTypes: text('measurement_types', { mode: 'json' }).notNull(), // ['power', 'energy', 'soc', 'temperature']
-  units: text('units', { mode: 'json' }), // {'power': 'W', 'energy': 'Wh', 'soc': '%'}
+  // default display name
+  defaultName: text('point_name').notNull(), // from device eg. "Battery"
 
-  // Status
-  status: text('status').notNull().default('active'), // 'active', 'disabled', 'removed'
-  lastSeenAt: integer('last_seen_at'), // Milliseconds
+  // user modifiable
+  subsystem: text('subsystem'), // eg. nullable, "solar", "battery", "location", "meter"
+  name: text('display_name').notNull(), // user settable, will generally be the same as pointName
 
-  // Configuration
-  pollingEnabled: integer('polling_enabled', { mode: 'boolean' }).notNull().default(true),
-  aggregationEnabled: integer('aggregation_enabled', { mode: 'boolean' }).notNull().default(true),
-
-  // Metadata
-  vendorMetadata: text('vendor_metadata', { mode: 'json' }),
-  createdAt: integer('created_at').notNull().default(sql`(unixepoch() * 1000)`),
-  updatedAt: integer('updated_at').notNull().default(sql`(unixepoch() * 1000)`),
+  // Type and unit
+  metricType: text('metric_type').notNull(), // eg. 'power', 'energy', 'soc'
+  metricUnit: text('metric_unit').notNull(), // eg. 'W', 'Wh', '%'
 }, (table) => ({
-  groupVendorUnique: uniqueIndex('pi_group_vendor_unique').on(table.groupId, table.vendorId),
-  groupIdx: index('pi_group_idx').on(table.groupId),
-  subGroupIdx: index('pi_sub_group_idx').on(table.subGroupId),
-  typeIdx: index('pi_type_idx').on(table.pointType),
-  statusIdx: index('pi_status_idx').on(table.status),
-  pollingIdx: index('pi_polling_idx').on(table.pollingEnabled),
+  systemPointUnique: uniqueIndex('pi_system_point_unique').on(table.systemId, table.pointId, table.pointSubId),
+  systemIdx: index('pi_system_idx').on(table.systemId),
+  subsystemIdx: index('pi_subsystem_idx').on(table.subsystem),
+  metricTypeIdx: index('pi_metric_type_idx').on(table.metricType),
 }));
-
-// Measurement Sessions table - tracks API fetch sessions
-// Note: measurementSessions table removed - using the main sessions table instead
 
 // Point Readings table - stores time-series data
 export const pointReadings = sqliteTable('point_readings', {
@@ -90,29 +41,13 @@ export const pointReadings = sqliteTable('point_readings', {
   // Timestamps (milliseconds for sub-second precision)
   measurementTime: integer('measurement_time').notNull(), // When device recorded
   receivedTime: integer('received_time').notNull(), // When we fetched
-  delayMs: integer('delay_ms'), // receivedTime - measurementTime
 
   // Core measurements (flexible schema)
-  powerW: real('power_w'), // Current power in Watts
-  energyWh: real('energy_wh'), // Cumulative energy in Watt-hours
-  energyTodayWh: real('energy_today_wh'), // Today's energy
-  energyYesterdayWh: real('energy_yesterday_wh'), // Yesterday's energy
-
-  // Battery-specific
-  batterySOC: real('battery_soc'), // State of charge percentage
-  batteryVoltage: real('battery_voltage'), // Voltage
-  batteryCurrent: real('battery_current'), // Current
-  batteryTemperature: real('battery_temperature'), // Temperature
-
-  // Additional metrics (JSON for flexibility)
-  additionalMetrics: text('additional_metrics', { mode: 'json' }), // Any other vendor-specific metrics
+  value: real('value'), // Current value (e.g., power in Watts)
 
   // Quality & status
-  deviceStatus: text('device_status'), // 'online', 'offline', 'fault'
-  dataQuality: text('data_quality'), // 'good', 'estimated', 'interpolated'
-
-  // Raw data preservation
-  rawData: text('raw_data', { mode: 'json' }), // Original vendor response
+  error: text('error'), // Error message if any
+  dataQuality: text('data_quality').notNull().default('good'), // 'good', 'error', 'estimated', 'interpolated'
 }, (table) => ({
   pointTimeUnique: uniqueIndex('pr_point_time_unique').on(table.pointId, table.measurementTime),
   pointIdx: index('pr_point_idx').on(table.pointId),
@@ -163,41 +98,12 @@ export const pointReadingsAgg5m = sqliteTable('point_readings_agg_5m', {
   pointTimeIdx: index('pr5m_point_time_idx').on(table.pointId, table.intervalStart),
 }));
 
-// Note: pointGroupsRelations removed - relationships now through systems table
-
-export const pointSubGroupsRelations = {
-  group: {
-    relation: 'many-to-one',
-    to: systems,
-    references: [(systems as any).id],
-  },
-  parent: {
-    relation: 'many-to-one',
-    to: pointSubGroups,
-    references: [(pointSubGroups as any).id],
-  },
-  children: {
-    relation: 'one-to-many',
-    to: pointSubGroups,
-    references: [(pointSubGroups as any).parentSubGroupId],
-  },
-  points: {
-    relation: 'one-to-many',
-    to: pointInfo,
-    references: [(pointInfo as any).subGroupId],
-  },
-};
-
+// Relations for point info
 export const pointInfoRelations = {
-  group: {
+  system: {
     relation: 'many-to-one',
     to: systems,
     references: [(systems as any).id],
-  },
-  subGroup: {
-    relation: 'many-to-one',
-    to: pointSubGroups,
-    references: [(pointSubGroups as any).id],
   },
   readings: {
     relation: 'one-to-many',

@@ -2,14 +2,11 @@ import { BaseVendorAdapter } from '../base-adapter';
 import type { SystemForVendor, PollingResult, TestConnectionResult, CredentialField } from '../types';
 import type { CommonPollingData } from '@/lib/types/common';
 import type { LatestReadingData } from '@/lib/types/readings';
-import { db } from '@/lib/db';
-import {
-  pointInfo,
-  pointReadings,
-  pointSubGroups
-} from '@/lib/db/schema-monitoring-points';
 import { getNextMinuteBoundary } from '@/lib/date-utils';
-import { eq, desc } from 'drizzle-orm';
+import {
+  insertPointReadingsBatch,
+  type PointMetadata
+} from '@/lib/monitoring-points-manager';
 
 interface MondoCredentials {
   email: string;
@@ -39,6 +36,7 @@ export class MondoAdapter extends BaseVendorAdapter {
   readonly displayName = 'Mondo Power';
   readonly dataSource = 'poll' as const;
   readonly supportsAddSystem = true;
+  readonly dataStore = 'point_readings' as const; // Uses monitoring points
 
   /**
    * Override getLastReading - returns null for now
@@ -216,59 +214,66 @@ export class MondoAdapter extends BaseVendorAdapter {
         const subcircuitData = await subcircuitResponse.json();
         const rows: MondoMonitoringPoint[] = subcircuitData.rows || [];
 
-        // Get all points for this system
-        const points = await db.select()
-          .from(pointInfo)
-          .where(eq(pointInfo.groupId, systemId));
-
-        const pointMap = new Map(points.map(p => [p.vendorId, p]));
         const measurementTime = Date.now();
         const receivedTime = Date.now();
+        const readingsToInsert = [];
 
         // Process each monitoring point
         for (const row of rows) {
-          const point = pointMap.get(row.monitoringPointId);
-
-          if (!point) {
-            console.warn(`[Mondo] Unknown monitoring point: ${row.monitoringPointId}`);
-            continue;
+          // Determine subsystem based on loadType
+          let subsystem: string | null = null;
+          if (row.loadType === 'PvInverter' || row.loadType === 'HybridPv') {
+            subsystem = 'solar';
+          } else if (row.loadType === 'HybridBattery') {
+            subsystem = 'battery';
+          } else if (row.loadType === 'GateMeter') {
+            subsystem = 'grid';
+          } else if (row.loadType === 'Hybridinverter') {
+            subsystem = 'inverter';
+          } else if (row.loadType === 'Other') {
+            subsystem = 'load';
           }
 
-          // Insert reading
-          await db.insert(pointReadings)
-            .values({
-              pointId: point.id,
-              sessionId: null,  // No longer using measurement_sessions
-              measurementTime,
-              receivedTime,
-              delayMs: receivedTime - measurementTime,
-              powerW: row.energyNowW,
-              energyWh: row.totalEnergyWh,
-              energyTodayWh: row.totalEnergyTodayWh || null,
-              energyYesterdayWh: row.totalEnergyYesterdayWh || null,
-              deviceStatus: 'online',
-              dataQuality: 'good',
-              rawData: row
-            })
-            .onConflictDoUpdate({
-              target: [pointReadings.pointId, pointReadings.measurementTime],
-              set: {
-                powerW: row.energyNowW,
-                energyWh: row.totalEnergyWh,
-                energyTodayWh: row.totalEnergyTodayWh || null,
-                energyYesterdayWh: row.totalEnergyYesterdayWh || null,
-                receivedTime,
-                rawData: row
-              }
-            });
+          // Add power reading
+          readingsToInsert.push({
+            pointMetadata: {
+              pointId: row.monitoringPointId,
+              pointSubId: 'energyNowW',
+              defaultName: row.monitoringPointName,
+              subsystem,
+              metricType: 'power',
+              metricUnit: 'W'
+            },
+            value: row.energyNowW,
+            measurementTime,
+            receivedTime,
+            dataQuality: 'good' as const,
+            sessionId: null,
+            error: null
+          });
 
-          // Update point's last seen time
-          await db.update(pointInfo)
-            .set({ lastSeenAt: receivedTime })
-            .where(eq(pointInfo.id, point.id));
-
-          recordsProcessed++;
+          // Add energy reading
+          readingsToInsert.push({
+            pointMetadata: {
+              pointId: row.monitoringPointId,
+              pointSubId: 'totalEnergyWh',
+              defaultName: row.monitoringPointName,
+              subsystem,
+              metricType: 'energy',
+              metricUnit: 'Wh'
+            },
+            value: row.totalEnergyWh,
+            measurementTime,
+            receivedTime,
+            dataQuality: 'good' as const,
+            sessionId: null,
+            error: null
+          });
         }
+
+        // Batch insert all readings - this will automatically ensure point_info entries exist
+        await insertPointReadingsBatch(systemId, readingsToInsert);
+        recordsProcessed = readingsToInsert.length;
 
         console.log(`[Mondo] Poll complete: ${recordsProcessed} records processed`);
 
@@ -276,9 +281,10 @@ export class MondoAdapter extends BaseVendorAdapter {
         const nextPollTime = getNextMinuteBoundary(5, system.timezoneOffsetMin); // 5-minute interval
 
         return this.polled(
-          {} as CommonPollingData, // Not used for monitoring points
+          null as any, // Mondo doesn't use the common readings table
           recordsProcessed,
-          nextPollTime
+          nextPollTime,
+          subcircuitData // Pass raw vendor response for session storage
         );
 
       } catch (error) {

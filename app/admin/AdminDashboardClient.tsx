@@ -9,6 +9,7 @@ import PollingStatsModal from '@/components/PollingStatsModal'
 import TestConnectionModal from '@/components/TestConnectionModal'
 import SystemSettingsDialog from '@/components/SystemSettingsDialog'
 import PollNowModal from '@/components/PollNowModal'
+import ViewDataModal from '@/components/ViewDataModal'
 import { formatDateTime } from '@/lib/fe-date-format'
 
 interface SystemInfo {
@@ -34,6 +35,7 @@ interface SystemData {
     siteId: string  // Vendor's identifier
     userId: string | null  // Vendor-specific user ID
     supportsPolling?: boolean
+    dataStore?: 'readings' | 'point_readings'
   }
   status: 'active' | 'disabled' | 'removed'  // System status
   location?: any  // Location data
@@ -111,6 +113,17 @@ export default function AdminDashboardClient() {
     displayName: null,
     vendorType: null
   })
+  const [viewDataModal, setViewDataModal] = useState<{
+    isOpen: boolean
+    systemId: number | null
+    systemName: string | null
+    vendorType: string | null
+  }>({
+    isOpen: false,
+    systemId: null,
+    systemName: null,
+    vendorType: null
+  })
 
   const openTestModal = (system: SystemData) => {
     setTestModal({
@@ -153,7 +166,8 @@ export default function AdminDashboardClient() {
     return testModal.isOpen ||
            pollingStatsModal.isOpen ||
            settingsModal.isOpen ||
-           pollNowModal.isOpen;
+           pollNowModal.isOpen ||
+           viewDataModal.isOpen;
   }
 
   const fetchSystems = async () => {
@@ -290,7 +304,7 @@ export default function AdminDashboardClient() {
         console.log('[AdminDashboard] Resumed auto-refresh - modals closed')
       }
     }
-  }, [testModal.isOpen, pollingStatsModal.isOpen, settingsModal.isOpen, pollNowModal.isOpen])
+  }, [testModal.isOpen, pollingStatsModal.isOpen, settingsModal.isOpen, pollNowModal.isOpen, viewDataModal.isOpen])
 
 
   if (loading) {
@@ -386,6 +400,7 @@ export default function AdminDashboardClient() {
                         status={system.status}
                         vendorType={system.vendor.type}
                         supportsPolling={system.vendor.supportsPolling}
+                        dataStore={system.vendor.dataStore}
                         onTest={() => openTestModal(system)}
                         onPollNow={() => openPollNowModal(system)}
                         onStatusChange={(newStatus) => updateSystemStatus(system.systemId, newStatus)}
@@ -405,6 +420,14 @@ export default function AdminDashboardClient() {
                             system: system
                           })
                         }}
+                        onViewData={system.vendor.dataStore === 'point_readings' ? () => {
+                          setViewDataModal({
+                            isOpen: true,
+                            systemId: system.systemId,
+                            systemName: system.displayName,
+                            vendorType: system.vendor.type
+                          })
+                        } : undefined}
                       />
                     </td>
                     <td className="px-1.5 md:px-1.5 py-4 whitespace-nowrap align-top">
@@ -611,6 +634,17 @@ export default function AdminDashboardClient() {
           displayName={pollNowModal.displayName}
           vendorType={pollNowModal.vendorType}
           onClose={closePollNowModal}
+        />
+      )}
+
+      {/* View Data Modal */}
+      {viewDataModal.isOpen && viewDataModal.systemId && viewDataModal.systemName && (
+        <ViewDataModal
+          isOpen={viewDataModal.isOpen}
+          onClose={() => setViewDataModal({ isOpen: false, systemId: null, systemName: null, vendorType: null })}
+          systemId={viewDataModal.systemId}
+          systemName={viewDataModal.systemName}
+          vendorType={viewDataModal.vendorType || undefined}
         />
       )}
       </>

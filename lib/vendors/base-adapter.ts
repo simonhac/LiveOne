@@ -14,6 +14,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   abstract readonly vendorType: string;
   abstract readonly displayName: string;
   abstract readonly dataSource: 'poll' | 'push' | 'combined';
+  readonly dataStore: 'readings' | 'point_readings' = 'readings'; // Default to readings table
   
   /**
    * Poll for new data. Only applicable for poll-based systems.

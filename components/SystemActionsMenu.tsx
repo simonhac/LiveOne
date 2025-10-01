@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { MoreVertical, Play, Pause, Trash2, FlaskConical, BarChart3, Settings, RefreshCw } from 'lucide-react'
+import { MoreVertical, Play, Pause, Trash2, FlaskConical, BarChart3, Settings, RefreshCw, Database } from 'lucide-react'
 
 interface SystemActionsMenuProps {
   systemId: number
@@ -10,11 +10,13 @@ interface SystemActionsMenuProps {
   status: 'active' | 'disabled' | 'removed'
   vendorType?: string
   supportsPolling?: boolean
+  dataStore?: 'readings' | 'point_readings'
   onTest: () => void
   onPollNow?: () => void
   onStatusChange: (status: 'active' | 'disabled' | 'removed') => void
   onPollingStats?: () => void
   onSettings?: () => void
+  onViewData?: () => void
 }
 
 export default function SystemActionsMenu({
@@ -23,11 +25,13 @@ export default function SystemActionsMenu({
   status,
   vendorType,
   supportsPolling = false,
+  dataStore,
   onTest,
   onPollNow,
   onStatusChange,
   onPollingStats,
-  onSettings
+  onSettings,
+  onViewData
 }: SystemActionsMenuProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 })
@@ -99,6 +103,16 @@ export default function SystemActionsMenu({
             >
               <RefreshCw className="w-4 h-4" />
               Poll Now
+            </button>
+          )}
+          {/* View Data - Only show for systems with point_readings */}
+          {dataStore === 'point_readings' && onViewData && (
+            <button
+              onClick={() => handleMenuClick(onViewData)}
+              className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+            >
+              <Database className="w-4 h-4" />
+              View Data
             </button>
           )}
           {onPollingStats && (

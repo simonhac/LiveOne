@@ -86,6 +86,7 @@ export async function GET(request: NextRequest) {
           siteId: system.vendorSiteId,  // Vendor's identifier
           userId: null,  // Don't fetch credentials to reduce API calls
           supportsPolling: VendorRegistry.supportsPolling(system.vendorType),
+          dataStore: VendorRegistry.getDataStore(system.vendorType),
         },
         location: system.location,  // Location data (address, city/state/country, or lat/lon)
         status: system.status,  // System status: active, disabled, or removed

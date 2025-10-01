@@ -95,6 +95,18 @@ export class VendorRegistry {
   }
 
   /**
+   * Get the data store type for a vendor
+   * @param vendorType The vendor type to check
+   * @returns 'readings' or 'point_readings'
+   */
+  static getDataStore(vendorType: string): 'readings' | 'point_readings' {
+    this.initialize();
+    const adapter = this.adapters.get(vendorType.toLowerCase());
+    if (!adapter) return 'readings'; // Default to readings if adapter not found
+    return adapter.dataStore || 'readings'; // Default to readings if not specified
+  }
+
+  /**
    * Get an adapter for a specific system by its ID
    * Uses SystemsManager to look up the system's vendor type
    */

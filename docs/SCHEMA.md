@@ -246,6 +246,66 @@ Manages many-to-many relationships between users and systems, controlling access
 - **admin**: Can view and manage the system
 - **viewer**: Read-only access to system data
 
+### 7. `point_info` - Monitoring Points Configuration
+
+Stores metadata for individual monitoring points within multi-point energy systems (e.g., Mondo Power systems with multiple devices).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PRIMARY KEY | Auto-incrementing unique identifier |
+| `system_id` | INTEGER NOT NULL | Foreign key to systems.id |
+| `point_id` | TEXT NOT NULL | Vendor's point identifier (e.g., 'DEV123') |
+| `point_sub_id` | TEXT | Sub-identifier for metric type (e.g., 'power', 'energy') |
+| `point_name` | TEXT NOT NULL | Default point name from vendor |
+| `display_name` | TEXT NOT NULL | User-customizable display name |
+| `subsystem` | TEXT | Energy subsystem ('solar', 'battery', 'grid', 'load', 'inverter') |
+| `metric_type` | TEXT NOT NULL | Type of measurement ('power', 'energy') |
+| `metric_unit` | TEXT NOT NULL | Unit of measurement ('W', 'Wh') |
+| `created_at` | INTEGER (timestamp) | Creation timestamp |
+| `updated_at` | INTEGER (timestamp) | Last update timestamp |
+
+**Indexes:**
+- `point_info_system_idx` on (`system_id`)
+- `point_info_unique` UNIQUE on (`system_id`, `point_id`, `point_sub_id`)
+
+**Constraints:**
+- Foreign key to `systems(id)` with CASCADE delete
+
+**Notes:**
+- Points are lazily created when first data is received
+- Each device typically has multiple points (e.g., power and energy)
+- The `subsystem` field enables color-coding in the UI
+
+### 8. `point_readings` - Monitoring Points Time-Series Data
+
+Stores time-series measurements from individual monitoring points.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PRIMARY KEY | Auto-incrementing unique identifier |
+| `point_id` | INTEGER NOT NULL | Foreign key to point_info.id |
+| `measurement_time` | INTEGER NOT NULL | Unix timestamp (ms) when measurement was taken |
+| `received_time` | INTEGER NOT NULL | Unix timestamp (ms) when data was received |
+| `value` | REAL | Measurement value (null if error) |
+| `error` | TEXT | Error message if reading failed |
+| `data_quality` | TEXT NOT NULL | Quality indicator ('good', 'error', 'estimated', 'interpolated') |
+| `session_id` | INTEGER | Foreign key to sessions.id for tracking |
+
+**Indexes:**
+- `point_readings_point_idx` on (`point_id`)
+- `point_readings_time_idx` on (`measurement_time`)
+- `point_readings_composite_idx` on (`point_id`, `measurement_time` DESC)
+
+**Constraints:**
+- Foreign key to `point_info(id)` with CASCADE delete
+- Foreign key to `sessions(id)` with SET NULL on delete
+
+**Notes:**
+- Data is stored at original resolution (typically 1-minute intervals)
+- The API returns pivoted data with one row per timestamp
+- Values are stored in base units (W for power, Wh for energy)
+- Display conversion: Power shown in kW, Energy shown in MWh
+
 ## Data Retention
 
 Currently, no automatic retention policies are implemented:
