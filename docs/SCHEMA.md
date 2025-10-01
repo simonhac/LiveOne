@@ -301,10 +301,7 @@ Stores time-series measurements from individual monitoring points.
 - Foreign key to `sessions(id)` with SET NULL on delete
 
 **Notes:**
-- Data is stored at original resolution (typically 1-minute intervals)
 - The API returns pivoted data with one row per timestamp
-- Values are stored in base units (W for power, Wh for energy)
-- Display conversion: Power shown in kW, Energy shown in MWh
 
 ## Data Retention
 
