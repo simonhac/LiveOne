@@ -107,8 +107,8 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       const evaluation = this.evaluateSchedule(system, lastPollTime, now);
 
       if (!evaluation.shouldPoll) {
-        // Convert nextPollTime to ZonedDateTime
-        const nextPoll = fromDate(evaluation.nextPollTime, 'UTC');
+        // Convert nextPollTime to ZonedDateTime in AEST
+        const nextPoll = fromDate(evaluation.nextPollTime, 'Australia/Brisbane');
         return this.skipped(evaluation.reason, nextPoll);
       }
     }

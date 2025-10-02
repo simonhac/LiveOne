@@ -103,7 +103,9 @@ export async function GET(request: NextRequest) {
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
           status: 'error',
-          error: `Unknown vendor type: ${system.vendorType}`
+          error: `Unknown vendor type: ${system.vendorType}`,
+          lastPoll: system.pollingStatus?.lastPollTime ? formatTimeAEST(fromDate(system.pollingStatus.lastPollTime, 'Australia/Brisbane')) : null,
+          nextPoll: undefined
         });
         continue;
       }
@@ -123,7 +125,9 @@ export async function GET(request: NextRequest) {
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
           status: 'error',
-          error: 'No owner configured'
+          error: 'No owner configured',
+          lastPoll: system.pollingStatus?.lastPollTime ? formatTimeAEST(fromDate(system.pollingStatus.lastPollTime, 'Australia/Brisbane')) : null,
+          nextPoll: undefined
         });
         continue;
       }
@@ -141,7 +145,9 @@ export async function GET(request: NextRequest) {
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
           status: 'error',
-          error: 'No credentials found'
+          error: 'No credentials found',
+          lastPoll: system.pollingStatus?.lastPollTime ? formatTimeAEST(fromDate(system.pollingStatus.lastPollTime, 'Australia/Brisbane')) : null,
+          nextPoll: undefined
         });
         continue;
       }
@@ -231,8 +237,9 @@ export async function GET(request: NextRequest) {
               vendorType: system.vendorType,
               status: 'polled',
               recordsUpserted: result.recordsProcessed,
-              nextPoll: result.nextPoll ? formatTimeAEST(result.nextPoll) : undefined,
-              ...(includeRaw && result.rawResponse ? { rawResponse: result.rawResponse } : {})
+              ...(includeRaw && result.rawResponse ? { rawResponse: result.rawResponse } : {}),
+              lastPoll: formatTimeAEST(fromDate(now, 'Australia/Brisbane')),
+              nextPoll: result.nextPoll ? formatTimeAEST(result.nextPoll) : undefined
             });
 
             console.log(`[Cron] ${formatSystemId(system)} - Success (${result.recordsProcessed} records)`);
@@ -245,6 +252,7 @@ export async function GET(request: NextRequest) {
               vendorType: system.vendorType,
               status: 'skipped',
               skipReason: result.reason,
+              lastPoll: system.pollingStatus?.lastPollTime ? formatTimeAEST(fromDate(system.pollingStatus.lastPollTime, 'Australia/Brisbane')) : null,
               nextPoll: result.nextPoll ? formatTimeAEST(result.nextPoll) : undefined
             });
             console.log(`[Cron] ${formatSystemId(system)} - Skipped: ${result.reason}`);
@@ -273,7 +281,9 @@ export async function GET(request: NextRequest) {
               displayName: system.displayName || undefined,
               vendorType: system.vendorType,
               status: 'error',
-              error: result.error
+              error: result.error,
+              lastPoll: system.pollingStatus?.lastPollTime ? formatTimeAEST(fromDate(system.pollingStatus.lastPollTime, 'Australia/Brisbane')) : null,
+              nextPoll: undefined
             });
             console.error(`[Cron] ${formatSystemId(system)} - Error: ${result.error}`);
             break;
@@ -303,7 +313,9 @@ export async function GET(request: NextRequest) {
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
           status: 'error',
-          error: error instanceof Error ? error.message : 'Unknown error'
+          error: error instanceof Error ? error.message : 'Unknown error',
+          lastPoll: system.pollingStatus?.lastPollTime ? formatTimeAEST(fromDate(system.pollingStatus.lastPollTime, 'Australia/Brisbane')) : null,
+          nextPoll: undefined
         });
       }
     }

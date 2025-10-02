@@ -262,7 +262,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
 
       // Calculate next poll time
       const evaluation = this.evaluateSchedule(system, system.pollingStatus?.lastPollTime || null, now);
-      const nextPoll = fromDate(evaluation.nextPollTime, 'UTC');
+      const nextPoll = fromDate(evaluation.nextPollTime, 'Australia/Brisbane');
 
       // Note: Enphase returns multiple records (5-minute intervals)
       // The data is already stored by fetchEnphaseDay, so we don't return it here
