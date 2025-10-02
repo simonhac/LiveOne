@@ -1,5 +1,6 @@
 import { BaseVendorAdapter } from '../base-adapter';
-import type { SystemForVendor, PollingResult, TestConnectionResult, CredentialField } from '../types';
+import type { PollingResult, TestConnectionResult, CredentialField } from '../types';
+import type { SystemWithPolling } from '@/lib/systems-manager';
 import type { CommonPollingData } from '@/lib/types/common';
 import type { LatestReadingData } from '@/lib/types/readings';
 import { getNextMinuteBoundary } from '@/lib/date-utils';
@@ -37,6 +38,10 @@ export class MondoAdapter extends BaseVendorAdapter {
   readonly dataSource = 'poll' as const;
   readonly supportsAddSystem = true;
   readonly dataStore = 'point_readings' as const; // Uses monitoring points
+
+  // Mondo polls every 5 minutes
+  protected pollIntervalMinutes = 5;
+  protected toleranceSeconds = 30;
 
   /**
    * Override getLastReading - returns null for now
@@ -180,7 +185,11 @@ export class MondoAdapter extends BaseVendorAdapter {
     }
   }
 
-  async poll(system: SystemForVendor, credentials: MondoCredentials): Promise<PollingResult> {
+
+  /**
+   * Perform the actual polling
+   */
+  protected async doPoll(system: SystemWithPolling, credentials: MondoCredentials, now: Date): Promise<PollingResult> {
     try {
       console.log(`[Mondo] Starting poll for system ${system.id}`);
 
@@ -345,7 +354,7 @@ export class MondoAdapter extends BaseVendorAdapter {
    * Test connection for an existing system with monitoring point group ID
    */
   private async testExistingSystem(
-    system: SystemForVendor,
+    system: SystemWithPolling,
     accessToken: string
   ): Promise<TestConnectionResult> {
     console.log(`[Mondo] Testing existing system ${system.id} with monitoring point group ${system.vendorSiteId}`);
@@ -538,7 +547,7 @@ export class MondoAdapter extends BaseVendorAdapter {
     };
   }
 
-  async testConnection(system: SystemForVendor, credentials: MondoCredentials): Promise<TestConnectionResult> {
+  async testConnection(system: SystemWithPolling, credentials: MondoCredentials): Promise<TestConnectionResult> {
     try {
       // Authenticate
       const accessToken = await this.authenticate(credentials);

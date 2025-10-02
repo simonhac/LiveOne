@@ -1,25 +1,33 @@
-import { BaseVendorAdapter } from '../base-adapter';
-import type { SystemForVendor, PollingResult, TestConnectionResult } from '../types';
+import { BaseVendorAdapter, type ScheduleEvaluation } from '../base-adapter';
+import type { PollingResult, TestConnectionResult } from '../types';
+import type { SystemWithPolling } from '@/lib/systems-manager';
 import type { CommonPollingData } from '@/lib/types/common';
 import type { LatestReadingData } from '@/lib/types/readings';
 import { db } from '@/lib/db';
 import { readingsAgg5m } from '@/lib/db/schema';
 import { eq, desc } from 'drizzle-orm';
-import { checkEnphasePollingSchedule } from '@/lib/vendors/enphase/enphase-cron';
 import { checkAndFetchYesterdayIfNeeded, fetchEnphaseDay } from '@/lib/vendors/enphase/enphase-history';
-import { getZonedNow } from '@/lib/date-utils';
+import { getZonedNow, formatJustTime_fromJSDate, getNextMinuteBoundary } from '@/lib/date-utils';
 import { fromDate } from '@internationalized/date';
 import { getPollingStatus } from '@/lib/polling-utils';
+import * as SunCalc from 'suncalc';
 
 /**
  * Vendor adapter for Enphase systems
  * Polls every 30 minutes during daylight hours due to API rate limits
  */
+// Configuration constants
+const ENPHASE_POLLING_INTERVAL_MINUTES = 60; // How often to poll during daylight hours
+
 export class EnphaseAdapter extends BaseVendorAdapter {
   readonly vendorType = 'enphase';
   readonly displayName = 'Enphase';
   readonly dataSource = 'poll' as const;
   readonly supportsAddSystem = false;  // Enphase uses OAuth flow, not supported in Add System dialog yet
+
+  // Enphase has custom schedule logic - polls every 60 minutes during daylight hours
+  protected pollIntervalMinutes = 60;
+  protected toleranceSeconds = 60;
 
   /**
    * Override getLastReading to read from readings_agg_5m table
@@ -69,33 +77,159 @@ export class EnphaseAdapter extends BaseVendorAdapter {
     };
   }
 
-  
-  async poll(system: SystemForVendor, credentials: any, force?: boolean): Promise<PollingResult> {
+
+  /**
+   * Override evaluateSchedule for Enphase-specific solar-aware logic
+   * Poll every 60 minutes from 30 mins after dawn to 30 mins after dusk,
+   * then hourly from 01:00-05:00 for yesterday's data
+   */
+  protected evaluateSchedule(system: SystemWithPolling, lastPollTime: Date | null, now: Date): ScheduleEvaluation {
+
+    // Always poll if never polled before
+    if (!lastPollTime) {
+      console.log(`[Enphase] Never polled, polling now`);
+      const nextPollTime = new Date(now.getTime() + 60 * 60 * 1000); // Next hour
+      return {
+        shouldPoll: true,
+        reason: 'Never polled',
+        nextPollTime
+      };
+    }
+
+    // Get location for sunrise/sunset calculation
+    let lat = -37.8136; // Melbourne default
+    let lon = 144.9631;
+
+    if (system.location) {
+      try {
+        const loc = typeof system.location === 'string'
+          ? JSON.parse(system.location)
+          : system.location;
+        if (loc.lat && loc.lon) {
+          lat = loc.lat;
+          lon = loc.lon;
+        }
+      } catch (e) {
+        console.log(`[Enphase] Using default location`);
+      }
+    }
+
+    // Calculate local time for the system
+    const utcTime = now.getTime();
+    const localOffset = system.timezoneOffsetMin * 60 * 1000;
+    const localTime = new Date(utcTime + localOffset);
+    const localHour = localTime.getUTCHours();
+    const localMinutes = localTime.getUTCMinutes();
+    const localTimeMinutes = localHour * 60 + localMinutes;
+
+    // Calculate sun times for today
+    const sunTimes = SunCalc.getTimes(now, lat, lon);
+    const dawnUTC = sunTimes.dawn;
+    const duskUTC = sunTimes.dusk;
+
+    // Convert to local time
+    const dawnLocalTime = new Date(dawnUTC.getTime() + localOffset);
+    const duskLocalTime = new Date(duskUTC.getTime() + localOffset);
+
+    let dawnMinutes = dawnLocalTime.getUTCHours() * 60 + dawnLocalTime.getUTCMinutes();
+    let duskMinutes = duskLocalTime.getUTCHours() * 60 + duskLocalTime.getUTCMinutes();
+
+    if (duskMinutes < dawnMinutes) {
+      duskMinutes += 24 * 60;
+    }
+
+    // Active hours: first 30-min boundary after dawn to 30 mins after dusk
+    const activeStart = Math.ceil(dawnMinutes / 30) * 30;
+    const activeEnd = duskMinutes + 30;
+
+    // Check if we're in active solar hours
+    if (localTimeMinutes >= activeStart && localTimeMinutes <= activeEnd) {
+      const msSinceLastPoll = now.getTime() - lastPollTime.getTime();
+      const targetIntervalMs = ENPHASE_POLLING_INTERVAL_MINUTES * 60 * 1000;
+      const toleranceMs = this.toleranceSeconds * 1000;
+
+      if (msSinceLastPoll >= (targetIntervalMs - toleranceMs)) {
+        const nextPollTime = new Date(now.getTime() + targetIntervalMs);
+        return {
+          shouldPoll: true,
+          reason: 'Solar hours polling interval reached',
+          nextPollTime
+        };
+      }
+
+      const nextPollTime = new Date(lastPollTime.getTime() + targetIntervalMs);
+      return {
+        shouldPoll: false,
+        reason: `Active solar hours (next poll at ${formatJustTime_fromJSDate(nextPollTime, system.timezoneOffsetMin)})`,
+        nextPollTime
+      };
+    }
+
+    // Night-time hourly check (01:00-05:00)
+    if (localHour >= 1 && localHour <= 5) {
+      const msSinceLastPoll = now.getTime() - lastPollTime.getTime();
+      const targetIntervalMs = 60 * 60 * 1000; // Hourly
+      const toleranceMs = this.toleranceSeconds * 1000;
+
+      if (msSinceLastPoll >= (targetIntervalMs - toleranceMs)) {
+        const nextPollTime = new Date(now.getTime() + targetIntervalMs);
+        return {
+          shouldPoll: true,
+          reason: 'Night-time hourly check',
+          nextPollTime
+        };
+      }
+
+      const nextPollTime = new Date(lastPollTime.getTime() + targetIntervalMs);
+      return {
+        shouldPoll: false,
+        reason: `Night-time check period (next at ${formatJustTime_fromJSDate(nextPollTime, system.timezoneOffsetMin)})`,
+        nextPollTime
+      };
+    }
+
+    // Outside active hours - calculate next poll time
+    let nextPollTime: Date;
+    let reason: string;
+
+    if (localTimeMinutes < activeStart) {
+      // Before dawn - next poll at first 30-min boundary after dawn
+      const minutesUntilNext = activeStart - localTimeMinutes;
+      nextPollTime = new Date(now.getTime() + minutesUntilNext * 60 * 1000);
+      const hoursUntil = Math.floor(minutesUntilNext / 60);
+      const minsUntil = minutesUntilNext % 60;
+      reason = hoursUntil > 0
+        ? `Before dawn (next poll in ${hoursUntil}h ${minsUntil}m)`
+        : `Before dawn (next poll in ${minsUntil}m)`;
+    } else {
+      // After dusk - next poll is tomorrow at 01:00 or dawn+30min, whichever is earlier
+      const tomorrow1AM = 25 * 60; // 01:00 tomorrow
+      const tomorrowDawn = activeStart + 24 * 60;
+      const nextPollMinutes = Math.min(tomorrow1AM, tomorrowDawn);
+      const minutesUntilNext = nextPollMinutes - localTimeMinutes;
+      nextPollTime = new Date(now.getTime() + minutesUntilNext * 60 * 1000);
+      const hoursUntil = Math.floor(minutesUntilNext / 60);
+      const minsUntil = minutesUntilNext % 60;
+      reason = hoursUntil > 0
+        ? `After dusk (next poll in ${hoursUntil}h ${minsUntil}m)`
+        : `After dusk (next poll in ${minsUntil}m)`;
+    }
+
+    return {
+      shouldPoll: false,
+      reason,
+      nextPollTime
+    };
+  }
+
+  /**
+   * Perform the actual polling
+   */
+  protected async doPoll(system: SystemWithPolling, credentials: any, now: Date): Promise<PollingResult> {
     const startTime = Date.now();
 
     try {
-      // Always check polling schedule to get nextPoll time
-      const status = await getPollingStatus(system.id);
-      const lastPollTime = status?.lastPollTime || null;
-
-      const scheduleCheck = checkEnphasePollingSchedule(
-        system as any, // System has ownerClerkUserId
-        lastPollTime
-      );
-
-      // If not forcing and schedule says don't poll, skip
-      if (!force && !scheduleCheck.shouldPollNow) {
-        return this.skipped(
-          scheduleCheck.skipReason || 'Outside polling schedule',
-          scheduleCheck.nextPoll
-        );
-      }
-      
-      if (force) {
-        console.log(`[Enphase] Force polling system ${system.id} (${system.displayName}) - bypassing schedule`);
-      } else {
-        console.log(`[Enphase] Polling system ${system.id} (${system.displayName})`);
-      }
+      console.log(`[Enphase] Polling system ${system.id} (${system.displayName})`);
 
       // Determine what to fetch
       let result;
@@ -126,13 +260,16 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       // Get raw response if available
       const rawResponse = 'rawResponse' in result ? result.rawResponse : undefined;
 
+      // Calculate next poll time
+      const evaluation = this.evaluateSchedule(system, system.pollingStatus?.lastPollTime || null, now);
+      const nextPoll = fromDate(evaluation.nextPollTime, 'UTC');
+
       // Note: Enphase returns multiple records (5-minute intervals)
       // The data is already stored by fetchEnphaseDay, so we don't return it here
-      // Use nextPoll from scheduleCheck which follows the proper schedule algorithm
       return this.polled(
         [], // Data already stored by fetchEnphaseDay
         recordsUpserted,
-        scheduleCheck.nextPoll,
+        nextPoll,
         rawResponse
       );
       
@@ -144,7 +281,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
   
   // getMostRecentReadings removed - not used externally
   
-  async testConnection(system: SystemForVendor, credentials: any): Promise<TestConnectionResult> {
+  async testConnection(system: SystemWithPolling, credentials: any): Promise<TestConnectionResult> {
     try {
       console.log(`[Enphase] Testing connection for system ${system.id}`);
 

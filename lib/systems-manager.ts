@@ -1,8 +1,18 @@
 import { db } from '@/lib/db';
-import { systems, userSystems } from '@/lib/db/schema';
+import { systems, userSystems, pollingStatus } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
+import type { InferSelectModel } from 'drizzle-orm';
 import { isUserAdmin } from '@/lib/auth-utils';
 import { clerkClient } from '@clerk/nextjs/server';
+
+// Export the type for a system from the database
+export type System = InferSelectModel<typeof systems>;
+export type PollingStatus = InferSelectModel<typeof pollingStatus>;
+
+// Combined system with polling status
+export type SystemWithPolling = System & {
+  pollingStatus?: PollingStatus | null;
+};
 
 /**
  * Manages system data with caching to avoid repeated database queries
@@ -17,7 +27,7 @@ import { clerkClient } from '@clerk/nextjs/server';
  */
 export class SystemsManager {
   private static instance: SystemsManager | null = null;
-  private systemsMap: Map<number, any> = new Map();
+  private systemsMap: Map<number, SystemWithPolling> = new Map();
   private loadPromise: Promise<void>;
 
   private constructor() {
@@ -36,26 +46,33 @@ export class SystemsManager {
   }
   
   /**
-   * Load all systems into cache (called once on instantiation)
+   * Load all systems with polling status into cache (called once on instantiation)
    */
   private async loadSystems() {
-    const allSystems = await db
+    // Join systems with polling_status to get everything in one query
+    const allSystemsWithPolling = await db
       .select()
-      .from(systems);
-    
+      .from(systems)
+      .leftJoin(pollingStatus, eq(systems.id, pollingStatus.systemId));
+
     // Create map for O(1) lookups
-    for (const system of allSystems) {
-      this.systemsMap.set(system.id, system);
+    for (const row of allSystemsWithPolling) {
+      const systemWithPolling: SystemWithPolling = {
+        ...row.systems,
+        pollingStatus: row.polling_status
+      };
+      this.systemsMap.set(row.systems.id, systemWithPolling);
     }
-    
-    const activeCount = allSystems.filter(s => s.status === 'active').length;
-    console.log(`[SystemsManager] DB HIT: Loaded ${allSystems.length} systems (${activeCount} active) from database`);
+
+    const allSystemsArray = Array.from(this.systemsMap.values());
+    const activeCount = allSystemsArray.filter(s => s.status === 'active').length;
+    console.log(`[SystemsManager] DB HIT: Loaded ${allSystemsArray.length} systems (${activeCount} active) from database`);
   }
   
   /**
-   * Get system details by ID
+   * Get system details by ID (with polling status)
    */
-  async getSystem(systemId: number) {
+  async getSystem(systemId: number): Promise<SystemWithPolling | null> {
     await this.loadPromise;
     return this.systemsMap.get(systemId) || null;
   }
@@ -63,7 +80,7 @@ export class SystemsManager {
   /**
    * Get system by vendor site ID
    */
-  async getSystemByVendorSiteId(vendorSiteId: string) {
+  async getSystemByVendorSiteId(vendorSiteId: string): Promise<SystemWithPolling | null> {
     await this.loadPromise;
     for (const system of this.systemsMap.values()) {
       if (system.vendorSiteId === vendorSiteId) {
@@ -76,7 +93,7 @@ export class SystemsManager {
   /**
    * Get all active systems only
    */
-  async getActiveSystems() {
+  async getActiveSystems(): Promise<SystemWithPolling[]> {
     await this.loadPromise;
     return Array.from(this.systemsMap.values()).filter(s => s.status === 'active');
   }
@@ -84,7 +101,7 @@ export class SystemsManager {
   /**
    * Get all systems (including inactive)
    */
-  async getAllSystems() {
+  async getAllSystems(): Promise<SystemWithPolling[]> {
     await this.loadPromise;
     return Array.from(this.systemsMap.values());
   }
@@ -92,7 +109,7 @@ export class SystemsManager {
   /**
    * Get multiple systems by IDs
    */
-  async getSystems(systemIds: number[]) {
+  async getSystems(systemIds: number[]): Promise<SystemWithPolling[]> {
     await this.loadPromise;
     return systemIds
       .map(id => this.systemsMap.get(id))
@@ -127,7 +144,7 @@ export class SystemsManager {
     await this.loadPromise;
     const isAdmin = await isUserAdmin();
     
-    let visibleSystems: any[] = [];
+    let visibleSystems: SystemWithPolling[] = [];
     const allSystemsArray = Array.from(this.systemsMap.values());
     
     if (isAdmin) {

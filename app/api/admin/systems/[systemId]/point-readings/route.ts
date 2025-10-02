@@ -10,7 +10,7 @@ import { fromDate } from '@internationalized/date'
 
 export async function GET(
   request: Request,
-  { params }: { params: { systemId: string } }
+  { params }: { params: Promise<{ systemId: string }> }
 ) {
   try {
     const { userId } = await auth()
@@ -26,13 +26,14 @@ export async function GET(
       return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
     }
 
-    const systemId = parseInt(params.systemId)
+    const { systemId: systemIdStr } = await params
+    const systemId = parseInt(systemIdStr)
     const { searchParams } = new URL(request.url)
     const limit = Math.min(parseInt(searchParams.get('limit') || '200'), 1000)
 
     // Get system timezone offset
     const [system] = await db
-      .select({ timezoneOffsetMin: systems.timezoneOffsetMin })
+      .select()
       .from(systems)
       .where(eq(systems.id, systemId))
       .limit(1)

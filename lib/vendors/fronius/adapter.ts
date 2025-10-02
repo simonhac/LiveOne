@@ -1,5 +1,6 @@
 import { BaseVendorAdapter } from '../base-adapter';
-import type { SystemForVendor, PollingResult, TestConnectionResult } from '../types';
+import type { PollingResult, TestConnectionResult } from '../types';
+import type { SystemWithPolling } from '@/lib/systems-manager';
 import type { CommonPollingData } from '@/lib/types/common';
 import { db } from '@/lib/db';
 import { readings } from '@/lib/db/schema';

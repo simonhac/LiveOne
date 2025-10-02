@@ -7,7 +7,6 @@ import { formatSystemId } from '@/lib/system-utils';
 import { VendorRegistry } from '@/lib/vendors/registry';
 import { getSystemCredentials } from '@/lib/secure-credentials';
 import { sessionManager } from '@/lib/session-manager';
-import type { SystemForVendor } from '@/lib/vendors/types';
 import type { CommonPollingData } from '@/lib/types/common';
 import {
   updatePollingStatusSuccess,
@@ -134,7 +133,7 @@ export async function GET(request: NextRequest) {
         system.ownerClerkUserId,
         system.id
       );
-      
+
       if (!credentials && adapter.vendorType !== 'craighack' && adapter.vendorType !== 'fronius') {
         console.error(`[Cron] No credentials found for ${system.vendorType} system ${system.id}`);
         results.push({
@@ -148,27 +147,12 @@ export async function GET(request: NextRequest) {
       }
       
       try {
-        // Convert system to SystemForVendor type
-        const systemForVendor: SystemForVendor = {
-          id: system.id,
-          vendorType: system.vendorType,
-          vendorSiteId: system.vendorSiteId,
-          ownerClerkUserId: system.ownerClerkUserId,
-          displayName: system.displayName,
-          timezoneOffsetMin: system.timezoneOffsetMin,
-          isActive: system.isActive,
-          model: system.model,
-          serial: system.serial,
-          ratings: system.ratings,
-          solarSize: system.solarSize,
-          batterySize: system.batterySize
-        };
-
         // Start timing for session recording
         const sessionStart = new Date();
 
         // Let the adapter handle the polling logic
-        const result = await adapter.poll(systemForVendor, credentials, forceTest);
+        const now = new Date();
+        const result = await adapter.poll(system, credentials, forceTest, now);
 
         // Calculate duration
         const duration = Date.now() - sessionStart.getTime();
@@ -338,9 +322,13 @@ export async function GET(request: NextRequest) {
 
     console.log(`[Cron] Polling complete. success: ${successCount}, failed: ${failureCount}, skipped: ${skippedCount}`, resultsForLogging);
 
+    // Format timestamp using AEST
+    const nowZoned = fromDate(new Date(), 'Australia/Brisbane');
+    const timestamp = formatTimeAEST(nowZoned);
+
     return NextResponse.json({
       success: true,
-      timestamp: new Date().toISOString(),
+      timestamp,
       summary: {
         total: results.length,
         successful: successCount,

@@ -1,5 +1,6 @@
 import { BaseVendorAdapter } from '../base-adapter';
-import type { SystemForVendor, PollingResult, TestConnectionResult, CredentialField } from '../types';
+import type { PollingResult, TestConnectionResult, CredentialField } from '../types';
+import type { SystemWithPolling } from '@/lib/systems-manager';
 import type { CommonPollingData } from '@/lib/types/common';
 import { SelectronicFetchClient, type SelectronicData } from './selectronic-client';
 import { getNextMinuteBoundary } from '@/lib/date-utils';
@@ -12,6 +13,10 @@ export class SelectronicAdapter extends BaseVendorAdapter {
   readonly displayName = 'Selectronic';
   readonly dataSource = 'poll' as const;
   readonly supportsAddSystem = true;
+
+  // Selectronic polls every minute
+  protected pollIntervalMinutes = 1;
+  protected toleranceSeconds = 30;
 
   readonly credentialFields: CredentialField[] = [
     {
@@ -35,9 +40,11 @@ export class SelectronicAdapter extends BaseVendorAdapter {
   // Cache for auth cookies
   private static authCache = new Map<string, { cookie: string; expires: number }>();
   
-  async poll(system: SystemForVendor, credentials: any, force?: boolean): Promise<PollingResult> {
-    // Selectronic polls every minute with no restrictions
-    // The force flag is available but not needed for Selectronic as it has no rate limiting
+
+  /**
+   * Perform the actual polling
+   */
+  protected async doPoll(system: SystemWithPolling, credentials: any, now: Date): Promise<PollingResult> {
     try {
       const client = new SelectronicFetchClient({
         email: credentials.email,
@@ -92,7 +99,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       return this.error(error instanceof Error ? error : 'Unknown error');
     }
   }
-  async testConnection(system: SystemForVendor, credentials: any): Promise<TestConnectionResult> {
+  async testConnection(system: SystemWithPolling, credentials: any): Promise<TestConnectionResult> {
     try {
       // If no vendorSiteId provided, we need to discover available systems
       if (!system.vendorSiteId) {

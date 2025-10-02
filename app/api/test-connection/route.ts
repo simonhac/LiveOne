@@ -5,7 +5,7 @@ import { isUserAdmin } from '@/lib/auth-utils';
 import { SystemsManager } from '@/lib/systems-manager';
 import { getSystemCredentials } from '@/lib/secure-credentials';
 import { sessionManager } from '@/lib/session-manager';
-import type { SystemForVendor } from '@/lib/vendors/types';
+import type { SystemWithPolling } from '@/lib/systems-manager';
 
 export async function POST(request: NextRequest) {
   try {
@@ -109,14 +109,23 @@ export async function POST(request: NextRequest) {
     console.log(`[Test Connection] Testing ${finalVendorType} for user ${finalOwnerUserId}`);
 
     // Create a temporary system object for the adapter to use
-    const tempSystem: SystemForVendor = {
+    const tempSystem: SystemWithPolling = {
       id: systemId || -1, // Use real ID if testing existing system
       vendorType: finalVendorType,
       vendorSiteId: vendorSiteId || '', // Use existing vendorSiteId or let adapter discover
       ownerClerkUserId: finalOwnerUserId,
-      displayName: null,
+      status: 'active',
+      displayName: 'Test System',
+      model: null,
+      serial: null,
+      ratings: null,
+      solarSize: null,
+      batterySize: null,
+      location: null,
       timezoneOffsetMin: 600, // Default to AEST, adapter can override
-      isActive: true
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      pollingStatus: null // No polling status for test
     };
 
     console.log(`[Test Connection] Using system object:`, {
