@@ -330,22 +330,31 @@ export class MondoAdapter extends BaseVendorAdapter {
    * Fetch monitoring point groups for a specific organization
    */
   private async fetchMonitoringPointGroups(orgId: string, accessToken: string): Promise<any[]> {
-    const response = await fetch(
-      `${this.baseUrl}/monitoring/organizations/${orgId}/points`,
-      {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Accept': 'application/json'
-        }
+    // Use the correct API endpoint from the documentation
+    const url = `${this.baseUrl}/monitoring/organizations/${orgId}/monitoringpointgroups`;
+    console.log(`[Mondo] Fetching monitoring point groups from: ${url}`);
+
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Accept': 'application/json'
       }
-    );
+    });
 
     if (!response.ok) {
-      console.log(`[Mondo] Failed to fetch monitoring points for org ${orgId}: ${response.status}`);
+      const errorText = await response.text();
+      console.error(`[Mondo] Failed to fetch monitoring point groups for org ${orgId}: ${response.status} - ${errorText}`);
       return [];
     }
 
     const points = await response.json();
+    console.log(`[Mondo] Found ${Array.isArray(points) ? points.length : 0} monitoring point groups for org ${orgId}`);
+
+    // Log first point structure if available for debugging
+    if (Array.isArray(points) && points.length > 0) {
+      console.log(`[Mondo] First monitoring point group structure:`, JSON.stringify(points[0], null, 2));
+    }
+
     return Array.isArray(points) ? points : [];
   }
 
@@ -508,6 +517,7 @@ export class MondoAdapter extends BaseVendorAdapter {
     console.log(`[Mondo] Discovering monitoring point groups for new system`);
 
     const organizations = await this.fetchOrganizations(accessToken);
+    console.log(`[Mondo] Found ${organizations.length} organizations`);
 
     if (!Array.isArray(organizations) || organizations.length === 0) {
       return {
@@ -516,28 +526,89 @@ export class MondoAdapter extends BaseVendorAdapter {
       };
     }
 
+    // Log organization details
+    organizations.forEach(org => {
+      console.log(`[Mondo] Organization: ${org.name} (ID: ${org.id})`);
+    });
+
     // Find the first monitoring point group from any org
     for (const org of organizations) {
+      console.log(`[Mondo] Checking organization ${org.name} for monitoring point groups...`);
       const points = await this.fetchMonitoringPointGroups(org.id, accessToken);
 
       if (points.length > 0) {
         const firstPoint = points[0];
         console.log(`[Mondo] Found monitoring point group: ${firstPoint.id} in org ${org.name}`);
 
-        return {
-          success: true,
-          systemInfo: {
-            vendorSiteId: firstPoint.id,  // This should be saved as vendorSiteId
-            displayName: `${firstPoint.name || 'Unnamed'} (${org.name})`,
-            model: 'Mondo Power Monitor',
-            serial: firstPoint.id
-          },
-          vendorResponse: {
-            organizations,
-            monitoringPointGroups: points,
-            selectedOrg: org
+        // Fetch live data for the monitoring point group
+        try {
+          const liveDataUrl = `${this.baseUrl}/liveusage/widget/${firstPoint.id}`;
+          console.log(`[Mondo] Fetching live data from: ${liveDataUrl}`);
+
+          const liveResponse = await fetch(liveDataUrl, {
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Accept': 'application/json'
+            }
+          });
+
+          let latestData = null;
+
+          if (liveResponse.ok) {
+            const liveData = await liveResponse.json();
+            console.log(`[Mondo] Got live data for monitoring point group ${firstPoint.id}`);
+
+            // Convert live usage data to our format
+            if (liveData.liveUsageData) {
+              const usage = liveData.liveUsageData;
+              latestData = {
+                timestamp: liveData.lastRecordedUtc ? new Date(liveData.lastRecordedUtc) : new Date(),
+                solarW: usage.solar?.value ? Math.round(usage.solar.value * 1000) : null, // kW to W
+                loadW: liveData.demand ? Math.round(liveData.demand * 1000) : null, // kW to W
+                batteryW: usage.battery?.value ? Math.round(usage.battery.value * 1000) : null, // kW to W
+                gridW: usage.grid?.value ? Math.round(usage.grid.value * 1000) : null, // kW to W
+                batterySOC: usage.battery?.stateOfCharge || null
+              };
+              console.log(`[Mondo] Converted live data - Solar: ${latestData.solarW}W, Load: ${latestData.loadW}W, Battery: ${latestData.batteryW}W, Grid: ${latestData.gridW}W`);
+            }
+          } else {
+            console.log(`[Mondo] Could not fetch live data: ${liveResponse.status}`);
           }
-        };
+
+          return {
+            success: true,
+            systemInfo: {
+              vendorSiteId: firstPoint.id,  // This should be saved as vendorSiteId
+              displayName: `${firstPoint.name || 'Unnamed'} (${org.name})`,
+              model: 'Mondo Power Monitor',
+              serial: firstPoint.id
+            },
+            latestData,
+            vendorResponse: {
+              organizations,
+              monitoringPointGroups: points,
+              selectedOrg: org,
+              liveData: latestData
+            }
+          };
+        } catch (error) {
+          console.error(`[Mondo] Error fetching live data:`, error);
+          // Still return success but without live data
+          return {
+            success: true,
+            systemInfo: {
+              vendorSiteId: firstPoint.id,
+              displayName: `${firstPoint.name || 'Unnamed'} (${org.name})`,
+              model: 'Mondo Power Monitor',
+              serial: firstPoint.id
+            },
+            vendorResponse: {
+              organizations,
+              monitoringPointGroups: points,
+              selectedOrg: org
+            }
+          };
+        }
       }
     }
 

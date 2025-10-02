@@ -44,22 +44,8 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Create System] Creating ${vendorType} system for user ${userId}`);
 
-    // Check if system already exists for this user
-    const existingSystems = await db
-      .select()
-      .from(systems)
-      .where(eq(systems.ownerClerkUserId, userId));
-
-    const duplicate = existingSystems.find(
-      s => s.vendorType === vendorType && s.vendorSiteId === systemInfo.vendorSiteId
-    );
-
-    if (duplicate) {
-      return NextResponse.json(
-        { error: 'You already have a system connected for this vendor site' },
-        { status: 409 }
-      );
-    }
+    // Allow multiple systems for the same vendor site
+    // This is useful for testing, multiple users monitoring the same site, etc.
 
     // Create the system in the database
     const [newSystem] = await db

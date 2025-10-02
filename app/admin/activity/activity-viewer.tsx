@@ -358,22 +358,14 @@ export default function ActivityViewer() {
               {/* Response data */}
               {selectedSession.response && (
                 <div>
-                  <button
-                    onClick={() => {
-                      // Toggle JSON expansion
-                      const button = document.activeElement as HTMLElement
-                      button?.blur()
-                    }}
-                    className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors mb-3"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                    Raw Server Response
-                  </button>
+                  <div className="text-sm text-gray-400 mb-3">
+                    Raw Comms
+                  </div>
                   <div className="bg-gray-950 border border-gray-700 rounded-lg">
                     <div className="overflow-x-auto font-mono text-sm">
                       <JsonView
                         data={selectedSession.response}
-                        shouldExpandNode={(level) => level < 2}
+                        shouldExpandNode={(level) => level < 3}
                         style={darkStyles}
                       />
                     </div>
