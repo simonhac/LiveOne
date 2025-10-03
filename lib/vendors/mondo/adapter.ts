@@ -552,7 +552,7 @@ export class MondoAdapter extends BaseVendorAdapter {
             }
           });
 
-          let latestData = null;
+          let latestData: CommonPollingData | undefined;
 
           if (liveResponse.ok) {
             const liveData = await liveResponse.json();

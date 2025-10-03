@@ -11,7 +11,7 @@ import type { CommonPollingData } from '@/lib/types/common';
 import {
   updatePollingStatusSuccess,
   updatePollingStatusError,
-  type PollingResult as PollingStatusResult
+  type PollingResult
 } from '@/lib/polling-utils';
 import { isUserAdmin } from '@/lib/auth-utils';
 import { and } from 'drizzle-orm';
@@ -44,6 +44,8 @@ async function validateCronRequest(request: NextRequest): Promise<boolean> {
 }
 
 export async function GET(request: NextRequest) {
+  const apiStartTime = Date.now(); // Track API call start time
+
   try {
     // Validate cron request or admin user
     if (!(await validateCronRequest(request))) {
@@ -89,7 +91,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const results: PollingStatusResult[] = [];
+    const results: PollingResult[] = [];
     
     // Poll each system using the new vendor adapter architecture
     for (const system of activeSystems) {
@@ -334,6 +336,9 @@ export async function GET(request: NextRequest) {
 
     console.log(`[Cron] Polling complete. success: ${successCount}, failed: ${failureCount}, skipped: ${skippedCount}`, resultsForLogging);
 
+    // Calculate total API call duration
+    const durationMs = Date.now() - apiStartTime;
+
     // Format timestamp using AEST
     const nowZoned = fromDate(new Date(), 'Australia/Brisbane');
     const timestamp = formatTimeAEST(nowZoned);
@@ -341,6 +346,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       timestamp,
+      durationMs,
       summary: {
         total: results.length,
         successful: successCount,
@@ -352,10 +358,15 @@ export async function GET(request: NextRequest) {
     
   } catch (error) {
     console.error('[Cron] Fatal error:', error);
+
+    // Calculate duration even for errors
+    const durationMs = Date.now() - apiStartTime;
+
     return NextResponse.json(
-      { 
+      {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error' 
+        error: error instanceof Error ? error.message : 'Unknown error',
+        durationMs
       },
       { status: 500 }
     );

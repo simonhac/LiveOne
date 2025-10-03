@@ -103,6 +103,7 @@ export interface PollingResult {
   skipReason?: string;
   error?: string;
   durationMs?: number;
+  lastPoll?: string | null; // When the last successful poll occurred (AEST formatted)
   nextPoll?: string; // When the next poll is scheduled (ISO string or AEST formatted)
   rawResponse?: any; // Raw vendor response for debugging
   data?: any; // Optional vendor-specific data

@@ -576,6 +576,7 @@ export function formatJustTime_fromJSDate(date: Date, timezoneOffsetMin: number)
  * Calculate the next time at a specific minute boundary
  * @param intervalMinutes - The interval in minutes (e.g., 1, 5, 15, 30, 60)
  * @param timezoneOffsetMin - Timezone offset in minutes from UTC (e.g., 600 for UTC+10)
+ * @param baseTime - Optional base time to calculate from (defaults to now)
  * @returns ZonedDateTime for the next boundary
  *
  * Examples:
@@ -585,17 +586,18 @@ export function formatJustTime_fromJSDate(date: Date, timezoneOffsetMin: number)
  */
 export function getNextMinuteBoundary(
   intervalMinutes: number,
-  timezoneOffsetMin: number = 600
+  timezoneOffsetMin: number = 600,
+  baseTime?: Date
 ): ZonedDateTime {
-  const now = new Date();
+  const base = baseTime || new Date();
 
   // Convert to milliseconds since epoch
-  const nowMs = now.getTime();
+  const baseMs = base.getTime();
   const intervalMs = intervalMinutes * 60 * 1000; // Convert minutes to milliseconds
 
   // Calculate periods and next boundary
   // Always advance to the next boundary
-  const periods = Math.floor(nowMs / intervalMs);
+  const periods = Math.floor(baseMs / intervalMs);
   const nextMs = (periods + 1) * intervalMs;
 
   // Create new Date at the next boundary

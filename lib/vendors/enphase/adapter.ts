@@ -8,7 +8,7 @@ import { readingsAgg5m } from '@/lib/db/schema';
 import { eq, desc } from 'drizzle-orm';
 import { checkAndFetchYesterdayIfNeeded, fetchEnphaseDay } from '@/lib/vendors/enphase/enphase-history';
 import { getZonedNow, formatJustTime_fromJSDate, getNextMinuteBoundary } from '@/lib/date-utils';
-import { fromDate } from '@internationalized/date';
+import { fromDate, type ZonedDateTime } from '@internationalized/date';
 import { getPollingStatus } from '@/lib/polling-utils';
 import * as SunCalc from 'suncalc';
 
@@ -88,7 +88,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
     // Always poll if never polled before
     if (!lastPollTime) {
       console.log(`[Enphase] Never polled, polling now`);
-      const nextPollTime = new Date(now.getTime() + 60 * 60 * 1000); // Next hour
+      const nextPollTime = getNextMinuteBoundary(60, system.timezoneOffsetMin); // Next hour boundary
       return {
         shouldPoll: true,
         reason: 'Never polled',
@@ -149,7 +149,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       const toleranceMs = this.toleranceSeconds * 1000;
 
       if (msSinceLastPoll >= (targetIntervalMs - toleranceMs)) {
-        const nextPollTime = new Date(now.getTime() + targetIntervalMs);
+        const nextPollTime = getNextMinuteBoundary(ENPHASE_POLLING_INTERVAL_MINUTES, system.timezoneOffsetMin);
         return {
           shouldPoll: true,
           reason: 'Solar hours polling interval reached',
@@ -157,10 +157,10 @@ export class EnphaseAdapter extends BaseVendorAdapter {
         };
       }
 
-      const nextPollTime = new Date(lastPollTime.getTime() + targetIntervalMs);
+      const nextPollTime = getNextMinuteBoundary(ENPHASE_POLLING_INTERVAL_MINUTES, system.timezoneOffsetMin);
       return {
         shouldPoll: false,
-        reason: `Active solar hours (next poll at ${formatJustTime_fromJSDate(nextPollTime, system.timezoneOffsetMin)})`,
+        reason: `Active solar hours (next poll at ${formatJustTime_fromJSDate(nextPollTime.toDate(), system.timezoneOffsetMin)})`,
         nextPollTime
       };
     }
@@ -172,7 +172,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       const toleranceMs = this.toleranceSeconds * 1000;
 
       if (msSinceLastPoll >= (targetIntervalMs - toleranceMs)) {
-        const nextPollTime = new Date(now.getTime() + targetIntervalMs);
+        const nextPollTime = getNextMinuteBoundary(60, system.timezoneOffsetMin); // Hourly
         return {
           shouldPoll: true,
           reason: 'Night-time hourly check',
@@ -180,34 +180,42 @@ export class EnphaseAdapter extends BaseVendorAdapter {
         };
       }
 
-      const nextPollTime = new Date(lastPollTime.getTime() + targetIntervalMs);
+      const nextPollTime = getNextMinuteBoundary(60, system.timezoneOffsetMin); // Hourly
       return {
         shouldPoll: false,
-        reason: `Night-time check period (next at ${formatJustTime_fromJSDate(nextPollTime, system.timezoneOffsetMin)})`,
+        reason: `Night-time check period (next at ${formatJustTime_fromJSDate(nextPollTime.toDate(), system.timezoneOffsetMin)})`,
         nextPollTime
       };
     }
 
     // Outside active hours - calculate next poll time
-    let nextPollTime: Date;
+    let nextPollTime: ZonedDateTime;
     let reason: string;
 
     if (localTimeMinutes < activeStart) {
-      // Before dawn - next poll at first 30-min boundary after dawn
-      const minutesUntilNext = activeStart - localTimeMinutes;
-      nextPollTime = new Date(now.getTime() + minutesUntilNext * 60 * 1000);
-      const hoursUntil = Math.floor(minutesUntilNext / 60);
-      const minsUntil = minutesUntilNext % 60;
+      // Before dawn - poll at dawn (rounded to next hour boundary)
+      const minutesUntilDawn = activeStart - localTimeMinutes;
+      const dawnTime = new Date(now.getTime() + minutesUntilDawn * 60 * 1000);
+
+      // Get next hour boundary after dawn time
+      nextPollTime = getNextMinuteBoundary(60, system.timezoneOffsetMin, dawnTime);
+
+      const hoursUntil = Math.floor(minutesUntilDawn / 60);
+      const minsUntil = minutesUntilDawn % 60;
       reason = hoursUntil > 0
         ? `Before dawn (next poll in ${hoursUntil}h ${minsUntil}m)`
         : `Before dawn (next poll in ${minsUntil}m)`;
     } else {
-      // After dusk - next poll is tomorrow at 01:00 or dawn+30min, whichever is earlier
+      // After dusk - next poll is tomorrow at 01:00 or dawn, whichever is earlier
       const tomorrow1AM = 25 * 60; // 01:00 tomorrow
       const tomorrowDawn = activeStart + 24 * 60;
       const nextPollMinutes = Math.min(tomorrow1AM, tomorrowDawn);
       const minutesUntilNext = nextPollMinutes - localTimeMinutes;
-      nextPollTime = new Date(now.getTime() + minutesUntilNext * 60 * 1000);
+      const targetTime = new Date(now.getTime() + minutesUntilNext * 60 * 1000);
+
+      // Get next hour boundary after target time
+      nextPollTime = getNextMinuteBoundary(60, system.timezoneOffsetMin, targetTime);
+
       const hoursUntil = Math.floor(minutesUntilNext / 60);
       const minsUntil = minutesUntilNext % 60;
       reason = hoursUntil > 0
@@ -262,7 +270,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
 
       // Calculate next poll time
       const evaluation = this.evaluateSchedule(system, system.pollingStatus?.lastPollTime || null, now);
-      const nextPoll = fromDate(evaluation.nextPollTime, 'Australia/Brisbane');
+      const nextPoll = evaluation.nextPollTime; // Already a ZonedDateTime
 
       // Note: Enphase returns multiple records (5-minute intervals)
       // The data is already stored by fetchEnphaseDay, so we don't return it here

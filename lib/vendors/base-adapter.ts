@@ -7,6 +7,7 @@ import { fromDate } from '@internationalized/date';
 import { db } from '@/lib/db';
 import { readings } from '@/lib/db/schema';
 import { eq, desc } from 'drizzle-orm';
+import { getNextMinuteBoundary } from '@/lib/date-utils';
 
 /**
  * Base adapter class that provides common functionality
@@ -18,7 +19,7 @@ import { eq, desc } from 'drizzle-orm';
 export interface ScheduleEvaluation {
   shouldPoll: boolean;
   reason: string;
-  nextPollTime: Date;
+  nextPollTime: ZonedDateTime;
 }
 
 export abstract class BaseVendorAdapter implements VendorAdapter {
@@ -44,8 +45,8 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
 
     // If never polled, poll now
     if (!lastPollTime) {
-      // Next poll will be one interval from now
-      const nextPollTime = new Date(now.getTime() + targetIntervalMs);
+      // Next poll will be one interval from now, aligned to minute boundary
+      const nextPollTime = getNextMinuteBoundary(this.pollIntervalMinutes, system.timezoneOffsetMin);
       return {
         shouldPoll: true,
         reason: 'Never polled',
@@ -57,8 +58,8 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
 
     // Check if we've reached the interval (with tolerance for delays)
     if (msSinceLastPoll >= (targetIntervalMs - toleranceMs)) {
-      // Next poll will be one interval from now
-      const nextPollTime = new Date(now.getTime() + targetIntervalMs);
+      // Next poll will be one interval from now, aligned to minute boundary
+      const nextPollTime = getNextMinuteBoundary(this.pollIntervalMinutes, system.timezoneOffsetMin);
       return {
         shouldPoll: true,
         reason: `Interval reached (${this.pollIntervalMinutes} min)`,
@@ -66,8 +67,8 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       };
     }
 
-    // Not time yet - calculate when next poll should be
-    const nextPollTime = new Date(lastPollTime.getTime() + targetIntervalMs);
+    // Not time yet - calculate when next poll should be, aligned to minute boundary
+    const nextPollTime = getNextMinuteBoundary(this.pollIntervalMinutes, system.timezoneOffsetMin);
 
     return {
       shouldPoll: false,
@@ -107,9 +108,8 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       const evaluation = this.evaluateSchedule(system, lastPollTime, now);
 
       if (!evaluation.shouldPoll) {
-        // Convert nextPollTime to ZonedDateTime in AEST
-        const nextPoll = fromDate(evaluation.nextPollTime, 'Australia/Brisbane');
-        return this.skipped(evaluation.reason, nextPoll);
+        // nextPollTime is already a ZonedDateTime
+        return this.skipped(evaluation.reason, evaluation.nextPollTime);
       }
     }
 
