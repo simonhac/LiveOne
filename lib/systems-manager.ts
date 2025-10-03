@@ -44,6 +44,20 @@ export class SystemsManager {
     }
     return SystemsManager.instance;
   }
+
+  /**
+   * Clear the cached instance (useful for cron jobs that need fresh data)
+   *
+   * TEMPORARY: This is a workaround for the cache consistency issue where
+   * the singleton persists across requests in Vercel/Next.js, causing stale
+   * polling status data. We need a proper cache invalidation strategy.
+   *
+   * TODO: Implement proper cache management with TTL, invalidation on updates,
+   * or request-scoped instances instead of global singletons.
+   */
+  static clearInstance(): void {
+    SystemsManager.instance = null;
+  }
   
   /**
    * Load all systems with polling status into cache (called once on instantiation)

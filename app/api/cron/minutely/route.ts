@@ -66,8 +66,12 @@ export async function GET(request: NextRequest) {
     }
 
     console.log('[Cron] Starting system polling...');
-    
-    // Get cached SystemsManager for this request
+
+    // TEMPORARY: Clear SystemsManager cache to ensure fresh polling status data
+    // TODO: Implement proper request-scoped caching instead of global singleton
+    SystemsManager.clearInstance();
+
+    // Get SystemsManager with fresh data for this request
     const systemsManager = SystemsManager.getInstance();
     
     // Get systems to poll
