@@ -2,11 +2,11 @@ import { NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { db } from '@/lib/db'
 import { pointReadings, pointInfo } from '@/lib/db/schema-monitoring-points'
-import { systems } from '@/lib/db/schema'
 import { eq, desc, sql } from 'drizzle-orm'
 import { isUserAdmin } from '@/lib/auth-utils'
 import { formatTimeAEST } from '@/lib/date-utils'
 import { fromDate } from '@internationalized/date'
+import { SystemsManager } from '@/lib/systems-manager'
 
 export async function GET(
   request: Request,
@@ -31,23 +31,25 @@ export async function GET(
     const { searchParams } = new URL(request.url)
     const limit = Math.min(parseInt(searchParams.get('limit') || '200'), 1000)
 
-    // Get system timezone offset
-    const [system] = await db
-      .select()
-      .from(systems)
-      .where(eq(systems.id, systemId))
-      .limit(1)
+    // Track database elapsed time
+    let dbElapsedMs = 0
+
+    // Get system from SystemsManager (already cached in memory)
+    const systemsManager = SystemsManager.getInstance()
+    const system = await systemsManager.getSystem(systemId)
 
     if (!system) {
       return NextResponse.json({ error: 'System not found' }, { status: 404 })
     }
 
     // Get all point info for this system
+    const pointsStartTime = Date.now()
     const points = await db
       .select()
       .from(pointInfo)
       .where(eq(pointInfo.systemId, systemId))
       .orderBy(pointInfo.id)
+    dbElapsedMs += Date.now() - pointsStartTime
 
     if (points.length === 0) {
       return NextResponse.json({
@@ -57,7 +59,8 @@ export async function GET(
           systemId,
           timezoneOffsetMin: system.timezoneOffsetMin,
           pointCount: 0,
-          rowCount: 0
+          rowCount: 0,
+          dbElapsedMs
         }
       })
     }
@@ -106,7 +109,9 @@ export async function GET(
       ORDER BY measurement_time DESC
     `
 
+    const pivotStartTime = Date.now()
     const result = await db.all(sql.raw(pivotQuery))
+    dbElapsedMs += Date.now() - pivotStartTime
 
     // Transform the data to include ISO timestamps with AEST formatting
     const data = result.map((row: any) => {
@@ -134,7 +139,8 @@ export async function GET(
         systemId,
         timezoneOffsetMin: system.timezoneOffsetMin,
         pointCount: points.length,
-        rowCount: data.length
+        rowCount: data.length,
+        dbElapsedMs
       }
     })
 

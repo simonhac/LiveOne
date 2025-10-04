@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { X, RefreshCw } from 'lucide-react'
 import { formatDateTime, formatTime } from '@/lib/fe-date-format'
 
@@ -36,9 +36,17 @@ export default function ViewDataModal({
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null)
   const [initialLoad, setInitialLoad] = useState(true)
   const [rotateKey, setRotateKey] = useState(0)
+  const fetchingRef = useRef(false)
 
   const fetchData = useCallback(async () => {
+    // Prevent duplicate fetches
+    if (fetchingRef.current) {
+      console.log('[ViewDataModal] Skipping duplicate fetch')
+      return
+    }
+
     try {
+      fetchingRef.current = true
       setLoading(true)
       const response = await fetch(`/api/admin/systems/${systemId}/point-readings?limit=200`)
       if (!response.ok) throw new Error('Failed to fetch data')
@@ -53,6 +61,7 @@ export default function ViewDataModal({
       console.error('Error fetching point readings:', error)
     } finally {
       setLoading(false)
+      fetchingRef.current = false
     }
   }, [systemId])
 
@@ -63,6 +72,7 @@ export default function ViewDataModal({
     } else {
       // Reset state when modal closes
       setInitialLoad(true)
+      fetchingRef.current = false // Reset fetch guard
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]) // Intentionally exclude fetchData to prevent double calls
