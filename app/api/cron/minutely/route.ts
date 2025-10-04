@@ -17,6 +17,7 @@ import { isUserAdmin } from '@/lib/auth-utils';
 import { and } from 'drizzle-orm';
 import { fromDate } from '@internationalized/date';
 import { formatTimeAEST } from '@/lib/date-utils';
+import { getNextSessionId, formatSessionId } from '@/lib/session-id';
 
 // Verify the request is from Vercel Cron or an admin user
 async function validateCronRequest(request: NextRequest): Promise<boolean> {
@@ -45,6 +46,7 @@ async function validateCronRequest(request: NextRequest): Promise<boolean> {
 
 export async function GET(request: NextRequest) {
   const apiStartTime = Date.now(); // Track API call start time
+  const sessionId = getNextSessionId(); // Get session ID for this API invocation
 
   try {
     // Validate cron request or admin user
@@ -95,10 +97,15 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    console.log(`[Cron] Starting polling session ${sessionId} with ${activeSystems.length} systems`);
+
     const results: PollingResult[] = [];
-    
+    let subSequence = 0;
+
     // Poll each system using the new vendor adapter architecture
     for (const system of activeSystems) {
+      subSequence++; // Increment for each system
+      const sessionLabel = formatSessionId(sessionId, subSequence);
       // Get the vendor adapter first to check if it supports polling
       const adapter = VendorRegistry.getAdapter(system.vendorType);
       
@@ -121,7 +128,7 @@ export async function GET(request: NextRequest) {
         continue;  // Don't add to results at all, don't log
       }
       
-      console.log(`[Cron] Processing systemId=${system.id} (${system.vendorType}/${system.vendorSiteId} '${system.displayName}')`);
+      console.log(`[Cron] Processing systemId=${system.id} (${system.vendorType}/${system.vendorSiteId} '${system.displayName}') with session ${sessionLabel}`);
       
       
       // Check if system has an owner
@@ -235,6 +242,7 @@ export async function GET(request: NextRequest) {
               successful: true,
               response: result.rawResponse,
               numRows: result.recordsProcessed || 0,
+              sessionLabel,
             });
 
             results.push({
@@ -280,6 +288,7 @@ export async function GET(request: NextRequest) {
               errorCode: result.errorCode || null,
               error: result.error || null,
               numRows: 0,
+              sessionLabel,
             });
 
             results.push({
@@ -312,6 +321,7 @@ export async function GET(request: NextRequest) {
           successful: false,
           error: error instanceof Error ? error.message : 'Unknown error',
           numRows: 0,
+          sessionLabel,
         });
 
         results.push({
@@ -354,6 +364,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      sessionId,
       timestamp,
       durationMs,
       summary: {
