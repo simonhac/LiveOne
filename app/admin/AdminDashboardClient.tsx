@@ -10,7 +10,7 @@ import TestConnectionModal from '@/components/TestConnectionModal'
 import SystemSettingsDialog from '@/components/SystemSettingsDialog'
 import PollNowModal from '@/components/PollNowModal'
 import ViewDataModal from '@/components/ViewDataModal'
-import { formatDateTime } from '@/lib/fe-date-format'
+import { formatDateTime, formatTime } from '@/lib/fe-date-format'
 
 interface SystemInfo {
   model?: string
@@ -431,7 +431,7 @@ export default function AdminDashboardClient() {
                       />
                     </td>
                     <td className="px-1.5 md:px-1.5 py-4 whitespace-nowrap align-top">
-                      <Link 
+                      <Link
                         href={`/dashboard/${system.systemId}`}
                         className="block group"
                       >
@@ -439,6 +439,7 @@ export default function AdminDashboardClient() {
                           <span className="text-sm font-medium text-white group-hover:text-blue-400 transition-colors">
                             {system.displayName}
                           </span>
+                          <span className="text-sm text-gray-500">ID: {system.systemId}</span>
                           {system.status === 'disabled' && (
                             <div className="relative group/pause">
                               <PauseCircle className="w-4 h-4 text-orange-400" />
@@ -529,48 +530,20 @@ export default function AdminDashboardClient() {
                               <div>
                                 <Clock className="w-3 h-3 inline mr-1" />
                                 {(() => {
-                                  const pollDate = new Date(system.polling.lastPollTime)
-                                  const today = new Date()
-                                  const isToday =
-                                    pollDate.getDate() === today.getDate() &&
-                                    pollDate.getMonth() === today.getMonth() &&
-                                    pollDate.getFullYear() === today.getFullYear()
-
-                                  // Format time as "7:24:12pm" (12-hour, no leading zero, lowercase am/pm)
-                                  const formatTime = (date: Date) => {
-                                    const hours = date.getHours()
-                                    const minutes = date.getMinutes()
-                                    const seconds = date.getSeconds()
-                                    const ampm = hours >= 12 ? 'pm' : 'am'
-                                    const displayHours = hours % 12 || 12 // Convert to 12-hour, no leading zero
-
-                                    return `${displayHours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}${ampm}`
-                                  }
-
-                                  if (isToday) {
-                                    return formatTime(pollDate)
+                                  const result = formatDateTime(system.polling.lastPollTime)
+                                  if (result.isToday) {
+                                    return result.time
                                   } else {
+                                    const pollDate = new Date(system.polling.lastPollTime)
                                     return pollDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
                                   }
                                 })()}
                               </div>
                               {(() => {
-                                const pollDate = new Date(system.polling.lastPollTime)
-                                const today = new Date()
-                                const isToday =
-                                  pollDate.getDate() === today.getDate() &&
-                                  pollDate.getMonth() === today.getMonth() &&
-                                  pollDate.getFullYear() === today.getFullYear()
-
-                                if (!isToday) {
-                                  const hours = pollDate.getHours()
-                                  const minutes = pollDate.getMinutes()
-                                  const seconds = pollDate.getSeconds()
-                                  const ampm = hours >= 12 ? 'pm' : 'am'
-                                  const displayHours = hours % 12 || 12
-
+                                const result = formatDateTime(system.polling.lastPollTime)
+                                if (!result.isToday) {
                                   return (
-                                    <div className="ml-4">{displayHours}:{minutes.toString().padStart(2, '0')}:{seconds.toString().padStart(2, '0')}{ampm}</div>
+                                    <div className="ml-4">{result.time}</div>
                                   )
                                 }
                                 return null

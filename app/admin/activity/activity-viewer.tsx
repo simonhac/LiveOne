@@ -235,8 +235,14 @@ export default function ActivityViewer() {
                     </div>
                   </td>
                   <td className="px-4 py-3 text-sm">
-                    <div className="text-gray-300">
-                      {session.systemName} <span className="text-gray-500">ID:&nbsp;{session.systemId}</span>
+                    <div>
+                      <a
+                        href={`/dashboard/${session.systemId}`}
+                        className="text-gray-300 hover:text-blue-400 hover:underline cursor-pointer transition-colors"
+                      >
+                        {session.systemName}
+                      </a>
+                      <span className="text-gray-500"> ID:&nbsp;{session.systemId}</span>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-300">
@@ -281,7 +287,14 @@ export default function ActivityViewer() {
             {/* Header */}
             <div className="flex justify-between items-start mb-4">
               <h3 className="text-lg font-semibold text-white">
-                Session with {selectedSession.systemName} <span className="text-gray-500">ID: {selectedSession.systemId}</span> — {selectedSession.vendorType}
+                Session with{' '}
+                <a
+                  href={`/dashboard/${selectedSession.systemId}`}
+                  className="hover:text-blue-400 hover:underline transition-colors"
+                >
+                  {selectedSession.systemName} <span className="text-gray-500">ID: {selectedSession.systemId}</span>
+                </a>
+                {' '}— {selectedSession.vendorType}
               </h3>
               <button
                 onClick={() => {

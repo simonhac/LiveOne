@@ -15,6 +15,7 @@ import ServerErrorModal from '@/components/ServerErrorModal'
 import SessionTimeoutModal from '@/components/SessionTimeoutModal'
 import { AddSystemDialog } from '@/components/AddSystemDialog'
 import SystemsMenu from '@/components/SystemsMenu'
+import ViewDataModal from '@/components/ViewDataModal'
 import { formatDateTime } from '@/lib/fe-date-format'
 import {
   Sun,
@@ -140,6 +141,7 @@ interface DashboardClientProps {
   isAdmin: boolean;
   availableSystems?: AvailableSystem[];
   userId?: string;
+  dataStore?: 'readings' | 'point_readings';
 }
 
 // Helper function to get stale threshold based on vendor type
@@ -148,7 +150,7 @@ function getStaleThreshold(vendorType?: string): number {
   return vendorType === 'enphase' ? 2100 : 300;
 }
 
-export default function DashboardClient({ systemId, system, hasAccess, systemExists, isAdmin: isAdminProp, availableSystems = [], userId }: DashboardClientProps) {
+export default function DashboardClient({ systemId, system, hasAccess, systemExists, isAdmin: isAdminProp, availableSystems = [], userId, dataStore }: DashboardClientProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [data, setData] = useState<DashboardData | null>(null)
@@ -164,6 +166,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
   const [showAddSystemDialog, setShowAddSystemDialog] = useState(false)
   const [serverError, setServerError] = useState<{ type: 'connection' | 'server' | null, details?: string }>({ type: null })
   const [showSessionTimeout, setShowSessionTimeout] = useState(false)
+  const [showViewDataModal, setShowViewDataModal] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const settingsDropdownRef = useRef<HTMLDivElement>(null)
 
@@ -240,7 +243,12 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
         setSystemInfo(result.systemInfo || null)
         // Don't show error for removed systems
         if (system?.status !== 'removed') {
-          setError('No readings available yet')
+          // Show different message for point_readings systems
+          if (dataStore === 'point_readings') {
+            setError('POINT_READINGS_NO_CHARTS') // Special marker for point_readings systems
+          } else {
+            setError('No readings available yet')
+          }
         }
         setLoading(false)
       }
@@ -265,7 +273,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
       }
       setLoading(false)
     }
-  }, [systemId, system?.status])
+  }, [systemId, system?.status, dataStore])
 
   useEffect(() => {
     // Initial fetch
@@ -523,10 +531,26 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
         )}
 
         {error && (
-          <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5" />
-            <span>{error}</span>
-          </div>
+          error === 'POINT_READINGS_NO_CHARTS' ? (
+            <div className="bg-blue-900/50 border border-blue-700 text-blue-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5" />
+              <span>
+                Charts coming soon. For now{' '}
+                <button
+                  onClick={() => setShowViewDataModal(true)}
+                  className="underline hover:text-blue-200 transition-colors"
+                >
+                  raw data is available
+                </button>
+                .
+              </span>
+            </div>
+          ) : (
+            <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5" />
+              <span>{error}</span>
+            </div>
+          )
         )}
 
         {data?.latest && (
@@ -687,6 +711,17 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
           window.location.reload()
         }}
       />
+
+      {/* View Data Modal for point_readings systems */}
+      {showViewDataModal && systemId && (
+        <ViewDataModal
+          isOpen={showViewDataModal}
+          onClose={() => setShowViewDataModal(false)}
+          systemId={parseInt(systemId)}
+          systemName={data?.displayName || system?.displayName || 'System'}
+          vendorType={data?.vendorType || system?.vendorType}
+        />
+      )}
     </div>
   )
 }

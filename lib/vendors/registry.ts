@@ -102,8 +102,11 @@ export class VendorRegistry {
   static getDataStore(vendorType: string): 'readings' | 'point_readings' {
     this.initialize();
     const adapter = this.adapters.get(vendorType.toLowerCase());
-    if (!adapter) return 'readings'; // Default to readings if adapter not found
-    return adapter.dataStore || 'readings'; // Default to readings if not specified
+    if (!adapter) {
+      console.error(`[VendorRegistry] No adapter found for vendor type: ${vendorType}`);
+      throw new Error(`Unknown vendor type: ${vendorType}`);
+    }
+    return adapter.dataStore; // Will use the adapter's value (or its base class default)
   }
 
   /**

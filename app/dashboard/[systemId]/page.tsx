@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm'
 import DashboardClient from '@/components/DashboardClient'
 import { isUserAdmin } from '@/lib/auth-utils'
 import { SystemsManager } from '@/lib/systems-manager'
+import { VendorRegistry } from '@/lib/vendors/registry'
 
 interface PageProps {
   params: Promise<{
@@ -58,8 +59,11 @@ export default async function DashboardSystemPage({ params }: PageProps) {
   const systemsManager = SystemsManager.getInstance()
   const availableSystems = await systemsManager.getSystemsVisibleByUser(userId, true) // true = active only
 
+  // Get the dataStore type for this system's vendor (only if system exists)
+  const dataStore = system ? VendorRegistry.getDataStore(system.vendorType) : undefined
+
   return (
-    <DashboardClient 
+    <DashboardClient
       systemId={systemId}
       system={system}
       hasAccess={hasAccess}
@@ -67,6 +71,7 @@ export default async function DashboardSystemPage({ params }: PageProps) {
       isAdmin={isAdmin}
       availableSystems={availableSystems}
       userId={userId}
+      dataStore={dataStore}
     />
   )
 }

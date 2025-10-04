@@ -23,7 +23,7 @@ export interface VendorAdapter {
   readonly vendorType: string;
   readonly displayName: string;
   readonly dataSource: 'poll' | 'push' | 'combined';
-  readonly dataStore?: 'readings' | 'point_readings';  // Where data is stored
+  readonly dataStore: 'readings' | 'point_readings';  // Where data is stored
 
   // Credential requirements for this vendor
   readonly credentialFields?: CredentialField[];

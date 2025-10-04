@@ -330,13 +330,18 @@ export async function GET(request: NextRequest) {
     const skippedCount = results.filter(r => r.status === 'skipped').length;
     const failureCount = results.filter(r => r.status === 'error').length;
 
-    // Create sanitized results for logging (truncate rawResponse to first 60 chars)
-    const resultsForLogging = results.map(r => ({
-      ...r,
-      rawResponse: r.rawResponse ?
-        (JSON.stringify(r.rawResponse).substring(0, 60) + '...') :
-        undefined
-    }));
+    // Create sanitized results for logging (truncate rawResponse if present)
+    const resultsForLogging = results.map(r => {
+      const log: any = { ...r };
+      // Only include rawResponse in log if it exists
+      if ('rawResponse' in r && r.rawResponse) {
+        log.rawResponse = JSON.stringify(r.rawResponse).substring(0, 60) + '...';
+      } else if ('rawResponse' in r) {
+        // Remove the field if it's explicitly undefined
+        delete log.rawResponse;
+      }
+      return log;
+    });
 
     console.log(`[Cron] Polling complete. success: ${successCount}, failed: ${failureCount}, skipped: ${skippedCount}`, resultsForLogging);
 
