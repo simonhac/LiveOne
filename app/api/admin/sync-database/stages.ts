@@ -1,5 +1,6 @@
 import { sql, and, eq, gte, lte } from 'drizzle-orm'
 import { systems, readings, userSystems, clerkIdMapping, pollingStatus, readingsAgg5m, readingsAgg1d } from '@/lib/db/schema'
+import { pointInfo, pointReadings } from '@/lib/db/schema-monitoring-points'
 import { createClient } from '@libsql/client'
 import { formatDateRange, fromUnixTimestamp } from '@/lib/date-utils'
 
@@ -708,7 +709,179 @@ async function prepareForSync(ctx: SyncContext) {
   }
 }
 
-// Stage 10: Finalise - cleanup and verification
+// Stage 10: Sync point_info (monitoring points metadata)
+async function syncPointInfo(ctx: SyncContext) {
+  console.log(`[SYNC] Syncing point_info from production`)
+
+  // Count total point_info in production
+  const countResult = await ctx.prodDb.execute(
+    `SELECT COUNT(*) as count FROM point_info`
+  )
+
+  const totalToSync = countResult.rows[0]?.count as number || 0
+
+  if (totalToSync === 0) {
+    return { detail: 'No point_info to sync' }
+  }
+
+  console.log(`[SYNC] Syncing ${totalToSync} point_info records`)
+
+  // Set totalToSync in context for consistent progress tracking
+  ctx.totalToSync = totalToSync
+
+  // Clear ALL existing point_info to replace with production data
+  await ctx.db.delete(pointInfo)
+
+  // Use generic sync function
+  const result = await syncTableData(ctx, 'point_info', 'point_info', {
+    query: `SELECT * FROM point_info ORDER BY system_id, id`,
+    queryParams: [],
+    mapRow: (row) => {
+      // Map system IDs
+      const mappedSystemId = ctx.mapSystemId(row.system_id as number)
+      if (!mappedSystemId) {
+        console.warn(`Skipping point_info for unmapped system ${row.system_id}`)
+        return null
+      }
+      return {
+        ...row,
+        system_id: mappedSystemId
+      }
+    },
+    batchSize: 1000,
+    chunkSize: 250,
+    onProgress: (synced, total) => {
+      if (ctx.totalToSync) {
+        const proportionComplete = synced / ctx.totalToSync
+        ctx.updateStage('sync-point-info', {
+          detail: `Syncing: ${synced.toLocaleString()} of ${ctx.totalToSync.toLocaleString()} (${Math.round(proportionComplete * 100)}%)`,
+          progress: proportionComplete
+        })
+      }
+    }
+  })
+
+  return { detail: `Synced ${result.synced.toLocaleString()} point_info records` }
+}
+
+// Stage 11: Sync point_readings (monitoring points time-series data)
+async function syncPointReadings(ctx: SyncContext) {
+  // Force minimum 7 days of point readings data
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+  const syncFromTime = ctx.syncFromTime || sevenDaysAgo
+  const syncFromTimestamp = syncFromTime.getTime() // point_readings uses milliseconds
+
+  console.log(`[SYNC] Syncing point_readings from ${syncFromTime.toISOString()}`)
+
+  // Count total to sync
+  const countResult = await ctx.prodDb.execute(
+    `SELECT COUNT(*) as count FROM point_readings WHERE measurement_time > ?`,
+    [syncFromTimestamp]
+  )
+
+  const totalToSync = countResult.rows[0]?.count as number || 0
+
+  if (totalToSync === 0) {
+    return { detail: 'No point_readings to sync' }
+  }
+
+  console.log(`[SYNC] Syncing ${totalToSync} point_readings`)
+
+  // Set totalToSync in context for consistent progress tracking
+  ctx.totalToSync = totalToSync
+
+  // Clear existing point_readings in the sync range
+  await ctx.db
+    .delete(pointReadings)
+    .where(gte(pointReadings.measurementTime, syncFromTimestamp))
+
+  // First, get mapping of production point_info IDs to development point_info IDs
+  const prodPointInfo = await ctx.prodDb.execute(
+    `SELECT id, system_id, point_id, point_sub_id FROM point_info`
+  )
+
+  const devPointInfo = await ctx.db
+    .select({
+      id: pointInfo.id,
+      systemId: pointInfo.systemId,
+      pointId: pointInfo.pointId,
+      pointSubId: pointInfo.pointSubId
+    })
+    .from(pointInfo)
+
+  // Create mapping: prod point_info.id -> dev point_info.id
+  const pointIdMapping = new Map<number, number>()
+
+  for (const prodPoint of prodPointInfo.rows) {
+    const prodSystemId = prodPoint.system_id as number
+    const devSystemId = ctx.mapSystemId(prodSystemId)
+
+    if (!devSystemId) continue
+
+    // Find matching dev point_info by system_id, point_id, and point_sub_id
+    const devPoint = devPointInfo.find((p: any) =>
+      p.systemId === devSystemId &&
+      p.pointId === prodPoint.point_id &&
+      p.pointSubId === prodPoint.point_sub_id
+    )
+
+    if (devPoint) {
+      pointIdMapping.set(prodPoint.id as number, devPoint.id)
+    }
+  }
+
+  console.log(`[SYNC] Mapped ${pointIdMapping.size} point_info IDs`)
+
+  // Use generic sync function
+  const result = await syncTableData(ctx, 'point_readings', 'point_readings', {
+    query: `SELECT * FROM point_readings WHERE measurement_time > ? ORDER BY measurement_time`,
+    queryParams: [syncFromTimestamp],
+    mapRow: (row) => {
+      // Map point_info IDs
+      const mappedPointId = pointIdMapping.get(row.point_id as number)
+      if (!mappedPointId) {
+        // Silently skip unmapped points (expected for systems we don't have)
+        return null
+      }
+      return {
+        ...row,
+        point_id: mappedPointId
+      }
+    },
+    batchSize: 1000,
+    chunkSize: 250,
+    delayBetweenBatches: 100,
+    // Note: timestampField expects seconds, but measurement_time is in milliseconds
+    // So we don't use timestampField here and handle it manually
+    onProgress: (synced, total) => {
+      if (ctx.totalToSync) {
+        const proportionComplete = synced / ctx.totalToSync
+
+        ctx.updateStage('sync-point-readings', {
+          detail: `Syncing: ${synced.toLocaleString()} of ${ctx.totalToSync.toLocaleString()} (${Math.round(proportionComplete * 100)}%)`,
+          progress: proportionComplete
+        })
+      }
+    },
+    onComplete: (synced, firstTime, lastTime) => {
+      // Format the date range if we have data
+      let dateRangeStr = ''
+      if (firstTime && lastTime) {
+        const firstZoned = fromUnixTimestamp(Math.floor(firstTime.getTime() / 1000), 600)
+        const lastZoned = fromUnixTimestamp(Math.floor(lastTime.getTime() / 1000), 600)
+        dateRangeStr = ` (${formatDateRange(firstZoned, lastZoned, true)})`
+      }
+      return `Synced ${synced.toLocaleString()} point_readings${dateRangeStr}`
+    }
+  })
+
+  return {
+    detail: result.detail,
+    context: { synced: result.synced }
+  }
+}
+
+// Stage 12: Finalise - cleanup and verification
 async function finaliseSync(ctx: SyncContext) {
   // Close the production database connection
   if (ctx.prodDb) {
@@ -736,8 +909,10 @@ async function finaliseSync(ctx: SyncContext) {
 export const syncStages: StageDefinition[] = [
   { id: 'prepare', name: 'Prepare for sync', estimatedDurationMs: 1000, execute: prepareForSync },
   { id: 'sync-systems', name: 'Sync systems', estimatedDurationMs: 200, execute: syncSystems },
+  { id: 'sync-point-info', name: 'Sync point info', estimatedDurationMs: 1000, execute: syncPointInfo },
   { id: 'count-data', name: 'Count new data', estimatedDurationMs: 300, execute: countNewData },
   { id: 'sync-readings', name: 'Sync readings', estimatedDurationMs: 30000, execute: syncReadings }, // 30 seconds for bulk of data
+  { id: 'sync-point-readings', name: 'Sync point readings', estimatedDurationMs: 15000, execute: syncPointReadings },
   { id: 'sync-5min-agg', name: 'Sync 5-min aggregations', estimatedDurationMs: 5000, execute: sync5MinAggregations },
   { id: 'sync-daily-agg', name: 'Sync daily aggregations', estimatedDurationMs: 3000, execute: syncDailyAggregations },
   { id: 'sync-users', name: 'Sync user systems', estimatedDurationMs: 100, execute: syncUserSystems },

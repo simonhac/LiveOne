@@ -1,22 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
-import { db } from '@/lib/db';
-import { systems } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { SystemsManager, SystemWithPolling } from '@/lib/systems-manager';
 import { OpenNEMResponse, OpenNEMDataSeries } from '@/types/opennem';
-import { formatDataArray, formatOpenNEMResponse } from '@/lib/format-opennem';
-import { 
-  formatTimeAEST, 
-  formatDateAEST, 
-  parseTimeRange as parseTimeRangeUtil, 
-  parseDateRange, 
-  parseRelativeTime, 
-  getDateDifferenceMs, 
+import { formatOpenNEMResponse } from '@/lib/format-opennem';
+import {
+  formatTimeAEST,
+  formatDateAEST,
+  parseTimeRange as parseTimeRangeUtil,
+  parseDateRange,
+  parseRelativeTime,
+  getDateDifferenceMs,
   getTimeDifferenceMs
 } from '@/lib/date-utils';
 import { CalendarDate, ZonedDateTime, now } from '@internationalized/date';
-import { fetch5MinuteData, fetch30MinuteData, fetch1DayData } from '@/lib/history-data-fetcher';
-import { getCraigHackSystemHistoryInOpenNEMFormat } from '@/lib/vendors/craighack/craighack-history';
+import { HistoryService } from '@/lib/history/history-service';
 import { isUserAdmin } from '@/lib/auth-utils';
 
 // ============================================================================
@@ -29,14 +26,13 @@ interface AuthResult {
 }
 
 interface SystemAccess {
-  system: typeof systems.$inferSelect;
+  system: SystemWithPolling;
   hasAccess: boolean;
 }
 
 interface ParsedParams {
   systemId: number;
   interval: '5m' | '30m' | '1d';
-  fields: string[];
   startTime: ZonedDateTime | CalendarDate;
   endTime: ZonedDateTime | CalendarDate;
   systemTimezoneOffsetMin: number;
@@ -54,7 +50,7 @@ interface ValidationResult {
 
 async function authenticateUser(): Promise<AuthResult | NextResponse> {
   const { userId } = await auth();
-  
+
   if (!userId) {
     return NextResponse.json(
       { error: 'Unauthorized - Authentication required' },
@@ -67,43 +63,48 @@ async function authenticateUser(): Promise<AuthResult | NextResponse> {
 }
 
 async function checkSystemAccess(
-  systemId: number, 
-  userId: string, 
+  systemId: number,
+  userId: string,
   isAdmin: boolean
 ): Promise<SystemAccess | NextResponse> {
-  const [system] = await db.select()
-    .from(systems)
-    .where(eq(systems.id, systemId))
-    .limit(1);
-  
-  if (!system) {
+  const systemsManager = SystemsManager.getInstance();
+
+  try {
+    const system = await systemsManager.getSystem(systemId);
+
+    if (!system) {
+      return NextResponse.json(
+        { error: 'System not found' },
+        { status: 404 }
+      );
+    }
+
+    // Admin can access all systems, regular users can only access their own
+    const hasAccess = isAdmin || system.ownerClerkUserId === userId;
+
+    if (!hasAccess) {
+      return NextResponse.json(
+        { error: 'Access denied to system' },
+        { status: 403 }
+      );
+    }
+
+    return { system, hasAccess };
+  } catch (error) {
     return NextResponse.json(
       { error: 'System not found' },
       { status: 404 }
     );
   }
-  
-  // Admin can access all systems, regular users can only access their own
-  const hasAccess = isAdmin || system.ownerClerkUserId === userId;
-  
-  if (!hasAccess) {
-    return NextResponse.json(
-      { error: 'Access denied to system' },
-      { status: 403 }
-    );
-  }
-  
-  return { system, hasAccess };
 }
 
 // ============================================================================
 // Parameter Parsing & Validation
 // ============================================================================
 
-function parseBasicParams(searchParams: URLSearchParams): ValidationResult & { 
-  systemId?: number; 
-  interval?: string; 
-  fields?: string[] 
+function parseBasicParams(searchParams: URLSearchParams): ValidationResult & {
+  systemId?: number;
+  interval?: string;
 } {
   const systemIdParam = searchParams.get('systemId');
   if (!systemIdParam) {
@@ -113,7 +114,7 @@ function parseBasicParams(searchParams: URLSearchParams): ValidationResult & {
       statusCode: 400
     };
   }
-  
+
   const systemId = parseInt(systemIdParam);
   if (isNaN(systemId)) {
     return {
@@ -122,7 +123,7 @@ function parseBasicParams(searchParams: URLSearchParams): ValidationResult & {
       statusCode: 400
     };
   }
-  
+
   const interval = searchParams.get('interval');
   if (!interval) {
     return {
@@ -131,7 +132,7 @@ function parseBasicParams(searchParams: URLSearchParams): ValidationResult & {
       statusCode: 400
     };
   }
-  
+
   if (!['5m', '30m', '1d'].includes(interval)) {
     return {
       isValid: false,
@@ -139,18 +140,11 @@ function parseBasicParams(searchParams: URLSearchParams): ValidationResult & {
       statusCode: 501
     };
   }
-  
-  // Make fields optional, default to all standard fields
-  const fieldsParam = searchParams.get('fields');
-  const fields = fieldsParam
-    ? fieldsParam.split(',').filter(f => f.trim())
-    : ['solar', 'load', 'battery', 'grid'];
-  
+
   return {
     isValid: true,
     systemId,
-    interval,
-    fields
+    interval
   };
 }
 
@@ -165,10 +159,10 @@ function parseTimeRangeParams(
   const lastParam = searchParams.get('last');
   const startTimeParam = searchParams.get('startTime');
   const endTimeParam = searchParams.get('endTime');
-  
+
   let startTime: ZonedDateTime | CalendarDate;
   let endTime: ZonedDateTime | CalendarDate;
-  
+
   try {
     if (lastParam) {
       // Parse relative time
@@ -180,13 +174,13 @@ function parseTimeRangeParams(
           // For daily intervals, expect date-only strings
           [startTime, endTime] = parseDateRange(startTimeParam, endTimeParam);
           break;
-          
+
         case '30m':
         case '5m':
           // For minute intervals, accept datetime or date strings
           [startTime, endTime] = parseTimeRangeUtil(startTimeParam, endTimeParam, systemTimezoneOffsetMin);
           break;
-          
+
         default:
           throw new Error(`Unsupported interval: ${interval}`);
       }
@@ -204,7 +198,7 @@ function parseTimeRangeParams(
       statusCode: 400
     };
   }
-  
+
   return {
     isValid: true,
     startTime,
@@ -218,13 +212,13 @@ function validateTimeRange(
   interval: '5m' | '30m' | '1d'
 ): ValidationResult {
   let timeDiff: number;
-  
+
   switch (interval) {
     case '1d': {
       // For CalendarDate, validate and calculate day difference
       const start = startTime as CalendarDate;
       const end = endTime as CalendarDate;
-      
+
       if (start.compare(end) > 0) {
         return {
           isValid: false,
@@ -232,17 +226,17 @@ function validateTimeRange(
           statusCode: 400
         };
       }
-      
+
       timeDiff = getDateDifferenceMs(start, end);
       break;
     }
-    
+
     case '30m':
     case '5m': {
       // For ZonedDateTime, validate and calculate millisecond difference
       const start = startTime as ZonedDateTime;
       const end = endTime as ZonedDateTime;
-      
+
       if (start.compare(end) >= 0) {
         return {
           isValid: false,
@@ -250,10 +244,10 @@ function validateTimeRange(
           statusCode: 400
         };
       }
-      
+
       // Validate alignment with interval boundaries
       const intervalMinutes = interval === '30m' ? 30 : 5;
-      
+
       // Check if start time is aligned to interval boundary
       const startMinute = start.minute;
       const startSecond = start.second;
@@ -264,7 +258,7 @@ function validateTimeRange(
           statusCode: 400
         };
       }
-      
+
       // Check if end time is aligned to interval boundary
       const endMinute = end.minute;
       const endSecond = end.second;
@@ -275,11 +269,11 @@ function validateTimeRange(
           statusCode: 400
         };
       }
-      
+
       timeDiff = getTimeDifferenceMs(start, end);
       break;
     }
-    
+
     default:
       return {
         isValid: false,
@@ -287,16 +281,16 @@ function validateTimeRange(
         statusCode: 400
       };
   }
-  
+
   // Check time range limits
   const limits = {
     '5m': { duration: 7.5 * 24 * 60 * 60 * 1000, label: '7.5 days' },
     '30m': { duration: 30 * 24 * 60 * 60 * 1000, label: '30 days' },
     '1d': { duration: 13 * 30 * 24 * 60 * 60 * 1000, label: '13 months' }
   };
-  
+
   const { duration: maxDuration, label: maxDurationLabel } = limits[interval];
-  
+
   if (timeDiff > maxDuration) {
     return {
       isValid: false,
@@ -304,246 +298,93 @@ function validateTimeRange(
       statusCode: 400
     };
   }
-  
+
   return { isValid: true };
 }
 
 // ============================================================================
-// Data Fetching
+// Data Fetching using new abstraction
 // ============================================================================
 
-async function fetchHistoryData(
-  system: typeof systems.$inferSelect,
+async function getSystemHistoryInOpenNEMFormat(
+  system: SystemWithPolling,
   startTime: ZonedDateTime | CalendarDate,
   endTime: ZonedDateTime | CalendarDate,
-  interval: '5m' | '30m' | '1d',
-  systemTimezoneOffsetMin: number
-): Promise<any[]> {
-  // This function should not be called for craighack systems
-  // They should be handled by getSystemHistoryInOpenNEMFormatHack
+  interval: '5m' | '30m' | '1d'
+): Promise<OpenNEMDataSeries[]> {
+  // Special handling for craighack systems (combine systems 2 & 3)
   if (system.vendorType === 'craighack') {
-    throw new Error('fetchHistoryData should not be called for craighack systems. Use getSystemHistoryInOpenNEMFormatHack instead.');
-  }
-  
-  // Fetch data based on interval type
-  switch (interval) {
-    case '1d': {
-      const start = startTime as CalendarDate;
-      const end = endTime as CalendarDate;
-      return await fetch1DayData(system.id, start, end);
-    }
-    
-    case '30m': {
-      const start = startTime as ZonedDateTime;
-      const end = endTime as ZonedDateTime;
-      return await fetch30MinuteData(system.id, start, end, systemTimezoneOffsetMin);
-    }
-    
-    case '5m': {
-      const start = startTime as ZonedDateTime;
-      const end = endTime as ZonedDateTime;
-      return await fetch5MinuteData(system.id, start, end, systemTimezoneOffsetMin);
-    }
-    
-    default:
-      // This should never happen due to earlier validation
-      throw new Error(`Unsupported interval: ${interval}`);
-  }
-}
+    // Get both systems' data and combine them
+    const systemsManager = SystemsManager.getInstance();
 
-// ============================================================================
-// Data Series Creation
-// ============================================================================
+    try {
+      const system2 = await systemsManager.getSystem(2);
+      const system3 = await systemsManager.getSystem(3);
 
-function createDataSeries(
-  remoteSystemIdentifier: string,
-  fieldName: string,
-  dataExtractor: (r: any) => any,
-  type: string,
-  units: string,
-  description: string,
-  processedData: any[],
-  startStr: string,
-  lastStr: string,
-  effectiveInterval: string
-): OpenNEMDataSeries {
-  return {
-    id: `liveone.${remoteSystemIdentifier}.${fieldName}`,
-    type,
-    units,
-    history: {
-      start: startStr,
-      last: lastStr,
-      interval: effectiveInterval,
-      data: formatDataArray(processedData.map(dataExtractor))
-    },
-    network: 'liveone',
-    source: 'selectronic',
-    description
-  };
-}
+      if (!system2 || !system3) {
+        throw new Error('Unable to fetch craighack systems 2 and 3');
+      }
 
-function buildDataSeries(
-  fields: string[],
-  processedData: any[],
-  interval: '5m' | '30m' | '1d',
-  remoteSystemIdentifier: string,
-  startStr: string,
-  lastStr: string
-): OpenNEMDataSeries[] {
-  const dataSeries: OpenNEMDataSeries[] = [];
-  
-  if (processedData.length === 0) {
-    return dataSeries;
-  }
-  
-  // Solar field
-  if (fields.includes('solar')) {
-    if (interval !== '1d') {
-      // Only include power for non-daily intervals
-      dataSeries.push(createDataSeries(
-        remoteSystemIdentifier,
-        'solar.power',
-        r => r?.power?.solar?.avgW ?? r?.solar?.avgW,
-        'power',
-        'W',
-        'Total solar generation (remote + local)',
-        processedData,
-        startStr,
-        lastStr,
-        interval
-      ));
-    } else {
-      // For daily intervals, only include energy
-      dataSeries.push(createDataSeries(
-        remoteSystemIdentifier,
-        'solar.energy',
-        r => r?.solar?.intervalKwh,
-        'energy',
-        'kWh',
-        'Total solar energy generated',
-        processedData,
-        startStr,
-        lastStr,
-        interval
-      ));
-    }
-  }
-  
-  // Load field
-  if (fields.includes('load')) {
-    if (interval !== '1d') {
-      // Only include power for non-daily intervals
-      dataSeries.push(createDataSeries(
-        remoteSystemIdentifier,
-        'load.power',
-        r => r?.power?.load?.avgW ?? r?.load?.avgW,
-        'power',
-        'W',
-        'Total load consumption',
-        processedData,
-        startStr,
-        lastStr,
-        interval
-      ));
-    } else {
-      // For daily intervals, only include energy
-      dataSeries.push(createDataSeries(
-        remoteSystemIdentifier,
-        'load.energy',
-        r => r?.load?.loadIntervalKwh,
-        'energy',
-        'kWh',
-        'Total load energy consumed',
-        processedData,
-        startStr,
-        lastStr,
-        interval
-      ));
-    }
-  }
-  
-  // Battery field
-  if (fields.includes('battery')) {
-    if (interval !== '1d') {
-      // Only include power for non-daily intervals
-      dataSeries.push(createDataSeries(
-        remoteSystemIdentifier,
-        'battery.power',
-        r => r?.power?.battery?.avgW ?? r?.battery?.avgW,
-        'power',
-        'W',
-        'Battery power (negative = charging, positive = discharging)',
-        processedData,
-        startStr,
-        lastStr,
-        interval
-      ));
-    }
+      // Select fields based on interval type
+      let craighackFields: string[];
+      if (interval === '1d') {
+        craighackFields = [
+          'solar_energy',
+          'load_energy',
+          'battery_soc_avg', 'battery_soc_min', 'battery_soc_max'
+        ];
+      } else {
+        craighackFields = ['solar', 'load', 'battery', 'grid', 'battery_soc'];
+      }
 
-    // Battery SOC is percentage, keep for all intervals
-    dataSeries.push(createDataSeries(
-      remoteSystemIdentifier,
-      interval === '1d' ? 'battery.soc.avg' : 'battery.soc.last',
-      r => interval === '1d' ? r?.soc?.avgBattery : (r?.batterySOCLast ?? r?.battery?.batteryLastSOC),
-      'percentage',
-      '%',
-      interval === '1d' ? 'Average battery state of charge' : 'Battery state of charge',
-      processedData,
-      startStr,
-      lastStr,
-      interval
-    ));
-    
-    if (interval === '1d') {
-      dataSeries.push(createDataSeries(
-        remoteSystemIdentifier,
-        'battery.soc.min',
-        r => r?.soc?.minBattery,
-        'percentage',
-        '%',
-        'Minimum battery state of charge',
-        processedData,
-        startStr,
-        lastStr,
-        interval
-      ));
-      
-      dataSeries.push(createDataSeries(
-        remoteSystemIdentifier,
-        'battery.soc.max',
-        r => r?.soc?.maxBattery,
-        'percentage',
-        '%',
-        'Maximum battery state of charge',
-        processedData,
-        startStr,
-        lastStr,
-        interval
-      ));
+      // Fetch data for both systems
+      const [data2, data3] = await Promise.all([
+        HistoryService.getHistoryInOpenNEMFormat(
+          system2,
+          startTime,
+          endTime,
+          interval,
+          craighackFields
+        ),
+        HistoryService.getHistoryInOpenNEMFormat(
+          system3,
+          startTime,
+          endTime,
+          interval,
+          craighackFields
+        )
+      ]);
+
+      // Combine all data
+      return [...data2, ...data3];
+    } catch (error) {
+      console.error('Error fetching craighack data:', error);
+      throw error;
     }
   }
-  
-  // Grid field
-  if (fields.includes('grid')) {
-    if (interval !== '1d') {
-      // Only include power for non-daily intervals
-      dataSeries.push(createDataSeries(
-        remoteSystemIdentifier,
-        'grid.power',
-        r => r?.power?.grid?.avgW ?? r?.grid?.avgW,
-        'power',
-        'W',
-        'Grid power (positive = import, negative = export)',
-        processedData,
-        startStr,
-        lastStr,
-        interval
-      ));
-    }
+
+  // Select fields based on interval type
+  let fields: string[];
+
+  if (interval === '1d') {
+    // For daily data, only include energy fields and all SOC variants (no power fields)
+    fields = [
+      'solar_energy',
+      'load_energy',
+      'battery_soc_avg', 'battery_soc_min', 'battery_soc_max'
+    ];
+  } else {
+    // For 5m and 30m intervals, use standard power fields
+    fields = ['solar', 'load', 'battery', 'grid', 'battery_soc'];
   }
-  
-  return dataSeries;
+
+  return HistoryService.getHistoryInOpenNEMFormat(
+    system,
+    startTime,
+    endTime,
+    interval,
+    fields
+  );
 }
 
 // ============================================================================
@@ -559,23 +400,23 @@ function buildResponse(
   // Format date strings based on interval type
   let requestStartStr: string;
   let requestEndStr: string;
-  
+
   switch (interval) {
     case '1d':
       requestStartStr = formatDateAEST(startTime as CalendarDate);
       requestEndStr = formatDateAEST(endTime as CalendarDate);
       break;
-      
+
     case '30m':
     case '5m':
       requestStartStr = formatTimeAEST(startTime as ZonedDateTime);
       requestEndStr = formatTimeAEST(endTime as ZonedDateTime);
       break;
-      
+
     default:
       throw new Error(`Unsupported interval: ${interval}`);
   }
-  
+
   const response: OpenNEMResponse = {
     type: 'energy',
     version: 'v4.1',
@@ -585,104 +426,15 @@ function buildResponse(
     requestEnd: requestEndStr,
     data: dataSeries
   };
-  
+
   const jsonStr = formatOpenNEMResponse(response);
-  
+
   return new NextResponse(jsonStr, {
     status: 200,
     headers: {
       'Content-Type': 'application/json',
     },
   });
-}
-
-// ============================================================================
-// Combined History Data Function
-// ============================================================================
-
-async function getSystemHistoryInOpenNEMFormat(
-  system: SystemAccess['system'],
-  startTime: ZonedDateTime | CalendarDate,
-  endTime: ZonedDateTime | CalendarDate,
-  interval: '5m' | '30m' | '1d',
-  fields: string[]
-): Promise<OpenNEMDataSeries[]> {
-  // Step 6: Fetch data
-  const systemTimezoneOffsetMin = system.timezoneOffsetMin;
-  const processedData = await fetchHistoryData(
-    system,
-    startTime,
-    endTime,
-    interval,
-    systemTimezoneOffsetMin
-  );
-  
-  // Step 7: Build data series
-  const remoteSystemIdentifier = `${system.vendorType}.${system.vendorSiteId}`;
-  
-  // Format date strings for data series
-  let startStr: string;
-  let lastStr: string;
-  
-  switch (interval) {
-    case '1d':
-      startStr = formatDateAEST(startTime as CalendarDate);
-      lastStr = formatDateAEST(endTime as CalendarDate);
-      break;
-      
-    case '30m':
-    case '5m':
-      startStr = formatTimeAEST(startTime as ZonedDateTime);
-      lastStr = formatTimeAEST(endTime as ZonedDateTime);
-      break;
-      
-    default:
-      throw new Error(`Unsupported interval: ${interval}`);
-  }
-  
-  const dataSeries = buildDataSeries(
-    fields,
-    processedData,
-    interval,
-    remoteSystemIdentifier,
-    startStr,
-    lastStr
-  );
-  
-  return dataSeries;
-}
-
-/**
- * Wrapper function that checks for craighack vendorType and delegates appropriately
- */
-async function getSystemHistoryInOpenNEMFormatHack(
-  system: SystemAccess['system'],
-  startTime: ZonedDateTime | CalendarDate,
-  endTime: ZonedDateTime | CalendarDate,
-  interval: '5m' | '30m' | '1d',
-  fields: string[]
-): Promise<OpenNEMDataSeries[]> {
-  // Check if this is a craighack system
-  if (system.vendorType === 'craighack') {
-    // Use the special craighack function that combines systems 2 and 3
-    return getCraigHackSystemHistoryInOpenNEMFormat(
-      system,
-      startTime,
-      endTime,
-      interval,
-      fields,
-      getSystemHistoryInOpenNEMFormat // Pass the original function as a parameter
-    );
-  }
-  
-  // For all other systems, use the normal function
-  return getSystemHistoryInOpenNEMFormat(
-    system,
-    startTime,
-    endTime,
-    interval,
-    fields
-  );
 }
 
 // ============================================================================
@@ -696,8 +448,8 @@ export async function GET(request: NextRequest) {
     if (authResult instanceof NextResponse) {
       return authResult;
     }
-    
-    // Step 2: Parse basic parameters
+
+    // Step 2: Parse basic parameters (no fields parameter needed)
     const searchParams = request.nextUrl.searchParams;
     const basicParams = parseBasicParams(searchParams);
     if (!basicParams.isValid) {
@@ -706,7 +458,7 @@ export async function GET(request: NextRequest) {
         { status: basicParams.statusCode! }
       );
     }
-    
+
     // Step 3: Check system access
     const systemAccess = await checkSystemAccess(
       basicParams.systemId!,
@@ -716,9 +468,9 @@ export async function GET(request: NextRequest) {
     if (systemAccess instanceof NextResponse) {
       return systemAccess;
     }
-    
+
     const { system } = systemAccess;
-    
+
     // Step 4: Parse time range
     const timeRange = parseTimeRangeParams(
       searchParams,
@@ -731,7 +483,7 @@ export async function GET(request: NextRequest) {
         { status: timeRange.statusCode! }
       );
     }
-    
+
     // Step 5: Validate time range
     const validation = validateTimeRange(
       timeRange.startTime!,
@@ -744,30 +496,29 @@ export async function GET(request: NextRequest) {
         { status: validation.statusCode! }
       );
     }
-    
-    // Steps 6 & 7: Fetch data and build data series
-    const dataSeries = await getSystemHistoryInOpenNEMFormatHack(
+
+    // Step 6: Fetch data using new abstraction
+    const dataSeries = await getSystemHistoryInOpenNEMFormat(
       system,
       timeRange.startTime!,
       timeRange.endTime!,
-      basicParams.interval as '5m' | '30m' | '1d',
-      basicParams.fields!
+      basicParams.interval as '5m' | '30m' | '1d'
     );
-    
-    // Step 8: Build and return response
+
+    // Step 7: Build and return response
     return buildResponse(
       dataSeries,
       timeRange.startTime!,
       timeRange.endTime!,
       basicParams.interval as '5m' | '30m' | '1d'
     );
-    
+
   } catch (error) {
     console.error('Error fetching historical data:', error);
     return NextResponse.json(
-      { 
-        error: 'Internal server error', 
-        details: error instanceof Error ? error.message : 'Unknown error' 
+      {
+        error: 'Internal server error',
+        details: error instanceof Error ? error.message : 'Unknown error'
       },
       { status: 500 }
     );
