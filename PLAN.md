@@ -80,27 +80,33 @@
    - Remove the `POINT_READINGS_NO_CHARTS` error in DashboardClient
    - Let EnergyChart fetch from `/api/history`
 
-### Phase 4: Add Generation & Demand Charts
+### Phase 4: Add Generation & Load Charts ✅ COMPLETE
 
-1. **Generation Chart** (stacked area chart)
+1. **MondoPowerChart Component** (`components/MondoPowerChart.tsx`)
+   - Reusable chart component with two modes: 'load' and 'generation'
+   - Fetches data from `/api/history` endpoint
+   - Proper Chart.js stacked area fills with `fill: 'stack'`
+   - Supports external period control (1D/7D/30D)
+   - Time-based annotations for daylight hours and weekdays
+
+2. **Generation Chart** (stacked area chart)
    - Solar 1
    - Solar 2
-   - Battery Discharge (battery > 0)
-   - Grid Import (grid > 0)
+   - Battery Storage
+   - Meter (Mains Power)
 
-2. **Demand Chart** (stacked area chart)
-   - HVAC
-   - Pool
-   - Heat Pump
+3. **Load Chart** (stacked area chart)
    - Tesla EV Charger
-   - Other (calculated remainder)
-   - Battery Charge (battery < 0, absolute value)
-   - Grid Export (grid < 0, absolute value)
+   - Heat Pump
+   - Pool
+   - HVAC
 
-3. **Implementation approach**
-   - Create new field mappings in history API
-   - Return additional data series for these specific fields
-   - Create new chart components that consume this data
+4. **Dashboard Integration** (`components/DashboardClient.tsx`)
+   - Combined both charts in single card at full width
+   - Shared period switcher controls both charts
+   - Load chart positioned above generation chart
+   - Increased height by 25% (375px)
+   - Only displays for mondo vendor type systems
 
 ### Phase 5: Migration & Cleanup
 
@@ -135,12 +141,20 @@
 
 1. `/api/history` returns correct responses for all system types ✅
 2. Mondo systems show working charts with real data ✅
-3. No performance degradation ✅
-4. Code is cleaner and more maintainable
+3. Generation and load stacked area charts implemented for Mondo systems ✅
+4. No performance degradation ✅
+5. Code is cleaner and more maintainable ✅
 
-## Next Steps
+## Completed Work
 
 1. ✅ Implement `/api/history` endpoint with provider pattern
 2. ✅ Test with multiple system types to validate output
 3. ✅ Mondo integration complete with point_readings_agg_5m
-4. Future: Add daily aggregation for Mondo systems (point_readings_agg_1d)
+4. ✅ MondoPowerChart component with stacked area charts
+5. ✅ Combined charts with shared period control in dashboard
+
+## Future Enhancements
+
+1. Add daily aggregation for Mondo systems (point_readings_agg_1d)
+2. Consider adding calculated fields (e.g., "Other" load category)
+3. Add energy totals panel for Mondo systems
