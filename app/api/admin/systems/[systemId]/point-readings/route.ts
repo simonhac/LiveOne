@@ -81,7 +81,9 @@ export async function GET(
         unit: p.metricUnit,
         subsystem: p.subsystem,
         pointId: p.pointId,
-        pointSubId: p.pointSubId
+        pointSubId: p.pointSubId,
+        pointDbId: p.id,
+        defaultName: p.defaultName
       }))
     ]
 

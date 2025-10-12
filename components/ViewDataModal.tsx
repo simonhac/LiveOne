@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { X, RefreshCw } from 'lucide-react'
 import { formatDateTime, formatTime } from '@/lib/fe-date-format'
+import PointInfoModal from './PointInfoModal'
 
 interface ColumnHeader {
   key: string
@@ -12,6 +13,8 @@ interface ColumnHeader {
   subsystem: string | null
   pointId?: string
   pointSubId?: string | null
+  pointDbId?: number
+  defaultName?: string
 }
 
 interface ViewDataModalProps {
@@ -37,6 +40,16 @@ export default function ViewDataModal({
   const [initialLoad, setInitialLoad] = useState(true)
   const [rotateKey, setRotateKey] = useState(0)
   const fetchingRef = useRef(false)
+  const [selectedPointInfo, setSelectedPointInfo] = useState<{
+    pointDbId: number
+    pointSubId: string | null
+    subsystem: string | null
+    defaultName: string
+    name: string | null
+    metricType: string
+    metricUnit: string | null
+  } | null>(null)
+  const [isPointInfoModalOpen, setIsPointInfoModalOpen] = useState(false)
 
   const fetchData = useCallback(async () => {
     // Prevent duplicate fetches
@@ -94,6 +107,52 @@ export default function ViewDataModal({
     fetchData()
   }
 
+  const handleColumnHeaderClick = (header: ColumnHeader) => {
+    // Only open modal for point columns (not timestamp)
+    if (header.key === 'timestamp' || !header.pointDbId) return
+
+    setSelectedPointInfo({
+      pointDbId: header.pointDbId,
+      pointSubId: header.pointSubId || null,
+      subsystem: header.subsystem,
+      defaultName: header.defaultName || header.label,
+      name: header.label !== header.defaultName ? header.label : null,
+      metricType: header.type,
+      metricUnit: header.unit
+    })
+    setIsPointInfoModalOpen(true)
+  }
+
+  const handleUpdatePointInfo = async (
+    pointDbId: number,
+    updates: { subsystem: string | null, name: string | null }
+  ) => {
+    try {
+      const response = await fetch(`/api/admin/points/${pointDbId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      })
+
+      if (!response.ok) throw new Error('Failed to update point info')
+
+      // Refresh data to show updated values
+      await fetchData()
+
+      // Update the selected point info to reflect changes
+      if (selectedPointInfo) {
+        setSelectedPointInfo({
+          ...selectedPointInfo,
+          subsystem: updates.subsystem,
+          name: updates.name
+        })
+      }
+    } catch (error) {
+      console.error('Error updating point info:', error)
+      throw error
+    }
+  }
+
   if (!isOpen) return null
 
   // Format value based on metric type
@@ -149,13 +208,6 @@ export default function ViewDataModal({
               Data for {systemName} <span className="text-gray-500">ID: {systemId}</span>
               {vendorType && <> — {vendorType}</>}
             </h3>
-            <p className="text-sm text-gray-400">
-              {metadata && (
-                <>
-                  Showing {metadata.rowCount} readings from {metadata.pointCount} monitoring points
-                </>
-              )}
-            </p>
           </div>
           <div className="flex items-center gap-2">
             {lastFetchTime && (
@@ -202,11 +254,25 @@ export default function ViewDataModal({
                 <thead className="text-left text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-900">
                   <tr>
                     {headers.map((header) => (
-                      <th key={header.key} className="pb-2 px-2">
+                      <th
+                        key={header.key}
+                        className={`pb-2 px-2 align-top ${
+                          header.key !== 'timestamp' && header.pointDbId
+                            ? 'cursor-pointer hover:bg-gray-700/50 rounded transition-colors'
+                            : ''
+                        }`}
+                        onClick={() => handleColumnHeaderClick(header)}
+                        title={header.key !== 'timestamp' && header.pointDbId ? 'Click to edit point info' : undefined}
+                      >
                         <div className="flex flex-col gap-0.5">
                           <span className={header.key === 'timestamp' ? 'text-gray-300' : getSubsystemColor(header.subsystem)}>
                             {header.label}
                           </span>
+                          {header.key !== 'timestamp' && header.subsystem && (
+                            <span className="text-xs text-gray-500">
+                              {header.subsystem}
+                            </span>
+                          )}
                           {getUnitDisplay(header) && (
                             <span className="text-xs text-gray-500">
                               {getUnitDisplay(header)}
@@ -246,6 +312,13 @@ export default function ViewDataModal({
           )}
         </div>
       </div>
+
+      <PointInfoModal
+        isOpen={isPointInfoModalOpen}
+        onClose={() => setIsPointInfoModalOpen(false)}
+        pointInfo={selectedPointInfo}
+        onUpdate={handleUpdatePointInfo}
+      />
     </div>
   )
 }
