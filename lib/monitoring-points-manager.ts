@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { pointInfo, pointReadings } from '@/lib/db/schema-monitoring-points';
 import { eq, and } from 'drizzle-orm';
+import { updatePointAggregates5m } from './point-aggregation-helper';
 
 export interface PointInfoMap {
   [key: string]: typeof pointInfo.$inferSelect;
@@ -84,6 +85,7 @@ export async function ensurePointInfo(
  * Insert a reading for a monitoring point
  */
 export async function insertPointReading(
+  systemId: number,
   pointInfoId: number,
   value: number,
   measurementTime: number,
@@ -94,6 +96,7 @@ export async function insertPointReading(
 ): Promise<void> {
   await db.insert(pointReadings)
     .values({
+      systemId,
       pointId: pointInfoId,
       sessionId: sessionId || null,
       measurementTime,
@@ -141,6 +144,7 @@ export async function insertPointReadingsBatch(
     const point = await ensurePointInfo(systemId, pointMap, reading.pointMetadata);
 
     valuesToInsert.push({
+      systemId,
       pointId: point.id,
       sessionId: reading.sessionId || null,
       measurementTime: reading.measurementTime,
@@ -166,4 +170,12 @@ export async function insertPointReadingsBatch(
         }
       });
   }
+
+  // Aggregate the readings we just inserted
+  const uniquePointIds = [...new Set(valuesToInsert.map(v => v.pointId))];
+  await updatePointAggregates5m(
+    systemId,
+    uniquePointIds,
+    readings[0].measurementTime
+  );
 }

@@ -5,7 +5,7 @@ import { db } from '@/lib/db'
 import { systems, readings, pollingStatus, readingsAgg1d, userSystems } from '@/lib/db/schema'
 import { eq, and, desc, or } from 'drizzle-orm'
 import { formatTimeAEST, formatTime_fromJSDate, getYesterdayDate, fromUnixTimestamp } from '@/lib/date-utils'
-import { roundToThree } from '@/lib/format-opennem'
+import { roundToThree } from '@/lib/history/format-opennem'
 import { isUserAdmin } from '@/lib/auth-utils'
 import { VendorRegistry } from '@/lib/vendors/registry'
 

@@ -4,7 +4,7 @@ import { db } from '@/lib/db';
 import { systems } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { OpenNEMResponse, OpenNEMDataSeries } from '@/types/opennem';
-import { formatDataArray, formatOpenNEMResponse } from '@/lib/format-opennem';
+import { formatDataArray, formatOpenNEMResponse } from '@/lib/history/format-opennem';
 import { 
   formatTimeAEST, 
   formatDateAEST, 

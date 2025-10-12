@@ -1,7 +1,7 @@
 import { MeasurementSeries } from './types';
 import { OpenNEMDataSeries } from '@/types/opennem';
 import { formatTimeAEST, formatDateAEST } from '@/lib/date-utils';
-import { formatDataArray } from '@/lib/format-opennem';
+import { formatDataArray } from './format-opennem';
 import { CalendarDate, ZonedDateTime } from '@internationalized/date';
 import { toUnixTimestamp } from '@/lib/date-utils';
 

@@ -34,7 +34,8 @@ export const pointInfo = sqliteTable('point_info', {
 export const pointReadings = sqliteTable('point_readings', {
   id: integer('id').primaryKey({ autoIncrement: true }),
 
-  // Relationships
+  // Relationships (denormalized for query performance)
+  systemId: integer('system_id').notNull().references(() => systems.id, { onDelete: 'cascade' }),
   pointId: integer('point_id').notNull().references(() => pointInfo.id, { onDelete: 'cascade' }),
   sessionId: integer('session_id'),  // No longer references measurementSessions
 
@@ -50,52 +51,33 @@ export const pointReadings = sqliteTable('point_readings', {
   dataQuality: text('data_quality').notNull().default('good'), // 'good', 'error', 'estimated', 'interpolated'
 }, (table) => ({
   pointTimeUnique: uniqueIndex('pr_point_time_unique').on(table.pointId, table.measurementTime),
+  systemTimeIdx: index('pr_system_time_idx').on(table.systemId, table.measurementTime),
   pointIdx: index('pr_point_idx').on(table.pointId),
-  timeIdx: index('pr_time_idx').on(table.measurementTime),
   sessionIdx: index('pr_session_idx').on(table.sessionId),
 }));
 
 // 5-minute aggregation table
 export const pointReadingsAgg5m = sqliteTable('point_readings_agg_5m', {
-  // Composite primary key
+  // Relationships (denormalized for query performance)
+  systemId: integer('system_id').notNull().references(() => systems.id, { onDelete: 'cascade' }),
   pointId: integer('point_id').notNull().references(() => pointInfo.id, { onDelete: 'cascade' }),
-  intervalStart: integer('interval_start').notNull(), // Start of 5-min interval (ms)
-
-  // Interval metadata
   intervalEnd: integer('interval_end').notNull(), // End of interval (ms)
-  sampleCount: integer('sample_count').notNull(), // Number of samples in interval
 
-  // Power aggregates (Watts)
-  powerAvg: real('power_avg'),
-  powerMin: real('power_min'),
-  powerMax: real('power_max'),
-  powerStdDev: real('power_std_dev'),
+  // Aggregates (generic - units determined by point_info.metricUnit)
+  // These can be null if all readings in the interval were errors
+  avg: real('avg'),
+  min: real('min'),
+  max: real('max'),
+  last: real('last'),
 
-  // Energy aggregates (Wh)
-  energyDelta: real('energy_delta'), // Energy change in this interval
-  energyEnd: real('energy_end'), // Cumulative energy at interval end
-
-  // Battery aggregates
-  batterySOCAvg: real('battery_soc_avg'),
-  batterySOCMin: real('battery_soc_min'),
-  batterySOCMax: real('battery_soc_max'),
-
-  // Additional aggregated metrics
-  additionalAggregates: text('additional_aggregates', { mode: 'json' }),
-
-  // Quality metrics
-  dataCompleteness: real('data_completeness'), // Percentage of expected samples
-  uptimeSeconds: integer('uptime_seconds'), // Seconds device was online
-
-  // Processing metadata
+  // Sampling metadata
+  sampleCount: integer('sample_count').notNull(),
+  errorCount: integer('error_count').notNull(),
   createdAt: integer('created_at').notNull().default(sql`(unixepoch() * 1000)`),
   updatedAt: integer('updated_at').notNull().default(sql`(unixepoch() * 1000)`),
 }, (table) => ({
-  // Composite primary key
-  pk: primaryKey({ columns: [table.pointId, table.intervalStart] }),
-  // Indexes
-  timeIdx: index('pr5m_time_idx').on(table.intervalStart),
-  pointTimeIdx: index('pr5m_point_time_idx').on(table.pointId, table.intervalStart),
+  pk: primaryKey({ columns: [table.pointId, table.intervalEnd] }),
+  systemTimeIdx: index('pr5m_system_time_idx').on(table.systemId, table.intervalEnd),
 }));
 
 // Relations for point info

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { SystemsManager, SystemWithPolling } from '@/lib/systems-manager';
 import { OpenNEMResponse, OpenNEMDataSeries } from '@/types/opennem';
-import { formatOpenNEMResponse } from '@/lib/format-opennem';
+import { formatOpenNEMResponse } from '@/lib/history/format-opennem';
 import {
   formatTimeAEST,
   formatDateAEST,

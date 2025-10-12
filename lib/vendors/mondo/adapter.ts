@@ -39,8 +39,8 @@ export class MondoAdapter extends BaseVendorAdapter {
   readonly supportsAddSystem = true;
   readonly dataStore = 'point_readings' as const; // Uses monitoring points
 
-  // Mondo polls every 5 minutes
-  protected pollIntervalMinutes = 5;
+  // Mondo polls every 2 minutes
+  protected pollIntervalMinutes = 2;
   protected toleranceSeconds = 30;
 
   /**
@@ -286,8 +286,8 @@ export class MondoAdapter extends BaseVendorAdapter {
 
         console.log(`[Mondo] Poll complete: ${recordsProcessed} records processed`);
 
-        // Calculate next poll time at the next 5-minute boundary
-        const nextPollTime = getNextMinuteBoundary(5, system.timezoneOffsetMin); // 5-minute interval
+        // Calculate next poll time at the next boundary
+        const nextPollTime = getNextMinuteBoundary(this.pollIntervalMinutes, system.timezoneOffsetMin);
 
         return this.polled(
           null as any, // Mondo doesn't use the common readings table

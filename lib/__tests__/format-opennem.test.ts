@@ -1,5 +1,5 @@
 import { describe, test, expect } from '@jest/globals';
-import { roundToThree, formatDataArray, formatOpenNEMResponse } from '@/lib/format-opennem';
+import { roundToThree, formatDataArray, formatOpenNEMResponse } from '@/lib/history/format-opennem';
 
 describe('roundToThree', () => {
   test('rounds positive numbers to 3 decimal places', () => {
