@@ -325,33 +325,19 @@ async function getSystemHistoryInOpenNEMFormat(
         throw new Error('Unable to fetch craighack systems 2 and 3');
       }
 
-      // Select fields based on interval type
-      let craighackFields: string[];
-      if (interval === '1d') {
-        craighackFields = [
-          'solar_energy',
-          'load_energy',
-          'battery_soc_avg', 'battery_soc_min', 'battery_soc_max'
-        ];
-      } else {
-        craighackFields = ['solar', 'load', 'battery', 'grid', 'battery_soc'];
-      }
-
-      // Fetch data for both systems
+      // Fetch data for both systems (fields are extracted dynamically)
       const [data2, data3] = await Promise.all([
         HistoryService.getHistoryInOpenNEMFormat(
           system2,
           startTime,
           endTime,
-          interval,
-          craighackFields
+          interval
         ),
         HistoryService.getHistoryInOpenNEMFormat(
           system3,
           startTime,
           endTime,
-          interval,
-          craighackFields
+          interval
         )
       ]);
 
@@ -363,27 +349,12 @@ async function getSystemHistoryInOpenNEMFormat(
     }
   }
 
-  // Select fields based on interval type
-  let fields: string[];
-
-  if (interval === '1d') {
-    // For daily data, only include energy fields and all SOC variants (no power fields)
-    fields = [
-      'solar_energy',
-      'load_energy',
-      'battery_soc_avg', 'battery_soc_min', 'battery_soc_max'
-    ];
-  } else {
-    // For 5m and 30m intervals, use standard power fields
-    fields = ['solar', 'load', 'battery', 'grid', 'battery_soc'];
-  }
-
+  // For all other systems, use the history service which extracts fields dynamically
   return HistoryService.getHistoryInOpenNEMFormat(
     system,
     startTime,
     endTime,
-    interval,
-    fields
+    interval
   );
 }
 

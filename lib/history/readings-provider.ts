@@ -78,19 +78,18 @@ export class ReadingsProvider implements HistoryDataProvider {
         });
       }
     }
-    if (solarData.length > 0) {
-      series.push({
-        field: 'solar',
-        metadata: {
-          id: 'solar.power.avg',
-          name: 'Total solar generation (remote + local)',
-          type: 'power',
-          unit: 'W',
-          subsystem: 'generation'
-        },
-        data: solarData
-      });
-    }
+    // Always include series with metadata, even if no data
+    series.push({
+      field: 'solar',
+      metadata: {
+        id: 'solar.power.avg',
+        name: 'Total solar generation (remote + local)',
+        type: 'power',
+        unit: 'W',
+        subsystem: 'generation'
+      },
+      data: solarData
+    });
 
     // Load series
     const loadData: TimeSeriesPoint[] = [];
@@ -106,19 +105,17 @@ export class ReadingsProvider implements HistoryDataProvider {
         });
       }
     }
-    if (loadData.length > 0) {
-      series.push({
-        field: 'load',
-        metadata: {
-          id: 'load.power.avg',
-          name: 'Total load consumption',
-          type: 'power',
-          unit: 'W',
-          subsystem: 'consumption'
-        },
-        data: loadData
-      });
-    }
+    series.push({
+      field: 'load',
+      metadata: {
+        id: 'load.power.avg',
+        name: 'Total load consumption',
+        type: 'power',
+        unit: 'W',
+        subsystem: 'consumption'
+      },
+      data: loadData
+    });
 
     // Battery series
     const batteryData: TimeSeriesPoint[] = [];
@@ -134,19 +131,17 @@ export class ReadingsProvider implements HistoryDataProvider {
         });
       }
     }
-    if (batteryData.length > 0) {
-      series.push({
-        field: 'battery',
-        metadata: {
-          id: 'battery.power.avg',
-          name: 'Battery power (negative = charging, positive = discharging)',
-          type: 'power',
-          unit: 'W',
-          subsystem: 'storage'
-        },
-        data: batteryData
-      });
-    }
+    series.push({
+      field: 'battery',
+      metadata: {
+        id: 'battery.power.avg',
+        name: 'Battery power (negative = charging, positive = discharging)',
+        type: 'power',
+        unit: 'W',
+        subsystem: 'storage'
+      },
+      data: batteryData
+    });
 
     // Grid series
     const gridData: TimeSeriesPoint[] = [];
@@ -162,19 +157,17 @@ export class ReadingsProvider implements HistoryDataProvider {
         });
       }
     }
-    if (gridData.length > 0) {
-      series.push({
-        field: 'grid',
-        metadata: {
-          id: 'grid.power.avg',
-          name: 'Grid power (positive = import, negative = export)',
-          type: 'power',
-          unit: 'W',
-          subsystem: 'grid'
-        },
-        data: gridData
-      });
-    }
+    series.push({
+      field: 'grid',
+      metadata: {
+        id: 'grid.power.avg',
+        name: 'Grid power (positive = import, negative = export)',
+        type: 'power',
+        unit: 'W',
+        subsystem: 'grid'
+      },
+      data: gridData
+    });
 
     // Battery SOC series
     const socData: TimeSeriesPoint[] = [];
@@ -188,19 +181,17 @@ export class ReadingsProvider implements HistoryDataProvider {
         });
       }
     }
-    if (socData.length > 0) {
-      series.push({
-        field: 'battery_soc',
-        metadata: {
-          id: 'battery.soc.last',
-          name: 'Battery state of charge',
-          type: 'percentage',
-          unit: '%',
-          subsystem: 'storage'
-        },
-        data: socData
-      });
-    }
+    series.push({
+      field: 'battery_soc',
+      metadata: {
+        id: 'battery.soc.last',
+        name: 'Battery state of charge',
+        type: 'percentage',
+        unit: '%',
+        subsystem: 'storage'
+      },
+      data: socData
+    });
 
     return series;
   }

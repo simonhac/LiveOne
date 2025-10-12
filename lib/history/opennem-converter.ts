@@ -127,7 +127,10 @@ export class OpenNEMConverter {
         const endMs = toUnixTimestamp(endTime) * 1000;
 
         // Calculate first and last interval boundaries
-        const firstIntervalEnd = Math.floor(startMs / intervalMs) * intervalMs + intervalMs;
+        // If startMs is already on a boundary, use it; otherwise round up to next boundary
+        const firstIntervalEnd = startMs % intervalMs === 0
+          ? startMs
+          : Math.floor(startMs / intervalMs) * intervalMs + intervalMs;
         const lastIntervalEnd = endMs % intervalMs === 0
           ? endMs
           : Math.floor(endMs / intervalMs) * intervalMs + intervalMs;
@@ -138,7 +141,10 @@ export class OpenNEMConverter {
           if (dataIndex < series.data.length) {
             const dataPoint = series.data[dataIndex];
             const dataTimestamp = toUnixTimestamp(dataPoint.timestamp as ZonedDateTime) * 1000;
-            const dataIntervalEnd = Math.floor(dataTimestamp / intervalMs) * intervalMs + intervalMs;
+
+            // Data from aggregated tables is already aligned to interval boundaries,
+            // so we just use it directly. Only round for raw data that might be off-boundary.
+            const dataIntervalEnd = dataTimestamp;
 
             if (dataIntervalEnd === expectedIntervalEnd) {
               // We have data for this interval

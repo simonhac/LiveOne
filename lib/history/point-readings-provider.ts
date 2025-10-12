@@ -49,81 +49,65 @@ export class PointReadingsProvider implements HistoryDataProvider {
       metricUnit: p.metricUnit
     }]));
 
-    // Fetch raw point readings within the time range
-    const readings = await db
+    // Fetch aggregated point readings within the time range
+    const aggregates = await db
       .select()
-      .from(pointReadings)
+      .from(pointReadingsAgg5m)
       .where(and(
-        inArray(pointReadings.pointId, points.map(p => p.id)),
-        gte(pointReadings.measurementTime, startMs),
-        lte(pointReadings.measurementTime, endMs)
+        eq(pointReadingsAgg5m.systemId, system.id),
+        gte(pointReadingsAgg5m.intervalEnd, startMs),
+        lte(pointReadingsAgg5m.intervalEnd, endMs)
       ))
-      .orderBy(pointReadings.measurementTime);
+      .orderBy(pointReadingsAgg5m.intervalEnd);
 
-    // Group readings by point and then by 5-minute intervals
-    const pointSeriesMap = new Map<number, Map<number, number[]>>();
+    // Group aggregates by point
+    const pointSeriesMap = new Map<number, typeof aggregates>();
 
-    for (const reading of readings) {
-      // Round down to nearest 5-minute interval, then add 5 minutes for interval end
-      const intervalEnd = Math.floor(reading.measurementTime / (5 * 60 * 1000)) * (5 * 60 * 1000) + (5 * 60 * 1000);
-
-      if (!pointSeriesMap.has(reading.pointId)) {
-        pointSeriesMap.set(reading.pointId, new Map());
+    for (const agg of aggregates) {
+      if (!pointSeriesMap.has(agg.pointId)) {
+        pointSeriesMap.set(agg.pointId, []);
       }
-
-      const intervalMap = pointSeriesMap.get(reading.pointId)!;
-      if (!intervalMap.has(intervalEnd)) {
-        intervalMap.set(intervalEnd, []);
-      }
-
-      if (reading.value !== null) {
-        intervalMap.get(intervalEnd)!.push(reading.value);
-      }
+      pointSeriesMap.get(agg.pointId)!.push(agg);
     }
 
     // Convert to MeasurementSeries format - one series per point
+    // Include all points, even those with no data
     const result: MeasurementSeries[] = [];
 
-    for (const [pointId, intervalMap] of pointSeriesMap) {
-      const pointMeta = pointMap.get(pointId);
-      if (!pointMeta) continue;
-
+    for (const [pointId, pointMeta] of pointMap) {
       const data: TimeSeriesPoint[] = [];
-      const sortedIntervals = Array.from(intervalMap.keys()).sort((a, b) => a - b);
 
-      for (const intervalEndMs of sortedIntervals) {
-        const values = intervalMap.get(intervalEndMs)!;
-        if (values.length === 0) continue;
+      // Get aggregates for this point if they exist
+      const pointAggregates = pointSeriesMap.get(pointId) || [];
 
-        // Calculate statistics for this interval
-        const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
-        const min = Math.min(...values);
-        const max = Math.max(...values);
-
-        data.push({
-          timestamp: fromUnixTimestamp(intervalEndMs / 1000, 600), // Use AEST timezone
-          value: {
-            avg,
-            min,
-            max,
-            count: values.length
-          }
-        });
+      for (const agg of pointAggregates) {
+        // Only include if we have valid aggregate data
+        if (agg.avg !== null || agg.min !== null || agg.max !== null) {
+          data.push({
+            timestamp: fromUnixTimestamp(agg.intervalEnd / 1000, 600), // Use AEST timezone
+            value: {
+              avg: agg.avg,
+              min: agg.min,
+              max: agg.max,
+              last: agg.last,
+              count: agg.sampleCount
+            }
+          });
+        }
       }
 
-      if (data.length > 0) {
-        result.push({
-          field: `point_${pointId}`,
-          metadata: {
-            id: `point_${pointId}`,
-            name: pointMeta.name,
-            type: pointMeta.metricType,
-            unit: pointMeta.metricUnit,
-            subsystem: pointMeta.subsystem || undefined
-          },
-          data
-        });
-      }
+      // Always include series with metadata, even if no data
+      result.push({
+        field: `point_${pointId}`,
+        metadata: {
+          id: `point_${pointId}`,
+          name: pointMeta.name,
+          type: pointMeta.metricType,
+          unit: pointMeta.metricUnit,
+          subsystem: pointMeta.subsystem || undefined
+        },
+        data
+      });
     }
 
     return result;

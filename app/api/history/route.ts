@@ -5,19 +5,23 @@ import { systems } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { OpenNEMResponse, OpenNEMDataSeries } from '@/types/opennem';
 import { formatDataArray, formatOpenNEMResponse } from '@/lib/history/format-opennem';
-import { 
-  formatTimeAEST, 
-  formatDateAEST, 
-  parseTimeRange as parseTimeRangeUtil, 
-  parseDateRange, 
-  parseRelativeTime, 
-  getDateDifferenceMs, 
+import { OpenNEMConverter } from '@/lib/history/opennem-converter';
+import {
+  formatTimeAEST,
+  formatDateAEST,
+  parseTimeRange as parseTimeRangeUtil,
+  parseDateRange,
+  parseRelativeTime,
+  getDateDifferenceMs,
   getTimeDifferenceMs
 } from '@/lib/date-utils';
 import { CalendarDate, ZonedDateTime, now } from '@internationalized/date';
 import { fetch5MinuteData, fetch30MinuteData, fetch1DayData } from '@/lib/history-data-fetcher';
 import { getCraigHackSystemHistoryInOpenNEMFormat } from '@/lib/vendors/craighack/craighack-history';
 import { isUserAdmin } from '@/lib/auth-utils';
+import { HistoryProviderFactory } from '@/lib/history/provider-factory';
+import { SystemWithPolling } from '@/lib/systems-manager';
+import { aggregateToInterval } from '@/lib/history/aggregation';
 
 // ============================================================================
 // Types and Interfaces
@@ -365,7 +369,8 @@ function createDataSeries(
   processedData: any[],
   startStr: string,
   lastStr: string,
-  effectiveInterval: string
+  effectiveInterval: string,
+  vendorType: string
 ): OpenNEMDataSeries {
   return {
     id: `liveone.${remoteSystemIdentifier}.${fieldName}`,
@@ -378,7 +383,7 @@ function createDataSeries(
       data: formatDataArray(processedData.map(dataExtractor))
     },
     network: 'liveone',
-    source: 'selectronic',
+    source: vendorType,
     description
   };
 }
@@ -389,7 +394,8 @@ function buildDataSeries(
   interval: '5m' | '30m' | '1d',
   remoteSystemIdentifier: string,
   startStr: string,
-  lastStr: string
+  lastStr: string,
+  vendorType: string
 ): OpenNEMDataSeries[] {
   const dataSeries: OpenNEMDataSeries[] = [];
   
@@ -411,7 +417,8 @@ function buildDataSeries(
         processedData,
         startStr,
         lastStr,
-        interval
+        interval,
+        vendorType
       ));
     } else {
       // For daily intervals, only include energy
@@ -425,7 +432,8 @@ function buildDataSeries(
         processedData,
         startStr,
         lastStr,
-        interval
+        interval,
+        vendorType
       ));
     }
   }
@@ -444,7 +452,8 @@ function buildDataSeries(
         processedData,
         startStr,
         lastStr,
-        interval
+        interval,
+        vendorType
       ));
     } else {
       // For daily intervals, only include energy
@@ -458,7 +467,8 @@ function buildDataSeries(
         processedData,
         startStr,
         lastStr,
-        interval
+        interval,
+        vendorType
       ));
     }
   }
@@ -477,7 +487,8 @@ function buildDataSeries(
         processedData,
         startStr,
         lastStr,
-        interval
+        interval,
+        vendorType
       ));
     }
 
@@ -492,9 +503,10 @@ function buildDataSeries(
       processedData,
       startStr,
       lastStr,
-      interval
+      interval,
+      vendorType
     ));
-    
+
     if (interval === '1d') {
       dataSeries.push(createDataSeries(
         remoteSystemIdentifier,
@@ -506,9 +518,10 @@ function buildDataSeries(
         processedData,
         startStr,
         lastStr,
-        interval
+        interval,
+        vendorType
       ));
-      
+
       dataSeries.push(createDataSeries(
         remoteSystemIdentifier,
         'battery.soc.max',
@@ -519,7 +532,8 @@ function buildDataSeries(
         processedData,
         startStr,
         lastStr,
-        interval
+        interval,
+        vendorType
       ));
     }
   }
@@ -538,11 +552,12 @@ function buildDataSeries(
         processedData,
         startStr,
         lastStr,
-        interval
+        interval,
+        vendorType
       ));
     }
   }
-  
+
   return dataSeries;
 }
 
@@ -607,48 +622,64 @@ async function getSystemHistoryInOpenNEMFormat(
   interval: '5m' | '30m' | '1d',
   fields: string[]
 ): Promise<OpenNEMDataSeries[]> {
-  // Step 6: Fetch data
-  const systemTimezoneOffsetMin = system.timezoneOffsetMin;
-  const processedData = await fetchHistoryData(
-    system,
-    startTime,
-    endTime,
-    interval,
-    systemTimezoneOffsetMin
-  );
-  
-  // Step 7: Build data series
-  const remoteSystemIdentifier = `${system.vendorType}.${system.vendorSiteId}`;
-  
-  // Format date strings for data series
-  let startStr: string;
-  let lastStr: string;
-  
+  // Get the appropriate provider for this system
+  const provider = HistoryProviderFactory.getProvider(system as SystemWithPolling);
+
+  // Fetch data using the provider
+  let measurementSeries;
   switch (interval) {
     case '1d':
-      startStr = formatDateAEST(startTime as CalendarDate);
-      lastStr = formatDateAEST(endTime as CalendarDate);
+      measurementSeries = await provider.fetchDailyData(
+        system as SystemWithPolling,
+        startTime as CalendarDate,
+        endTime as CalendarDate
+      );
       break;
-      
-    case '30m':
+
     case '5m':
-      startStr = formatTimeAEST(startTime as ZonedDateTime);
-      lastStr = formatTimeAEST(endTime as ZonedDateTime);
+      measurementSeries = await provider.fetch5MinuteData(
+        system as SystemWithPolling,
+        startTime as ZonedDateTime,
+        endTime as ZonedDateTime
+      );
       break;
-      
+
+    case '30m':
+      // Fetch 5-minute data and aggregate to 30-minute
+      const fiveMinData = await provider.fetch5MinuteData(
+        system as SystemWithPolling,
+        startTime as ZonedDateTime,
+        endTime as ZonedDateTime
+      );
+
+      // Aggregate using the generic aggregation function
+      measurementSeries = aggregateToInterval(
+        fiveMinData,
+        30 * 60 * 1000, // 30 minutes in milliseconds
+        startTime as ZonedDateTime,
+        endTime as ZonedDateTime
+      );
+      break;
+
     default:
       throw new Error(`Unsupported interval: ${interval}`);
   }
-  
-  const dataSeries = buildDataSeries(
-    fields,
-    processedData,
+
+  // Convert MeasurementSeries to OpenNEM format using the converter
+  // The converter handles gap-filling automatically
+  // Extract field names from the actual series data (works for both static and dynamic fields)
+  const seriesFields = measurementSeries.map(s => s.field);
+
+  const dataSeries = OpenNEMConverter.convertToOpenNEM(
+    measurementSeries,
+    seriesFields,
     interval,
-    remoteSystemIdentifier,
-    startStr,
-    lastStr
+    system.vendorType,
+    system.vendorSiteId,
+    startTime,
+    endTime
   );
-  
+
   return dataSeries;
 }
 

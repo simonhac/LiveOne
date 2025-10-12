@@ -203,7 +203,7 @@ export function formatDataArray(data: (number | null)[]): (number | null)[] {
 export function formatOpenNEMResponse(response: any): string {
   // Convert to JSON string with proper indentation
   let jsonStr = JSON.stringify(response, null, 2);
-  
+
   // Replace multi-line numeric data arrays with single-line arrays
   // Only target "data" arrays that contain numbers (within history objects)
   jsonStr = jsonStr.replace(/"data": \[\n\s+([\d\s,.\-null\n]+)\n\s+\]/g, (match, content) => {
@@ -211,6 +211,56 @@ export function formatOpenNEMResponse(response: any): string {
     const compacted = content.trim().replace(/\n\s+/g, '').replace(/,\s*/g, ',');
     return `"data": [${compacted}]`;
   });
-  
+
   return jsonStr;
+}
+
+/**
+ * Convert MeasurementSeries to OpenNEMDataSeries
+ * @param series - Array of measurement series from a provider
+ * @param remoteSystemIdentifier - System identifier (e.g., "mondo.12345")
+ * @param startStr - Formatted start time string
+ * @param lastStr - Formatted end time string
+ * @param interval - Interval string (e.g., "5m", "30m", "1d")
+ * @param vendorType - Vendor type (e.g., "mondo", "selectronic")
+ * @returns Array of OpenNEM data series
+ */
+export function convertMeasurementSeriesToOpenNEM(
+  series: any[], // MeasurementSeries[]
+  remoteSystemIdentifier: string,
+  startStr: string,
+  lastStr: string,
+  interval: string,
+  vendorType: string
+): any[] {
+  return series.map(s => {
+    // Extract values from the series data
+    // For MeasurementValue objects with avg/min/max, use avg
+    const dataArray = s.data.map((point: any) => {
+      if (point === null) return null;
+      const value = point.value;
+      if (value === null || value === undefined) return null;
+
+      // Use avg if available, otherwise use the value directly
+      if (typeof value === 'object' && value.avg !== undefined) {
+        return value.avg;
+      }
+      return value;
+    });
+
+    return {
+      id: `liveone.${remoteSystemIdentifier}.${s.field}`,
+      type: s.metadata.type,
+      units: s.metadata.unit,
+      history: {
+        start: startStr,
+        last: lastStr,
+        interval: interval,
+        data: formatDataArray(dataArray)
+      },
+      network: 'liveone',
+      source: vendorType,
+      description: s.metadata.name
+    };
+  });
 }

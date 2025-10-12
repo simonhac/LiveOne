@@ -19,7 +19,8 @@ export interface MeasurementValue {
   avg: number | null;
   min?: number | null;
   max?: number | null;
-  count?: number;       // Number of samples in this aggregation
+  last?: number | null;  // Last value in the interval (chronologically)
+  count?: number;        // Number of samples in this aggregation
 }
 
 /**

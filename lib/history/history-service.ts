@@ -17,13 +17,12 @@ export class HistoryService {
     system: SystemWithPolling,
     startTime: ZonedDateTime | CalendarDate,
     endTime: ZonedDateTime | CalendarDate,
-    interval: '5m' | '30m' | '1d',
-    fields: string[]
+    interval: '5m' | '30m' | '1d'
   ): Promise<OpenNEMDataSeries[]> {
     // Get the appropriate provider for this system
     const provider = HistoryProviderFactory.getProvider(system);
 
-    let data: MeasurementSeries[];
+    let measurementSeries: MeasurementSeries[];
 
     // Fetch data based on interval
     switch (interval) {
@@ -31,7 +30,7 @@ export class HistoryService {
         // Daily data
         const startDate = startTime as CalendarDate;
         const endDate = endTime as CalendarDate;
-        data = await provider.fetchDailyData(system, startDate, endDate);
+        measurementSeries = await provider.fetchDailyData(system, startDate, endDate);
         break;
       }
 
@@ -39,7 +38,7 @@ export class HistoryService {
         // 5-minute data
         const start = startTime as ZonedDateTime;
         const end = endTime as ZonedDateTime;
-        data = await provider.fetch5MinuteData(system, start, end);
+        measurementSeries = await provider.fetch5MinuteData(system, start, end);
         break;
       }
 
@@ -48,7 +47,7 @@ export class HistoryService {
         const start = startTime as ZonedDateTime;
         const end = endTime as ZonedDateTime;
         const fiveMinData = await provider.fetch5MinuteData(system, start, end);
-        data = aggregateToInterval(fiveMinData, 30 * 60 * 1000, start, end);
+        measurementSeries = aggregateToInterval(fiveMinData, 30 * 60 * 1000, start, end);
         break;
       }
 
@@ -56,10 +55,13 @@ export class HistoryService {
         throw new Error(`Unsupported interval: ${interval}`);
     }
 
+    // Extract field names dynamically from the returned data
+    const seriesFields = measurementSeries.map(s => s.field);
+
     // Convert to OpenNEM format
     return OpenNEMConverter.convertToOpenNEM(
-      data,
-      fields,
+      measurementSeries,
+      seriesFields,
       interval,
       system.vendorType,
       system.vendorSiteId,
