@@ -16,6 +16,7 @@ import SessionTimeoutModal from '@/components/SessionTimeoutModal'
 import { AddSystemDialog } from '@/components/AddSystemDialog'
 import SystemsMenu from '@/components/SystemsMenu'
 import ViewDataModal from '@/components/ViewDataModal'
+import MondoPowerChart from '@/components/MondoPowerChart'
 import { formatDateTime } from '@/lib/fe-date-format'
 import {
   Sun,
@@ -167,6 +168,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
   const [serverError, setServerError] = useState<{ type: 'connection' | 'server' | null, details?: string }>({ type: null })
   const [showSessionTimeout, setShowSessionTimeout] = useState(false)
   const [showViewDataModal, setShowViewDataModal] = useState(false)
+  const [mondoPeriod, setMondoPeriod] = useState<'1D' | '7D' | '30D'>('1D')
   const dropdownRef = useRef<HTMLDivElement>(null)
   const settingsDropdownRef = useRef<HTMLDivElement>(null)
 
@@ -531,7 +533,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
         )}
 
         {error && (
-          error === 'POINT_READINGS_NO_CHARTS' ? (
+          error === 'POINT_READINGS_NO_CHARTS' && data?.vendorType !== 'mondo' ? (
             <div className="bg-blue-900/50 border border-blue-700 text-blue-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
               <AlertTriangle className="w-5 h-5" />
               <span>
@@ -545,19 +547,19 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                 .
               </span>
             </div>
-          ) : (
+          ) : error !== 'POINT_READINGS_NO_CHARTS' ? (
             <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
               <AlertTriangle className="w-5 h-5" />
               <span>{error}</span>
             </div>
-          )
+          ) : null
         )}
 
-        {data?.latest && (
+        {(data?.latest || (data && data.vendorType === 'mondo')) && (
           <div className="space-y-6">
 
             {/* Fault Warning */}
-            {data.latest.system.faultCode && data.latest.system.faultCode !== 0 && data.latest.system.faultTimestamp && data.latest.system.faultTimestamp > 0 && (
+            {data.latest?.system.faultCode && data.latest.system.faultCode !== 0 && data.latest.system.faultTimestamp && data.latest.system.faultTimestamp > 0 && (
               <div className="bg-yellow-900/50 border border-yellow-700 text-yellow-300 px-4 py-3 rounded flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5" />
                 <div>
@@ -568,42 +570,78 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
 
             {/* Main Dashboard Grid - Only show for admin or non-removed systems */}
             {(isAdmin || system?.status !== 'removed') && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* Energy Chart - 2/3 width */}
-              <div className="lg:col-span-2">
-                <EnergyChart 
-                  systemId={parseInt(systemId as string)}
-                  vendorType={data?.vendorType}
-                  className="h-full min-h-[400px]" 
-                  maxPowerHint={(() => {
-                    // Parse solar size (format: "9 kW")
-                    let solarKW: number | undefined
-                    if (systemInfo?.solarSize) {
-                      const solarMatch = systemInfo.solarSize.match(/^(\d+(?:\.\d+)?)\s+kW$/i)
-                      if (solarMatch) {
-                        solarKW = parseFloat(solarMatch[1])
+            <div className={data?.vendorType === 'mondo' ? '' : 'grid grid-cols-1 lg:grid-cols-3 gap-4'}>
+              {/* Charts - Full width for mondo, 2/3 width for others */}
+              <div className={data?.vendorType === 'mondo' ? '' : 'lg:col-span-2'}>
+                {data?.vendorType === 'mondo' ? (
+                  // For mondo systems, show combined power charts in one card at full width
+                  <div className="bg-gray-800 border border-gray-700 rounded p-4">
+                    <MondoPowerChart
+                      systemId={parseInt(systemId as string)}
+                      mode="load"
+                      title="Loads"
+                      className="h-full min-h-[375px] mb-6"
+                      period={mondoPeriod}
+                      onPeriodChange={(newPeriod) => {
+                        setMondoPeriod(newPeriod)
+                        const params = new URLSearchParams(searchParams.toString())
+                        params.set('period', newPeriod)
+                        router.push(`?${params.toString()}`, { scroll: false })
+                      }}
+                      showPeriodSwitcher={true}
+                    />
+                    <MondoPowerChart
+                      systemId={parseInt(systemId as string)}
+                      mode="generation"
+                      title="Generation"
+                      className="h-full min-h-[375px]"
+                      period={mondoPeriod}
+                      onPeriodChange={(newPeriod) => {
+                        setMondoPeriod(newPeriod)
+                        const params = new URLSearchParams(searchParams.toString())
+                        params.set('period', newPeriod)
+                        router.push(`?${params.toString()}`, { scroll: false })
+                      }}
+                      showPeriodSwitcher={false}
+                    />
+                  </div>
+                ) : (
+                  // For other systems, show the regular energy chart
+                  <EnergyChart
+                    systemId={parseInt(systemId as string)}
+                    vendorType={data?.vendorType}
+                    className="h-full min-h-[400px]"
+                    maxPowerHint={(() => {
+                      // Parse solar size (format: "9 kW")
+                      let solarKW: number | undefined
+                      if (systemInfo?.solarSize) {
+                        const solarMatch = systemInfo.solarSize.match(/^(\d+(?:\.\d+)?)\s+kW$/i)
+                        if (solarMatch) {
+                          solarKW = parseFloat(solarMatch[1])
+                        }
                       }
-                    }
-                    
-                    // Parse inverter rating (format: "7.5kW, 48V")
-                    let inverterKW: number | undefined
-                    if (systemInfo?.ratings) {
-                      const ratingMatch = systemInfo.ratings.match(/(\d+(?:\.\d+)?)kW/i)
-                      if (ratingMatch) {
-                        inverterKW = parseFloat(ratingMatch[1])
+
+                      // Parse inverter rating (format: "7.5kW, 48V")
+                      let inverterKW: number | undefined
+                      if (systemInfo?.ratings) {
+                        const ratingMatch = systemInfo.ratings.match(/(\d+(?:\.\d+)?)kW/i)
+                        if (ratingMatch) {
+                          inverterKW = parseFloat(ratingMatch[1])
+                        }
                       }
-                    }
-                    
-                    // Return the maximum of both values, or undefined if neither parsed
-                    if (solarKW !== undefined && inverterKW !== undefined) {
-                      return Math.max(solarKW, inverterKW)
-                    }
-                    return solarKW ?? inverterKW
-                  })()}
-                />
+
+                      // Return the maximum of both values, or undefined if neither parsed
+                      if (solarKW !== undefined && inverterKW !== undefined) {
+                        return Math.max(solarKW, inverterKW)
+                      }
+                      return solarKW ?? inverterKW
+                    })()}
+                  />
+                )}
               </div>
 
-              {/* Power Cards - 1/3 width on desktop, horizontal on mobile */}
+              {/* Power Cards - 1/3 width on desktop, horizontal on mobile - Only for systems with latest data */}
+              {data.latest && (
               <div className="grid grid-cols-3 gap-2 lg:grid-cols-1 lg:gap-4 px-1">
                 <PowerCard
                   title="Solar"
@@ -666,12 +704,13 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                   />
                 )}
               </div>
+              )}
             </div>
             )}
 
             {/* Energy Panel - Only show for admin or non-removed systems */}
-            {(isAdmin || system?.status !== 'removed') && (
-              <EnergyPanel 
+            {(isAdmin || system?.status !== 'removed') && data.latest && (
+              <EnergyPanel
                 energy={data.latest.energy}
                 historical={data.historical}
                 showGrid={showGrid}
