@@ -7,7 +7,7 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
 
 import { getTestSession } from '@/lib/__tests__/test-auth-helper';
 
-const API_URL = 'http://localhost:3000/api/history-new';
+const API_URL = 'http://localhost:3000/api/history';
 
 describe('History API Integration Tests - Multiple Interval Support', () => {
   let sessionToken: string | null = null;

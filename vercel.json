@@ -14,7 +14,7 @@
     "app/api/cron/minutely/route.ts": {
       "maxDuration": 60
     },
-    "app/api/history-new/route.ts": {
+    "app/api/history/route.ts": {
       "maxDuration": 30
     }
   }

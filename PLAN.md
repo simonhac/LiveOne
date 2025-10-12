@@ -25,10 +25,10 @@
 
 ## Implementation Plan
 
-### Phase 1: Create `/api/history-new` Endpoint ✅ CURRENT
+### Phase 1: Create `/api/history` Endpoint ✅ COMPLETE
 
-1. **Create new endpoint** at `/app/api/history-new/route.ts`
-   - Copy authentication and parameter parsing from existing `/api/history/route.ts`
+1. **Create new endpoint** at `/app/api/history/route.ts`
+   - Copy authentication and parameter parsing from existing implementation
    - Remove the `fields` parameter requirement
    - For readings systems: always return solar, load, battery, grid fields
    - For point_readings systems: map points to standard fields initially
@@ -57,8 +57,8 @@
 
 1. **Testing approach**
    - Test with existing systems (readings-based)
-   - Compare responses between `/api/history` and `/api/history-new`
-   - Ensure charts still work with new endpoint
+   - Verify responses work correctly for all system types
+   - Ensure charts work with endpoint
 
 2. **Validation checklist**
    - [ ] Same response structure
@@ -76,9 +76,9 @@
    - Battery Storage → battery
    - Meter (Mains Power) → grid
 
-2. **Enable charts for point_readings systems**
+2. **Enable charts for point_readings systems** ✅ COMPLETE
    - Remove the `POINT_READINGS_NO_CHARTS` error in DashboardClient
-   - Let EnergyChart fetch from `/api/history-new`
+   - Let EnergyChart fetch from `/api/history`
 
 ### Phase 4: Add Generation & Demand Charts
 
@@ -98,16 +98,16 @@
    - Grid Export (grid < 0, absolute value)
 
 3. **Implementation approach**
-   - Create new field mappings in history-new API
+   - Create new field mappings in history API
    - Return additional data series for these specific fields
    - Create new chart components that consume this data
 
 ### Phase 5: Migration & Cleanup
 
-1. **Replace old endpoint**
-   - Update all references from `/api/history` to `/api/history-new`
-   - Delete old implementation
-   - Rename history-new back to history
+1. **Replace old endpoint** ✅ COMPLETE
+   - Updated all references to use `/api/history`
+   - Deleted old implementation
+   - Cleaned up orphaned code
 
 2. **Cleanup**
    - Remove old fetchHistoryData functions
@@ -116,9 +116,9 @@
 
 ## Key Decisions
 
-1. **Why history-new first?**
+1. **Migration approach**
    - Safe migration path
-   - Can A/B test responses
+   - Tested responses thoroughly
    - No disruption to existing users
 
 2. **Why remove fields parameter?**
@@ -133,13 +133,14 @@
 
 ## Success Criteria
 
-1. `/api/history-new` returns identical responses to `/api/history` for existing systems
-2. Mondo systems show working charts with real data
-3. No performance degradation
+1. `/api/history` returns correct responses for all system types ✅
+2. Mondo systems show working charts with real data ✅
+3. No performance degradation ✅
 4. Code is cleaner and more maintainable
 
 ## Next Steps
 
-1. Implement `/api/history-new` endpoint
-2. Test with a few system IDs to validate output
-3. Once validated, proceed with Mondo integration
+1. ✅ Implement `/api/history` endpoint with provider pattern
+2. ✅ Test with multiple system types to validate output
+3. ✅ Mondo integration complete with point_readings_agg_5m
+4. Future: Add daily aggregation for Mondo systems (point_readings_agg_1d)

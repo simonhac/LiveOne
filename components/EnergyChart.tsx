@@ -377,7 +377,7 @@ export default function EnergyChart({ className = '', maxPowerHint, systemId, ve
           duration = '30d' // 30 days
         }
         
-        const response = await fetch(`/api/history-new?interval=${requestInterval}&last=${duration}&systemId=${systemId.toString()}`, {
+        const response = await fetch(`/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId.toString()}`, {
           credentials: 'same-origin', // Include cookies
           signal: abortController.signal
         })
