@@ -21,6 +21,7 @@ import { Line } from 'react-chartjs-2'
 import { format } from 'date-fns'
 import 'chartjs-adapter-date-fns'
 import annotationPlugin from 'chartjs-plugin-annotation'
+import { formatDateTime } from '@/lib/fe-date-format'
 
 // Register Chart.js components
 ChartJS.register(
@@ -173,6 +174,11 @@ export default function MondoPowerChart({
         padding: 12,
         displayColors: true,
         callbacks: {
+          title: function(context: any) {
+            if (context.length === 0) return ''
+            const timestamp = new Date(context[0].parsed.x)
+            return formatDateTime(timestamp, { includeSeconds: false }).display
+          },
           label: function(context: any) {
             const label = context.dataset.label || ''
             const value = context.raw as number
