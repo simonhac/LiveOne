@@ -6,6 +6,26 @@ import { toUnixTimestamp, fromUnixTimestamp } from '@/lib/date-utils';
 import { SystemWithPolling } from '@/lib/systems-manager';
 import { HistoryDataProvider, MeasurementSeries, MeasurementPointMetadata, MeasurementValue, TimeSeriesPoint } from './types';
 
+/**
+ * Generate a point ID in the format:
+ * {pointId}.{pointSubId}.{metricType}
+ * (omitting pointSubId if it's null)
+ *
+ * Note: The vendor prefix (liveone.{vendorType}.{vendorSiteId}) is added by OpenNEMConverter
+ */
+function generatePointId(
+  pointId: string,
+  pointSubId: string | null,
+  metricType: string
+): string {
+  const parts = [pointId];
+  if (pointSubId) {
+    parts.push(pointSubId);
+  }
+  parts.push(metricType);
+  return parts.join('.');
+}
+
 export class PointReadingsProvider implements HistoryDataProvider {
   async getAvailableFields(system: SystemWithPolling): Promise<MeasurementPointMetadata[]> {
     // Fetch actual points from the database for this system
@@ -15,7 +35,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
       .where(eq(pointInfo.systemId, system.id));
 
     return points.map(p => ({
-      id: `point_${p.id}`,
+      id: generatePointId(p.pointId, p.pointSubId, p.metricType),
       name: p.name || p.defaultName,
       type: p.metricType,
       unit: p.metricUnit,
@@ -43,6 +63,8 @@ export class PointReadingsProvider implements HistoryDataProvider {
 
     // Map point IDs to their metadata
     const pointMap = new Map(points.map(p => [p.id, {
+      pointId: p.pointId,
+      pointSubId: p.pointSubId,
       name: p.name || p.defaultName,
       subsystem: p.subsystem,
       metricType: p.metricType,
@@ -97,10 +119,16 @@ export class PointReadingsProvider implements HistoryDataProvider {
       }
 
       // Always include series with metadata, even if no data
+      const fieldId = generatePointId(
+        pointMeta.pointId,
+        pointMeta.pointSubId,
+        pointMeta.metricType
+      );
+
       result.push({
-        field: `point_${pointId}`,
+        field: fieldId,
         metadata: {
-          id: `point_${pointId}`,
+          id: fieldId,
           name: pointMeta.name,
           type: pointMeta.metricType,
           unit: pointMeta.metricUnit,

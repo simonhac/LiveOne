@@ -9,6 +9,7 @@ export const systems = sqliteTable('systems', {
   vendorSiteId: text('vendor_site_id').notNull(), // Vendor's site/system identifier
   status: text('status').notNull().default('active'), // 'active', 'disabled', or 'removed'
   displayName: text('display_name').notNull(),
+  shortName: text('short_name'), // Optional short name (letters, digits, underscore only) - used in history API IDs
   model: text('model'),
   serial: text('serial'),
   ratings: text('ratings'),
@@ -22,6 +23,8 @@ export const systems = sqliteTable('systems', {
   // Note: vendor_site_unique index removed to allow multiple systems with same vendorSiteId (e.g., for removed/inactive systems)
   ownerClerkUserIdx: index('owner_clerk_user_idx').on(table.ownerClerkUserId),
   statusIdx: index('systems_status_idx').on(table.status),
+  // Unique constraint for short_name within a vendor type (only when short_name is not null)
+  vendorShortNameUnique: uniqueIndex('vendor_short_name_unique').on(table.vendorType, table.shortName),
 }));
 
 // Readings table - stores time-series inverter data

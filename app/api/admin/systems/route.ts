@@ -81,6 +81,7 @@ export async function GET(request: NextRequest) {
           lastName: userInfo?.lastName || null
         },
         displayName: system.displayName,  // Non-null from database
+        shortName: system.shortName,  // Optional short name for history API IDs
         vendor: {
           type: system.vendorType,
           siteId: system.vendorSiteId,  // Vendor's identifier

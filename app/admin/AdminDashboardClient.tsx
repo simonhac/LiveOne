@@ -30,6 +30,7 @@ interface SystemData {
     lastName: string | null
   }
   displayName: string  // Non-null from database
+  shortName: string | null  // Optional short name for history API IDs
   vendor: {
     type: string
     siteId: string  // Vendor's identifier
@@ -239,38 +240,38 @@ export default function AdminDashboardClient() {
     }
   }
 
-  const renameSystem = async (systemId: number, newName: string) => {
+  const updateSystem = async (systemId: number, updates: { displayName?: string, shortName?: string | null }) => {
     try {
       const response = await fetch(`/api/admin/systems/${systemId}/rename`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ displayName: newName }),
+        body: JSON.stringify(updates),
       })
-      
+
       if (!response.ok) {
         const error = await response.json()
-        throw new Error(error.error || 'Failed to rename system')
+        throw new Error(error.error || 'Failed to update system')
       }
-      
+
       const result = await response.json()
-      
+
       // Update the system in the local state
-      setSystems(prev => prev.map(s => 
-        s.systemId === systemId ? { ...s, displayName: newName } : s
+      setSystems(prev => prev.map(s =>
+        s.systemId === systemId ? { ...s, ...updates } : s
       ))
-      
+
       // Update the settings dialog state if it's the same system
-      setSettingsDialog(prev => 
-        prev.system?.systemId === systemId 
-          ? { ...prev, system: { ...prev.system, displayName: newName } }
+      setSettingsDialog(prev =>
+        prev.system?.systemId === systemId
+          ? { ...prev, system: { ...prev.system, ...updates } }
           : prev
       )
-      
+
       return result
     } catch (err) {
-      console.error('Error renaming system:', err)
+      console.error('Error updating system:', err)
       throw err  // Re-throw to be handled by the dialog
     }
   }
@@ -599,8 +600,13 @@ export default function AdminDashboardClient() {
       <SystemSettingsDialog
         isOpen={settingsModal.isOpen}
         onClose={() => setSettingsDialog({ isOpen: false, system: null })}
-        system={settingsModal.system}
-        onRename={renameSystem}
+        system={settingsModal.system ? {
+          systemId: settingsModal.system.systemId,
+          displayName: settingsModal.system.displayName,
+          shortName: settingsModal.system.shortName,
+          vendorType: settingsModal.system.vendor.type
+        } : null}
+        onUpdate={updateSystem}
       />
 
       {/* Poll Now Modal */}

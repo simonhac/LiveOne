@@ -66,7 +66,8 @@ export class HistoryService {
       system.vendorType,
       system.vendorSiteId,
       startTime,
-      endTime
+      endTime,
+      system.shortName
     );
   }
 }

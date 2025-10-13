@@ -20,9 +20,12 @@ export class OpenNEMConverter {
     vendorType: string,
     vendorSiteId: string,
     requestedStartTime?: CalendarDate | ZonedDateTime,
-    requestedEndTime?: CalendarDate | ZonedDateTime
+    requestedEndTime?: CalendarDate | ZonedDateTime,
+    shortName?: string | null
   ): OpenNEMDataSeries[] {
-    const remoteSystemIdentifier = `${vendorType}.${vendorSiteId}`;
+    // Use shortName if available, otherwise use vendorSiteId
+    const systemIdentifier = shortName || vendorSiteId;
+    const remoteSystemIdentifier = `${vendorType}.${systemIdentifier}`;
     const dataSeries: OpenNEMDataSeries[] = [];
 
     // Determine the actual time range to use
