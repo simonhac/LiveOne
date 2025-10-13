@@ -6,12 +6,14 @@ import { X, CheckCircle2, XCircle } from 'lucide-react'
 
 interface PointInfo {
   pointDbId: number
+  pointId: string
   pointSubId: string | null
   subsystem: string | null
   defaultName: string
   name: string | null
   metricType: string
   metricUnit: string | null
+  vendorSiteId?: string
 }
 
 interface PointInfoModalProps {
@@ -105,7 +107,7 @@ export default function PointInfoModal({
       />
 
       {/* Dialog */}
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[10001] w-full max-w-md">
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[10001] w-full max-w-xl">
         <div className="bg-gray-800 border border-gray-700 rounded-lg shadow-xl">
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
@@ -123,19 +125,28 @@ export default function PointInfoModal({
             {/* Read-only fields */}
             <div className="flex items-center gap-3">
               <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                Point Sub ID:
+                Vendor Site ID:
               </label>
               <div className="px-3 py-2 bg-gray-800 rounded-md text-gray-400 font-mono text-sm flex-1">
-                {pointInfo.pointSubId || 'N/A'}
+                {pointInfo.vendorSiteId || 'N/A'}
               </div>
             </div>
 
             <div className="flex items-center gap-3">
               <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                Default Name:
+                Point ID:
               </label>
-              <div className="px-3 py-2 bg-gray-800 rounded-md text-gray-400 text-sm flex-1">
-                {pointInfo.defaultName}
+              <div className="px-3 py-2 bg-gray-800 rounded-md text-gray-400 font-mono text-sm flex-1">
+                {pointInfo.pointId}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
+                Point Sub ID:
+              </label>
+              <div className="px-3 py-2 bg-gray-800 rounded-md text-gray-400 font-mono text-sm flex-1">
+                {pointInfo.pointSubId || 'N/A'}
               </div>
             </div>
 
@@ -208,7 +219,7 @@ export default function PointInfoModal({
               </div>
             </div>
 
-            {/* Editable: Name */}
+            {/* Editable: Custom Name */}
             <div className="flex items-center gap-3">
               <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
                 Custom Name:

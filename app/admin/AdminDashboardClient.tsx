@@ -118,11 +118,13 @@ export default function AdminDashboardClient() {
     systemId: number | null
     systemName: string | null
     vendorType: string | null
+    vendorSiteId: string | null
   }>({
     isOpen: false,
     systemId: null,
     systemName: null,
-    vendorType: null
+    vendorType: null,
+    vendorSiteId: null
   })
 
   const openTestModal = (system: SystemData) => {
@@ -425,7 +427,8 @@ export default function AdminDashboardClient() {
                             isOpen: true,
                             systemId: system.systemId,
                             systemName: system.displayName,
-                            vendorType: system.vendor.type
+                            vendorType: system.vendor.type,
+                            vendorSiteId: system.vendor.siteId
                           })
                         } : undefined}
                       />
@@ -611,13 +614,14 @@ export default function AdminDashboardClient() {
       )}
 
       {/* View Data Modal */}
-      {viewDataModal.isOpen && viewDataModal.systemId && viewDataModal.systemName && (
+      {viewDataModal.isOpen && viewDataModal.systemId && viewDataModal.systemName && viewDataModal.vendorType && viewDataModal.vendorSiteId && (
         <ViewDataModal
           isOpen={viewDataModal.isOpen}
-          onClose={() => setViewDataModal({ isOpen: false, systemId: null, systemName: null, vendorType: null })}
+          onClose={() => setViewDataModal({ isOpen: false, systemId: null, systemName: null, vendorType: null, vendorSiteId: null })}
           systemId={viewDataModal.systemId}
           systemName={viewDataModal.systemName}
-          vendorType={viewDataModal.vendorType || undefined}
+          vendorType={viewDataModal.vendorType}
+          vendorSiteId={viewDataModal.vendorSiteId}
         />
       )}
       </>

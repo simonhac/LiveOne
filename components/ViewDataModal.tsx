@@ -22,7 +22,8 @@ interface ViewDataModalProps {
   onClose: () => void
   systemId: number
   systemName: string
-  vendorType?: string
+  vendorType: string
+  vendorSiteId: string
 }
 
 export default function ViewDataModal({
@@ -30,7 +31,8 @@ export default function ViewDataModal({
   onClose,
   systemId,
   systemName,
-  vendorType
+  vendorType,
+  vendorSiteId
 }: ViewDataModalProps) {
   const [headers, setHeaders] = useState<ColumnHeader[]>([])
   const [data, setData] = useState<any[]>([])
@@ -42,12 +44,14 @@ export default function ViewDataModal({
   const fetchingRef = useRef(false)
   const [selectedPointInfo, setSelectedPointInfo] = useState<{
     pointDbId: number
+    pointId: string
     pointSubId: string | null
     subsystem: string | null
     defaultName: string
     name: string | null
     metricType: string
     metricUnit: string | null
+    vendorSiteId: string
   } | null>(null)
   const [isPointInfoModalOpen, setIsPointInfoModalOpen] = useState(false)
 
@@ -109,16 +113,18 @@ export default function ViewDataModal({
 
   const handleColumnHeaderClick = (header: ColumnHeader) => {
     // Only open modal for point columns (not timestamp)
-    if (header.key === 'timestamp' || !header.pointDbId) return
+    if (header.key === 'timestamp' || !header.pointDbId || !header.pointId) return
 
     setSelectedPointInfo({
       pointDbId: header.pointDbId,
+      pointId: header.pointId,
       pointSubId: header.pointSubId || null,
       subsystem: header.subsystem,
       defaultName: header.defaultName || header.label,
       name: header.label !== header.defaultName ? header.label : null,
       metricType: header.type,
-      metricUnit: header.unit
+      metricUnit: header.unit,
+      vendorSiteId: vendorSiteId
     })
     setIsPointInfoModalOpen(true)
   }
