@@ -759,6 +759,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
           systemId={parseInt(systemId)}
           systemName={data?.displayName || system?.displayName || 'System'}
           vendorType={data?.vendorType || system?.vendorType}
+          vendorSiteId={data?.vendorSiteId || system?.vendorSiteId || ''}
         />
       )}
     </div>
