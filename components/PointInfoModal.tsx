@@ -11,6 +11,7 @@ interface PointInfo {
   subsystem: string | null
   defaultName: string
   name: string | null
+  shortName: string | null
   metricType: string
   metricUnit: string | null
   vendorSiteId?: string
@@ -20,7 +21,7 @@ interface PointInfoModalProps {
   isOpen: boolean
   onClose: () => void
   pointInfo: PointInfo | null
-  onUpdate: (pointDbId: number, updates: { subsystem: string | null, name: string | null }) => Promise<void>
+  onUpdate: (pointDbId: number, updates: { subsystem?: string | null, name?: string | null, shortName?: string | null }) => Promise<void>
 }
 
 export default function PointInfoModal({
@@ -31,16 +32,30 @@ export default function PointInfoModal({
 }: PointInfoModalProps) {
   const [editedSubsystem, setEditedSubsystem] = useState(pointInfo?.subsystem || '')
   const [editedName, setEditedName] = useState(pointInfo?.name || '')
+  const [editedShortName, setEditedShortName] = useState(pointInfo?.shortName || '')
   const [isSubsystemDirty, setIsSubsystemDirty] = useState(false)
   const [isNameDirty, setIsNameDirty] = useState(false)
+  const [isShortNameDirty, setIsShortNameDirty] = useState(false)
+  const [shortNameError, setShortNameError] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
 
   useEffect(() => {
     setEditedSubsystem(pointInfo?.subsystem || '')
     setEditedName(pointInfo?.name || '')
+    setEditedShortName(pointInfo?.shortName || '')
     setIsSubsystemDirty(false)
     setIsNameDirty(false)
+    setIsShortNameDirty(false)
+    setShortNameError(null)
   }, [pointInfo, isOpen])
+
+  const validateShortName = (value: string): string | null => {
+    if (!value) return null // Empty is valid (optional field)
+    if (!/^[a-zA-Z0-9_]+$/.test(value)) {
+      return 'Only letters, digits, and underscores are allowed'
+    }
+    return null
+  }
 
   const handleSubsystemChange = (value: string) => {
     setEditedSubsystem(value)
@@ -52,14 +67,19 @@ export default function PointInfoModal({
     setIsNameDirty(value !== (pointInfo?.name || ''))
   }
 
+  const handleShortNameChange = (value: string) => {
+    setEditedShortName(value)
+    setIsShortNameDirty(value !== (pointInfo?.shortName || ''))
+    setShortNameError(validateShortName(value))
+  }
+
   const handleSaveSubsystem = async () => {
     if (!isSubsystemDirty || !pointInfo) return
 
     setIsSaving(true)
     try {
       await onUpdate(pointInfo.pointDbId, {
-        subsystem: editedSubsystem || null,
-        name: pointInfo.name
+        subsystem: editedSubsystem || null
       })
       setIsSubsystemDirty(false)
     } catch (error) {
@@ -75,12 +95,31 @@ export default function PointInfoModal({
     setIsSaving(true)
     try {
       await onUpdate(pointInfo.pointDbId, {
-        subsystem: pointInfo.subsystem,
         name: editedName || null
       })
       setIsNameDirty(false)
     } catch (error) {
       console.error('Failed to update name:', error)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleSaveShortName = async () => {
+    if (!isShortNameDirty || !pointInfo || shortNameError) return
+
+    setIsSaving(true)
+    try {
+      await onUpdate(pointInfo.pointDbId, {
+        shortName: editedShortName || null
+      })
+      setIsShortNameDirty(false)
+    } catch (error) {
+      console.error('Failed to update short name:', error)
+      // Check if it's a uniqueness error
+      if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+        setShortNameError(`Short name "${editedShortName}" is already in use for this system`)
+      }
     } finally {
       setIsSaving(false)
     }
@@ -94,6 +133,12 @@ export default function PointInfoModal({
   const handleCancelName = () => {
     setEditedName(pointInfo?.name || '')
     setIsNameDirty(false)
+  }
+
+  const handleCancelShortName = () => {
+    setEditedShortName(pointInfo?.shortName || '')
+    setIsShortNameDirty(false)
+    setShortNameError(null)
   }
 
   if (!isOpen || !pointInfo || typeof document === 'undefined') return null
@@ -259,6 +304,58 @@ export default function PointInfoModal({
                   <XCircle className="w-6 h-6" />
                 </button>
               </div>
+            </div>
+
+            {/* Editable: Short Name */}
+            <div>
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
+                  Short Name:
+                </label>
+                <input
+                  type="text"
+                  value={editedShortName}
+                  onChange={(e) => handleShortNameChange(e.target.value)}
+                  placeholder="e.g., batt_main, solar_east"
+                  className={`flex-1 px-3 py-2 bg-gray-900 border ${
+                    shortNameError ? 'border-red-500' : 'border-gray-700'
+                  } rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm`}
+                  disabled={isSaving}
+                />
+                {/* Always reserve space for buttons to prevent layout shift */}
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={handleSaveShortName}
+                    disabled={isSaving || !isShortNameDirty || !!shortNameError}
+                    className={`p-1 rounded-full transition-all ${
+                      isShortNameDirty && !shortNameError
+                        ? 'text-green-500 hover:text-green-400 cursor-pointer'
+                        : 'text-gray-800 cursor-default'
+                    } disabled:opacity-50`}
+                    title="Save"
+                  >
+                    <CheckCircle2 className="w-6 h-6" />
+                  </button>
+                  <button
+                    onClick={handleCancelShortName}
+                    disabled={isSaving || !isShortNameDirty}
+                    className={`p-1 rounded-full transition-all ${
+                      isShortNameDirty
+                        ? 'text-red-500 hover:text-red-400 cursor-pointer'
+                        : 'text-gray-800 cursor-default'
+                    } disabled:opacity-50`}
+                    title="Cancel"
+                  >
+                    <XCircle className="w-6 h-6" />
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-gray-400 mt-1 ml-[8.5rem]">
+                Used in history API IDs. Only letters, digits, and underscores. Must be unique within this system.
+              </p>
+              {shortNameError && (
+                <p className="text-xs text-red-400 mt-1 ml-[8.5rem]">{shortNameError}</p>
+              )}
             </div>
           </div>
 

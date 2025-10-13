@@ -19,6 +19,7 @@ export const pointInfo = sqliteTable('point_info', {
   // user modifiable
   subsystem: text('subsystem'), // eg. nullable, "solar", "battery", "location", "meter"
   name: text('display_name').notNull(), // user settable, will generally be the same as pointName
+  shortName: text('short_name'), // Optional short name (letters, digits, underscore only) - used in history API IDs
 
   // Type and unit
   metricType: text('metric_type').notNull(), // eg. 'power', 'energy', 'soc'
@@ -28,6 +29,8 @@ export const pointInfo = sqliteTable('point_info', {
   systemIdx: index('pi_system_idx').on(table.systemId),
   subsystemIdx: index('pi_subsystem_idx').on(table.subsystem),
   metricTypeIdx: index('pi_metric_type_idx').on(table.metricType),
+  // Unique constraint for short_name within a system (only when short_name is not null)
+  systemShortNameUnique: uniqueIndex('pi_system_short_name_unique').on(table.systemId, table.shortName),
 }));
 
 // Point Readings table - stores time-series data

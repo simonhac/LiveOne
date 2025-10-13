@@ -8,16 +8,23 @@ import { HistoryDataProvider, MeasurementSeries, MeasurementPointMetadata, Measu
 
 /**
  * Generate a point ID in the format:
- * {pointId}.{pointSubId}.{metricType}
- * (omitting pointSubId if it's null)
+ * - If shortName is set: use shortName
+ * - Otherwise: {pointId}.{pointSubId}.{metricType} (omitting pointSubId if null)
  *
  * Note: The vendor prefix (liveone.{vendorType}.{vendorSiteId}) is added by OpenNEMConverter
  */
 function generatePointId(
   pointId: string,
   pointSubId: string | null,
-  metricType: string
+  metricType: string,
+  shortName: string | null
 ): string {
+  // If shortName is set, use it directly
+  if (shortName) {
+    return shortName;
+  }
+
+  // Otherwise, build from components
   const parts = [pointId];
   if (pointSubId) {
     parts.push(pointSubId);
@@ -35,7 +42,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
       .where(eq(pointInfo.systemId, system.id));
 
     return points.map(p => ({
-      id: generatePointId(p.pointId, p.pointSubId, p.metricType),
+      id: generatePointId(p.pointId, p.pointSubId, p.metricType, p.shortName),
       name: p.name || p.defaultName,
       type: p.metricType,
       unit: p.metricUnit,
@@ -65,6 +72,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
     const pointMap = new Map(points.map(p => [p.id, {
       pointId: p.pointId,
       pointSubId: p.pointSubId,
+      shortName: p.shortName,
       name: p.name || p.defaultName,
       subsystem: p.subsystem,
       metricType: p.metricType,
@@ -122,7 +130,8 @@ export class PointReadingsProvider implements HistoryDataProvider {
       const fieldId = generatePointId(
         pointMeta.pointId,
         pointMeta.pointSubId,
-        pointMeta.metricType
+        pointMeta.metricType,
+        pointMeta.shortName
       );
 
       result.push({

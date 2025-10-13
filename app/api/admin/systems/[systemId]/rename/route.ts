@@ -67,8 +67,8 @@ export async function PATCH(
           return NextResponse.json({ error: 'Short name can only contain letters, digits, and underscores' }, { status: 400 })
         }
 
-        if (shortName.length > 50) {
-          return NextResponse.json({ error: 'Short name is too long (max 50 characters)' }, { status: 400 })
+        if (shortName.length > 200) {
+          return NextResponse.json({ error: 'Short name is too long (max 200 characters)' }, { status: 400 })
         }
       }
     }

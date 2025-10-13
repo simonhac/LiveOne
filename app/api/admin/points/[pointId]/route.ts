@@ -31,14 +31,32 @@ export async function PATCH(
     }
 
     const body = await request.json()
-    const { subsystem, name } = body
+    const { subsystem, name, shortName } = body
 
     // Validate that at least one field is provided
-    if (subsystem === undefined && name === undefined) {
+    if (subsystem === undefined && name === undefined && shortName === undefined) {
       return NextResponse.json(
-        { error: 'At least one field (subsystem or name) must be provided' },
+        { error: 'At least one field (subsystem, name, or shortName) must be provided' },
         { status: 400 }
       )
+    }
+
+    // Validate shortName if provided
+    if (shortName !== undefined && shortName !== null) {
+      if (typeof shortName !== 'string') {
+        return NextResponse.json({ error: 'Short name must be a string' }, { status: 400 })
+      }
+
+      // Empty string is treated as null (removing the short name)
+      if (shortName.trim().length > 0) {
+        if (!/^[a-zA-Z0-9_]+$/.test(shortName)) {
+          return NextResponse.json({ error: 'Short name can only contain letters, digits, and underscores' }, { status: 400 })
+        }
+
+        if (shortName.length > 200) {
+          return NextResponse.json({ error: 'Short name is too long (max 200 characters)' }, { status: 400 })
+        }
+      }
     }
 
     // Build the update object
@@ -48,6 +66,9 @@ export async function PATCH(
     }
     if (name !== undefined) {
       updates.name = name || null
+    }
+    if (shortName !== undefined) {
+      updates.shortName = shortName === null || shortName.trim().length === 0 ? null : shortName.trim()
     }
 
     // Update the point info
@@ -75,6 +96,7 @@ export async function PATCH(
         subsystem: updatedPoint.subsystem,
         defaultName: updatedPoint.defaultName,
         name: updatedPoint.name,
+        shortName: updatedPoint.shortName,
         metricType: updatedPoint.metricType,
         metricUnit: updatedPoint.metricUnit
       }
@@ -82,6 +104,15 @@ export async function PATCH(
 
   } catch (error) {
     console.error('Error updating point info:', error)
+
+    // Check for unique constraint violation on shortName
+    if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+      return NextResponse.json(
+        { error: 'UNIQUE constraint failed: short_name must be unique within system' },
+        { status: 409 }
+      )
+    }
+
     return NextResponse.json(
       { error: 'Failed to update point info' },
       { status: 500 }

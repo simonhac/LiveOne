@@ -83,7 +83,8 @@ export async function GET(
         pointId: p.pointId,
         pointSubId: p.pointSubId,
         pointDbId: p.id,
-        defaultName: p.defaultName
+        defaultName: p.defaultName,
+        shortName: p.shortName
       }))
     ]
 

@@ -15,6 +15,7 @@ interface ColumnHeader {
   pointSubId?: string | null
   pointDbId?: number
   defaultName?: string
+  shortName?: string | null
 }
 
 interface ViewDataModalProps {
@@ -49,6 +50,7 @@ export default function ViewDataModal({
     subsystem: string | null
     defaultName: string
     name: string | null
+    shortName: string | null
     metricType: string
     metricUnit: string | null
     vendorSiteId: string
@@ -122,6 +124,7 @@ export default function ViewDataModal({
       subsystem: header.subsystem,
       defaultName: header.defaultName || header.label,
       name: header.label !== header.defaultName ? header.label : null,
+      shortName: header.shortName || null,
       metricType: header.type,
       metricUnit: header.unit,
       vendorSiteId: vendorSiteId
@@ -131,7 +134,7 @@ export default function ViewDataModal({
 
   const handleUpdatePointInfo = async (
     pointDbId: number,
-    updates: { subsystem: string | null, name: string | null }
+    updates: { subsystem?: string | null, name?: string | null, shortName?: string | null }
   ) => {
     try {
       const response = await fetch(`/api/admin/points/${pointDbId}`, {
@@ -149,8 +152,7 @@ export default function ViewDataModal({
       if (selectedPointInfo) {
         setSelectedPointInfo({
           ...selectedPointInfo,
-          subsystem: updates.subsystem,
-          name: updates.name
+          ...updates
         })
       }
     } catch (error) {
@@ -282,6 +284,11 @@ export default function ViewDataModal({
                           {getUnitDisplay(header) && (
                             <span className="text-xs text-gray-500">
                               {getUnitDisplay(header)}
+                            </span>
+                          )}
+                          {header.key !== 'timestamp' && header.shortName && (
+                            <span className={`text-xs ${getSubsystemColor(header.subsystem)}`}>
+                              {header.shortName}
                             </span>
                           )}
                         </div>
