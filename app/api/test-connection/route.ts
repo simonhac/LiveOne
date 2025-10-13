@@ -116,6 +116,7 @@ export async function POST(request: NextRequest) {
       ownerClerkUserId: finalOwnerUserId,
       status: 'active',
       displayName: 'Test System',
+      shortName: null,
       model: null,
       serial: null,
       ratings: null,
