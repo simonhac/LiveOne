@@ -18,9 +18,10 @@ import SystemsMenu from '@/components/SystemsMenu'
 import ViewDataModal from '@/components/ViewDataModal'
 import MondoPowerChart, { type ChartData } from '@/components/MondoPowerChart'
 import EnergyTable from '@/components/EnergyTable'
+import { fetchAndProcessMondoData } from '@/lib/mondo-data-processor'
 import PeriodSwitcher from '@/components/PeriodSwitcher'
 import { formatDateTime } from '@/lib/fe-date-format'
-import { formatDateRange, fromUnixTimestamp } from '@/lib/date-utils'
+import { formatDateRange, fromUnixTimestamp, getNextMinuteBoundary } from '@/lib/date-utils'
 import { format } from 'date-fns'
 import {
   Sun,
@@ -174,6 +175,8 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
   const [showSessionTimeout, setShowSessionTimeout] = useState(false)
   const [showViewDataModal, setShowViewDataModal] = useState(false)
   const [mondoPeriod, setMondoPeriod] = useState<'1D' | '7D' | '30D'>('1D')
+  const [processedHistoryData, setProcessedHistoryData] = useState<{load: ChartData | null, generation: ChartData | null}>({load: null, generation: null})
+  const [historyLoading, setHistoryLoading] = useState(false)
   const [loadChartData, setLoadChartData] = useState<ChartData | null>(null)
   const [generationChartData, setGenerationChartData] = useState<ChartData | null>(null)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null) // Single hover index for both charts
@@ -316,6 +319,77 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
     
     return () => clearInterval(interval)
   }, [lastUpdate, fetchData])
+
+  // Fetch and process Mondo history data when needed
+  useEffect(() => {
+    if (system?.vendorType !== 'mondo' || !systemId) return
+
+    let abortController = new AbortController()
+    let timeoutId: NodeJS.Timeout | null = null
+
+    const fetchMondoData = async () => {
+      setHistoryLoading(true)
+      try {
+        const processedData = await fetchAndProcessMondoData(systemId as string, mondoPeriod)
+
+        if (!abortController.signal.aborted) {
+          setProcessedHistoryData(processedData)
+          setLoadChartData(processedData.load)
+          setGenerationChartData(processedData.generation)
+        }
+      } catch (err) {
+        console.error('Failed to fetch Mondo history data:', err)
+        if (!abortController.signal.aborted) {
+          setProcessedHistoryData({load: null, generation: null})
+          setLoadChartData(null)
+          setGenerationChartData(null)
+        }
+      } finally {
+        if (!abortController.signal.aborted) {
+          setHistoryLoading(false)
+        }
+      }
+    }
+
+    const scheduleNextFetch = () => {
+      // Get next 5-minute boundary
+      const nextBoundary = getNextMinuteBoundary(5, system?.timezoneOffsetMin || 0)
+
+      // Add 15 seconds to the boundary
+      const targetTime = new Date(nextBoundary.toDate().getTime() + 15000)
+
+      // Calculate delay from now
+      const delay = targetTime.getTime() - Date.now()
+
+      // Schedule the fetch (but not if delay is negative or too far in future)
+      if (delay > 0 && delay < 5 * 60 * 1000) {
+        timeoutId = setTimeout(() => {
+          fetchMondoData()
+          // Schedule the next fetch after this one
+          scheduleNextFetch()
+        }, delay)
+      } else {
+        // If something's wrong with timing, just schedule for 5 minutes
+        timeoutId = setTimeout(() => {
+          fetchMondoData()
+          scheduleNextFetch()
+        }, 5 * 60 * 1000)
+      }
+    }
+
+    // Initial fetch
+    fetchMondoData()
+
+    // Schedule subsequent fetches at 15 seconds past each 5-minute interval
+    scheduleNextFetch()
+
+    return () => {
+      abortController.abort()
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
+    }
+  }, [systemId, system?.vendorType, system?.timezoneOffsetMin, mondoPeriod])
 
   // Handle clicks outside of the dropdowns
   useEffect(() => {
@@ -724,6 +798,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                             hoveredIndex={hoveredIndex}
                             visibleSeries={loadVisibleSeries.size > 0 ? loadVisibleSeries : undefined}
                             onVisibilityChange={setLoadVisibleSeries}
+                            data={processedHistoryData.load}
                           />
                         </div>
                         <div className="w-64">
@@ -761,6 +836,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                             hoveredIndex={hoveredIndex}
                             visibleSeries={generationVisibleSeries.size > 0 ? generationVisibleSeries : undefined}
                             onVisibilityChange={setGenerationVisibleSeries}
+                            data={processedHistoryData.generation}
                           />
                         </div>
                         <div className="w-64">

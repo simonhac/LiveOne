@@ -53,6 +53,7 @@ interface MondoPowerChartProps {
   hoveredIndex?: number | null // External hover index to sync with other charts
   visibleSeries?: Set<string> // Control which series are visible
   onVisibilityChange?: (visibleSeries: Set<string>) => void // Callback when visibility changes
+  data?: ChartData | null // Pre-processed data from parent
 }
 
 export interface SeriesData {
@@ -77,7 +78,7 @@ interface SeriesConfig {
   order?: number
 }
 
-const SERIES_CONFIG: Record<'load' | 'generation', SeriesConfig[]> = {
+export const SERIES_CONFIG: Record<'load' | 'generation', SeriesConfig[]> = {
   load: [
     { id: '.ac_p', label: 'AC', color: 'rgb(147, 51, 234)' },  // purple-600
     { id: '.ev_p', label: 'EV', color: 'rgb(239, 68, 68)' },   // red-500
@@ -132,7 +133,8 @@ export default function MondoPowerChart({
   onHoverIndexChange,
   hoveredIndex: externalHoveredIndex,
   visibleSeries: externalVisibleSeries,
-  onVisibilityChange
+  onVisibilityChange,
+  data: externalData
 }: MondoPowerChartProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -386,6 +388,14 @@ export default function MondoPowerChart({
     },
   }), [handleHover, windowStart, now, timeRange, hoveredTimestamp])
 
+  // Use external data when provided
+  useEffect(() => {
+    if (externalData !== undefined) {
+      setChartData(externalData)
+      setLoading(false)
+    }
+  }, [externalData])
+
   // Call onDataChange when chart data updates
   useEffect(() => {
     if (onDataChange) {
@@ -394,6 +404,9 @@ export default function MondoPowerChart({
   }, [chartData, onDataChange])
 
   useEffect(() => {
+    // Skip fetching if we're using external data
+    if (externalData !== undefined) return
+
     let abortController = new AbortController()
 
     const fetchData = async () => {
@@ -655,7 +668,7 @@ export default function MondoPowerChart({
       clearInterval(interval)
       abortController.abort()
     }
-  }, [timeRange, systemId, mode])
+  }, [timeRange, systemId, mode, externalData])
 
   const data: any = !chartData ? {} : {
     labels: chartData.timestamps,
