@@ -363,14 +363,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
       const delay = targetTime.getTime() - now.getTime()
 
       // Log scheduling details
-      console.log('Mondo data fetch scheduling:', {
-        now: now.toLocaleTimeString(),
-        nextBoundary: nextBoundary.toDate().toLocaleTimeString(),
-        targetTime: targetTime.toLocaleTimeString(),
-        delayMs: delay,
-        delaySeconds: Math.round(delay / 1000),
-        systemId
-      })
+      console.log(`Scheduling mondo history fetch for ${targetTime.toLocaleTimeString()} (${Math.round(delay / 1000)} seconds from now)`)
 
       // Schedule the fetch (but not if delay is negative or too far in future)
       if (delay > 0 && delay < 5 * 60 * 1000) {
