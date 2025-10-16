@@ -732,7 +732,7 @@ export default function MondoPowerChart({
 
     return (
       <div
-        className="flex-1 min-h-0"
+        className="flex-1 min-h-0 w-full overflow-hidden"
         onMouseLeave={handleMouseLeave}
       >
         <Line ref={chartRef} data={data} options={options} />

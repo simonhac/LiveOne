@@ -359,17 +359,30 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
       const targetTime = new Date(nextBoundary.toDate().getTime() + 15000)
 
       // Calculate delay from now
-      const delay = targetTime.getTime() - Date.now()
+      const now = new Date()
+      const delay = targetTime.getTime() - now.getTime()
+
+      // Log scheduling details
+      console.log('Mondo data fetch scheduling:', {
+        now: now.toLocaleTimeString(),
+        nextBoundary: nextBoundary.toDate().toLocaleTimeString(),
+        targetTime: targetTime.toLocaleTimeString(),
+        delayMs: delay,
+        delaySeconds: Math.round(delay / 1000),
+        systemId
+      })
 
       // Schedule the fetch (but not if delay is negative or too far in future)
       if (delay > 0 && delay < 5 * 60 * 1000) {
         timeoutId = setTimeout(() => {
+          console.log(`Fetching Mondo data at ${new Date().toLocaleTimeString()} for system ${systemId}`)
           fetchMondoData()
           // Schedule the next fetch after this one
           scheduleNextFetch()
         }, delay)
       } else {
         // If something's wrong with timing, just schedule for 5 minutes
+        console.warn('Delay out of expected range, falling back to 5-minute interval', { delay })
         timeoutId = setTimeout(() => {
           fetchMondoData()
           scheduleNextFetch()
@@ -722,15 +735,14 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
               <div className={data?.vendorType === 'mondo' ? '' : 'lg:col-span-2'}>
                 {data?.vendorType === 'mondo' ? (
                   // For mondo systems, show charts with tables in single container
-                  <div className="bg-gray-800 border border-gray-700 rounded">
+                  <div className="sm:bg-gray-800 sm:border sm:border-gray-700 sm:rounded overflow-hidden">
                     {/* Shared header with date/time and period switcher */}
-                    <div className="p-4">
-                      <div className="flex justify-between items-center">
-                        <h2 className="text-lg font-medium text-gray-200">Power Charts</h2>
-                        <div className="flex items-center gap-4">
-                          <span className="text-sm text-gray-400" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+                    <div className="px-2 sm:px-4 pt-2 sm:pt-4 pb-1 sm:pb-2">
+                      <div className="flex justify-end items-center">
+                        <div className="flex items-center gap-2 sm:gap-4">
+                          <span className="text-xs sm:text-sm text-gray-400" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
                             {hoveredIndex !== null && (loadChartData || generationChartData) ? (
-                              // Show hovered timestamp from whichever chart has data
+                              // Show hovered timestamp from whichever chart has data - always show time when hovering
                               format(
                                 loadChartData?.timestamps[hoveredIndex] || generationChartData?.timestamps[hoveredIndex] || new Date(),
                                 mondoPeriod === '1D' ? 'h:mma' : mondoPeriod === '7D' ? 'EEE, d MMM h:mma' : 'EEE, d MMM'
@@ -747,7 +759,12 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                                 if (chartData && chartData.timestamps.length > 0) {
                                   const start = fromUnixTimestamp(chartData.timestamps[0].getTime() / 1000, timezoneOffset)
                                   const end = fromUnixTimestamp(chartData.timestamps[chartData.timestamps.length - 1].getTime() / 1000, timezoneOffset)
-                                  return formatDateRange(start, end, true)  // Include times
+                                  return (
+                                    <>
+                                      <span className="hidden sm:inline">{formatDateRange(start, end, true)}</span>
+                                      <span className="sm:hidden">{formatDateRange(start, end, false)}</span>
+                                    </>
+                                  )
                                 } else {
                                   // Fallback to calculated range if no data yet
                                   const now = new Date()
@@ -758,7 +775,12 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                                   const windowStart = new Date(now.getTime() - windowHours * 60 * 60 * 1000)
                                   const start = fromUnixTimestamp(windowStart.getTime() / 1000, timezoneOffset)
                                   const end = fromUnixTimestamp(now.getTime() / 1000, timezoneOffset)
-                                  return formatDateRange(start, end, true)  // Include times
+                                  return (
+                                    <>
+                                      <span className="hidden sm:inline">{formatDateRange(start, end, true)}</span>
+                                      <span className="sm:hidden">{formatDateRange(start, end, false)}</span>
+                                    </>
+                                  )
                                 }
                               })()
                             )}
@@ -777,9 +799,9 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                     </div>
 
                     {/* Loads Chart with Table */}
-                    <div className="p-4">
-                      <div className="flex gap-4">
-                        <div className="flex-1">
+                    <div className="px-2 sm:px-4 pt-1 sm:pt-2 pb-2 sm:pb-4">
+                      <div className="flex flex-col md:flex-row md:gap-4">
+                        <div className="flex-1 min-w-0">
                           <MondoPowerChart
                             systemId={parseInt(systemId as string)}
                             mode="load"
@@ -801,7 +823,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                             data={processedHistoryData.load}
                           />
                         </div>
-                        <div className="w-64">
+                        <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
                           <EnergyTable
                             chartData={loadChartData}
                             mode="load"
@@ -815,9 +837,9 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                     </div>
 
                     {/* Generation Chart with Table */}
-                    <div className="p-4">
-                      <div className="flex gap-4">
-                        <div className="flex-1">
+                    <div className="p-2 sm:p-4">
+                      <div className="flex flex-col md:flex-row md:gap-4">
+                        <div className="flex-1 min-w-0">
                           <MondoPowerChart
                             systemId={parseInt(systemId as string)}
                             mode="generation"
@@ -839,7 +861,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                             data={processedHistoryData.generation}
                           />
                         </div>
-                        <div className="w-64">
+                        <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
                           <EnergyTable
                             chartData={generationChartData}
                             mode="generation"

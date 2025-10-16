@@ -141,15 +141,14 @@ export async function fetchAndProcessMondoData(
 
       // Apply any data transformation
       if (config.dataTransform) {
-        seriesValues = seriesValues.map(v => v === null ? null : config.dataTransform!(v * 1000) / 1000)
+        seriesValues = seriesValues.map((v: number | null) => v === null ? null : config.dataTransform!(v * 1000) / 1000)
       }
 
       seriesData.push({
         id: config.id,
         description: config.label,
         data: seriesValues,
-        color: config.color,
-        order: config.order
+        color: config.color
       })
 
       // Accumulate values for rest of house calculation (load mode)
@@ -159,7 +158,7 @@ export async function fetchAndProcessMondoData(
           if (measuredLoadsSum === null) {
             measuredLoadsSum = new Array(seriesValues.length).fill(0)
           }
-          seriesValues.forEach((val, idx) => {
+          seriesValues.forEach((val: number | null, idx: number) => {
             if (val !== null && measuredLoadsSum![idx] !== null) {
               measuredLoadsSum![idx] = (measuredLoadsSum![idx] as number) + val
             } else if (val === null) {
@@ -178,7 +177,7 @@ export async function fetchAndProcessMondoData(
         if (totalGenerationValues === null) {
           totalGenerationValues = new Array(seriesValues.length).fill(0)
         }
-        seriesValues.forEach((val, idx) => {
+        seriesValues.forEach((val: number | null, idx: number) => {
           if (val !== null && totalGenerationValues![idx] !== null) {
             totalGenerationValues![idx] = (totalGenerationValues![idx] as number) + val
           } else if (val === null) {
@@ -202,7 +201,7 @@ export async function fetchAndProcessMondoData(
       })
 
       // Calculate rest of house
-      const restOfHouse = totalGen.map((gen, idx) => {
+      const restOfHouse = totalGen.map((gen: number | null, idx: number) => {
         if (gen === null) return null
         const measured = measuredLoadsSum![idx]
         const batteryCharge = batteryChargeValues![idx]
@@ -218,13 +217,16 @@ export async function fetchAndProcessMondoData(
         id: 'rest_of_house',
         description: 'Rest of House',
         data: restOfHouse,
-        color: 'rgb(107, 114, 128)',  // gray-500
-        order: 999
+        color: 'rgb(107, 114, 128)'  // gray-500
       })
     }
 
-    // Sort series by order
-    seriesData.sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
+    // Sort series by order from config
+    seriesData.sort((a, b) => {
+      const aConfig = seriesConfig.find(c => c.id === a.id)
+      const bConfig = seriesConfig.find(c => c.id === b.id)
+      return (aConfig?.order ?? 999) - (bConfig?.order ?? 999)
+    })
 
     processedData[mode] = {
       timestamps: filteredTimestamps,

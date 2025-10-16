@@ -70,7 +70,7 @@ export default function EnergyTable({ chartData, mode, hoveredIndex, className =
       <div className="space-y-4" style={{ paddingTop: '44px' }}>
         {/* Column Headers - aligned to top */}
         <div className="flex items-center text-xs border-b border-gray-700 pb-1">
-          <div className="flex-1 text-gray-500">Source</div>
+          <div className="flex-1 text-gray-500">{mode === 'load' ? 'Load' : 'Source'}</div>
           <div className="w-16 text-right text-gray-500">Power (kW)</div>
           <div className="w-12 text-right text-gray-500">%</div>
         </div>
