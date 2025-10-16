@@ -39,29 +39,36 @@ export default function EnergyTable({ chartData, mode, hoveredIndex, className =
 
   // Build table data from series - maintain consistent order from chart
   const tableData = chartData.series
-    .map(series => ({
-      id: series.id,
-      label: series.description,
-      powerValue: series.data[dataIndex], // Power value at specific point (kW)
-      energyValue: energyValues.get(series.id) ?? null, // Total energy (kWh)
-      color: series.color
-    }))
+    .map(series => {
+      const isVisible = !visibleSeries || visibleSeries.has(series.id)
+      return {
+        id: series.id,
+        label: series.description,
+        powerValue: series.data[dataIndex], // Power value at specific point (kW)
+        energyValue: energyValues.get(series.id) ?? null, // Total energy (kWh)
+        color: series.color,
+        isVisible
+      }
+    })
     // Keep the original order from the chart configuration - no sorting
 
-  // Calculate totals
+  // Calculate totals (only include visible series)
   let powerTotal: number | null = null
   let energyTotal: number | null = null
   let hasAnyValue = false
 
   tableData.forEach(item => {
-    // Power total
-    if (item.powerValue !== null && item.powerValue !== undefined) {
-      hasAnyValue = true
-      powerTotal = (powerTotal ?? 0) + item.powerValue
-    }
-    // Energy total
-    if (item.energyValue !== null && item.energyValue !== undefined) {
-      energyTotal = (energyTotal ?? 0) + item.energyValue
+    // Only include in totals if the series is visible
+    if (item.isVisible) {
+      // Power total
+      if (item.powerValue !== null && item.powerValue !== undefined) {
+        hasAnyValue = true
+        powerTotal = (powerTotal ?? 0) + item.powerValue
+      }
+      // Energy total
+      if (item.energyValue !== null && item.energyValue !== undefined) {
+        energyTotal = (energyTotal ?? 0) + item.energyValue
+      }
     }
   })
 
@@ -100,14 +107,13 @@ export default function EnergyTable({ chartData, mode, hoveredIndex, className =
         {/* Items */}
         <div className="space-y-1">
           {tableData.map((item) => {
-            const isVisible = !visibleSeries || visibleSeries.has(item.id)
             return (
               <div key={item.label} className="flex items-center text-xs">
                 <div className="flex items-center gap-2 flex-1">
                   <div
                     className="w-3 h-3 rounded-sm flex-shrink-0 cursor-pointer border-2"
                     style={{
-                      backgroundColor: isVisible ? item.color : 'transparent',
+                      backgroundColor: item.isVisible ? item.color : 'transparent',
                       borderColor: item.color
                     }}
                     onClick={(e) => onSeriesToggle?.(item.id, e.shiftKey)}
@@ -116,16 +122,21 @@ export default function EnergyTable({ chartData, mode, hoveredIndex, className =
                   <span className="text-gray-300">{item.label}</span>
                 </div>
                 <span className="text-gray-100 font-mono w-20 text-right">
-                  {displayValue === 'power'
-                    ? formatValue(item.powerValue)
-                    : formatValue(item.energyValue, 1)
+                  {item.isVisible
+                    ? (displayValue === 'power'
+                      ? formatValue(item.powerValue)
+                      : formatValue(item.energyValue, 1))
+                    : ''
                   }
                 </span>
                 <span className="text-gray-400 font-mono w-12 text-right">
-                  {formatPercentage(
-                    displayValue === 'power' ? item.powerValue : item.energyValue,
-                    total
-                  )}
+                  {item.isVisible
+                    ? formatPercentage(
+                        displayValue === 'power' ? item.powerValue : item.energyValue,
+                        total
+                      )
+                    : ''
+                  }
                 </span>
               </div>
             )

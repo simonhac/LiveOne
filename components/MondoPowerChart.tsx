@@ -390,9 +390,18 @@ export default function MondoPowerChart({
 
   // Use external data when provided
   useEffect(() => {
+    // When using external data, we need to manage loading state differently
     if (externalData !== undefined) {
-      setChartData(externalData)
-      setLoading(false)
+      if (externalData === null) {
+        // If external data is null, keep loading state true
+        // The parent component will pass actual data when it's ready
+        setLoading(true)
+        setChartData(null)
+      } else {
+        // We have actual data
+        setChartData(externalData)
+        setLoading(false)
+      }
     }
   }, [externalData])
 
@@ -717,7 +726,7 @@ export default function MondoPowerChart({
     if (loading) {
       return (
         <div className="flex-1 flex items-center justify-center min-h-0">
-          <div className="text-gray-500">Loading chart...</div>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400"></div>
         </div>
       );
     }
