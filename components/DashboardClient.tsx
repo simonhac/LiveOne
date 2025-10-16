@@ -650,7 +650,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                   // For mondo systems, show charts with tables in single container
                   <div className="bg-gray-800 border border-gray-700 rounded">
                     {/* Shared header with date/time and period switcher */}
-                    <div className="p-4 border-b border-gray-700">
+                    <div className="p-4">
                       <div className="flex justify-between items-center">
                         <h2 className="text-lg font-medium text-gray-200">Power Charts</h2>
                         <div className="flex items-center gap-4">
@@ -703,7 +703,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                     </div>
 
                     {/* Loads Chart with Table */}
-                    <div className="p-4 border-b border-gray-700">
+                    <div className="p-4">
                       <div className="flex gap-4">
                         <div className="flex-1">
                           <MondoPowerChart
@@ -721,6 +721,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                             showPeriodSwitcher={false}
                             onDataChange={setLoadChartData}
                             onHoverIndexChange={setHoveredIndex}
+                            hoveredIndex={hoveredIndex}
                             visibleSeries={loadVisibleSeries.size > 0 ? loadVisibleSeries : undefined}
                             onVisibilityChange={setLoadVisibleSeries}
                           />
@@ -757,6 +758,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                             showPeriodSwitcher={false}
                             onDataChange={setGenerationChartData}
                             onHoverIndexChange={setHoveredIndex}
+                            hoveredIndex={hoveredIndex}
                             visibleSeries={generationVisibleSeries.size > 0 ? generationVisibleSeries : undefined}
                             onVisibilityChange={setGenerationVisibleSeries}
                           />

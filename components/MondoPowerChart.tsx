@@ -50,6 +50,7 @@ interface MondoPowerChartProps {
   showDateDisplay?: boolean // Whether to show the date display
   onDataChange?: (data: ChartData | null) => void // Callback when data changes
   onHoverIndexChange?: (index: number | null) => void // Callback when hover index changes
+  hoveredIndex?: number | null // External hover index to sync with other charts
   visibleSeries?: Set<string> // Control which series are visible
   onVisibilityChange?: (visibleSeries: Set<string>) => void // Callback when visibility changes
 }
@@ -129,6 +130,7 @@ export default function MondoPowerChart({
   showPeriodSwitcher = true,
   onDataChange,
   onHoverIndexChange,
+  hoveredIndex: externalHoveredIndex,
   visibleSeries: externalVisibleSeries,
   onVisibilityChange
 }: MondoPowerChartProps) {
@@ -164,30 +166,33 @@ export default function MondoPowerChart({
   // Use external visibility if provided, otherwise use internal state
   const visibleSeries = externalVisibleSeries ?? internalVisibleSeries
 
-  const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  // Sync external hovered index with internal timestamp
+  useEffect(() => {
+    if (externalHoveredIndex !== undefined && chartData) {
+      if (externalHoveredIndex !== null && chartData.timestamps[externalHoveredIndex]) {
+        setHoveredTimestamp(chartData.timestamps[externalHoveredIndex])
+      } else {
+        setHoveredTimestamp(null)
+      }
+    }
+  }, [externalHoveredIndex, chartData])
 
   const handleHover = useCallback((event: any, activeElements: any[], chart: any) => {
     if (!chartData) return
 
-    if (hoverTimeoutRef.current) {
-      clearTimeout(hoverTimeoutRef.current)
-    }
-
-    hoverTimeoutRef.current = setTimeout(() => {
-      if (activeElements && activeElements.length > 0) {
-        const dataIndex = activeElements[0].index
-        const timestamp = chartData.timestamps[dataIndex]
-        setHoveredTimestamp(timestamp)
-        if (onHoverIndexChange) {
-          onHoverIndexChange(dataIndex)
-        }
-      } else {
-        setHoveredTimestamp(null)
-        if (onHoverIndexChange) {
-          onHoverIndexChange(null)
-        }
+    if (activeElements && activeElements.length > 0) {
+      const dataIndex = activeElements[0].index
+      const timestamp = chartData.timestamps[dataIndex]
+      setHoveredTimestamp(timestamp)
+      if (onHoverIndexChange) {
+        onHoverIndexChange(dataIndex)
       }
-    }, 10)
+    } else {
+      setHoveredTimestamp(null)
+      if (onHoverIndexChange) {
+        onHoverIndexChange(null)
+      }
+    }
   }, [chartData, onHoverIndexChange])
 
   const { now, windowStart } = useMemo(() => {
@@ -207,6 +212,9 @@ export default function MondoPowerChart({
   const options: ChartOptions<any> = useMemo(() => ({
     responsive: true,
     maintainAspectRatio: false,
+    animation: {
+      duration: 0,  // Disable all animations
+    },
     interaction: {
       mode: 'index' as const,
       intersect: false,
@@ -217,31 +225,10 @@ export default function MondoPowerChart({
         display: false,  // Legend now shown in the table
       },
       tooltip: {
-        enabled: true,
-        mode: 'index' as const,
-        intersect: false,
-        backgroundColor: 'rgba(31, 41, 55, 0.95)',
-        titleColor: 'rgb(229, 231, 235)',
-        bodyColor: 'rgb(209, 213, 219)',
-        borderColor: 'rgb(75, 85, 99)',
-        borderWidth: 1,
-        padding: 12,
-        displayColors: true,
-        callbacks: {
-          title: function(context: any) {
-            if (context.length === 0) return ''
-            const timestamp = new Date(context[0].parsed.x)
-            return formatDateTime(timestamp, { includeSeconds: false }).display
-          },
-          label: function(context: any) {
-            const label = context.dataset.label || ''
-            const value = context.raw as number
-            if (value === null) return null
-            return `${label}: ${value.toFixed(1)} kW`
-          }
-        }
+        enabled: false,
       },
       annotation: {
+        animation: false,  // Disable animation for immediate updates
         annotations: (() => {
           const annotations: any[] = []
 
@@ -290,6 +277,18 @@ export default function MondoPowerChart({
                 })
               }
             }
+          }
+
+          // Add vertical line for hover position
+          if (hoveredTimestamp) {
+            annotations.push({
+              type: 'line',
+              scaleID: 'x',
+              value: hoveredTimestamp.getTime(),
+              borderColor: 'rgb(239, 68, 68)',  // Red color
+              borderWidth: 1,
+              borderDash: [],  // Solid line
+            })
           }
 
           return annotations
@@ -385,15 +384,7 @@ export default function MondoPowerChart({
         },
       },
     },
-  }), [handleHover, windowStart, now, timeRange])
-
-  useEffect(() => {
-    return () => {
-      if (hoverTimeoutRef.current) {
-        clearTimeout(hoverTimeoutRef.current)
-      }
-    }
-  }, [])
+  }), [handleHover, windowStart, now, timeRange, hoveredTimestamp])
 
   // Call onDataChange when chart data updates
   useEffect(() => {
@@ -702,11 +693,6 @@ export default function MondoPowerChart({
   };
 
   const handleMouseLeave = useCallback(() => {
-    // Clear any pending hover timeout
-    if (hoverTimeoutRef.current) {
-      clearTimeout(hoverTimeoutRef.current)
-      hoverTimeoutRef.current = null
-    }
     // Reset hover state
     setHoveredTimestamp(null)
     if (onHoverIndexChange) {
