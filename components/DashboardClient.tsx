@@ -177,6 +177,8 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
   const [loadChartData, setLoadChartData] = useState<ChartData | null>(null)
   const [generationChartData, setGenerationChartData] = useState<ChartData | null>(null)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null) // Single hover index for both charts
+  const [loadVisibleSeries, setLoadVisibleSeries] = useState<Set<string>>(new Set())
+  const [generationVisibleSeries, setGenerationVisibleSeries] = useState<Set<string>>(new Set())
   const dropdownRef = useRef<HTMLDivElement>(null)
   const settingsDropdownRef = useRef<HTMLDivElement>(null)
 
@@ -359,6 +361,69 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
 
   const handleLogout = async () => {
     router.push('/sign-in')
+  }
+
+  // Handle series visibility toggle with special logic
+  const handleLoadSeriesToggle = (seriesId: string, shiftKey: boolean) => {
+    const allSeriesIds = loadChartData?.series.map(s => s.id) ?? []
+
+    if (shiftKey) {
+      // Shift-click: show only this series
+      setLoadVisibleSeries(new Set([seriesId]))
+    } else {
+      // Regular click: toggle visibility
+      const newVisible = new Set(loadVisibleSeries)
+
+      // If series is not in the set or set is empty, we're starting fresh - add all series first
+      if (newVisible.size === 0) {
+        allSeriesIds.forEach(id => newVisible.add(id))
+      }
+
+      if (newVisible.has(seriesId)) {
+        // Check if this is the only visible series
+        if (newVisible.size === 1) {
+          // Show all series instead of hiding the last one
+          allSeriesIds.forEach(id => newVisible.add(id))
+        } else {
+          newVisible.delete(seriesId)
+        }
+      } else {
+        newVisible.add(seriesId)
+      }
+
+      setLoadVisibleSeries(newVisible)
+    }
+  }
+
+  const handleGenerationSeriesToggle = (seriesId: string, shiftKey: boolean) => {
+    const allSeriesIds = generationChartData?.series.map(s => s.id) ?? []
+
+    if (shiftKey) {
+      // Shift-click: show only this series
+      setGenerationVisibleSeries(new Set([seriesId]))
+    } else {
+      // Regular click: toggle visibility
+      const newVisible = new Set(generationVisibleSeries)
+
+      // If series is not in the set or set is empty, we're starting fresh - add all series first
+      if (newVisible.size === 0) {
+        allSeriesIds.forEach(id => newVisible.add(id))
+      }
+
+      if (newVisible.has(seriesId)) {
+        // Check if this is the only visible series
+        if (newVisible.size === 1) {
+          // Show all series instead of hiding the last one
+          allSeriesIds.forEach(id => newVisible.add(id))
+        } else {
+          newVisible.delete(seriesId)
+        }
+      } else {
+        newVisible.add(seriesId)
+      }
+
+      setGenerationVisibleSeries(newVisible)
+    }
   }
 
   if (!data && loading) {
@@ -582,10 +647,10 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
               {/* Charts - Full width for mondo, 2/3 width for others */}
               <div className={data?.vendorType === 'mondo' ? '' : 'lg:col-span-2'}>
                 {data?.vendorType === 'mondo' ? (
-                  // For mondo systems, show charts with tables
-                  <div className="space-y-6">
+                  // For mondo systems, show charts with tables in single container
+                  <div className="bg-gray-800 border border-gray-700 rounded">
                     {/* Shared header with date/time and period switcher */}
-                    <div className="bg-gray-800 border border-gray-700 rounded p-4">
+                    <div className="p-4 border-b border-gray-700">
                       <div className="flex justify-between items-center">
                         <h2 className="text-lg font-medium text-gray-200">Power Charts</h2>
                         <div className="flex items-center gap-4">
@@ -638,7 +703,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                     </div>
 
                     {/* Loads Chart with Table */}
-                    <div className="bg-gray-800 border border-gray-700 rounded p-4">
+                    <div className="p-4 border-b border-gray-700">
                       <div className="flex gap-4">
                         <div className="flex-1">
                           <MondoPowerChart
@@ -656,6 +721,8 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                             showPeriodSwitcher={false}
                             onDataChange={setLoadChartData}
                             onHoverIndexChange={setHoveredIndex}
+                            visibleSeries={loadVisibleSeries.size > 0 ? loadVisibleSeries : undefined}
+                            onVisibilityChange={setLoadVisibleSeries}
                           />
                         </div>
                         <div className="w-64">
@@ -664,13 +731,15 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                             mode="load"
                             hoveredIndex={hoveredIndex}
                             className="h-full"
+                            visibleSeries={loadVisibleSeries.size > 0 ? loadVisibleSeries : undefined}
+                            onSeriesToggle={handleLoadSeriesToggle}
                           />
                         </div>
                       </div>
                     </div>
 
                     {/* Generation Chart with Table */}
-                    <div className="bg-gray-800 border border-gray-700 rounded p-4">
+                    <div className="p-4">
                       <div className="flex gap-4">
                         <div className="flex-1">
                           <MondoPowerChart
@@ -688,6 +757,8 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                             showPeriodSwitcher={false}
                             onDataChange={setGenerationChartData}
                             onHoverIndexChange={setHoveredIndex}
+                            visibleSeries={generationVisibleSeries.size > 0 ? generationVisibleSeries : undefined}
+                            onVisibilityChange={setGenerationVisibleSeries}
                           />
                         </div>
                         <div className="w-64">
@@ -696,6 +767,8 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                             mode="generation"
                             hoveredIndex={hoveredIndex}
                             className="h-full"
+                            visibleSeries={generationVisibleSeries.size > 0 ? generationVisibleSeries : undefined}
+                            onSeriesToggle={handleGenerationSeriesToggle}
                           />
                         </div>
                       </div>

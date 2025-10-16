@@ -50,6 +50,8 @@ interface MondoPowerChartProps {
   showDateDisplay?: boolean // Whether to show the date display
   onDataChange?: (data: ChartData | null) => void // Callback when data changes
   onHoverIndexChange?: (index: number | null) => void // Callback when hover index changes
+  visibleSeries?: Set<string> // Control which series are visible
+  onVisibilityChange?: (visibleSeries: Set<string>) => void // Callback when visibility changes
 }
 
 export interface SeriesData {
@@ -126,7 +128,9 @@ export default function MondoPowerChart({
   onPeriodChange,
   showPeriodSwitcher = true,
   onDataChange,
-  onHoverIndexChange
+  onHoverIndexChange,
+  visibleSeries: externalVisibleSeries,
+  onVisibilityChange
 }: MondoPowerChartProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -149,6 +153,16 @@ export default function MondoPowerChart({
   const timeRange = externalPeriod || internalTimeRange
   const [hoveredTimestamp, setHoveredTimestamp] = useState<Date | null>(null)
   const chartRef = useRef<any>(null)
+
+  // Initialize visible series - all series visible by default
+  const [internalVisibleSeries, setInternalVisibleSeries] = useState<Set<string>>(() => {
+    const allSeries = SERIES_CONFIG[mode].map(s => s.id)
+    if (mode === 'load') allSeries.push('rest_of_house')
+    return new Set(allSeries)
+  })
+
+  // Use external visibility if provided, otherwise use internal state
+  const visibleSeries = externalVisibleSeries ?? internalVisibleSeries
 
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -200,18 +214,7 @@ export default function MondoPowerChart({
     onHover: handleHover,
     plugins: {
       legend: {
-        display: true,
-        position: 'bottom' as const,
-        labels: {
-          color: 'rgb(156, 163, 175)',
-          font: {
-            size: 11,
-            family: 'DM Sans, system-ui, sans-serif',
-          },
-          padding: 10,
-          usePointStyle: true,
-          pointStyle: 'rect',
-        },
+        display: false,  // Legend now shown in the table
       },
       tooltip: {
         enabled: true,
@@ -665,19 +668,21 @@ export default function MondoPowerChart({
 
   const data: any = !chartData ? {} : {
     labels: chartData.timestamps,
-    datasets: chartData.series.map((series, idx) => ({
-      label: series.description, // Description already contains the display label
-      data: series.data, // Already in kW from earlier conversion
-      borderColor: series.color,
-      backgroundColor: series.color, // Use solid color, not transparent
-      yAxisID: 'y',
-      tension: 0,  // Use straight lines instead of curved
-      borderWidth: 2,
-      pointRadius: 0,
-      fill: 'stack', // Fill according to stack configuration
-      stack: 'stack0', // Ensure all datasets stack together
-      order: idx,
-    })),
+    datasets: chartData.series
+      .filter(series => visibleSeries.has(series.id))  // Filter by visibility
+      .map((series, idx) => ({
+        label: series.description, // Description already contains the display label
+        data: series.data, // Already in kW from earlier conversion
+        borderColor: series.color,
+        backgroundColor: series.color, // Use solid color, not transparent
+        yAxisID: 'y',
+        tension: 0,  // Use straight lines instead of curved
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: 'stack', // Fill according to stack configuration
+        stack: 'stack0', // Ensure all datasets stack together
+        order: idx,
+      })),
   }
 
   const formatHoverTimestamp = (date: Date | null, isMobile: boolean = false) => {
