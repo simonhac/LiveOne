@@ -153,7 +153,7 @@ export async function fetchAndProcessMondoData(
 
       // Accumulate values for rest of house calculation (load mode)
       if (mode === 'load') {
-        if (config.id !== '.battery_charge_p' && config.id !== '.grid_export_p') {
+        if (config.id !== '.batt_p' && config.id !== '.grid_p' && config.id !== 'rest_of_house') {
           // This is a measured load
           if (measuredLoadsSum === null) {
             measuredLoadsSum = new Array(seriesValues.length).fill(0)
@@ -165,9 +165,9 @@ export async function fetchAndProcessMondoData(
               measuredLoadsSum![idx] = null
             }
           })
-        } else if (config.id === '.battery_charge_p') {
+        } else if (config.id === '.batt_p') {
           batteryChargeValues = seriesValues
-        } else if (config.id === '.grid_export_p') {
+        } else if (config.id === '.grid_p') {
           gridExportValues = seriesValues
         }
       }
@@ -188,28 +188,60 @@ export async function fetchAndProcessMondoData(
     })
 
     // Calculate rest of house if in load mode
-    if (mode === 'load' && measuredLoadsSum && batteryChargeValues && gridExportValues && seriesMap.get('.solar1_p')) {
-      // Get total generation
+    if (mode === 'load' && measuredLoadsSum) {
+      // Get all generation sources (solar + grid import + battery discharge)
       const solar1 = seriesMap.get('.solar1_p')
       const solar2 = seriesMap.get('.solar2_p')
+      const gridImport = seriesMap.get('.grid_p')  // This is grid import (positive when importing)
+      const batteryDischarge = seriesMap.get('.batt_p')  // This is battery discharge (positive when discharging)
 
-      const totalGen = selectedIndices.map((i: number) => {
-        const s1 = solar1 ? solar1.history.data[i] : 0
-        const s2 = solar2 ? solar2.history.data[i] : 0
-        if (s1 === null && s2 === null) return null
-        return ((s1 || 0) + (s2 || 0)) / 1000  // Convert W to kW
+      const totalGeneration = selectedIndices.map((i: number) => {
+        const s1 = solar1 ? solar1.history.data[i] : null
+        const s2 = solar2 ? solar2.history.data[i] : null
+        const gridIn = gridImport ? gridImport.history.data[i] : null
+        const battOut = batteryDischarge ? batteryDischarge.history.data[i] : null
+
+        // Convert W to kW and handle nulls
+        let total = 0
+        let hasAnyData = false
+
+        if (s1 !== null && s1 !== undefined) {
+          total += s1 / 1000
+          hasAnyData = true
+        }
+        if (s2 !== null && s2 !== undefined) {
+          total += s2 / 1000
+          hasAnyData = true
+        }
+        // Grid import: positive values mean importing from grid
+        if (gridIn !== null && gridIn !== undefined && gridIn > 0) {
+          total += gridIn / 1000
+          hasAnyData = true
+        }
+        // Battery discharge: positive values mean discharging
+        if (battOut !== null && battOut !== undefined && battOut > 0) {
+          total += battOut / 1000
+          hasAnyData = true
+        }
+
+        return hasAnyData ? total : null
       })
 
       // Calculate rest of house
-      const restOfHouse = totalGen.map((gen: number | null, idx: number) => {
-        if (gen === null) return null
+      // Rest of House = Total Generation - Measured Loads - Battery Charge - Grid Export
+      const restOfHouse = totalGeneration.map((gen: number | null, idx: number) => {
         const measured = measuredLoadsSum![idx]
         const batteryCharge = batteryChargeValues![idx]
         const gridExport = gridExportValues![idx]
 
-        if (measured === null || batteryCharge === null || gridExport === null) return null
+        // If we don't have generation or measured loads data, return null
+        if (gen === null || measured === null) return null
 
-        const rest = gen + batteryCharge + gridExport - measured
+        // Battery charge and grid export might be null (treat as 0)
+        const battCharge = (batteryCharge !== null && batteryCharge !== undefined) ? batteryCharge : 0
+        const gridExp = (gridExport !== null && gridExport !== undefined) ? gridExport : 0
+
+        const rest = gen - measured - battCharge - gridExp
         return Math.max(0, rest)  // Don't show negative values
       })
 

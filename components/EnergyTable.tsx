@@ -1,6 +1,8 @@
 'use client'
 
+import { useMemo } from 'react'
 import { SeriesData } from './MondoPowerChart'
+import { calculateSeriesEnergy } from '@/lib/energy-calculator'
 
 interface EnergyTableProps {
   chartData: {
@@ -16,6 +18,12 @@ interface EnergyTableProps {
 }
 
 export default function EnergyTable({ chartData, mode, hoveredIndex, className = '', visibleSeries, onSeriesToggle }: EnergyTableProps) {
+  // Calculate energy values for all series
+  const energyValues = useMemo(() => {
+    if (!chartData) return new Map<string, number | null>()
+    return calculateSeriesEnergy(chartData.series, chartData.timestamps)
+  }, [chartData])
+
   if (!chartData || chartData.series.length === 0) {
     return (
       <div className={`${className}`}>
@@ -24,38 +32,47 @@ export default function EnergyTable({ chartData, mode, hoveredIndex, className =
     )
   }
 
+  const isHovering = hoveredIndex !== null && hoveredIndex !== undefined
+
   // Use hovered index if available, otherwise use the latest
-  const dataIndex = hoveredIndex !== null && hoveredIndex !== undefined ? hoveredIndex : chartData.timestamps.length - 1
+  const dataIndex = isHovering ? hoveredIndex : chartData.timestamps.length - 1
 
   // Build table data from series - maintain consistent order from chart
   const tableData = chartData.series
     .map(series => ({
       id: series.id,
       label: series.description,
-      value: series.data[dataIndex], // Can be null or a number (already in kW)
+      powerValue: series.data[dataIndex], // Power value at specific point (kW)
+      energyValue: energyValues.get(series.id) ?? null, // Total energy (kWh)
       color: series.color
     }))
     // Keep the original order from the chart configuration - no sorting
 
-  // Calculate totals (only sum non-null values)
-  let total: number | null = null
+  // Calculate totals
+  let powerTotal: number | null = null
+  let energyTotal: number | null = null
   let hasAnyValue = false
 
   tableData.forEach(item => {
-    if (item.value !== null && item.value !== undefined) {
+    // Power total
+    if (item.powerValue !== null && item.powerValue !== undefined) {
       hasAnyValue = true
-      total = (total ?? 0) + item.value
+      powerTotal = (powerTotal ?? 0) + item.powerValue
+    }
+    // Energy total
+    if (item.energyValue !== null && item.energyValue !== undefined) {
+      energyTotal = (energyTotal ?? 0) + item.energyValue
     }
   })
 
   // If all values are null, total should be null
   if (!hasAnyValue) {
-    total = null
+    powerTotal = null
   }
 
-  const formatValue = (value: number | null | undefined) => {
+  const formatValue = (value: number | null | undefined, decimals: number = 1) => {
     if (value === null || value === undefined) return '—' // Show dash for no data
-    return value.toFixed(1)
+    return value.toFixed(decimals)
   }
 
   const formatPercentage = (value: number | null | undefined, total: number | null) => {
@@ -64,15 +81,20 @@ export default function EnergyTable({ chartData, mode, hoveredIndex, className =
     return percentage.toFixed(0) + '%'
   }
 
+  // Decide which values to show based on hover state
+  const displayValue = isHovering ? 'power' : 'energy'
+  const columnHeader = isHovering ? 'Power (kW)' : 'Energy (kWh)'
+  const total = isHovering ? powerTotal : energyTotal
+
   return (
     <div className={`${className}`}>
       {/* Match exact chart title height (text-sm = ~20px) + margin (mb-3 = 12px) + chart padding (~12px) */}
       <div className="space-y-4" style={{ paddingTop: '44px' }}>
         {/* Column Headers - aligned to top */}
         <div className="flex items-center text-xs border-b border-gray-700 pb-1">
-          <div className="flex-1 text-gray-500">{mode === 'load' ? 'Load' : 'Source'}</div>
-          <div className="w-16 text-right text-gray-500">Power (kW)</div>
-          <div className="w-12 text-right text-gray-500">%</div>
+          <div className="flex-1 text-gray-400">{mode === 'load' ? 'Load' : 'Source'}</div>
+          <div className="w-20 text-right text-gray-400">{columnHeader}</div>
+          <div className="w-12 text-right text-gray-400">%</div>
         </div>
 
         {/* Items */}
@@ -93,11 +115,17 @@ export default function EnergyTable({ chartData, mode, hoveredIndex, className =
                   />
                   <span className="text-gray-300">{item.label}</span>
                 </div>
-                <span className="text-gray-100 font-mono w-16 text-right">
-                  {formatValue(item.value)}
+                <span className="text-gray-100 font-mono w-20 text-right">
+                  {displayValue === 'power'
+                    ? formatValue(item.powerValue)
+                    : formatValue(item.energyValue, 1)
+                  }
                 </span>
                 <span className="text-gray-400 font-mono w-12 text-right">
-                  {formatPercentage(item.value, total)}
+                  {formatPercentage(
+                    displayValue === 'power' ? item.powerValue : item.energyValue,
+                    total
+                  )}
                 </span>
               </div>
             )
@@ -108,8 +136,11 @@ export default function EnergyTable({ chartData, mode, hoveredIndex, className =
         <div className="border-t border-gray-700 pt-1">
           <div className="flex items-center text-xs">
             <span className="text-gray-300 font-medium flex-1">Total</span>
-            <span className="text-gray-100 font-mono font-medium w-16 text-right">
-              {formatValue(total)}
+            <span className="text-gray-100 font-mono font-medium w-20 text-right">
+              {displayValue === 'power'
+                ? formatValue(total)
+                : formatValue(total, 1)
+              }
             </span>
             <span className="text-gray-400 font-mono font-medium w-12 text-right">
               {total !== null ? '100%' : '—'}

@@ -80,8 +80,8 @@ interface SeriesConfig {
 
 export const SERIES_CONFIG: Record<'load' | 'generation', SeriesConfig[]> = {
   load: [
-    { id: '.ac_p', label: 'AC', color: 'rgb(147, 51, 234)' },  // purple-600
-    { id: '.ev_p', label: 'EV', color: 'rgb(239, 68, 68)' },   // red-500
+    { id: '.ac_p', label: 'A/C', color: 'rgb(147, 51, 234)' },  // purple-600
+    { id: '.ev_p', label: 'EV Charger', color: 'rgb(239, 68, 68)' },   // red-500
     { id: '.hws_p', label: 'Hot Water', color: 'rgb(251, 146, 60)' },  // orange-400
     { id: '.pool_p', label: 'Pool', color: 'rgb(59, 130, 246)' },  // blue-500
     {
