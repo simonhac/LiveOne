@@ -22,6 +22,7 @@ import { format } from 'date-fns'
 import 'chartjs-adapter-date-fns'
 import annotationPlugin from 'chartjs-plugin-annotation'
 import { formatDateTime } from '@/lib/fe-date-format'
+import { formatDateRange, fromUnixTimestamp } from '@/lib/date-utils'
 
 // Register Chart.js components
 ChartJS.register(
@@ -46,32 +47,74 @@ interface MondoPowerChartProps {
   period?: '1D' | '7D' | '30D' // External period control
   onPeriodChange?: (period: '1D' | '7D' | '30D') => void
   showPeriodSwitcher?: boolean
+  showDateDisplay?: boolean // Whether to show the date display
+  onDataChange?: (data: ChartData | null) => void // Callback when data changes
+  onHoverIndexChange?: (index: number | null) => void // Callback when hover index changes
 }
 
-interface SeriesData {
+export interface SeriesData {
   id: string
   description: string
   data: (number | null)[]
   color: string
 }
 
-interface ChartData {
+export interface ChartData {
   timestamps: Date[]
   series: SeriesData[]
   mode: 'power' | 'energy'
 }
 
-// Color palette for series
-const COLORS = [
-  'rgb(250, 204, 21)',  // yellow-400
-  'rgb(96, 165, 250)',  // blue-400
-  'rgb(74, 222, 128)',  // green-400
-  'rgb(251, 146, 60)',  // orange-400
-  'rgb(168, 85, 247)',  // purple-400
-  'rgb(236, 72, 153)',  // pink-400
-  'rgb(34, 211, 238)',  // cyan-400
-  'rgb(251, 191, 36)',  // amber-400
-]
+// Series configuration for data-driven approach
+interface SeriesConfig {
+  id: string
+  label: string
+  color: string
+  dataTransform?: (val: number) => number
+  order?: number
+}
+
+const SERIES_CONFIG: Record<'load' | 'generation', SeriesConfig[]> = {
+  load: [
+    { id: '.ac_p', label: 'AC', color: 'rgb(147, 51, 234)' },  // purple-600
+    { id: '.ev_p', label: 'EV', color: 'rgb(239, 68, 68)' },   // red-500
+    { id: '.hws_p', label: 'Hot Water', color: 'rgb(251, 146, 60)' },  // orange-400
+    { id: '.pool_p', label: 'Pool', color: 'rgb(59, 130, 246)' },  // blue-500
+    {
+      id: '.batt_p',
+      label: 'Battery Charge',
+      color: 'rgb(34, 211, 238)',  // cyan-400
+      dataTransform: (val: number) => val < 0 ? Math.abs(val) : 0
+    },
+    {
+      id: '.grid_p',
+      label: 'Grid Export',
+      color: 'rgb(74, 222, 128)',  // green-400
+      dataTransform: (val: number) => val < 0 ? Math.abs(val) : 0
+    },
+    // Rest of house would be calculated separately
+    { id: 'rest_of_house', label: 'Rest of House', color: 'rgb(156, 163, 175)' }  // gray-400
+  ],
+  generation: [
+    // Solar panels at bottom of stack (order 0 and 1)
+    { id: '.solar1_p', label: 'Solar 1', color: 'rgb(254, 240, 138)', order: 0 },  // yellow-200
+    { id: '.solar2_p', label: 'Solar 2', color: 'rgb(245, 158, 11)', order: 1 },  // amber-500
+    {
+      id: '.grid_p',
+      label: 'Grid Import',
+      color: 'rgb(248, 113, 113)',  // red-400
+      dataTransform: (val: number) => val > 0 ? val : 0,
+      order: 2
+    },
+    {
+      id: '.batt_p',
+      label: 'Battery Discharge',
+      color: 'rgb(96, 165, 250)',  // blue-400
+      dataTransform: (val: number) => val > 0 ? val : 0,
+      order: 3
+    }
+  ]
+}
 
 export default function MondoPowerChart({
   className = '',
@@ -81,7 +124,9 @@ export default function MondoPowerChart({
   initialPeriod,
   period: externalPeriod,
   onPeriodChange,
-  showPeriodSwitcher = true
+  showPeriodSwitcher = true,
+  onDataChange,
+  onHoverIndexChange
 }: MondoPowerChartProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -119,11 +164,17 @@ export default function MondoPowerChart({
         const dataIndex = activeElements[0].index
         const timestamp = chartData.timestamps[dataIndex]
         setHoveredTimestamp(timestamp)
+        if (onHoverIndexChange) {
+          onHoverIndexChange(dataIndex)
+        }
       } else {
         setHoveredTimestamp(null)
+        if (onHoverIndexChange) {
+          onHoverIndexChange(null)
+        }
       }
     }, 10)
-  }, [chartData])
+  }, [chartData, onHoverIndexChange])
 
   const { now, windowStart } = useMemo(() => {
     const now = new Date()
@@ -341,6 +392,13 @@ export default function MondoPowerChart({
     }
   }, [])
 
+  // Call onDataChange when chart data updates
+  useEffect(() => {
+    if (onDataChange) {
+      onDataChange(chartData)
+    }
+  }, [chartData, onDataChange])
+
   useEffect(() => {
     let abortController = new AbortController()
 
@@ -385,29 +443,20 @@ export default function MondoPowerChart({
         // Filter to only power series
         const powerSeries = data.data.filter((d: any) => d.type === 'power')
 
-        // Further filter based on mode
-        const filteredSeries = powerSeries.filter((series: any) => {
-          const desc = series.description.toLowerCase()
-          if (mode === 'load') {
-            // Load series: Tesla, Heat Pump, Pool, HVAC
-            return desc.includes('tesla') ||
-                   desc.includes('heat pump') ||
-                   desc.includes('pool') ||
-                   desc.includes('hvac')
-          } else {
-            // Generation series: Solar, Battery, Meter
-            return desc.includes('solar') ||
-                   desc.includes('battery') ||
-                   desc.includes('meter')
-          }
+        // Create a map of available series by their ID suffix
+        const seriesMap = new Map<string, any>()
+        powerSeries.forEach((series: any) => {
+          // Extract the key part of the ID (e.g., '.ac_p' from the full ID)
+          const idParts = series.id.split('.')
+          const key = '.' + idParts[idParts.length - 1]
+          seriesMap.set(key, series)
         })
 
-        if (filteredSeries.length === 0) {
+        // Get first available series to extract timestamps
+        const firstSeries = powerSeries[0]
+        if (!firstSeries) {
           throw new Error('No data series available')
         }
-
-        // Get first series to extract timestamps
-        const firstSeries = filteredSeries[0]
         const startTimeString = firstSeries.history.start
         const startTime = new Date(startTimeString)
         const interval = firstSeries.history.interval
@@ -446,13 +495,142 @@ export default function MondoPowerChart({
           .filter(({ time }: { time: Date, index: number }) => time >= windowStart && time <= currentTime)
           .map(({ index }: { time: Date, index: number }) => index)
 
-        // Build series data with colors
-        const seriesData: SeriesData[] = filteredSeries.map((series: any, idx: number) => ({
-          id: series.id,
-          description: series.description,
-          data: selectedIndices.map((i: number) => series.history.data[i]),
-          color: COLORS[idx % COLORS.length]
-        }))
+        // Build series data based on configuration
+        const seriesConfig = SERIES_CONFIG[mode]
+        const seriesData: SeriesData[] = []
+
+        // For rest of house calculation, we'll need to accumulate values
+        let measuredLoadsSum: (number | null)[] | null = null
+        let batteryChargeValues: (number | null)[] | null = null
+        let gridExportValues: (number | null)[] | null = null
+        let totalGenerationValues: (number | null)[] | null = null
+
+        // Process each configured series
+        seriesConfig.forEach((config) => {
+          // Special handling for calculated series
+          if (config.id === 'rest_of_house' && mode === 'load') {
+            // We'll calculate this after processing all other series
+            return
+          }
+
+          // Find the matching series in our data
+          const dataSeries = seriesMap.get(config.id)
+          if (!dataSeries) return // Skip if series not found in data
+
+          // Extract the data for selected indices and convert from W to kW
+          let seriesValues = selectedIndices.map((i: number) => {
+            const val = dataSeries.history.data[i]
+            return val === null ? null : val / 1000  // Convert W to kW
+          })
+
+          // Apply any data transformation (e.g., for battery/grid positive/negative split)
+          if (config.dataTransform) {
+            seriesValues = seriesValues.map((val: number | null) => val === null ? null : config.dataTransform!(val))
+          }
+
+          // Accumulate values for rest of house calculation (load mode)
+          if (mode === 'load') {
+            if (config.id === '.ac_p' || config.id === '.ev_p' || config.id === '.hws_p' || config.id === '.pool_p') {
+              // Accumulate measured loads
+              if (!measuredLoadsSum) {
+                measuredLoadsSum = seriesValues.slice()
+              } else {
+                seriesValues.forEach((val: number | null, idx: number) => {
+                  if (measuredLoadsSum![idx] === null || val === null) {
+                    measuredLoadsSum![idx] = null
+                  } else {
+                    measuredLoadsSum![idx] = (measuredLoadsSum![idx] ?? 0) + (val ?? 0)
+                  }
+                })
+              }
+            } else if (config.id === '.batt_p' && config.label === 'Battery Charge') {
+              batteryChargeValues = seriesValues
+            } else if (config.id === '.grid_p' && config.label === 'Grid Export') {
+              gridExportValues = seriesValues
+            }
+          }
+
+          seriesData.push({
+            id: config.id,
+            description: config.label,
+            data: seriesValues,
+            color: config.color
+          })
+        })
+
+        // Calculate rest of house for load mode
+        if (mode === 'load') {
+          // Calculate total generation (Solar 1 + Solar 2 + Grid Import + Battery Discharge)
+          const solar1Series = seriesMap.get('.solar1_p')
+          const solar2Series = seriesMap.get('.solar2_p')
+          const gridSeries = seriesMap.get('.grid_p')
+          const battSeries = seriesMap.get('.batt_p')
+
+          if (solar1Series || solar2Series || gridSeries || battSeries) {
+            totalGenerationValues = selectedIndices.map((i: number) => {
+              const solar1Raw = solar1Series ? solar1Series.history.data[i] : null
+              const solar2Raw = solar2Series ? solar2Series.history.data[i] : null
+              const gridValRaw = gridSeries ? gridSeries.history.data[i] : null
+              const battValRaw = battSeries ? battSeries.history.data[i] : null
+
+              // If any value is null, we can't calculate total
+              if (solar1Raw === null || solar2Raw === null || gridValRaw === null || battValRaw === null) {
+                return null
+              }
+
+              // Convert from W to kW
+              const solar1 = solar1Raw / 1000
+              const solar2 = solar2Raw / 1000
+              const gridVal = gridValRaw / 1000
+              const battVal = battValRaw / 1000
+
+              const gridImport = Math.max(0, gridVal)
+              const battDischarge = Math.max(0, battVal)
+              return solar1 + solar2 + gridImport + battDischarge
+            })
+
+            // Calculate rest of house: Total Generation - (Measured Loads + Battery Charge + Grid Export)
+            const restOfHouseValues = selectedIndices.map((_: number, idx: number) => {
+              const totalGen = totalGenerationValues![idx]
+              const measuredLoads = measuredLoadsSum?.[idx]
+              const battCharge = batteryChargeValues?.[idx]
+              const gridExp = gridExportValues?.[idx]
+
+              // If any component is null, we can't calculate rest of house
+              if (totalGen === null || measuredLoads === null || battCharge === null || gridExp === null) {
+                return null
+              }
+
+              const restOfHouse = totalGen - ((measuredLoads ?? 0) + (battCharge ?? 0) + (gridExp ?? 0))
+              // Only show positive values (negative would indicate measurement error)
+              return Math.max(0, restOfHouse)
+            })
+
+            // Add rest of house to series data
+            const restOfHouseConfig = seriesConfig.find(c => c.id === 'rest_of_house')
+            if (restOfHouseConfig) {
+              seriesData.push({
+                id: 'rest_of_house',
+                description: restOfHouseConfig.label,
+                data: restOfHouseValues,
+                color: restOfHouseConfig.color
+              })
+            }
+          }
+        }
+
+        // Sort by order if specified (for generation mode)
+        if (mode === 'generation') {
+          seriesData.sort((a, b) => {
+            const aConfig = seriesConfig.find(c => c.id === a.id)
+            const bConfig = seriesConfig.find(c => c.id === b.id)
+            return (aConfig?.order ?? 999) - (bConfig?.order ?? 999)
+          })
+        }
+
+        if (seriesData.length === 0) {
+          throw new Error('No data series available for the selected mode')
+        }
 
         setChartData({
           timestamps: selectedIndices.map((i: number) => timestamps[i]),
@@ -488,12 +666,12 @@ export default function MondoPowerChart({
   const data: any = !chartData ? {} : {
     labels: chartData.timestamps,
     datasets: chartData.series.map((series, idx) => ({
-      label: series.description,
-      data: series.data.map(w => w === null ? null : w / 1000), // Convert W to kW
+      label: series.description, // Description already contains the display label
+      data: series.data, // Already in kW from earlier conversion
       borderColor: series.color,
       backgroundColor: series.color, // Use solid color, not transparent
       yAxisID: 'y',
-      tension: 0.1,
+      tension: 0,  // Use straight lines instead of curved
       borderWidth: 2,
       pointRadius: 0,
       fill: 'stack', // Fill according to stack configuration
@@ -503,7 +681,11 @@ export default function MondoPowerChart({
   }
 
   const formatHoverTimestamp = (date: Date | null, isMobile: boolean = false) => {
-    if (!date) return '';
+    if (!date) {
+      // When not hovering, show the date range of the displayed data
+      // Note: This function is not currently used since date display moved to parent component
+      return '';
+    }
 
     if (timeRange === '30D') {
       return format(date, isMobile ? 'EEE, d MMM' : 'EEE, d MMM yyyy');
@@ -513,6 +695,19 @@ export default function MondoPowerChart({
       return format(date, 'h:mma');
     }
   };
+
+  const handleMouseLeave = useCallback(() => {
+    // Clear any pending hover timeout
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current)
+      hoverTimeoutRef.current = null
+    }
+    // Reset hover state
+    setHoveredTimestamp(null)
+    if (onHoverIndexChange) {
+      onHoverIndexChange(null)
+    }
+  }, [onHoverIndexChange])
 
   const renderChartContent = () => {
     if (loading) {
@@ -532,39 +727,34 @@ export default function MondoPowerChart({
     }
 
     return (
-      <div className="flex-1 min-h-0">
+      <div
+        className="flex-1 min-h-0"
+        onMouseLeave={handleMouseLeave}
+      >
         <Line ref={chartRef} data={data} options={options} />
       </div>
     );
   };
 
   return (
-    <div className={`flex flex-col ${className}`}>
+    <div className={`flex flex-col ${className}`} onMouseLeave={handleMouseLeave}>
       <div className="flex justify-between items-center mb-2 md:mb-3 px-1 md:px-0">
         <h3 className="text-sm font-medium text-gray-300">{title}</h3>
-        <div className="flex items-center gap-2 sm:gap-3">
-          <span className="hidden sm:block text-xs text-gray-400 min-w-[200px] text-right whitespace-nowrap" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-            {formatHoverTimestamp(hoveredTimestamp)}
-          </span>
-          <span className="sm:hidden text-xs text-gray-400 text-right whitespace-nowrap" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-            {formatHoverTimestamp(hoveredTimestamp, true)}
-          </span>
-          {showPeriodSwitcher && (
-            <PeriodSwitcher
-              value={timeRange}
-              onChange={(newPeriod) => {
-                if (onPeriodChange) {
-                  onPeriodChange(newPeriod)
-                } else {
-                  setInternalTimeRange(newPeriod)
-                  const params = new URLSearchParams(searchParams.toString())
-                  params.set('period', newPeriod)
-                  router.push(`?${params.toString()}`, { scroll: false })
-                }
-              }}
-            />
-          )}
-        </div>
+        {showPeriodSwitcher && (
+          <PeriodSwitcher
+            value={timeRange}
+            onChange={(newPeriod) => {
+              if (onPeriodChange) {
+                onPeriodChange(newPeriod)
+              } else {
+                setInternalTimeRange(newPeriod)
+                const params = new URLSearchParams(searchParams.toString())
+                params.set('period', newPeriod)
+                router.push(`?${params.toString()}`, { scroll: false })
+              }
+            }}
+          />
+        )}
       </div>
       {renderChartContent()}
 

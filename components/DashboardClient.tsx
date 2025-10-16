@@ -16,8 +16,12 @@ import SessionTimeoutModal from '@/components/SessionTimeoutModal'
 import { AddSystemDialog } from '@/components/AddSystemDialog'
 import SystemsMenu from '@/components/SystemsMenu'
 import ViewDataModal from '@/components/ViewDataModal'
-import MondoPowerChart from '@/components/MondoPowerChart'
+import MondoPowerChart, { type ChartData } from '@/components/MondoPowerChart'
+import EnergyTable from '@/components/EnergyTable'
+import PeriodSwitcher from '@/components/PeriodSwitcher'
 import { formatDateTime } from '@/lib/fe-date-format'
+import { formatDateRange, fromUnixTimestamp } from '@/lib/date-utils'
+import { format } from 'date-fns'
 import {
   Sun,
   Home,
@@ -42,6 +46,7 @@ interface SystemInfo {
 }
 
 interface DashboardData {
+  timezoneOffsetMin?: number;
   latest: {
     timestamp: string;
     power: {
@@ -169,6 +174,9 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
   const [showSessionTimeout, setShowSessionTimeout] = useState(false)
   const [showViewDataModal, setShowViewDataModal] = useState(false)
   const [mondoPeriod, setMondoPeriod] = useState<'1D' | '7D' | '30D'>('1D')
+  const [loadChartData, setLoadChartData] = useState<ChartData | null>(null)
+  const [generationChartData, setGenerationChartData] = useState<ChartData | null>(null)
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null) // Single hover index for both charts
   const dropdownRef = useRef<HTMLDivElement>(null)
   const settingsDropdownRef = useRef<HTMLDivElement>(null)
 
@@ -574,36 +582,124 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
               {/* Charts - Full width for mondo, 2/3 width for others */}
               <div className={data?.vendorType === 'mondo' ? '' : 'lg:col-span-2'}>
                 {data?.vendorType === 'mondo' ? (
-                  // For mondo systems, show combined power charts in one card at full width
-                  <div className="bg-gray-800 border border-gray-700 rounded p-4">
-                    <MondoPowerChart
-                      systemId={parseInt(systemId as string)}
-                      mode="load"
-                      title="Loads"
-                      className="h-full min-h-[375px] mb-6"
-                      period={mondoPeriod}
-                      onPeriodChange={(newPeriod) => {
-                        setMondoPeriod(newPeriod)
-                        const params = new URLSearchParams(searchParams.toString())
-                        params.set('period', newPeriod)
-                        router.push(`?${params.toString()}`, { scroll: false })
-                      }}
-                      showPeriodSwitcher={true}
-                    />
-                    <MondoPowerChart
-                      systemId={parseInt(systemId as string)}
-                      mode="generation"
-                      title="Generation"
-                      className="h-full min-h-[375px]"
-                      period={mondoPeriod}
-                      onPeriodChange={(newPeriod) => {
-                        setMondoPeriod(newPeriod)
-                        const params = new URLSearchParams(searchParams.toString())
-                        params.set('period', newPeriod)
-                        router.push(`?${params.toString()}`, { scroll: false })
-                      }}
-                      showPeriodSwitcher={false}
-                    />
+                  // For mondo systems, show charts with tables
+                  <div className="space-y-6">
+                    {/* Shared header with date/time and period switcher */}
+                    <div className="bg-gray-800 border border-gray-700 rounded p-4">
+                      <div className="flex justify-between items-center">
+                        <h2 className="text-lg font-medium text-gray-200">Power Charts</h2>
+                        <div className="flex items-center gap-4">
+                          <span className="text-sm text-gray-400" style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+                            {hoveredIndex !== null && (loadChartData || generationChartData) ? (
+                              // Show hovered timestamp from whichever chart has data
+                              format(
+                                loadChartData?.timestamps[hoveredIndex] || generationChartData?.timestamps[hoveredIndex] || new Date(),
+                                mondoPeriod === '1D' ? 'h:mma' : mondoPeriod === '7D' ? 'EEE, d MMM h:mma' : 'EEE, d MMM'
+                              )
+                            ) : (
+                              // Show date range from actual chart data when not hovering
+                              (() => {
+                                const chartData = loadChartData || generationChartData
+                                // Get timezone offset from API data or system prop
+                                const timezoneOffset = data?.timezoneOffsetMin ?? system?.timezoneOffsetMin
+                                if (!timezoneOffset) {
+                                  return 'Loading...' // No timezone data yet
+                                }
+                                if (chartData && chartData.timestamps.length > 0) {
+                                  const start = fromUnixTimestamp(chartData.timestamps[0].getTime() / 1000, timezoneOffset)
+                                  const end = fromUnixTimestamp(chartData.timestamps[chartData.timestamps.length - 1].getTime() / 1000, timezoneOffset)
+                                  return formatDateRange(start, end, true)  // Include times
+                                } else {
+                                  // Fallback to calculated range if no data yet
+                                  const now = new Date()
+                                  let windowHours: number
+                                  if (mondoPeriod === '1D') windowHours = 24
+                                  else if (mondoPeriod === '7D') windowHours = 24 * 7
+                                  else windowHours = 24 * 30
+                                  const windowStart = new Date(now.getTime() - windowHours * 60 * 60 * 1000)
+                                  const start = fromUnixTimestamp(windowStart.getTime() / 1000, timezoneOffset)
+                                  const end = fromUnixTimestamp(now.getTime() / 1000, timezoneOffset)
+                                  return formatDateRange(start, end, true)  // Include times
+                                }
+                              })()
+                            )}
+                          </span>
+                          <PeriodSwitcher
+                            value={mondoPeriod}
+                            onChange={(newPeriod) => {
+                              setMondoPeriod(newPeriod)
+                              const params = new URLSearchParams(searchParams.toString())
+                              params.set('period', newPeriod)
+                              router.push(`?${params.toString()}`, { scroll: false })
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Loads Chart with Table */}
+                    <div className="bg-gray-800 border border-gray-700 rounded p-4">
+                      <div className="flex gap-4">
+                        <div className="flex-1">
+                          <MondoPowerChart
+                            systemId={parseInt(systemId as string)}
+                            mode="load"
+                            title="Loads"
+                            className="h-full min-h-[375px]"
+                            period={mondoPeriod}
+                            onPeriodChange={(newPeriod) => {
+                              setMondoPeriod(newPeriod)
+                              const params = new URLSearchParams(searchParams.toString())
+                              params.set('period', newPeriod)
+                              router.push(`?${params.toString()}`, { scroll: false })
+                            }}
+                            showPeriodSwitcher={false}
+                            onDataChange={setLoadChartData}
+                            onHoverIndexChange={setHoveredIndex}
+                          />
+                        </div>
+                        <div className="w-64">
+                          <EnergyTable
+                            chartData={loadChartData}
+                            mode="load"
+                            hoveredIndex={hoveredIndex}
+                            className="h-full"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Generation Chart with Table */}
+                    <div className="bg-gray-800 border border-gray-700 rounded p-4">
+                      <div className="flex gap-4">
+                        <div className="flex-1">
+                          <MondoPowerChart
+                            systemId={parseInt(systemId as string)}
+                            mode="generation"
+                            title="Generation"
+                            className="h-full min-h-[375px]"
+                            period={mondoPeriod}
+                            onPeriodChange={(newPeriod) => {
+                              setMondoPeriod(newPeriod)
+                              const params = new URLSearchParams(searchParams.toString())
+                              params.set('period', newPeriod)
+                              router.push(`?${params.toString()}`, { scroll: false })
+                            }}
+                            showPeriodSwitcher={false}
+                            onDataChange={setGenerationChartData}
+                            onHoverIndexChange={setHoveredIndex}
+                          />
+                        </div>
+                        <div className="w-64">
+                          <EnergyTable
+                            chartData={generationChartData}
+                            mode="generation"
+                            hoveredIndex={hoveredIndex}
+                            className="h-full"
+                          />
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   // For other systems, show the regular energy chart

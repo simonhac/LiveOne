@@ -107,6 +107,7 @@ export async function GET(request: Request) {
       displayName: system.displayName,
       ownerClerkUserId: system.ownerClerkUserId,
       supportsPolling: VendorRegistry.supportsPolling(system.vendorType),
+      timezoneOffsetMin: system.timezoneOffsetMin,
       systemInfo: {
         model: system.model,
         serial: system.serial,

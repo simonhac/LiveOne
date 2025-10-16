@@ -50,7 +50,7 @@
     "autoprefixer": "^10.4.21",
     "axios": "^1.11.0",
     "axios-cookiejar-support": "^6.0.4",
-    "better-sqlite3": "^12.2.0",
+    "better-sqlite3": "^12.4.1",
     "chart.js": "^4.5.0",
     "chartjs-adapter-date-fns": "^3.0.0",
     "chartjs-plugin-annotation": "^3.1.0",
