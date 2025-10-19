@@ -23,7 +23,8 @@
     "db:seed": "tsx scripts/seed-db.ts",
     "db:sync-prod": "node scripts/sync-prod-to-dev.js",
     "test:history": "node scripts/test-history-api.js",
-    "test:history:prod": "node scripts/test-history-api.js --prod"
+    "test:history:prod": "node scripts/test-history-api.js --prod",
+    "prepare": "husky"
   },
   "keywords": [],
   "author": "",
@@ -83,7 +84,19 @@
     "drizzle-kit": "^0.31.4",
     "eslint": "^9.33.0",
     "eslint-config-next": "^15.4.6",
+    "husky": "^9.1.7",
     "jest": "^30.0.5",
+    "lint-staged": "^16.2.4",
+    "prettier": "^3.6.2",
     "ts-jest": "^29.4.1"
+  },
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx}": [
+      "eslint --fix",
+      "eslint"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
   }
 }
