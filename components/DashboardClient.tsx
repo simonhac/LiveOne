@@ -418,6 +418,63 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
     }
   }, [showSystemDropdown, showSettingsDropdown])
 
+  // Hover handlers that track which chart is active on touch devices
+  const handleLoadHoverIndexChange = useCallback((index: number | null) => {
+    // On touch devices, only accept updates from the active chart
+    if ('ontouchstart' in window) {
+      if (index !== null) {
+        // New touch - this chart becomes active
+        setActiveChart('load')
+        setHoveredIndex(index)
+      } else if (activeChart === 'load') {
+        // Only clear if this was the active chart
+        setHoveredIndex(null)
+      }
+      // Ignore clear events from non-active charts
+    } else {
+      // On desktop, accept all updates (normal mouse behavior)
+      setHoveredIndex(index)
+    }
+  }, [activeChart])
+
+  const handleGenerationHoverIndexChange = useCallback((index: number | null) => {
+    // On touch devices, only accept updates from the active chart
+    if ('ontouchstart' in window) {
+      if (index !== null) {
+        // New touch - this chart becomes active
+        setActiveChart('generation')
+        setHoveredIndex(index)
+      } else if (activeChart === 'generation') {
+        // Only clear if this was the active chart
+        setHoveredIndex(null)
+      }
+      // Ignore clear events from non-active charts
+    } else {
+      // On desktop, accept all updates (normal mouse behavior)
+      setHoveredIndex(index)
+    }
+  }, [activeChart])
+
+  // Global touch handler to clear hover when touching outside charts
+  useEffect(() => {
+    const handleTouchOutside = (e: TouchEvent) => {
+      // Check if the touch target is outside both chart containers
+      const target = e.target as HTMLElement
+      const isInChart = target.closest('.mondo-power-chart-container')
+
+      if (!isInChart) {
+        setActiveChart(null)
+        setHoveredIndex(null)
+      }
+    }
+
+    // Only add listener on touch devices
+    if ('ontouchstart' in window) {
+      document.addEventListener('touchstart', handleTouchOutside)
+      return () => document.removeEventListener('touchstart', handleTouchOutside)
+    }
+  }, [])
+
   // Show access denied message if user doesn't have access
   if (!hasAccess || !systemExists) {
     return (
@@ -506,63 +563,6 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
       setGenerationVisibleSeries(newVisible)
     }
   }
-
-  // Hover handlers that track which chart is active on touch devices
-  const handleLoadHoverIndexChange = useCallback((index: number | null) => {
-    // On touch devices, only accept updates from the active chart
-    if ('ontouchstart' in window) {
-      if (index !== null) {
-        // New touch - this chart becomes active
-        setActiveChart('load')
-        setHoveredIndex(index)
-      } else if (activeChart === 'load') {
-        // Only clear if this was the active chart
-        setHoveredIndex(null)
-      }
-      // Ignore clear events from non-active charts
-    } else {
-      // On desktop, accept all updates (normal mouse behavior)
-      setHoveredIndex(index)
-    }
-  }, [activeChart])
-
-  const handleGenerationHoverIndexChange = useCallback((index: number | null) => {
-    // On touch devices, only accept updates from the active chart
-    if ('ontouchstart' in window) {
-      if (index !== null) {
-        // New touch - this chart becomes active
-        setActiveChart('generation')
-        setHoveredIndex(index)
-      } else if (activeChart === 'generation') {
-        // Only clear if this was the active chart
-        setHoveredIndex(null)
-      }
-      // Ignore clear events from non-active charts
-    } else {
-      // On desktop, accept all updates (normal mouse behavior)
-      setHoveredIndex(index)
-    }
-  }, [activeChart])
-
-  // Global touch handler to clear hover when touching outside charts
-  useEffect(() => {
-    const handleTouchOutside = (e: TouchEvent) => {
-      // Check if the touch target is outside both chart containers
-      const target = e.target as HTMLElement
-      const isInChart = target.closest('.mondo-power-chart-container')
-
-      if (!isInChart) {
-        setActiveChart(null)
-        setHoveredIndex(null)
-      }
-    }
-
-    // Only add listener on touch devices
-    if ('ontouchstart' in window) {
-      document.addEventListener('touchstart', handleTouchOutside)
-      return () => document.removeEventListener('touchstart', handleTouchOutside)
-    }
-  }, [])
 
   if (!data && loading) {
     return (
