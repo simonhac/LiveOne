@@ -15,10 +15,10 @@ export async function fetchAndProcessMondoData(
 
   if (period === '1D') {
     requestInterval = '5m'
-    duration = '25h'
+    duration = '24h'
   } else if (period === '7D') {
     requestInterval = '30m'
-    duration = '169h'
+    duration = '168h'
   } else {
     requestInterval = '1d'
     duration = '30d'
@@ -87,18 +87,31 @@ export async function fetchAndProcessMondoData(
   // Filter to selected time range
   const currentTime = new Date()
   let windowHours: number
+  let intervalMinutes: number
+
   if (period === '1D') {
     windowHours = 24
+    intervalMinutes = 5
   } else if (period === '7D') {
     windowHours = 24 * 7
+    intervalMinutes = 30
   } else {
     windowHours = 24 * 30
+    intervalMinutes = 24 * 60
   }
-  const windowStart = new Date(currentTime.getTime() - windowHours * 60 * 60 * 1000)
+
+  // Round down the current time to the nearest interval boundary
+  const currentMinutes = currentTime.getMinutes()
+  const roundedMinutes = Math.floor(currentMinutes / intervalMinutes) * intervalMinutes
+  const windowEnd = new Date(currentTime)
+  windowEnd.setMinutes(roundedMinutes, 0, 0) // Round to interval boundary
+
+  // Start exactly windowHours before the end time
+  const windowStart = new Date(windowEnd.getTime() - windowHours * 60 * 60 * 1000)
 
   const selectedIndices = timestamps
     .map((t: Date, i: number) => ({ time: t, index: i }))
-    .filter(({ time }: { time: Date, index: number }) => time >= windowStart && time <= currentTime)
+    .filter(({ time }: { time: Date, index: number }) => time >= windowStart && time <= windowEnd)
     .map(({ index }: { time: Date, index: number }) => index)
 
   const filteredTimestamps = selectedIndices.map((i: number) => timestamps[i])

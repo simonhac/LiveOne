@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { SeriesData } from './MondoPowerChart'
 import { calculateSeriesEnergy } from '@/lib/energy-calculator'
 
@@ -18,6 +18,9 @@ interface EnergyTableProps {
 }
 
 export default function EnergyTable({ chartData, mode, hoveredIndex, className = '', visibleSeries, onSeriesToggle }: EnergyTableProps) {
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const isPressedRef = useRef(false)
+
   // Calculate energy values for all series
   const energyValues = useMemo(() => {
     if (!chartData) return new Map<string, number | null>()
@@ -93,6 +96,43 @@ export default function EnergyTable({ chartData, mode, hoveredIndex, className =
   const columnHeader = isHovering ? 'Power (kW)' : 'Energy (kWh)'
   const total = isHovering ? powerTotal : energyTotal
 
+  // Handle touch and click events for series toggle
+  const handlePointerDown = (seriesId: string) => {
+    isPressedRef.current = true
+
+    // Start timer for long press (500ms)
+    longPressTimerRef.current = setTimeout(() => {
+      if (isPressedRef.current) {
+        // Long press detected - act as shift-click (select only)
+        onSeriesToggle?.(seriesId, true)
+        isPressedRef.current = false
+      }
+    }, 500)
+  }
+
+  const handlePointerUp = (seriesId: string, e: React.MouseEvent | React.TouchEvent) => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+
+    if (isPressedRef.current) {
+      // Normal click/tap
+      const isShiftClick = 'shiftKey' in e ? e.shiftKey : false
+      onSeriesToggle?.(seriesId, isShiftClick)
+    }
+
+    isPressedRef.current = false
+  }
+
+  const handlePointerCancel = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+    isPressedRef.current = false
+  }
+
   return (
     <div className={`${className}`}>
       {/* Match exact chart title height (text-sm = ~20px) + margin (mb-3 = 12px) + chart padding (~12px) */}
@@ -109,15 +149,22 @@ export default function EnergyTable({ chartData, mode, hoveredIndex, className =
           {tableData.map((item) => {
             return (
               <div key={item.label} className="flex items-center text-xs">
-                <div className="flex items-center gap-2 flex-1">
+                <div
+                  className="flex items-center gap-2 flex-1 cursor-pointer select-none"
+                  onMouseDown={() => handlePointerDown(item.id)}
+                  onMouseUp={(e) => handlePointerUp(item.id, e)}
+                  onMouseLeave={handlePointerCancel}
+                  onTouchStart={() => handlePointerDown(item.id)}
+                  onTouchEnd={(e) => handlePointerUp(item.id, e)}
+                  onTouchCancel={handlePointerCancel}
+                  title="Click to toggle visibility, Shift-click or long press to show only this series"
+                >
                   <div
-                    className="w-3 h-3 rounded-sm flex-shrink-0 cursor-pointer border-2"
+                    className="w-3 h-3 rounded-sm flex-shrink-0 border-2"
                     style={{
                       backgroundColor: item.isVisible ? item.color : 'transparent',
                       borderColor: item.color
                     }}
-                    onClick={(e) => onSeriesToggle?.(item.id, e.shiftKey)}
-                    title="Click to toggle visibility, Shift-click to show only this series"
                   />
                   <span className="text-gray-300">{item.label}</span>
                 </div>

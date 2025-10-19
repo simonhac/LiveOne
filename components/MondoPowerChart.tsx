@@ -427,10 +427,10 @@ export default function MondoPowerChart({
 
         if (timeRange === '1D') {
           requestInterval = '5m'
-          duration = '25h'
+          duration = '24h'
         } else if (timeRange === '7D') {
           requestInterval = '30m'
-          duration = '169h'
+          duration = '168h'
         } else {
           requestInterval = '1d'
           duration = '30d'
@@ -722,6 +722,17 @@ export default function MondoPowerChart({
     }
   }, [onHoverIndexChange])
 
+  const handleTouchEnd = useCallback(() => {
+    // On touch devices, clear hover state when touch ends
+    // This helps prevent lingering hover states
+    if ('ontouchstart' in window) {
+      setHoveredTimestamp(null)
+      if (onHoverIndexChange) {
+        onHoverIndexChange(null)
+      }
+    }
+  }, [onHoverIndexChange])
+
   const renderChartContent = () => {
     if (loading) {
       return (
@@ -743,6 +754,7 @@ export default function MondoPowerChart({
       <div
         className="flex-1 min-h-0 w-full overflow-hidden"
         onMouseLeave={handleMouseLeave}
+        onTouchEnd={handleTouchEnd}
       >
         <Line ref={chartRef} data={data} options={options} />
       </div>
@@ -750,7 +762,11 @@ export default function MondoPowerChart({
   };
 
   return (
-    <div className={`flex flex-col ${className}`} onMouseLeave={handleMouseLeave}>
+    <div
+      className={`flex flex-col mondo-power-chart-container ${className}`}
+      onMouseLeave={handleMouseLeave}
+      onTouchEnd={handleTouchEnd}
+    >
       <div className="flex justify-between items-center mb-2 md:mb-3 px-1 md:px-0">
         <h3 className="text-sm font-medium text-gray-300">{title}</h3>
         {showPeriodSwitcher && (

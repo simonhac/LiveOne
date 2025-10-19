@@ -368,10 +368,10 @@ export default function EnergyChart({ className = '', maxPowerHint, systemId, ve
         
         if (timeRange === '1D') {
           requestInterval = '5m'
-          duration = '25h' // 25h for 1D
+          duration = '24h' // 24h for 1D
         } else if (timeRange === '7D') {
           requestInterval = '30m'
-          duration = '169h' // 7*24+1 for 7D
+          duration = '168h' // 7*24 for 7D
         } else { // 30D
           requestInterval = '1d'
           duration = '30d' // 30 days

@@ -180,6 +180,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
   const [loadChartData, setLoadChartData] = useState<ChartData | null>(null)
   const [generationChartData, setGenerationChartData] = useState<ChartData | null>(null)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null) // Single hover index for both charts
+  const [activeChart, setActiveChart] = useState<'load' | 'generation' | null>(null) // Track which chart was last touched
   const [loadVisibleSeries, setLoadVisibleSeries] = useState<Set<string>>(new Set())
   const [generationVisibleSeries, setGenerationVisibleSeries] = useState<Set<string>>(new Set())
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -506,6 +507,63 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
     }
   }
 
+  // Hover handlers that track which chart is active on touch devices
+  const handleLoadHoverIndexChange = useCallback((index: number | null) => {
+    // On touch devices, only accept updates from the active chart
+    if ('ontouchstart' in window) {
+      if (index !== null) {
+        // New touch - this chart becomes active
+        setActiveChart('load')
+        setHoveredIndex(index)
+      } else if (activeChart === 'load') {
+        // Only clear if this was the active chart
+        setHoveredIndex(null)
+      }
+      // Ignore clear events from non-active charts
+    } else {
+      // On desktop, accept all updates (normal mouse behavior)
+      setHoveredIndex(index)
+    }
+  }, [activeChart])
+
+  const handleGenerationHoverIndexChange = useCallback((index: number | null) => {
+    // On touch devices, only accept updates from the active chart
+    if ('ontouchstart' in window) {
+      if (index !== null) {
+        // New touch - this chart becomes active
+        setActiveChart('generation')
+        setHoveredIndex(index)
+      } else if (activeChart === 'generation') {
+        // Only clear if this was the active chart
+        setHoveredIndex(null)
+      }
+      // Ignore clear events from non-active charts
+    } else {
+      // On desktop, accept all updates (normal mouse behavior)
+      setHoveredIndex(index)
+    }
+  }, [activeChart])
+
+  // Global touch handler to clear hover when touching outside charts
+  useEffect(() => {
+    const handleTouchOutside = (e: TouchEvent) => {
+      // Check if the touch target is outside both chart containers
+      const target = e.target as HTMLElement
+      const isInChart = target.closest('.mondo-power-chart-container')
+
+      if (!isInChart) {
+        setActiveChart(null)
+        setHoveredIndex(null)
+      }
+    }
+
+    // Only add listener on touch devices
+    if ('ontouchstart' in window) {
+      document.addEventListener('touchstart', handleTouchOutside)
+      return () => document.removeEventListener('touchstart', handleTouchOutside)
+    }
+  }, [])
+
   if (!data && loading) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
@@ -809,7 +867,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                             }}
                             showPeriodSwitcher={false}
                             onDataChange={setLoadChartData}
-                            onHoverIndexChange={setHoveredIndex}
+                            onHoverIndexChange={handleLoadHoverIndexChange}
                             hoveredIndex={hoveredIndex}
                             visibleSeries={loadVisibleSeries.size > 0 ? loadVisibleSeries : undefined}
                             onVisibilityChange={setLoadVisibleSeries}
@@ -847,7 +905,7 @@ export default function DashboardClient({ systemId, system, hasAccess, systemExi
                             }}
                             showPeriodSwitcher={false}
                             onDataChange={setGenerationChartData}
-                            onHoverIndexChange={setHoveredIndex}
+                            onHoverIndexChange={handleGenerationHoverIndexChange}
                             hoveredIndex={hoveredIndex}
                             visibleSeries={generationVisibleSeries.size > 0 ? generationVisibleSeries : undefined}
                             onVisibilityChange={setGenerationVisibleSeries}
