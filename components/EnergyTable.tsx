@@ -174,13 +174,11 @@ export default function EnergyTable({
             return (
               <div key={item.label} className="flex items-center text-xs">
                 <div
-                  className="flex items-center gap-2 flex-1 cursor-pointer select-none"
-                  onMouseDown={() => handlePointerDown(item.id)}
-                  onMouseUp={(e) => handlePointerUp(item.id, e)}
-                  onMouseLeave={handlePointerCancel}
-                  onTouchStart={() => handlePointerDown(item.id)}
-                  onTouchEnd={(e) => handlePointerUp(item.id, e)}
-                  onTouchCancel={handlePointerCancel}
+                  className="flex items-center gap-2 flex-1 cursor-pointer select-none touch-none"
+                  onPointerDown={() => handlePointerDown(item.id)}
+                  onPointerUp={(e) => handlePointerUp(item.id, e)}
+                  onPointerLeave={handlePointerCancel}
+                  onPointerCancel={handlePointerCancel}
                   title="Click to toggle visibility, Shift-click or long press to show only this series"
                 >
                   <div

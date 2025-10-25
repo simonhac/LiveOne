@@ -60,6 +60,7 @@ USER_SECRETS.ts
 
 # Temporary scripts
 /scripts/temp/
+/scripts/sandbox/
 # Keep utility scripts
 !/scripts/utils/
 
