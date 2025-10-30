@@ -7,6 +7,7 @@ LiveOne provides a RESTful API for accessing solar inverter data, managing authe
 ## Authentication
 
 Most endpoints require authentication via Clerk. Some endpoints have additional requirements:
+
 - Admin endpoints: Require admin role
 - Cron endpoints: Require Bearer token with `CRON_SECRET`
 - Public endpoints: No authentication required
@@ -21,20 +22,22 @@ Most endpoints require authentication via Clerk. Some endpoints have additional 
 ### 1. Public Endpoints
 
 #### GET /api/health
+
 Returns system health status and diagnostic information for monitoring.
 
 **Authentication:** Not required (public endpoint for monitoring)
 
 **Response:**
+
 ```json
 {
-  "status": "healthy",  // "healthy", "degraded", or "unhealthy"
+  "status": "healthy", // "healthy", "degraded", or "unhealthy"
   "timestamp": "2025-08-30T03:01:46.037Z",
   "checks": {
     "database": {
-      "status": "pass",  // "pass" or "fail"
+      "status": "pass", // "pass" or "fail"
       "message": "Connected",
-      "duration": 1  // milliseconds
+      "duration": 1 // milliseconds
     },
     "tables": {
       "status": "pass",
@@ -54,7 +57,7 @@ Returns system health status and diagnostic information for monitoring.
   },
   "details": {
     "tableCount": 7,
-    "missingTables": [],  // Lists any missing required tables
+    "missingTables": [], // Lists any missing required tables
     "systemCount": 2,
     "userSystemCount": 3,
     "environment": "development",
@@ -64,11 +67,13 @@ Returns system health status and diagnostic information for monitoring.
 ```
 
 **Status Codes:**
+
 - `200 OK` - System is healthy
 - `503 Service Unavailable` - System is degraded (some checks failing)
 - `500 Internal Server Error` - System is unhealthy (critical failures)
 
 **Use Cases:**
+
 - Post-deployment verification
 - Continuous monitoring
 - Load balancer health checks
@@ -79,14 +84,17 @@ Returns system health status and diagnostic information for monitoring.
 ### 2. Data Endpoints
 
 #### GET /api/data
+
 Returns comprehensive current and historical energy data.
 
 **Authentication:** Required (Clerk)
 
 **Query Parameters:**
+
 - `systemId` (optional): Numeric ID of the system to query. If not provided, uses the first system the user has access to.
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -95,7 +103,7 @@ Returns comprehensive current and historical energy data.
     "power": {
       "solarW": 2500,
       "loadW": 1200,
-      "batteryW": -1300,  // negative = charging
+      "batteryW": -1300, // negative = charging
       "gridW": 0
     },
     "energy": {
@@ -172,26 +180,30 @@ Returns comprehensive current and historical energy data.
 ---
 
 #### GET /api/history
+
 Returns historical time-series data for charting in OpenNEM format.
 
 **Authentication:** Required (Clerk)
 
 **Query Parameters:**
+
 - `systemId` (required): Numeric ID of the system to query
 - `interval` (required): Data interval - "5m", "30m", or "1d"
 - `fields` (required): Comma-separated list of fields - "solar", "load", "battery", "grid"
 - Time range (choose one option):
   - `last` (relative time): e.g., "7d", "24h", "30m" for minute intervals, or "30d" for daily intervals
-  - `startTime` AND `endTime` (absolute time): 
+  - `startTime` AND `endTime` (absolute time):
     - For "5m" or "30m" intervals: ISO8601 datetime (e.g., "2025-08-16T10:00:00Z") or date only (e.g., "2025-08-16")
     - For "1d" interval: Date only in YYYY-MM-DD format (e.g., "2025-08-16")
 
 **Time Range Limits:**
+
 - "5m" interval: Maximum 7.5 days
 - "30m" interval: Maximum 30 days
 - "1d" interval: Maximum 13 months
 
 **Response (OpenNEM format):**
+
 ```json
 {
   "type": "energy",
@@ -207,7 +219,7 @@ Returns historical time-series data for charting in OpenNEM format.
         "start": "2025-08-16",
         "last": "2025-08-19",
         "interval": "1d",
-        "data": [723,451,948,1817]
+        "data": [723, 451, 948, 1817]
       },
       "network": "liveone",
       "source": "selectronic",
@@ -219,6 +231,7 @@ Returns historical time-series data for charting in OpenNEM format.
 ```
 
 **Examples:**
+
 ```bash
 # Last 30 days with daily resolution
 GET /api/history?systemId=1&interval=1d&fields=solar,load&last=30d
@@ -235,9 +248,11 @@ GET /api/history?systemId=1&interval=30m&fields=solar,load,battery,grid&last=7d
 ### 3. Authentication Endpoints
 
 #### POST /api/auth/login
+
 Authenticates a user (legacy endpoint, consider using Clerk sign-in).
 
 **Request Body:**
+
 ```json
 {
   "email": "user@example.com",
@@ -246,13 +261,14 @@ Authenticates a user (legacy endpoint, consider using Clerk sign-in).
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
   "user": {
     "email": "user@example.com",
     "displayName": "User",
-    "role": "user"  // or "admin" for admin users
+    "role": "user" // or "admin" for admin users
   }
 }
 ```
@@ -260,11 +276,13 @@ Authenticates a user (legacy endpoint, consider using Clerk sign-in).
 ---
 
 #### POST /api/auth/logout
+
 Logs out the current user (legacy endpoint, consider using Clerk sign-out).
 
 **Authentication:** Required
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -275,11 +293,13 @@ Logs out the current user (legacy endpoint, consider using Clerk sign-out).
 ---
 
 #### GET /api/auth/check-admin
+
 Checks if the current user has admin privileges.
 
 **Authentication:** Required (Clerk)
 
 **Response:**
+
 ```json
 {
   "isAdmin": true,
@@ -290,11 +310,13 @@ Checks if the current user has admin privileges.
 ---
 
 #### POST /api/auth/enphase/connect
+
 Initiates Enphase OAuth 2.0 connection flow.
 
 **Authentication:** Required (Clerk)
 
 **Response:**
+
 ```json
 {
   "authUrl": "https://api.enphaseenergy.com/oauth/authorize?...",
@@ -305,11 +327,13 @@ Initiates Enphase OAuth 2.0 connection flow.
 ---
 
 #### GET /api/auth/enphase/callback
+
 OAuth 2.0 callback endpoint for Enphase authorization.
 
 **Authentication:** Not required (OAuth flow)
 
 **Query Parameters:**
+
 - `code` - Authorization code from Enphase
 - `state` - Security state parameter
 - `error` (optional) - Error if user denied access
@@ -319,11 +343,13 @@ OAuth 2.0 callback endpoint for Enphase authorization.
 ---
 
 #### GET /api/auth/enphase/disconnect
+
 Checks Enphase connection status and allows disconnection.
 
 **Authentication:** Required (Clerk)
 
 **Response:**
+
 ```json
 {
   "connected": true,
@@ -339,11 +365,13 @@ Checks Enphase connection status and allows disconnection.
 All admin endpoints require authentication and admin role.
 
 #### GET /api/admin/systems
+
 Lists all configured systems with current status and data.
 
 **Authentication:** Required (Admin only)
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -352,7 +380,7 @@ Lists all configured systems with current status and data.
       "systemId": 1,
       "owner": "simon@example.com",
       "displayName": "Home Solar",
-      "vendorType": "select.live",
+      "vendorType": "selectronic",
       "vendorSiteId": "1586",
       "systemInfo": {
         "model": "SP PRO GO 7.5kW",
@@ -386,11 +414,13 @@ Lists all configured systems with current status and data.
 ---
 
 #### GET /api/admin/storage
+
 Returns database storage information and statistics.
 
 **Authentication:** Required (Admin only)
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -423,11 +453,13 @@ Returns database storage information and statistics.
 ---
 
 #### POST /api/admin/test-connection
+
 Tests connection to a Select.Live system.
 
 **Authentication:** Required (Admin only)
 
 **Request Body:**
+
 ```json
 {
   "ownerClerkUserId": "user_31xcrIbiSrjjTIKlXShEPilRow7",
@@ -437,6 +469,7 @@ Tests connection to a Select.Live system.
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -472,19 +505,22 @@ Tests connection to a Select.Live system.
 ---
 
 #### POST /api/admin/sync-database
+
 Synchronizes historical data from Select.Live to the database.
 
 **Authentication:** Required (Admin only)
 
 **Request Body:**
+
 ```json
 {
   "systemId": 1,
-  "days": 7  // Number of days to sync
+  "days": 7 // Number of days to sync
 }
 ```
 
 **Response (Server-Sent Events):**
+
 ```
 data: {"progress":10,"total":100,"message":"Fetching day 1 of 7"}
 data: {"progress":20,"total":100,"message":"Processing 1440 readings"}
@@ -494,11 +530,13 @@ data: {"progress":100,"total":100,"message":"Sync complete","stats":{"totalReadi
 ---
 
 #### GET /api/admin/users
+
 Lists all users and their system access.
 
 **Authentication:** Required (Admin only)
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -527,22 +565,27 @@ Lists all users and their system access.
 These endpoints are designed to be called by scheduled jobs.
 
 #### GET /api/cron/minutely
+
 Polls all active systems for new data. Designed to run every minute.
 
 **Authentication:** Required (Bearer token OR admin user in production)
 
 **Headers (production only):**
+
 ```
 Authorization: Bearer ${CRON_SECRET}
 ```
+
 OR authenticated as admin user via Clerk session.
 
 **Query Parameters (optional, development/admin only):**
+
 - `systemId` - Poll specific system ID only
 - `force=true` - Force polling regardless of schedule
 - `date=YYYY-MM-DD` - Fetch specific date (Enphase only, interpreted in system timezone)
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -581,6 +624,7 @@ OR authenticated as admin user via Clerk session.
 ```
 
 **Polling Behavior:**
+
 - **Selectronic systems**: Polled every minute
 - **Enphase systems**: Smart polling schedule
   - Every 30 minutes from 30 mins after dawn to 30 mins after dusk
@@ -591,17 +635,21 @@ OR authenticated as admin user via Clerk session.
 ---
 
 #### GET /api/cron/daily
+
 Runs daily data aggregation. Designed to run at 00:05 daily to aggregate yesterday's data.
 
 **Authentication:** Required (Bearer token OR admin user in production)
 
 **Headers (production only):**
+
 ```
 Authorization: Bearer ${CRON_SECRET}
 ```
+
 OR authenticated as admin user via Clerk session.
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -620,6 +668,7 @@ OR authenticated as admin user via Clerk session.
 ```
 
 #### POST /api/cron/daily
+
 Manually trigger aggregation with various maintenance options.
 
 **Authentication:** Required (Admin only)
@@ -627,6 +676,7 @@ Manually trigger aggregation with various maintenance options.
 **Request Body Options:**
 
 1. Regenerate all historical data (clears table first):
+
 ```json
 {
   "action": "regenerate"
@@ -634,10 +684,13 @@ Manually trigger aggregation with various maintenance options.
 ```
 
 2. Update last 7 days (default if no action specified):
+
 ```json
 {}
 ```
+
 Or explicitly:
+
 ```json
 {
   "action": "update"
@@ -645,6 +698,7 @@ Or explicitly:
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -667,6 +721,7 @@ Or explicitly:
 All endpoints return consistent error responses:
 
 ### 400 Bad Request
+
 ```json
 {
   "success": false,
@@ -675,6 +730,7 @@ All endpoints return consistent error responses:
 ```
 
 ### 401 Unauthorized
+
 ```json
 {
   "error": "Unauthorized"
@@ -682,6 +738,7 @@ All endpoints return consistent error responses:
 ```
 
 ### 403 Forbidden
+
 ```json
 {
   "error": "Admin access required"
@@ -689,6 +746,7 @@ All endpoints return consistent error responses:
 ```
 
 ### 404 Not Found
+
 ```json
 {
   "error": "Resource not found"
@@ -696,6 +754,7 @@ All endpoints return consistent error responses:
 ```
 
 ### 500 Internal Server Error
+
 ```json
 {
   "success": false,

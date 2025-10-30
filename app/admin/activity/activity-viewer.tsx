@@ -1,148 +1,179 @@
-'use client'
+"use client";
 
-import { useState, useEffect, useCallback } from 'react'
-import { formatTime } from '@/lib/fe-date-format'
-import { Info, X, RefreshCw, Clock, Activity, CheckCircle, AlertCircle, Database, Hash, ChevronRight, ChevronDown } from 'lucide-react'
-import { JsonView, darkStyles, allExpanded } from 'react-json-view-lite'
-import 'react-json-view-lite/dist/index.css'
+import { useState, useEffect, useCallback } from "react";
+import { formatDateTime } from "@/lib/fe-date-format";
+import {
+  Info,
+  X,
+  RefreshCw,
+  Clock,
+  Activity,
+  CheckCircle,
+  AlertCircle,
+  Database,
+  Hash,
+  ChevronRight,
+  ChevronDown,
+} from "lucide-react";
+import { JsonView, darkStyles, allExpanded } from "react-json-view-lite";
+import "react-json-view-lite/dist/index.css";
 
 interface Session {
-  id: number
-  sessionLabel?: string
-  systemId: number
-  vendorType: string
-  systemName: string
-  cause: string
-  started: string
-  duration: number
-  successful: boolean
-  errorCode?: string
-  error?: string
-  response?: any
-  numRows: number
-  createdAt: string
+  id: number;
+  sessionLabel?: string;
+  systemId: number;
+  vendorType: string;
+  systemName: string;
+  cause: string;
+  started: string;
+  duration: number;
+  successful: boolean;
+  errorCode?: string;
+  error?: string;
+  response?: any;
+  numRows: number;
+  createdAt: string;
 }
 
 // Helper function to format duration
 const formatDuration = (durationMs: number): string => {
   if (durationMs >= 2000) {
-    return `${(durationMs / 1000).toFixed(1)}s`
+    return `${(durationMs / 1000).toFixed(1)}s`;
   }
-  return `${durationMs}ms`
-}
+  return `${durationMs}ms`;
+};
 
 export default function ActivityViewer() {
-  const [sessions, setSessions] = useState<Session[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [refreshing, setRefreshing] = useState(false)
-  const [selectedSession, setSelectedSession] = useState<Session | null>(null)
-  const [rotateKey, setRotateKey] = useState(0)
-  const [maxSessionId, setMaxSessionId] = useState<number | null>(null)
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedSession, setSelectedSession] = useState<Session | null>(null);
+  const [rotateKey, setRotateKey] = useState(0);
+  const [maxSessionId, setMaxSessionId] = useState<number | null>(null);
 
-  const fetchSessions = useCallback(async (isRefresh = false) => {
-    try {
-      // On refresh, use start from maxSessionId, otherwise use last=100
-      const url = isRefresh && maxSessionId
-        ? `/api/admin/sessions?start=${maxSessionId}&count=100`
-        : '/api/admin/sessions?last=100'
+  const fetchSessions = useCallback(
+    async (isRefresh = false) => {
+      try {
+        // On refresh, use start from maxSessionId, otherwise use last=100
+        const url =
+          isRefresh && maxSessionId
+            ? `/api/admin/sessions?start=${maxSessionId}&count=100`
+            : "/api/admin/sessions?last=100";
 
-      const response = await fetch(url)
-      if (!response.ok) {
-        throw new Error(`Failed to fetch sessions: ${response.status}`)
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch sessions: ${response.status}`);
+        }
+        const data = await response.json();
+
+        if (isRefresh) {
+          // On refresh, merge new sessions with existing ones
+          setSessions((prev) => {
+            // Create a Map for deduplication
+            const sessionMap = new Map<number, Session>();
+
+            // Add existing sessions
+            prev.forEach((session) => sessionMap.set(session.id, session));
+
+            // Add new sessions (will overwrite duplicates)
+            data.sessions.forEach((session: Session) =>
+              sessionMap.set(session.id, session),
+            );
+
+            // Convert back to array and sort by ID descending (newest first)
+            return Array.from(sessionMap.values()).sort((a, b) => b.id - a.id);
+          });
+        } else {
+          // Initial load - replace all sessions
+          setSessions(data.sessions);
+        }
+
+        // Update the max session ID to the highest (most recent) session ID
+        if (data.sessions.length > 0) {
+          const newMaxId = Math.max(...data.sessions.map((s: Session) => s.id));
+          setMaxSessionId((prevMax) =>
+            prevMax ? Math.max(prevMax, newMaxId) : newMaxId,
+          );
+        }
+
+        setError(null);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to load sessions",
+        );
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-      const data = await response.json()
-
-      if (isRefresh) {
-        // On refresh, merge new sessions with existing ones
-        setSessions(prev => {
-          // Create a Map for deduplication
-          const sessionMap = new Map<number, Session>()
-
-          // Add existing sessions
-          prev.forEach(session => sessionMap.set(session.id, session))
-
-          // Add new sessions (will overwrite duplicates)
-          data.sessions.forEach((session: Session) => sessionMap.set(session.id, session))
-
-          // Convert back to array and sort by ID descending (newest first)
-          return Array.from(sessionMap.values()).sort((a, b) => b.id - a.id)
-        })
-      } else {
-        // Initial load - replace all sessions
-        setSessions(data.sessions)
-      }
-
-      // Update the max session ID to the highest (most recent) session ID
-      if (data.sessions.length > 0) {
-        const newMaxId = Math.max(...data.sessions.map((s: Session) => s.id))
-        setMaxSessionId(prevMax => prevMax ? Math.max(prevMax, newMaxId) : newMaxId)
-      }
-
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load sessions')
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
-    }
-  }, [maxSessionId])
+    },
+    [maxSessionId],
+  );
 
   useEffect(() => {
     // Only fetch on initial load
     if (loading) {
-      fetchSessions()
+      fetchSessions();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, []);
 
   const handleRefresh = () => {
-    setRefreshing(true)
-    setRotateKey(prev => prev + 1) // Increment to trigger animation
-    fetchSessions(true) // Pass true to indicate it's a refresh
-  }
+    setRefreshing(true);
+    setRotateKey((prev) => prev + 1); // Increment to trigger animation
+    fetchSessions(true); // Pass true to indicate it's a refresh
+  };
 
   // Handle modal close on Escape key
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setSelectedSession(null)
+      if (e.key === "Escape") {
+        setSelectedSession(null);
         // Remove focus from any button
         if (document.activeElement instanceof HTMLElement) {
-          document.activeElement.blur()
+          document.activeElement.blur();
         }
       }
-    }
+    };
     if (selectedSession) {
-      document.addEventListener('keydown', handleEscape)
-      return () => document.removeEventListener('keydown', handleEscape)
+      document.addEventListener("keydown", handleEscape);
+      return () => document.removeEventListener("keydown", handleEscape);
     }
-  }, [selectedSession])
+  }, [selectedSession]);
 
   const getCauseColor = (cause: string) => {
     switch (cause) {
-      case 'POLL': return 'text-blue-400'
-      case 'PUSH': return 'text-green-400'
-      case 'USER': return 'text-yellow-400'
-      case 'ADMIN': return 'text-purple-400'
-      default: return 'text-gray-400'
+      case "POLL":
+        return "text-blue-400";
+      case "PUSH":
+        return "text-green-400";
+      case "USER":
+        return "text-yellow-400";
+      case "ADMIN":
+        return "text-purple-400";
+      default:
+        return "text-gray-400";
     }
-  }
+  };
 
   const getStatusColor = (successful: boolean) => {
-    return successful ? 'text-green-500' : 'text-red-500'
-  }
+    return successful ? "text-green-500" : "text-red-500";
+  };
 
   const getStatusBadge = (successful: boolean, errorCode?: string) => {
     if (successful) {
-      return <span className="px-2 py-0.5 text-xs rounded bg-green-500/20 text-green-400">Success</span>
+      return (
+        <span className="px-2 py-0.5 text-xs rounded bg-green-500/20 text-green-400">
+          Success
+        </span>
+      );
     }
     return (
       <span className="px-2 py-0.5 text-xs rounded bg-red-500/20 text-red-400">
-        {errorCode ? `Error ${errorCode}` : 'Failed'}
+        {errorCode ? `Error ${errorCode}` : "Failed"}
       </span>
-    )
-  }
+    );
+  };
 
   if (loading) {
     return (
@@ -152,7 +183,7 @@ export default function ActivityViewer() {
           <p className="text-gray-400 text-lg">Loading activity…</p>
         </div>
       </div>
-    )
+    );
   }
 
   if (error) {
@@ -166,7 +197,7 @@ export default function ActivityViewer() {
           Retry
         </button>
       </div>
-    )
+    );
   }
 
   return (
@@ -190,7 +221,7 @@ export default function ActivityViewer() {
                         className="h-4 w-4"
                         style={{
                           transform: `rotate(${rotateKey * 180}deg)`,
-                          transition: 'transform 500ms ease'
+                          transition: "transform 500ms ease",
                         }}
                       />
                     </button>
@@ -221,10 +252,13 @@ export default function ActivityViewer() {
             </thead>
             <tbody>
               {sessions.map((session, index) => (
-                <tr key={session.id} className={`${index % 2 === 0 ? 'bg-gray-900/50' : 'bg-gray-800/50'} hover:bg-gray-700 transition-colors`}>
+                <tr
+                  key={session.id}
+                  className={`${index % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"} hover:bg-gray-700 transition-colors`}
+                >
                   <td className="px-4 py-3 text-sm text-gray-300 align-top">
                     <div className="flex items-start gap-1">
-                      <span>{formatTime(session.started)}</span>
+                      <span>{formatDateTime(session.started).display}</span>
                       <button
                         onClick={() => setSelectedSession(session)}
                         className="text-gray-500 hover:text-gray-300 transition-colors"
@@ -242,14 +276,19 @@ export default function ActivityViewer() {
                       >
                         {session.systemName}
                       </a>
-                      <span className="text-gray-500"> ID:&nbsp;{session.systemId}</span>
+                      <span className="text-gray-500">
+                        {" "}
+                        ID:&nbsp;{session.systemId}
+                      </span>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-300">
                     {session.vendorType}
                   </td>
                   <td className="px-4 py-3 text-sm">
-                    <span className={`font-medium ${getCauseColor(session.cause)}`}>
+                    <span
+                      className={`font-medium ${getCauseColor(session.cause)}`}
+                    >
                       {session.cause}
                     </span>
                   </td>
@@ -260,12 +299,16 @@ export default function ActivityViewer() {
                     {getStatusBadge(session.successful, session.errorCode)}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-300">
-                    {session.numRows > 0 ? session.numRows : '-'}
+                    {session.numRows > 0 ? session.numRows : "-"}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-400">
                     {session.sessionLabel ? (
-                      <span className="font-mono text-xs">{session.sessionLabel}</span>
-                    ) : '-'}
+                      <span className="font-mono text-xs">
+                        {session.sessionLabel}
+                      </span>
+                    ) : (
+                      "-"
+                    )}
                   </td>
                 </tr>
               ))}
@@ -287,21 +330,24 @@ export default function ActivityViewer() {
             {/* Header */}
             <div className="flex justify-between items-start mb-4">
               <h3 className="text-lg font-semibold text-white">
-                Session with{' '}
+                Session with{" "}
                 <a
                   href={`/dashboard/${selectedSession.systemId}`}
                   className="hover:text-blue-400 hover:underline transition-colors"
                 >
-                  {selectedSession.systemName} <span className="text-gray-500">ID: {selectedSession.systemId}</span>
-                </a>
-                {' '}— {selectedSession.vendorType}
+                  {selectedSession.systemName}{" "}
+                  <span className="text-gray-500">
+                    ID: {selectedSession.systemId}
+                  </span>
+                </a>{" "}
+                — {selectedSession.vendorType}
               </h3>
               <button
                 onClick={() => {
-                  setSelectedSession(null)
+                  setSelectedSession(null);
                   // Remove focus from any button
                   if (document.activeElement instanceof HTMLElement) {
-                    document.activeElement.blur()
+                    document.activeElement.blur();
                   }
                 }}
                 className="text-gray-400 hover:text-white transition-colors"
@@ -317,7 +363,7 @@ export default function ActivityViewer() {
                   <div>
                     <p className="text-sm text-gray-400 mb-1">Time</p>
                     <p className="text-lg font-bold text-white">
-                      {formatTime(selectedSession.started)}
+                      {formatDateTime(selectedSession.started).display}
                     </p>
                     <p className="text-xs text-gray-400 mt-1">
                       Duration: {formatDuration(selectedSession.duration)}
@@ -326,7 +372,9 @@ export default function ActivityViewer() {
 
                   <div>
                     <p className="text-sm text-gray-400 mb-1">Cause</p>
-                    <p className={`text-lg font-bold ${getCauseColor(selectedSession.cause)}`}>
+                    <p
+                      className={`text-lg font-bold ${getCauseColor(selectedSession.cause)}`}
+                    >
                       {selectedSession.cause}
                     </p>
                   </div>
@@ -335,7 +383,9 @@ export default function ActivityViewer() {
                     <p className="text-sm text-gray-400 mb-1">Session ID</p>
                     <p className="text-lg font-bold text-white">
                       {selectedSession.sessionLabel ? (
-                        <span className="font-mono">{selectedSession.sessionLabel}</span>
+                        <span className="font-mono">
+                          {selectedSession.sessionLabel}
+                        </span>
                       ) : (
                         <span className="text-gray-500">—</span>
                       )}
@@ -344,12 +394,17 @@ export default function ActivityViewer() {
 
                   <div>
                     <p className="text-sm text-gray-400 mb-1">Status</p>
-                    <p className={`text-lg font-bold ${selectedSession.successful ? 'text-green-400' : 'text-red-400'}`}>
-                      {selectedSession.successful ? 'Success' : 'Failed'}
-                      {selectedSession.errorCode && ` (${selectedSession.errorCode})`}
+                    <p
+                      className={`text-lg font-bold ${selectedSession.successful ? "text-green-400" : "text-red-400"}`}
+                    >
+                      {selectedSession.successful ? "Success" : "Failed"}
+                      {selectedSession.errorCode &&
+                        ` (${selectedSession.errorCode})`}
                     </p>
                     {selectedSession.numRows > 0 && (
-                      <p className="text-xs text-gray-400 mt-1">{selectedSession.numRows} rows</p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {selectedSession.numRows} rows
+                      </p>
                     )}
                   </div>
                 </div>
@@ -361,8 +416,12 @@ export default function ActivityViewer() {
                   <div className="flex items-start gap-2">
                     <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
                     <div>
-                      <p className="text-sm font-medium text-red-400 mb-1">Error Details</p>
-                      <p className="text-sm text-red-300">{selectedSession.error}</p>
+                      <p className="text-sm font-medium text-red-400 mb-1">
+                        Error Details
+                      </p>
+                      <p className="text-sm text-red-300">
+                        {selectedSession.error}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -371,9 +430,7 @@ export default function ActivityViewer() {
               {/* Response data */}
               {selectedSession.response && (
                 <div>
-                  <div className="text-sm text-gray-400 mb-3">
-                    Raw Comms
-                  </div>
+                  <div className="text-sm text-gray-400 mb-3">Raw Comms</div>
                   <div className="bg-gray-950 border border-gray-700 rounded-lg">
                     <div className="overflow-x-auto font-mono text-sm">
                       <JsonView
@@ -391,9 +448,9 @@ export default function ActivityViewer() {
             <div className="mt-6">
               <button
                 onClick={() => {
-                  setSelectedSession(null)
+                  setSelectedSession(null);
                   if (document.activeElement instanceof HTMLElement) {
-                    document.activeElement.blur()
+                    document.activeElement.blur();
                   }
                 }}
                 className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
@@ -405,5 +462,5 @@ export default function ActivityViewer() {
         </div>
       )}
     </>
-  )
+  );
 }

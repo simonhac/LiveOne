@@ -1,10 +1,11 @@
-import type { VendorAdapter } from './types';
-import { SelectronicAdapter } from './selectronic/adapter';
-import { EnphaseAdapter } from './enphase/adapter';
-import { CraigHackAdapter } from './craighack/adapter';
-import { FroniusAdapter } from './fronius/adapter';
-import { MondoAdapter } from './mondo/adapter';
-import { SystemsManager } from '@/lib/systems-manager';
+import type { VendorAdapter } from "./types";
+import { SelectronicAdapter } from "./selectronic/adapter";
+import { EnphaseAdapter } from "./enphase/adapter";
+import { CraigHackAdapter } from "./craighack/adapter";
+import { FroniusAdapter } from "./fronius/adapter";
+import { MondoAdapter } from "./mondo/adapter";
+import { CompositeAdapter } from "./composite/adapter";
+import { SystemsManager } from "@/lib/systems-manager";
 
 /**
  * Registry for all vendor adapters
@@ -13,29 +14,30 @@ import { SystemsManager } from '@/lib/systems-manager';
 export class VendorRegistry {
   private static adapters = new Map<string, VendorAdapter>();
   private static initialized = false;
-  
+
   /**
    * Initialize the registry with all available adapters
    */
   private static initialize() {
     if (this.initialized) return;
-    
-    // Register all adapters
-    const selectronic = new SelectronicAdapter();
-    this.adapters.set('selectronic', selectronic);
-    this.adapters.set('select.live', selectronic); // Alias for backward compatibility
 
-    this.adapters.set('enphase', new EnphaseAdapter());
-    this.adapters.set('craighack', new CraigHackAdapter());
-    this.adapters.set('fronius', new FroniusAdapter());
-    this.adapters.set('mondo', new MondoAdapter());
-    
+    // Register all adapters
+    this.adapters.set("selectronic", new SelectronicAdapter());
+
+    this.adapters.set("enphase", new EnphaseAdapter());
+    this.adapters.set("craighack", new CraigHackAdapter());
+    this.adapters.set("fronius", new FroniusAdapter());
+    this.adapters.set("mondo", new MondoAdapter());
+    this.adapters.set("composite", new CompositeAdapter());
+
     this.initialized = true;
-    
-    console.log('[VendorRegistry] Initialized with adapters:', 
-      Array.from(this.adapters.keys()).join(', '));
+
+    console.log(
+      "[VendorRegistry] Initialized with adapters:",
+      Array.from(this.adapters.keys()).join(", "),
+    );
   }
-  
+
   /**
    * Get an adapter for a specific vendor type
    */
@@ -43,7 +45,7 @@ export class VendorRegistry {
     this.initialize();
     return this.adapters.get(vendorType.toLowerCase()) || null;
   }
-  
+
   /**
    * Get all registered vendor types
    */
@@ -51,7 +53,7 @@ export class VendorRegistry {
     this.initialize();
     return Array.from(this.adapters.keys());
   }
-  
+
   /**
    * Check if a vendor type is supported
    */
@@ -59,7 +61,7 @@ export class VendorRegistry {
     this.initialize();
     return this.adapters.has(vendorType.toLowerCase());
   }
-  
+
   /**
    * Register a custom adapter (useful for testing or extensions)
    */
@@ -68,7 +70,7 @@ export class VendorRegistry {
     this.adapters.set(vendorType.toLowerCase(), adapter);
     console.log(`[VendorRegistry] Registered adapter for ${vendorType}`);
   }
-  
+
   /**
    * Get all registered adapters
    */
@@ -91,7 +93,7 @@ export class VendorRegistry {
     this.initialize();
     const adapter = this.adapters.get(vendorType.toLowerCase());
     if (!adapter) return false;
-    return adapter.dataSource === 'poll' || adapter.dataSource === 'combined';
+    return adapter.dataSource === "poll" || adapter.dataSource === "combined";
   }
 
   /**
@@ -99,11 +101,13 @@ export class VendorRegistry {
    * @param vendorType The vendor type to check
    * @returns 'readings' or 'point_readings'
    */
-  static getDataStore(vendorType: string): 'readings' | 'point_readings' {
+  static getDataStore(vendorType: string): "readings" | "point_readings" {
     this.initialize();
     const adapter = this.adapters.get(vendorType.toLowerCase());
     if (!adapter) {
-      console.error(`[VendorRegistry] No adapter found for vendor type: ${vendorType}`);
+      console.error(
+        `[VendorRegistry] No adapter found for vendor type: ${vendorType}`,
+      );
       throw new Error(`Unknown vendor type: ${vendorType}`);
     }
     return adapter.dataStore; // Will use the adapter's value (or its base class default)
@@ -113,7 +117,9 @@ export class VendorRegistry {
    * Get an adapter for a specific system by its ID
    * Uses SystemsManager to look up the system's vendor type
    */
-  static async getAdapterForSystem(systemId: number): Promise<VendorAdapter | null> {
+  static async getAdapterForSystem(
+    systemId: number,
+  ): Promise<VendorAdapter | null> {
     const systemsManager = SystemsManager.getInstance();
     const system = await systemsManager.getSystem(systemId);
 
@@ -124,7 +130,9 @@ export class VendorRegistry {
 
     const adapter = this.getAdapter(system.vendorType);
     if (!adapter) {
-      console.error(`[VendorRegistry] No adapter found for vendor type: ${system.vendorType}`);
+      console.error(
+        `[VendorRegistry] No adapter found for vendor type: ${system.vendorType}`,
+      );
       return null;
     }
 

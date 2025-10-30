@@ -1,10 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
-import { db } from '@/lib/db';
-import { systems } from '@/lib/db/schema';
-import { eq, desc } from 'drizzle-orm';
-import { storeSystemCredentials } from '@/lib/secure-credentials';
-import { VendorRegistry } from '@/lib/vendors/registry';
+import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
+import { db } from "@/lib/db";
+import { systems } from "@/lib/db/schema";
+import { eq, desc } from "drizzle-orm";
+import { storeSystemCredentials } from "@/lib/secure-credentials";
+import { VendorRegistry } from "@/lib/vendors/registry";
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
     const { userId } = await auth();
 
     if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     // Get request data
@@ -20,8 +20,11 @@ export async function POST(request: NextRequest) {
 
     if (!vendorType || !credentials || !systemInfo?.vendorSiteId) {
       return NextResponse.json(
-        { error: 'Vendor type, credentials, and system info with vendorSiteId are required' },
-        { status: 400 }
+        {
+          error:
+            "Vendor type, credentials, and system info with vendorSiteId are required",
+        },
+        { status: 400 },
       );
     }
 
@@ -31,18 +34,22 @@ export async function POST(request: NextRequest) {
     if (!adapter) {
       return NextResponse.json(
         { error: `Unknown vendor type: ${vendorType}` },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!adapter.supportsAddSystem) {
       return NextResponse.json(
-        { error: `${adapter.displayName} does not support automatic system addition` },
-        { status: 400 }
+        {
+          error: `${adapter.displayName} does not support automatic system addition`,
+        },
+        { status: 400 },
       );
     }
 
-    console.log(`[Create System] Creating ${vendorType} system for user ${userId}`);
+    console.log(
+      `[Create System] Creating ${vendorType} system for user ${userId}`,
+    );
 
     // Allow multiple systems for the same vendor site
     // This is useful for testing, multiple users monitoring the same site, etc.
@@ -54,7 +61,7 @@ export async function POST(request: NextRequest) {
         ownerClerkUserId: userId,
         vendorType,
         vendorSiteId: systemInfo.vendorSiteId,
-        status: 'active',
+        status: "active",
         displayName: systemInfo.displayName || `${adapter.displayName} System`,
         model: systemInfo.model || null,
         serial: systemInfo.serial || null,
@@ -63,18 +70,20 @@ export async function POST(request: NextRequest) {
         batterySize: systemInfo.batterySize || null,
         timezoneOffsetMin: 600, // Default to AEST
         createdAt: new Date(),
-        updatedAt: new Date()
+        updatedAt: new Date(),
       })
       .returning();
 
-    console.log(`[Create System] Created system ${newSystem.id} for user ${userId}`);
+    console.log(
+      `[Create System] Created system ${newSystem.id} for user ${userId}`,
+    );
 
     // Store the credentials in Clerk
     const credentialResult = await storeSystemCredentials(
       userId,
       newSystem.id,
-      vendorType === 'selectronic' ? 'select.live' : vendorType,
-      credentials
+      vendorType,
+      credentials,
     );
 
     if (!credentialResult.success) {
@@ -82,22 +91,24 @@ export async function POST(request: NextRequest) {
       await db.delete(systems).where(eq(systems.id, newSystem.id));
 
       return NextResponse.json(
-        { error: credentialResult.error || 'Failed to store credentials' },
-        { status: 500 }
+        { error: credentialResult.error || "Failed to store credentials" },
+        { status: 500 },
       );
     }
 
     // Success!
     return NextResponse.json({
       success: true,
-      systemId: newSystem.id
+      systemId: newSystem.id,
     });
-
   } catch (error) {
-    console.error('[Create System] Error:', error);
+    console.error("[Create System] Error:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to create system' },
-      { status: 500 }
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to create system",
+      },
+      { status: 500 },
     );
   }
 }
@@ -109,7 +120,7 @@ export async function GET(request: NextRequest) {
     const { userId } = await auth();
 
     if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     // Get all systems for this user
@@ -120,14 +131,16 @@ export async function GET(request: NextRequest) {
       .orderBy(desc(systems.createdAt));
 
     return NextResponse.json({
-      systems: userSystems
+      systems: userSystems,
     });
-
   } catch (error) {
-    console.error('[List Systems] Error:', error);
+    console.error("[List Systems] Error:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to fetch systems' },
-      { status: 500 }
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to fetch systems",
+      },
+      { status: 500 },
     );
   }
 }

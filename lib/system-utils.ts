@@ -5,7 +5,7 @@
 /**
  * Format system information for logging and display
  * @param system - System object with vendorType, vendorSiteId, and displayName
- * @returns Formatted string like "select.live/648 ('Daylesford')"
+ * @returns Formatted string like "selectronic/648 ('Daylesford')"
  */
 export function formatSystemId(system: {
   vendorType: string;
