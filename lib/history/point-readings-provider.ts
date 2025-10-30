@@ -1,14 +1,30 @@
-import { db } from '@/lib/db';
-import { pointReadings, pointInfo, pointReadingsAgg5m } from '@/lib/db/schema-monitoring-points';
-import { eq, and, gte, lte, inArray } from 'drizzle-orm';
-import { CalendarDate, ZonedDateTime, fromDate, parseDate } from '@internationalized/date';
-import { toUnixTimestamp, fromUnixTimestamp } from '@/lib/date-utils';
-import { SystemWithPolling } from '@/lib/systems-manager';
-import { HistoryDataProvider, MeasurementSeries, MeasurementPointMetadata, MeasurementValue, TimeSeriesPoint } from './types';
+import { db } from "@/lib/db";
+import {
+  pointReadings,
+  pointInfo,
+  pointReadingsAgg5m,
+} from "@/lib/db/schema-monitoring-points";
+import { eq, and, gte, lte, inArray } from "drizzle-orm";
+import {
+  CalendarDate,
+  ZonedDateTime,
+  fromDate,
+  parseDate,
+} from "@internationalized/date";
+import { toUnixTimestamp, fromUnixTimestamp } from "@/lib/date-utils";
+import { SystemWithPolling } from "@/lib/systems-manager";
+import {
+  HistoryDataProvider,
+  MeasurementSeries,
+  MeasurementPointMetadata,
+  MeasurementValue,
+  TimeSeriesPoint,
+} from "./types";
 
 /**
  * Generate a point ID in the format:
- * - If shortName is set: use shortName
+ * - If type and subtype are set: use series ID {type}.{subtype}.{extension}.{metricType}
+ * - Otherwise if shortName is set: use shortName
  * - Otherwise: {pointId}.{pointSubId}.{metricType} (omitting pointSubId if null)
  *
  * Note: The vendor prefix (liveone.{vendorType}.{vendorSiteId}) is added by OpenNEMConverter
@@ -17,8 +33,19 @@ function generatePointId(
   pointId: string,
   pointSubId: string | null,
   metricType: string,
-  shortName: string | null
+  shortName: string | null,
+  type: string | null,
+  subtype: string | null,
+  extension: string | null,
 ): string {
+  // If type and subtype are set, use series ID
+  if (type && subtype) {
+    const parts = [type, subtype];
+    if (extension) parts.push(extension);
+    parts.push(metricType);
+    return parts.join(".");
+  }
+
   // If shortName is set, use it directly
   if (shortName) {
     return shortName;
@@ -30,30 +57,45 @@ function generatePointId(
     parts.push(pointSubId);
   }
   parts.push(metricType);
-  return parts.join('.');
+  return parts.join(".");
 }
 
 export class PointReadingsProvider implements HistoryDataProvider {
-  async getAvailableFields(system: SystemWithPolling): Promise<MeasurementPointMetadata[]> {
-    // Fetch actual points from the database for this system
-    const points = await db
-      .select()
-      .from(pointInfo)
-      .where(eq(pointInfo.systemId, system.id));
-
-    return points.map(p => ({
-      id: generatePointId(p.pointId, p.pointSubId, p.metricType, p.shortName),
-      name: p.name || p.defaultName,
-      type: p.metricType,
-      unit: p.metricUnit,
-      subsystem: p.subsystem || undefined
-    }));
+  /**
+   * Helper method to filter and sort points by series ID
+   */
+  private filterAndSortPoints(
+    points: (typeof pointInfo.$inferSelect)[],
+  ): (typeof pointInfo.$inferSelect)[] {
+    return points
+      .filter((p) => p.type && p.subtype)
+      .sort((a, b) => {
+        const aSeriesId = generatePointId(
+          a.pointId,
+          a.pointSubId,
+          a.metricType,
+          a.shortName,
+          a.type,
+          a.subtype,
+          a.extension,
+        );
+        const bSeriesId = generatePointId(
+          b.pointId,
+          b.pointSubId,
+          b.metricType,
+          b.shortName,
+          b.type,
+          b.subtype,
+          b.extension,
+        );
+        return aSeriesId.localeCompare(bSeriesId);
+      });
   }
 
   async fetch5MinuteData(
     system: SystemWithPolling,
     startTime: ZonedDateTime,
-    endTime: ZonedDateTime
+    endTime: ZonedDateTime,
   ): Promise<MeasurementSeries[]> {
     const startMs = toUnixTimestamp(startTime) * 1000;
     const endMs = toUnixTimestamp(endTime) * 1000;
@@ -64,30 +106,43 @@ export class PointReadingsProvider implements HistoryDataProvider {
       .from(pointInfo)
       .where(eq(pointInfo.systemId, system.id));
 
-    if (points.length === 0) {
+    // Only include points with series IDs (type and subtype set), sorted by series ID string
+    const filteredPoints = this.filterAndSortPoints(points);
+
+    if (filteredPoints.length === 0) {
       return [];
     }
 
     // Map point IDs to their metadata
-    const pointMap = new Map(points.map(p => [p.id, {
-      pointId: p.pointId,
-      pointSubId: p.pointSubId,
-      shortName: p.shortName,
-      name: p.name || p.defaultName,
-      subsystem: p.subsystem,
-      metricType: p.metricType,
-      metricUnit: p.metricUnit
-    }]));
+    const pointMap = new Map(
+      filteredPoints.map((p) => [
+        p.id,
+        {
+          pointId: p.pointId,
+          pointSubId: p.pointSubId,
+          shortName: p.shortName,
+          name: p.name || p.defaultName,
+          subsystem: p.subsystem,
+          metricType: p.metricType,
+          metricUnit: p.metricUnit,
+          type: p.type,
+          subtype: p.subtype,
+          extension: p.extension,
+        },
+      ]),
+    );
 
     // Fetch aggregated point readings within the time range
     const aggregates = await db
       .select()
       .from(pointReadingsAgg5m)
-      .where(and(
-        eq(pointReadingsAgg5m.systemId, system.id),
-        gte(pointReadingsAgg5m.intervalEnd, startMs),
-        lte(pointReadingsAgg5m.intervalEnd, endMs)
-      ))
+      .where(
+        and(
+          eq(pointReadingsAgg5m.systemId, system.id),
+          gte(pointReadingsAgg5m.intervalEnd, startMs),
+          lte(pointReadingsAgg5m.intervalEnd, endMs),
+        ),
+      )
       .orderBy(pointReadingsAgg5m.intervalEnd);
 
     // Group aggregates by point
@@ -120,8 +175,8 @@ export class PointReadingsProvider implements HistoryDataProvider {
               min: agg.min,
               max: agg.max,
               last: agg.last,
-              count: agg.sampleCount
-            }
+              count: agg.sampleCount,
+            },
           });
         }
       }
@@ -131,7 +186,10 @@ export class PointReadingsProvider implements HistoryDataProvider {
         pointMeta.pointId,
         pointMeta.pointSubId,
         pointMeta.metricType,
-        pointMeta.shortName
+        pointMeta.shortName,
+        pointMeta.type,
+        pointMeta.subtype,
+        pointMeta.extension,
       );
 
       result.push({
@@ -139,11 +197,11 @@ export class PointReadingsProvider implements HistoryDataProvider {
         metadata: {
           id: fieldId,
           name: pointMeta.name,
+          label: pointMeta.name,
           type: pointMeta.metricType,
           unit: pointMeta.metricUnit,
-          subsystem: pointMeta.subsystem || undefined
         },
-        data
+        data,
       });
     }
 
@@ -153,26 +211,34 @@ export class PointReadingsProvider implements HistoryDataProvider {
   async fetchDailyData(
     system: SystemWithPolling,
     startDate: CalendarDate,
-    endDate: CalendarDate
+    endDate: CalendarDate,
   ): Promise<MeasurementSeries[]> {
     // Convert dates to ZonedDateTime for the full day range
     const startTime = new ZonedDateTime(
       startDate.year,
       startDate.month,
       startDate.day,
-      'Australia/Brisbane',
-      0, 0, 0
+      "Australia/Brisbane",
+      0,
+      0,
+      0,
     );
     const endTime = new ZonedDateTime(
       endDate.year,
       endDate.month,
       endDate.day,
-      'Australia/Brisbane',
-      23, 59, 59
+      "Australia/Brisbane",
+      23,
+      59,
+      59,
     );
 
     // Get 5-minute data
-    const fiveMinSeries = await this.fetch5MinuteData(system, startTime, endTime);
+    const fiveMinSeries = await this.fetch5MinuteData(
+      system,
+      startTime,
+      endTime,
+    );
 
     // Aggregate each series to daily
     const result: MeasurementSeries[] = [];
@@ -184,7 +250,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
       for (const point of series.data) {
         // Get the date in YYYY-MM-DD format from ZonedDateTime
         const zdt = point.timestamp as ZonedDateTime;
-        const dayKey = `${zdt.year.toString().padStart(4, '0')}-${zdt.month.toString().padStart(2, '0')}-${zdt.day.toString().padStart(2, '0')}`;
+        const dayKey = `${zdt.year.toString().padStart(4, "0")}-${zdt.month.toString().padStart(2, "0")}-${zdt.day.toString().padStart(2, "0")}`;
 
         if (!dayMap.has(dayKey)) {
           dayMap.set(dayKey, []);
@@ -201,20 +267,29 @@ export class PointReadingsProvider implements HistoryDataProvider {
         if (dayPoints.length === 0) continue;
 
         // Extract values
-        const values = dayPoints.map(p => p.value).filter(v => v !== undefined);
+        const values = dayPoints
+          .map((p) => p.value)
+          .filter((v) => v !== undefined);
 
         if (values.length > 0) {
-          const avgs = values.filter(v => v.avg !== null).map(v => v.avg!);
-          const mins = values.filter(v => v.min !== null && v.min !== undefined).map(v => v.min!);
-          const maxs = values.filter(v => v.max !== null && v.max !== undefined).map(v => v.max!);
+          const avgs = values.filter((v) => v.avg !== null).map((v) => v.avg!);
+          const mins = values
+            .filter((v) => v.min !== null && v.min !== undefined)
+            .map((v) => v.min!);
+          const maxs = values
+            .filter((v) => v.max !== null && v.max !== undefined)
+            .map((v) => v.max!);
 
           dailyData.push({
             timestamp: parseDate(dayKey),
             value: {
-              avg: avgs.length > 0 ? avgs.reduce((sum, v) => sum + v, 0) / avgs.length : null,
+              avg:
+                avgs.length > 0
+                  ? avgs.reduce((sum, v) => sum + v, 0) / avgs.length
+                  : null,
               min: mins.length > 0 ? Math.min(...mins) : undefined,
-              max: maxs.length > 0 ? Math.max(...maxs) : undefined
-            }
+              max: maxs.length > 0 ? Math.max(...maxs) : undefined,
+            },
           });
         }
       }
@@ -223,12 +298,11 @@ export class PointReadingsProvider implements HistoryDataProvider {
         result.push({
           field: series.field,
           metadata: series.metadata,
-          data: dailyData
+          data: dailyData,
         });
       }
     }
 
     return result;
   }
-
 }

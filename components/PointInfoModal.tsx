@@ -173,6 +173,14 @@ export default function PointInfoModal({
 
   if (!isOpen || !pointInfo || typeof document === "undefined") return null;
 
+  // Handle Enter key to save
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && hasChanges && !isSaving && !shortNameError) {
+      e.preventDefault();
+      handleSave();
+    }
+  };
+
   return createPortal(
     <>
       {/* Backdrop with blur */}
@@ -183,7 +191,10 @@ export default function PointInfoModal({
 
       {/* Dialog */}
       <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[10001] w-full max-w-xl">
-        <div className="bg-gray-800 border border-gray-700 rounded-lg shadow-xl">
+        <div
+          className="bg-gray-800 border border-gray-700 rounded-lg shadow-xl"
+          onKeyDown={handleKeyDown}
+        >
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
             <h2 className="text-lg font-medium text-gray-100">
@@ -275,10 +286,10 @@ export default function PointInfoModal({
                 Configuration
               </div>
 
-              {/* Editable: Custom Name */}
+              {/* Editable: Display Label */}
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Custom Name:
+                  Display Label:
                 </label>
                 <input
                   type="text"
@@ -369,7 +380,7 @@ export default function PointInfoModal({
                   type="text"
                   value={editedExtension}
                   onChange={(e) => handleExtensionChange(e.target.value)}
-                  placeholder="e.g., additional qualifier"
+                  placeholder="e.g. local, remote, hws, ev, hvac"
                   className="flex-1 px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                   disabled={isSaving}
                 />

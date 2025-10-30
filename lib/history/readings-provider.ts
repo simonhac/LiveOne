@@ -1,40 +1,46 @@
-import { db } from '@/lib/db';
-import { readingsAgg5m, readingsAgg1d } from '@/lib/db/schema';
-import { eq, and, gte, lte } from 'drizzle-orm';
-import { CalendarDate, ZonedDateTime, parseDate } from '@internationalized/date';
-import { toUnixTimestamp, fromUnixTimestamp, formatDateAEST } from '@/lib/date-utils';
-import { SystemWithPolling } from '@/lib/systems-manager';
-import { HistoryDataProvider, MeasurementSeries, MeasurementPointMetadata, MeasurementValue, TimeSeriesPoint } from './types';
+import { db } from "@/lib/db";
+import { readingsAgg5m, readingsAgg1d } from "@/lib/db/schema";
+import { eq, and, gte, lte } from "drizzle-orm";
+import {
+  CalendarDate,
+  ZonedDateTime,
+  parseDate,
+} from "@internationalized/date";
+import {
+  toUnixTimestamp,
+  fromUnixTimestamp,
+  formatDateAEST,
+} from "@/lib/date-utils";
+import { SystemWithPolling } from "@/lib/systems-manager";
+import {
+  HistoryDataProvider,
+  MeasurementSeries,
+  MeasurementPointMetadata,
+  MeasurementValue,
+  TimeSeriesPoint,
+} from "./types";
 
 export class ReadingsProvider implements HistoryDataProvider {
   private readonly timezoneOffsetMin = 600; // Default to AEST (UTC+10)
 
-  async getAvailableFields(system: SystemWithPolling): Promise<MeasurementPointMetadata[]> {
-    // Standard fields available in the readings table
-    return [
-      { id: 'solar.power.avg', name: 'Solar', type: 'power', unit: 'W', subsystem: 'generation' },
-      { id: 'load.power.avg', name: 'Load', type: 'power', unit: 'W', subsystem: 'consumption' },
-      { id: 'battery.power.avg', name: 'Battery', type: 'power', unit: 'W', subsystem: 'storage' },
-      { id: 'grid.power.avg', name: 'Grid', type: 'power', unit: 'W', subsystem: 'grid' },
-      { id: 'battery.soc.last', name: 'Battery SOC', type: 'percentage', unit: '%', subsystem: 'storage' },
-    ];
-  }
-
   async fetch5MinuteData(
     system: SystemWithPolling,
     startTime: ZonedDateTime,
-    endTime: ZonedDateTime
+    endTime: ZonedDateTime,
   ): Promise<MeasurementSeries[]> {
     const startTimestamp = toUnixTimestamp(startTime);
     const endTimestamp = toUnixTimestamp(endTime);
 
-    const data = await db.select()
+    const data = await db
+      .select()
       .from(readingsAgg5m)
-      .where(and(
-        eq(readingsAgg5m.systemId, system.id),
-        gte(readingsAgg5m.intervalEnd, startTimestamp),
-        lte(readingsAgg5m.intervalEnd, endTimestamp)
-      ))
+      .where(
+        and(
+          eq(readingsAgg5m.systemId, system.id),
+          gte(readingsAgg5m.intervalEnd, startTimestamp),
+          lte(readingsAgg5m.intervalEnd, endTimestamp),
+        ),
+      )
       .orderBy(readingsAgg5m.intervalEnd);
 
     return this.transformToSeries5Min(data);
@@ -43,25 +49,30 @@ export class ReadingsProvider implements HistoryDataProvider {
   async fetchDailyData(
     system: SystemWithPolling,
     startDate: CalendarDate,
-    endDate: CalendarDate
+    endDate: CalendarDate,
   ): Promise<MeasurementSeries[]> {
     // Use the same approach as existing code - format dates as strings
     const startDateStr = formatDateAEST(startDate);
     const endDateStr = formatDateAEST(endDate);
 
-    const data = await db.select()
+    const data = await db
+      .select()
       .from(readingsAgg1d)
-      .where(and(
-        eq(readingsAgg1d.systemId, system.id.toString()),
-        gte(readingsAgg1d.day, startDateStr),
-        lte(readingsAgg1d.day, endDateStr)
-      ))
+      .where(
+        and(
+          eq(readingsAgg1d.systemId, system.id.toString()),
+          gte(readingsAgg1d.day, startDateStr),
+          lte(readingsAgg1d.day, endDateStr),
+        ),
+      )
       .orderBy(readingsAgg1d.day);
 
     return this.transformToSeriesDaily(data);
   }
 
-  private transformToSeries5Min(rows: Array<typeof readingsAgg5m.$inferSelect>): MeasurementSeries[] {
+  private transformToSeries5Min(
+    rows: Array<typeof readingsAgg5m.$inferSelect>,
+  ): MeasurementSeries[] {
     const series: MeasurementSeries[] = [];
 
     // Solar series
@@ -73,22 +84,22 @@ export class ReadingsProvider implements HistoryDataProvider {
           value: {
             avg: row.solarWAvg,
             min: row.solarWMin,
-            max: row.solarWMax
-          }
+            max: row.solarWMax,
+          },
         });
       }
     }
     // Always include series with metadata, even if no data
     series.push({
-      field: 'solar',
+      field: "solar",
       metadata: {
-        id: 'solar.power.avg',
-        name: 'Total solar generation (remote + local)',
-        type: 'power',
-        unit: 'W',
-        subsystem: 'generation'
+        id: "solar.power.avg",
+        name: "Total solar generation (remote + local)",
+        label: "Total solar generation (remote + local)",
+        type: "power",
+        unit: "W",
       },
-      data: solarData
+      data: solarData,
     });
 
     // Load series
@@ -100,21 +111,21 @@ export class ReadingsProvider implements HistoryDataProvider {
           value: {
             avg: row.loadWAvg,
             min: row.loadWMin,
-            max: row.loadWMax
-          }
+            max: row.loadWMax,
+          },
         });
       }
     }
     series.push({
-      field: 'load',
+      field: "load",
       metadata: {
-        id: 'load.power.avg',
-        name: 'Total load consumption',
-        type: 'power',
-        unit: 'W',
-        subsystem: 'consumption'
+        id: "load.power.avg",
+        name: "Total load consumption",
+        label: "Total load consumption",
+        type: "power",
+        unit: "W",
       },
-      data: loadData
+      data: loadData,
     });
 
     // Battery series
@@ -126,21 +137,21 @@ export class ReadingsProvider implements HistoryDataProvider {
           value: {
             avg: row.batteryWAvg,
             min: row.batteryWMin,
-            max: row.batteryWMax
-          }
+            max: row.batteryWMax,
+          },
         });
       }
     }
     series.push({
-      field: 'battery',
+      field: "battery",
       metadata: {
-        id: 'battery.power.avg',
-        name: 'Battery power (negative = charging, positive = discharging)',
-        type: 'power',
-        unit: 'W',
-        subsystem: 'storage'
+        id: "battery.power.avg",
+        name: "Battery power (negative = charging, positive = discharging)",
+        label: "Battery power (negative = charging, positive = discharging)",
+        type: "power",
+        unit: "W",
       },
-      data: batteryData
+      data: batteryData,
     });
 
     // Grid series
@@ -152,21 +163,21 @@ export class ReadingsProvider implements HistoryDataProvider {
           value: {
             avg: row.gridWAvg,
             min: row.gridWMin,
-            max: row.gridWMax
-          }
+            max: row.gridWMax,
+          },
         });
       }
     }
     series.push({
-      field: 'grid',
+      field: "grid",
       metadata: {
-        id: 'grid.power.avg',
-        name: 'Grid power (positive = import, negative = export)',
-        type: 'power',
-        unit: 'W',
-        subsystem: 'grid'
+        id: "grid.power.avg",
+        name: "Grid power (positive = import, negative = export)",
+        label: "Grid power (positive = import, negative = export)",
+        type: "power",
+        unit: "W",
       },
-      data: gridData
+      data: gridData,
     });
 
     // Battery SOC series
@@ -176,27 +187,29 @@ export class ReadingsProvider implements HistoryDataProvider {
         socData.push({
           timestamp: fromUnixTimestamp(row.intervalEnd, 600),
           value: {
-            avg: row.batterySOCLast
-          }
+            avg: row.batterySOCLast,
+          },
         });
       }
     }
     series.push({
-      field: 'battery_soc',
+      field: "battery_soc",
       metadata: {
-        id: 'battery.soc.last',
-        name: 'Battery state of charge',
-        type: 'percentage',
-        unit: '%',
-        subsystem: 'storage'
+        id: "battery.soc.last",
+        name: "Battery state of charge",
+        label: "Battery state of charge",
+        type: "percentage",
+        unit: "%",
       },
-      data: socData
+      data: socData,
     });
 
     return series;
   }
 
-  private transformToSeriesDaily(rows: Array<typeof readingsAgg1d.$inferSelect>): MeasurementSeries[] {
+  private transformToSeriesDaily(
+    rows: Array<typeof readingsAgg1d.$inferSelect>,
+  ): MeasurementSeries[] {
     const series: MeasurementSeries[] = [];
 
     // Solar energy series
@@ -206,22 +219,22 @@ export class ReadingsProvider implements HistoryDataProvider {
         solarEnergyData.push({
           timestamp: parseDate(row.day),
           value: {
-            avg: row.solarKwh
-          }
+            avg: row.solarKwh,
+          },
         });
       }
     }
     if (solarEnergyData.length > 0) {
       series.push({
-        field: 'solar_energy',
+        field: "solar_energy",
         metadata: {
-          id: 'solar.energy',
-          name: 'Total solar energy generated',
-          type: 'energy',
-          unit: 'kWh',
-          subsystem: 'generation'
+          id: "solar.energy",
+          name: "Total solar energy generated",
+          label: "Total solar energy generated",
+          type: "energy",
+          unit: "kWh",
         },
-        data: solarEnergyData
+        data: solarEnergyData,
       });
     }
 
@@ -232,22 +245,22 @@ export class ReadingsProvider implements HistoryDataProvider {
         loadEnergyData.push({
           timestamp: parseDate(row.day),
           value: {
-            avg: row.loadKwh
-          }
+            avg: row.loadKwh,
+          },
         });
       }
     }
     if (loadEnergyData.length > 0) {
       series.push({
-        field: 'load_energy',
+        field: "load_energy",
         metadata: {
-          id: 'load.energy',
-          name: 'Total load energy consumed',
-          type: 'energy',
-          unit: 'kWh',
-          subsystem: 'consumption'
+          id: "load.energy",
+          name: "Total load energy consumed",
+          label: "Total load energy consumed",
+          type: "energy",
+          unit: "kWh",
         },
-        data: loadEnergyData
+        data: loadEnergyData,
       });
     }
 
@@ -258,22 +271,22 @@ export class ReadingsProvider implements HistoryDataProvider {
         socAvgData.push({
           timestamp: parseDate(row.day),
           value: {
-            avg: row.batterySocAvg
-          }
+            avg: row.batterySocAvg,
+          },
         });
       }
     }
     if (socAvgData.length > 0) {
       series.push({
-        field: 'battery_soc_avg',
+        field: "battery_soc_avg",
         metadata: {
-          id: 'battery.soc.avg',
-          name: 'Average battery state of charge',
-          type: 'percentage',
-          unit: '%',
-          subsystem: 'storage'
+          id: "battery.soc.avg",
+          name: "Average battery state of charge",
+          label: "Average battery state of charge",
+          type: "percentage",
+          unit: "%",
         },
-        data: socAvgData
+        data: socAvgData,
       });
     }
 
@@ -284,22 +297,22 @@ export class ReadingsProvider implements HistoryDataProvider {
         socMinData.push({
           timestamp: parseDate(row.day),
           value: {
-            avg: row.batterySocMin
-          }
+            avg: row.batterySocMin,
+          },
         });
       }
     }
     if (socMinData.length > 0) {
       series.push({
-        field: 'battery_soc_min',
+        field: "battery_soc_min",
         metadata: {
-          id: 'battery.soc.min',
-          name: 'Minimum battery state of charge',
-          type: 'percentage',
-          unit: '%',
-          subsystem: 'storage'
+          id: "battery.soc.min",
+          name: "Minimum battery state of charge",
+          label: "Minimum battery state of charge",
+          type: "percentage",
+          unit: "%",
         },
-        data: socMinData
+        data: socMinData,
       });
     }
 
@@ -310,27 +323,25 @@ export class ReadingsProvider implements HistoryDataProvider {
         socMaxData.push({
           timestamp: parseDate(row.day),
           value: {
-            avg: row.batterySocMax
-          }
+            avg: row.batterySocMax,
+          },
         });
       }
     }
     if (socMaxData.length > 0) {
       series.push({
-        field: 'battery_soc_max',
+        field: "battery_soc_max",
         metadata: {
-          id: 'battery.soc.max',
-          name: 'Maximum battery state of charge',
-          type: 'percentage',
-          unit: '%',
-          subsystem: 'storage'
+          id: "battery.soc.max",
+          name: "Maximum battery state of charge",
+          label: "Maximum battery state of charge",
+          type: "percentage",
+          unit: "%",
         },
-        data: socMaxData
+        data: socMaxData,
       });
     }
 
     return series;
   }
-
-
 }

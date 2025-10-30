@@ -78,56 +78,182 @@ interface SeriesConfig {
   order?: number;
 }
 
-export const SERIES_CONFIG: Record<"load" | "generation", SeriesConfig[]> = {
-  load: [
-    { id: ".ac_p", label: "A/C", color: "rgb(147, 51, 234)" }, // purple-600
-    { id: ".ev_p", label: "EV Charger", color: "rgb(239, 68, 68)" }, // red-500
-    { id: ".hws_p", label: "Hot Water", color: "rgb(251, 146, 60)" }, // orange-400
-    { id: ".pool_p", label: "Pool", color: "rgb(59, 130, 246)" }, // blue-500
-    {
-      id: ".batt_p",
-      label: "Battery Charge",
-      color: "rgb(34, 211, 238)", // cyan-400
-      dataTransform: (val: number) => (val < 0 ? Math.abs(val) : 0),
-    },
-    {
-      id: ".grid_p",
-      label: "Grid Export",
-      color: "rgb(74, 222, 128)", // green-400
-      dataTransform: (val: number) => (val < 0 ? Math.abs(val) : 0),
-    },
-    // Rest of house would be calculated separately
-    {
+// Parse series ID from new format: liveone.mondo.{systemName}.{type}.{subtype}.{extension}.{metricType}
+// Returns: { type, subtype, extension } or null if not parseable
+export function parseSeriesId(
+  seriesId: string,
+): { type: string; subtype: string; extension?: string } | null {
+  const parts = seriesId.split(".");
+
+  // Find the vendor prefix (liveone.mondo.{systemName})
+  const mondoIndex = parts.indexOf("mondo");
+  if (mondoIndex === -1) return null;
+
+  // After system name comes: type.subtype[.extension].metricType
+  const afterSystem = parts.slice(mondoIndex + 2);
+  if (afterSystem.length < 3) return null;
+
+  const type = afterSystem[0];
+  const subtype = afterSystem[1];
+
+  // Check if we have an extension (4+ parts means extension exists)
+  let extension: string | undefined;
+  if (afterSystem.length >= 4) {
+    // Everything between subtype and last part (metricType) is extension
+    extension = afterSystem.slice(2, -1).join(".");
+  }
+
+  return { type, subtype, extension };
+}
+
+// Color palettes for dynamic load discovery
+const LOAD_COLORS = [
+  "rgb(147, 51, 234)", // purple-600 (hvac)
+  "rgb(239, 68, 68)", // red-500 (ev)
+  "rgb(251, 146, 60)", // orange-400 (hws)
+  "rgb(59, 130, 246)", // blue-500 (pool)
+  "rgb(236, 72, 153)", // pink-500
+  "rgb(168, 85, 247)", // violet-500
+];
+
+// Friendly labels for known load types
+const LOAD_LABELS: Record<string, string> = {
+  hvac: "A/C",
+  ev: "EV Charger",
+  hws: "Hot Water",
+  pool: "Pool",
+  spa: "Spa",
+  oven: "Oven",
+};
+
+// Generate series configurations dynamically from available data
+export function generateSeriesConfig(
+  availableSeries: Array<{ id: string; label?: string }>,
+  mode: "load" | "generation",
+): SeriesConfig[] {
+  const configs: SeriesConfig[] = [];
+
+  if (mode === "load") {
+    // Find all load series
+    const loadSeries = availableSeries
+      .map((s) => ({ ...s, parsed: parseSeriesId(s.id) }))
+      .filter((s) => s.parsed?.type === "load");
+
+    // Create config for each load
+    loadSeries.forEach((series, idx) => {
+      const { subtype, extension } = series.parsed!;
+      const loadType = extension || subtype;
+      // Use label from API if available, otherwise fallback to lookup table or capitalized load type
+      const label =
+        series.label ||
+        LOAD_LABELS[loadType] ||
+        loadType.charAt(0).toUpperCase() + loadType.slice(1);
+      const color = LOAD_COLORS[idx % LOAD_COLORS.length];
+
+      configs.push({
+        id: series.id,
+        label,
+        color,
+      });
+    });
+
+    // Add battery charge (negative battery power)
+    const batterySeries = availableSeries.find((s) => {
+      const parsed = parseSeriesId(s.id);
+      return parsed?.type === "bidi" && parsed?.subtype === "battery";
+    });
+    if (batterySeries) {
+      configs.push({
+        id: batterySeries.id,
+        label: "Battery Charge",
+        color: "rgb(34, 211, 238)", // cyan-400
+        dataTransform: (val: number) => (val < 0 ? Math.abs(val) : 0),
+      });
+    }
+
+    // Add grid export (negative grid power)
+    const gridSeries = availableSeries.find((s) => {
+      const parsed = parseSeriesId(s.id);
+      return parsed?.type === "bidi" && parsed?.subtype === "grid";
+    });
+    if (gridSeries) {
+      configs.push({
+        id: gridSeries.id,
+        label: "Grid Export",
+        color: "rgb(74, 222, 128)", // green-400
+        dataTransform: (val: number) => (val < 0 ? Math.abs(val) : 0),
+      });
+    }
+
+    // Add rest of house placeholder
+    configs.push({
       id: "rest_of_house",
       label: "Rest of House",
-      color: "rgb(156, 163, 175)",
-    }, // gray-400
-  ],
-  generation: [
-    // Solar panels at bottom of stack (order 0 and 1)
-    {
-      id: ".solar1_p",
-      label: "Solar 1",
-      color: "rgb(254, 240, 138)",
-      order: 0,
-    }, // yellow-200
-    { id: ".solar2_p", label: "Solar 2", color: "rgb(245, 158, 11)", order: 1 }, // amber-500
-    {
-      id: ".grid_p",
-      label: "Grid Import",
-      color: "rgb(248, 113, 113)", // red-400
-      dataTransform: (val: number) => (val > 0 ? val : 0),
-      order: 2,
-    },
-    {
-      id: ".batt_p",
-      label: "Battery Discharge",
-      color: "rgb(96, 165, 250)", // blue-400
-      dataTransform: (val: number) => (val > 0 ? val : 0),
-      order: 3,
-    },
-  ],
-};
+      color: "rgb(156, 163, 175)", // gray-400
+    });
+  } else {
+    // generation mode
+    // Find solar series
+    const solarSeries = availableSeries
+      .map((s) => ({ ...s, parsed: parseSeriesId(s.id) }))
+      .filter(
+        (s) => s.parsed?.type === "source" && s.parsed?.subtype === "solar",
+      )
+      .sort((a, b) => {
+        // Sort by extension: local first, then remote
+        const aExt = a.parsed?.extension || "";
+        const bExt = b.parsed?.extension || "";
+        return aExt.localeCompare(bExt);
+      });
+
+    solarSeries.forEach((series, idx) => {
+      const extension = series.parsed?.extension || "";
+      const label = extension
+        ? `Solar ${extension.charAt(0).toUpperCase() + extension.slice(1)}`
+        : "Solar";
+      const color = idx === 0 ? "rgb(254, 240, 138)" : "rgb(245, 158, 11)"; // yellow-200 / amber-500
+
+      configs.push({
+        id: series.id,
+        label,
+        color,
+        order: idx,
+      });
+    });
+
+    // Add grid import (positive grid power)
+    const gridSeries = availableSeries.find((s) => {
+      const parsed = parseSeriesId(s.id);
+      return parsed?.type === "bidi" && parsed?.subtype === "grid";
+    });
+    if (gridSeries) {
+      configs.push({
+        id: gridSeries.id,
+        label: "Grid Import",
+        color: "rgb(248, 113, 113)", // red-400
+        dataTransform: (val: number) => (val > 0 ? val : 0),
+        order: solarSeries.length,
+      });
+    }
+
+    // Add battery discharge (positive battery power)
+    const batterySeries = availableSeries.find((s) => {
+      const parsed = parseSeriesId(s.id);
+      return parsed?.type === "bidi" && parsed?.subtype === "battery";
+    });
+    if (batterySeries) {
+      configs.push({
+        id: batterySeries.id,
+        label: "Battery Discharge",
+        color: "rgb(96, 165, 250)", // blue-400
+        dataTransform: (val: number) => (val > 0 ? val : 0),
+        order: solarSeries.length + 1,
+      });
+    }
+  }
+
+  return configs;
+}
 
 export default function MondoPowerChart({
   className = "",
@@ -173,16 +299,21 @@ export default function MondoPowerChart({
   const chartRef = useRef<any>(null);
 
   // Initialize visible series - all series visible by default
+  // We'll populate this dynamically when data arrives
   const [internalVisibleSeries, setInternalVisibleSeries] = useState<
     Set<string>
-  >(() => {
-    const allSeries = SERIES_CONFIG[mode].map((s) => s.id);
-    if (mode === "load") allSeries.push("rest_of_house");
-    return new Set(allSeries);
-  });
+  >(new Set());
 
   // Use external visibility if provided, otherwise use internal state
   const visibleSeries = externalVisibleSeries ?? internalVisibleSeries;
+
+  // Compute effective visibility - if empty, show all series
+  const effectiveVisibleSeries = useMemo(() => {
+    if (visibleSeries.size === 0 && chartData) {
+      return new Set(chartData.series.map((s) => s.id));
+    }
+    return visibleSeries;
+  }, [visibleSeries, chartData]);
 
   // Sync external hovered index with internal timestamp
   useEffect(() => {
@@ -499,13 +630,24 @@ export default function MondoPowerChart({
         // Filter to only power series
         const powerSeries = data.data.filter((d: any) => d.type === "power");
 
-        // Create a map of available series by their ID suffix
+        // Generate series configuration dynamically from available data
+        const seriesConfig = generateSeriesConfig(powerSeries, mode);
+
+        // Initialize visible series if not set yet
+        let currentVisibleSeries =
+          externalVisibleSeries ?? internalVisibleSeries;
+        if (currentVisibleSeries.size === 0) {
+          currentVisibleSeries = new Set(seriesConfig.map((s) => s.id));
+          setInternalVisibleSeries(currentVisibleSeries);
+          if (onVisibilityChange) {
+            onVisibilityChange(currentVisibleSeries);
+          }
+        }
+
+        // Create a map of available series by their full ID
         const seriesMap = new Map<string, any>();
         powerSeries.forEach((series: any) => {
-          // Extract the key part of the ID (e.g., '.ac_p' from the full ID)
-          const idParts = series.id.split(".");
-          const key = "." + idParts[idParts.length - 1];
-          seriesMap.set(key, series);
+          seriesMap.set(series.id, series);
         });
 
         // Get first available series to extract timestamps
@@ -558,7 +700,6 @@ export default function MondoPowerChart({
           .map(({ index }: { time: Date; index: number }) => index);
 
         // Build series data based on configuration
-        const seriesConfig = SERIES_CONFIG[mode];
         const seriesData: SeriesData[] = [];
 
         // For rest of house calculation, we'll need to accumulate values
@@ -594,12 +735,8 @@ export default function MondoPowerChart({
 
           // Accumulate values for rest of house calculation (load mode)
           if (mode === "load") {
-            if (
-              config.id === ".ac_p" ||
-              config.id === ".ev_p" ||
-              config.id === ".hws_p" ||
-              config.id === ".pool_p"
-            ) {
+            const parsed = parseSeriesId(config.id);
+            if (parsed?.type === "load") {
               // Accumulate measured loads
               if (!measuredLoadsSum) {
                 measuredLoadsSum = seriesValues.slice();
@@ -614,12 +751,14 @@ export default function MondoPowerChart({
                 });
               }
             } else if (
-              config.id === ".batt_p" &&
+              parsed?.type === "bidi" &&
+              parsed?.subtype === "battery" &&
               config.label === "Battery Charge"
             ) {
               batteryChargeValues = seriesValues;
             } else if (
-              config.id === ".grid_p" &&
+              parsed?.type === "bidi" &&
+              parsed?.subtype === "grid" &&
               config.label === "Grid Export"
             ) {
               gridExportValues = seriesValues;
@@ -636,42 +775,51 @@ export default function MondoPowerChart({
 
         // Calculate rest of house for load mode
         if (mode === "load") {
-          // Calculate total generation (Solar 1 + Solar 2 + Grid Import + Battery Discharge)
-          const solar1Series = seriesMap.get(".solar1_p");
-          const solar2Series = seriesMap.get(".solar2_p");
-          const gridSeries = seriesMap.get(".grid_p");
-          const battSeries = seriesMap.get(".batt_p");
+          // Find solar, grid, and battery series using the new structure
+          const solarSeriesList = Array.from(seriesMap.values()).filter((s) => {
+            const parsed = parseSeriesId(s.id);
+            return parsed?.type === "source" && parsed?.subtype === "solar";
+          });
 
-          if (solar1Series || solar2Series || gridSeries || battSeries) {
+          const gridSeries = Array.from(seriesMap.values()).find((s) => {
+            const parsed = parseSeriesId(s.id);
+            return parsed?.type === "bidi" && parsed?.subtype === "grid";
+          });
+
+          const battSeries = Array.from(seriesMap.values()).find((s) => {
+            const parsed = parseSeriesId(s.id);
+            return parsed?.type === "bidi" && parsed?.subtype === "battery";
+          });
+
+          if (solarSeriesList.length > 0 || gridSeries || battSeries) {
             totalGenerationValues = selectedIndices.map((i: number) => {
-              const solar1Raw = solar1Series
-                ? solar1Series.history.data[i]
-                : null;
-              const solar2Raw = solar2Series
-                ? solar2Series.history.data[i]
-                : null;
-              const gridValRaw = gridSeries ? gridSeries.history.data[i] : null;
-              const battValRaw = battSeries ? battSeries.history.data[i] : null;
+              // Sum all solar arrays
+              let totalSolar = 0;
+              let hasNullSolar = false;
+              for (const solarSeries of solarSeriesList) {
+                const solarRaw = solarSeries.history.data[i];
+                if (solarRaw === null) {
+                  hasNullSolar = true;
+                  break;
+                }
+                totalSolar += solarRaw / 1000; // Convert W to kW
+              }
 
-              // If any value is null, we can't calculate total
-              if (
-                solar1Raw === null ||
-                solar2Raw === null ||
-                gridValRaw === null ||
-                battValRaw === null
-              ) {
+              const gridValRaw = gridSeries ? gridSeries.history.data[i] : 0;
+              const battValRaw = battSeries ? battSeries.history.data[i] : 0;
+
+              // If any critical value is null, we can't calculate total
+              if (hasNullSolar || gridValRaw === null || battValRaw === null) {
                 return null;
               }
 
               // Convert from W to kW
-              const solar1 = solar1Raw / 1000;
-              const solar2 = solar2Raw / 1000;
               const gridVal = gridValRaw / 1000;
               const battVal = battValRaw / 1000;
 
               const gridImport = Math.max(0, gridVal);
               const battDischarge = Math.max(0, battVal);
-              return solar1 + solar2 + gridImport + battDischarge;
+              return totalSolar + gridImport + battDischarge;
             });
 
             // Calculate rest of house: Total Generation - (Measured Loads + Battery Charge + Grid Export)
@@ -766,7 +914,7 @@ export default function MondoPowerChart({
     : {
         labels: chartData.timestamps,
         datasets: chartData.series
-          .filter((series) => visibleSeries.has(series.id)) // Filter by visibility
+          .filter((series) => effectiveVisibleSeries.has(series.id)) // Filter by visibility
           .map((series, idx) => ({
             label: series.description, // Description already contains the display label
             data: series.data, // Already in kW from earlier conversion

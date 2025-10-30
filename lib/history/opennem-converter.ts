@@ -1,9 +1,9 @@
-import { MeasurementSeries } from './types';
-import { OpenNEMDataSeries } from '@/types/opennem';
-import { formatTimeAEST, formatDateAEST } from '@/lib/date-utils';
-import { formatDataArray } from './format-opennem';
-import { CalendarDate, ZonedDateTime } from '@internationalized/date';
-import { toUnixTimestamp } from '@/lib/date-utils';
+import { MeasurementSeries } from "./types";
+import { OpenNEMDataSeries } from "@/types/opennem";
+import { formatTimeAEST, formatDateAEST } from "@/lib/date-utils";
+import { formatDataArray } from "./format-opennem";
+import { CalendarDate, ZonedDateTime } from "@internationalized/date";
+import { toUnixTimestamp } from "@/lib/date-utils";
 
 /**
  * Converts MeasurementSeries data to OpenNEM format
@@ -16,12 +16,12 @@ export class OpenNEMConverter {
   static convertToOpenNEM(
     measurementSeries: MeasurementSeries[],
     fields: string[],
-    interval: '5m' | '30m' | '1d',
+    interval: "5m" | "30m" | "1d",
     vendorType: string,
     vendorSiteId: string,
     requestedStartTime?: CalendarDate | ZonedDateTime,
     requestedEndTime?: CalendarDate | ZonedDateTime,
-    shortName?: string | null
+    shortName?: string | null,
   ): OpenNEMDataSeries[] {
     // Use shortName if available, otherwise use vendorSiteId
     const systemIdentifier = shortName || vendorSiteId;
@@ -66,7 +66,7 @@ export class OpenNEMConverter {
     // Process each requested field
     for (const field of fields) {
       // Find the series for this field
-      const series = measurementSeries.find(s => s.field === field);
+      const series = measurementSeries.find((s) => s.field === field);
 
       // If field not found in data, skip it
       if (!series) {
@@ -77,7 +77,7 @@ export class OpenNEMConverter {
       let startStr: string;
       let lastStr: string;
 
-      if (interval === '1d') {
+      if (interval === "1d") {
         // Daily data uses CalendarDate
         startStr = formatDateAEST(startInterval as CalendarDate);
         lastStr = formatDateAEST(endInterval as CalendarDate);
@@ -91,7 +91,7 @@ export class OpenNEMConverter {
       const fieldData: (number | null)[] = [];
       let dataIndex = 0;
 
-      if (interval === '1d') {
+      if (interval === "1d") {
         // Daily intervals
         const startDate = startInterval as CalendarDate;
         const endDate = endInterval as CalendarDate;
@@ -124,26 +124,33 @@ export class OpenNEMConverter {
         // Minute intervals (5m or 30m)
         const startTime = startInterval as ZonedDateTime;
         const endTime = endInterval as ZonedDateTime;
-        const intervalMs = interval === '5m' ? 5 * 60 * 1000 : 30 * 60 * 1000;
+        const intervalMs = interval === "5m" ? 5 * 60 * 1000 : 30 * 60 * 1000;
 
         const startMs = toUnixTimestamp(startTime) * 1000;
         const endMs = toUnixTimestamp(endTime) * 1000;
 
         // Calculate first and last interval boundaries
         // If startMs is already on a boundary, use it; otherwise round up to next boundary
-        const firstIntervalEnd = startMs % intervalMs === 0
-          ? startMs
-          : Math.floor(startMs / intervalMs) * intervalMs + intervalMs;
-        const lastIntervalEnd = endMs % intervalMs === 0
-          ? endMs
-          : Math.floor(endMs / intervalMs) * intervalMs + intervalMs;
+        const firstIntervalEnd =
+          startMs % intervalMs === 0
+            ? startMs
+            : Math.floor(startMs / intervalMs) * intervalMs + intervalMs;
+        const lastIntervalEnd =
+          endMs % intervalMs === 0
+            ? endMs
+            : Math.floor(endMs / intervalMs) * intervalMs + intervalMs;
 
         // Walk through all expected intervals
-        for (let expectedIntervalEnd = firstIntervalEnd; expectedIntervalEnd <= lastIntervalEnd; expectedIntervalEnd += intervalMs) {
+        for (
+          let expectedIntervalEnd = firstIntervalEnd;
+          expectedIntervalEnd <= lastIntervalEnd;
+          expectedIntervalEnd += intervalMs
+        ) {
           // Check if we have data for this interval
           if (dataIndex < series.data.length) {
             const dataPoint = series.data[dataIndex];
-            const dataTimestamp = toUnixTimestamp(dataPoint.timestamp as ZonedDateTime) * 1000;
+            const dataTimestamp =
+              toUnixTimestamp(dataPoint.timestamp as ZonedDateTime) * 1000;
 
             // Data from aggregated tables is already aligned to interval boundaries,
             // so we just use it directly. Only round for raw data that might be off-boundary.
@@ -169,7 +176,7 @@ export class OpenNEMConverter {
       const fieldId = metadata.id;
       const type = metadata.type;
       const units = metadata.unit;
-      const description = metadata.name;
+      const label = metadata.label;
 
       dataSeries.push({
         id: `liveone.${remoteSystemIdentifier}.${fieldId}`,
@@ -179,11 +186,11 @@ export class OpenNEMConverter {
           start: startStr,
           last: lastStr,
           interval,
-          data: formatDataArray(fieldData)
+          data: formatDataArray(fieldData),
         },
-        network: 'liveone',
+        network: "liveone",
         source: vendorType,
-        description
+        label,
       });
     }
 
