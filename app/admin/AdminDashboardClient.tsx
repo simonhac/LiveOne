@@ -304,7 +304,7 @@ export default function AdminDashboardClient() {
     updates: { displayName?: string; shortName?: string | null },
   ) => {
     try {
-      const response = await fetch(`/api/admin/systems/${systemId}/rename`, {
+      const response = await fetch(`/api/admin/systems/${systemId}/settings`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",

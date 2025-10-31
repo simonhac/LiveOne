@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { JsonView, darkStyles, allExpanded } from "react-json-view-lite";
 import "react-json-view-lite/dist/index.css";
+import CapabilitiesTab from "./CapabilitiesTab";
 
 interface SystemSettingsDialogProps {
   isOpen: boolean;
@@ -34,16 +35,29 @@ export default function SystemSettingsDialog({
   );
   const [isNameDirty, setIsNameDirty] = useState(false);
   const [isShortNameDirty, setIsShortNameDirty] = useState(false);
+  const [isCapabilitiesDirty, setIsCapabilitiesDirty] = useState(false);
   const [shortNameError, setShortNameError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState<"general" | "capabilities">(
+    "general",
+  );
+  const capabilitiesSaveRef = useRef<(() => Promise<string[]>) | null>(null);
 
+  // Reset form when modal opens or system ID changes (but not when system data updates)
   useEffect(() => {
-    setEditedName(system?.displayName || "");
-    setEditedShortName(system?.shortName || "");
-    setIsNameDirty(false);
-    setIsShortNameDirty(false);
-    setShortNameError(null);
-  }, [system, isOpen]);
+    if (isOpen) {
+      // Initialize form with current system data
+      setEditedName(system?.displayName || "");
+      setEditedShortName(system?.shortName || "");
+      setIsNameDirty(false);
+      setIsShortNameDirty(false);
+      setIsCapabilitiesDirty(false);
+      setShortNameError(null);
+    } else {
+      // Reset tab to general when modal closes (prevents flash on next open)
+      setActiveTab("general");
+    }
+  }, [isOpen, system?.systemId]); // Only depend on isOpen and systemId, not entire system object
 
   const validateShortName = (value: string): string | null => {
     if (!value) return null; // Empty is valid (optional field)
@@ -67,32 +81,68 @@ export default function SystemSettingsDialog({
     setShortNameError(validateShortName(value));
   };
 
-  const hasChanges = isNameDirty || isShortNameDirty;
+  const hasChanges = isNameDirty || isShortNameDirty || isCapabilitiesDirty;
+  const hasGeneralChanges = isNameDirty || isShortNameDirty;
 
   const handleSave = async () => {
     if (!hasChanges || !system || shortNameError) return;
 
     setIsSaving(true);
     try {
-      const updates: { displayName?: string; shortName?: string | null } = {};
-      if (isNameDirty) updates.displayName = editedName;
-      if (isShortNameDirty) updates.shortName = editedShortName || null;
+      // Build the settings update object
+      const settings: {
+        displayName?: string;
+        shortName?: string | null;
+        capabilities?: string[];
+      } = {};
 
-      await onUpdate(system.systemId, updates);
+      if (isNameDirty) settings.displayName = editedName;
+      if (isShortNameDirty) settings.shortName = editedShortName || null;
+      if (isCapabilitiesDirty && capabilitiesSaveRef.current) {
+        // Get capabilities from the tab
+        const capabilitiesData = await capabilitiesSaveRef.current();
+        settings.capabilities = capabilitiesData;
+      }
+
+      console.log("Settings to save:", settings);
+
+      // Save all settings in a single API call
+      const response = await fetch(
+        `/api/admin/systems/${system.systemId}/settings`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(settings),
+        },
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to update system settings");
+      }
+
+      // Update parent component with new values
+      if (isNameDirty || isShortNameDirty) {
+        const updates: { displayName?: string; shortName?: string | null } = {};
+        if (isNameDirty) updates.displayName = editedName;
+        if (isShortNameDirty) updates.shortName = editedShortName || null;
+        await onUpdate(system.systemId, updates);
+      }
 
       // Reset dirty flags
       setIsNameDirty(false);
       setIsShortNameDirty(false);
+      setIsCapabilitiesDirty(false);
 
       // Close modal on successful save
       onClose();
     } catch (error) {
       console.error("Failed to update system settings:", error);
       // Check if it's a uniqueness error
-      if (
-        error instanceof Error &&
-        error.message.includes("UNIQUE constraint failed")
-      ) {
+      if (error instanceof Error && error.message.includes("already in use")) {
         setShortNameError(`Short name "${editedShortName}" is already in use`);
       }
     } finally {
@@ -158,67 +208,123 @@ export default function SystemSettingsDialog({
             </button>
           </div>
 
-          {/* Content */}
-          <div className="px-6 py-4 space-y-4">
-            {/* Name field */}
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Display Name
-              </label>
-              <input
-                type="text"
-                value={editedName}
-                onChange={(e) => handleNameChange(e.target.value)}
-                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                disabled={isSaving}
-              />
+          {/* Tabs */}
+          <div className="border-b border-gray-700">
+            <div className="flex items-end -mb-px px-6">
+              <button
+                onClick={() => setActiveTab("general")}
+                className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+                  activeTab === "general"
+                    ? "text-white border-blue-500 bg-gray-700/50"
+                    : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
+                }`}
+              >
+                General
+                {hasGeneralChanges && (
+                  <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
+                )}
+              </button>
+              <button
+                onClick={() => setActiveTab("capabilities")}
+                className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+                  activeTab === "capabilities"
+                    ? "text-white border-blue-500 bg-gray-700/50"
+                    : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
+                }`}
+              >
+                Capabilities
+                {isCapabilitiesDirty && (
+                  <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
+                )}
+              </button>
             </div>
+          </div>
 
-            {/* Short Name field */}
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Short Name (optional)
-              </label>
-              <p className="text-xs text-gray-400 mb-2">
-                Used as an alias in URLs and series names. Only letters, digits,
-                and underscores and must contain at least one non-numeric
-                character. Must be unique across all systems.
-              </p>
-              <input
-                type="text"
-                value={editedShortName}
-                onChange={(e) => handleShortNameChange(e.target.value)}
-                placeholder="e.g., racv_kinkora"
-                className={`w-full px-3 py-2 bg-gray-900 border ${
-                  shortNameError ? "border-red-500" : "border-gray-700"
-                } rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
-                disabled={isSaving}
-              />
-              {shortNameError && (
-                <p className="text-xs text-red-400 mt-1">{shortNameError}</p>
+          {/* Content */}
+          <div className="px-6 py-4 space-y-4 min-h-[400px] max-h-[400px] overflow-y-auto">
+            {/* General Tab Content */}
+            <div className={activeTab === "general" ? "" : "hidden"}>
+              {/* Name field */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Display Name
+                </label>
+                <input
+                  type="text"
+                  value={editedName}
+                  onChange={(e) => handleNameChange(e.target.value)}
+                  onBlur={(e) => {
+                    const withoutTrailingSpaces = e.target.value.replace(
+                      /\s+$/,
+                      "",
+                    );
+                    if (withoutTrailingSpaces !== e.target.value) {
+                      handleNameChange(withoutTrailingSpaces);
+                    }
+                  }}
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={isSaving}
+                />
+              </div>
+
+              {/* Short Name field */}
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Short Name (optional)
+                </label>
+                <p className="text-xs text-gray-400 mb-2">
+                  Used as an alias in URLs and series names. Only letters,
+                  digits, and underscores and must contain at least one
+                  non-numeric character. Must be unique across all systems.
+                </p>
+                <input
+                  type="text"
+                  value={editedShortName}
+                  onChange={(e) => handleShortNameChange(e.target.value)}
+                  placeholder="e.g., racv_kinkora"
+                  className={`w-full px-3 py-2 bg-gray-900 border ${
+                    shortNameError ? "border-red-500" : "border-gray-700"
+                  } rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
+                  disabled={isSaving}
+                />
+                {shortNameError && (
+                  <p className="text-xs text-red-400 mt-1">{shortNameError}</p>
+                )}
+              </div>
+
+              {/* Composite metadata view - only show for composite systems */}
+              {system.vendorType === "composite" && system.metadata && (
+                <div className="mt-4">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Composite System Configuration
+                  </label>
+                  <p className="text-xs text-gray-400 mb-2">
+                    This system combines data from multiple source systems.
+                  </p>
+                  <div className="bg-gray-950 border border-gray-700 rounded-lg overflow-hidden">
+                    <div className="overflow-x-auto font-mono text-xs p-3">
+                      <JsonView
+                        data={system.metadata}
+                        shouldExpandNode={allExpanded}
+                        style={darkStyles}
+                      />
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
 
-            {/* Composite metadata view - only show for composite systems */}
-            {system.vendorType === "composite" && system.metadata && (
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Composite System Configuration
-                </label>
-                <p className="text-xs text-gray-400 mb-2">
-                  This system combines data from multiple source systems.
-                </p>
-                <div className="bg-gray-950 border border-gray-700 rounded-lg overflow-hidden">
-                  <div className="overflow-x-auto font-mono text-xs p-3">
-                    <JsonView
-                      data={system.metadata}
-                      shouldExpandNode={allExpanded}
-                      style={darkStyles}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
+            {/* Capabilities Tab Content */}
+            <div className={activeTab === "capabilities" ? "" : "hidden"}>
+              <CapabilitiesTab
+                systemId={system.systemId}
+                shouldLoad={isOpen}
+                onDirtyChange={setIsCapabilitiesDirty}
+                onSaveFunctionReady={(fn) => {
+                  capabilitiesSaveRef.current = fn;
+                }}
+              />
+            </div>
           </div>
 
           {/* Footer */}
