@@ -19,6 +19,7 @@ interface PointInfo {
   metricUnit: string | null;
   vendorSiteId?: string;
   systemShortName?: string;
+  vendorType?: string;
 }
 
 interface PointInfoModalProps {
@@ -190,7 +191,7 @@ export default function PointInfoModal({
       />
 
       {/* Dialog */}
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[10001] w-full max-w-xl">
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[10001] w-full max-w-3xl">
         <div
           className="bg-gray-800 border border-gray-700 rounded-lg shadow-xl"
           onKeyDown={handleKeyDown}
@@ -218,9 +219,23 @@ export default function PointInfoModal({
 
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Vendor Site ID:
+                  Vendor:
                 </label>
-                <div className="px-2 text-gray-400 font-mono text-sm flex-1">
+                <div className="px-2 text-gray-400 text-sm flex-1">
+                  {pointInfo.vendorType || "N/A"}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
+                  Site ID:
+                </label>
+                <div className="px-2 text-gray-400 font-mono text-sm flex-1 whitespace-nowrap">
+                  {pointInfo.systemShortName && (
+                    <span className="text-gray-300">
+                      {pointInfo.systemShortName}{" "}
+                    </span>
+                  )}
                   {pointInfo.vendorSiteId || "N/A"}
                 </div>
               </div>
@@ -229,17 +244,11 @@ export default function PointInfoModal({
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
                   Point ID:
                 </label>
-                <div className="px-2 text-gray-400 font-mono text-sm flex-1">
+                <div className="px-2 text-gray-400 font-mono text-sm flex-1 whitespace-nowrap">
+                  <span className="text-gray-300">
+                    {pointInfo.defaultName}{" "}
+                  </span>
                   {pointInfo.pointId}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Name:
-                </label>
-                <div className="px-2 text-gray-400 text-sm flex-1">
-                  {pointInfo.defaultName}
                 </div>
               </div>
 
@@ -263,19 +272,11 @@ export default function PointInfoModal({
 
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Metric Type:
+                  Type and unit:
                 </label>
                 <div className="px-2 text-gray-400 text-sm flex-1">
                   {pointInfo.metricType}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Metric Unit:
-                </label>
-                <div className="px-2 text-gray-400 text-sm flex-1">
-                  {pointInfo.metricUnit || "N/A"}
+                  {pointInfo.metricUnit && ` (${pointInfo.metricUnit})`}
                 </div>
               </div>
             </div>

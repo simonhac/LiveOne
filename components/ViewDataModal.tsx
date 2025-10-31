@@ -61,6 +61,7 @@ export default function ViewDataModal({
     metricUnit: string | null;
     vendorSiteId: string;
     systemShortName?: string;
+    vendorType?: string;
   } | null>(null);
   const [isPointInfoModalOpen, setIsPointInfoModalOpen] = useState(false);
   const [hoveredColumnIndex, setHoveredColumnIndex] = useState<number | null>(
@@ -146,6 +147,7 @@ export default function ViewDataModal({
       metricUnit: header.unit,
       vendorSiteId: vendorSiteId,
       systemShortName: metadata?.systemShortName || undefined,
+      vendorType: vendorType,
     });
     setIsPointInfoModalOpen(true);
   };
