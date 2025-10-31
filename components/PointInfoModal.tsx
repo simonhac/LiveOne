@@ -211,8 +211,8 @@ export default function PointInfoModal({
           {/* Content */}
           <div className="px-6 py-4 space-y-4">
             {/* Original Metadata - Non-editable fields */}
-            <div className="border border-gray-600 rounded-md p-3 bg-gray-800/30 space-y-1">
-              <div className="text-xs font-medium text-gray-400 mb-1">
+            <div className="border border-gray-600 rounded-md p-3 bg-gray-800/30">
+              <div className="text-xs font-medium text-gray-400 mb-2">
                 Original Metadata
               </div>
 
@@ -220,7 +220,7 @@ export default function PointInfoModal({
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
                   Vendor Site ID:
                 </label>
-                <div className="px-2 py-1 text-gray-400 font-mono text-sm flex-1">
+                <div className="px-2 text-gray-400 font-mono text-sm flex-1">
                   {pointInfo.vendorSiteId || "N/A"}
                 </div>
               </div>
@@ -229,7 +229,7 @@ export default function PointInfoModal({
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
                   Point ID:
                 </label>
-                <div className="px-2 py-1 text-gray-400 font-mono text-sm flex-1">
+                <div className="px-2 text-gray-400 font-mono text-sm flex-1">
                   {pointInfo.pointId}
                 </div>
               </div>
@@ -238,7 +238,7 @@ export default function PointInfoModal({
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
                   Name:
                 </label>
-                <div className="px-2 py-1 text-gray-400 text-sm flex-1">
+                <div className="px-2 text-gray-400 text-sm flex-1">
                   {pointInfo.defaultName}
                 </div>
               </div>
@@ -247,7 +247,7 @@ export default function PointInfoModal({
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
                   Point Sub ID:
                 </label>
-                <div className="px-2 py-1 text-gray-400 font-mono text-sm flex-1">
+                <div className="px-2 text-gray-400 font-mono text-sm flex-1">
                   {pointInfo.pointSubId || "N/A"}
                 </div>
               </div>
@@ -256,7 +256,7 @@ export default function PointInfoModal({
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
                   Subsystem:
                 </label>
-                <div className="px-2 py-1 text-gray-400 text-sm flex-1">
+                <div className="px-2 text-gray-400 text-sm flex-1">
                   {pointInfo.subsystem || "N/A"}
                 </div>
               </div>
@@ -265,7 +265,7 @@ export default function PointInfoModal({
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
                   Metric Type:
                 </label>
-                <div className="px-2 py-1 text-gray-400 text-sm flex-1">
+                <div className="px-2 text-gray-400 text-sm flex-1">
                   {pointInfo.metricType}
                 </div>
               </div>
@@ -274,7 +274,7 @@ export default function PointInfoModal({
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
                   Metric Unit:
                 </label>
-                <div className="px-2 py-1 text-gray-400 text-sm flex-1">
+                <div className="px-2 text-gray-400 text-sm flex-1">
                   {pointInfo.metricUnit || "N/A"}
                 </div>
               </div>

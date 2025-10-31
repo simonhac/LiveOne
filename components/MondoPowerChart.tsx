@@ -154,7 +154,16 @@ export function generateSeriesConfig(
         id: series.id,
         label,
         color,
+        order: idx,
       });
+    });
+
+    // Add rest of house placeholder (after loads)
+    configs.push({
+      id: "rest_of_house",
+      label: "Rest of House",
+      color: "rgb(156, 163, 175)", // gray-400
+      order: loadSeries.length,
     });
 
     // Add battery charge (negative battery power)
@@ -168,6 +177,7 @@ export function generateSeriesConfig(
         label: "Battery Charge",
         color: "rgb(34, 211, 238)", // cyan-400
         dataTransform: (val: number) => (val < 0 ? Math.abs(val) : 0),
+        order: loadSeries.length + 1,
       });
     }
 
@@ -182,15 +192,9 @@ export function generateSeriesConfig(
         label: "Grid Export",
         color: "rgb(74, 222, 128)", // green-400
         dataTransform: (val: number) => (val < 0 ? Math.abs(val) : 0),
+        order: loadSeries.length + 2,
       });
     }
-
-    // Add rest of house placeholder
-    configs.push({
-      id: "rest_of_house",
-      label: "Rest of House",
-      color: "rgb(156, 163, 175)", // gray-400
-    });
   } else {
     // generation mode
     // Find solar series
@@ -221,22 +225,7 @@ export function generateSeriesConfig(
       });
     });
 
-    // Add grid import (positive grid power)
-    const gridSeries = availableSeries.find((s) => {
-      const parsed = parseSeriesId(s.id);
-      return parsed?.type === "bidi" && parsed?.subtype === "grid";
-    });
-    if (gridSeries) {
-      configs.push({
-        id: gridSeries.id,
-        label: "Grid Import",
-        color: "rgb(248, 113, 113)", // red-400
-        dataTransform: (val: number) => (val > 0 ? val : 0),
-        order: solarSeries.length,
-      });
-    }
-
-    // Add battery discharge (positive battery power)
+    // Add battery discharge (positive battery power) - before grid import
     const batterySeries = availableSeries.find((s) => {
       const parsed = parseSeriesId(s.id);
       return parsed?.type === "bidi" && parsed?.subtype === "battery";
@@ -246,6 +235,21 @@ export function generateSeriesConfig(
         id: batterySeries.id,
         label: "Battery Discharge",
         color: "rgb(96, 165, 250)", // blue-400
+        dataTransform: (val: number) => (val > 0 ? val : 0),
+        order: solarSeries.length,
+      });
+    }
+
+    // Add grid import (positive grid power) - after battery
+    const gridSeries = availableSeries.find((s) => {
+      const parsed = parseSeriesId(s.id);
+      return parsed?.type === "bidi" && parsed?.subtype === "grid";
+    });
+    if (gridSeries) {
+      configs.push({
+        id: gridSeries.id,
+        label: "Grid Import",
+        color: "rgb(248, 113, 113)", // red-400
         dataTransform: (val: number) => (val > 0 ? val : 0),
         order: solarSeries.length + 1,
       });
@@ -863,14 +867,12 @@ export default function MondoPowerChart({
           }
         }
 
-        // Sort by order if specified (for generation mode)
-        if (mode === "generation") {
-          seriesData.sort((a, b) => {
-            const aConfig = seriesConfig.find((c) => c.id === a.id);
-            const bConfig = seriesConfig.find((c) => c.id === b.id);
-            return (aConfig?.order ?? 999) - (bConfig?.order ?? 999);
-          });
-        }
+        // Sort by order property
+        seriesData.sort((a, b) => {
+          const aConfig = seriesConfig.find((c) => c.id === a.id);
+          const bConfig = seriesConfig.find((c) => c.id === b.id);
+          return (aConfig?.order ?? 999) - (bConfig?.order ?? 999);
+        });
 
         if (seriesData.length === 0) {
           throw new Error("No data series available for the selected mode");
