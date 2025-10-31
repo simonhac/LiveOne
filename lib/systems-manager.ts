@@ -1,9 +1,9 @@
-import { db } from '@/lib/db';
-import { systems, userSystems, pollingStatus } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
-import type { InferSelectModel } from 'drizzle-orm';
-import { isUserAdmin } from '@/lib/auth-utils';
-import { clerkClient } from '@clerk/nextjs/server';
+import { db } from "@/lib/db";
+import { systems, userSystems, pollingStatus } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import type { InferSelectModel } from "drizzle-orm";
+import { isUserAdmin } from "@/lib/auth-utils";
+import { clerkClient } from "@clerk/nextjs/server";
 
 // Export the type for a system from the database
 export type System = InferSelectModel<typeof systems>;
@@ -58,7 +58,7 @@ export class SystemsManager {
   static clearInstance(): void {
     SystemsManager.instance = null;
   }
-  
+
   /**
    * Load all systems with polling status into cache (called once on instantiation)
    */
@@ -73,16 +73,20 @@ export class SystemsManager {
     for (const row of allSystemsWithPolling) {
       const systemWithPolling: SystemWithPolling = {
         ...row.systems,
-        pollingStatus: row.polling_status
+        pollingStatus: row.polling_status,
       };
       this.systemsMap.set(row.systems.id, systemWithPolling);
     }
 
     const allSystemsArray = Array.from(this.systemsMap.values());
-    const activeCount = allSystemsArray.filter(s => s.status === 'active').length;
-    console.log(`[SystemsManager] DB HIT: Loaded ${allSystemsArray.length} systems (${activeCount} active) from database`);
+    const activeCount = allSystemsArray.filter(
+      (s) => s.status === "active",
+    ).length;
+    console.log(
+      `[SystemsManager] DB HIT: Loaded ${allSystemsArray.length} systems (${activeCount} active) from database`,
+    );
   }
-  
+
   /**
    * Get system details by ID (with polling status)
    */
@@ -90,11 +94,13 @@ export class SystemsManager {
     await this.loadPromise;
     return this.systemsMap.get(systemId) || null;
   }
-  
+
   /**
    * Get system by vendor site ID
    */
-  async getSystemByVendorSiteId(vendorSiteId: string): Promise<SystemWithPolling | null> {
+  async getSystemByVendorSiteId(
+    vendorSiteId: string,
+  ): Promise<SystemWithPolling | null> {
     await this.loadPromise;
     for (const system of this.systemsMap.values()) {
       if (system.vendorSiteId === vendorSiteId) {
@@ -103,15 +109,32 @@ export class SystemsManager {
     }
     return null;
   }
-  
+
+  /**
+   * Get system by short name
+   */
+  async getSystemByShortName(
+    shortName: string,
+  ): Promise<SystemWithPolling | null> {
+    await this.loadPromise;
+    for (const system of this.systemsMap.values()) {
+      if (system.shortName === shortName) {
+        return system;
+      }
+    }
+    return null;
+  }
+
   /**
    * Get all active systems only
    */
   async getActiveSystems(): Promise<SystemWithPolling[]> {
     await this.loadPromise;
-    return Array.from(this.systemsMap.values()).filter(s => s.status === 'active');
+    return Array.from(this.systemsMap.values()).filter(
+      (s) => s.status === "active",
+    );
   }
-  
+
   /**
    * Get all systems (including inactive)
    */
@@ -119,26 +142,26 @@ export class SystemsManager {
     await this.loadPromise;
     return Array.from(this.systemsMap.values());
   }
-  
+
   /**
    * Get multiple systems by IDs
    */
   async getSystems(systemIds: number[]): Promise<SystemWithPolling[]> {
     await this.loadPromise;
     return systemIds
-      .map(id => this.systemsMap.get(id))
-      .filter(system => system !== undefined);
+      .map((id) => this.systemsMap.get(id))
+      .filter((system) => system !== undefined);
   }
-  
+
   /**
    * Check if a system exists and is active
    */
   async systemIsActive(systemId: number): Promise<boolean> {
     await this.loadPromise;
     const system = this.systemsMap.get(systemId);
-    return system ? system.status === 'active' : false;
+    return system ? system.status === "active" : false;
   }
-  
+
   /**
    * Check if a system exists (any status)
    */
@@ -146,7 +169,7 @@ export class SystemsManager {
     await this.loadPromise;
     return this.systemsMap.has(systemId);
   }
-  
+
   /**
    * Get all systems visible to a user (for dropdown menus, etc.)
    * - Admins see all active systems
@@ -157,49 +180,53 @@ export class SystemsManager {
   async getSystemsVisibleByUser(userId: string, activeOnly: boolean = true) {
     await this.loadPromise;
     const isAdmin = await isUserAdmin();
-    
+
     let visibleSystems: SystemWithPolling[] = [];
     const allSystemsArray = Array.from(this.systemsMap.values());
-    
+
     if (isAdmin) {
       // Admins see all systems (optionally filtered by status)
       visibleSystems = allSystemsArray
-        .filter(s => !activeOnly || s.status === 'active')
-        .filter(s => s.displayName && s.vendorSiteId); // Must have display name and vendor site ID
+        .filter((s) => !activeOnly || s.status === "active")
+        .filter((s) => s.displayName && s.vendorSiteId); // Must have display name and vendor site ID
     } else {
       // Get systems the user owns
-      const ownedSystems = allSystemsArray.filter(s => s.ownerClerkUserId === userId);
-      
+      const ownedSystems = allSystemsArray.filter(
+        (s) => s.ownerClerkUserId === userId,
+      );
+
       // Get systems the user has been granted access to
       const grantedAccess = await db
         .select()
         .from(userSystems)
         .where(eq(userSystems.clerkUserId, userId));
-      
-      const grantedSystemIds = new Set(grantedAccess.map(ua => ua.systemId));
-      
+
+      const grantedSystemIds = new Set(grantedAccess.map((ua) => ua.systemId));
+
       // Combine owned and granted systems
       const userVisibleSystems = [
         ...ownedSystems,
-        ...allSystemsArray.filter(s => grantedSystemIds.has(s.id) && s.ownerClerkUserId !== userId)
+        ...allSystemsArray.filter(
+          (s) => grantedSystemIds.has(s.id) && s.ownerClerkUserId !== userId,
+        ),
       ];
-      
+
       // Filter by status and required fields
       visibleSystems = userVisibleSystems
-        .filter(s => !activeOnly || s.status === 'active')
-        .filter(s => s.displayName && s.vendorSiteId);
+        .filter((s) => !activeOnly || s.status === "active")
+        .filter((s) => s.displayName && s.vendorSiteId);
     }
-    
+
     // Sort by display name and return simplified objects
     return visibleSystems
       .sort((a, b) => a.displayName.localeCompare(b.displayName))
-      .map(s => ({
+      .map((s) => ({
         id: s.id,
         displayName: s.displayName,
         vendorSiteId: s.vendorSiteId,
         vendorType: s.vendorType,
         status: s.status,
-        ownerClerkUserId: s.ownerClerkUserId
+        ownerClerkUserId: s.ownerClerkUserId,
       }));
   }
 }

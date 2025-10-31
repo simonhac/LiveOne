@@ -16,6 +16,7 @@ import SessionTimeoutModal from "@/components/SessionTimeoutModal";
 import { AddSystemDialog } from "@/components/AddSystemDialog";
 import SystemsMenu from "@/components/SystemsMenu";
 import ViewDataModal from "@/components/ViewDataModal";
+import SystemSettingsDialog from "@/components/SystemSettingsDialog";
 import MondoPowerChart, { type ChartData } from "@/components/MondoPowerChart";
 import EnergyTable from "@/components/EnergyTable";
 import { fetchAndProcessMondoData } from "@/lib/mondo-data-processor";
@@ -192,6 +193,8 @@ export default function DashboardClient({
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [showTestConnection, setShowTestConnection] = useState(false);
   const [showAddSystemDialog, setShowAddSystemDialog] = useState(false);
+  const [showSystemSettingsDialog, setShowSystemSettingsDialog] =
+    useState(false);
   const [serverError, setServerError] = useState<{
     type: "connection" | "server" | null;
     details?: string;
@@ -570,6 +573,27 @@ export default function DashboardClient({
     router.push("/sign-in");
   };
 
+  const handleUpdateSystemSettings = async (
+    systemId: number,
+    updates: { displayName?: string; shortName?: string | null },
+  ) => {
+    const response = await fetch(`/api/systems/${systemId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(updates),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || "Failed to update system settings");
+    }
+
+    // Refresh the page to show updated data
+    router.refresh();
+  };
+
   // Handle series visibility toggle with special logic
   const handleLoadSeriesToggle = (seriesId: string, shiftKey: boolean) => {
     const allSeriesIds = loadChartData?.series.map((s) => s.id) ?? [];
@@ -688,6 +712,8 @@ export default function DashboardClient({
             isAdmin={isAdmin}
             systemStatus={system?.status}
             userId={userId}
+            onAddSystem={() => setShowAddSystemDialog(true)}
+            onSystemSettings={() => setShowSystemSettingsDialog(true)}
           />
 
           {/* Desktop Layout */}
@@ -795,6 +821,18 @@ export default function DashboardClient({
                             >
                               <Plus className="w-4 h-4" />
                               Add System…
+                            </button>
+
+                            {/* System Settings */}
+                            <button
+                              onClick={() => {
+                                setShowSettingsDropdown(false);
+                                setShowSystemSettingsDialog(true);
+                              }}
+                              className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
+                            >
+                              <SettingsIcon className="w-4 h-4" />
+                              System Settings
                             </button>
                           </>
                         );
@@ -1322,6 +1360,22 @@ export default function DashboardClient({
           systemName={data?.displayName || system?.displayName || "System"}
           vendorType={data?.vendorType || system?.vendorType}
           vendorSiteId={data?.vendorSiteId || system?.vendorSiteId || ""}
+        />
+      )}
+
+      {/* System Settings Dialog */}
+      {system && (
+        <SystemSettingsDialog
+          isOpen={showSystemSettingsDialog}
+          onClose={() => setShowSystemSettingsDialog(false)}
+          system={{
+            systemId: system.id,
+            displayName: system.displayName,
+            shortName: system.shortName,
+            vendorType: system.vendorType,
+            metadata: system.metadata,
+          }}
+          onUpdate={handleUpdateSystemSettings}
         />
       )}
     </div>

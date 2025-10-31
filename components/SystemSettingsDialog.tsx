@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { X, CheckCircle2, XCircle } from "lucide-react";
+import { X } from "lucide-react";
 import { JsonView, darkStyles, allExpanded } from "react-json-view-lite";
 import "react-json-view-lite/dist/index.css";
 
@@ -50,6 +50,9 @@ export default function SystemSettingsDialog({
     if (!/^[a-zA-Z0-9_]+$/.test(value)) {
       return "Only letters, digits, and underscores are allowed";
     }
+    if (/^\d+$/.test(value)) {
+      return "Must contain at least one non-numeric character";
+    }
     return null;
   };
 
@@ -64,53 +67,70 @@ export default function SystemSettingsDialog({
     setShortNameError(validateShortName(value));
   };
 
-  const handleSaveName = async () => {
-    if (!isNameDirty || !system) return;
+  const hasChanges = isNameDirty || isShortNameDirty;
+
+  const handleSave = async () => {
+    if (!hasChanges || !system || shortNameError) return;
 
     setIsSaving(true);
     try {
-      await onUpdate(system.systemId, { displayName: editedName });
+      const updates: { displayName?: string; shortName?: string | null } = {};
+      if (isNameDirty) updates.displayName = editedName;
+      if (isShortNameDirty) updates.shortName = editedShortName || null;
+
+      await onUpdate(system.systemId, updates);
+
+      // Reset dirty flags
       setIsNameDirty(false);
-    } catch (error) {
-      console.error("Failed to update system name:", error);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleSaveShortName = async () => {
-    if (!isShortNameDirty || !system || shortNameError) return;
-
-    setIsSaving(true);
-    try {
-      await onUpdate(system.systemId, { shortName: editedShortName || null });
       setIsShortNameDirty(false);
+
+      // Close modal on successful save
+      onClose();
     } catch (error) {
-      console.error("Failed to update system short name:", error);
+      console.error("Failed to update system settings:", error);
       // Check if it's a uniqueness error
       if (
         error instanceof Error &&
         error.message.includes("UNIQUE constraint failed")
       ) {
-        setShortNameError(
-          `Short name "${editedShortName}" is already in use for ${system.vendorType} systems`,
-        );
+        setShortNameError(`Short name "${editedShortName}" is already in use`);
       }
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleCancelName = () => {
+  const handleCancel = () => {
     setEditedName(system?.displayName || "");
-    setIsNameDirty(false);
-  };
-
-  const handleCancelShortName = () => {
     setEditedShortName(system?.shortName || "");
+    setIsNameDirty(false);
     setIsShortNameDirty(false);
     setShortNameError(null);
+    onClose();
   };
+
+  // Handle keyboard shortcuts globally when modal is open
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        handleCancel();
+      } else if (
+        e.key === "Enter" &&
+        hasChanges &&
+        !isSaving &&
+        !shortNameError
+      ) {
+        e.preventDefault();
+        handleSave();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, hasChanges, isSaving, shortNameError, handleCancel, handleSave]);
 
   if (!isOpen || !system || typeof document === "undefined") return null;
 
@@ -145,42 +165,13 @@ export default function SystemSettingsDialog({
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 Display Name
               </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={editedName}
-                  onChange={(e) => handleNameChange(e.target.value)}
-                  className="flex-1 px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={isSaving}
-                />
-                {/* Always reserve space for buttons to prevent layout shift */}
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={handleSaveName}
-                    disabled={isSaving || !isNameDirty}
-                    className={`p-1 rounded-full transition-all ${
-                      isNameDirty
-                        ? "text-green-500 hover:text-green-400 cursor-pointer"
-                        : "text-gray-800 cursor-default"
-                    } disabled:opacity-50`}
-                    title="Save"
-                  >
-                    <CheckCircle2 className="w-6 h-6" />
-                  </button>
-                  <button
-                    onClick={handleCancelName}
-                    disabled={isSaving || !isNameDirty}
-                    className={`p-1 rounded-full transition-all ${
-                      isNameDirty
-                        ? "text-red-500 hover:text-red-400 cursor-pointer"
-                        : "text-gray-800 cursor-default"
-                    } disabled:opacity-50`}
-                    title="Cancel"
-                  >
-                    <XCircle className="w-6 h-6" />
-                  </button>
-                </div>
-              </div>
+              <input
+                type="text"
+                value={editedName}
+                onChange={(e) => handleNameChange(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                disabled={isSaving}
+              />
             </div>
 
             {/* Short Name field */}
@@ -189,48 +180,20 @@ export default function SystemSettingsDialog({
                 Short Name (optional)
               </label>
               <p className="text-xs text-gray-400 mb-2">
-                Used in history API IDs. Only letters, digits, and underscores.
-                Must be unique for {system?.vendorType} systems.
+                Used as an alias in URLs and series names. Only letters, digits,
+                and underscores and must contain at least one non-numeric
+                character. Must be unique across all systems.
               </p>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={editedShortName}
-                  onChange={(e) => handleShortNameChange(e.target.value)}
-                  placeholder="e.g., racv_kinkora"
-                  className={`flex-1 px-3 py-2 bg-gray-900 border ${
-                    shortNameError ? "border-red-500" : "border-gray-700"
-                  } rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
-                  disabled={isSaving}
-                />
-                {/* Always reserve space for buttons to prevent layout shift */}
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={handleSaveShortName}
-                    disabled={isSaving || !isShortNameDirty || !!shortNameError}
-                    className={`p-1 rounded-full transition-all ${
-                      isShortNameDirty && !shortNameError
-                        ? "text-green-500 hover:text-green-400 cursor-pointer"
-                        : "text-gray-800 cursor-default"
-                    } disabled:opacity-50`}
-                    title="Save"
-                  >
-                    <CheckCircle2 className="w-6 h-6" />
-                  </button>
-                  <button
-                    onClick={handleCancelShortName}
-                    disabled={isSaving || !isShortNameDirty}
-                    className={`p-1 rounded-full transition-all ${
-                      isShortNameDirty
-                        ? "text-red-500 hover:text-red-400 cursor-pointer"
-                        : "text-gray-800 cursor-default"
-                    } disabled:opacity-50`}
-                    title="Cancel"
-                  >
-                    <XCircle className="w-6 h-6" />
-                  </button>
-                </div>
-              </div>
+              <input
+                type="text"
+                value={editedShortName}
+                onChange={(e) => handleShortNameChange(e.target.value)}
+                placeholder="e.g., racv_kinkora"
+                className={`w-full px-3 py-2 bg-gray-900 border ${
+                  shortNameError ? "border-red-500" : "border-gray-700"
+                } rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
+                disabled={isSaving}
+              />
               {shortNameError && (
                 <p className="text-xs text-red-400 mt-1">{shortNameError}</p>
               )}
@@ -259,12 +222,20 @@ export default function SystemSettingsDialog({
           </div>
 
           {/* Footer */}
-          <div className="px-6 py-4 border-t border-gray-700">
+          <div className="px-6 py-4 border-t border-gray-700 flex gap-3">
             <button
-              onClick={onClose}
-              className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-100 rounded-md transition-colors"
+              onClick={handleCancel}
+              className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-100 rounded-md transition-colors"
+              disabled={isSaving}
             >
-              Close
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={!hasChanges || isSaving || !!shortNameError}
+              className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSaving ? "Saving..." : "Save"}
             </button>
           </div>
         </div>

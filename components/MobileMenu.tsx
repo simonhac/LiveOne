@@ -1,41 +1,54 @@
-'use client'
+"use client";
 
-import { useState, useRef, useEffect } from 'react'
-import { Menu, X, User, LogOut, Info, ChevronDown, Settings, FlaskConical, Plus, Shield } from 'lucide-react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { useUser } from '@clerk/nextjs'
-import LastUpdateTime from './LastUpdateTime'
-import SystemsMenu from './SystemsMenu'
+import { useState, useRef, useEffect } from "react";
+import {
+  Menu,
+  X,
+  User,
+  LogOut,
+  Info,
+  ChevronDown,
+  Settings,
+  FlaskConical,
+  Plus,
+  Shield,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useUser } from "@clerk/nextjs";
+import LastUpdateTime from "./LastUpdateTime";
+import SystemsMenu from "./SystemsMenu";
 
 interface SystemInfo {
-  model?: string
-  serial?: string
-  ratings?: string
-  solarSize?: string
-  batterySize?: string
+  model?: string;
+  serial?: string;
+  ratings?: string;
+  solarSize?: string;
+  batterySize?: string;
 }
 
 interface AvailableSystem {
-  id: number
-  displayName: string
-  vendorSiteId: string
-  ownerClerkUserId?: string | null
+  id: number;
+  displayName: string;
+  vendorSiteId: string;
+  ownerClerkUserId?: string | null;
 }
 
 interface MobileMenuProps {
-  displayName: string | null
-  secondsSinceUpdate: number
-  onLogout: () => void
-  systemInfo?: SystemInfo | null
-  availableSystems?: AvailableSystem[]
-  currentSystemId?: string
-  onTestConnection?: () => void
-  vendorType?: string
-  supportsPolling?: boolean
-  isAdmin?: boolean
-  systemStatus?: 'active' | 'disabled' | 'removed'
-  userId?: string
+  displayName: string | null;
+  secondsSinceUpdate: number;
+  onLogout: () => void;
+  systemInfo?: SystemInfo | null;
+  availableSystems?: AvailableSystem[];
+  currentSystemId?: string;
+  onTestConnection?: () => void;
+  vendorType?: string;
+  supportsPolling?: boolean;
+  isAdmin?: boolean;
+  systemStatus?: "active" | "disabled" | "removed";
+  userId?: string;
+  onAddSystem?: () => void;
+  onSystemSettings?: () => void;
 }
 
 export default function MobileMenu({
@@ -50,36 +63,41 @@ export default function MobileMenu({
   supportsPolling = false,
   isAdmin = false,
   systemStatus,
-  userId
+  userId,
+  onAddSystem,
+  onSystemSettings,
 }: MobileMenuProps) {
-  const [isOpen, setIsOpen] = useState(false)
-  const [isSystemDropdownOpen, setIsSystemDropdownOpen] = useState(false)
-  const router = useRouter()
-  const dropdownRef = useRef<HTMLDivElement>(null)
-  const { user } = useUser()
+  const [isOpen, setIsOpen] = useState(false);
+  const [isSystemDropdownOpen, setIsSystemDropdownOpen] = useState(false);
+  const router = useRouter();
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const { user } = useUser();
 
-  const toggleMenu = () => setIsOpen(!isOpen)
+  const toggleMenu = () => setIsOpen(!isOpen);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsSystemDropdownOpen(false)
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsSystemDropdownOpen(false);
       }
-    }
+    };
 
     if (isSystemDropdownOpen) {
-      document.addEventListener('mousedown', handleClickOutside)
+      document.addEventListener("mousedown", handleClickOutside);
     }
 
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [isSystemDropdownOpen])
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isSystemDropdownOpen]);
 
   const handleSystemSelect = (systemId: number) => {
-    router.push(`/dashboard/${systemId}`)
-    setIsSystemDropdownOpen(false)
-  }
+    router.push(`/dashboard/${systemId}`);
+    setIsSystemDropdownOpen(false);
+  };
 
   return (
     <>
@@ -92,13 +110,17 @@ export default function MobileMenu({
                 onClick={() => setIsSystemDropdownOpen(!isSystemDropdownOpen)}
                 className="flex items-center gap-1 text-base font-bold text-white hover:text-blue-400 transition-colors"
               >
-                {displayName || 'Select System'}
-                <ChevronDown className={`w-4 h-4 transition-transform ${isSystemDropdownOpen ? 'rotate-180' : ''}`} />
+                {displayName || "Select System"}
+                <ChevronDown
+                  className={`w-4 h-4 transition-transform ${isSystemDropdownOpen ? "rotate-180" : ""}`}
+                />
               </button>
             ) : (
-              <h1 className="text-base font-bold text-white">{displayName || 'LiveOne'}</h1>
+              <h1 className="text-base font-bold text-white">
+                {displayName || "LiveOne"}
+              </h1>
             )}
-            
+
             {/* System Dropdown Menu */}
             {isSystemDropdownOpen && availableSystems.length > 1 && (
               <div className="absolute top-full left-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
@@ -108,8 +130,8 @@ export default function MobileMenu({
                   userId={userId}
                   isAdmin={isAdmin}
                   onSystemSelect={(systemId) => {
-                    handleSystemSelect(systemId)
-                    setIsSystemDropdownOpen(false)
+                    handleSystemSelect(systemId);
+                    setIsSystemDropdownOpen(false);
                   }}
                   isMobile={true}
                   itemClassName="w-full text-left px-4 py-2 text-sm hover:bg-gray-700 transition-colors first:rounded-t-lg last:rounded-b-lg text-white"
@@ -118,15 +140,15 @@ export default function MobileMenu({
               </div>
             )}
           </div>
-          
+
           <div className="flex items-center gap-2">
             {/* Connection Status and Time */}
-            <LastUpdateTime 
+            <LastUpdateTime
               secondsSinceUpdate={secondsSinceUpdate}
               showIcon={true}
               className="text-xs"
             />
-            
+
             {/* Admin Link */}
             {isAdmin && (
               <Link
@@ -137,14 +159,18 @@ export default function MobileMenu({
                 <Shield className="w-4 h-4" />
               </Link>
             )}
-            
+
             {/* Hamburger Menu Button */}
             <button
               onClick={toggleMenu}
               className="p-1.5 text-gray-400 hover:text-white transition-colors"
               aria-label="Toggle menu"
             >
-              {isOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+              {isOpen ? (
+                <X className="w-4 h-4" />
+              ) : (
+                <Menu className="w-4 h-4" />
+              )}
             </button>
           </div>
         </div>
@@ -154,11 +180,11 @@ export default function MobileMenu({
       {isOpen && (
         <div className="sm:hidden fixed inset-0 z-50">
           {/* Backdrop */}
-          <div 
+          <div
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
             onClick={() => setIsOpen(false)}
           />
-          
+
           {/* Menu Panel */}
           <div className="absolute right-0 top-0 h-full w-64 bg-gray-800 shadow-xl">
             {/* Menu Header */}
@@ -172,7 +198,7 @@ export default function MobileMenu({
                 <X className="w-5 h-5" />
               </button>
             </div>
-            
+
             {/* Menu Content */}
             <div className="p-4 space-y-4">
               {/* User Section */}
@@ -181,54 +207,75 @@ export default function MobileMenu({
                 <div>
                   <p className="text-sm text-gray-400">Logged in as</p>
                   <p className="text-white font-medium">
-                    {user?.firstName && user?.lastName 
+                    {user?.firstName && user?.lastName
                       ? `${user.firstName} ${user.lastName}`
-                      : user?.username 
-                      || user?.primaryEmailAddress?.emailAddress
-                      || 'User'}
+                      : user?.username ||
+                        user?.primaryEmailAddress?.emailAddress ||
+                        "User"}
                   </p>
                 </div>
               </div>
-              
+
               {/* Settings Section */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2 mb-2">
                   <Settings className="w-4 h-4 text-gray-400" />
                   <p className="text-white font-medium text-sm">Settings</p>
                 </div>
-                
+
                 {/* Test Connection - Only show for vendors that support polling and for admin or non-removed systems */}
-                {onTestConnection && supportsPolling && (isAdmin || systemStatus !== 'removed') && (
+                {onTestConnection &&
+                  supportsPolling &&
+                  (isAdmin || systemStatus !== "removed") && (
+                    <button
+                      onClick={() => {
+                        setIsOpen(false);
+                        onTestConnection();
+                      }}
+                      className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
+                    >
+                      <FlaskConical className="w-4 h-4" />
+                      Test Connection
+                    </button>
+                  )}
+
+                {/* Add System */}
+                {onAddSystem && (
                   <button
                     onClick={() => {
-                      setIsOpen(false)
-                      onTestConnection()
+                      setIsOpen(false);
+                      onAddSystem();
                     }}
                     className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
                   >
-                    <FlaskConical className="w-4 h-4" />
-                    Test Connection
+                    <Plus className="w-4 h-4" />
+                    Add System…
                   </button>
                 )}
-                
-                {vendorType !== 'enphase' && (
-                  <Link
-                    href="/auth/enphase/connect"
-                    onClick={() => setIsOpen(false)}
-                    className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2 block"
+
+                {/* System Settings */}
+                {onSystemSettings && (
+                  <button
+                    onClick={() => {
+                      setIsOpen(false);
+                      onSystemSettings();
+                    }}
+                    className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
                   >
-                    <Plus className="w-4 h-4" />
-                    Add Enphase
-                  </Link>
+                    <Settings className="w-4 h-4" />
+                    System Settings
+                  </button>
                 )}
               </div>
-              
+
               {/* System Info Section */}
               {systemInfo && (
                 <div className="p-3 bg-gray-700/50 rounded space-y-2">
                   <div className="flex items-center gap-2 mb-2">
                     <Info className="w-4 h-4 text-gray-400" />
-                    <p className="text-white font-medium text-sm">System Information</p>
+                    <p className="text-white font-medium text-sm">
+                      System Information
+                    </p>
                   </div>
                   <div className="space-y-1 text-xs">
                     {systemInfo.model && (
@@ -252,24 +299,28 @@ export default function MobileMenu({
                     {systemInfo.solarSize && (
                       <div className="flex justify-between">
                         <span className="text-gray-400">Solar:</span>
-                        <span className="text-white">{systemInfo.solarSize}</span>
+                        <span className="text-white">
+                          {systemInfo.solarSize}
+                        </span>
                       </div>
                     )}
                     {systemInfo.batterySize && (
                       <div className="flex justify-between">
                         <span className="text-gray-400">Battery:</span>
-                        <span className="text-white">{systemInfo.batterySize}</span>
+                        <span className="text-white">
+                          {systemInfo.batterySize}
+                        </span>
                       </div>
                     )}
                   </div>
                 </div>
               )}
-              
+
               {/* Logout Button */}
               <button
                 onClick={() => {
-                  setIsOpen(false)
-                  onLogout()
+                  setIsOpen(false);
+                  onLogout();
                 }}
                 className="w-full bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded flex items-center justify-center gap-2 transition-colors"
               >
@@ -281,5 +332,5 @@ export default function MobileMenu({
         </div>
       )}
     </>
-  )
+  );
 }
