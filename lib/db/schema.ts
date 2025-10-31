@@ -38,11 +38,8 @@ export const systems = sqliteTable(
     // Note: vendor_site_unique index removed to allow multiple systems with same vendorSiteId (e.g., for removed/inactive systems)
     ownerClerkUserIdx: index("owner_clerk_user_idx").on(table.ownerClerkUserId),
     statusIdx: index("systems_status_idx").on(table.status),
-    // Unique constraint for short_name within a vendor type (only when short_name is not null)
-    vendorShortNameUnique: uniqueIndex("vendor_short_name_unique").on(
-      table.vendorType,
-      table.shortName,
-    ),
+    // Unique constraint for short_name globally (only when short_name is not null)
+    shortNameUnique: uniqueIndex("short_name_unique").on(table.shortName),
   }),
 );
 

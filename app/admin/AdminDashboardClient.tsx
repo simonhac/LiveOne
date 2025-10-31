@@ -522,6 +522,11 @@ export default function AdminDashboardClient() {
                               <span className="text-sm font-medium text-white group-hover:text-blue-400 transition-colors">
                                 {system.displayName}
                               </span>
+                              {system.shortName && (
+                                <span className="text-sm text-gray-400">
+                                  ({system.shortName})
+                                </span>
+                              )}
                               <span className="text-sm text-gray-500">
                                 ID: {system.systemId}
                               </span>
