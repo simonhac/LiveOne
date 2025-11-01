@@ -23,6 +23,11 @@ import "chartjs-adapter-date-fns";
 import annotationPlugin from "chartjs-plugin-annotation";
 import { formatDateTime } from "@/lib/fe-date-format";
 import { formatDateRange, fromUnixTimestamp } from "@/lib/date-utils";
+import {
+  parseSeriesPath,
+  parseDeviceMetric,
+  parseDeviceId,
+} from "@/lib/series-path-parser";
 
 // Register Chart.js components
 ChartJS.register(
@@ -78,32 +83,28 @@ interface SeriesConfig {
   order?: number;
 }
 
-// Parse series ID from new format: liveone.mondo.{systemName}.{type}.{subtype}.{extension}.{metricType}
-// Returns: { type, subtype, extension } or null if not parseable
+// Parse series ID from format: liveone.{siteId}.{deviceId}.{metric}[.summariser]
+// Returns: { type, subtype, extension } extracted from deviceId, or null if not parseable
 export function parseSeriesId(
   seriesId: string,
 ): { type: string; subtype: string; extension?: string } | null {
-  const parts = seriesId.split(".");
+  // Parse the full series path to get siteId and pointId
+  const parsed = parseSeriesPath(seriesId);
+  if (!parsed) return null;
 
-  // Find the vendor prefix (liveone.mondo.{systemName})
-  const mondoIndex = parts.indexOf("mondo");
-  if (mondoIndex === -1) return null;
+  // Parse the pointId to extract deviceId (strips off metric/summariser)
+  const deviceMetric = parseDeviceMetric(parsed.pointId);
+  if (!deviceMetric) return null;
 
-  // After system name comes: type.subtype[.extension].metricType
-  const afterSystem = parts.slice(mondoIndex + 2);
-  if (afterSystem.length < 3) return null;
+  // Parse the deviceId to get type, subtype, and extension
+  const deviceIdParsed = parseDeviceId(deviceMetric.deviceId);
+  if (!deviceIdParsed) return null;
 
-  const type = afterSystem[0];
-  const subtype = afterSystem[1];
-
-  // Check if we have an extension (4+ parts means extension exists)
-  let extension: string | undefined;
-  if (afterSystem.length >= 4) {
-    // Everything between subtype and last part (metricType) is extension
-    extension = afterSystem.slice(2, -1).join(".");
-  }
-
-  return { type, subtype, extension };
+  return {
+    type: deviceIdParsed.type,
+    subtype: deviceIdParsed.subtype || "",
+    extension: deviceIdParsed.extension,
+  };
 }
 
 // Color palettes for dynamic load discovery

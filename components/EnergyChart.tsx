@@ -443,25 +443,36 @@ export default function EnergyChart({
 
         // Process the data for Chart.js
         // Energy mode: use energy data; Power mode: use power data
+        // Series IDs now include summarisers (e.g., .avg, .last)
         const solarData = isEnergyMode
-          ? data.data.find((d: any) => d.id.includes("solar.energy"))
-          : data.data.find((d: any) => d.id.includes("solar.power"));
+          ? data.data.find(
+              (d: any) => d.id.includes(".solar.") && d.id.includes(".energy"),
+            )
+          : data.data.find(
+              (d: any) => d.id.includes(".solar.") && d.id.includes(".power."),
+            );
         const loadData = isEnergyMode
-          ? data.data.find((d: any) => d.id.includes("load.energy"))
-          : data.data.find((d: any) => d.id.includes("load.power"));
-        const batteryWData = data.data.find((d: any) =>
-          d.id.includes("battery.power"),
+          ? data.data.find(
+              (d: any) => d.id.includes(".load.") && d.id.includes(".energy"),
+            )
+          : data.data.find(
+              (d: any) => d.id.includes(".load.") && d.id.includes(".power."),
+            );
+        const batteryWData = data.data.find(
+          (d: any) => d.id.includes(".battery.") && d.id.includes(".power."),
         );
-        const batterySOCData = data.data.find((d: any) =>
-          d.id.includes(isEnergyMode ? "battery.soc.avg" : "battery.soc.last"),
+        const batterySOCData = data.data.find(
+          (d: any) =>
+            d.id.includes(".battery.soc.") &&
+            d.id.includes(isEnergyMode ? ".avg" : ".last"),
         );
 
         // For daily data, also get min/max SOC
         const batterySOCMinData = isEnergyMode
-          ? data.data.find((d: any) => d.id.includes("battery.soc.min"))
+          ? data.data.find((d: any) => d.id.includes(".battery.soc.min"))
           : null;
         const batterySOCMaxData = isEnergyMode
-          ? data.data.find((d: any) => d.id.includes("battery.soc.max"))
+          ? data.data.find((d: any) => d.id.includes(".battery.soc.max"))
           : null;
 
         if (!solarData || !loadData || !batterySOCData) {
