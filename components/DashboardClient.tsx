@@ -303,7 +303,7 @@ export default function DashboardClient({
           if (dataStore === "point_readings") {
             setError("POINT_READINGS_NO_CHARTS"); // Special marker for point_readings systems
           } else {
-            setError("No readings available yet");
+            setError("Real-time readings not available.");
           }
         }
         setLoading(false);
