@@ -6,8 +6,7 @@ import { SystemWithPolling } from "@/lib/systems-manager";
  */
 export interface MeasurementPointMetadata {
   id: string; // Unique identifier for the point (e.g., "solar.power", "point_1")
-  name: string; // Display name
-  label?: string; // User-friendly label from point configuration
+  label: string; // User-friendly label
   type: string; // Metric type (e.g., "power", "energy", "percentage")
   unit: string; // Unit of measurement (e.g., "W", "kWh", "%")
 }

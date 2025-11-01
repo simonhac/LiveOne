@@ -233,10 +233,11 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   }
 
   /**
-   * Get all available capabilities for this system.
+   * Get all possible capabilities for this system (what it could support).
    * Default implementation returns capabilities based on data store type.
+   * Returns array of capability strings in format: type.subtype.extension (subtype and extension optional)
    */
-  async getAllCapabilities(systemId: number): Promise<Capability[]> {
+  async getPossibleCapabilities(systemId: number): Promise<string[]> {
     if (this.dataStore === "readings") {
       // Return standard capabilities for generic readings table
       return GENERIC_READINGS_CAPABILITIES;
@@ -247,26 +248,46 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
         .from(pointInfo)
         .where(eq(pointInfo.systemId, systemId));
 
-      // Extract unique capabilities (type, subtype, extension)
+      // Extract unique capabilities as strings
       const capabilitySet = new Set<string>();
-      const capabilities: Capability[] = [];
 
       for (const point of points) {
         if (point.type) {
-          const key = `${point.type}.${point.subtype || ""}.${point.extension || ""}`;
-          if (!capabilitySet.has(key)) {
-            capabilitySet.add(key);
-            capabilities.push({
-              type: point.type,
-              subtype: point.subtype,
-              extension: point.extension,
-            });
-          }
+          // Build capability string: type.subtype.extension (omitting nulls)
+          const parts = [point.type];
+          if (point.subtype) parts.push(point.subtype);
+          if (point.extension) parts.push(point.extension);
+          capabilitySet.add(parts.join("."));
         }
       }
 
-      return capabilities;
+      return Array.from(capabilitySet).sort();
     }
+  }
+
+  /**
+   * Get enabled capabilities for this system (what is currently enabled).
+   * Default implementation returns the capabilities stored in the system record.
+   * Returns array of capability strings in format: type.subtype.extension (subtype and extension optional)
+   */
+  async getEnabledCapabilities(systemId: number): Promise<string[]> {
+    const { SystemsManager } = await import("@/lib/systems-manager");
+    const systemsManager = SystemsManager.getInstance();
+    const system = await systemsManager.getSystem(systemId);
+
+    if (!system) {
+      return [];
+    }
+
+    const enabledCapabilities = system.capabilities as string[] | null;
+
+    if (!enabledCapabilities || enabledCapabilities.length === 0) {
+      // If no capabilities are explicitly enabled, return all possible capabilities
+      return this.getPossibleCapabilities(systemId);
+    }
+
+    // Return the enabled capabilities directly (already strings)
+    return enabledCapabilities;
   }
 
   /**

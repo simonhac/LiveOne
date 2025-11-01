@@ -46,8 +46,13 @@ export interface VendorAdapter {
     credentials: any,
   ): Promise<TestConnectionResult>;
 
-  // Get all available capabilities for this system
-  getAllCapabilities(systemId: number): Promise<Capability[]>;
+  // Get all possible capabilities for this system (what it could support)
+  // Returns array of capability strings in format: type.subtype.extension (subtype and extension optional)
+  getPossibleCapabilities(systemId: number): Promise<string[]>;
+
+  // Get enabled capabilities for this system (what is currently enabled)
+  // Returns array of capability strings in format: type.subtype.extension (subtype and extension optional)
+  getEnabledCapabilities(systemId: number): Promise<string[]>;
 }
 
 /**

@@ -49,6 +49,7 @@ interface SystemData {
   status: "active" | "disabled" | "removed"; // System status
   location?: any; // Location data
   metadata?: any; // Vendor-specific metadata (e.g., composite system configuration)
+  compositeSourceSystems?: Array<{ id: number; shortName: string | null }>; // Only present for composite systems
   systemInfo?: SystemInfo | null;
   polling: {
     isActive: boolean;
@@ -74,49 +75,28 @@ interface SystemData {
 }
 
 /**
- * Extract all system IDs referenced in composite metadata
- * Returns a sorted array of unique system IDs
+ * Format composite source systems for display
+ * Uses shortnames where available, falls back to "ID: X" format
+ * - "(drawn from kinkora)"
+ * - "(drawn from kinkora and hawthorn)"
+ * - "(drawn from kinkora, hawthorn and ID: 3)"
  */
-function getCompositeSystemIds(metadata: any): number[] {
-  if (!metadata || typeof metadata !== "object") return [];
+function formatCompositeSourceSystems(
+  systems: Array<{ id: number; shortName: string | null }> | undefined,
+): string {
+  if (!systems || systems.length === 0) return "(no systems)";
 
-  const systemIds = new Set<number>();
+  // Format each system: use shortname if available, otherwise "ID: X"
+  const formatted = systems.map((s) => s.shortName || `ID: ${s.id}`);
 
-  // Add base_system if present
-  if (typeof metadata.base_system === "number") {
-    systemIds.add(metadata.base_system);
-  }
+  if (formatted.length === 1) return `(drawn from ${formatted[0]})`;
+  if (formatted.length === 2)
+    return `(drawn from ${formatted[0]} and ${formatted[1]})`;
 
-  // Add all override system IDs
-  if (metadata.overrides && typeof metadata.overrides === "object") {
-    for (const value of Object.values(metadata.overrides)) {
-      if (typeof value === "number") {
-        systemIds.add(value);
-      }
-    }
-  }
-
-  return Array.from(systemIds).sort((a, b) => a - b);
-}
-
-/**
- * Format system IDs for display
- * - "(system 10)" for single system
- * - "(systems 3 & 7)" for two systems
- * - "(systems 3, 7 & 10)" for three or more systems
- */
-function formatCompositeSystemIds(metadata: any): string {
-  const systemIds = getCompositeSystemIds(metadata);
-
-  if (systemIds.length === 0) return "(no systems)";
-  if (systemIds.length === 1) return `(system ${systemIds[0]})`;
-  if (systemIds.length === 2)
-    return `(systems ${systemIds[0]} & ${systemIds[1]})`;
-
-  // Three or more: "(systems 3, 7 & 10)"
-  const allButLast = systemIds.slice(0, -1).join(", ");
-  const last = systemIds[systemIds.length - 1];
-  return `(systems ${allButLast} & ${last})`;
+  // Three or more: "(drawn from kinkora, hawthorn and ID: 3)"
+  const allButLast = formatted.slice(0, -1).join(", ");
+  const last = formatted[formatted.length - 1];
+  return `(drawn from ${allButLast} and ${last})`;
 }
 
 export default function AdminDashboardClient() {
@@ -543,8 +523,10 @@ export default function AdminDashboardClient() {
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-gray-400 group-hover:text-blue-400 transition-colors">
                                   {system.vendor.type === "composite" &&
-                                  system.metadata
-                                    ? formatCompositeSystemIds(system.metadata)
+                                  system.compositeSourceSystems
+                                    ? formatCompositeSourceSystems(
+                                        system.compositeSourceSystems,
+                                      )
                                     : `${system.vendor.type}/${system.vendor.siteId}`}
                                 </span>
                                 {system.systemInfo && (

@@ -49,15 +49,8 @@ export async function GET(
       );
     }
 
-    const capabilities = await adapter.getAllCapabilities(systemId);
-
-    // Flatten capabilities to simple path strings
-    const availableCapabilities = capabilities.map((cap) => {
-      const parts = [cap.type, cap.subtype, cap.extension].filter(
-        (p): p is string => Boolean(p),
-      );
-      return parts.join(".");
-    });
+    const availableCapabilities =
+      await adapter.getPossibleCapabilities(systemId);
 
     // Get enabled capabilities from the database
     const enabledCapabilities = system.capabilities as string[] | null;
@@ -221,15 +214,8 @@ export async function PATCH(
         }
 
         const availableCapabilities =
-          await adapter.getAllCapabilities(systemId);
-        const availableSet = new Set(
-          availableCapabilities.map((cap) => {
-            const parts = [cap.type, cap.subtype, cap.extension].filter(
-              (p): p is string => Boolean(p),
-            );
-            return parts.join(".");
-          }),
-        );
+          await adapter.getPossibleCapabilities(systemId);
+        const availableSet = new Set(availableCapabilities);
 
         // Check for invalid capabilities
         const invalidCaps = capabilities.filter(

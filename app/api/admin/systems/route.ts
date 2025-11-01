@@ -7,6 +7,50 @@ import { formatTimeAEST, fromUnixTimestamp } from "@/lib/date-utils";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { fromDate } from "@internationalized/date";
 import { VendorRegistry } from "@/lib/vendors/registry";
+import {
+  parseSeriesPath,
+  resolveSystemFromSiteId,
+} from "@/lib/series-path-utils";
+
+/**
+ * Extract all source systems referenced in composite metadata (version 1 format)
+ * Returns array of systems with ID and shortName
+ */
+async function getCompositeSourceSystems(
+  metadata: any,
+): Promise<Array<{ id: number; shortName: string | null }>> {
+  if (!metadata || typeof metadata !== "object") return [];
+
+  // Only handle version 1 format with mappings
+  if (metadata.version !== 1 || !metadata.mappings) return [];
+
+  const systemsMap = new Map<
+    number,
+    { id: number; shortName: string | null }
+  >();
+
+  // Iterate through all categories in mappings
+  for (const [category, paths] of Object.entries(metadata.mappings)) {
+    if (Array.isArray(paths)) {
+      for (const fullPath of paths as string[]) {
+        // Parse the series path to get siteId
+        const parsed = parseSeriesPath(fullPath);
+        if (parsed) {
+          // Resolve siteId to system
+          const system = await resolveSystemFromSiteId(parsed.siteId);
+          if (system && !systemsMap.has(system.id)) {
+            systemsMap.set(system.id, {
+              id: system.id,
+              shortName: system.shortName,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return Array.from(systemsMap.values()).sort((a, b) => a.id - b.id);
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -85,6 +129,12 @@ export async function GET(request: NextRequest) {
       // Get user info from cache
       const userInfo = userCache.get(system.ownerClerkUserId);
 
+      // Extract composite source systems if this is a composite system
+      const compositeSourceSystems =
+        system.vendorType === "composite"
+          ? await getCompositeSourceSystems(system.metadata)
+          : undefined;
+
       systemsData.push({
         systemId: system.id, // Our internal ID
         owner: {
@@ -105,6 +155,7 @@ export async function GET(request: NextRequest) {
         },
         location: system.location, // Location data (address, city/state/country, or lat/lon)
         metadata: system.metadata, // Vendor-specific metadata (e.g., composite system configuration)
+        compositeSourceSystems, // Only present for composite systems
         status: system.status, // System status: active, disabled, or removed
         systemInfo: {
           model: system.model,

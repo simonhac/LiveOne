@@ -4,6 +4,11 @@ import { formatTimeAEST, formatDateAEST } from "@/lib/date-utils";
 import { formatDataArray } from "./format-opennem";
 import { CalendarDate, ZonedDateTime } from "@internationalized/date";
 import { toUnixTimestamp } from "@/lib/date-utils";
+import { SystemWithPolling } from "@/lib/systems-manager";
+import {
+  buildSeriesPath,
+  buildSiteIdFromSystem,
+} from "@/lib/series-path-utils";
 
 /**
  * Converts MeasurementSeries data to OpenNEM format
@@ -17,15 +22,12 @@ export class OpenNEMConverter {
     measurementSeries: MeasurementSeries[],
     fields: string[],
     interval: "5m" | "30m" | "1d",
-    vendorType: string,
-    vendorSiteId: string,
+    system: SystemWithPolling,
     requestedStartTime?: CalendarDate | ZonedDateTime,
     requestedEndTime?: CalendarDate | ZonedDateTime,
-    shortName?: string | null,
   ): OpenNEMDataSeries[] {
-    // Use shortName if available, otherwise use vendorSiteId
-    const systemIdentifier = shortName || vendorSiteId;
-    const remoteSystemIdentifier = `${vendorType}.${systemIdentifier}`;
+    // Build siteId from system (uses shortname if available, otherwise system.{id})
+    const siteId = buildSiteIdFromSystem(system);
     const dataSeries: OpenNEMDataSeries[] = [];
 
     // Determine the actual time range to use
@@ -178,8 +180,11 @@ export class OpenNEMConverter {
       const units = metadata.unit;
       const label = metadata.label;
 
+      // Build series ID using standard format: liveone.{siteId}.{pointId}
+      const seriesId = buildSeriesPath(siteId, fieldId);
+
       dataSeries.push({
-        id: `liveone.${remoteSystemIdentifier}.${fieldId}`,
+        id: seriesId,
         type,
         units,
         history: {
@@ -189,7 +194,7 @@ export class OpenNEMConverter {
           data: formatDataArray(fieldData),
         },
         network: "liveone",
-        source: vendorType,
+        source: system.vendorType,
         label,
       });
     }

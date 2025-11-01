@@ -1,8 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
-import { SystemsManager, SystemWithPolling } from '@/lib/systems-manager';
-import { OpenNEMResponse, OpenNEMDataSeries } from '@/types/opennem';
-import { formatOpenNEMResponse } from '@/lib/history/format-opennem';
+import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
+import { SystemsManager, SystemWithPolling } from "@/lib/systems-manager";
+import { OpenNEMResponse, OpenNEMDataSeries } from "@/types/opennem";
+import { formatOpenNEMResponse } from "@/lib/history/format-opennem";
 import {
   formatTimeAEST,
   formatDateAEST,
@@ -10,11 +10,15 @@ import {
   parseDateRange,
   parseRelativeTime,
   getDateDifferenceMs,
-  getTimeDifferenceMs
-} from '@/lib/date-utils';
-import { CalendarDate, ZonedDateTime, now } from '@internationalized/date';
-import { HistoryService } from '@/lib/history/history-service';
-import { isUserAdmin } from '@/lib/auth-utils';
+  getTimeDifferenceMs,
+} from "@/lib/date-utils";
+import { CalendarDate, ZonedDateTime, now } from "@internationalized/date";
+import { HistoryService } from "@/lib/history/history-service";
+import { isUserAdmin } from "@/lib/auth-utils";
+import {
+  parseSeriesPath,
+  resolveSystemFromSiteId,
+} from "@/lib/series-path-utils";
 
 // ============================================================================
 // Types and Interfaces
@@ -32,7 +36,7 @@ interface SystemAccess {
 
 interface ParsedParams {
   systemId: number;
-  interval: '5m' | '30m' | '1d';
+  interval: "5m" | "30m" | "1d";
   startTime: ZonedDateTime | CalendarDate;
   endTime: ZonedDateTime | CalendarDate;
   systemTimezoneOffsetMin: number;
@@ -53,8 +57,8 @@ async function authenticateUser(): Promise<AuthResult | NextResponse> {
 
   if (!userId) {
     return NextResponse.json(
-      { error: 'Unauthorized - Authentication required' },
-      { status: 401 }
+      { error: "Unauthorized - Authentication required" },
+      { status: 401 },
     );
   }
 
@@ -65,7 +69,7 @@ async function authenticateUser(): Promise<AuthResult | NextResponse> {
 async function checkSystemAccess(
   systemId: number,
   userId: string,
-  isAdmin: boolean
+  isAdmin: boolean,
 ): Promise<SystemAccess | NextResponse> {
   const systemsManager = SystemsManager.getInstance();
 
@@ -73,10 +77,7 @@ async function checkSystemAccess(
     const system = await systemsManager.getSystem(systemId);
 
     if (!system) {
-      return NextResponse.json(
-        { error: 'System not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
     // Admin can access all systems, regular users can only access their own
@@ -84,17 +85,14 @@ async function checkSystemAccess(
 
     if (!hasAccess) {
       return NextResponse.json(
-        { error: 'Access denied to system' },
-        { status: 403 }
+        { error: "Access denied to system" },
+        { status: 403 },
       );
     }
 
     return { system, hasAccess };
   } catch (error) {
-    return NextResponse.json(
-      { error: 'System not found' },
-      { status: 404 }
-    );
+    return NextResponse.json({ error: "System not found" }, { status: 404 });
   }
 }
 
@@ -106,12 +104,12 @@ function parseBasicParams(searchParams: URLSearchParams): ValidationResult & {
   systemId?: number;
   interval?: string;
 } {
-  const systemIdParam = searchParams.get('systemId');
+  const systemIdParam = searchParams.get("systemId");
   if (!systemIdParam) {
     return {
       isValid: false,
-      error: 'Missing required parameter: systemId',
-      statusCode: 400
+      error: "Missing required parameter: systemId",
+      statusCode: 400,
     };
   }
 
@@ -119,46 +117,47 @@ function parseBasicParams(searchParams: URLSearchParams): ValidationResult & {
   if (isNaN(systemId)) {
     return {
       isValid: false,
-      error: 'Invalid systemId: must be a number',
-      statusCode: 400
+      error: "Invalid systemId: must be a number",
+      statusCode: 400,
     };
   }
 
-  const interval = searchParams.get('interval');
+  const interval = searchParams.get("interval");
   if (!interval) {
     return {
       isValid: false,
-      error: 'Missing required parameter: interval. Must be one of: 5m, 30m, 1d',
-      statusCode: 400
+      error:
+        "Missing required parameter: interval. Must be one of: 5m, 30m, 1d",
+      statusCode: 400,
     };
   }
 
-  if (!['5m', '30m', '1d'].includes(interval)) {
+  if (!["5m", "30m", "1d"].includes(interval)) {
     return {
       isValid: false,
-      error: 'Only 5m, 30m, and 1d intervals are supported',
-      statusCode: 501
+      error: "Only 5m, 30m, and 1d intervals are supported",
+      statusCode: 501,
     };
   }
 
   return {
     isValid: true,
     systemId,
-    interval
+    interval,
   };
 }
 
 function parseTimeRangeParams(
   searchParams: URLSearchParams,
-  interval: '5m' | '30m' | '1d',
-  systemTimezoneOffsetMin: number
+  interval: "5m" | "30m" | "1d",
+  systemTimezoneOffsetMin: number,
 ): ValidationResult & {
   startTime?: ZonedDateTime | CalendarDate;
   endTime?: ZonedDateTime | CalendarDate;
 } {
-  const lastParam = searchParams.get('last');
-  const startTimeParam = searchParams.get('startTime');
-  const endTimeParam = searchParams.get('endTime');
+  const lastParam = searchParams.get("last");
+  const startTimeParam = searchParams.get("startTime");
+  const endTimeParam = searchParams.get("endTime");
 
   let startTime: ZonedDateTime | CalendarDate;
   let endTime: ZonedDateTime | CalendarDate;
@@ -166,19 +165,27 @@ function parseTimeRangeParams(
   try {
     if (lastParam) {
       // Parse relative time
-      [startTime, endTime] = parseRelativeTime(lastParam, interval, systemTimezoneOffsetMin);
+      [startTime, endTime] = parseRelativeTime(
+        lastParam,
+        interval,
+        systemTimezoneOffsetMin,
+      );
     } else if (startTimeParam && endTimeParam) {
       // Parse absolute time based on interval
       switch (interval) {
-        case '1d':
+        case "1d":
           // For daily intervals, expect date-only strings
           [startTime, endTime] = parseDateRange(startTimeParam, endTimeParam);
           break;
 
-        case '30m':
-        case '5m':
+        case "30m":
+        case "5m":
           // For minute intervals, accept datetime or date strings
-          [startTime, endTime] = parseTimeRangeUtil(startTimeParam, endTimeParam, systemTimezoneOffsetMin);
+          [startTime, endTime] = parseTimeRangeUtil(
+            startTimeParam,
+            endTimeParam,
+            systemTimezoneOffsetMin,
+          );
           break;
 
         default:
@@ -187,34 +194,38 @@ function parseTimeRangeParams(
     } else {
       return {
         isValid: false,
-        error: 'Missing time range. Provide either "last" parameter (e.g., last=7d) or both "startTime" and "endTime" parameters',
-        statusCode: 400
+        error:
+          'Missing time range. Provide either "last" parameter (e.g., last=7d) or both "startTime" and "endTime" parameters',
+        statusCode: 400,
       };
     }
   } catch (error) {
     return {
       isValid: false,
-      error: error instanceof Error ? error.message : 'Invalid time range parameters',
-      statusCode: 400
+      error:
+        error instanceof Error
+          ? error.message
+          : "Invalid time range parameters",
+      statusCode: 400,
     };
   }
 
   return {
     isValid: true,
     startTime,
-    endTime
+    endTime,
   };
 }
 
 function validateTimeRange(
   startTime: ZonedDateTime | CalendarDate,
   endTime: ZonedDateTime | CalendarDate,
-  interval: '5m' | '30m' | '1d'
+  interval: "5m" | "30m" | "1d",
 ): ValidationResult {
   let timeDiff: number;
 
   switch (interval) {
-    case '1d': {
+    case "1d": {
       // For CalendarDate, validate and calculate day difference
       const start = startTime as CalendarDate;
       const end = endTime as CalendarDate;
@@ -222,8 +233,8 @@ function validateTimeRange(
       if (start.compare(end) > 0) {
         return {
           isValid: false,
-          error: 'startTime must be before endTime',
-          statusCode: 400
+          error: "startTime must be before endTime",
+          statusCode: 400,
         };
       }
 
@@ -231,8 +242,8 @@ function validateTimeRange(
       break;
     }
 
-    case '30m':
-    case '5m': {
+    case "30m":
+    case "5m": {
       // For ZonedDateTime, validate and calculate millisecond difference
       const start = startTime as ZonedDateTime;
       const end = endTime as ZonedDateTime;
@@ -240,13 +251,13 @@ function validateTimeRange(
       if (start.compare(end) >= 0) {
         return {
           isValid: false,
-          error: 'startTime must be before endTime',
-          statusCode: 400
+          error: "startTime must be before endTime",
+          statusCode: 400,
         };
       }
 
       // Validate alignment with interval boundaries
-      const intervalMinutes = interval === '30m' ? 30 : 5;
+      const intervalMinutes = interval === "30m" ? 30 : 5;
 
       // Check if start time is aligned to interval boundary
       const startMinute = start.minute;
@@ -254,8 +265,8 @@ function validateTimeRange(
       if (startSecond !== 0 || startMinute % intervalMinutes !== 0) {
         return {
           isValid: false,
-          error: `Start time must be aligned to ${intervalMinutes}-minute boundaries (e.g., HH:00:00, HH:${intervalMinutes.toString().padStart(2, '0')}:00)`,
-          statusCode: 400
+          error: `Start time must be aligned to ${intervalMinutes}-minute boundaries (e.g., HH:00:00, HH:${intervalMinutes.toString().padStart(2, "0")}:00)`,
+          statusCode: 400,
         };
       }
 
@@ -265,8 +276,8 @@ function validateTimeRange(
       if (endSecond !== 0 || endMinute % intervalMinutes !== 0) {
         return {
           isValid: false,
-          error: `End time must be aligned to ${intervalMinutes}-minute boundaries (e.g., HH:00:00, HH:${intervalMinutes.toString().padStart(2, '0')}:00)`,
-          statusCode: 400
+          error: `End time must be aligned to ${intervalMinutes}-minute boundaries (e.g., HH:00:00, HH:${intervalMinutes.toString().padStart(2, "0")}:00)`,
+          statusCode: 400,
         };
       }
 
@@ -278,15 +289,15 @@ function validateTimeRange(
       return {
         isValid: false,
         error: `Unsupported interval: ${interval}`,
-        statusCode: 400
+        statusCode: 400,
       };
   }
 
   // Check time range limits
   const limits = {
-    '5m': { duration: 7.5 * 24 * 60 * 60 * 1000, label: '7.5 days' },
-    '30m': { duration: 30 * 24 * 60 * 60 * 1000, label: '30 days' },
-    '1d': { duration: 13 * 30 * 24 * 60 * 60 * 1000, label: '13 months' }
+    "5m": { duration: 7.5 * 24 * 60 * 60 * 1000, label: "7.5 days" },
+    "30m": { duration: 30 * 24 * 60 * 60 * 1000, label: "30 days" },
+    "1d": { duration: 13 * 30 * 24 * 60 * 60 * 1000, label: "13 months" },
   };
 
   const { duration: maxDuration, label: maxDurationLabel } = limits[interval];
@@ -295,7 +306,7 @@ function validateTimeRange(
     return {
       isValid: false,
       error: `Time range exceeds maximum of ${maxDurationLabel} for ${interval} interval`,
-      statusCode: 400
+      statusCode: 400,
     };
   }
 
@@ -310,10 +321,10 @@ async function getSystemHistoryInOpenNEMFormat(
   system: SystemWithPolling,
   startTime: ZonedDateTime | CalendarDate,
   endTime: ZonedDateTime | CalendarDate,
-  interval: '5m' | '30m' | '1d'
+  interval: "5m" | "30m" | "1d",
 ): Promise<OpenNEMDataSeries[]> {
   // Special handling for craighack systems (combine systems 2 & 3)
-  if (system.vendorType === 'craighack') {
+  if (system.vendorType === "craighack") {
     // Get both systems' data and combine them
     const systemsManager = SystemsManager.getInstance();
 
@@ -322,7 +333,7 @@ async function getSystemHistoryInOpenNEMFormat(
       const system3 = await systemsManager.getSystem(3);
 
       if (!system2 || !system3) {
-        throw new Error('Unable to fetch craighack systems 2 and 3');
+        throw new Error("Unable to fetch craighack systems 2 and 3");
       }
 
       // Fetch data for both systems (fields are extracted dynamically)
@@ -331,20 +342,186 @@ async function getSystemHistoryInOpenNEMFormat(
           system2,
           startTime,
           endTime,
-          interval
+          interval,
         ),
         HistoryService.getHistoryInOpenNEMFormat(
           system3,
           startTime,
           endTime,
-          interval
-        )
+          interval,
+        ),
       ]);
 
       // Combine all data
       return [...data2, ...data3];
     } catch (error) {
-      console.error('Error fetching craighack data:', error);
+      console.error("Error fetching craighack data:", error);
+      throw error;
+    }
+  }
+
+  // Special handling for composite systems
+  if (system.vendorType === "composite") {
+    const systemsManager = SystemsManager.getInstance();
+
+    try {
+      const metadata = system.metadata as any;
+
+      // Validate metadata format
+      if (!metadata || metadata.version !== 1 || !metadata.mappings) {
+        throw new Error("Invalid composite system metadata");
+      }
+
+      // Collect all series paths from mappings
+      // Composite config stores capability-level paths, we need to expand them to full series paths
+      const expectedSeriesPaths = new Set<string>();
+      const sourceSystemIds = new Set<number>();
+
+      for (const [category, paths] of Object.entries(metadata.mappings)) {
+        if (Array.isArray(paths)) {
+          for (const basePath of paths as string[]) {
+            // Parse to extract source system and capability info
+            const parsed = parseSeriesPath(basePath);
+            if (!parsed) {
+              console.warn(
+                `[Composite History] Failed to parse path: ${basePath}`,
+              );
+              continue;
+            }
+
+            // Track source system
+            const sourceSystem = await resolveSystemFromSiteId(parsed.siteId);
+            if (sourceSystem) {
+              sourceSystemIds.add(sourceSystem.id);
+            } else {
+              console.warn(
+                `[Composite History] Could not resolve system from siteId: ${parsed.siteId}`,
+              );
+            }
+
+            // Extract capability subtype from pointId (e.g., "bidi.battery" -> "battery")
+            const pointIdParts = parsed.pointId.split(".");
+            const capabilitySubtype = pointIdParts[pointIdParts.length - 1];
+
+            // All capabilities get power.avg
+            expectedSeriesPaths.add(`${basePath}.power.avg`);
+
+            // Battery capabilities also get soc.last
+            if (capabilitySubtype === "battery") {
+              expectedSeriesPaths.add(`${basePath}.soc.last`);
+            }
+          }
+        }
+      }
+
+      console.log(
+        `[Composite History] Expected series paths:`,
+        JSON.stringify(Array.from(expectedSeriesPaths), null, 2),
+      );
+
+      if (sourceSystemIds.size === 0) {
+        throw new Error(
+          "No valid source systems found in composite configuration",
+        );
+      }
+
+      // Fetch data from all source systems
+      const allSourceData = await Promise.all(
+        Array.from(sourceSystemIds).map(async (sourceSystemId) => {
+          const sourceSystem = await systemsManager.getSystem(sourceSystemId);
+          if (!sourceSystem) {
+            console.warn(
+              `[Composite History] Source system ${sourceSystemId} not found`,
+            );
+            return [];
+          }
+
+          const data = await HistoryService.getHistoryInOpenNEMFormat(
+            sourceSystem,
+            startTime,
+            endTime,
+            interval,
+          );
+
+          console.log(
+            `[Composite History] System ${sourceSystemId} returned ${data.length} series:`,
+            JSON.stringify(
+              data.map((s) => s.id),
+              null,
+              2,
+            ),
+          );
+
+          return data;
+        }),
+      );
+
+      // Flatten all series from all sources
+      const allSeries = allSourceData.flat();
+      console.log(
+        `[Composite History] Total series from all sources: ${allSeries.length}`,
+      );
+
+      // Build a map of expected paths with resolved system IDs for smart matching
+      const expectedPathsResolved = await Promise.all(
+        Array.from(expectedSeriesPaths).map(async (path) => {
+          const parsed = parseSeriesPath(path);
+          if (!parsed) return null;
+
+          const system = await resolveSystemFromSiteId(parsed.siteId);
+          if (!system) return null;
+
+          return {
+            originalPath: path,
+            systemId: system.id,
+            pointId: parsed.pointId,
+          };
+        }),
+      );
+
+      const validExpectedPaths = expectedPathsResolved.filter(
+        (p) => p !== null,
+      );
+
+      // Filter series using smart matching (resolve siteIds to system IDs)
+      const filteredSeries = await Promise.all(
+        allSeries.map(async (series) => {
+          const parsed = parseSeriesPath(series.id);
+          if (!parsed) return null;
+
+          const system = await resolveSystemFromSiteId(parsed.siteId);
+          if (!system) return null;
+
+          // Check if this series matches any expected path
+          const matches = validExpectedPaths.some(
+            (expected) =>
+              expected.systemId === system.id &&
+              expected.pointId === parsed.pointId,
+          );
+
+          return matches ? series : null;
+        }),
+      );
+
+      const finalSeries = filteredSeries.filter((s) => s !== null);
+      console.log(
+        `[Composite History] Filtered down to ${finalSeries.length} series`,
+      );
+
+      if (finalSeries.length === 0) {
+        console.warn(
+          `[Composite History] No matching series found! Available series:`,
+          JSON.stringify(
+            allSeries.map((s) => s.id),
+            null,
+            2,
+          ),
+        );
+      }
+
+      return finalSeries;
+    } catch (error) {
+      console.error("Error fetching composite data:", error);
       throw error;
     }
   }
@@ -354,7 +531,7 @@ async function getSystemHistoryInOpenNEMFormat(
     system,
     startTime,
     endTime,
-    interval
+    interval,
   );
 }
 
@@ -366,20 +543,20 @@ function buildResponse(
   dataSeries: OpenNEMDataSeries[],
   startTime: ZonedDateTime | CalendarDate,
   endTime: ZonedDateTime | CalendarDate,
-  interval: '5m' | '30m' | '1d'
+  interval: "5m" | "30m" | "1d",
 ): NextResponse {
   // Format date strings based on interval type
   let requestStartStr: string;
   let requestEndStr: string;
 
   switch (interval) {
-    case '1d':
+    case "1d":
       requestStartStr = formatDateAEST(startTime as CalendarDate);
       requestEndStr = formatDateAEST(endTime as CalendarDate);
       break;
 
-    case '30m':
-    case '5m':
+    case "30m":
+    case "5m":
       requestStartStr = formatTimeAEST(startTime as ZonedDateTime);
       requestEndStr = formatTimeAEST(endTime as ZonedDateTime);
       break;
@@ -389,13 +566,13 @@ function buildResponse(
   }
 
   const response: OpenNEMResponse = {
-    type: 'energy',
-    version: 'v4.1',
-    network: 'liveone',
-    created_at: formatTimeAEST(now('Australia/Brisbane')),
+    type: "energy",
+    version: "v4.1",
+    network: "liveone",
+    created_at: formatTimeAEST(now("Australia/Brisbane")),
     requestStart: requestStartStr,
     requestEnd: requestEndStr,
-    data: dataSeries
+    data: dataSeries,
   };
 
   const jsonStr = formatOpenNEMResponse(response);
@@ -403,7 +580,7 @@ function buildResponse(
   return new NextResponse(jsonStr, {
     status: 200,
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
     },
   });
 }
@@ -426,7 +603,7 @@ export async function GET(request: NextRequest) {
     if (!basicParams.isValid) {
       return NextResponse.json(
         { error: basicParams.error },
-        { status: basicParams.statusCode! }
+        { status: basicParams.statusCode! },
       );
     }
 
@@ -434,7 +611,7 @@ export async function GET(request: NextRequest) {
     const systemAccess = await checkSystemAccess(
       basicParams.systemId!,
       authResult.userId,
-      authResult.isAdmin
+      authResult.isAdmin,
     );
     if (systemAccess instanceof NextResponse) {
       return systemAccess;
@@ -445,13 +622,13 @@ export async function GET(request: NextRequest) {
     // Step 4: Parse time range
     const timeRange = parseTimeRangeParams(
       searchParams,
-      basicParams.interval as '5m' | '30m' | '1d',
-      system.timezoneOffsetMin
+      basicParams.interval as "5m" | "30m" | "1d",
+      system.timezoneOffsetMin,
     );
     if (!timeRange.isValid) {
       return NextResponse.json(
         { error: timeRange.error },
-        { status: timeRange.statusCode! }
+        { status: timeRange.statusCode! },
       );
     }
 
@@ -459,12 +636,12 @@ export async function GET(request: NextRequest) {
     const validation = validateTimeRange(
       timeRange.startTime!,
       timeRange.endTime!,
-      basicParams.interval as '5m' | '30m' | '1d'
+      basicParams.interval as "5m" | "30m" | "1d",
     );
     if (!validation.isValid) {
       return NextResponse.json(
         { error: validation.error },
-        { status: validation.statusCode! }
+        { status: validation.statusCode! },
       );
     }
 
@@ -473,7 +650,7 @@ export async function GET(request: NextRequest) {
       system,
       timeRange.startTime!,
       timeRange.endTime!,
-      basicParams.interval as '5m' | '30m' | '1d'
+      basicParams.interval as "5m" | "30m" | "1d",
     );
 
     // Step 7: Build and return response
@@ -481,17 +658,16 @@ export async function GET(request: NextRequest) {
       dataSeries,
       timeRange.startTime!,
       timeRange.endTime!,
-      basicParams.interval as '5m' | '30m' | '1d'
+      basicParams.interval as "5m" | "30m" | "1d",
     );
-
   } catch (error) {
-    console.error('Error fetching historical data:', error);
+    console.error("Error fetching historical data:", error);
     return NextResponse.json(
       {
-        error: 'Internal server error',
-        details: error instanceof Error ? error.message : 'Unknown error'
+        error: "Internal server error",
+        details: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

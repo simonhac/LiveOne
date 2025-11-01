@@ -2,10 +2,10 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
-import { JsonView, darkStyles, allExpanded } from "react-json-view-lite";
-import "react-json-view-lite/dist/index.css";
 import CapabilitiesTab from "./CapabilitiesTab";
+import CompositeTab from "./CompositeTab";
 
 interface SystemSettingsDialogProps {
   isOpen: boolean;
@@ -17,7 +17,7 @@ interface SystemSettingsDialogProps {
     vendorType: string;
     metadata?: any;
   } | null;
-  onUpdate: (
+  onUpdate?: (
     systemId: number,
     updates: { displayName?: string; shortName?: string | null },
   ) => Promise<void>;
@@ -29,6 +29,7 @@ export default function SystemSettingsDialog({
   system,
   onUpdate,
 }: SystemSettingsDialogProps) {
+  const router = useRouter();
   const [editedName, setEditedName] = useState(system?.displayName || "");
   const [editedShortName, setEditedShortName] = useState(
     system?.shortName || "",
@@ -36,12 +37,14 @@ export default function SystemSettingsDialog({
   const [isNameDirty, setIsNameDirty] = useState(false);
   const [isShortNameDirty, setIsShortNameDirty] = useState(false);
   const [isCapabilitiesDirty, setIsCapabilitiesDirty] = useState(false);
+  const [isCompositeDirty, setIsCompositeDirty] = useState(false);
   const [shortNameError, setShortNameError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<"general" | "capabilities">(
-    "general",
-  );
+  const [activeTab, setActiveTab] = useState<
+    "general" | "capabilities" | "composite"
+  >("general");
   const capabilitiesSaveRef = useRef<(() => Promise<string[]>) | null>(null);
+  const compositeSaveRef = useRef<(() => Promise<any>) | null>(null);
 
   // Reset form when modal opens or system ID changes (but not when system data updates)
   useEffect(() => {
@@ -52,6 +55,7 @@ export default function SystemSettingsDialog({
       setIsNameDirty(false);
       setIsShortNameDirty(false);
       setIsCapabilitiesDirty(false);
+      setIsCompositeDirty(false);
       setShortNameError(null);
     } else {
       // Reset tab to general when modal closes (prevents flash on next open)
@@ -81,7 +85,8 @@ export default function SystemSettingsDialog({
     setShortNameError(validateShortName(value));
   };
 
-  const hasChanges = isNameDirty || isShortNameDirty || isCapabilitiesDirty;
+  const hasChanges =
+    isNameDirty || isShortNameDirty || isCapabilitiesDirty || isCompositeDirty;
   const hasGeneralChanges = isNameDirty || isShortNameDirty;
 
   const handleSave = async () => {
@@ -89,53 +94,79 @@ export default function SystemSettingsDialog({
 
     setIsSaving(true);
     try {
-      // Build the settings update object
-      const settings: {
-        displayName?: string;
-        shortName?: string | null;
-        capabilities?: string[];
-      } = {};
+      // Save regular settings (displayName, shortName, capabilities)
+      if (isNameDirty || isShortNameDirty || isCapabilitiesDirty) {
+        const settings: {
+          displayName?: string;
+          shortName?: string | null;
+          capabilities?: string[];
+        } = {};
 
-      if (isNameDirty) settings.displayName = editedName;
-      if (isShortNameDirty) settings.shortName = editedShortName || null;
-      if (isCapabilitiesDirty && capabilitiesSaveRef.current) {
-        // Get capabilities from the tab
-        const capabilitiesData = await capabilitiesSaveRef.current();
-        settings.capabilities = capabilitiesData;
-      }
+        if (isNameDirty) settings.displayName = editedName;
+        if (isShortNameDirty) settings.shortName = editedShortName || null;
+        if (isCapabilitiesDirty && capabilitiesSaveRef.current) {
+          // Get capabilities from the tab
+          const capabilitiesData = await capabilitiesSaveRef.current();
+          settings.capabilities = capabilitiesData;
+        }
 
-      console.log("Settings to save:", settings);
+        console.log("Settings to save:", settings);
 
-      // Save all settings in a single API call
-      const response = await fetch(
-        `/api/admin/systems/${system.systemId}/settings`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
+        const response = await fetch(
+          `/api/admin/systems/${system.systemId}/settings`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(settings),
           },
-          body: JSON.stringify(settings),
-        },
-      );
+        );
 
-      const data = await response.json();
+        const data = await response.json();
 
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to update system settings");
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to update system settings");
+        }
+
+        // Note: No need to call onUpdate since we already saved to the settings endpoint
+        // The parent component will refresh when the modal closes
       }
 
-      // Update parent component with new values
-      if (isNameDirty || isShortNameDirty) {
-        const updates: { displayName?: string; shortName?: string | null } = {};
-        if (isNameDirty) updates.displayName = editedName;
-        if (isShortNameDirty) updates.shortName = editedShortName || null;
-        await onUpdate(system.systemId, updates);
+      // Save composite configuration separately
+      if (isCompositeDirty && compositeSaveRef.current) {
+        const compositeMappings = await compositeSaveRef.current();
+
+        console.log("Composite mappings to save:", compositeMappings);
+
+        const response = await fetch(
+          `/api/admin/systems/${system.systemId}/composite-config`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ mappings: compositeMappings }),
+          },
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || "Failed to update composite configuration",
+          );
+        }
       }
 
       // Reset dirty flags
       setIsNameDirty(false);
       setIsShortNameDirty(false);
       setIsCapabilitiesDirty(false);
+      setIsCompositeDirty(false);
+
+      // Refresh the page to show updated data
+      router.refresh();
 
       // Close modal on successful save
       onClose();
@@ -193,12 +224,12 @@ export default function SystemSettingsDialog({
       />
 
       {/* Dialog */}
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[10001] w-full max-w-md">
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[10001] w-full max-w-[488px] sm:max-w-[588px]">
         <div className="bg-gray-800 border border-gray-700 rounded-lg shadow-xl">
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
             <h2 className="text-lg font-medium text-gray-100">
-              System Settings
+              {system.displayName} Settings
             </h2>
             <button
               onClick={onClose}
@@ -224,24 +255,41 @@ export default function SystemSettingsDialog({
                   <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
                 )}
               </button>
-              <button
-                onClick={() => setActiveTab("capabilities")}
-                className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
-                  activeTab === "capabilities"
-                    ? "text-white border-blue-500 bg-gray-700/50"
-                    : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
-                }`}
-              >
-                Capabilities
-                {isCapabilitiesDirty && (
-                  <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
-                )}
-              </button>
+              {system.vendorType !== "composite" && (
+                <button
+                  onClick={() => setActiveTab("capabilities")}
+                  className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+                    activeTab === "capabilities"
+                      ? "text-white border-blue-500 bg-gray-700/50"
+                      : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
+                  }`}
+                >
+                  Capabilities
+                  {isCapabilitiesDirty && (
+                    <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
+                  )}
+                </button>
+              )}
+              {system.vendorType === "composite" && (
+                <button
+                  onClick={() => setActiveTab("composite")}
+                  className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+                    activeTab === "composite"
+                      ? "text-white border-blue-500 bg-gray-700/50"
+                      : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
+                  }`}
+                >
+                  Composite
+                  {isCompositeDirty && (
+                    <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
+                  )}
+                </button>
+              )}
             </div>
           </div>
 
           {/* Content */}
-          <div className="px-6 py-4 space-y-4 min-h-[400px] max-h-[400px] overflow-y-auto">
+          <div className="px-6 py-4 space-y-4 min-h-[500px] max-h-[500px] overflow-y-auto">
             {/* General Tab Content */}
             <div className={activeTab === "general" ? "" : "hidden"}>
               {/* Name field */}
@@ -291,40 +339,35 @@ export default function SystemSettingsDialog({
                   <p className="text-xs text-red-400 mt-1">{shortNameError}</p>
                 )}
               </div>
-
-              {/* Composite metadata view - only show for composite systems */}
-              {system.vendorType === "composite" && system.metadata && (
-                <div className="mt-4">
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Composite System Configuration
-                  </label>
-                  <p className="text-xs text-gray-400 mb-2">
-                    This system combines data from multiple source systems.
-                  </p>
-                  <div className="bg-gray-950 border border-gray-700 rounded-lg overflow-hidden">
-                    <div className="overflow-x-auto font-mono text-xs p-3">
-                      <JsonView
-                        data={system.metadata}
-                        shouldExpandNode={allExpanded}
-                        style={darkStyles}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
 
-            {/* Capabilities Tab Content */}
-            <div className={activeTab === "capabilities" ? "" : "hidden"}>
-              <CapabilitiesTab
-                systemId={system.systemId}
-                shouldLoad={isOpen}
-                onDirtyChange={setIsCapabilitiesDirty}
-                onSaveFunctionReady={(fn) => {
-                  capabilitiesSaveRef.current = fn;
-                }}
-              />
-            </div>
+            {/* Capabilities Tab Content - Only for non-composite systems */}
+            {system.vendorType !== "composite" && (
+              <div className={activeTab === "capabilities" ? "" : "hidden"}>
+                <CapabilitiesTab
+                  systemId={system.systemId}
+                  shouldLoad={isOpen}
+                  onDirtyChange={setIsCapabilitiesDirty}
+                  onSaveFunctionReady={(fn) => {
+                    capabilitiesSaveRef.current = fn;
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Composite Tab Content */}
+            {system.vendorType === "composite" && (
+              <div className={activeTab === "composite" ? "" : "hidden"}>
+                <CompositeTab
+                  systemId={system.systemId}
+                  shouldLoad={isOpen}
+                  onDirtyChange={setIsCompositeDirty}
+                  onSaveFunctionReady={(fn) => {
+                    compositeSaveRef.current = fn;
+                  }}
+                />
+              </div>
+            )}
           </div>
 
           {/* Footer */}

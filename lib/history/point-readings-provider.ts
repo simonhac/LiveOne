@@ -20,12 +20,18 @@ import {
   MeasurementValue,
   TimeSeriesPoint,
 } from "./types";
+import { VendorRegistry } from "@/lib/vendors/registry";
 
 /**
  * Generate a point ID in the format:
- * - If type and subtype are set: use series ID {type}.{subtype}.{extension}.{metricType}
+ * - If type and subtype are set: use series ID {type}.{subtype}.{extension}.{metricType}.{aggregation}
  * - Otherwise if shortName is set: use shortName
- * - Otherwise: {pointId}.{pointSubId}.{metricType} (omitting pointSubId if null)
+ * - Otherwise: {pointId}.{pointSubId}.{metricType}.{aggregation} (omitting pointSubId if null)
+ *
+ * The aggregation type is determined by metricType:
+ * - power, energy: use .avg (average over the interval)
+ * - soc: use .last (state at end of interval)
+ * - default: use .avg
  *
  * Note: The vendor prefix (liveone.{vendorType}.{vendorSiteId}) is added by OpenNEMConverter
  */
@@ -38,11 +44,15 @@ function generatePointId(
   subtype: string | null,
   extension: string | null,
 ): string {
+  // Determine aggregation type based on metric type
+  const aggregationType = metricType === "soc" ? "last" : "avg";
+
   // If type and subtype are set, use series ID
   if (type && subtype) {
     const parts = [type, subtype];
     if (extension) parts.push(extension);
     parts.push(metricType);
+    parts.push(aggregationType);
     return parts.join(".");
   }
 
@@ -57,18 +67,43 @@ function generatePointId(
     parts.push(pointSubId);
   }
   parts.push(metricType);
+  parts.push(aggregationType);
   return parts.join(".");
 }
 
 export class PointReadingsProvider implements HistoryDataProvider {
   /**
+   * Helper to build capability string from point
+   */
+  private buildCapabilityString(point: typeof pointInfo.$inferSelect): string {
+    const parts = [point.type];
+    if (point.subtype) parts.push(point.subtype);
+    if (point.extension) parts.push(point.extension);
+    return parts.join(".");
+  }
+
+  /**
    * Helper method to filter and sort points by series ID
+   * Filters to only include points with type set and capability enabled
    */
   private filterAndSortPoints(
     points: (typeof pointInfo.$inferSelect)[],
+    enabledCapabilities: string[],
   ): (typeof pointInfo.$inferSelect)[] {
+    // Build set of enabled capability strings for fast lookup
+    const enabledSet = new Set(enabledCapabilities);
+
     return points
-      .filter((p) => p.type && p.subtype)
+      .filter((p) => {
+        // Must have type
+        if (!p.type) {
+          return false;
+        }
+
+        // Check if this point's capability is enabled
+        const capabilityString = this.buildCapabilityString(p);
+        return enabledSet.has(capabilityString);
+      })
       .sort((a, b) => {
         const aSeriesId = generatePointId(
           a.pointId,
@@ -100,14 +135,24 @@ export class PointReadingsProvider implements HistoryDataProvider {
     const startMs = toUnixTimestamp(startTime) * 1000;
     const endMs = toUnixTimestamp(endTime) * 1000;
 
+    // Get enabled capabilities from vendor adapter
+    const adapter = VendorRegistry.getAdapter(system.vendorType);
+    if (!adapter) {
+      throw new Error(`No adapter found for vendor type: ${system.vendorType}`);
+    }
+    const enabledCapabilities = await adapter.getEnabledCapabilities(system.id);
+
     // Get all points for this system
     const points = await db
       .select()
       .from(pointInfo)
       .where(eq(pointInfo.systemId, system.id));
 
-    // Only include points with series IDs (type and subtype set), sorted by series ID string
-    const filteredPoints = this.filterAndSortPoints(points);
+    // Only include points with type set and capability enabled, sorted by series ID
+    const filteredPoints = this.filterAndSortPoints(
+      points,
+      enabledCapabilities,
+    );
 
     if (filteredPoints.length === 0) {
       return [];
@@ -196,7 +241,6 @@ export class PointReadingsProvider implements HistoryDataProvider {
         field: fieldId,
         metadata: {
           id: fieldId,
-          name: pointMeta.name,
           label: pointMeta.name,
           type: pointMeta.metricType,
           unit: pointMeta.metricUnit,

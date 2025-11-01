@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Check } from "lucide-react";
 
 interface Capability {
@@ -45,22 +45,25 @@ export default function CapabilitiesTab({
   const [initialEnabled, setInitialEnabled] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [hasLoaded, setHasLoaded] = useState(false);
+  const fetchingRef = useRef(false);
 
   // Reset hasLoaded when modal closes so it will reload next time
   useEffect(() => {
     if (!shouldLoad && hasLoaded) {
       setHasLoaded(false);
       setLoading(true);
+      fetchingRef.current = false;
     }
   }, [shouldLoad, hasLoaded]);
 
   useEffect(() => {
-    if (shouldLoad && !hasLoaded) {
+    if (shouldLoad && !hasLoaded && !fetchingRef.current) {
       fetchCapabilities();
     }
   }, [systemId, shouldLoad, hasLoaded]);
 
   const fetchCapabilities = async () => {
+    fetchingRef.current = true;
     try {
       const response = await fetch(`/api/admin/systems/${systemId}/settings`);
       const data = await response.json();
@@ -120,6 +123,7 @@ export default function CapabilitiesTab({
       console.error("Failed to fetch capabilities:", error);
     } finally {
       setLoading(false);
+      fetchingRef.current = false;
     }
   };
 

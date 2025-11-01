@@ -1,13 +1,12 @@
-import type { Capability } from "@/lib/vendors/types";
-
 /**
  * Standard capabilities for systems using the generic readings table
+ * Format: type.subtype.extension (subtype and extension optional)
  */
-export const GENERIC_READINGS_CAPABILITIES: Capability[] = [
-  { type: "source", subtype: "solar", extension: "total" },
-  { type: "source", subtype: "solar", extension: "local" },
-  { type: "source", subtype: "solar", extension: "remote" },
-  { type: "load", subtype: null, extension: null },
-  { type: "bidi", subtype: "battery", extension: null },
-  { type: "bidi", subtype: "grid", extension: null },
+export const GENERIC_READINGS_CAPABILITIES: string[] = [
+  "source.solar.total",
+  "source.solar.local",
+  "source.solar.remote",
+  "load",
+  "bidi.battery",
+  "bidi.grid",
 ];

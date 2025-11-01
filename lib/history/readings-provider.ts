@@ -91,11 +91,10 @@ export class ReadingsProvider implements HistoryDataProvider {
     }
     // Always include series with metadata, even if no data
     series.push({
-      field: "solar",
+      field: "source.solar.total",
       metadata: {
-        id: "solar.power.avg",
-        name: "Total solar generation (remote + local)",
-        label: "Total solar generation (remote + local)",
+        id: "source.solar.total.power.avg",
+        label: "Solar (total)",
         type: "power",
         unit: "W",
       },
@@ -120,8 +119,7 @@ export class ReadingsProvider implements HistoryDataProvider {
       field: "load",
       metadata: {
         id: "load.power.avg",
-        name: "Total load consumption",
-        label: "Total load consumption",
+        label: "Load",
         type: "power",
         unit: "W",
       },
@@ -143,11 +141,10 @@ export class ReadingsProvider implements HistoryDataProvider {
       }
     }
     series.push({
-      field: "battery",
+      field: "bidi.battery",
       metadata: {
-        id: "battery.power.avg",
-        name: "Battery power (negative = charging, positive = discharging)",
-        label: "Battery power (negative = charging, positive = discharging)",
+        id: "bidi.battery.power.avg",
+        label: "Battery",
         type: "power",
         unit: "W",
       },
@@ -169,11 +166,10 @@ export class ReadingsProvider implements HistoryDataProvider {
       }
     }
     series.push({
-      field: "grid",
+      field: "bidi.grid",
       metadata: {
-        id: "grid.power.avg",
-        name: "Grid power (positive = import, negative = export)",
-        label: "Grid power (positive = import, negative = export)",
+        id: "bidi.grid.power.avg",
+        label: "Grid",
         type: "power",
         unit: "W",
       },
@@ -193,11 +189,10 @@ export class ReadingsProvider implements HistoryDataProvider {
       }
     }
     series.push({
-      field: "battery_soc",
+      field: "bidi.battery.soc",
       metadata: {
-        id: "battery.soc.last",
-        name: "Battery state of charge",
-        label: "Battery state of charge",
+        id: "bidi.battery.soc.last",
+        label: "Battery SOC",
         type: "percentage",
         unit: "%",
       },
@@ -229,7 +224,6 @@ export class ReadingsProvider implements HistoryDataProvider {
         field: "solar_energy",
         metadata: {
           id: "solar.energy",
-          name: "Total solar energy generated",
           label: "Total solar energy generated",
           type: "energy",
           unit: "kWh",
@@ -255,7 +249,6 @@ export class ReadingsProvider implements HistoryDataProvider {
         field: "load_energy",
         metadata: {
           id: "load.energy",
-          name: "Total load energy consumed",
           label: "Total load energy consumed",
           type: "energy",
           unit: "kWh",
@@ -281,7 +274,6 @@ export class ReadingsProvider implements HistoryDataProvider {
         field: "battery_soc_avg",
         metadata: {
           id: "battery.soc.avg",
-          name: "Average battery state of charge",
           label: "Average battery state of charge",
           type: "percentage",
           unit: "%",
@@ -307,7 +299,6 @@ export class ReadingsProvider implements HistoryDataProvider {
         field: "battery_soc_min",
         metadata: {
           id: "battery.soc.min",
-          name: "Minimum battery state of charge",
           label: "Minimum battery state of charge",
           type: "percentage",
           unit: "%",
@@ -333,7 +324,6 @@ export class ReadingsProvider implements HistoryDataProvider {
         field: "battery_soc_max",
         metadata: {
           id: "battery.soc.max",
-          name: "Maximum battery state of charge",
           label: "Maximum battery state of charge",
           type: "percentage",
           unit: "%",

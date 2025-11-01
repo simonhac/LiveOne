@@ -1,10 +1,10 @@
-import { SystemWithPolling } from '@/lib/systems-manager';
-import { CalendarDate, ZonedDateTime } from '@internationalized/date';
-import { OpenNEMDataSeries } from '@/types/opennem';
-import { HistoryProviderFactory } from './provider-factory';
-import { OpenNEMConverter } from './opennem-converter';
-import { aggregateToInterval } from './aggregation';
-import { MeasurementSeries } from './types';
+import { SystemWithPolling } from "@/lib/systems-manager";
+import { CalendarDate, ZonedDateTime } from "@internationalized/date";
+import { OpenNEMDataSeries } from "@/types/opennem";
+import { HistoryProviderFactory } from "./provider-factory";
+import { OpenNEMConverter } from "./opennem-converter";
+import { aggregateToInterval } from "./aggregation";
+import { MeasurementSeries } from "./types";
 
 /**
  * Service for fetching historical data using the new abstraction
@@ -17,7 +17,7 @@ export class HistoryService {
     system: SystemWithPolling,
     startTime: ZonedDateTime | CalendarDate,
     endTime: ZonedDateTime | CalendarDate,
-    interval: '5m' | '30m' | '1d'
+    interval: "5m" | "30m" | "1d",
   ): Promise<OpenNEMDataSeries[]> {
     // Get the appropriate provider for this system
     const provider = HistoryProviderFactory.getProvider(system);
@@ -26,15 +26,19 @@ export class HistoryService {
 
     // Fetch data based on interval
     switch (interval) {
-      case '1d': {
+      case "1d": {
         // Daily data
         const startDate = startTime as CalendarDate;
         const endDate = endTime as CalendarDate;
-        measurementSeries = await provider.fetchDailyData(system, startDate, endDate);
+        measurementSeries = await provider.fetchDailyData(
+          system,
+          startDate,
+          endDate,
+        );
         break;
       }
 
-      case '5m': {
+      case "5m": {
         // 5-minute data
         const start = startTime as ZonedDateTime;
         const end = endTime as ZonedDateTime;
@@ -42,12 +46,17 @@ export class HistoryService {
         break;
       }
 
-      case '30m': {
+      case "30m": {
         // 30-minute data - fetch 5-minute and aggregate
         const start = startTime as ZonedDateTime;
         const end = endTime as ZonedDateTime;
         const fiveMinData = await provider.fetch5MinuteData(system, start, end);
-        measurementSeries = aggregateToInterval(fiveMinData, 30 * 60 * 1000, start, end);
+        measurementSeries = aggregateToInterval(
+          fiveMinData,
+          30 * 60 * 1000,
+          start,
+          end,
+        );
         break;
       }
 
@@ -56,18 +65,16 @@ export class HistoryService {
     }
 
     // Extract field names dynamically from the returned data
-    const seriesFields = measurementSeries.map(s => s.field);
+    const seriesFields = measurementSeries.map((s) => s.field);
 
     // Convert to OpenNEM format
     return OpenNEMConverter.convertToOpenNEM(
       measurementSeries,
       seriesFields,
       interval,
-      system.vendorType,
-      system.vendorSiteId,
+      system,
       startTime,
       endTime,
-      system.shortName
     );
   }
 }
