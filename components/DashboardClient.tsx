@@ -361,9 +361,13 @@ export default function DashboardClient({
     return () => clearInterval(interval);
   }, [lastUpdate, fetchData]);
 
-  // Fetch and process Mondo history data when needed
+  // Fetch and process Mondo/Composite history data when needed
   useEffect(() => {
-    if (system?.vendorType !== "mondo" || !systemId) return;
+    if (
+      (system?.vendorType !== "mondo" && system?.vendorType !== "composite") ||
+      !systemId
+    )
+      return;
 
     let abortController = new AbortController();
     let timeoutId: NodeJS.Timeout | null = null;
@@ -871,7 +875,8 @@ export default function DashboardClient({
 
         {error &&
           (error === "POINT_READINGS_NO_CHARTS" &&
-          data?.vendorType !== "mondo" ? (
+          data?.vendorType !== "mondo" &&
+          data?.vendorType !== "composite" ? (
             <div className="bg-blue-900/50 border border-blue-700 text-blue-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
               <AlertTriangle className="w-5 h-5" />
               <span>
@@ -892,7 +897,10 @@ export default function DashboardClient({
             </div>
           ) : null)}
 
-        {(data?.latest || (data && data.vendorType === "mondo")) && (
+        {(data?.latest ||
+          (data &&
+            (data.vendorType === "mondo" ||
+              data.vendorType === "composite"))) && (
           <div className="space-y-6">
             {/* Fault Warning */}
             {data.latest?.system.faultCode &&
@@ -919,19 +927,24 @@ export default function DashboardClient({
             {(isAdmin || system?.status !== "removed") && (
               <div
                 className={
-                  data?.vendorType === "mondo"
+                  data?.vendorType === "mondo" ||
+                  data?.vendorType === "composite"
                     ? ""
                     : "grid grid-cols-1 lg:grid-cols-3 gap-4"
                 }
               >
-                {/* Charts - Full width for mondo, 2/3 width for others */}
+                {/* Charts - Full width for mondo/composite, 2/3 width for others */}
                 <div
                   className={
-                    data?.vendorType === "mondo" ? "" : "lg:col-span-2"
+                    data?.vendorType === "mondo" ||
+                    data?.vendorType === "composite"
+                      ? ""
+                      : "lg:col-span-2"
                   }
                 >
-                  {data?.vendorType === "mondo" ? (
-                    // For mondo systems, show charts with tables in single container
+                  {data?.vendorType === "mondo" ||
+                  data?.vendorType === "composite" ? (
+                    // For mondo/composite systems, show charts with tables in single container
                     <div className="sm:bg-gray-800 sm:border sm:border-gray-700 sm:rounded overflow-hidden">
                       {/* Shared header with date/time and period switcher */}
                       <div className="px-2 sm:px-4 pt-2 sm:pt-4 pb-1 sm:pb-2">
