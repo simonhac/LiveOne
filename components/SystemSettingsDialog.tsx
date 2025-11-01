@@ -3,9 +3,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { X } from "lucide-react";
+import { X, Shield } from "lucide-react";
 import CapabilitiesTab from "./CapabilitiesTab";
 import CompositeTab from "./CompositeTab";
+import AdminTab from "./AdminTab";
 
 interface SystemSettingsDialogProps {
   isOpen: boolean;
@@ -17,6 +18,7 @@ interface SystemSettingsDialogProps {
     vendorType: string;
     metadata?: any;
   } | null;
+  isAdmin?: boolean;
   onUpdate?: (
     systemId: number,
     updates: { displayName?: string; shortName?: string | null },
@@ -27,6 +29,7 @@ export default function SystemSettingsDialog({
   isOpen,
   onClose,
   system,
+  isAdmin = false,
   onUpdate,
 }: SystemSettingsDialogProps) {
   const router = useRouter();
@@ -38,13 +41,15 @@ export default function SystemSettingsDialog({
   const [isShortNameDirty, setIsShortNameDirty] = useState(false);
   const [isCapabilitiesDirty, setIsCapabilitiesDirty] = useState(false);
   const [isCompositeDirty, setIsCompositeDirty] = useState(false);
+  const [isAdminDirty, setIsAdminDirty] = useState(false);
   const [shortNameError, setShortNameError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "general" | "capabilities" | "composite"
+    "general" | "capabilities" | "composite" | "admin"
   >("general");
   const capabilitiesSaveRef = useRef<(() => Promise<string[]>) | null>(null);
   const compositeSaveRef = useRef<(() => Promise<any>) | null>(null);
+  const adminSaveRef = useRef<(() => Promise<any>) | null>(null);
 
   // Reset form when modal opens or system ID changes (but not when system data updates)
   useEffect(() => {
@@ -56,6 +61,7 @@ export default function SystemSettingsDialog({
       setIsShortNameDirty(false);
       setIsCapabilitiesDirty(false);
       setIsCompositeDirty(false);
+      setIsAdminDirty(false);
       setShortNameError(null);
     } else {
       // Reset tab to general when modal closes (prevents flash on next open)
@@ -86,7 +92,11 @@ export default function SystemSettingsDialog({
   };
 
   const hasChanges =
-    isNameDirty || isShortNameDirty || isCapabilitiesDirty || isCompositeDirty;
+    isNameDirty ||
+    isShortNameDirty ||
+    isCapabilitiesDirty ||
+    isCompositeDirty ||
+    isAdminDirty;
   const hasGeneralChanges = isNameDirty || isShortNameDirty;
 
   const handleSave = async () => {
@@ -159,11 +169,36 @@ export default function SystemSettingsDialog({
         }
       }
 
+      // Save admin settings separately
+      if (isAdminDirty && adminSaveRef.current) {
+        const adminData = await adminSaveRef.current();
+
+        console.log("Admin data to save:", adminData);
+
+        const response = await fetch(
+          `/api/admin/systems/${system.systemId}/admin-settings`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(adminData),
+          },
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to update admin settings");
+        }
+      }
+
       // Reset dirty flags
       setIsNameDirty(false);
       setIsShortNameDirty(false);
       setIsCapabilitiesDirty(false);
       setIsCompositeDirty(false);
+      setIsAdminDirty(false);
 
       // Refresh the page to show updated data
       router.refresh();
@@ -285,6 +320,22 @@ export default function SystemSettingsDialog({
                   )}
                 </button>
               )}
+              {isAdmin && (
+                <button
+                  onClick={() => setActiveTab("admin")}
+                  className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 flex items-center gap-2 ${
+                    activeTab === "admin"
+                      ? "text-white border-blue-500 bg-gray-700/50"
+                      : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
+                  }`}
+                >
+                  <Shield className="w-4 h-4 text-blue-500" />
+                  Admin
+                  {isAdminDirty && (
+                    <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
+                  )}
+                </button>
+              )}
             </div>
           </div>
 
@@ -364,6 +415,20 @@ export default function SystemSettingsDialog({
                   onDirtyChange={setIsCompositeDirty}
                   onSaveFunctionReady={(fn) => {
                     compositeSaveRef.current = fn;
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Admin Tab Content */}
+            {isAdmin && (
+              <div className={activeTab === "admin" ? "" : "hidden"}>
+                <AdminTab
+                  systemId={system.systemId}
+                  shouldLoad={isOpen}
+                  onDirtyChange={setIsAdminDirty}
+                  onSaveFunctionReady={(fn) => {
+                    adminSaveRef.current = fn;
                   }}
                 />
               </div>

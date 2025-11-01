@@ -1388,6 +1388,7 @@ export default function DashboardClient({
             vendorType: system.vendorType,
             metadata: system.metadata,
           }}
+          isAdmin={isAdmin}
           onUpdate={handleUpdateSystemSettings}
         />
       )}
