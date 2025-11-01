@@ -5,6 +5,7 @@ import { systems } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { storeSystemCredentials } from "@/lib/secure-credentials";
 import { VendorRegistry } from "@/lib/vendors/registry";
+import { SystemsManager } from "@/lib/systems-manager";
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,13 +17,68 @@ export async function POST(request: NextRequest) {
     }
 
     // Get request data
-    const { vendorType, credentials, systemInfo } = await request.json();
+    const { vendorType, credentials, systemInfo, displayName, metadata } =
+      await request.json();
 
-    if (!vendorType || !credentials || !systemInfo?.vendorSiteId) {
+    // Handle composite systems differently
+    if (vendorType === "composite") {
+      // Validate composite system requirements
+      if (!displayName || !displayName.trim()) {
+        return NextResponse.json(
+          { error: "Display name is required for composite systems" },
+          { status: 400 },
+        );
+      }
+
+      if (!metadata || !metadata.mappings) {
+        return NextResponse.json(
+          { error: "Composite mappings are required" },
+          { status: 400 },
+        );
+      }
+
+      console.log(
+        `[Create System] Creating composite system for user ${userId}`,
+      );
+
+      // Create the composite system
+      const [newSystem] = await db
+        .insert(systems)
+        .values({
+          ownerClerkUserId: userId,
+          vendorType: "composite",
+          vendorSiteId: `composite_${Date.now()}`, // Unique identifier
+          displayName: displayName.trim(),
+          status: "active",
+          metadata: {
+            version: 1,
+            mappings: metadata.mappings,
+          },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .returning();
+
+      console.log(
+        `[Create System] Created composite system ${newSystem.id} for user ${userId}`,
+      );
+
+      // Invalidate SystemsManager cache so the new system appears immediately
+      SystemsManager.clearInstance();
+
+      // Success!
+      return NextResponse.json({
+        success: true,
+        systemId: newSystem.id,
+        system: newSystem,
+      });
+    }
+
+    // Handle regular systems
+    if (!credentials || !systemInfo?.vendorSiteId) {
       return NextResponse.json(
         {
-          error:
-            "Vendor type, credentials, and system info with vendorSiteId are required",
+          error: "Credentials and system info with vendorSiteId are required",
         },
         { status: 400 },
       );
@@ -77,6 +133,9 @@ export async function POST(request: NextRequest) {
     console.log(
       `[Create System] Created system ${newSystem.id} for user ${userId}`,
     );
+
+    // Invalidate SystemsManager cache so the new system appears immediately
+    SystemsManager.clearInstance();
 
     // Store the credentials in Clerk
     const credentialResult = await storeSystemCredentials(

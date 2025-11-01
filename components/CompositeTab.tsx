@@ -106,25 +106,50 @@ export default function CompositeTab({
   const fetchCompositeConfig = async () => {
     fetchingRef.current = true;
     try {
-      const response = await fetch(
-        `/api/admin/systems/${systemId}/composite-config`,
-      );
-      const data = await response.json();
+      // For new systems (systemId=-1), initialize with empty mappings
+      // and fetch available capabilities from all systems
+      if (systemId === -1) {
+        // Fetch available capabilities from all systems
+        const response = await fetch(
+          "/api/admin/systems/composite-capabilities",
+        );
+        const data = await response.json();
 
-      if (data.success) {
-        // Parse existing mappings from metadata
-        const metadata = data.metadata || {};
-        const currentMappings: CompositeMapping = {
-          solar: metadata.mappings?.solar || [],
-          battery: metadata.mappings?.battery || [],
-          load: metadata.mappings?.load || [],
-          grid: metadata.mappings?.grid || [],
-        };
+        if (data.success) {
+          const emptyMappings: CompositeMapping = {
+            solar: [],
+            battery: [],
+            load: [],
+            grid: [],
+          };
 
-        setMappings(currentMappings);
-        setInitialMappings(JSON.parse(JSON.stringify(currentMappings)));
-        setAvailableCapabilities(data.availableCapabilities);
-        setHasLoaded(true);
+          setMappings(emptyMappings);
+          setInitialMappings(JSON.parse(JSON.stringify(emptyMappings)));
+          setAvailableCapabilities(data.availableCapabilities || []);
+          setHasLoaded(true);
+        }
+      } else {
+        // For existing systems, fetch their composite configuration
+        const response = await fetch(
+          `/api/admin/systems/${systemId}/composite-config`,
+        );
+        const data = await response.json();
+
+        if (data.success) {
+          // Parse existing mappings from metadata
+          const metadata = data.metadata || {};
+          const currentMappings: CompositeMapping = {
+            solar: metadata.mappings?.solar || [],
+            battery: metadata.mappings?.battery || [],
+            load: metadata.mappings?.load || [],
+            grid: metadata.mappings?.grid || [],
+          };
+
+          setMappings(currentMappings);
+          setInitialMappings(JSON.parse(JSON.stringify(currentMappings)));
+          setAvailableCapabilities(data.availableCapabilities);
+          setHasLoaded(true);
+        }
       }
     } catch (error) {
       console.error("Failed to fetch composite config:", error);
@@ -346,18 +371,23 @@ export default function CompositeTab({
 
     return createPortal(
       <>
-        {/* Backdrop */}
-        <div className="fixed inset-0 z-[10002]" onClick={handleCloseMenu} />
-
-        {/* Menu */}
+        {/* Backdrop - pointer-events-auto to capture clicks for closing */}
         <div
-          className="fixed z-[10003] bg-gray-900 border border-gray-700 rounded-lg shadow-xl overflow-hidden"
+          className="fixed inset-0 z-[10002] pointer-events-auto"
+          onClick={handleCloseMenu}
+          style={{ background: "rgba(0, 0, 0, 0.3)" }}
+        />
+
+        {/* Menu - must be above backdrop with pointer-events-auto */}
+        <div
+          className="fixed z-[10003] bg-gray-900 border border-gray-700 rounded-lg shadow-xl overflow-hidden pointer-events-auto"
           style={{
             left: `${left}px`,
             top: `${top}px`,
             width: `${menuWidth}px`,
             maxHeight: `${menuMaxHeight}px`,
           }}
+          onClick={(e) => e.stopPropagation()}
         >
           <div className="overflow-y-auto max-h-full">
             {availableForCategory.length === 0 ? (
@@ -393,10 +423,11 @@ export default function CompositeTab({
                     {group.capabilities.map((cap, idx) => (
                       <button
                         key={idx}
-                        onClick={() =>
-                          handleSelectCapability(typedCategory, cap)
-                        }
-                        className="w-full text-left px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-800 transition-colors border-b border-gray-800 last:border-b-0"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSelectCapability(typedCategory, cap);
+                        }}
+                        className="w-full text-left pl-6 pr-3 py-1.5 text-sm text-gray-300 hover:bg-gray-800 transition-colors border-b border-gray-800 last:border-b-0"
                       >
                         {cap.seriesId}
                       </button>
@@ -421,7 +452,7 @@ export default function CompositeTab({
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-[15px]">
       <p className="text-sm text-gray-400">
         Map data points from your other systems to create a unified view.
       </p>

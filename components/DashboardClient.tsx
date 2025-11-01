@@ -189,6 +189,12 @@ export default function DashboardClient({
   const [secondsSinceUpdate, setSecondsSinceUpdate] = useState<number>(0);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [isAdmin, setIsAdmin] = useState(isAdminProp);
+  const [currentDisplayName, setCurrentDisplayName] = useState(
+    system?.displayName || "",
+  );
+  const [currentShortName, setCurrentShortName] = useState(
+    system?.shortName || null,
+  );
   const [showSystemDropdown, setShowSystemDropdown] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [showTestConnection, setShowTestConnection] = useState(false);
@@ -330,6 +336,13 @@ export default function DashboardClient({
       setLoading(false);
     }
   }, [systemId, system?.status, dataStore]);
+
+  // Sync local state with data when loaded (unless user has manually updated)
+  useEffect(() => {
+    if (data?.displayName && !currentDisplayName) {
+      setCurrentDisplayName(data.displayName);
+    }
+  }, [data?.displayName]);
 
   useEffect(() => {
     // Initial fetch
@@ -581,21 +594,13 @@ export default function DashboardClient({
     systemId: number,
     updates: { displayName?: string; shortName?: string | null },
   ) => {
-    const response = await fetch(`/api/systems/${systemId}`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(updates),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || "Failed to update system settings");
+    // Update local state immediately (API call was already made by modal)
+    if (updates.displayName !== undefined) {
+      setCurrentDisplayName(updates.displayName);
     }
-
-    // Refresh the page to show updated data
-    router.refresh();
+    if (updates.shortName !== undefined) {
+      setCurrentShortName(updates.shortName);
+    }
   };
 
   // Handle series visibility toggle with special logic
@@ -687,8 +692,9 @@ export default function DashboardClient({
       (data.latest.energy.total.gridOutKwh || 0) > 0
     : false;
 
-  // Get display name for the system
+  // Get display name for the system (prefer local state which updates immediately)
   const systemDisplayName =
+    currentDisplayName ||
     data?.displayName ||
     (systemId
       ? `System ${data?.systemNumber || systemId}`
@@ -923,6 +929,20 @@ export default function DashboardClient({
                 </div>
               )}
 
+            {/* Show warning for unconfigured composite systems */}
+            {system?.vendorType === "composite" &&
+              !historyLoading &&
+              !processedHistoryData.load &&
+              !processedHistoryData.generation && (
+                <div className="bg-yellow-900/50 border border-yellow-700 text-yellow-300 px-4 py-3 rounded flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5" />
+                  <span>
+                    Composite system needs to be configured before charts can be
+                    displayed.
+                  </span>
+                </div>
+              )}
+
             {/* Main Dashboard Grid - Only show for admin or non-removed systems */}
             {(isAdmin || system?.status !== "removed") && (
               <div
@@ -945,221 +965,243 @@ export default function DashboardClient({
                   {data?.vendorType === "mondo" ||
                   data?.vendorType === "composite" ? (
                     // For mondo/composite systems, show charts with tables in single container
-                    <div className="sm:bg-gray-800 sm:border sm:border-gray-700 sm:rounded overflow-hidden">
-                      {/* Shared header with date/time and period switcher */}
-                      <div className="px-2 sm:px-4 pt-2 sm:pt-4 pb-1 sm:pb-2">
-                        <div className="flex justify-end items-center">
-                          <div className="flex items-center gap-2 sm:gap-4">
-                            <span
-                              className="text-xs sm:text-sm text-gray-400"
-                              style={{
-                                fontFamily: "DM Sans, system-ui, sans-serif",
-                              }}
-                            >
-                              {hoveredIndex !== null &&
-                              (loadChartData || generationChartData)
-                                ? // Show hovered timestamp from whichever chart has data - always show time when hovering
-                                  format(
-                                    loadChartData?.timestamps[hoveredIndex] ||
-                                      generationChartData?.timestamps[
-                                        hoveredIndex
-                                      ] ||
-                                      new Date(),
-                                    mondoPeriod === "1D"
-                                      ? "h:mma"
-                                      : mondoPeriod === "7D"
-                                        ? "EEE, d MMM h:mma"
-                                        : "EEE, d MMM",
-                                  )
-                                : // Show date range from actual chart data when not hovering
-                                  (() => {
-                                    const chartData =
-                                      loadChartData || generationChartData;
-                                    // Get timezone offset from API data or system prop
-                                    const timezoneOffset =
-                                      data?.timezoneOffsetMin ??
-                                      system?.timezoneOffsetMin;
-                                    if (!timezoneOffset) {
-                                      return "Loading..."; // No timezone data yet
-                                    }
-                                    if (
-                                      chartData &&
-                                      chartData.timestamps.length > 0
-                                    ) {
-                                      const start = fromUnixTimestamp(
-                                        chartData.timestamps[0].getTime() /
-                                          1000,
-                                        timezoneOffset,
-                                      );
-                                      const end = fromUnixTimestamp(
-                                        chartData.timestamps[
-                                          chartData.timestamps.length - 1
-                                        ].getTime() / 1000,
-                                        timezoneOffset,
-                                      );
-                                      return (
-                                        <>
-                                          <span className="hidden sm:inline">
-                                            {formatDateRange(start, end, true)}
-                                          </span>
-                                          <span className="sm:hidden">
-                                            {formatDateRange(start, end, false)}
-                                          </span>
-                                        </>
-                                      );
-                                    } else {
-                                      // Fallback to calculated range if no data yet
-                                      const now = new Date();
-                                      let windowHours: number;
-                                      if (mondoPeriod === "1D")
-                                        windowHours = 24;
-                                      else if (mondoPeriod === "7D")
-                                        windowHours = 24 * 7;
-                                      else windowHours = 24 * 30;
-                                      const windowStart = new Date(
-                                        now.getTime() -
-                                          windowHours * 60 * 60 * 1000,
-                                      );
-                                      const start = fromUnixTimestamp(
-                                        windowStart.getTime() / 1000,
-                                        timezoneOffset,
-                                      );
-                                      const end = fromUnixTimestamp(
-                                        now.getTime() / 1000,
-                                        timezoneOffset,
-                                      );
-                                      return (
-                                        <>
-                                          <span className="hidden sm:inline">
-                                            {formatDateRange(start, end, true)}
-                                          </span>
-                                          <span className="sm:hidden">
-                                            {formatDateRange(start, end, false)}
-                                          </span>
-                                        </>
-                                      );
-                                    }
-                                  })()}
-                            </span>
-                            <PeriodSwitcher
-                              value={mondoPeriod}
-                              onChange={(newPeriod) => {
-                                setMondoPeriod(newPeriod);
-                                const params = new URLSearchParams(
-                                  searchParams.toString(),
-                                );
-                                params.set("period", newPeriod);
-                                router.push(`?${params.toString()}`, {
-                                  scroll: false,
-                                });
-                              }}
-                            />
+                    // Hide entire container for unconfigured composite systems
+                    (historyLoading ||
+                      processedHistoryData.load ||
+                      processedHistoryData.generation ||
+                      system?.vendorType !== "composite") && (
+                      <div className="sm:bg-gray-800 sm:border sm:border-gray-700 sm:rounded overflow-hidden">
+                        {/* Shared header with date/time and period switcher */}
+                        <div className="px-2 sm:px-4 pt-2 sm:pt-4 pb-1 sm:pb-2">
+                          <div className="flex justify-end items-center">
+                            <div className="flex items-center gap-2 sm:gap-4">
+                              <span
+                                className="text-xs sm:text-sm text-gray-400"
+                                style={{
+                                  fontFamily: "DM Sans, system-ui, sans-serif",
+                                }}
+                              >
+                                {hoveredIndex !== null &&
+                                (loadChartData || generationChartData)
+                                  ? // Show hovered timestamp from whichever chart has data - always show time when hovering
+                                    format(
+                                      loadChartData?.timestamps[hoveredIndex] ||
+                                        generationChartData?.timestamps[
+                                          hoveredIndex
+                                        ] ||
+                                        new Date(),
+                                      mondoPeriod === "1D"
+                                        ? "h:mma"
+                                        : mondoPeriod === "7D"
+                                          ? "EEE, d MMM h:mma"
+                                          : "EEE, d MMM",
+                                    )
+                                  : // Show date range from actual chart data when not hovering
+                                    (() => {
+                                      const chartData =
+                                        loadChartData || generationChartData;
+                                      // Get timezone offset from API data or system prop
+                                      const timezoneOffset =
+                                        data?.timezoneOffsetMin ??
+                                        system?.timezoneOffsetMin;
+                                      if (!timezoneOffset) {
+                                        return "Loading..."; // No timezone data yet
+                                      }
+                                      if (
+                                        chartData &&
+                                        chartData.timestamps.length > 0
+                                      ) {
+                                        const start = fromUnixTimestamp(
+                                          chartData.timestamps[0].getTime() /
+                                            1000,
+                                          timezoneOffset,
+                                        );
+                                        const end = fromUnixTimestamp(
+                                          chartData.timestamps[
+                                            chartData.timestamps.length - 1
+                                          ].getTime() / 1000,
+                                          timezoneOffset,
+                                        );
+                                        return (
+                                          <>
+                                            <span className="hidden sm:inline">
+                                              {formatDateRange(
+                                                start,
+                                                end,
+                                                true,
+                                              )}
+                                            </span>
+                                            <span className="sm:hidden">
+                                              {formatDateRange(
+                                                start,
+                                                end,
+                                                false,
+                                              )}
+                                            </span>
+                                          </>
+                                        );
+                                      } else {
+                                        // Fallback to calculated range if no data yet
+                                        const now = new Date();
+                                        let windowHours: number;
+                                        if (mondoPeriod === "1D")
+                                          windowHours = 24;
+                                        else if (mondoPeriod === "7D")
+                                          windowHours = 24 * 7;
+                                        else windowHours = 24 * 30;
+                                        const windowStart = new Date(
+                                          now.getTime() -
+                                            windowHours * 60 * 60 * 1000,
+                                        );
+                                        const start = fromUnixTimestamp(
+                                          windowStart.getTime() / 1000,
+                                          timezoneOffset,
+                                        );
+                                        const end = fromUnixTimestamp(
+                                          now.getTime() / 1000,
+                                          timezoneOffset,
+                                        );
+                                        return (
+                                          <>
+                                            <span className="hidden sm:inline">
+                                              {formatDateRange(
+                                                start,
+                                                end,
+                                                true,
+                                              )}
+                                            </span>
+                                            <span className="sm:hidden">
+                                              {formatDateRange(
+                                                start,
+                                                end,
+                                                false,
+                                              )}
+                                            </span>
+                                          </>
+                                        );
+                                      }
+                                    })()}
+                              </span>
+                              <PeriodSwitcher
+                                value={mondoPeriod}
+                                onChange={(newPeriod) => {
+                                  setMondoPeriod(newPeriod);
+                                  const params = new URLSearchParams(
+                                    searchParams.toString(),
+                                  );
+                                  params.set("period", newPeriod);
+                                  router.push(`?${params.toString()}`, {
+                                    scroll: false,
+                                  });
+                                }}
+                              />
+                            </div>
                           </div>
                         </div>
-                      </div>
 
-                      {/* Loads Chart with Table */}
-                      <div className="px-2 sm:px-4 pt-1 sm:pt-2 pb-2 sm:pb-4">
-                        <div className="flex flex-col md:flex-row md:gap-4">
-                          <div className="flex-1 min-w-0">
-                            <MondoPowerChart
-                              systemId={parseInt(systemId as string)}
-                              mode="load"
-                              title="Loads"
-                              className="h-full min-h-[375px]"
-                              period={mondoPeriod}
-                              onPeriodChange={(newPeriod) => {
-                                setMondoPeriod(newPeriod);
-                                const params = new URLSearchParams(
-                                  searchParams.toString(),
-                                );
-                                params.set("period", newPeriod);
-                                router.push(`?${params.toString()}`, {
-                                  scroll: false,
-                                });
-                              }}
-                              showPeriodSwitcher={false}
-                              onDataChange={setLoadChartData}
-                              onHoverIndexChange={handleLoadHoverIndexChange}
-                              hoveredIndex={hoveredIndex}
-                              visibleSeries={
-                                loadVisibleSeries.size > 0
-                                  ? loadVisibleSeries
-                                  : undefined
-                              }
-                              onVisibilityChange={setLoadVisibleSeries}
-                              data={processedHistoryData.load}
-                            />
-                          </div>
-                          <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
-                            <EnergyTable
-                              chartData={loadChartData}
-                              mode="load"
-                              hoveredIndex={hoveredIndex}
-                              className="h-full"
-                              visibleSeries={
-                                loadVisibleSeries.size > 0
-                                  ? loadVisibleSeries
-                                  : undefined
-                              }
-                              onSeriesToggle={handleLoadSeriesToggle}
-                            />
+                        {/* Loads Chart with Table */}
+                        <div className="px-2 sm:px-4 pt-1 sm:pt-2 pb-2 sm:pb-4">
+                          <div className="flex flex-col md:flex-row md:gap-4">
+                            <div className="flex-1 min-w-0">
+                              <MondoPowerChart
+                                systemId={parseInt(systemId as string)}
+                                mode="load"
+                                title="Loads"
+                                className="h-full min-h-[375px]"
+                                period={mondoPeriod}
+                                onPeriodChange={(newPeriod) => {
+                                  setMondoPeriod(newPeriod);
+                                  const params = new URLSearchParams(
+                                    searchParams.toString(),
+                                  );
+                                  params.set("period", newPeriod);
+                                  router.push(`?${params.toString()}`, {
+                                    scroll: false,
+                                  });
+                                }}
+                                showPeriodSwitcher={false}
+                                onDataChange={setLoadChartData}
+                                onHoverIndexChange={handleLoadHoverIndexChange}
+                                hoveredIndex={hoveredIndex}
+                                visibleSeries={
+                                  loadVisibleSeries.size > 0
+                                    ? loadVisibleSeries
+                                    : undefined
+                                }
+                                onVisibilityChange={setLoadVisibleSeries}
+                                data={processedHistoryData.load}
+                              />
+                            </div>
+                            <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+                              <EnergyTable
+                                chartData={loadChartData}
+                                mode="load"
+                                hoveredIndex={hoveredIndex}
+                                className="h-full"
+                                visibleSeries={
+                                  loadVisibleSeries.size > 0
+                                    ? loadVisibleSeries
+                                    : undefined
+                                }
+                                onSeriesToggle={handleLoadSeriesToggle}
+                              />
+                            </div>
                           </div>
                         </div>
-                      </div>
 
-                      {/* Generation Chart with Table */}
-                      <div className="p-2 sm:p-4">
-                        <div className="flex flex-col md:flex-row md:gap-4">
-                          <div className="flex-1 min-w-0">
-                            <MondoPowerChart
-                              systemId={parseInt(systemId as string)}
-                              mode="generation"
-                              title="Generation"
-                              className="h-full min-h-[375px]"
-                              period={mondoPeriod}
-                              onPeriodChange={(newPeriod) => {
-                                setMondoPeriod(newPeriod);
-                                const params = new URLSearchParams(
-                                  searchParams.toString(),
-                                );
-                                params.set("period", newPeriod);
-                                router.push(`?${params.toString()}`, {
-                                  scroll: false,
-                                });
-                              }}
-                              showPeriodSwitcher={false}
-                              onDataChange={setGenerationChartData}
-                              onHoverIndexChange={
-                                handleGenerationHoverIndexChange
-                              }
-                              hoveredIndex={hoveredIndex}
-                              visibleSeries={
-                                generationVisibleSeries.size > 0
-                                  ? generationVisibleSeries
-                                  : undefined
-                              }
-                              onVisibilityChange={setGenerationVisibleSeries}
-                              data={processedHistoryData.generation}
-                            />
-                          </div>
-                          <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
-                            <EnergyTable
-                              chartData={generationChartData}
-                              mode="generation"
-                              hoveredIndex={hoveredIndex}
-                              className="h-full"
-                              visibleSeries={
-                                generationVisibleSeries.size > 0
-                                  ? generationVisibleSeries
-                                  : undefined
-                              }
-                              onSeriesToggle={handleGenerationSeriesToggle}
-                            />
+                        {/* Generation Chart with Table */}
+                        <div className="p-2 sm:p-4">
+                          <div className="flex flex-col md:flex-row md:gap-4">
+                            <div className="flex-1 min-w-0">
+                              <MondoPowerChart
+                                systemId={parseInt(systemId as string)}
+                                mode="generation"
+                                title="Generation"
+                                className="h-full min-h-[375px]"
+                                period={mondoPeriod}
+                                onPeriodChange={(newPeriod) => {
+                                  setMondoPeriod(newPeriod);
+                                  const params = new URLSearchParams(
+                                    searchParams.toString(),
+                                  );
+                                  params.set("period", newPeriod);
+                                  router.push(`?${params.toString()}`, {
+                                    scroll: false,
+                                  });
+                                }}
+                                showPeriodSwitcher={false}
+                                onDataChange={setGenerationChartData}
+                                onHoverIndexChange={
+                                  handleGenerationHoverIndexChange
+                                }
+                                hoveredIndex={hoveredIndex}
+                                visibleSeries={
+                                  generationVisibleSeries.size > 0
+                                    ? generationVisibleSeries
+                                    : undefined
+                                }
+                                onVisibilityChange={setGenerationVisibleSeries}
+                                data={processedHistoryData.generation}
+                              />
+                            </div>
+                            <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+                              <EnergyTable
+                                chartData={generationChartData}
+                                mode="generation"
+                                hoveredIndex={hoveredIndex}
+                                className="h-full"
+                                visibleSeries={
+                                  generationVisibleSeries.size > 0
+                                    ? generationVisibleSeries
+                                    : undefined
+                                }
+                                onSeriesToggle={handleGenerationSeriesToggle}
+                              />
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
+                    )
                   ) : (
                     // For other systems, show the regular energy chart
                     <EnergyChart
@@ -1370,7 +1412,7 @@ export default function DashboardClient({
           isOpen={showViewDataModal}
           onClose={() => setShowViewDataModal(false)}
           systemId={parseInt(systemId)}
-          systemName={data?.displayName || system?.displayName || "System"}
+          systemName={data?.displayName || currentDisplayName || "System"}
           vendorType={data?.vendorType || system?.vendorType}
           vendorSiteId={data?.vendorSiteId || system?.vendorSiteId || ""}
         />
@@ -1383,8 +1425,8 @@ export default function DashboardClient({
           onClose={() => setShowSystemSettingsDialog(false)}
           system={{
             systemId: system.id,
-            displayName: system.displayName,
-            shortName: system.shortName,
+            displayName: currentDisplayName,
+            shortName: currentShortName,
             vendorType: system.vendorType,
             metadata: system.metadata,
           }}

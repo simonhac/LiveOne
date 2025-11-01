@@ -139,8 +139,14 @@ export default function SystemSettingsDialog({
           throw new Error(data.error || "Failed to update system settings");
         }
 
-        // Note: No need to call onUpdate since we already saved to the settings endpoint
-        // The parent component will refresh when the modal closes
+        // Call onUpdate to update parent component's local state
+        if (onUpdate && (isNameDirty || isShortNameDirty)) {
+          const updates: { displayName?: string; shortName?: string | null } =
+            {};
+          if (isNameDirty) updates.displayName = editedName;
+          if (isShortNameDirty) updates.shortName = editedShortName || null;
+          await onUpdate(system.systemId, updates);
+        }
       }
 
       // Save composite configuration separately
@@ -200,11 +206,11 @@ export default function SystemSettingsDialog({
       setIsCompositeDirty(false);
       setIsAdminDirty(false);
 
+      // Close modal first to show the updated state immediately
+      onClose();
+
       // Refresh the page to show updated data
       router.refresh();
-
-      // Close modal on successful save
-      onClose();
     } catch (error) {
       console.error("Failed to update system settings:", error);
       // Check if it's a uniqueness error
@@ -224,6 +230,22 @@ export default function SystemSettingsDialog({
     setShortNameError(null);
     onClose();
   };
+
+  // Prevent body scroll when modal is open
+  useEffect(() => {
+    if (!isOpen) return;
+
+    // Save original overflow value
+    const originalOverflow = document.body.style.overflow;
+
+    // Prevent body scroll
+    document.body.style.overflow = "hidden";
+
+    // Restore on cleanup
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [isOpen]);
 
   // Handle keyboard shortcuts globally when modal is open
   useEffect(() => {
@@ -253,10 +275,7 @@ export default function SystemSettingsDialog({
   return createPortal(
     <>
       {/* Backdrop with blur */}
-      <div
-        className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[10000]"
-        onClick={onClose}
-      />
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[10000]" />
 
       {/* Dialog */}
       <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[10001] w-full max-w-[488px] sm:max-w-[588px]">

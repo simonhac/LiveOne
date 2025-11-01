@@ -367,9 +367,23 @@ async function getSystemHistoryInOpenNEMFormat(
     try {
       const metadata = system.metadata as any;
 
-      // Validate metadata format
+      // If composite system has no configuration yet, return empty data
       if (!metadata || metadata.version !== 1 || !metadata.mappings) {
-        throw new Error("Invalid composite system metadata");
+        console.log(
+          `[Composite History] System ${system.id} has no configuration yet, returning empty data`,
+        );
+        return [];
+      }
+
+      // Check if mappings is empty (all categories have empty arrays)
+      const hasAnyMappings = Object.values(metadata.mappings).some(
+        (paths) => Array.isArray(paths) && paths.length > 0,
+      );
+      if (!hasAnyMappings) {
+        console.log(
+          `[Composite History] System ${system.id} has empty mappings, returning empty data`,
+        );
+        return [];
       }
 
       // Collect all series paths from mappings

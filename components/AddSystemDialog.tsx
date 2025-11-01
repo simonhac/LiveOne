@@ -1,19 +1,37 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2, CheckCircle, AlertCircle, MoreHorizontal } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useRef } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Loader2,
+  CheckCircle,
+  AlertCircle,
+  MoreHorizontal,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
+import CompositeTab from "./CompositeTab";
 
 interface CredentialField {
   name: string;
   label: string;
-  type: 'text' | 'email' | 'password' | 'url' | 'number';
+  type: "text" | "email" | "password" | "url" | "number";
   placeholder?: string;
   required?: boolean;
   helpText?: string;
@@ -32,8 +50,11 @@ interface AddSystemDialogProps {
 
 export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
   const router = useRouter();
+  const [compositeName, setCompositeName] = useState("");
+  const [isCompositeDirty, setIsCompositeDirty] = useState(false);
+  const compositeSaveRef = useRef<(() => Promise<any>) | null>(null);
   const [vendors, setVendors] = useState<VendorInfo[]>([]);
-  const [selectedVendor, setSelectedVendor] = useState<string>('');
+  const [selectedVendor, setSelectedVendor] = useState<string>("");
   const [credentials, setCredentials] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -52,7 +73,9 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
     }
     if (!newOpen) {
       // Reset state when closing
-      setSelectedVendor('');
+      setCompositeName("");
+      setIsCompositeDirty(false);
+      setSelectedVendor("");
       setCredentials({});
       setError(null);
       setTestSuccess(false);
@@ -65,20 +88,27 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
   useEffect(() => {
     async function fetchVendors() {
       try {
-        const response = await fetch('/api/vendors');
+        const response = await fetch("/api/vendors");
         if (response.ok) {
           const data = await response.json();
-          setVendors(data.vendors.filter((v: VendorInfo) => v.credentialFields && v.credentialFields.length > 0));
+          setVendors(
+            data.vendors.filter(
+              (v: VendorInfo) =>
+                v.credentialFields && v.credentialFields.length > 0,
+            ),
+          );
         }
       } catch (err) {
-        console.error('Failed to fetch vendors:', err);
+        console.error("Failed to fetch vendors:", err);
       }
     }
 
     if (open) {
       fetchVendors();
       // Reset state when dialog opens
-      setSelectedVendor('');
+      setCompositeName("");
+      setIsCompositeDirty(false);
+      setSelectedVendor("");
       setCredentials({});
       setError(null);
       setTestSuccess(false);
@@ -86,26 +116,32 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
     }
   }, [open]);
 
-  const selectedVendorInfo = vendors.find(v => v.vendorType === selectedVendor);
+  const selectedVendorInfo = vendors.find(
+    (v) => v.vendorType === selectedVendor,
+  );
 
   const handleVendorChange = (vendorType: string) => {
     setSelectedVendor(vendorType);
     setCredentials({});
+    setCompositeName("");
+    setIsCompositeDirty(false);
     setError(null);
     setTestSuccess(false);
     setSystemInfo(null);
   };
 
+  const isComposite = selectedVendor === "composite";
+
   const handleFieldChange = (fieldName: string, value: string) => {
-    setCredentials(prev => ({ ...prev, [fieldName]: value }));
+    setCredentials((prev) => ({ ...prev, [fieldName]: value }));
     setError(null);
   };
 
   const canTestConnection = () => {
     if (!selectedVendorInfo) return false;
     return selectedVendorInfo.credentialFields
-      .filter(f => f.required)
-      .every(f => credentials[f.name]?.trim());
+      .filter((f) => f.required)
+      .every((f) => credentials[f.name]?.trim());
   };
 
   const handleTestConnection = async () => {
@@ -116,51 +152,55 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
     setTestSuccess(false);
 
     try {
-      console.log('[Test Connection] Sending request with:', {
+      console.log("[Test Connection] Sending request with:", {
         vendorType: selectedVendor,
-        credentials: Object.keys(credentials)
+        credentials: Object.keys(credentials),
       });
 
-      const response = await fetch('/api/test-connection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/test-connection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           vendorType: selectedVendor,
-          credentials
-        })
+          credentials,
+        }),
       });
 
       const data = await response.json();
-      console.log('[Test Connection] Response:', response.status, data);
+      console.log("[Test Connection] Response:", response.status, data);
 
       if (response.ok && data.success) {
         setTestSuccess(true);
         setSystemInfo(data.systemInfo);
       } else {
-        setError(data.error || 'Connection test failed');
+        setError(data.error || "Connection test failed");
       }
     } catch (err) {
-      setError('Failed to test connection. Please try again.');
+      setError("Failed to test connection. Please try again.");
     } finally {
       setIsTesting(false);
     }
   };
 
   const handleCreateSystem = async () => {
+    if (isComposite) {
+      return handleCreateCompositeSystem();
+    }
+
     if (!testSuccess || !selectedVendorInfo) return;
 
     setIsCreating(true);
     setError(null);
 
     try {
-      const response = await fetch('/api/systems', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/systems", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           vendorType: selectedVendor,
           credentials,
-          systemInfo
-        })
+          systemInfo,
+        }),
       });
 
       const data = await response.json();
@@ -171,10 +211,49 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
         router.push(`/dashboard/${data.systemId}`);
         router.refresh();
       } else {
-        setError(data.error || 'Failed to create system');
+        setError(data.error || "Failed to create system");
       }
     } catch (err) {
-      setError('Failed to create system. Please try again.');
+      setError("Failed to create system. Please try again.");
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleCreateCompositeSystem = async () => {
+    if (!compositeName.trim() || !compositeSaveRef.current) return;
+
+    setIsCreating(true);
+    setError(null);
+
+    try {
+      // Get composite mappings from CompositeTab
+      const compositeMappings = await compositeSaveRef.current();
+
+      const response = await fetch("/api/systems", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vendorType: "composite",
+          displayName: compositeName,
+          metadata: {
+            mappings: compositeMappings,
+          },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        // Success! Navigate to the new system
+        onOpenChange(false);
+        router.push(`/dashboard/${data.systemId}`);
+        router.refresh();
+      } else {
+        setError(data.error || "Failed to create composite system");
+      }
+    } catch (err) {
+      setError("Failed to create composite system. Please try again.");
     } finally {
       setIsCreating(false);
     }
@@ -182,7 +261,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[560px]">
         <DialogHeader>
           <DialogTitle>Add System</DialogTitle>
           <DialogDescription>
@@ -199,30 +278,71 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
                 <SelectValue placeholder="Select a system type" />
               </SelectTrigger>
               <SelectContent>
-                {vendors.map(vendor => (
+                {vendors.map((vendor) => (
                   <SelectItem key={vendor.vendorType} value={vendor.vendorType}>
                     {vendor.displayName}
                   </SelectItem>
                 ))}
+                <SelectItem value="composite">
+                  Composite (Combine Multiple Systems)
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
 
+          {/* Composite System Fields */}
+          {isComposite && (
+            <>
+              {/* Composite System Name */}
+              <div className="space-y-2">
+                <Label htmlFor="compositeName">
+                  System Name
+                  <span className="text-red-500 ml-1">*</span>
+                </Label>
+                <Input
+                  id="compositeName"
+                  type="text"
+                  placeholder="e.g., My Combined System"
+                  value={compositeName}
+                  onChange={(e) => setCompositeName(e.target.value)}
+                  disabled={isCreating}
+                />
+              </div>
+
+              {/* Composite Configuration */}
+              <div className="space-y-1">
+                <h3 className="text-sm font-medium">Data Sources</h3>
+                <CompositeTab
+                  systemId={-1}
+                  shouldLoad={true}
+                  onDirtyChange={setIsCompositeDirty}
+                  onSaveFunctionReady={(fn) => {
+                    compositeSaveRef.current = fn;
+                  }}
+                />
+              </div>
+            </>
+          )}
+
           {/* Dynamic Credential Fields */}
           {selectedVendorInfo && (
             <div className="space-y-4">
-              {selectedVendorInfo.credentialFields.map(field => (
+              {selectedVendorInfo.credentialFields.map((field) => (
                 <div key={field.name} className="space-y-2">
                   <Label htmlFor={field.name}>
                     {field.label}
-                    {field.required && <span className="text-red-500 ml-1">*</span>}
+                    {field.required && (
+                      <span className="text-red-500 ml-1">*</span>
+                    )}
                   </Label>
                   <Input
                     id={field.name}
                     type={field.type}
                     placeholder={field.placeholder}
-                    value={credentials[field.name] || ''}
-                    onChange={(e) => handleFieldChange(field.name, e.target.value)}
+                    value={credentials[field.name] || ""}
+                    onChange={(e) =>
+                      handleFieldChange(field.name, e.target.value)
+                    }
                     disabled={isTesting || isCreating}
                   />
                   {field.helpText && (
@@ -249,9 +369,15 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
                 {systemInfo && (
                   <div className="mt-2 text-sm">
                     {systemInfo.model && <div>Model: {systemInfo.model}</div>}
-                    {systemInfo.serial && <div>Serial: {systemInfo.serial}</div>}
-                    {systemInfo.solarSize && <div>Solar: {systemInfo.solarSize}</div>}
-                    {systemInfo.batterySize && <div>Battery: {systemInfo.batterySize}</div>}
+                    {systemInfo.serial && (
+                      <div>Serial: {systemInfo.serial}</div>
+                    )}
+                    {systemInfo.solarSize && (
+                      <div>Solar: {systemInfo.solarSize}</div>
+                    )}
+                    {systemInfo.batterySize && (
+                      <div>Battery: {systemInfo.batterySize}</div>
+                    )}
                   </div>
                 )}
               </AlertDescription>
@@ -260,11 +386,32 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
         </div>
 
         <div className="flex justify-end gap-2 mt-6">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isTesting || isCreating}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isTesting || isCreating}
+          >
             Cancel
           </Button>
 
-          {!testSuccess ? (
+          {isComposite ? (
+            <Button
+              onClick={handleCreateSystem}
+              disabled={
+                !compositeName.trim() || !isCompositeDirty || isCreating
+              }
+              className="bg-green-600 hover:bg-green-700"
+            >
+              {isCreating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Creating System
+                </>
+              ) : (
+                "Create System"
+              )}
+            </Button>
+          ) : !testSuccess ? (
             <Button
               onClick={handleTestConnection}
               disabled={!canTestConnection() || isTesting || isCreating}
@@ -275,7 +422,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
                   Testing Connection
                 </>
               ) : (
-                'Test Connection'
+                "Test Connection"
               )}
             </Button>
           ) : (
@@ -290,7 +437,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
                   Creating System
                 </>
               ) : (
-                'Create System'
+                "Create System"
               )}
             </Button>
           )}

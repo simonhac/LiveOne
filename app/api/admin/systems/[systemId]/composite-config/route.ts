@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { systems } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
+import { VendorRegistry } from "@/lib/vendors/registry";
 
 // Helper to parse capabilities into a readable format
 function parseCapabilityLabel(seriesId: string): string {
@@ -101,8 +102,20 @@ export async function GET(
       // Skip the target system itself
       if (system.id === systemId) continue;
 
-      // Get capabilities (Drizzle auto-parses with mode: "json")
-      const capabilities = (system.capabilities as string[] | null) || [];
+      // Skip composite systems (they don't have real capabilities)
+      if (system.vendorType === "composite") continue;
+
+      // Get adapter for this system
+      const adapter = VendorRegistry.getAdapter(system.vendorType);
+      if (!adapter) {
+        console.warn(
+          `No adapter found for system ${system.id} (${system.vendorType})`,
+        );
+        continue;
+      }
+
+      // Get all possible capabilities (ignores database, returns what this system could support)
+      const capabilities = await adapter.getPossibleCapabilities(system.id);
 
       // Add each capability to the available list
       for (const seriesId of capabilities) {

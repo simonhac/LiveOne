@@ -52,15 +52,15 @@ export async function GET(
     const availableCapabilities =
       await adapter.getPossibleCapabilities(systemId);
 
-    // Get enabled capabilities from the database
-    const enabledCapabilities = system.capabilities as string[] | null;
+    // Get enabled capabilities (reads from database, falls back to all possible if none set)
+    const enabledCapabilities = await adapter.getEnabledCapabilities(systemId);
 
     return NextResponse.json({
       success: true,
       settings: {
         displayName: system.displayName,
         shortName: system.shortName,
-        capabilities: enabledCapabilities || [],
+        capabilities: enabledCapabilities,
       },
       availableCapabilities,
     });

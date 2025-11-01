@@ -24,6 +24,9 @@ Stores configuration for each monitored inverter system with multi-user support.
 | `battery_size`        | TEXT                           | Battery capacity (e.g., '14.3 kWh')                              |
 | `status`              | TEXT NOT NULL DEFAULT 'active' | System status ('active', 'disabled', 'removed')                  |
 | `location`            | TEXT                           | JSON location data (e.g., {"lat": -37.123, "lng": 145.456})      |
+| `metadata`            | TEXT                           | JSON metadata (vendor-specific, e.g., composite mappings)        |
+| `short_name`          | TEXT                           | Optional short name for URLs (e.g., 'daylesford')                |
+| `capabilities`        | TEXT                           | JSON array of available data series (e.g., ['source.solar'])     |
 | `timezone_offset_min` | INTEGER NOT NULL DEFAULT 600   | Standard timezone offset in minutes (600 for AEST/UTC+10)        |
 | `created_at`          | INTEGER (timestamp)            | Creation timestamp                                               |
 | `updated_at`          | INTEGER (timestamp)            | Last update timestamp                                            |
@@ -40,13 +43,44 @@ Stores configuration for each monitored inverter system with multi-user support.
 - Each system owner must have vendor credentials stored in Clerk private metadata:
   - Select.Live: Username/password credentials
   - Enphase: OAuth tokens (access_token, refresh_token)
+  - Composite: No credentials needed (aggregates data from other systems)
 - The polling job uses the owner's credentials to fetch data from the vendor API
 - **`status`** field controls system visibility:
   - `active`: System is polled and visible
   - `disabled`: System is not polled but remains visible
   - `removed`: System is hidden but data is preserved
 - **`location`** stores JSON data (coordinates for Select.Live, address for Enphase)
+- **`metadata`** stores vendor-specific configuration (required for composite systems)
+- **`short_name`** provides a URL-friendly identifier (must be globally unique)
+- **`capabilities`** lists available data series for the system
 - Multiple systems per user are supported
+
+**Composite Systems:**
+
+Composite systems aggregate data from multiple source systems without requiring their own polling. The `metadata` field stores the mapping configuration in version 1 format:
+
+```json
+{
+  "version": 1,
+  "mappings": {
+    "solar": [
+      "liveone.system1.source.solar.local.power.avg",
+      "liveone.system2.source.solar.remote.power.avg"
+    ],
+    "battery": [
+      "liveone.system1.bidi.battery.power.avg",
+      "liveone.system1.bidi.battery.soc.last"
+    ],
+    "load": ["liveone.system2.load.total.power.avg"],
+    "grid": ["liveone.system1.bidi.grid.power.avg"]
+  }
+}
+```
+
+- `vendor_type` must be "composite"
+- `vendor_site_id` is auto-generated as `composite_{timestamp}`
+- Series paths follow the format: `liveone.{siteId}.{deviceId}.{metric}.{summariser}`
+- Composite systems do not appear in other system's source lists (no nesting)
 
 ### 2. `readings` - Raw Inverter Data
 

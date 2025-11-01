@@ -245,7 +245,77 @@ GET /api/history?systemId=1&interval=30m&fields=solar,load,battery,grid&last=7d
 
 ---
 
-### 3. Authentication Endpoints
+### 3. System Management Endpoints
+
+#### POST /api/systems
+
+Creates a new energy system (regular or composite).
+
+**Authentication:** Required (Clerk)
+
+**Request Body (Regular System):**
+
+```json
+{
+  "vendorType": "selectronic",
+  "credentials": {
+    "username": "your-username",
+    "password": "your-password"
+  },
+  "systemInfo": {
+    "vendorSiteId": "1586",
+    "displayName": "My Solar System",
+    "model": "SP PRO GO 7.5kW",
+    "serial": "240315002",
+    "solarSize": "9 kW",
+    "batterySize": "14.3 kWh"
+  }
+}
+```
+
+**Request Body (Composite System):**
+
+```json
+{
+  "vendorType": "composite",
+  "displayName": "Combined System",
+  "metadata": {
+    "mappings": {
+      "solar": [
+        "liveone.system1.source.solar.local.power.avg",
+        "liveone.system2.source.solar.remote.power.avg"
+      ],
+      "battery": [
+        "liveone.system1.bidi.battery.power.avg",
+        "liveone.system1.bidi.battery.soc.last"
+      ],
+      "load": ["liveone.system2.load.total.power.avg"],
+      "grid": ["liveone.system1.bidi.grid.power.avg"]
+    }
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "systemId": 12
+}
+```
+
+**Notes:**
+
+- Regular systems require `credentials` and `systemInfo` with `vendorSiteId`
+- Composite systems require `displayName` and `metadata.mappings`
+- Credentials are securely stored in Clerk user metadata (not in database)
+- SystemsManager cache is automatically invalidated after creation
+- The new system will appear immediately in all user interfaces
+
+---
+
+### 4. Authentication Endpoints
 
 #### POST /api/auth/login
 
@@ -360,15 +430,17 @@ Checks Enphase connection status and allows disconnection.
 
 ---
 
-### 4. Admin Endpoints
+### 5. Admin Endpoints
 
 All admin endpoints require authentication and admin role.
 
 #### GET /api/admin/systems
 
-Lists all configured systems with current status and data.
+Lists all configured systems with current status and data (read-only).
 
 **Authentication:** Required (Admin only)
+
+**Note:** To create systems, use `POST /api/systems` (available to all authenticated users)
 
 **Response:**
 
@@ -560,7 +632,7 @@ Lists all users and their system access.
 
 ---
 
-### 5. Cron Job Endpoints
+### 6. Cron Job Endpoints
 
 These endpoints are designed to be called by scheduled jobs.
 
@@ -779,6 +851,28 @@ All endpoints return consistent error responses:
 - API responses include timezone information where relevant
 - Daily aggregation respects system's configured timezone offset
 - Default timezone: AEST (UTC+10)
+
+---
+
+## Internal/UI Endpoints
+
+The following endpoints are used internally by the UI and are not documented in this public API reference:
+
+- `/api/vendors` - Returns available vendor types for system creation UI
+- `/api/test-connection` - Connection testing endpoint used during system setup
+- `/api/setup` - Initial setup wizard endpoints
+- `/api/admin/sessions` - Session management
+- `/api/admin/systems/[systemId]/status` - System status management
+- `/api/admin/systems/[systemId]/settings` - System settings management (PATCH)
+- `/api/admin/systems/[systemId]/admin-settings` - Admin settings (GET/PATCH)
+- `/api/admin/systems/[systemId]/composite-config` - Composite configuration (GET/PATCH)
+- `/api/admin/systems/[systemId]/point-readings` - Multi-point system readings
+- `/api/admin/systems/composite-capabilities` - Available capabilities for composite systems
+- `/api/admin/points/[pointId]` - Point information management
+- `/api/push/fronius` - Webhook for Fronius push data
+- `/api/enphase-proxy` - Proxy for Enphase API calls
+
+These endpoints are subject to change and should not be relied upon for external integrations.
 
 ---
 
