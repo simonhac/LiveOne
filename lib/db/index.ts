@@ -9,34 +9,87 @@ import * as schema from "./schema";
 const isProduction = process.env.NODE_ENV === "production";
 const isTurso = DATABASE_CONFIG.url.startsWith("libsql://");
 
+// Global singleton to persist across hot reloads in development
+declare global {
+  // eslint-disable-next-line no-var
+  var __db:
+    | ReturnType<typeof drizzle>
+    | ReturnType<typeof drizzleSqlite>
+    | undefined;
+  // eslint-disable-next-line no-var
+  var __rawClient: ReturnType<typeof createClient> | undefined;
+  // eslint-disable-next-line no-var
+  var __sqliteDb: Database.Database | undefined;
+}
+
 // Create raw client for direct SQL access (used in sync operations)
 export const rawClient = (() => {
-  if (isTurso || isProduction) {
-    return createClient({
-      url: DATABASE_CONFIG.turso.url || DATABASE_CONFIG.url,
-      authToken: DATABASE_CONFIG.turso.authToken,
-    });
-  } else {
-    return createClient({
-      url: DATABASE_CONFIG.url,
-    });
+  if (global.__rawClient) {
+    return global.__rawClient;
   }
+
+  const client = (() => {
+    if (isTurso || isProduction) {
+      return createClient({
+        url: DATABASE_CONFIG.turso.url || DATABASE_CONFIG.url,
+        authToken: DATABASE_CONFIG.turso.authToken,
+      });
+    } else {
+      return createClient({
+        url: DATABASE_CONFIG.url,
+      });
+    }
+  })();
+
+  if (!isProduction) {
+    global.__rawClient = client;
+  }
+
+  return client;
 })();
 
 // Create database instance based on environment
 export const db = (() => {
-  if (isTurso || isProduction) {
-    // Use Turso in production or if explicitly configured
-    return drizzle(rawClient, { schema });
-  } else {
-    // Use local SQLite in development
-    const sqliteDb = new Database(DATABASE_CONFIG.url.replace("file:", ""));
-
-    // Enable WAL mode for better concurrent access
-    sqliteDb.pragma("journal_mode = WAL");
-
-    return drizzleSqlite(sqliteDb, { schema });
+  if (global.__db) {
+    return global.__db;
   }
+
+  const dbInstance = (() => {
+    if (isTurso || isProduction) {
+      // Use Turso in production or if explicitly configured
+      return drizzle(rawClient, { schema });
+    } else {
+      // Use local SQLite in development
+      // Reuse existing SQLite instance if available
+      if (!global.__sqliteDb) {
+        const sqliteDb = new Database(DATABASE_CONFIG.url.replace("file:", ""));
+
+        // Enable WAL mode for better concurrent access
+        // Wrap in try-catch to handle hot reload race conditions
+        try {
+          sqliteDb.pragma("journal_mode = WAL");
+        } catch (error: any) {
+          // Ignore I/O errors during hot reload - WAL mode may already be set
+          if (
+            error.code !== "SQLITE_IOERR_SHORT_READ" &&
+            error.code !== "SQLITE_IOERR"
+          ) {
+            throw error;
+          }
+        }
+
+        global.__sqliteDb = sqliteDb;
+      }
+
+      return drizzleSqlite(global.__sqliteDb, { schema });
+    }
+  })();
+
+  if (!isProduction) {
+    global.__db = dbInstance;
+  }
+
+  return dbInstance;
 })();
 
 // Export schema and types

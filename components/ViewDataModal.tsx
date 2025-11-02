@@ -113,13 +113,13 @@ export default function ViewDataModal({
   // Handle escape key
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isOpen) {
+      if (e.key === "Escape" && isOpen && !isPointInfoModalOpen) {
         onClose();
       }
     };
     document.addEventListener("keydown", handleEscape);
     return () => document.removeEventListener("keydown", handleEscape);
-  }, [isOpen, onClose]);
+  }, [isOpen, isPointInfoModalOpen, onClose]);
 
   const handleRefresh = () => {
     setRotateKey((prev) => prev + 1); // Increment to trigger animation
@@ -358,6 +358,8 @@ export default function ViewDataModal({
                       <th
                         key={`${header.key}-row1`}
                         className={`pt-1 pb-1 px-2 align-top transition-colors ${
+                          header.key !== "timestamp" ? "text-right" : ""
+                        } ${
                           hoveredColumnIndex === colIndex
                             ? "bg-gray-700/50"
                             : "bg-gray-900"
@@ -403,6 +405,8 @@ export default function ViewDataModal({
                       <th
                         key={`${header.key}-row2`}
                         className={`py-1 px-2 align-top transition-colors ${
+                          header.key !== "timestamp" ? "text-right" : ""
+                        } ${
                           hoveredColumnIndex === colIndex
                             ? "bg-gray-700/50"
                             : "bg-gray-900"
@@ -457,6 +461,8 @@ export default function ViewDataModal({
                       <th
                         key={`${header.key}-row3`}
                         className={`py-1 px-2 align-top transition-colors ${
+                          header.key !== "timestamp" ? "text-right" : ""
+                        } ${
                           hoveredColumnIndex === colIndex
                             ? "bg-gray-700/50"
                             : "bg-gray-900"

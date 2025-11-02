@@ -185,10 +185,7 @@ export default function PointInfoModal({
   return createPortal(
     <>
       {/* Backdrop with blur */}
-      <div
-        className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[10000]"
-        onClick={onClose}
-      />
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[10000]" />
 
       {/* Dialog */}
       <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[10001] w-full max-w-3xl">
