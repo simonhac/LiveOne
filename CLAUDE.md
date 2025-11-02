@@ -204,6 +204,18 @@ vercel ls
 - Use: `select()` then filter in JavaScript
 - Example: `[...new Set(results.map(r => r.systemId))]`
 
+**Database Access Patterns**
+
+- **Drizzle ORM (`db`)**: Use for type-safe queries with Drizzle query builder
+  - Example: `await db.select().from(systems).where(eq(systems.id, systemId))`
+  - Does NOT have `.execute()` or `.all()` methods
+
+- **Raw SQL queries (`rawClient`)**: Use for direct SQL execution (e.g., complex queries, migrations)
+  - Import: `import { rawClient } from '@/lib/db'`
+  - Example: `await rawClient.execute('SELECT COUNT(*) FROM readings')`
+  - Returns `{ rows: [...], columns: [...] }` format
+  - Use this when you need to run raw SQL queries that can't be expressed with Drizzle query builder
+
 ## Data Pipeline
 
 1. **Collection**: Cron job polls vendor APIs every minute

@@ -94,6 +94,9 @@ export const pointReadings = sqliteTable(
     ),
     pointIdx: index("pr_point_idx").on(table.pointId),
     sessionIdx: index("pr_session_idx").on(table.sessionId),
+    measurementTimeIdx: index("pr_measurement_time_idx").on(
+      table.measurementTime,
+    ),
   }),
 );
 
@@ -133,6 +136,7 @@ export const pointReadingsAgg5m = sqliteTable(
       table.systemId,
       table.intervalEnd,
     ),
+    intervalEndIdx: index("pr5m_interval_end_idx").on(table.intervalEnd),
   }),
 );
 
