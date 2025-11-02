@@ -1,28 +1,28 @@
-import { auth } from '@clerk/nextjs/server'
-import { redirect } from 'next/navigation'
-import { isUserAdmin } from '@/lib/auth-utils'
-import StorageTools from './StorageTools'
-import { syncStages } from '@/app/api/admin/sync-database/stages'
+import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
+import { isUserAdmin } from "@/lib/auth-utils";
+import StorageTools from "./StorageTools";
+import { syncStages } from "@/app/api/admin/sync-database/stages";
 
 export default async function StoragePage() {
-  const { userId } = await auth()
-  
+  const { userId } = await auth();
+
   if (!userId) {
-    redirect('/sign-in')
+    redirect("/sign-in");
   }
-  
-  const isAdmin = await isUserAdmin()
-  
+
+  const isAdmin = await isUserAdmin();
+
   if (!isAdmin) {
-    redirect('/dashboard')
+    redirect("/dashboard");
   }
-  
+
   // Prepare stages data for the client component
-  const stages = syncStages.map(stage => ({
+  const stages = syncStages.map((stage) => ({
     id: stage.id,
     name: stage.name,
-    estimatedDurationMs: stage.estimatedDurationMs
-  }))
-  
-  return <StorageTools initialStages={stages} />
+    modifiesMetadata: stage.modifiesMetadata,
+  }));
+
+  return <StorageTools initialStages={stages} />;
 }
