@@ -478,19 +478,15 @@ export default function AdminDashboardClient() {
                                 system: system,
                               });
                             }}
-                            onViewData={
-                              system.vendor.dataStore === "point_readings"
-                                ? () => {
-                                    setViewDataModal({
-                                      isOpen: true,
-                                      systemId: system.systemId,
-                                      systemName: system.displayName,
-                                      vendorType: system.vendor.type,
-                                      vendorSiteId: system.vendor.siteId,
-                                    });
-                                  }
-                                : undefined
-                            }
+                            onViewData={() => {
+                              setViewDataModal({
+                                isOpen: true,
+                                systemId: system.systemId,
+                                systemName: system.displayName,
+                                vendorType: system.vendor.type,
+                                vendorSiteId: system.vendor.siteId,
+                              });
+                            }}
                           />
                         </td>
                         <td className="px-1.5 md:px-1.5 py-4 whitespace-nowrap align-top">

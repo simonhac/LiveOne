@@ -6,6 +6,7 @@ import {
   index,
   uniqueIndex,
   primaryKey,
+  foreignKey,
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import { systems } from "./schema";
@@ -14,12 +15,11 @@ import { systems } from "./schema";
 export const pointInfo = sqliteTable(
   "point_info",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-
-    // Relationships
+    // Composite primary key (systemId, id)
     systemId: integer("system_id")
       .notNull()
       .references(() => systems.id, { onDelete: "cascade" }),
+    id: integer("id").notNull(), // Sequential per system, not auto-increment
 
     // Identification
     pointId: text("point_id").notNull(), // eg. "5ecacac2-3cc3-447a-b3b5-423e333031e6"
@@ -41,6 +41,7 @@ export const pointInfo = sqliteTable(
     metricUnit: text("metric_unit").notNull(), // eg. 'W', 'Wh', '%'
   },
   (table) => ({
+    pk: primaryKey({ columns: [table.systemId, table.id] }),
     systemPointUnique: uniqueIndex("pi_system_point_unique").on(
       table.systemId,
       table.pointId,
@@ -63,13 +64,12 @@ export const pointReadings = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
 
-    // Relationships (denormalized for query performance)
+    // Relationships
     systemId: integer("system_id")
       .notNull()
       .references(() => systems.id, { onDelete: "cascade" }),
-    pointId: integer("point_id")
-      .notNull()
-      .references(() => pointInfo.id, { onDelete: "cascade" }),
+    pointId: integer("point_id").notNull(),
+    // Composite foreign key to point_info(system_id, id)
     sessionId: integer("session_id"), // No longer references measurementSessions
 
     // Timestamps (milliseconds for sub-second precision)
@@ -85,6 +85,7 @@ export const pointReadings = sqliteTable(
   },
   (table) => ({
     pointTimeUnique: uniqueIndex("pr_point_time_unique").on(
+      table.systemId,
       table.pointId,
       table.measurementTime,
     ),
@@ -97,6 +98,11 @@ export const pointReadings = sqliteTable(
     measurementTimeIdx: index("pr_measurement_time_idx").on(
       table.measurementTime,
     ),
+    // Composite foreign key to point_info
+    pointInfoFk: foreignKey({
+      columns: [table.systemId, table.pointId],
+      foreignColumns: [pointInfo.systemId, pointInfo.id],
+    }).onDelete("cascade"),
   }),
 );
 
@@ -104,13 +110,12 @@ export const pointReadings = sqliteTable(
 export const pointReadingsAgg5m = sqliteTable(
   "point_readings_agg_5m",
   {
-    // Relationships (denormalized for query performance)
+    // Relationships
     systemId: integer("system_id")
       .notNull()
       .references(() => systems.id, { onDelete: "cascade" }),
-    pointId: integer("point_id")
-      .notNull()
-      .references(() => pointInfo.id, { onDelete: "cascade" }),
+    pointId: integer("point_id").notNull(),
+    // Composite foreign key to point_info(system_id, id)
     intervalEnd: integer("interval_end").notNull(), // End of interval (ms)
 
     // Aggregates (generic - units determined by point_info.metricUnit)
@@ -131,12 +136,19 @@ export const pointReadingsAgg5m = sqliteTable(
       .default(sql`(unixepoch() * 1000)`),
   },
   (table) => ({
-    pk: primaryKey({ columns: [table.pointId, table.intervalEnd] }),
+    pk: primaryKey({
+      columns: [table.systemId, table.pointId, table.intervalEnd],
+    }),
     systemTimeIdx: index("pr5m_system_time_idx").on(
       table.systemId,
       table.intervalEnd,
     ),
     intervalEndIdx: index("pr5m_interval_end_idx").on(table.intervalEnd),
+    // Composite foreign key to point_info
+    pointInfoFk: foreignKey({
+      columns: [table.systemId, table.pointId],
+      foreignColumns: [pointInfo.systemId, pointInfo.id],
+    }).onDelete("cascade"),
   }),
 );
 
@@ -150,12 +162,18 @@ export const pointInfoRelations = {
   readings: {
     relation: "one-to-many",
     to: pointReadings,
-    references: [(pointReadings as any).pointId],
+    references: [
+      (pointReadings as any).systemId,
+      (pointReadings as any).pointId,
+    ],
   },
   aggregates5m: {
     relation: "one-to-many",
     to: pointReadingsAgg5m,
-    references: [(pointReadingsAgg5m as any).pointId],
+    references: [
+      (pointReadingsAgg5m as any).systemId,
+      (pointReadingsAgg5m as any).pointId,
+    ],
   },
 };
 
@@ -163,7 +181,7 @@ export const pointReadingsRelations = {
   point: {
     relation: "many-to-one",
     to: pointInfo,
-    references: [(pointInfo as any).id],
+    references: [(pointInfo as any).systemId, (pointInfo as any).id],
   },
   // session relation removed - no longer using measurementSessions
 };
@@ -174,6 +192,6 @@ export const pointReadingsAgg5mRelations = {
   point: {
     relation: "many-to-one",
     to: pointInfo,
-    references: [(pointInfo as any).id],
+    references: [(pointInfo as any).systemId, (pointInfo as any).id],
   },
 };

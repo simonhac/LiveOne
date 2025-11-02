@@ -125,7 +125,7 @@ export async function GET(
     const pivotColumns = points
       .map(
         (p) =>
-          `MAX(CASE WHEN point_id = ${p.id} THEN value END) as point_${p.id}`,
+          `MAX(CASE WHEN system_id = ${systemId} AND point_id = ${p.id} THEN value END) as point_${p.id}`,
       )
       .join(",\n  ");
 
@@ -134,7 +134,7 @@ export async function GET(
       WITH recent_timestamps AS (
         SELECT DISTINCT measurement_time
         FROM point_readings pr
-        INNER JOIN point_info pi ON pr.point_id = pi.id
+        INNER JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
         WHERE pi.system_id = ${systemId}
         ORDER BY measurement_time DESC
         LIMIT ${limit}
@@ -143,7 +143,8 @@ export async function GET(
         measurement_time,
         ${pivotColumns}
       FROM point_readings
-      WHERE measurement_time IN (SELECT measurement_time FROM recent_timestamps)
+      WHERE system_id = ${systemId}
+        AND measurement_time IN (SELECT measurement_time FROM recent_timestamps)
       GROUP BY measurement_time
       ORDER BY measurement_time DESC
     `;

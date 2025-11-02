@@ -175,6 +175,94 @@ turso db create liveone-restored --location hnd
 turso db shell liveone-restored < backup-20250817.sql
 ```
 
+## Database Migrations
+
+### Overview
+
+This project uses plain SQL migration files for database schema changes. Migrations are tracked in a `migrations` table to ensure they're only applied once per database.
+
+### Migration File Structure
+
+- **Location**: `/migrations/` directory
+- **Naming**: `NNNN_description.sql` (e.g., `0016_composite_primary_keys_point_tables.sql`)
+- **Format**: Plain SQL with migration tracking at the end
+
+### Migration Tracking
+
+Every migration should end with:
+
+```sql
+-- Track migration
+CREATE TABLE IF NOT EXISTS migrations (
+  id TEXT PRIMARY KEY,
+  applied_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)  -- Unix timestamp in milliseconds
+);
+
+INSERT INTO migrations (id) VALUES ('0016_composite_primary_keys_point_tables');
+```
+
+The `migrations` table:
+
+- `id`: Migration filename without `.sql` extension
+- `applied_at`: Unix timestamp in milliseconds when migration was applied
+
+### Creating a Migration
+
+1. **Create the migration file** in `/migrations/` with sequential number:
+
+   ```bash
+   # Check latest migration number
+   ls migrations/ | tail -1
+
+   # Create new migration (e.g., 0017)
+   touch migrations/0017_add_new_feature.sql
+   ```
+
+2. **Write the migration SQL**:
+
+   ```sql
+   -- Migration: Description of what this migration does
+
+   -- Your schema changes here
+   ALTER TABLE systems ADD COLUMN new_field TEXT;
+
+   -- Track migration (always include this at the end)
+   CREATE TABLE IF NOT EXISTS migrations (
+     id TEXT PRIMARY KEY,
+     applied_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+   );
+
+   INSERT INTO migrations (id) VALUES ('0017_add_new_feature');
+   ```
+
+3. **Apply to development**:
+
+   ```bash
+   sqlite3 dev.db < migrations/0017_add_new_feature.sql
+   ```
+
+4. **Apply to production** (via Turso CLI):
+   ```bash
+   ~/.turso/turso db shell liveone-tokyo < migrations/0017_add_new_feature.sql
+   ```
+
+### Checking Migration Status
+
+```bash
+# List all applied migrations
+sqlite3 dev.db "SELECT id, datetime(applied_at/1000, 'unixepoch') as applied FROM migrations ORDER BY applied_at"
+
+# Check if specific migration was applied
+sqlite3 dev.db "SELECT * FROM migrations WHERE id = '0017_add_new_feature'"
+```
+
+### Important Notes
+
+- **Idempotency**: Migrations should be safe to run multiple times (use `IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`, etc.)
+- **No Rollbacks**: This project doesn't use rollback migrations - if you need to undo a change, create a new forward migration
+- **Testing**: Always test migrations on development database before applying to production
+- **Composite Keys**: When creating foreign keys with composite primary keys, remember that SQLite doesn't update FK table references on `ALTER TABLE RENAME` - create tables with final names or use temporary tables
+
 ## Vercel Deployment
 
 ### Build & Deploy

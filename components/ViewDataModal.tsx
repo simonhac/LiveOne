@@ -240,7 +240,13 @@ export default function ViewDataModal({
 
   // Get series ID suffix (without the liveone.mondo.{system} prefix)
   const getSeriesIdSuffix = (header: ColumnHeader) => {
-    if (!header.pointType || !header.subtype) return null;
+    // Must have pointType to be a valid series
+    if (!header.pointType) {
+      console.log(
+        `[ViewData] ${header.label}: NO pointType - skipping (subtype=${header.subtype}, ext=${header.extension}, metricType=${header.type})`,
+      );
+      return null;
+    }
 
     const parts = [];
     if (header.pointType) parts.push(header.pointType);
@@ -248,7 +254,11 @@ export default function ViewDataModal({
     if (header.extension) parts.push(header.extension);
     if (header.type) parts.push(header.type); // metricType
 
-    return parts.join(".");
+    const seriesId = parts.join(".");
+    console.log(
+      `[ViewData] ${header.label}: pointType=${header.pointType}, subtype=${header.subtype}, ext=${header.extension}, metricType=${header.type} => seriesId=${seriesId || "NULL"}`,
+    );
+    return seriesId || null;
   };
 
   // Filter headers based on showExtras state
@@ -316,7 +326,18 @@ export default function ViewDataModal({
             </div>
           ) : data.length === 0 ? (
             <div className="text-center text-gray-400 py-8">
-              No data available
+              {metadata?.pointCount === 0 ? (
+                <>
+                  <p className="text-lg mb-2">
+                    No monitoring points configured
+                  </p>
+                  <p className="text-sm">
+                    This system doesn&apos;t have any point_info records yet.
+                  </p>
+                </>
+              ) : (
+                <p>No data available</p>
+              )}
             </div>
           ) : (
             <table className="w-full text-sm">
@@ -485,6 +506,8 @@ export default function ViewDataModal({
                       <th
                         key={`${header.key}-row4`}
                         className={`py-1 pb-2 px-2 align-top transition-colors ${
+                          header.key !== "timestamp" ? "text-right" : ""
+                        } ${
                           hoveredColumnIndex === colIndex
                             ? "bg-gray-700/50"
                             : "bg-gray-900"
@@ -539,6 +562,8 @@ export default function ViewDataModal({
                         <td
                           key={header.key}
                           className={`py-2 px-2 ${
+                            header.key !== "timestamp" ? "text-right" : ""
+                          } ${
                             isLastSeriesIdColumn
                               ? "border-r border-gray-700"
                               : ""

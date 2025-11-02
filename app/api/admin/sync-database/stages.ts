@@ -1273,9 +1273,17 @@ async function syncPointReadings(ctx: SyncContext) {
         // Silently skip unmapped points (expected for systems we don't have)
         return null;
       }
+
+      // Map system IDs
+      const mappedSystemId = ctx.mapSystemId(row.system_id as number);
+      if (!mappedSystemId) {
+        return null;
+      }
+
       return {
         ...row,
         point_id: mappedPointId,
+        system_id: mappedSystemId,
       };
     },
     timestampField: "measurement_time", // syncTableData handles milliseconds automatically
