@@ -73,6 +73,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
   });
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [syncMetadata, setSyncMetadata] = useState(false);
+  const [daysToSync, setDaysToSync] = useState(1);
   const [recordCounts, setRecordCounts] = useState<Record<string, number>>({});
   const lastDetailRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
@@ -162,7 +163,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ syncMetadata, previewOnly: true }),
+        body: JSON.stringify({ syncMetadata, daysToSync, previewOnly: true }),
       });
 
       if (!response.ok) {
@@ -198,9 +199,11 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                   (sum: number, count: any) => sum + (count || 0),
                   0,
                 );
+                const daysText =
+                  daysToSync === 1 ? "1 day" : `${daysToSync} days`;
                 setSyncProgress((prev) => ({
                   ...prev,
-                  message: `Ready to sync ${totalRecords.toLocaleString()} records from last 7 days from production database`,
+                  message: `Ready to sync ${totalRecords.toLocaleString()} records from last ${daysText} from production database`,
                 }));
               } else if (update.type === "error") {
                 console.error("[SYNC] Error from backend:", update.message);
@@ -307,7 +310,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ syncMetadata, previewOnly: false }),
+        body: JSON.stringify({ syncMetadata, daysToSync, previewOnly: false }),
       });
 
       if (!response.ok) {
@@ -553,7 +556,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
     fetchSettings();
   }, []);
 
-  // Update stages when syncMetadata checkbox changes (only if dialog is open and not started)
+  // Update stages when syncMetadata or daysToSync changes (only if dialog is open and not started)
   useEffect(() => {
     if (
       syncProgress.isActive &&
@@ -562,7 +565,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
     ) {
       resetStagesAndCount();
     }
-  }, [syncMetadata, syncProgress.isActive]);
+  }, [syncMetadata, daysToSync, syncProgress.isActive]);
 
   // Handle ESC key to close modal
   useEffect(() => {
@@ -688,6 +691,22 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
               );
             })()}
 
+            {/* Days to Sync Dropdown */}
+            <div className="mb-3 flex items-center gap-3">
+              <label className="text-sm text-gray-300">Days to sync:</label>
+              <select
+                value={daysToSync}
+                onChange={(e) => setDaysToSync(Number(e.target.value))}
+                disabled={!!syncAbortController || syncProgress.progress > 0}
+                className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <option value={1}>Last 1 day</option>
+                <option value={3}>Last 3 days</option>
+                <option value={7}>Last 7 days</option>
+                <option value={14}>Last 14 days</option>
+              </select>
+            </div>
+
             {/* Sync Metadata Checkbox */}
             <div className="mb-4">
               <label
@@ -711,24 +730,29 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
               </p>
             </div>
 
-            <div className="mb-4">
-              <div className="bg-gray-900 rounded-full h-2 overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-300 ${
-                    syncProgress.progress === 100
-                      ? "bg-green-500"
-                      : "bg-blue-500"
-                  }`}
-                  style={{
-                    width: `${(syncProgress.progress / syncProgress.total) * 100}%`,
-                  }}
-                />
+            {/* Progress bar - only show after sync has started */}
+            {syncProgress.progress > 0 && (
+              <div className="mb-4">
+                <div className="bg-gray-900 rounded-full h-2 overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-300 ${
+                      syncProgress.progress === 100
+                        ? "bg-green-500"
+                        : "bg-blue-500"
+                    }`}
+                    style={{
+                      width: `${(syncProgress.progress / syncProgress.total) * 100}%`,
+                    }}
+                  />
+                </div>
+                <div className="mt-2 text-xs text-gray-500 text-right">
+                  {Math.round(
+                    (syncProgress.progress / syncProgress.total) * 100,
+                  )}
+                  %
+                </div>
               </div>
-              <div className="mt-2 text-xs text-gray-500 text-right">
-                {Math.round((syncProgress.progress / syncProgress.total) * 100)}
-                %
-              </div>
-            </div>
+            )}
 
             {/* Detailed Progress Table */}
             {syncStages.length > 0 && (

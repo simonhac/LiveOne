@@ -305,7 +305,8 @@ export interface SyncContext {
   systemIdMappings: Map<number, number>; // Map prod systemId → dev systemId
   mapSystemId: (prodSystemId: number) => number | undefined;
   localLatestTime?: Date;
-  syncFromTime?: Date; // The actual time to sync from (exactly 7 days back)
+  syncFromTime?: Date; // The actual time to sync from (configurable days back)
+  daysToSync: number; // Number of days to sync (1, 3, 7, or 14)
   totalToSync?: number;
   synced?: number;
   recordCounts?: Record<string, number>; // Map of stage id → record count
@@ -547,9 +548,9 @@ async function syncSystems(ctx: SyncContext) {
 
 // Stage 5: Count records to sync from all tables
 async function countRecordsToSync(ctx: SyncContext) {
-  // Sync exactly 7 days of data
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const syncFromTime = sevenDaysAgo;
+  // Sync the specified number of days
+  const daysAgo = new Date(Date.now() - ctx.daysToSync * 24 * 60 * 60 * 1000);
+  const syncFromTime = daysAgo;
 
   const syncFromTimestampSec = Math.floor(syncFromTime.getTime() / 1000);
   const syncFromTimestampMs = syncFromTime.getTime();
@@ -743,9 +744,7 @@ async function syncUserSystems(ctx: SyncContext) {
 
 // Stage 8: Sync 5-minute aggregations from production
 async function sync5MinAggregations(ctx: SyncContext) {
-  // Force minimum 7 days of aggregated data
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const syncFromTime = ctx.syncFromTime || sevenDaysAgo;
+  const syncFromTime = ctx.syncFromTime!;
 
   // Get stage-specific total from recordCounts
   const stageTotal = ctx.recordCounts?.["sync-5min-agg"] || 0;
@@ -798,9 +797,7 @@ async function sync5MinAggregations(ctx: SyncContext) {
 
 // Stage: Sync point_readings_agg_5m (5-minute aggregations for monitoring points)
 async function syncPointReadings5MinAggregations(ctx: SyncContext) {
-  // Force minimum 7 days of aggregated data
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const syncFromTime = ctx.syncFromTime || sevenDaysAgo;
+  const syncFromTime = ctx.syncFromTime!;
   const syncFromTimestamp = syncFromTime.getTime(); // point_readings_agg_5m uses milliseconds
 
   console.log(
@@ -1196,9 +1193,7 @@ async function syncPointInfo(ctx: SyncContext) {
 
 // Stage 11: Sync point_readings (monitoring points time-series data)
 async function syncPointReadings(ctx: SyncContext) {
-  // Force minimum 7 days of point readings data
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const syncFromTime = ctx.syncFromTime || sevenDaysAgo;
+  const syncFromTime = ctx.syncFromTime!;
   const syncFromTimestamp = syncFromTime.getTime(); // point_readings uses milliseconds
 
   console.log(
@@ -1321,9 +1316,20 @@ async function finaliseSync(ctx: SyncContext) {
 
   const systemCount = await ctx.db.select().from(systems);
 
-  return {
-    detail: `Complete`,
-  };
+  // Add completion message followed by blank lines for scrolling
+  ctx.updateStage("finalise", {
+    detail: "Complete",
+  });
+
+  ctx.updateStage("finalise", {
+    detail: "\u00A0", // Non-breaking space for blank line
+  });
+
+  ctx.updateStage("finalise", {
+    detail: "\u00A0\u00A0", // Two non-breaking spaces for second blank line
+  });
+
+  return {};
 }
 
 // Export the stage definitions

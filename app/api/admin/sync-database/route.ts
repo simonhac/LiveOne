@@ -101,6 +101,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const syncMetadata = body.syncMetadata === true;
     const previewOnly = body.previewOnly === true;
+    const daysToSync = body.daysToSync || 1; // Default to 1 day if not specified
 
     // Filter stages based on syncMetadata flag
     let stagesToRun = syncMetadata
@@ -123,11 +124,13 @@ export async function POST(request: NextRequest) {
     const { stream, send, close } = createStreamResponse();
 
     // Start the sync process in the background
-    syncDatabase(send, close, request.signal, stagesToRun).catch((err) => {
-      console.error("Sync error:", err);
-      send({ type: "error", message: err.message });
-      close();
-    });
+    syncDatabase(send, close, request.signal, stagesToRun, daysToSync).catch(
+      (err) => {
+        console.error("Sync error:", err);
+        send({ type: "error", message: err.message });
+        close();
+      },
+    );
 
     return new NextResponse(stream, {
       headers: {
@@ -151,6 +154,7 @@ async function syncDatabase(
   close: () => void,
   signal: AbortSignal,
   stagesToRun: StageDefinition[],
+  daysToSync: number,
 ) {
   // Initialise all stages upfront
   const stages: SyncStage[] = stagesToRun.map((def) => ({
@@ -248,6 +252,7 @@ async function syncDatabase(
     mapClerkId: () => undefined,
     systemIdMappings: new Map(),
     mapSystemId: () => undefined,
+    daysToSync,
     cumulativeSynced: 0,
     formatDateTime,
   };
