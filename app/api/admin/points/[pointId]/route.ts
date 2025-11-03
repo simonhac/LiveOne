@@ -34,23 +34,28 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { type, subtype, extension, subsystem, displayName, shortName } =
-      body;
+    const {
+      type,
+      subtype,
+      extension,
+      subsystem,
+      displayName,
+      shortName,
+      active,
+    } = body;
 
-    // Validate that at least one field is provided
-    if (
-      type === undefined &&
-      subtype === undefined &&
-      extension === undefined &&
-      subsystem === undefined &&
-      displayName === undefined &&
-      shortName === undefined
-    ) {
+    // Validate that active is provided (required field)
+    if (active === undefined) {
       return NextResponse.json(
-        {
-          error:
-            "At least one field (type, subtype, extension, subsystem, displayName, or shortName) must be provided",
-        },
+        { error: "active field is required" },
+        { status: 400 },
+      );
+    }
+
+    // Validate active is boolean
+    if (typeof active !== "boolean") {
+      return NextResponse.json(
+        { error: "active must be a boolean" },
         { status: 400 },
       );
     }
@@ -86,7 +91,9 @@ export async function PATCH(
     }
 
     // Build the update object
-    const updates: any = {};
+    const updates: any = {
+      active, // Required field, always set
+    };
     if (type !== undefined) {
       updates.type = type || null;
     }
@@ -135,6 +142,7 @@ export async function PATCH(
         defaultName: updatedPoint.defaultName,
         displayName: updatedPoint.displayName,
         shortName: updatedPoint.shortName,
+        active: updatedPoint.active,
         metricType: updatedPoint.metricType,
         metricUnit: updatedPoint.metricUnit,
       },

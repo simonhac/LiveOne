@@ -2,38 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { systems } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { pointInfo } from "@/lib/db/schema-monitoring-points";
+import { eq, inArray } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
-import { VendorRegistry } from "@/lib/vendors/registry";
-
-// Helper to parse capabilities into a readable format
-function parseCapabilityLabel(seriesId: string): string {
-  const parts = seriesId.split(".");
-
-  // Subtype mappings
-  const subtypeLabels: Record<string, string> = {
-    solar: "Solar",
-    battery: "Battery",
-    load: "Load",
-    grid: "Grid",
-    power: "Power",
-    soc: "State of Charge",
-    local: "Local",
-    remote: "Remote",
-  };
-
-  const subtype = parts[1];
-  const extension = parts[2];
-
-  // Start with the subtype (e.g., "solar", "battery")
-  let label = subtypeLabels[subtype] || subtype;
-
-  if (extension) {
-    label += ` (${subtypeLabels[extension] || extension})`;
-  }
-
-  return label;
-}
 
 export async function GET(
   request: NextRequest,
@@ -83,52 +54,6 @@ export async function GET(
       );
     }
 
-    // Get all systems owned by the same user (excluding the target system itself)
-    const ownedSystems = await db
-      .select()
-      .from(systems)
-      .where(eq(systems.ownerClerkUserId, targetSystem.ownerClerkUserId!));
-
-    // Build list of available capabilities from all owned systems
-    const availableCapabilities: Array<{
-      systemId: number;
-      systemName: string;
-      shortName: string | null;
-      seriesId: string;
-      label: string;
-    }> = [];
-
-    for (const system of ownedSystems) {
-      // Skip the target system itself
-      if (system.id === systemId) continue;
-
-      // Skip composite systems (they don't have real capabilities)
-      if (system.vendorType === "composite") continue;
-
-      // Get adapter for this system
-      const adapter = VendorRegistry.getAdapter(system.vendorType);
-      if (!adapter) {
-        console.warn(
-          `No adapter found for system ${system.id} (${system.vendorType})`,
-        );
-        continue;
-      }
-
-      // Get all possible capabilities (ignores database, returns what this system could support)
-      const capabilities = await adapter.getPossibleCapabilities(system.id);
-
-      // Add each capability to the available list
-      for (const seriesId of capabilities) {
-        availableCapabilities.push({
-          systemId: system.id,
-          systemName: system.displayName,
-          shortName: system.shortName,
-          seriesId,
-          label: parseCapabilityLabel(seriesId),
-        });
-      }
-    }
-
     // Get metadata (Drizzle auto-parses with mode: "json")
     let metadata = targetSystem.metadata || null;
 
@@ -150,7 +75,6 @@ export async function GET(
     return NextResponse.json({
       success: true,
       metadata,
-      availableCapabilities,
     });
   } catch (error) {
     console.error("Error fetching composite config:", error);
@@ -224,35 +148,47 @@ export async function PATCH(
       );
     }
 
-    // Validate mappings structure
-    if (
-      typeof mappings !== "object" ||
-      !mappings.solar ||
-      !mappings.battery ||
-      !mappings.load ||
-      !mappings.grid
-    ) {
+    // Validate mappings structure - must be an object with string array values
+    if (typeof mappings !== "object" || Array.isArray(mappings)) {
       return NextResponse.json(
-        { error: "Invalid mappings structure" },
+        { error: "Mappings must be an object" },
         { status: 400 },
       );
     }
 
-    // Validate that all arrays contain strings
-    const validateArray = (arr: any, name: string) => {
+    // Validate that all mapping values are arrays of strings in format "systemId.pointId"
+    const validateMappingArray = (arr: any, categoryName: string) => {
       if (!Array.isArray(arr)) {
-        throw new Error(`${name} must be an array`);
+        throw new Error(`${categoryName} must be an array`);
       }
-      if (!arr.every((item) => typeof item === "string")) {
-        throw new Error(`${name} must contain only strings`);
+
+      for (const item of arr) {
+        if (typeof item !== "string") {
+          throw new Error(`${categoryName} must contain only strings`);
+        }
+
+        // Validate format: "systemId.pointId" where both are numbers
+        const parts = item.split(".");
+        if (parts.length !== 2) {
+          throw new Error(
+            `${categoryName} mapping "${item}" must be in format "systemId.pointId"`,
+          );
+        }
+
+        const [systemIdStr, pointIdStr] = parts;
+        if (isNaN(parseInt(systemIdStr)) || isNaN(parseInt(pointIdStr))) {
+          throw new Error(
+            `${categoryName} mapping "${item}" must have numeric systemId and pointId`,
+          );
+        }
       }
     };
 
+    // Validate all mapping categories
     try {
-      validateArray(mappings.solar, "solar");
-      validateArray(mappings.battery, "battery");
-      validateArray(mappings.load, "load");
-      validateArray(mappings.grid, "grid");
+      for (const [category, value] of Object.entries(mappings)) {
+        validateMappingArray(value, category);
+      }
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : "Invalid mappings" },
@@ -260,24 +196,88 @@ export async function PATCH(
       );
     }
 
-    // Validate constraints (max 1 battery, max 1 grid)
-    if (mappings.battery.length > 1) {
-      return NextResponse.json(
-        { error: "Only one battery mapping is allowed" },
-        { status: 400 },
-      );
+    // Validate that points have compatible paths for their categories
+    // Collect all point DB IDs from mappings
+    const allPointDbIds = new Set<number>();
+    for (const pointIds of Object.values(mappings)) {
+      if (Array.isArray(pointIds)) {
+        for (const pointId of pointIds) {
+          const [, pointDbIdStr] = pointId.split(".");
+          allPointDbIds.add(parseInt(pointDbIdStr));
+        }
+      }
     }
 
-    if (mappings.grid.length > 1) {
-      return NextResponse.json(
-        { error: "Only one grid mapping is allowed" },
-        { status: 400 },
-      );
+    // Fetch all referenced points from database
+    if (allPointDbIds.size > 0) {
+      const points = await db
+        .select()
+        .from(pointInfo)
+        .where(inArray(pointInfo.id, Array.from(allPointDbIds)));
+
+      // Build map of pointDbId -> path
+      const pointPaths = new Map<number, string>();
+      for (const point of points) {
+        if (point.type) {
+          const pathParts = [point.type, point.subtype, point.extension].filter(
+            Boolean,
+          );
+          pointPaths.set(point.id, pathParts.join("."));
+        }
+      }
+
+      // Helper to check if a path matches a pattern
+      const matchesPattern = (path: string, pattern: string): boolean => {
+        return path === pattern || path.startsWith(pattern + ".");
+      };
+
+      // Define category path requirements
+      const categoryPathPatterns: Record<string, string> = {
+        solar: "source.solar",
+        battery: "bidi.battery",
+        load: "load",
+        grid: "bidi.grid",
+      };
+
+      // Validate each category's points
+      for (const [category, pointIds] of Object.entries(mappings)) {
+        if (!Array.isArray(pointIds)) continue;
+
+        const pattern = categoryPathPatterns[category];
+        if (!pattern) {
+          // Allow unknown categories (for future extensibility)
+          continue;
+        }
+
+        for (const pointId of pointIds) {
+          const [, pointDbIdStr] = pointId.split(".");
+          const pointDbId = parseInt(pointDbIdStr);
+          const path = pointPaths.get(pointDbId);
+
+          if (!path) {
+            return NextResponse.json(
+              {
+                error: `Point ${pointId} not found or has no type defined`,
+              },
+              { status: 400 },
+            );
+          }
+
+          if (!matchesPattern(path, pattern)) {
+            return NextResponse.json(
+              {
+                error: `Point ${pointId} with path "${path}" is not compatible with category "${category}"`,
+              },
+              { status: 400 },
+            );
+          }
+        }
+      }
     }
 
-    // Build metadata object with version
+    // Build metadata object with version 2
     const metadata = {
-      version: 1,
+      version: 2,
       mappings,
     };
 

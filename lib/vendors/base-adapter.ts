@@ -267,27 +267,13 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
 
   /**
    * Get enabled capabilities for this system (what is currently enabled).
-   * Default implementation returns the capabilities stored in the system record.
+   * Note: This method is deprecated. Capabilities are now managed at the point level via point_info.active.
+   * For backwards compatibility, this now always returns all possible capabilities.
    * Returns array of capability strings in format: type.subtype.extension (subtype and extension optional)
    */
   async getEnabledCapabilities(systemId: number): Promise<string[]> {
-    const { SystemsManager } = await import("@/lib/systems-manager");
-    const systemsManager = SystemsManager.getInstance();
-    const system = await systemsManager.getSystem(systemId);
-
-    if (!system) {
-      return [];
-    }
-
-    const enabledCapabilities = system.capabilities as string[] | null;
-
-    if (!enabledCapabilities || enabledCapabilities.length === 0) {
-      // If no capabilities are explicitly enabled, return all possible capabilities
-      return this.getPossibleCapabilities(systemId);
-    }
-
-    // Return the enabled capabilities directly (already strings)
-    return enabledCapabilities;
+    // Always return all possible capabilities (filtering is now done at point level)
+    return this.getPossibleCapabilities(systemId);
   }
 
   /**

@@ -39,7 +39,6 @@ export default function SystemSettingsDialog({
   );
   const [isNameDirty, setIsNameDirty] = useState(false);
   const [isShortNameDirty, setIsShortNameDirty] = useState(false);
-  const [isCapabilitiesDirty, setIsCapabilitiesDirty] = useState(false);
   const [isCompositeDirty, setIsCompositeDirty] = useState(false);
   const [isAdminDirty, setIsAdminDirty] = useState(false);
   const [shortNameError, setShortNameError] = useState<string | null>(null);
@@ -47,7 +46,6 @@ export default function SystemSettingsDialog({
   const [activeTab, setActiveTab] = useState<
     "general" | "capabilities" | "composite" | "admin"
   >("general");
-  const capabilitiesSaveRef = useRef<(() => Promise<string[]>) | null>(null);
   const compositeSaveRef = useRef<(() => Promise<any>) | null>(null);
   const adminSaveRef = useRef<(() => Promise<any>) | null>(null);
 
@@ -59,7 +57,6 @@ export default function SystemSettingsDialog({
       setEditedShortName(system?.shortName || "");
       setIsNameDirty(false);
       setIsShortNameDirty(false);
-      setIsCapabilitiesDirty(false);
       setIsCompositeDirty(false);
       setIsAdminDirty(false);
       setShortNameError(null);
@@ -92,11 +89,7 @@ export default function SystemSettingsDialog({
   };
 
   const hasChanges =
-    isNameDirty ||
-    isShortNameDirty ||
-    isCapabilitiesDirty ||
-    isCompositeDirty ||
-    isAdminDirty;
+    isNameDirty || isShortNameDirty || isCompositeDirty || isAdminDirty;
   const hasGeneralChanges = isNameDirty || isShortNameDirty;
 
   const handleSave = async () => {
@@ -104,21 +97,15 @@ export default function SystemSettingsDialog({
 
     setIsSaving(true);
     try {
-      // Save regular settings (displayName, shortName, capabilities)
-      if (isNameDirty || isShortNameDirty || isCapabilitiesDirty) {
+      // Save regular settings (displayName, shortName)
+      if (isNameDirty || isShortNameDirty) {
         const settings: {
           displayName?: string;
           shortName?: string | null;
-          capabilities?: string[];
         } = {};
 
         if (isNameDirty) settings.displayName = editedName;
         if (isShortNameDirty) settings.shortName = editedShortName || null;
-        if (isCapabilitiesDirty && capabilitiesSaveRef.current) {
-          // Get capabilities from the tab
-          const capabilitiesData = await capabilitiesSaveRef.current();
-          settings.capabilities = capabilitiesData;
-        }
 
         console.log("Settings to save:", settings);
 
@@ -202,7 +189,6 @@ export default function SystemSettingsDialog({
       // Reset dirty flags
       setIsNameDirty(false);
       setIsShortNameDirty(false);
-      setIsCapabilitiesDirty(false);
       setIsCompositeDirty(false);
       setIsAdminDirty(false);
 
@@ -319,9 +305,6 @@ export default function SystemSettingsDialog({
                   }`}
                 >
                   Capabilities
-                  {isCapabilitiesDirty && (
-                    <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
-                  )}
                 </button>
               )}
               {system.vendorType === "composite" && (
@@ -417,10 +400,6 @@ export default function SystemSettingsDialog({
                 <CapabilitiesTab
                   systemId={system.systemId}
                   shouldLoad={isOpen}
-                  onDirtyChange={setIsCapabilitiesDirty}
-                  onSaveFunctionReady={(fn) => {
-                    capabilitiesSaveRef.current = fn;
-                  }}
                 />
               </div>
             )}
@@ -455,10 +434,10 @@ export default function SystemSettingsDialog({
           </div>
 
           {/* Footer */}
-          <div className="px-6 py-4 border-t border-gray-700 flex gap-3">
+          <div className="px-6 py-4 border-t border-gray-700 flex justify-end gap-3">
             <button
               onClick={handleCancel}
-              className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-100 rounded-md transition-colors"
+              className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-gray-100 rounded-md transition-colors min-w-[100px]"
               disabled={isSaving}
             >
               Cancel
@@ -466,7 +445,7 @@ export default function SystemSettingsDialog({
             <button
               onClick={handleSave}
               disabled={!hasChanges || isSaving || !!shortNameError}
-              className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-w-[100px]"
             >
               {isSaving ? "Saving..." : "Save"}
             </button>

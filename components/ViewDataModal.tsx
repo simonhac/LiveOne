@@ -20,6 +20,7 @@ interface ColumnHeader {
   systemId: number;
   defaultName: string;
   shortName: string | null;
+  active: boolean;
 }
 
 interface ViewDataModalProps {
@@ -59,6 +60,7 @@ export default function ViewDataModal({
     defaultName: string;
     displayName: string | null;
     shortName: string | null;
+    active: boolean;
     metricType: string;
     metricUnit: string | null;
     vendorSiteId: string;
@@ -148,6 +150,7 @@ export default function ViewDataModal({
       defaultName: header.defaultName || header.label,
       displayName: header.label,
       shortName: header.shortName || null,
+      active: header.active,
       metricType: header.type,
       metricUnit: header.unit,
       vendorSiteId: vendorSiteId,
@@ -166,6 +169,7 @@ export default function ViewDataModal({
       extension?: string | null;
       displayName?: string | null;
       shortName?: string | null;
+      active: boolean;
     },
   ) => {
     try {
@@ -375,7 +379,7 @@ export default function ViewDataModal({
                             : ""
                         } ${
                           isLastSeriesIdColumn ? "border-r border-gray-700" : ""
-                        }`}
+                        } ${!header.active && header.key !== "timestamp" ? "opacity-50" : ""}`}
                         onClick={() => handleColumnHeaderClick(header)}
                         onMouseEnter={() => setHoveredColumnIndex(colIndex)}
                         onMouseLeave={() => setHoveredColumnIndex(null)}
@@ -388,7 +392,11 @@ export default function ViewDataModal({
                         {header.key === "timestamp" ? (
                           <span className="text-gray-300">Name</span>
                         ) : (
-                          <span className={getSubsystemColor(header.subsystem)}>
+                          <span
+                            className={`${getSubsystemColor(header.subsystem)} ${
+                              !header.active ? "line-through" : ""
+                            }`}
+                          >
                             {header.label}
                           </span>
                         )}
@@ -422,7 +430,7 @@ export default function ViewDataModal({
                             : ""
                         } ${
                           isLastSeriesIdColumn ? "border-r border-gray-700" : ""
-                        }`}
+                        } ${!header.active && header.key !== "timestamp" ? "opacity-50" : ""}`}
                         onClick={() => handleColumnHeaderClick(header)}
                         onMouseEnter={() => setHoveredColumnIndex(colIndex)}
                         onMouseLeave={() => setHoveredColumnIndex(null)}
@@ -436,7 +444,9 @@ export default function ViewDataModal({
                           <span className="text-gray-300">Series</span>
                         ) : getSeriesIdSuffix(header) ? (
                           <span
-                            className="text-xs text-gray-500 font-mono"
+                            className={`text-xs text-gray-500 font-mono ${
+                              !header.active ? "line-through" : ""
+                            }`}
                             dangerouslySetInnerHTML={{
                               __html:
                                 getSeriesIdSuffix(header)?.replace(
@@ -478,7 +488,7 @@ export default function ViewDataModal({
                             : ""
                         } ${
                           isLastSeriesIdColumn ? "border-r border-gray-700" : ""
-                        }`}
+                        } ${!header.active && header.key !== "timestamp" ? "opacity-50" : ""}`}
                         onClick={() => handleColumnHeaderClick(header)}
                         onMouseEnter={() => setHoveredColumnIndex(colIndex)}
                         onMouseLeave={() => setHoveredColumnIndex(null)}
@@ -492,7 +502,9 @@ export default function ViewDataModal({
                           <span className="text-gray-300">Short Name</span>
                         ) : header.shortName ? (
                           <span
-                            className={`text-xs ${getSubsystemColor(header.subsystem)}`}
+                            className={`text-xs ${getSubsystemColor(header.subsystem)} ${
+                              !header.active ? "line-through" : ""
+                            }`}
                           >
                             {header.shortName}
                           </span>
@@ -529,7 +541,7 @@ export default function ViewDataModal({
                             : ""
                         } ${
                           isLastSeriesIdColumn ? "border-r border-gray-700" : ""
-                        }`}
+                        } ${!header.active && header.key !== "timestamp" ? "opacity-50" : ""}`}
                         onClick={() => handleColumnHeaderClick(header)}
                         onMouseEnter={() => setHoveredColumnIndex(colIndex)}
                         onMouseLeave={() => setHoveredColumnIndex(null)}
@@ -542,7 +554,11 @@ export default function ViewDataModal({
                         {header.key === "timestamp" ? (
                           <span className="text-gray-300">Time</span>
                         ) : getUnitDisplay(header) ? (
-                          <span className="text-xs text-gray-400">
+                          <span
+                            className={`text-xs text-gray-400 ${
+                              !header.active ? "line-through" : ""
+                            }`}
+                          >
                             {getUnitDisplay(header)}
                           </span>
                         ) : (
@@ -579,7 +595,7 @@ export default function ViewDataModal({
                             isLastSeriesIdColumn
                               ? "border-r border-gray-700"
                               : ""
-                          }`}
+                          } ${!header.active && header.key !== "timestamp" ? "opacity-50" : ""}`}
                         >
                           {header.key === "timestamp" ? (
                             <span className="text-xs font-mono text-gray-300 whitespace-nowrap">

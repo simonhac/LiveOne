@@ -1,48 +1,81 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Check } from "lucide-react";
+import { Sun, Battery, Zap, Home, Activity } from "lucide-react";
 
-interface Capability {
-  type: string;
+interface PointInfo {
+  pointDbId: number;
+  label: string;
+  subsystem: string | null;
+  type: string | null; // type component of series ID
   subtype: string | null;
   extension: string | null;
+  active: boolean;
 }
 
 interface CapabilityNode {
-  key: string; // type.subtype.extension
+  key: string; // type.subtype.extension or type.subtype.extension.metricType (for leaf nodes)
   label: string;
   children?: CapabilityNode[];
   level: number;
+  isLeaf: boolean; // True if this is an actual point (not just a grouping node)
+  active?: boolean; // Only set for leaf nodes
+  subsystem?: string | null; // Only set for leaf nodes
 }
+
+const SUBSYSTEM_CONFIG = {
+  solar: {
+    label: "Solar",
+    icon: Sun,
+    iconColor: "text-yellow-400",
+    bgColor: "bg-yellow-500/10",
+    borderColor: "border-yellow-500/30",
+  },
+  battery: {
+    label: "Battery",
+    icon: Battery,
+    iconColor: "text-blue-400",
+    bgColor: "bg-blue-500/10",
+    borderColor: "border-blue-500/30",
+  },
+  grid: {
+    label: "Grid",
+    icon: Zap,
+    iconColor: "text-green-400",
+    bgColor: "bg-green-500/10",
+    borderColor: "border-green-500/30",
+  },
+  load: {
+    label: "Load",
+    icon: Home,
+    iconColor: "text-red-400",
+    bgColor: "bg-red-500/10",
+    borderColor: "border-red-500/30",
+  },
+  inverter: {
+    label: "Inverter",
+    icon: Activity,
+    iconColor: "text-orange-400",
+    bgColor: "bg-orange-500/10",
+    borderColor: "border-orange-500/30",
+  },
+  other: {
+    label: "Other",
+    icon: Activity,
+    iconColor: "text-gray-400",
+    bgColor: "bg-gray-500/10",
+    borderColor: "border-gray-500/30",
+  },
+} as const;
 
 interface CapabilitiesTabProps {
   systemId: number;
   shouldLoad?: boolean;
-  onDirtyChange?: (isDirty: boolean) => void;
-  onSaveFunctionReady?: (saveFunction: () => Promise<string[]>) => void;
 }
-
-// Helper: Build all parent paths from a capability path string
-const buildParentPaths = (path: string): string[] => {
-  const parts = path.split(".");
-  const paths: string[] = [];
-  for (let i = 1; i <= parts.length; i++) {
-    paths.push(parts.slice(0, i).join("."));
-  }
-  return paths;
-};
 
 export default function CapabilitiesTab({
   systemId,
   shouldLoad = false,
-  onDirtyChange,
-  onSaveFunctionReady,
 }: CapabilitiesTabProps) {
-  const [capabilities, setCapabilities] = useState<Capability[]>([]);
-  const [availableCapabilities, setAvailableCapabilities] = useState<
-    Set<string>
-  >(new Set());
-  const [enabled, setEnabled] = useState<Set<string>>(new Set());
-  const [initialEnabled, setInitialEnabled] = useState<Set<string>>(new Set());
+  const [points, setPoints] = useState<PointInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasLoaded, setHasLoaded] = useState(false);
   const fetchingRef = useRef(false);
@@ -58,69 +91,37 @@ export default function CapabilitiesTab({
 
   useEffect(() => {
     if (shouldLoad && !hasLoaded && !fetchingRef.current) {
-      fetchCapabilities();
+      fetchPoints();
     }
   }, [systemId, shouldLoad, hasLoaded]);
 
-  const fetchCapabilities = async () => {
+  const fetchPoints = async () => {
     fetchingRef.current = true;
     try {
-      const response = await fetch(`/api/admin/systems/${systemId}/settings`);
+      const response = await fetch(
+        `/api/admin/systems/${systemId}/point-readings?limit=1`,
+      );
       const data = await response.json();
 
-      console.log("Loaded settings:", data);
+      if (data.headers) {
+        // Convert headers to PointInfo objects, filtering out timestamp column
+        const pointsData: PointInfo[] = data.headers
+          .filter((h: any) => h.key !== "timestamp")
+          .map((h: any) => ({
+            pointDbId: h.pointDbId,
+            label: h.label,
+            subsystem: h.subsystem,
+            type: h.pointType || null,
+            subtype: h.subtype || null,
+            extension: h.extension || null,
+            active: h.active,
+          }));
 
-      if (data.success) {
-        // Store available capabilities as a Set for fast lookup
-        const availableSet = new Set<string>(data.availableCapabilities);
-        setAvailableCapabilities(availableSet);
-
-        // Convert flattened strings back to Capability objects for tree building
-        const capabilityObjects: Capability[] = data.availableCapabilities.map(
-          (path: string) => {
-            const parts = path.split(".");
-            return {
-              type: parts[0],
-              subtype: parts[1] !== undefined ? parts[1] : null,
-              extension: parts[2] !== undefined ? parts[2] : null,
-            };
-          },
-        );
-        setCapabilities(capabilityObjects);
-
-        // Load enabled capabilities (default to all if none saved)
-        // Only load capabilities that actually have checkboxes (are in availableCapabilities)
-        const savedCapabilities =
-          !data.settings.capabilities || data.settings.capabilities.length === 0
-            ? data.availableCapabilities
-            : data.settings.capabilities.filter((cap: string) =>
-                availableSet.has(cap),
-              );
-
-        // Warn if any invalid capabilities were filtered out
-        if (
-          data.settings.capabilities &&
-          data.settings.capabilities.length > 0
-        ) {
-          const invalidCaps = data.settings.capabilities.filter(
-            (cap: string) => !availableSet.has(cap),
-          );
-          if (invalidCaps.length > 0) {
-            console.warn(
-              "Filtered out invalid capabilities on load:",
-              invalidCaps,
-            );
-          }
-        }
-
-        const enabledSet = new Set<string>(savedCapabilities);
-
-        setEnabled(enabledSet);
-        setInitialEnabled(new Set(enabledSet));
+        setPoints(pointsData);
         setHasLoaded(true);
       }
     } catch (error) {
-      console.error("Failed to fetch capabilities:", error);
+      console.error("Failed to fetch points:", error);
     } finally {
       setLoading(false);
       fetchingRef.current = false;
@@ -141,17 +142,46 @@ export default function CapabilitiesTab({
     return label;
   };
 
-  // Build tree structure from flat capabilities
-  const tree = useMemo(() => {
+  // Group points by subsystem
+  const pointsBySubsystem = useMemo(() => {
+    const grouped: Record<string, PointInfo[]> = {
+      solar: [],
+      battery: [],
+      grid: [],
+      load: [],
+      inverter: [],
+      other: [],
+    };
+
+    points.forEach((point) => {
+      const subsystem = point.subsystem || "other";
+      if (grouped[subsystem]) {
+        grouped[subsystem].push(point);
+      } else {
+        grouped.other.push(point);
+      }
+    });
+
+    return grouped;
+  }, [points]);
+
+  // Build tree structure for a given subsystem's points
+  const buildTreeForSubsystem = (
+    subsystemPoints: PointInfo[],
+  ): CapabilityNode[] => {
     const nodeMap = new Map<string, CapabilityNode>();
 
-    capabilities.forEach((cap) => {
-      const parts = [cap.type, cap.subtype, cap.extension].filter(
+    // Only include points that have a series ID (type is not null)
+    const pointsWithSeriesId = subsystemPoints.filter((p) => p.type);
+
+    pointsWithSeriesId.forEach((point) => {
+      // Build series ID path: type.subtype.extension
+      const parts = [point.type, point.subtype, point.extension].filter(
         (p): p is string => Boolean(p),
       );
 
-      // Build all parent paths
-      for (let i = 1; i <= parts.length; i++) {
+      // Build all parent paths (grouping nodes)
+      for (let i = 1; i < parts.length; i++) {
         const pathParts = parts.slice(0, i);
         const key = pathParts.join(".");
         const rawLabel = pathParts[pathParts.length - 1];
@@ -163,9 +193,22 @@ export default function CapabilitiesTab({
             label,
             children: [],
             level: i - 1,
+            isLeaf: false,
           });
         }
       }
+
+      // Add the point itself as a leaf node (use the display label)
+      const pointKey = parts.join(".");
+      nodeMap.set(pointKey, {
+        key: pointKey,
+        label: point.label,
+        children: [],
+        level: parts.length - 1,
+        isLeaf: true,
+        active: point.active,
+        subsystem: point.subsystem,
+      });
     });
 
     // Build parent-child relationships
@@ -196,106 +239,27 @@ export default function CapabilitiesTab({
     sortChildren(roots);
 
     return roots;
-  }, [capabilities]);
-
-  // Check if capabilities are dirty
-  const isDirty = useMemo(() => {
-    if (enabled.size !== initialEnabled.size) return true;
-    for (const key of enabled) {
-      if (!initialEnabled.has(key)) return true;
-    }
-    return false;
-  }, [enabled, initialEnabled]);
-
-  // Notify parent when dirty state changes
-  useEffect(() => {
-    onDirtyChange?.(isDirty);
-  }, [isDirty, onDirtyChange]);
-
-  // Log capabilities to console when they change
-  useEffect(() => {
-    if (hasLoaded) {
-      const enabledArray = Array.from(enabled);
-      console.log("Capabilities:", enabledArray);
-    }
-  }, [enabled, hasLoaded]);
-
-  // Get capabilities data for saving (called by parent)
-  // Only save items that are actual capabilities (in availableCapabilities)
-  const getCapabilitiesData = async (): Promise<string[]> => {
-    const allEnabled = Array.from(enabled);
-    const validCapabilities = allEnabled.filter((key) =>
-      availableCapabilities.has(key),
-    );
-
-    // Warn if any invalid capabilities are being filtered out
-    const invalidCaps = allEnabled.filter(
-      (key) => !availableCapabilities.has(key),
-    );
-    if (invalidCaps.length > 0) {
-      console.warn(
-        "Filtered out invalid capabilities before save:",
-        invalidCaps,
-      );
-    }
-
-    return validCapabilities;
-  };
-
-  // Expose data getter to parent
-  useEffect(() => {
-    onSaveFunctionReady?.(getCapabilitiesData);
-  }, [enabled, availableCapabilities, onSaveFunctionReady]);
-
-  const handleToggle = (nodeKey: string) => {
-    const newEnabled = new Set(enabled);
-
-    if (newEnabled.has(nodeKey)) {
-      newEnabled.delete(nodeKey);
-    } else {
-      newEnabled.add(nodeKey);
-    }
-
-    setEnabled(newEnabled);
   };
 
   const renderNode = (node: CapabilityNode) => {
     const hasChildren = node.children && node.children.length > 0;
-    const isActualCapability = availableCapabilities.has(node.key);
-    const isEnabled = enabled.has(node.key);
+    const isActive = node.isLeaf ? node.active : true;
+    const textColor = node.isLeaf
+      ? isActive
+        ? "text-gray-300"
+        : "text-gray-600"
+      : "text-gray-300";
 
     return (
       <div key={node.key}>
         <div
-          className="flex items-center gap-2 py-1 hover:bg-gray-700/30 rounded px-2 -mx-2"
-          style={{ paddingLeft: `${node.level * 20 + 8}px` }}
+          className="flex items-center gap-2 py-0.5 px-2"
+          style={{ paddingLeft: `${node.level * 16 + 8}px` }}
         >
-          {/* Checkbox - only show for actual capabilities */}
-          {isActualCapability && (
-            <div
-              className={`w-4 h-4 border-2 rounded flex items-center justify-center transition-colors cursor-pointer ${
-                isEnabled
-                  ? "bg-blue-600 border-blue-600"
-                  : "border-gray-600 bg-gray-900"
-              }`}
-              onClick={() => handleToggle(node.key)}
-            >
-              {isEnabled && <Check className="w-3 h-3 text-white" />}
-            </div>
-          )}
-
-          {/* Label */}
           <span
-            className={`text-sm ${
-              isActualCapability
-                ? isEnabled
-                  ? "text-gray-100"
-                  : "text-gray-500"
-                : "text-gray-300"
-            } ${node.level === 0 ? "font-semibold" : ""} ${
-              isActualCapability ? "cursor-pointer" : ""
-            }`}
-            onClick={() => isActualCapability && handleToggle(node.key)}
+            className={`text-sm ${textColor} ${
+              node.level === 0 ? "font-semibold" : ""
+            } ${node.isLeaf && !isActive ? "line-through" : ""}`}
           >
             {node.label}
             {hasChildren ? ":" : ""}
@@ -318,7 +282,7 @@ export default function CapabilitiesTab({
     );
   }
 
-  if (tree.length === 0) {
+  if (points.length === 0) {
     return (
       <div className="flex items-center justify-center py-8">
         <div className="text-gray-400">
@@ -329,6 +293,53 @@ export default function CapabilitiesTab({
   }
 
   return (
-    <div className="space-y-1">{tree.map((node) => renderNode(node))}</div>
+    <div className="space-y-[15px]">
+      <p className="text-sm text-gray-400">
+        System capabilities organized by subsystem. Points can be activated or
+        deactivated via the View Data modal.
+      </p>
+
+      {(
+        Object.keys(SUBSYSTEM_CONFIG) as Array<keyof typeof SUBSYSTEM_CONFIG>
+      ).map((subsystem) => {
+        const subsystemPoints = pointsBySubsystem[subsystem];
+        if (!subsystemPoints || subsystemPoints.length === 0) {
+          return null; // Skip empty subsystems
+        }
+
+        const config = SUBSYSTEM_CONFIG[subsystem];
+        const tree = buildTreeForSubsystem(subsystemPoints);
+
+        return (
+          <div
+            key={subsystem}
+            className={`border rounded-none sm:rounded-lg p-3 -mx-6 sm:mx-0 sm:flex sm:gap-4 ${config.bgColor} ${config.borderColor}`}
+          >
+            {/* Header - Icon and Label */}
+            <div className="flex items-center gap-2 mb-3 sm:mb-0 sm:flex-col sm:items-center sm:justify-start sm:min-w-[60px]">
+              <config.icon
+                className={`w-5 h-5 sm:w-8 sm:h-8 ${config.iconColor}`}
+              />
+              <h3 className="text-sm font-semibold text-gray-200 sm:text-center">
+                {config.label}
+              </h3>
+            </div>
+
+            {/* Content - Capability Tree */}
+            <div className="flex-1 min-w-0">
+              {tree.length > 0 ? (
+                <div className="space-y-0.5">
+                  {tree.map((node) => renderNode(node))}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500 italic py-1">
+                  No {subsystem} points configured
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }

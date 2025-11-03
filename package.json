@@ -76,7 +76,8 @@
     "tailwindcss": "^4.1.12",
     "tough-cookie": "^5.1.2",
     "tsx": "^4.20.4",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "uuidv7": "^1.0.2"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

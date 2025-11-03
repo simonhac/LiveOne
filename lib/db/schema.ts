@@ -26,7 +26,6 @@ export const systems = sqliteTable(
     batterySize: text("battery_size"),
     location: text("location", { mode: "json" }), // JSON object for address, city/state/country, or lat/lon
     metadata: text("metadata", { mode: "json" }), // JSON object for vendor-specific config (e.g., composite system sources)
-    capabilities: text("capabilities", { mode: "json" }), // JSON array of enabled capabilities (type.subtype.extension)
     timezoneOffsetMin: integer("timezone_offset_min").notNull().default(600), // Standard timezone offset in minutes (e.g., 600 for AEST/UTC+10, DST calculated separately)
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()

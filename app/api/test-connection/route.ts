@@ -135,7 +135,6 @@ export async function POST(request: NextRequest) {
       batterySize: null,
       location: null,
       metadata: null,
-      capabilities: null,
       timezoneOffsetMin: 600, // Default to AEST, adapter can override
       createdAt: new Date(),
       updatedAt: new Date(),

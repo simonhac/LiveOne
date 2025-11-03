@@ -6,6 +6,7 @@ import { eq, desc } from "drizzle-orm";
 import { storeSystemCredentials } from "@/lib/secure-credentials";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { SystemsManager } from "@/lib/systems-manager";
+import { uuidv7 } from "uuidv7";
 
 export async function POST(request: NextRequest) {
   try {
@@ -47,11 +48,11 @@ export async function POST(request: NextRequest) {
         .values({
           ownerClerkUserId: userId,
           vendorType: "composite",
-          vendorSiteId: `composite_${Date.now()}`, // Unique identifier
+          vendorSiteId: uuidv7(), // UUIDv7 for time-ordered unique identifier
           displayName: displayName.trim(),
           status: "active",
           metadata: {
-            version: 1,
+            version: 2, // Version 2 uses new mapping format
             mappings: metadata.mappings,
           },
           createdAt: new Date(),

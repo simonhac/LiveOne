@@ -16,6 +16,7 @@ interface PointInfo {
   defaultName: string;
   displayName: string | null;
   shortName: string | null;
+  active: boolean;
   metricType: string;
   metricUnit: string | null;
   vendorSiteId?: string;
@@ -36,6 +37,7 @@ interface PointInfoModalProps {
       extension?: string | null;
       displayName?: string | null;
       shortName?: string | null;
+      active: boolean;
     },
   ) => Promise<void>;
 }
@@ -57,11 +59,13 @@ export default function PointInfoModal({
   const [editedShortName, setEditedShortName] = useState(
     pointInfo?.shortName || "",
   );
+  const [editedActive, setEditedActive] = useState(!!pointInfo?.active);
   const [isTypeDirty, setIsTypeDirty] = useState(false);
   const [isSubtypeDirty, setIsSubtypeDirty] = useState(false);
   const [isExtensionDirty, setIsExtensionDirty] = useState(false);
   const [isDisplayNameDirty, setIsDisplayNameDirty] = useState(false);
   const [isShortNameDirty, setIsShortNameDirty] = useState(false);
+  const [isActiveDirty, setIsActiveDirty] = useState(false);
   const [shortNameError, setShortNameError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -71,11 +75,13 @@ export default function PointInfoModal({
     setEditedExtension(pointInfo?.extension || "");
     setEditedDisplayName(pointInfo?.displayName || "");
     setEditedShortName(pointInfo?.shortName || "");
+    setEditedActive(!!pointInfo?.active);
     setIsTypeDirty(false);
     setIsSubtypeDirty(false);
     setIsExtensionDirty(false);
     setIsDisplayNameDirty(false);
     setIsShortNameDirty(false);
+    setIsActiveDirty(false);
     setShortNameError(null);
   }, [pointInfo, isOpen]);
 
@@ -113,19 +119,25 @@ export default function PointInfoModal({
     setShortNameError(validateShortName(value));
   };
 
+  const handleActiveChange = (value: boolean) => {
+    setEditedActive(value);
+    setIsActiveDirty(value !== !!pointInfo?.active);
+  };
+
   const hasChanges =
     isTypeDirty ||
     isSubtypeDirty ||
     isExtensionDirty ||
     isDisplayNameDirty ||
-    isShortNameDirty;
+    isShortNameDirty ||
+    isActiveDirty;
 
   const handleSave = async () => {
-    if (!hasChanges || !pointInfo || shortNameError) return;
+    if (!pointInfo || shortNameError) return;
 
     setIsSaving(true);
     try {
-      const updates: any = {};
+      const updates: any = { active: editedActive };
       if (isTypeDirty) updates.type = editedType || null;
       if (isSubtypeDirty) updates.subtype = editedSubtype || null;
       if (isExtensionDirty) updates.extension = editedExtension || null;
@@ -140,6 +152,7 @@ export default function PointInfoModal({
       setIsExtensionDirty(false);
       setIsDisplayNameDirty(false);
       setIsShortNameDirty(false);
+      setIsActiveDirty(false);
 
       // Close modal on successful save
       onClose();
@@ -270,6 +283,25 @@ export default function PointInfoModal({
             <div className="border border-gray-600 rounded-md p-3 bg-gray-800/30 space-y-3">
               <div className="text-xs font-medium text-gray-400 mb-1">
                 Configuration
+              </div>
+
+              {/* Editable: Active */}
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
+                  Active:
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={editedActive}
+                    onChange={(e) => handleActiveChange(e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-600 bg-gray-900 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0"
+                    disabled={isSaving}
+                  />
+                  <span className="text-sm text-gray-400">
+                    {editedActive ? "Enabled" : "Disabled"}
+                  </span>
+                </div>
               </div>
 
               {/* Editable: Display Name */}

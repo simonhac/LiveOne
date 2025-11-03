@@ -20,7 +20,6 @@ import {
   MeasurementValue,
   TimeSeriesPoint,
 } from "./types";
-import { VendorRegistry } from "@/lib/vendors/registry";
 
 /**
  * Generate a point ID in the format:
@@ -84,25 +83,15 @@ export class PointReadingsProvider implements HistoryDataProvider {
 
   /**
    * Helper method to filter and sort points by series ID
-   * Filters to only include points with type set and capability enabled
+   * Filters to only include active points with type set
    */
   private filterAndSortPoints(
     points: (typeof pointInfo.$inferSelect)[],
-    enabledCapabilities: string[],
   ): (typeof pointInfo.$inferSelect)[] {
-    // Build set of enabled capability strings for fast lookup
-    const enabledSet = new Set(enabledCapabilities);
-
     return points
       .filter((p) => {
-        // Must have type
-        if (!p.type) {
-          return false;
-        }
-
-        // Check if this point's capability is enabled
-        const capabilityString = this.buildCapabilityString(p);
-        return enabledSet.has(capabilityString);
+        // Must have type and be active
+        return p.type && p.active;
       })
       .sort((a, b) => {
         const aSeriesId = generatePointId(
@@ -135,24 +124,14 @@ export class PointReadingsProvider implements HistoryDataProvider {
     const startMs = toUnixTimestamp(startTime) * 1000;
     const endMs = toUnixTimestamp(endTime) * 1000;
 
-    // Get enabled capabilities from vendor adapter
-    const adapter = VendorRegistry.getAdapter(system.vendorType);
-    if (!adapter) {
-      throw new Error(`No adapter found for vendor type: ${system.vendorType}`);
-    }
-    const enabledCapabilities = await adapter.getEnabledCapabilities(system.id);
-
-    // Get all points for this system
+    // Get all active points for this system
     const points = await db
       .select()
       .from(pointInfo)
       .where(eq(pointInfo.systemId, system.id));
 
-    // Only include points with type set and capability enabled, sorted by series ID
-    const filteredPoints = this.filterAndSortPoints(
-      points,
-      enabledCapabilities,
-    );
+    // Only include active points with type set, sorted by series ID
+    const filteredPoints = this.filterAndSortPoints(points);
 
     if (filteredPoints.length === 0) {
       return [];

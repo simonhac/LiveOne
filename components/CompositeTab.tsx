@@ -3,18 +3,15 @@ import { Plus, X, Sun, Home, Battery, Zap } from "lucide-react";
 import { createPortal } from "react-dom";
 
 interface CompositeMapping {
-  solar: string[];
-  battery: string[];
-  load: string[];
-  grid: string[];
+  [key: string]: string[]; // Allow any category keys
 }
 
-interface AvailableCapability {
+interface AvailablePoint {
+  id: string; // Format: "systemId.pointId"
+  path: string; // Series ID path like "source.solar.local"
+  name: string; // Display name
   systemId: number;
   systemName: string;
-  shortName: string | null;
-  seriesId: string;
-  label: string;
 }
 
 interface CompositeTabProps {
@@ -29,7 +26,6 @@ const CATEGORY_CONFIG = {
     label: "Solar",
     icon: Sun,
     iconColor: "text-yellow-400",
-    maxEntries: null,
     bgColor: "bg-yellow-500/10",
     borderColor: "border-yellow-500/30",
   },
@@ -37,7 +33,6 @@ const CATEGORY_CONFIG = {
     label: "Battery",
     icon: Battery,
     iconColor: "text-blue-400",
-    maxEntries: 1,
     bgColor: "bg-blue-500/10",
     borderColor: "border-blue-500/30",
   },
@@ -45,7 +40,6 @@ const CATEGORY_CONFIG = {
     label: "Load",
     icon: Home,
     iconColor: "text-red-400",
-    maxEntries: null,
     bgColor: "bg-red-500/10",
     borderColor: "border-red-500/30",
   },
@@ -53,7 +47,6 @@ const CATEGORY_CONFIG = {
     label: "Grid",
     icon: Zap,
     iconColor: "text-green-400",
-    maxEntries: 1,
     bgColor: "bg-green-500/10",
     borderColor: "border-green-500/30",
   },
@@ -77,9 +70,7 @@ export default function CompositeTab({
     load: [],
     grid: [],
   });
-  const [availableCapabilities, setAvailableCapabilities] = useState<
-    AvailableCapability[]
-  >([]);
+  const [availablePoints, setAvailablePoints] = useState<AvailablePoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [addingToCategory, setAddingToCategory] = useState<string | null>(null);
@@ -106,48 +97,48 @@ export default function CompositeTab({
   const fetchCompositeConfig = async () => {
     fetchingRef.current = true;
     try {
-      // For new systems (systemId=-1), initialize with empty mappings
-      // and fetch available capabilities from all systems
-      if (systemId === -1) {
-        // Fetch available capabilities from all systems
-        const response = await fetch(
-          "/api/admin/systems/composite-capabilities",
-        );
-        const data = await response.json();
+      // Fetch available points from user's systems (works for both new and existing systems)
+      const pointsResponse = await fetch("/api/admin/systems/points/me");
+      const pointsData = await pointsResponse.json();
 
-        if (data.success) {
-          const emptyMappings: CompositeMapping = {
+      if (!pointsData.success) {
+        console.error("Failed to fetch available points");
+        return;
+      }
+
+      setAvailablePoints(pointsData.availablePoints || []);
+
+      // For new systems (systemId=-1), initialize with empty mappings
+      if (systemId === -1) {
+        const emptyMappings: CompositeMapping = {
+          solar: [],
+          battery: [],
+          load: [],
+          grid: [],
+        };
+
+        setMappings(emptyMappings);
+        setInitialMappings(JSON.parse(JSON.stringify(emptyMappings)));
+        setHasLoaded(true);
+      } else {
+        // For existing systems, fetch their composite configuration
+        const configResponse = await fetch(
+          `/api/admin/systems/${systemId}/composite-config`,
+        );
+        const configData = await configResponse.json();
+
+        if (configData.success) {
+          // Parse existing mappings from metadata
+          const metadata = configData.metadata || {};
+          const currentMappings: CompositeMapping = metadata.mappings || {
             solar: [],
             battery: [],
             load: [],
             grid: [],
           };
 
-          setMappings(emptyMappings);
-          setInitialMappings(JSON.parse(JSON.stringify(emptyMappings)));
-          setAvailableCapabilities(data.availableCapabilities || []);
-          setHasLoaded(true);
-        }
-      } else {
-        // For existing systems, fetch their composite configuration
-        const response = await fetch(
-          `/api/admin/systems/${systemId}/composite-config`,
-        );
-        const data = await response.json();
-
-        if (data.success) {
-          // Parse existing mappings from metadata
-          const metadata = data.metadata || {};
-          const currentMappings: CompositeMapping = {
-            solar: metadata.mappings?.solar || [],
-            battery: metadata.mappings?.battery || [],
-            load: metadata.mappings?.load || [],
-            grid: metadata.mappings?.grid || [],
-          };
-
           setMappings(currentMappings);
           setInitialMappings(JSON.parse(JSON.stringify(currentMappings)));
-          setAvailableCapabilities(data.availableCapabilities);
           setHasLoaded(true);
         }
       }
@@ -178,71 +169,33 @@ export default function CompositeTab({
     onSaveFunctionReady?.(getMappingsData);
   }, [mappings, onSaveFunctionReady]);
 
-  // Helper to build full path from capability
-  const buildFullPath = (cap: AvailableCapability): string => {
-    const systemPath = cap.shortName || `system.${cap.systemId}`;
-    return `liveone.${systemPath}.${cap.seriesId}`;
-  };
-
-  // Helper to parse full path back to components
-  const parseFullPath = (
-    fullPath: string,
-  ): { systemPath: string; seriesId: string } | null => {
-    const parts = fullPath.split(".");
-    if (parts.length < 3 || parts[0] !== "liveone") return null;
-
-    // Check if systemPath is "system.{id}" (2 parts) or just a shortname (1 part)
-    let systemPath: string;
-    let seriesIdStartIndex: number;
-
-    if (parts[1] === "system") {
-      // Format: liveone.system.{id}.{seriesId}
-      systemPath = `${parts[1]}.${parts[2]}`;
-      seriesIdStartIndex = 3;
-    } else {
-      // Format: liveone.{shortname}.{seriesId}
-      systemPath = parts[1];
-      seriesIdStartIndex = 2;
-    }
-
-    const seriesId = parts.slice(seriesIdStartIndex).join(".");
-
-    return { systemPath, seriesId };
-  };
-
-  // Get display label components for a full path
+  // Helper to get display label components for a point ID
   const getDisplayLabelParts = (
-    fullPath: string,
-  ): { systemName: string; seriesId: string } | null => {
-    const parsed = parseFullPath(fullPath);
-    if (!parsed) return null;
+    pointId: string, // Format: "systemId.pointId"
+  ): { systemName: string; pointName: string } | null => {
+    const point = availablePoints.find((p) => p.id === pointId);
 
-    const cap = availableCapabilities.find(
-      (c) =>
-        (c.shortName === parsed.systemPath ||
-          `system.${c.systemId}` === parsed.systemPath) &&
-        c.seriesId === parsed.seriesId,
-    );
-
-    if (cap) {
-      return { systemName: cap.systemName, seriesId: cap.seriesId };
+    if (point) {
+      return {
+        systemName: point.systemName,
+        pointName: point.name,
+      };
     }
 
-    // Fallback: format the path nicely
-    const systemName = parsed.systemPath.startsWith("system.")
-      ? `System ${parsed.systemPath.split(".")[1]}`
-      : parsed.systemPath;
-    return { systemName, seriesId: parsed.seriesId };
+    // Fallback: parse the ID
+    const parts = pointId.split(".");
+    if (parts.length !== 2) return null;
+
+    return {
+      systemName: `System ${parts[0]}`,
+      pointName: `Point ${parts[1]}`,
+    };
   };
 
   const handleAddMapping = (
-    category: keyof CompositeMapping,
+    category: string,
     buttonElement: HTMLButtonElement,
   ) => {
-    const config = CATEGORY_CONFIG[category];
-    if (config.maxEntries && mappings[category].length >= config.maxEntries) {
-      return; // Already at max
-    }
     console.log(
       "Opening menu for category:",
       category,
@@ -258,66 +211,48 @@ export default function CompositeTab({
     setMenuButtonRef(null);
   };
 
-  const handleSelectCapability = (
-    category: keyof CompositeMapping,
-    capability: AvailableCapability,
-  ) => {
-    const fullPath = buildFullPath(capability);
+  const handleSelectPoint = (category: string, point: AvailablePoint) => {
     setMappings((prev) => ({
       ...prev,
-      [category]: [...prev[category], fullPath],
+      [category]: [...(prev[category] || []), point.id],
     }));
     handleCloseMenu();
   };
 
-  const handleRemoveMapping = (
-    category: keyof CompositeMapping,
-    index: number,
-  ) => {
+  const handleRemoveMapping = (category: string, index: number) => {
     setMappings((prev) => ({
       ...prev,
-      [category]: prev[category].filter((_, i) => i !== index),
+      [category]: (prev[category] || []).filter((_, i) => i !== index),
     }));
   };
 
-  // Filter available capabilities for selection
-  const getAvailableForCategory = (
-    category: keyof CompositeMapping,
-  ): AvailableCapability[] => {
-    // Map UI categories to actual capability patterns
-    const categoryPatterns: Record<
-      keyof CompositeMapping,
-      (seriesId: string) => boolean
-    > = {
-      solar: (id) => id.startsWith("source.solar"),
-      battery: (id) =>
-        id === "bidi.battery" ||
-        id.startsWith("bidi.battery.") ||
-        id === "battery" ||
-        id.startsWith("battery."),
-      load: (id) => id === "load" || id.startsWith("load."),
-      grid: (id) =>
-        id === "bidi.grid" ||
-        id.startsWith("bidi.grid.") ||
-        id === "grid" ||
-        id.startsWith("grid."),
+  // Helper to check if a path matches a pattern
+  const matchesPattern = (path: string, pattern: string): boolean => {
+    return path === pattern || path.startsWith(pattern + ".");
+  };
+
+  // Filter available points for selection
+  const getAvailableForCategory = (category: string): AvailablePoint[] => {
+    // Map UI categories to series ID path patterns
+    const categoryPatterns: Record<string, string> = {
+      solar: "source.solar",
+      battery: "bidi.battery",
+      load: "load",
+      grid: "bidi.grid",
     };
 
-    // Get already-added full paths for this category
-    const addedPaths = new Set(mappings[category]);
+    // Get already-added point IDs for this category
+    const addedIds = new Set(mappings[category] || []);
 
-    return availableCapabilities.filter((cap) => {
-      // Check if it matches the category pattern
-      if (!categoryPatterns[category](cap.seriesId)) {
+    return availablePoints.filter((point) => {
+      // Check if it matches the category pattern (if pattern exists)
+      const pattern = categoryPatterns[category];
+      if (pattern && !matchesPattern(point.path, pattern)) {
         return false;
       }
 
-      // Build the full path for this capability
-      const systemPath = cap.shortName || `system.${cap.systemId}`;
-      const fullPath = `liveone.${systemPath}.${cap.seriesId}`;
-
       // Exclude if already added to this category
-      return !addedPaths.has(fullPath);
+      return !addedIds.has(point.id);
     });
   };
 
@@ -337,8 +272,7 @@ export default function CompositeTab({
     }
 
     console.log("Rendering popup menu for:", addingToCategory);
-    const typedCategory = addingToCategory as keyof CompositeMapping;
-    const availableForCategory = getAvailableForCategory(typedCategory);
+    const availableForCategory = getAvailableForCategory(addingToCategory);
 
     // Calculate position
     const rect = menuButtonRef.getBoundingClientRect();
@@ -392,48 +326,58 @@ export default function CompositeTab({
           <div className="overflow-y-auto max-h-full">
             {availableForCategory.length === 0 ? (
               <div className="px-3 py-2 text-sm text-gray-500">
-                No available {addingToCategory} capabilities from your systems
+                No available {addingToCategory} points from your systems
               </div>
             ) : (
               (() => {
-                // Group capabilities by system
+                // Group points by system
                 const grouped = availableForCategory.reduce(
-                  (acc, cap) => {
-                    const key = cap.systemId;
+                  (acc, point) => {
+                    const key = point.systemId;
                     if (!acc[key]) {
                       acc[key] = {
-                        systemName: cap.systemName,
-                        capabilities: [],
+                        systemName: point.systemName,
+                        points: [],
                       };
                     }
-                    acc[key].capabilities.push(cap);
+                    acc[key].points.push(point);
                     return acc;
                   },
                   {} as Record<
                     number,
-                    { systemName: string; capabilities: AvailableCapability[] }
+                    { systemName: string; points: AvailablePoint[] }
                   >,
                 );
 
-                return Object.entries(grouped).map(([systemId, group]) => (
-                  <div key={systemId}>
-                    <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 bg-gray-800/50 sticky top-0">
-                      {group.systemName}
+                // Sort systems by name and points within each system by name
+                return Object.entries(grouped)
+                  .sort(([, a], [, b]) =>
+                    a.systemName.localeCompare(b.systemName),
+                  )
+                  .map(([systemId, group]) => (
+                    <div key={systemId}>
+                      <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 bg-gray-800/50 sticky top-0">
+                        {group.systemName}
+                      </div>
+                      {group.points
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map((point, idx) => (
+                          <button
+                            key={idx}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSelectPoint(addingToCategory, point);
+                            }}
+                            className="w-full text-left pl-6 pr-3 py-1.5 text-sm text-gray-300 hover:bg-gray-800 transition-colors border-b border-gray-800 last:border-b-0"
+                          >
+                            <span>{point.name}</span>
+                            <span className="ml-2 text-gray-600">
+                              {point.path}
+                            </span>
+                          </button>
+                        ))}
                     </div>
-                    {group.capabilities.map((cap, idx) => (
-                      <button
-                        key={idx}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSelectCapability(typedCategory, cap);
-                        }}
-                        className="w-full text-left pl-6 pr-3 py-1.5 text-sm text-gray-300 hover:bg-gray-800 transition-colors border-b border-gray-800 last:border-b-0"
-                      >
-                        {cap.seriesId}
-                      </button>
-                    ))}
-                  </div>
-                ));
+                  ));
               })()
             )}
           </div>
@@ -460,10 +404,7 @@ export default function CompositeTab({
       {renderPopupMenu()}
 
       {Object.entries(CATEGORY_CONFIG).map(([category, config]) => {
-        const typedCategory = category as keyof CompositeMapping;
-        const currentMappings = mappings[typedCategory];
-        const canAdd =
-          !config.maxEntries || currentMappings.length < config.maxEntries;
+        const currentMappings = mappings[category] || [];
 
         return (
           <div
@@ -476,53 +417,38 @@ export default function CompositeTab({
                 <config.icon
                   className={`w-5 h-5 sm:w-8 sm:h-8 ${config.iconColor}`}
                 />
-                <div className="flex items-center gap-2 sm:flex-col sm:gap-1">
-                  <h3 className="text-sm font-semibold text-gray-200 sm:text-center">
-                    {config.label}
-                  </h3>
-                  {config.maxEntries && (
-                    <span className="text-xs text-gray-500 sm:text-center">
-                      (one only)
-                    </span>
-                  )}
-                </div>
+                <h3 className="text-sm font-semibold text-gray-200 sm:text-center">
+                  {config.label}
+                </h3>
               </div>
               {/* Add Button - Visible on mobile */}
-              {canAdd && (
-                <button
-                  onClick={(e) =>
-                    handleAddMapping(typedCategory, e.currentTarget)
-                  }
-                  className="flex sm:hidden items-center gap-1 px-2 py-1 text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-400/10 rounded transition-colors"
-                >
-                  <Plus className="w-3 h-3" />
-                  Add
-                </button>
-              )}
+              <button
+                onClick={(e) => handleAddMapping(category, e.currentTarget)}
+                className="flex sm:hidden items-center gap-1 px-2 py-1 text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-400/10 rounded transition-colors"
+              >
+                <Plus className="w-3 h-3" />
+                Add
+              </button>
             </div>
 
             {/* Content - Right Side on Desktop */}
             <div className="flex-1 min-w-0">
               {/* Add Button - Desktop only */}
               <div className="hidden sm:flex justify-end mb-2">
-                {canAdd && (
-                  <button
-                    onClick={(e) =>
-                      handleAddMapping(typedCategory, e.currentTarget)
-                    }
-                    className="flex items-center gap-1 px-2 py-1 text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-400/10 rounded transition-colors"
-                  >
-                    <Plus className="w-3 h-3" />
-                    Add
-                  </button>
-                )}
+                <button
+                  onClick={(e) => handleAddMapping(category, e.currentTarget)}
+                  className="flex items-center gap-1 px-2 py-1 text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-400/10 rounded transition-colors"
+                >
+                  <Plus className="w-3 h-3" />
+                  Add
+                </button>
               </div>
 
               {/* Existing Mappings */}
               {currentMappings.length > 0 ? (
                 <div>
-                  {currentMappings.map((fullPath, index) => {
-                    const labelParts = getDisplayLabelParts(fullPath);
+                  {currentMappings.map((pointId, index) => {
+                    const labelParts = getDisplayLabelParts(pointId);
                     return (
                       <div
                         key={index}
@@ -535,17 +461,15 @@ export default function CompositeTab({
                                 {labelParts.systemName}
                               </span>{" "}
                               <span className="text-gray-400">
-                                {labelParts.seriesId}
+                                {labelParts.pointName}
                               </span>
                             </>
                           ) : (
-                            fullPath
+                            pointId
                           )}
                         </span>
                         <button
-                          onClick={() =>
-                            handleRemoveMapping(typedCategory, index)
-                          }
+                          onClick={() => handleRemoveMapping(category, index)}
                           className="text-gray-500 hover:text-red-400 transition-colors"
                         >
                           <X className="w-4 h-4" />

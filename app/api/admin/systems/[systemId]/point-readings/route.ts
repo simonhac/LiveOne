@@ -138,6 +138,7 @@ export async function GET(
         systemId: systemId,
         defaultName: p.defaultName,
         shortName: p.shortName,
+        active: p.active,
       })),
     ];
 
