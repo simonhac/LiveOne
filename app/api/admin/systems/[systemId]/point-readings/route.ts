@@ -84,8 +84,8 @@ export async function GET(
 
     // Sort points: series ID columns first (sorted by series ID), then by displayName
     const sortedPoints = [...points].sort((a, b) => {
-      const aHasSeriesId = !!(a.type && a.subtype);
-      const bHasSeriesId = !!(b.type && b.subtype);
+      const aHasSeriesId = !!a.type;
+      const bHasSeriesId = !!b.type;
 
       // Points with series ID come first
       if (aHasSeriesId && !bHasSeriesId) return -1;

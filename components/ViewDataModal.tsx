@@ -125,9 +125,11 @@ export default function ViewDataModal({
   }, [isOpen, isPointInfoModalOpen, onClose]);
 
   const handleRefresh = () => {
-    setRotateKey((prev) => prev + 1); // Increment to trigger animation
-    setInitialLoad(false); // Not initial load when manually refreshing
-    fetchData();
+    if (!loading) {
+      setRotateKey((prev) => prev + 1); // Increment to trigger animation
+      setInitialLoad(false); // Not initial load when manually refreshing
+      fetchData();
+    }
   };
 
   const handleColumnHeaderClick = (header: ColumnHeader) => {
@@ -309,7 +311,7 @@ export default function ViewDataModal({
                 className="w-5 h-5 text-gray-400"
                 style={{
                   transform: `rotate(${rotateKey * 180}deg)`,
-                  transition: "transform 500ms ease",
+                  transition: "transform 1s ease-in-out",
                 }}
               />
             </button>
@@ -555,7 +557,7 @@ export default function ViewDataModal({
                 {data.map((row, idx) => (
                   <tr
                     key={idx}
-                    className={`border-b border-gray-700 ${
+                    className={`${
                       idx % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"
                     } hover:bg-gray-700/50 transition-colors`}
                   >
@@ -571,7 +573,7 @@ export default function ViewDataModal({
                       return (
                         <td
                           key={header.key}
-                          className={`py-2 px-2 ${
+                          className={`py-1 px-2 ${
                             header.key !== "timestamp" ? "text-right" : ""
                           } ${
                             isLastSeriesIdColumn
@@ -580,7 +582,7 @@ export default function ViewDataModal({
                           }`}
                         >
                           {header.key === "timestamp" ? (
-                            <span className="text-xs font-mono text-gray-300">
+                            <span className="text-xs font-mono text-gray-300 whitespace-nowrap">
                               {formatDateTime(row[header.key]).display}
                             </span>
                           ) : (
