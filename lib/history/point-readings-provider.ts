@@ -166,7 +166,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
           pointId: p.pointId,
           pointSubId: p.pointSubId,
           shortName: p.shortName,
-          name: p.name || p.defaultName,
+          name: p.displayName || p.defaultName,
           subsystem: p.subsystem,
           metricType: p.metricType,
           metricUnit: p.metricUnit,

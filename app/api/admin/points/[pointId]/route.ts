@@ -34,7 +34,8 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { type, subtype, extension, subsystem, name, shortName } = body;
+    const { type, subtype, extension, subsystem, displayName, shortName } =
+      body;
 
     // Validate that at least one field is provided
     if (
@@ -42,13 +43,13 @@ export async function PATCH(
       subtype === undefined &&
       extension === undefined &&
       subsystem === undefined &&
-      name === undefined &&
+      displayName === undefined &&
       shortName === undefined
     ) {
       return NextResponse.json(
         {
           error:
-            "At least one field (type, subtype, extension, subsystem, name, or shortName) must be provided",
+            "At least one field (type, subtype, extension, subsystem, displayName, or shortName) must be provided",
         },
         { status: 400 },
       );
@@ -98,8 +99,8 @@ export async function PATCH(
     if (subsystem !== undefined) {
       updates.subsystem = subsystem || null;
     }
-    if (name !== undefined) {
-      updates.name = name || null;
+    if (displayName !== undefined) {
+      updates.displayName = displayName || null;
     }
     if (shortName !== undefined) {
       updates.shortName =
@@ -132,7 +133,7 @@ export async function PATCH(
         extension: updatedPoint.extension,
         subsystem: updatedPoint.subsystem,
         defaultName: updatedPoint.defaultName,
-        name: updatedPoint.name,
+        displayName: updatedPoint.displayName,
         shortName: updatedPoint.shortName,
         metricType: updatedPoint.metricType,
         metricUnit: updatedPoint.metricUnit,

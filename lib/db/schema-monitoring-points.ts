@@ -33,7 +33,7 @@ export const pointInfo = sqliteTable(
     type: text("type"), // eg. "source", "load", "bidi" - user settable dropdown
     subtype: text("subtype"), // eg. "pool", "ev", "solar1" - user settable free text
     extension: text("extension"), // eg. additional qualifier - user settable free text
-    name: text("display_name").notNull(), // user settable, will generally be the same as pointName
+    displayName: text("display_name").notNull(), // user settable, will generally be the same as pointName
     shortName: text("short_name"), // Optional short name (letters, digits, underscore only) - used in history API IDs
 
     // Type and unit

@@ -14,11 +14,12 @@ interface ColumnHeader {
   pointType?: string | null;
   subtype?: string | null;
   extension?: string | null;
-  pointId?: string;
-  pointSubId?: string | null;
-  pointDbId?: number;
-  defaultName?: string;
-  shortName?: string | null;
+  pointId: string;
+  pointSubId: string | null;
+  pointDbId: number;
+  systemId: number;
+  defaultName: string;
+  shortName: string | null;
 }
 
 interface ViewDataModalProps {
@@ -48,6 +49,7 @@ export default function ViewDataModal({
   const fetchingRef = useRef(false);
   const [selectedPointInfo, setSelectedPointInfo] = useState<{
     pointDbId: number;
+    systemId: number;
     pointId: string;
     pointSubId: string | null;
     subsystem: string | null;
@@ -55,7 +57,7 @@ export default function ViewDataModal({
     subtype: string | null;
     extension: string | null;
     defaultName: string;
-    name: string | null;
+    displayName: string | null;
     shortName: string | null;
     metricType: string;
     metricUnit: string | null;
@@ -129,11 +131,11 @@ export default function ViewDataModal({
 
   const handleColumnHeaderClick = (header: ColumnHeader) => {
     // Only open modal for point columns (not timestamp)
-    if (header.key === "timestamp" || !header.pointDbId || !header.pointId)
-      return;
+    if (header.key === "timestamp") return;
 
     setSelectedPointInfo({
       pointDbId: header.pointDbId,
+      systemId: header.systemId,
       pointId: header.pointId,
       pointSubId: header.pointSubId || null,
       subsystem: header.subsystem,
@@ -141,7 +143,7 @@ export default function ViewDataModal({
       subtype: header.subtype || null,
       extension: header.extension || null,
       defaultName: header.defaultName || header.label,
-      name: header.label !== header.defaultName ? header.label : null,
+      displayName: header.label,
       shortName: header.shortName || null,
       metricType: header.type,
       metricUnit: header.unit,
@@ -158,7 +160,7 @@ export default function ViewDataModal({
       type?: string | null;
       subtype?: string | null;
       extension?: string | null;
-      name?: string | null;
+      displayName?: string | null;
       shortName?: string | null;
     },
   ) => {

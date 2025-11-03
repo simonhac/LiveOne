@@ -69,7 +69,7 @@ export async function GET(
       });
     }
 
-    // Sort points: series ID columns first (sorted by series ID), then by name
+    // Sort points: series ID columns first (sorted by series ID), then by displayName
     const sortedPoints = [...points].sort((a, b) => {
       const aHasSeriesId = !!(a.type && a.subtype);
       const bHasSeriesId = !!(b.type && b.subtype);
@@ -89,9 +89,9 @@ export async function GET(
         return aSeriesId.localeCompare(bSeriesId);
       }
 
-      // Neither has series ID, sort by name
-      const aName = a.name || a.defaultName;
-      const bName = b.name || b.defaultName;
+      // Neither has series ID, sort by displayName
+      const aName = a.displayName || a.defaultName;
+      const bName = b.displayName || b.defaultName;
       return aName.localeCompare(bName);
     });
 
@@ -103,10 +103,16 @@ export async function GET(
         type: "datetime",
         unit: null,
         subsystem: null,
+        pointId: "",
+        pointSubId: null,
+        pointDbId: 0,
+        systemId: 0,
+        defaultName: "",
+        shortName: null,
       },
       ...sortedPoints.map((p) => ({
         key: `point_${p.id}`,
-        label: p.name || p.defaultName,
+        label: p.displayName || p.defaultName,
         type: p.metricType,
         unit: p.metricUnit,
         subsystem: p.subsystem,
@@ -116,6 +122,7 @@ export async function GET(
         pointId: p.pointId,
         pointSubId: p.pointSubId,
         pointDbId: p.id,
+        systemId: systemId,
         defaultName: p.defaultName,
         shortName: p.shortName,
       })),

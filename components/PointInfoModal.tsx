@@ -6,6 +6,7 @@ import { X } from "lucide-react";
 
 interface PointInfo {
   pointDbId: number;
+  systemId: number;
   pointId: string;
   pointSubId: string | null;
   subsystem: string | null;
@@ -13,7 +14,7 @@ interface PointInfo {
   subtype: string | null;
   extension: string | null;
   defaultName: string;
-  name: string | null;
+  displayName: string | null;
   shortName: string | null;
   metricType: string;
   metricUnit: string | null;
@@ -32,7 +33,7 @@ interface PointInfoModalProps {
       type?: string | null;
       subtype?: string | null;
       extension?: string | null;
-      name?: string | null;
+      displayName?: string | null;
       shortName?: string | null;
     },
   ) => Promise<void>;
@@ -49,14 +50,16 @@ export default function PointInfoModal({
   const [editedExtension, setEditedExtension] = useState(
     pointInfo?.extension || "",
   );
-  const [editedName, setEditedName] = useState(pointInfo?.name || "");
+  const [editedDisplayName, setEditedDisplayName] = useState(
+    pointInfo?.displayName || "",
+  );
   const [editedShortName, setEditedShortName] = useState(
     pointInfo?.shortName || "",
   );
   const [isTypeDirty, setIsTypeDirty] = useState(false);
   const [isSubtypeDirty, setIsSubtypeDirty] = useState(false);
   const [isExtensionDirty, setIsExtensionDirty] = useState(false);
-  const [isNameDirty, setIsNameDirty] = useState(false);
+  const [isDisplayNameDirty, setIsDisplayNameDirty] = useState(false);
   const [isShortNameDirty, setIsShortNameDirty] = useState(false);
   const [shortNameError, setShortNameError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -65,12 +68,12 @@ export default function PointInfoModal({
     setEditedType(pointInfo?.type || "");
     setEditedSubtype(pointInfo?.subtype || "");
     setEditedExtension(pointInfo?.extension || "");
-    setEditedName(pointInfo?.name || "");
+    setEditedDisplayName(pointInfo?.displayName || "");
     setEditedShortName(pointInfo?.shortName || "");
     setIsTypeDirty(false);
     setIsSubtypeDirty(false);
     setIsExtensionDirty(false);
-    setIsNameDirty(false);
+    setIsDisplayNameDirty(false);
     setIsShortNameDirty(false);
     setShortNameError(null);
   }, [pointInfo, isOpen]);
@@ -98,9 +101,9 @@ export default function PointInfoModal({
     setIsExtensionDirty(value !== (pointInfo?.extension || ""));
   };
 
-  const handleNameChange = (value: string) => {
-    setEditedName(value);
-    setIsNameDirty(value !== (pointInfo?.name || ""));
+  const handleDisplayNameChange = (value: string) => {
+    setEditedDisplayName(value);
+    setIsDisplayNameDirty(value !== (pointInfo?.displayName || ""));
   };
 
   const handleShortNameChange = (value: string) => {
@@ -113,7 +116,7 @@ export default function PointInfoModal({
     isTypeDirty ||
     isSubtypeDirty ||
     isExtensionDirty ||
-    isNameDirty ||
+    isDisplayNameDirty ||
     isShortNameDirty;
 
   const handleSave = async () => {
@@ -125,7 +128,7 @@ export default function PointInfoModal({
       if (isTypeDirty) updates.type = editedType || null;
       if (isSubtypeDirty) updates.subtype = editedSubtype || null;
       if (isExtensionDirty) updates.extension = editedExtension || null;
-      if (isNameDirty) updates.name = editedName || null;
+      if (isDisplayNameDirty) updates.displayName = editedDisplayName || null;
       if (isShortNameDirty) updates.shortName = editedShortName || null;
 
       await onUpdate(pointInfo.pointDbId, updates);
@@ -134,7 +137,7 @@ export default function PointInfoModal({
       setIsTypeDirty(false);
       setIsSubtypeDirty(false);
       setIsExtensionDirty(false);
-      setIsNameDirty(false);
+      setIsDisplayNameDirty(false);
       setIsShortNameDirty(false);
 
       // Close modal on successful save
@@ -216,42 +219,44 @@ export default function PointInfoModal({
 
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Vendor:
+                  Site:
                 </label>
-                <div className="px-2 text-gray-400 text-sm flex-1">
-                  {pointInfo.vendorType || "N/A"}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Site ID:
-                </label>
-                <div className="px-2 text-gray-400 font-mono text-sm flex-1 whitespace-nowrap">
+                <div className="px-2 font-mono text-sm flex-1 whitespace-nowrap">
+                  <span className="text-gray-300">
+                    {pointInfo.vendorType || "N/A"}/
+                    {pointInfo.vendorSiteId || "N/A"}
+                  </span>
                   {pointInfo.systemShortName && (
-                    <span className="text-gray-300">
-                      {pointInfo.systemShortName}{" "}
+                    <span className="text-gray-400">
+                      {" "}
+                      ({pointInfo.systemShortName})
                     </span>
                   )}
-                  {pointInfo.vendorSiteId || "N/A"}
                 </div>
               </div>
 
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Point ID:
+                  Point:
                 </label>
-                <div className="px-2 text-gray-400 font-mono text-sm flex-1 whitespace-nowrap">
-                  <span className="text-gray-300">
-                    {pointInfo.defaultName}{" "}
+                <div className="px-2 font-mono text-sm flex-1">
+                  <span className="text-gray-300 whitespace-nowrap">
+                    {pointInfo.pointId}
                   </span>
-                  {pointInfo.pointId}
+                  <span className="text-gray-400 whitespace-nowrap">
+                    {" "}
+                    ({pointInfo.defaultName})
+                  </span>
+                  <span className="text-gray-500 whitespace-nowrap">
+                    {" "}
+                    ID: {pointInfo.systemId}.{pointInfo.pointDbId}
+                  </span>
                 </div>
               </div>
 
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Point Sub ID:
+                  Sub-Point:
                 </label>
                 <div className="px-2 text-gray-400 font-mono text-sm flex-1">
                   {pointInfo.pointSubId || "N/A"}
@@ -284,15 +289,15 @@ export default function PointInfoModal({
                 Configuration
               </div>
 
-              {/* Editable: Display Label */}
+              {/* Editable: Display Name */}
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Display Label:
+                  Display Name:
                 </label>
                 <input
                   type="text"
-                  value={editedName}
-                  onChange={(e) => handleNameChange(e.target.value)}
+                  value={editedDisplayName}
+                  onChange={(e) => handleDisplayNameChange(e.target.value)}
                   placeholder={pointInfo.defaultName}
                   className="flex-1 px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                   disabled={isSaving}

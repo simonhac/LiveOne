@@ -81,7 +81,7 @@ export async function ensurePointInfo(
       pointId: metadata.pointId,
       pointSubId: metadata.pointSubId || null,
       defaultName: metadata.defaultName,
-      name: metadata.defaultName, // Initially same as default
+      displayName: metadata.defaultName, // Initially same as default
       subsystem: metadata.subsystem || null,
       metricType: metadata.metricType,
       metricUnit: metadata.metricUnit,
@@ -90,7 +90,7 @@ export async function ensurePointInfo(
       target: [pointInfo.systemId, pointInfo.pointId, pointInfo.pointSubId],
       set: {
         defaultName: metadata.defaultName, // Update default name if changed from source
-        // Don't update 'name' as it's user-modifiable
+        // Don't update 'displayName' as it's user-modifiable
         // Don't update subsystem as it's user-modifiable
       },
     })
