@@ -111,17 +111,41 @@ export class SystemsManager {
   }
 
   /**
-   * Get system by short name
+   * Get system by username and short name
    */
-  async getSystemByShortName(
+  async getSystemByUserNameShortName(
+    username: string,
     shortName: string,
   ): Promise<SystemWithPolling | null> {
     await this.loadPromise;
-    for (const system of this.systemsMap.values()) {
-      if (system.shortName === shortName) {
-        return system;
+
+    // Find all systems with matching shortname
+    const matchingSystems = Array.from(this.systemsMap.values()).filter(
+      (system) => system.shortName === shortName,
+    );
+
+    if (matchingSystems.length === 0) {
+      return null;
+    }
+
+    // Query Clerk to find which system owner has this username
+    const client = await clerkClient();
+
+    for (const system of matchingSystems) {
+      if (!system.ownerClerkUserId) continue;
+
+      try {
+        const user = await client.users.getUser(system.ownerClerkUserId);
+        if (user.username === username) {
+          return system;
+        }
+      } catch (error) {
+        // User not found or error - skip this system
+        console.error(`Error fetching user ${system.ownerClerkUserId}:`, error);
+        continue;
       }
     }
+
     return null;
   }
 

@@ -1,4 +1,4 @@
-import { auth } from "@clerk/nextjs/server";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import DashboardClient from "@/components/DashboardClient";
 import { isUserAdmin } from "@/lib/auth-utils";
@@ -7,52 +7,61 @@ import { VendorRegistry } from "@/lib/vendors/registry";
 
 interface PageProps {
   params: Promise<{
-    systemId: string;
+    slug: string[];
   }>;
 }
 
-export default async function DashboardSystemPage({ params }: PageProps) {
+export default async function DashboardPage({ params }: PageProps) {
   const { userId } = await auth();
-  const { systemId } = await params;
+  const { slug } = await params;
 
   if (!userId) {
     redirect("/sign-in");
   }
 
   const isAdmin = await isUserAdmin();
-
-  // Get systems manager instance
   const systemsManager = SystemsManager.getInstance();
 
-  // Determine if systemId is numeric (ID) or alphanumeric (shortname)
-  const isNumericId = /^\d+$/.test(systemId);
+  let system = null;
+  let systemId: string;
 
-  let system;
-  if (isNumericId) {
-    // Look up by ID
-    system = await systemsManager.getSystem(parseInt(systemId));
+  // Handle different URL patterns
+  if (slug.length === 1) {
+    // Single segment: could be numeric ID or shortname (legacy)
+    const segment = slug[0];
+    const isNumericId = /^\d+$/.test(segment);
 
-    // If system has a shortname, redirect to shortname URL
-    if (system?.shortName) {
-      redirect(`/dashboard/${system.shortName}`);
+    if (isNumericId) {
+      // Numeric ID - look up and redirect to new format if it has a shortname
+      system = await systemsManager.getSystem(parseInt(segment));
+
+      if (system?.shortName && system.ownerClerkUserId) {
+        const clerk = await clerkClient();
+        const owner = await clerk.users.getUser(system.ownerClerkUserId);
+        if (owner.username) {
+          redirect(`/dashboard/${owner.username}/${system.shortName}`);
+        }
+      }
+
+      systemId = system?.id?.toString() || segment;
+    } else {
+      // Non-numeric single segment - no longer supported
+      redirect("/dashboard");
     }
+  } else if (slug.length === 2) {
+    // Two segments: username/shortname format
+    const [username, shortname] = slug;
+    system = await systemsManager.getSystemByUserNameShortName(
+      username,
+      shortname,
+    );
+    systemId = system?.id?.toString() || `${username}/${shortname}`;
   } else {
-    // Look up by shortname
-    system = await systemsManager.getSystemByShortName(systemId);
+    // More than 2 segments - invalid
+    redirect("/dashboard");
   }
 
   const systemExists = !!system;
-
-  // Debug logging for admin access
-  // if (isAdmin) {
-  //   console.log('[Dashboard] Admin access check:', {
-  //     userId,
-  //     systemId,
-  //     systemExists,
-  //     systemOwner: system?.ownerClerkUserId,
-  //     isAdmin
-  //   })
-  // }
 
   // Check if user has access to this system
   let hasAccess = false;
@@ -78,7 +87,7 @@ export default async function DashboardSystemPage({ params }: PageProps) {
 
   return (
     <DashboardClient
-      systemId={system?.id?.toString() || systemId}
+      systemId={systemId}
       system={system}
       hasAccess={hasAccess}
       systemExists={systemExists}
