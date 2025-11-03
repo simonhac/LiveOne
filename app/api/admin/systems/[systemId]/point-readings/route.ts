@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { pointReadings, pointInfo } from "@/lib/db/schema-monitoring-points";
 import { eq, desc, sql } from "drizzle-orm";
@@ -45,6 +45,18 @@ export async function GET(
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
+    // Get username from system owner
+    let username: string | null = null;
+    if (system.ownerClerkUserId) {
+      try {
+        const clerk = await clerkClient();
+        const owner = await clerk.users.getUser(system.ownerClerkUserId);
+        username = owner.username || null;
+      } catch (error) {
+        console.error("Error fetching owner username:", error);
+      }
+    }
+
     // Get all point info for this system
     const pointsStartTime = Date.now();
     const points = await db
@@ -61,6 +73,7 @@ export async function GET(
         metadata: {
           systemId,
           systemShortName: system.shortName || null,
+          ownerUsername: username,
           timezoneOffsetMin: system.timezoneOffsetMin,
           pointCount: 0,
           rowCount: 0,
@@ -188,6 +201,7 @@ export async function GET(
       metadata: {
         systemId,
         systemShortName: system.shortName || null,
+        ownerUsername: username,
         timezoneOffsetMin: system.timezoneOffsetMin,
         pointCount: points.length,
         rowCount: data.length,

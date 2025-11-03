@@ -63,6 +63,7 @@ export default function ViewDataModal({
     metricUnit: string | null;
     vendorSiteId: string;
     systemShortName?: string;
+    ownerUsername: string;
     vendorType?: string;
   } | null>(null);
   const [isPointInfoModalOpen, setIsPointInfoModalOpen] = useState(false);
@@ -149,6 +150,7 @@ export default function ViewDataModal({
       metricUnit: header.unit,
       vendorSiteId: vendorSiteId,
       systemShortName: metadata?.systemShortName || undefined,
+      ownerUsername: metadata?.ownerUsername || "",
       vendorType: vendorType,
     });
     setIsPointInfoModalOpen(true);

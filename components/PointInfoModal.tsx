@@ -20,6 +20,7 @@ interface PointInfo {
   metricUnit: string | null;
   vendorSiteId?: string;
   systemShortName?: string;
+  ownerUsername: string;
   vendorType?: string;
 }
 
@@ -158,23 +159,6 @@ export default function PointInfoModal({
     }
   };
 
-  // Compute series ID: liveone.mondo.{system shortname}.{type}.{subtype}.{extension}.{metric type}
-  const getSeriesId = () => {
-    if (!pointInfo) return { prefix: "", parts: [] };
-
-    const prefix = pointInfo.systemShortName
-      ? `liveone.mondo.${pointInfo.systemShortName}.`
-      : "liveone.mondo.";
-
-    const parts = [];
-    if (editedType) parts.push(editedType);
-    if (editedSubtype) parts.push(editedSubtype);
-    if (editedExtension) parts.push(editedExtension);
-    if (pointInfo.metricType) parts.push(pointInfo.metricType);
-
-    return { prefix, parts };
-  };
-
   if (!isOpen || !pointInfo || typeof document === "undefined") return null;
 
   // Handle Enter key to save
@@ -219,19 +203,18 @@ export default function PointInfoModal({
 
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Site:
+                  System:
                 </label>
                 <div className="px-2 font-mono text-sm flex-1 whitespace-nowrap">
                   <span className="text-gray-300">
                     {pointInfo.vendorType || "N/A"}/
                     {pointInfo.vendorSiteId || "N/A"}
                   </span>
-                  {pointInfo.systemShortName && (
-                    <span className="text-gray-400">
-                      {" "}
-                      ({pointInfo.systemShortName})
-                    </span>
-                  )}
+                  <span className="text-gray-400">
+                    {" "}
+                    ({pointInfo.ownerUsername}/
+                    {pointInfo.systemShortName || pointInfo.systemId})
+                  </span>
                 </div>
               </div>
 
@@ -349,7 +332,7 @@ export default function PointInfoModal({
                 <select
                   value={editedType}
                   onChange={(e) => handleTypeChange(e.target.value)}
-                  className="flex-1 px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                  className="px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                   disabled={isSaving}
                 >
                   <option value="">-- Select Type --</option>
@@ -388,35 +371,14 @@ export default function PointInfoModal({
                   disabled={isSaving}
                 />
               </div>
-
-              {/* Series ID Display */}
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Series ID:
-                </label>
-                {editedType && editedSubtype ? (
-                  <div className="px-2 py-1 text-gray-400 font-mono text-sm flex-1 break-all">
-                    <span className="text-gray-600">
-                      {getSeriesId().prefix}
-                    </span>
-                    <span className="text-gray-400">
-                      {getSeriesId().parts.join(".")}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="px-2 py-1 text-gray-500 text-sm flex-1 italic">
-                    (type and subtype must be set for a series ID)
-                  </div>
-                )}
-              </div>
             </div>
           </div>
 
           {/* Footer */}
-          <div className="px-6 py-4 border-t border-gray-700 flex gap-3">
+          <div className="px-6 py-4 border-t border-gray-700 flex justify-end gap-3">
             <button
               onClick={onClose}
-              className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-100 rounded-md transition-colors"
+              className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-gray-100 rounded-md transition-colors min-w-24"
               disabled={isSaving}
             >
               Cancel
@@ -424,7 +386,7 @@ export default function PointInfoModal({
             <button
               onClick={handleSave}
               disabled={!hasChanges || isSaving || !!shortNameError}
-              className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-w-24"
             >
               {isSaving ? "Saving..." : "Save"}
             </button>
