@@ -645,8 +645,8 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
 
       {/* Sync Progress Modal */}
       {syncProgress.isActive && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 max-w-[752px] w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-[50px] overflow-y-auto">
+          <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 max-w-[752px] w-full h-fit max-h-[1000px] overflow-y-auto">
             <div className="mb-4">
               <h3 className="text-lg font-semibold text-white">
                 Sync Database

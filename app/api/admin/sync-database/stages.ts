@@ -90,6 +90,7 @@ interface SyncTableOptions {
   queryParams: any[];
   mapRow?: (row: any) => any | null; // Optional: transform/filter rows (return null to skip)
   timestampField?: string; // Field to use for date range tracking (e.g., 'inverter_time')
+  idField: string; // Field to use as secondary cursor to handle duplicate timestamps (e.g., 'id')
   onProgress?: (
     synced: number,
     total: number,
@@ -107,8 +108,15 @@ async function syncTableData(
   targetTable: string,
   options: SyncTableOptions,
 ): Promise<{ synced: number; skipped: number; detail?: string }> {
-  const { query, queryParams, mapRow, timestampField, onProgress, onComplete } =
-    options;
+  const {
+    query,
+    queryParams,
+    mapRow,
+    timestampField,
+    idField,
+    onProgress,
+    onComplete,
+  } = options;
 
   const batchSize = SYNC_BATCH_SIZE;
   const chunkSize = SYNC_CHUNK_SIZE;
@@ -119,17 +127,21 @@ async function syncTableData(
   let firstBatchTime: Date | null = null;
   let lastBatchTime: Date | null = null;
   let lastCursor: number | null = null; // Track last timestamp for cursor-based pagination
+  let lastId: number | null = null; // Track last ID for handling duplicate timestamps
 
   while (!ctx.signal.aborted) {
     batchNum++;
     const fetchStart = Date.now();
 
-    // Build query with cursor if available
+    // Build query with composite cursor if available
     let paginatedQuery = query;
     let paginatedParams = [...queryParams];
 
-    if (lastCursor !== null && timestampField) {
-      // Add cursor condition: timestamp > lastCursor
+    if (lastCursor !== null && lastId !== null && timestampField) {
+      // Add composite cursor condition: (timestamp > lastCursor) OR (timestamp = lastCursor AND id > lastId)
+      // This ensures we don't skip records with duplicate timestamps
+      const cursorCondition = `((${timestampField} > ?) OR (${timestampField} = ? AND ${idField} > ?))`;
+
       // Need to insert before ORDER BY clause if it exists
       const orderByMatch = query.match(/\s+ORDER\s+BY\s+/i);
 
@@ -141,20 +153,21 @@ async function syncTableData(
 
         // Add cursor condition before ORDER BY
         if (query.toUpperCase().includes("WHERE")) {
-          paginatedQuery = `${beforeOrderBy} AND ${timestampField} > ?${orderByClause}`;
+          paginatedQuery = `${beforeOrderBy} AND ${cursorCondition}${orderByClause}`;
         } else {
-          paginatedQuery = `${beforeOrderBy} WHERE ${timestampField} > ?${orderByClause}`;
+          paginatedQuery = `${beforeOrderBy} WHERE ${cursorCondition}${orderByClause}`;
         }
       } else {
-        // No ORDER BY, append at end as before
+        // No ORDER BY, append at end
         if (query.toUpperCase().includes("WHERE")) {
-          paginatedQuery = `${query} AND ${timestampField} > ?`;
+          paginatedQuery = `${query} AND ${cursorCondition}`;
         } else {
-          paginatedQuery = `${query} WHERE ${timestampField} > ?`;
+          paginatedQuery = `${query} WHERE ${cursorCondition}`;
         }
       }
 
-      paginatedParams.push(lastCursor);
+      // Add parameters: timestamp > ?, timestamp = ?, id > ?
+      paginatedParams.push(lastCursor, lastCursor, lastId);
     }
 
     // Fetch batch from production using cursor-based pagination
@@ -177,18 +190,18 @@ async function syncTableData(
       break;
     }
 
-    // Track date range if timestamp field specified
+    // Track date range and cursor if timestamp field specified
     let batchRangeStart: Date | undefined;
     let batchRangeEnd: Date | undefined;
 
     if (timestampField && batchResult.rows.length > 0) {
       const firstTimestamp = batchResult.rows[0][timestampField] as number;
-      const lastTimestamp = batchResult.rows[batchResult.rows.length - 1][
-        timestampField
-      ] as number;
+      const lastRow = batchResult.rows[batchResult.rows.length - 1];
+      const lastTimestamp = lastRow[timestampField] as number;
 
-      // Update cursor to last timestamp in this batch
+      // Update composite cursor to last timestamp AND ID in this batch
       lastCursor = lastTimestamp;
+      lastId = lastRow[idField] as number;
 
       // Convert to dates (handle both seconds and milliseconds)
       // readings tables use seconds, point_readings use milliseconds
@@ -639,7 +652,7 @@ async function syncReadings(ctx: SyncContext) {
 
   // Use generic sync function with progress tracking
   const result = await syncTableData(ctx, "readings", "readings", {
-    query: `SELECT * FROM readings WHERE inverter_time > ? ORDER BY inverter_time`,
+    query: `SELECT * FROM readings WHERE inverter_time > ? ORDER BY inverter_time, id`,
     queryParams: [syncFromTimestamp],
     mapRow: (row) => {
       // Map system IDs
@@ -654,6 +667,7 @@ async function syncReadings(ctx: SyncContext) {
       };
     },
     timestampField: "inverter_time",
+    idField: "id",
     onProgress: createProgressCallback(ctx, "sync-readings"),
     onComplete: (synced, firstTime, lastTime) => {
       // Format the date range if we have data
@@ -771,7 +785,7 @@ async function syncSessions(ctx: SyncContext) {
 
   // Use generic sync function
   const result = await syncTableData(ctx, "sessions", "sessions", {
-    query: `SELECT * FROM sessions WHERE started > ? ORDER BY started`,
+    query: `SELECT * FROM sessions WHERE started > ? ORDER BY started, id`,
     queryParams: [syncFromTimestamp],
     mapRow: (row) => {
       // Map system IDs
@@ -786,6 +800,7 @@ async function syncSessions(ctx: SyncContext) {
       };
     },
     timestampField: "started",
+    idField: "id",
     onProgress: createProgressCallback(ctx, "sync-sessions"),
     onComplete: (synced, firstTime, lastTime) => {
       // Format the date range if we have data
@@ -838,7 +853,7 @@ async function sync5MinAggregations(ctx: SyncContext) {
     "readings_agg_5m",
     "readings_agg_5m",
     {
-      query: `SELECT * FROM readings_agg_5m WHERE interval_end > ? ORDER BY interval_end`,
+      query: `SELECT * FROM readings_agg_5m WHERE interval_end > ? ORDER BY interval_end, system_id`,
       queryParams: [Math.floor(syncFromTime.getTime() / 1000)],
       mapRow: (row) => {
         // Map system IDs
@@ -855,6 +870,7 @@ async function sync5MinAggregations(ctx: SyncContext) {
         };
       },
       timestampField: "interval_end", // 5-min aggregations use interval_end for timestamps
+      idField: "system_id", // Use system_id as secondary cursor (part of composite PK)
       onProgress: createProgressCallback(ctx, "sync-5min-agg"),
     },
   );
@@ -931,7 +947,7 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
     "point_readings_agg_5m",
     "point_readings_agg_5m",
     {
-      query: `SELECT * FROM point_readings_agg_5m WHERE interval_end > ? ORDER BY interval_end`,
+      query: `SELECT * FROM point_readings_agg_5m WHERE interval_end > ? ORDER BY interval_end, system_id, point_id`,
       queryParams: [syncFromTimestamp],
       mapRow: (row) => {
         // Map point_info IDs
@@ -954,6 +970,7 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
         };
       },
       timestampField: "interval_end",
+      idField: "point_id", // Use point_id as secondary cursor (part of composite PK)
       onProgress: createProgressCallback(ctx, "sync-point-5min-agg"),
     },
   );
@@ -1243,6 +1260,7 @@ async function syncPointInfo(ctx: SyncContext) {
         system_id: mappedSystemId,
       };
     },
+    idField: "id", // Use id as cursor (part of composite PK: system_id, id)
     onProgress: createProgressCallback(ctx, "sync-point-info"),
   });
 
@@ -1312,7 +1330,7 @@ async function syncPointReadings(ctx: SyncContext) {
 
   // Use generic sync function
   const result = await syncTableData(ctx, "point_readings", "point_readings", {
-    query: `SELECT * FROM point_readings WHERE measurement_time > ? ORDER BY measurement_time`,
+    query: `SELECT * FROM point_readings WHERE measurement_time > ? ORDER BY measurement_time, id`,
     queryParams: [syncFromTimestamp],
     mapRow: (row) => {
       // Map point_info IDs
@@ -1335,6 +1353,7 @@ async function syncPointReadings(ctx: SyncContext) {
       };
     },
     timestampField: "measurement_time", // syncTableData handles milliseconds automatically
+    idField: "id",
     onProgress: createProgressCallback(ctx, "sync-point-readings"),
     onComplete: (synced, firstTime, lastTime) => {
       // Format the date range if we have data
