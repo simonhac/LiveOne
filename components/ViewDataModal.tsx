@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { X, RefreshCw } from "lucide-react";
-import { formatDateTime, formatTime } from "@/lib/fe-date-format";
+import { X } from "lucide-react";
+import { formatDateTime } from "@/lib/fe-date-format";
 import PointInfoModal from "./PointInfoModal";
 
 interface ColumnHeader {
@@ -44,9 +44,7 @@ export default function ViewDataModal({
   const [data, setData] = useState<any[]>([]);
   const [metadata, setMetadata] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   const [initialLoad, setInitialLoad] = useState(true);
-  const [rotateKey, setRotateKey] = useState(0);
   const fetchingRef = useRef(false);
   const [selectedPointInfo, setSelectedPointInfo] = useState<{
     pointDbId: number;
@@ -70,6 +68,7 @@ export default function ViewDataModal({
   } | null>(null);
   const [isPointInfoModalOpen, setIsPointInfoModalOpen] = useState(false);
   const [showExtras, setShowExtras] = useState(true);
+  const [dataSource, setDataSource] = useState<"raw" | "5m">("raw");
 
   const fetchData = useCallback(async () => {
     // Prevent duplicate fetches
@@ -82,7 +81,7 @@ export default function ViewDataModal({
       fetchingRef.current = true;
       setLoading(true);
       const response = await fetch(
-        `/api/admin/systems/${systemId}/point-readings?limit=200`,
+        `/api/admin/systems/${systemId}/point-readings?limit=200&dataSource=${dataSource}`,
       );
       if (!response.ok) throw new Error("Failed to fetch data");
 
@@ -90,7 +89,6 @@ export default function ViewDataModal({
       setHeaders(result.headers || []);
       setData(result.data || []);
       setMetadata(result.metadata || null);
-      setLastFetchTime(new Date());
       setInitialLoad(false); // Mark initial load as complete
     } catch (error) {
       console.error("Error fetching point readings:", error);
@@ -98,7 +96,7 @@ export default function ViewDataModal({
       setLoading(false);
       fetchingRef.current = false;
     }
-  }, [systemId]);
+  }, [systemId, dataSource]);
 
   useEffect(() => {
     if (isOpen) {
@@ -112,6 +110,14 @@ export default function ViewDataModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]); // Intentionally exclude fetchData to prevent double calls
 
+  // Refetch when data source changes
+  useEffect(() => {
+    if (isOpen) {
+      fetchData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataSource]);
+
   // Handle escape key
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -123,11 +129,11 @@ export default function ViewDataModal({
     return () => document.removeEventListener("keydown", handleEscape);
   }, [isOpen, isPointInfoModalOpen, onClose]);
 
-  const handleRefresh = () => {
-    if (!loading) {
-      setRotateKey((prev) => prev + 1); // Increment to trigger animation
-      setInitialLoad(false); // Not initial load when manually refreshing
-      fetchData();
+  const handleDataSourceChange = (newSource: "raw" | "5m") => {
+    // Set loading state immediately for instant UI feedback
+    if (newSource !== dataSource) {
+      setLoading(true);
+      setDataSource(newSource);
     }
   };
 
@@ -336,9 +342,9 @@ export default function ViewDataModal({
     .join("\n");
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center px-10 py-4 z-50">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-5 z-50">
       <style>{columnHoverStyles}</style>
-      <div className="bg-gray-900 border border-gray-700 rounded-lg shadow-xl w-full max-h-[90vh] flex flex-col">
+      <div className="bg-gray-900 border border-gray-700 rounded-lg shadow-xl w-full h-full flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
           <div>
@@ -355,25 +361,35 @@ export default function ViewDataModal({
             >
               {showExtras ? "Hide" : "Show"} Extras
             </button>
-            {lastFetchTime && (
-              <span className="text-xs text-gray-400">
-                Last updated: {formatTime(lastFetchTime)}
-              </span>
-            )}
-            <button
-              onClick={handleRefresh}
-              disabled={loading}
-              className="p-2 hover:bg-gray-700 rounded transition-colors disabled:opacity-50"
-              title="Refresh"
-            >
-              <RefreshCw
-                className="w-5 h-5 text-gray-400"
-                style={{
-                  transform: `rotate(${rotateKey * 180}deg)`,
-                  transition: "transform 1s ease-in-out",
-                }}
-              />
-            </button>
+            {/* Data Source Toggle */}
+            <div className="inline-flex rounded-md shadow-sm" role="group">
+              <button
+                onClick={() => handleDataSourceChange("raw")}
+                className={`
+                  px-3 py-1 text-xs font-medium transition-colors border rounded-l-md -ml-px
+                  ${
+                    dataSource === "raw"
+                      ? "bg-blue-900/50 text-blue-300 border-blue-800 z-10"
+                      : "bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300"
+                  }
+                `}
+              >
+                Raw
+              </button>
+              <button
+                onClick={() => handleDataSourceChange("5m")}
+                className={`
+                  px-3 py-1 text-xs font-medium transition-colors border rounded-r-md -ml-px
+                  ${
+                    dataSource === "5m"
+                      ? "bg-blue-900/50 text-blue-300 border-blue-800 z-10"
+                      : "bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300"
+                  }
+                `}
+              >
+                5m
+              </button>
+            </div>
             <button
               onClick={onClose}
               className="p-2 hover:bg-gray-700 rounded transition-colors"
@@ -384,9 +400,10 @@ export default function ViewDataModal({
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-x-auto overflow-y-auto">
-          {initialLoad && loading ? (
-            <div className="flex items-center justify-center h-64">
+        <div className="flex-1 overflow-x-auto overflow-y-auto relative">
+          {/* Loading spinner - show during initial load or when switching data sources */}
+          {loading ? (
+            <div className="absolute inset-0 flex items-center justify-center z-20">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
             </div>
           ) : data.length === 0 ? (
@@ -474,7 +491,7 @@ export default function ViewDataModal({
                       rowKey="row3"
                     >
                       {header.key === "timestamp" ? (
-                        <span className="text-gray-300">Short Name</span>
+                        <span className="text-gray-300">Alias</span>
                       ) : header.key === "sessionLabel" ? (
                         <div></div>
                       ) : header.shortName ? (

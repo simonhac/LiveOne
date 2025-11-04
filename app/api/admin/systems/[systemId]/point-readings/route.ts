@@ -33,6 +33,7 @@ export async function GET(
     const systemId = parseInt(systemIdStr);
     const { searchParams } = new URL(request.url);
     const limit = Math.min(parseInt(searchParams.get("limit") || "200"), 1000);
+    const dataSource = searchParams.get("dataSource") || "raw"; // "raw" or "5m"
 
     // Track database elapsed time
     let dbElapsedMs = 0;
@@ -108,6 +109,11 @@ export async function GET(
       return aName.localeCompare(bName);
     });
 
+    // Determine which aggregate column to use for each point (when using 5m data)
+    const getAggColumn = (metricType: string) => {
+      return metricType === "power" ? "avg" : "last";
+    };
+
     // Build headers with metadata for each column
     const headers = [
       {
@@ -138,64 +144,100 @@ export async function GET(
         shortName: null,
         active: true,
       },
-      ...sortedPoints.map((p) => ({
-        key: `point_${p.id}`,
-        label: p.displayName || p.defaultName,
-        type: p.metricType,
-        unit: p.metricUnit,
-        subsystem: p.subsystem,
-        pointType: p.type,
-        subtype: p.subtype,
-        extension: p.extension,
-        originId: p.originId,
-        originSubId: p.originSubId,
-        pointDbId: p.id,
-        systemId: systemId,
-        defaultName: p.defaultName,
-        shortName: p.shortName,
-        active: p.active,
-      })),
+      ...sortedPoints.map((p) => {
+        // For agg data, append the summary type to the extension field
+        const aggColumn =
+          dataSource === "5m" ? getAggColumn(p.metricType) : null;
+        const extension =
+          dataSource === "5m" && aggColumn
+            ? p.extension
+              ? `${p.extension}.${aggColumn}`
+              : aggColumn
+            : p.extension;
+
+        return {
+          key: `point_${p.id}`,
+          label: p.displayName || p.defaultName,
+          type: p.metricType,
+          unit: p.metricUnit,
+          subsystem: p.subsystem,
+          pointType: p.type,
+          subtype: p.subtype,
+          extension: extension,
+          originId: p.originId,
+          originSubId: p.originSubId,
+          pointDbId: p.id,
+          systemId: systemId,
+          defaultName: p.defaultName,
+          shortName: p.shortName,
+          active: p.active,
+        };
+      }),
     ];
 
-    // Build dynamic SQL for pivot query (still uses all points, order doesn't matter here)
-    const pivotColumns = points
-      .map(
-        (p) =>
-          `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.id} THEN pr.value END) as point_${p.id}`,
-      )
-      .join(",\n  ");
+    // Build dynamic SQL for pivot query based on data source
+    let pivotQuery: string;
 
-    // Get sessionIds for each point at each timestamp
-    const sessionIdColumns = points
-      .map(
-        (p) =>
-          `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.id} THEN pr.session_id END) as session_${p.id}`,
-      )
-      .join(",\n  ");
+    if (dataSource === "5m") {
+      // Query 5-minute aggregated data
+      const pivotColumns = points
+        .map((p) => {
+          const aggCol = getAggColumn(p.metricType);
+          return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.id} THEN pr.${aggCol} END) as point_${p.id}`;
+        })
+        .join(",\n  ");
 
-    // Query to get pivoted data - last N readings by unique timestamp
-    // Group by both timestamp AND session_id to split rows with different sessionIds
-    const pivotQuery = `
-      WITH recent_timestamps AS (
-        SELECT DISTINCT measurement_time
+      pivotQuery = `
+        WITH recent_timestamps AS (
+          SELECT DISTINCT interval_end
+          FROM point_readings_agg_5m pr
+          INNER JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
+          WHERE pi.system_id = ${systemId}
+          ORDER BY interval_end DESC
+          LIMIT ${limit}
+        )
+        SELECT
+          pr.interval_end as measurement_time,
+          NULL as session_id,
+          NULL as session_label,
+          ${pivotColumns}
+        FROM point_readings_agg_5m pr
+        WHERE pr.system_id = ${systemId}
+          AND pr.interval_end IN (SELECT interval_end FROM recent_timestamps)
+        GROUP BY pr.interval_end
+        ORDER BY pr.interval_end DESC
+      `;
+    } else {
+      // Query raw point readings
+      const pivotColumns = points
+        .map(
+          (p) =>
+            `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.id} THEN pr.value END) as point_${p.id}`,
+        )
+        .join(",\n  ");
+
+      pivotQuery = `
+        WITH recent_timestamps AS (
+          SELECT DISTINCT measurement_time
+          FROM point_readings pr
+          INNER JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
+          WHERE pi.system_id = ${systemId}
+          ORDER BY measurement_time DESC
+          LIMIT ${limit}
+        )
+        SELECT
+          pr.measurement_time,
+          pr.session_id,
+          s.session_label,
+          ${pivotColumns}
         FROM point_readings pr
-        INNER JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
-        WHERE pi.system_id = ${systemId}
-        ORDER BY measurement_time DESC
-        LIMIT ${limit}
-      )
-      SELECT
-        pr.measurement_time,
-        pr.session_id,
-        s.session_label,
-        ${pivotColumns}
-      FROM point_readings pr
-      LEFT JOIN sessions s ON pr.session_id = s.id
-      WHERE pr.system_id = ${systemId}
-        AND pr.measurement_time IN (SELECT measurement_time FROM recent_timestamps)
-      GROUP BY pr.measurement_time, pr.session_id
-      ORDER BY pr.measurement_time DESC, pr.session_id
-    `;
+        LEFT JOIN sessions s ON pr.session_id = s.id
+        WHERE pr.system_id = ${systemId}
+          AND pr.measurement_time IN (SELECT measurement_time FROM recent_timestamps)
+        GROUP BY pr.measurement_time, pr.session_id
+        ORDER BY pr.measurement_time DESC, pr.session_id
+      `;
+    }
 
     const pivotStartTime = Date.now();
     const result = await db.all(sql.raw(pivotQuery));
