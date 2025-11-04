@@ -54,11 +54,11 @@ export default function ActivityViewer() {
   const fetchSessions = useCallback(
     async (isRefresh = false) => {
       try {
-        // On refresh, use start from maxSessionId, otherwise use last=100
+        // On refresh, use start from maxSessionId, otherwise use last=200
         const url =
           isRefresh && maxSessionId
-            ? `/api/admin/sessions?start=${maxSessionId}&count=100`
-            : "/api/admin/sessions?last=100";
+            ? `/api/admin/sessions?start=${maxSessionId}&count=200`
+            : "/api/admin/sessions?last=200";
 
         const response = await fetch(url);
         if (!response.ok) {
