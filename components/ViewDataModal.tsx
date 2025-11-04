@@ -311,6 +311,8 @@ export default function ViewDataModal({
   const filteredHeaders = headers.filter((header) => {
     // Always show timestamp
     if (header.key === "timestamp") return true;
+    // Hide session column when viewing 5m data (5m aggregates don't have sessions)
+    if (header.key === "sessionLabel" && dataSource === "5m") return false;
     // Always show columns with series ID
     if (getSeriesIdSuffix(header)) return true;
     // Only show columns without series ID if showExtras is true
@@ -363,15 +365,19 @@ export default function ViewDataModal({
     );
   };
 
-  // Generate CSS for column hover effect
+  // Generate CSS for column hover effect (exclude timestamp and sessionLabel columns)
   const columnHoverStyles = filteredHeaders
-    .map(
-      (_, colIndex) => `
+    .map((header, colIndex) => {
+      // Don't add hover effect for timestamp or sessionLabel columns
+      if (header.key === "timestamp" || header.key === "sessionLabel") {
+        return "";
+      }
+      return `
     thead:has(th[data-col="${colIndex}"]:hover) th[data-col="${colIndex}"] {
       background-color: rgb(55 65 81 / 0.5) !important;
     }
-  `,
-    )
+  `;
+    })
     .join("\n");
 
   return (
