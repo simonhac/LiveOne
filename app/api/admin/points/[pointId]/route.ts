@@ -133,8 +133,8 @@ export async function PATCH(
       success: true,
       point: {
         id: updatedPoint.id,
-        pointId: updatedPoint.pointId,
-        pointSubId: updatedPoint.pointSubId,
+        originId: updatedPoint.originId,
+        originSubId: updatedPoint.originSubId,
         type: updatedPoint.type,
         subtype: updatedPoint.subtype,
         extension: updatedPoint.extension,

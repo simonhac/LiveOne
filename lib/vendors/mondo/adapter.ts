@@ -258,8 +258,8 @@ export class MondoAdapter extends BaseVendorAdapter {
           // Add power reading
           readingsToInsert.push({
             pointMetadata: {
-              pointId: row.monitoringPointId,
-              pointSubId: "energyNowW",
+              originId: row.monitoringPointId,
+              originSubId: "energyNowW",
               defaultName: row.monitoringPointName,
               subsystem,
               metricType: "power",
@@ -276,8 +276,8 @@ export class MondoAdapter extends BaseVendorAdapter {
           // Add energy reading
           readingsToInsert.push({
             pointMetadata: {
-              pointId: row.monitoringPointId,
-              pointSubId: "totalEnergyWh",
+              originId: row.monitoringPointId,
+              originSubId: "totalEnergyWh",
               defaultName: row.monitoringPointName,
               subsystem,
               metricType: "energy",

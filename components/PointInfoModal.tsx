@@ -7,8 +7,8 @@ import { X } from "lucide-react";
 interface PointInfo {
   pointDbId: number;
   systemId: number;
-  pointId: string;
-  pointSubId: string | null;
+  originId: string;
+  originSubId: string | null;
   subsystem: string | null;
   type: string | null;
   subtype: string | null;
@@ -237,7 +237,7 @@ export default function PointInfoModal({
                 </label>
                 <div className="px-2 font-mono text-sm flex-1">
                   <span className="text-gray-300 whitespace-nowrap">
-                    {pointInfo.pointId}
+                    {pointInfo.originId}
                   </span>
                   <span className="text-gray-400 whitespace-nowrap">
                     {" "}
@@ -255,7 +255,7 @@ export default function PointInfoModal({
                   Sub-Point:
                 </label>
                 <div className="px-2 text-gray-400 font-mono text-sm flex-1">
-                  {pointInfo.pointSubId || "N/A"}
+                  {pointInfo.originSubId || "N/A"}
                 </div>
               </div>
 

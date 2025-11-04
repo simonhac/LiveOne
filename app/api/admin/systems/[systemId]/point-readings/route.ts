@@ -116,8 +116,8 @@ export async function GET(
         type: "datetime",
         unit: null,
         subsystem: null,
-        pointId: "",
-        pointSubId: null,
+        originId: "",
+        originSubId: null,
         pointDbId: 0,
         systemId: 0,
         defaultName: "",
@@ -125,13 +125,13 @@ export async function GET(
         active: true,
       },
       {
-        key: "sessionId",
-        label: "Session",
-        type: "number",
+        key: "sessionLabel",
+        label: "Session Label",
+        type: "string",
         unit: null,
         subsystem: null,
-        pointId: "",
-        pointSubId: null,
+        originId: "",
+        originSubId: null,
         pointDbId: 0,
         systemId: 0,
         defaultName: "",
@@ -147,8 +147,8 @@ export async function GET(
         pointType: p.type,
         subtype: p.subtype,
         extension: p.extension,
-        pointId: p.pointId,
-        pointSubId: p.pointSubId,
+        originId: p.originId,
+        originSubId: p.originSubId,
         pointDbId: p.id,
         systemId: systemId,
         defaultName: p.defaultName,
@@ -161,7 +161,7 @@ export async function GET(
     const pivotColumns = points
       .map(
         (p) =>
-          `MAX(CASE WHEN system_id = ${systemId} AND point_id = ${p.id} THEN value END) as point_${p.id}`,
+          `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.id} THEN pr.value END) as point_${p.id}`,
       )
       .join(",\n  ");
 
@@ -169,7 +169,7 @@ export async function GET(
     const sessionIdColumns = points
       .map(
         (p) =>
-          `MAX(CASE WHEN system_id = ${systemId} AND point_id = ${p.id} THEN session_id END) as session_${p.id}`,
+          `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.id} THEN pr.session_id END) as session_${p.id}`,
       )
       .join(",\n  ");
 
@@ -185,14 +185,16 @@ export async function GET(
         LIMIT ${limit}
       )
       SELECT
-        measurement_time,
-        ${pivotColumns},
-        ${sessionIdColumns}
-      FROM point_readings
-      WHERE system_id = ${systemId}
-        AND measurement_time IN (SELECT measurement_time FROM recent_timestamps)
-      GROUP BY measurement_time, session_id
-      ORDER BY measurement_time DESC, session_id
+        pr.measurement_time,
+        pr.session_id,
+        s.session_label,
+        ${pivotColumns}
+      FROM point_readings pr
+      LEFT JOIN sessions s ON pr.session_id = s.id
+      WHERE pr.system_id = ${systemId}
+        AND pr.measurement_time IN (SELECT measurement_time FROM recent_timestamps)
+      GROUP BY pr.measurement_time, pr.session_id
+      ORDER BY pr.measurement_time DESC, pr.session_id
     `;
 
     const pivotStartTime = Date.now();
@@ -208,19 +210,13 @@ export async function GET(
       );
       const formattedTime = formatTimeAEST(zonedDate);
 
-      // Extract sessionId from the first non-null session_* column
-      let sessionId: number | null = null;
-      for (const p of sortedPoints) {
-        const sid = row[`session_${p.id}`];
-        if (sid !== null && sid !== undefined) {
-          sessionId = Number(sid);
-          break;
-        }
-      }
+      // Use session_label from the joined sessions table, or fallback to session_id if label is null
+      const sessionLabel =
+        row.session_label || row.session_id?.toString() || null;
 
       const transformed: any = {
         timestamp: formattedTime,
-        sessionId: sessionId,
+        sessionLabel: sessionLabel,
       };
 
       // Add point values in sorted order

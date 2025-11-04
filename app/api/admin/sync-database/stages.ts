@@ -894,8 +894,8 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
     .select({
       id: pointInfo.id,
       systemId: pointInfo.systemId,
-      pointId: pointInfo.pointId,
-      pointSubId: pointInfo.pointSubId,
+      originId: pointInfo.originId,
+      originSubId: pointInfo.originSubId,
     })
     .from(pointInfo);
 
@@ -912,8 +912,8 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.pointId === prodPoint.point_id &&
-        p.pointSubId === prodPoint.point_sub_id,
+        p.originId === prodPoint.point_id &&
+        p.originSubId === prodPoint.point_sub_id,
     );
 
     if (devPoint) {
@@ -1281,8 +1281,8 @@ async function syncPointReadings(ctx: SyncContext) {
     .select({
       id: pointInfo.id,
       systemId: pointInfo.systemId,
-      pointId: pointInfo.pointId,
-      pointSubId: pointInfo.pointSubId,
+      originId: pointInfo.originId,
+      originSubId: pointInfo.originSubId,
     })
     .from(pointInfo);
 
@@ -1299,8 +1299,8 @@ async function syncPointReadings(ctx: SyncContext) {
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.pointId === prodPoint.point_id &&
-        p.pointSubId === prodPoint.point_sub_id,
+        p.originId === prodPoint.point_id &&
+        p.originSubId === prodPoint.point_sub_id,
     );
 
     if (devPoint) {

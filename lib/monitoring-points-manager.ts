@@ -8,8 +8,8 @@ export interface PointInfoMap {
 }
 
 export interface PointMetadata {
-  pointId: string;
-  pointSubId?: string;
+  originId: string;
+  originSubId?: string;
   defaultName: string;
   subsystem?: string | null;
   metricType: string;
@@ -29,10 +29,10 @@ export async function loadPointInfoMap(
 
   const pointMap: PointInfoMap = {};
   for (const point of points) {
-    // Create composite key: pointId[:pointSubId]
-    const key = point.pointSubId
-      ? `${point.pointId}:${point.pointSubId}`
-      : point.pointId;
+    // Create composite key: originId[:originSubId]
+    const key = point.originSubId
+      ? `${point.originId}:${point.originSubId}`
+      : point.originId;
     pointMap[key] = point;
   }
 
@@ -48,9 +48,9 @@ export async function ensurePointInfo(
   metadata: PointMetadata,
 ): Promise<typeof pointInfo.$inferSelect> {
   // Create composite key
-  const key = metadata.pointSubId
-    ? `${metadata.pointId}:${metadata.pointSubId}`
-    : metadata.pointId;
+  const key = metadata.originSubId
+    ? `${metadata.originId}:${metadata.originSubId}`
+    : metadata.originId;
 
   // Return existing if found
   if (pointMap[key]) {
@@ -58,7 +58,7 @@ export async function ensurePointInfo(
   }
 
   console.log(
-    `[PointsManager] Creating point_info for ${metadata.defaultName}${metadata.pointSubId ? "." + metadata.pointSubId : ""}`,
+    `[PointsManager] Creating point_info for ${metadata.defaultName}${metadata.originSubId ? "." + metadata.originSubId : ""}`,
   );
 
   // Get the next available id for this system
@@ -78,8 +78,8 @@ export async function ensurePointInfo(
     .values({
       systemId,
       id: nextId,
-      pointId: metadata.pointId,
-      pointSubId: metadata.pointSubId || null,
+      originId: metadata.originId,
+      originSubId: metadata.originSubId || null,
       defaultName: metadata.defaultName,
       displayName: metadata.defaultName, // Initially same as default
       subsystem: metadata.subsystem || null,
@@ -87,7 +87,7 @@ export async function ensurePointInfo(
       metricUnit: metadata.metricUnit,
     })
     .onConflictDoUpdate({
-      target: [pointInfo.systemId, pointInfo.pointId, pointInfo.pointSubId],
+      target: [pointInfo.systemId, pointInfo.originId, pointInfo.originSubId],
       set: {
         defaultName: metadata.defaultName, // Update default name if changed from source
         // Don't update 'displayName' as it's user-modifiable
@@ -127,7 +127,11 @@ export async function insertPointReading(
       dataQuality,
     })
     .onConflictDoUpdate({
-      target: [pointReadings.pointId, pointReadings.measurementTime],
+      target: [
+        pointReadings.systemId,
+        pointReadings.pointId,
+        pointReadings.measurementTime,
+      ],
       set: {
         value,
         receivedTime,
@@ -187,7 +191,11 @@ export async function insertPointReadingsBatch(
       .insert(pointReadings)
       .values(val)
       .onConflictDoUpdate({
-        target: [pointReadings.pointId, pointReadings.measurementTime],
+        target: [
+          pointReadings.systemId,
+          pointReadings.pointId,
+          pointReadings.measurementTime,
+        ],
         set: {
           value: val.value,
           receivedTime: val.receivedTime,

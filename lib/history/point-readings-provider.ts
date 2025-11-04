@@ -25,7 +25,7 @@ import {
  * Generate a point ID in the format:
  * - If type and subtype are set: use series ID {type}.{subtype}.{extension}.{metricType}.{aggregation}
  * - Otherwise if shortName is set: use shortName
- * - Otherwise: {pointId}.{pointSubId}.{metricType}.{aggregation} (omitting pointSubId if null)
+ * - Otherwise: {originId}.{originSubId}.{metricType}.{aggregation} (omitting originSubId if null)
  *
  * The aggregation type is determined by metricType:
  * - power, energy: use .avg (average over the interval)
@@ -35,8 +35,8 @@ import {
  * Note: The vendor prefix (liveone.{vendorType}.{vendorSiteId}) is added by OpenNEMConverter
  */
 function generatePointId(
-  pointId: string,
-  pointSubId: string | null,
+  originId: string,
+  originSubId: string | null,
   metricType: string,
   shortName: string | null,
   type: string | null,
@@ -61,9 +61,9 @@ function generatePointId(
   }
 
   // Otherwise, build from components
-  const parts = [pointId];
-  if (pointSubId) {
-    parts.push(pointSubId);
+  const parts = [originId];
+  if (originSubId) {
+    parts.push(originSubId);
   }
   parts.push(metricType);
   parts.push(aggregationType);
@@ -95,8 +95,8 @@ export class PointReadingsProvider implements HistoryDataProvider {
       })
       .sort((a, b) => {
         const aSeriesId = generatePointId(
-          a.pointId,
-          a.pointSubId,
+          a.originId,
+          a.originSubId,
           a.metricType,
           a.shortName,
           a.type,
@@ -104,8 +104,8 @@ export class PointReadingsProvider implements HistoryDataProvider {
           a.extension,
         );
         const bSeriesId = generatePointId(
-          b.pointId,
-          b.pointSubId,
+          b.originId,
+          b.originSubId,
           b.metricType,
           b.shortName,
           b.type,
@@ -142,8 +142,8 @@ export class PointReadingsProvider implements HistoryDataProvider {
       filteredPoints.map((p) => [
         p.id,
         {
-          pointId: p.pointId,
-          pointSubId: p.pointSubId,
+          originId: p.originId,
+          originSubId: p.originSubId,
           shortName: p.shortName,
           name: p.displayName || p.defaultName,
           subsystem: p.subsystem,
@@ -207,8 +207,8 @@ export class PointReadingsProvider implements HistoryDataProvider {
 
       // Always include series with metadata, even if no data
       const fieldId = generatePointId(
-        pointMeta.pointId,
-        pointMeta.pointSubId,
+        pointMeta.originId,
+        pointMeta.originSubId,
         pointMeta.metricType,
         pointMeta.shortName,
         pointMeta.type,

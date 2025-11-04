@@ -21,9 +21,9 @@ export const pointInfo = sqliteTable(
       .references(() => systems.id, { onDelete: "cascade" }),
     id: integer("id").notNull(), // Sequential per system, not auto-increment
 
-    // Identification
-    pointId: text("point_id").notNull(), // eg. "5ecacac2-3cc3-447a-b3b5-423e333031e6"
-    pointSubId: text("point_sub_id"), // eg. "energyNowW"
+    // Identification (original IDs from vendor system)
+    originId: text("origin_id").notNull(), // eg. "5ecacac2-3cc3-447a-b3b5-423e333031e6"
+    originSubId: text("origin_sub_id"), // eg. "energyNowW"
 
     // default display name
     defaultName: text("point_name").notNull(), // from device eg. "Battery"
@@ -45,8 +45,8 @@ export const pointInfo = sqliteTable(
     pk: primaryKey({ columns: [table.systemId, table.id] }),
     systemPointUnique: uniqueIndex("pi_system_point_unique").on(
       table.systemId,
-      table.pointId,
-      table.pointSubId,
+      table.originId,
+      table.originSubId,
     ),
     systemIdx: index("pi_system_idx").on(table.systemId),
     subsystemIdx: index("pi_subsystem_idx").on(table.subsystem),
@@ -184,10 +184,7 @@ export const pointReadingsRelations = {
     to: pointInfo,
     references: [(pointInfo as any).systemId, (pointInfo as any).id],
   },
-  // session relation removed - no longer using measurementSessions
 };
-
-// Note: measurementSessionsRelations removed - using the main sessions table
 
 export const pointReadingsAgg5mRelations = {
   point: {

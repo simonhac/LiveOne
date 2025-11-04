@@ -14,8 +14,8 @@ interface ColumnHeader {
   pointType?: string | null;
   subtype?: string | null;
   extension?: string | null;
-  pointId: string;
-  pointSubId: string | null;
+  originId: string;
+  originSubId: string | null;
   pointDbId: number;
   systemId: number;
   defaultName: string;
@@ -51,8 +51,8 @@ export default function ViewDataModal({
   const [selectedPointInfo, setSelectedPointInfo] = useState<{
     pointDbId: number;
     systemId: number;
-    pointId: string;
-    pointSubId: string | null;
+    originId: string;
+    originSubId: string | null;
     subsystem: string | null;
     type: string | null;
     subtype: string | null;
@@ -132,14 +132,14 @@ export default function ViewDataModal({
   };
 
   const handleColumnHeaderClick = (header: ColumnHeader) => {
-    // Only open modal for point columns (not timestamp or sessionId)
-    if (header.key === "timestamp" || header.key === "sessionId") return;
+    // Only open modal for point columns (not timestamp or sessionLabel)
+    if (header.key === "timestamp" || header.key === "sessionLabel") return;
 
     setSelectedPointInfo({
       pointDbId: header.pointDbId,
       systemId: header.systemId,
-      pointId: header.pointId,
-      pointSubId: header.pointSubId || null,
+      originId: header.originId,
+      originSubId: header.originSubId || null,
       subsystem: header.subsystem,
       type: header.pointType || null,
       subtype: header.subtype || null,
@@ -214,7 +214,7 @@ export default function ViewDataModal({
 
   // Get unit display for header
   const getUnitDisplay = (header: ColumnHeader) => {
-    if (header.key === "timestamp" || header.key === "sessionId") return "";
+    if (header.key === "timestamp" || header.key === "sessionLabel") return "";
 
     if (header.type === "energy") {
       return "MWh";
@@ -299,7 +299,7 @@ export default function ViewDataModal({
       : false;
     const isLastSeriesIdColumn = hasSeriesId && !nextHasSeriesId;
     const isSpecialColumn =
-      header.key === "timestamp" || header.key === "sessionId";
+      header.key === "timestamp" || header.key === "sessionLabel";
 
     return (
       <th
@@ -418,7 +418,7 @@ export default function ViewDataModal({
                     >
                       {header.key === "timestamp" ? (
                         <span className="text-gray-300">Name</span>
-                      ) : header.key === "sessionId" ? (
+                      ) : header.key === "sessionLabel" ? (
                         <span className="text-gray-300">Session</span>
                       ) : (
                         <span
@@ -443,7 +443,7 @@ export default function ViewDataModal({
                     >
                       {header.key === "timestamp" ? (
                         <span className="text-gray-300">Series</span>
-                      ) : header.key === "sessionId" ? (
+                      ) : header.key === "sessionLabel" ? (
                         <div></div>
                       ) : getSeriesIdSuffix(header) ? (
                         <span
@@ -475,7 +475,7 @@ export default function ViewDataModal({
                     >
                       {header.key === "timestamp" ? (
                         <span className="text-gray-300">Short Name</span>
-                      ) : header.key === "sessionId" ? (
+                      ) : header.key === "sessionLabel" ? (
                         <div></div>
                       ) : header.shortName ? (
                         <span
@@ -503,7 +503,7 @@ export default function ViewDataModal({
                     >
                       {header.key === "timestamp" ? (
                         <span className="text-gray-300">Time</span>
-                      ) : header.key === "sessionId" ? (
+                      ) : header.key === "sessionLabel" ? (
                         <div></div>
                       ) : getUnitDisplay(header) ? (
                         <span
@@ -555,7 +555,7 @@ export default function ViewDataModal({
                             <span className="text-xs font-mono text-gray-300 whitespace-nowrap">
                               {formatDateTime(row[header.key]).display}
                             </span>
-                          ) : header.key === "sessionId" ? (
+                          ) : header.key === "sessionLabel" ? (
                             <span className="text-xs font-mono text-gray-400">
                               {row[header.key] !== null ? row[header.key] : "-"}
                             </span>
