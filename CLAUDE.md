@@ -256,12 +256,107 @@ sqlite3 dev.db "SELECT id, datetime(applied_at/1000, 'unixepoch') as applied FRO
 sqlite3 dev.db "SELECT * FROM migrations WHERE id = '0017_add_new_feature'"
 ```
 
-### Important Notes
+### Migration Safety Guidelines
 
-- **Idempotency**: Migrations should be safe to run multiple times (use `IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`, etc.)
+**Critical lessons learned from migration 0016 (which lost 345K+ records):**
+
+#### Before Running ANY Migration
+
+1. **Always backup production first**:
+
+   ```bash
+   ./scripts/utils/backup-prod-db.sh
+   # Verify backup is at least 6MB and contains expected data
+   ls -lh db-backups/ | tail -1
+   ```
+
+2. **Test on a database copy**:
+
+   ```bash
+   # Extract backup to test database
+   gunzip -c db-backups/liveone-tokyo-YYYYMMDD-HHMMSS.db.gz > /tmp/test.db
+
+   # Test migration on copy
+   sqlite3 /tmp/test.db < migrations/NNNN_migration.sql
+
+   # Verify data integrity
+   sqlite3 /tmp/test.db "SELECT COUNT(*) FROM critical_table"
+   ```
+
+#### Writing Safe Migrations
+
+**Pattern for destructive migrations (CREATE new → DROP old → RENAME):**
+
+```sql
+-- Migration: Description
+
+-- ALWAYS wrap in explicit transaction
+BEGIN TRANSACTION;
+
+-- Step 1: Create new table
+CREATE TABLE table_name_new (
+  -- new schema
+);
+
+-- Step 2: Copy data
+INSERT INTO table_name_new SELECT * FROM table_name;
+
+-- Step 3: VALIDATE before dropping (CRITICAL!)
+-- This will abort if counts don't match
+SELECT CASE
+  WHEN (SELECT COUNT(*) FROM table_name) != (SELECT COUNT(*) FROM table_name_new)
+  THEN RAISE(ABORT, 'Data copy failed - row count mismatch')
+END;
+
+-- Step 4: Only drop if we get here
+DROP TABLE table_name;
+
+-- Step 5: Rename
+ALTER TABLE table_name_new RENAME TO table_name;
+
+-- Step 6: Recreate indexes
+CREATE INDEX idx_name ON table_name(column);
+
+COMMIT;
+
+-- Track migration
+CREATE TABLE IF NOT EXISTS migrations (
+  id TEXT PRIMARY KEY,
+  applied_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+);
+INSERT INTO migrations (id) VALUES ('NNNN_migration_name');
+```
+
+#### Why Migration 0016 Failed
+
+The migration had INSERT...SELECT statements but **no validation** before dropping old tables:
+
+1. ❌ No explicit `BEGIN TRANSACTION` at start
+2. ❌ No row count validation after INSERT
+3. ❌ Immediately dropped old table without checking copy succeeded
+4. ❌ Foreign key constraints may have silently rejected rows
+5. ❌ Not tested on production data copy first
+
+Result: 345,456 point_readings lost, requiring 8+ hour restoration from backup.
+
+#### Migration Checklist
+
+- [ ] Backup production database
+- [ ] Test migration on backup copy
+- [ ] Migration wrapped in explicit `BEGIN TRANSACTION`
+- [ ] Row count validation before DROP statements
+- [ ] Idempotent (safe to run multiple times with `IF NOT EXISTS`, etc.)
+- [ ] Foreign key constraints accounted for
+- [ ] Indexes recreated after table operations
+- [ ] Migration tracking at end
+- [ ] Tested on development database
+- [ ] Ready to restore from backup if needed
+
+#### Other Notes
+
 - **No Rollbacks**: This project doesn't use rollback migrations - if you need to undo a change, create a new forward migration
-- **Testing**: Always test migrations on development database before applying to production
 - **Composite Keys**: When creating foreign keys with composite primary keys, remember that SQLite doesn't update FK table references on `ALTER TABLE RENAME` - create tables with final names or use temporary tables
+- **Run pre-checks**: Before complex migrations, check data volumes and estimate time required
 
 ## Vercel Deployment
 
