@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { formatDateTime } from "@/lib/fe-date-format";
 import {
-  Info,
   X,
   RefreshCw,
   Clock,
@@ -254,19 +253,10 @@ export default function ActivityViewer() {
               {sessions.map((session, index) => (
                 <tr
                   key={session.id}
-                  className={`${index % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"} hover:bg-gray-700 transition-colors`}
+                  className={`group ${index % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"} hover:bg-gray-700 transition-colors`}
                 >
                   <td className="px-4 py-3 text-sm text-gray-300 align-top">
-                    <div className="flex items-start gap-1">
-                      <span>{formatDateTime(session.started).display}</span>
-                      <button
-                        onClick={() => setSelectedSession(session)}
-                        className="text-gray-500 hover:text-gray-300 transition-colors"
-                        title="View details"
-                      >
-                        <Info className="h-4 w-4" />
-                      </button>
-                    </div>
+                    {formatDateTime(session.started).display}
                   </td>
                   <td className="px-4 py-3 text-sm">
                     <div>
@@ -303,9 +293,12 @@ export default function ActivityViewer() {
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-400">
                     {session.sessionLabel ? (
-                      <span className="font-mono text-xs">
+                      <button
+                        onClick={() => setSelectedSession(session)}
+                        className="font-mono text-xs text-gray-400 hover:text-gray-200 group-hover:underline transition-colors cursor-pointer"
+                      >
                         {session.sessionLabel}
-                      </span>
+                      </button>
                     ) : (
                       "-"
                     )}

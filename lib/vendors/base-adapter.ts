@@ -123,6 +123,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     credentials: any,
     force: boolean,
     now: Date,
+    sessionId: number,
   ): Promise<PollingResult> {
     if (this.dataSource === "push") {
       console.error(
@@ -145,7 +146,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     }
 
     // Delegate to the actual polling implementation
-    return this.doPoll(system, credentials, now);
+    return this.doPoll(system, credentials, now, sessionId);
   }
 
   /**
@@ -154,11 +155,13 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * @param system - The system to poll
    * @param credentials - Vendor credentials
    * @param now - Current time from cron job
+   * @param sessionId - The session ID to associate with this polling operation
    */
   protected async doPoll(
     system: SystemWithPolling,
     credentials: any,
     now: Date,
+    sessionId: number,
   ): Promise<PollingResult> {
     // Default implementation for push-only systems (should never be called)
     return this.error("This vendor does not support polling");

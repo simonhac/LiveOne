@@ -35,6 +35,7 @@ export interface VendorAdapter {
     credentials: any,
     force: boolean,
     now: Date,
+    sessionId: number,
   ): Promise<PollingResult>;
 
   // Get the latest reading for this system

@@ -1,16 +1,23 @@
-import { BaseVendorAdapter, type ScheduleEvaluation } from '../base-adapter';
-import type { PollingResult, TestConnectionResult } from '../types';
-import type { SystemWithPolling } from '@/lib/systems-manager';
-import type { CommonPollingData } from '@/lib/types/common';
-import type { LatestReadingData } from '@/lib/types/readings';
-import { db } from '@/lib/db';
-import { readingsAgg5m } from '@/lib/db/schema';
-import { eq, desc } from 'drizzle-orm';
-import { checkAndFetchYesterdayIfNeeded, fetchEnphaseDay } from '@/lib/vendors/enphase/enphase-history';
-import { getZonedNow, formatJustTime_fromJSDate, getNextMinuteBoundary } from '@/lib/date-utils';
-import { fromDate, type ZonedDateTime } from '@internationalized/date';
-import { getPollingStatus } from '@/lib/polling-utils';
-import * as SunCalc from 'suncalc';
+import { BaseVendorAdapter, type ScheduleEvaluation } from "../base-adapter";
+import type { PollingResult, TestConnectionResult } from "../types";
+import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { CommonPollingData } from "@/lib/types/common";
+import type { LatestReadingData } from "@/lib/types/readings";
+import { db } from "@/lib/db";
+import { readingsAgg5m } from "@/lib/db/schema";
+import { eq, desc } from "drizzle-orm";
+import {
+  checkAndFetchYesterdayIfNeeded,
+  fetchEnphaseDay,
+} from "@/lib/vendors/enphase/enphase-history";
+import {
+  getZonedNow,
+  formatJustTime_fromJSDate,
+  getNextMinuteBoundary,
+} from "@/lib/date-utils";
+import { fromDate, type ZonedDateTime } from "@internationalized/date";
+import { getPollingStatus } from "@/lib/polling-utils";
+import * as SunCalc from "suncalc";
 
 /**
  * Vendor adapter for Enphase systems
@@ -20,10 +27,10 @@ import * as SunCalc from 'suncalc';
 const ENPHASE_POLLING_INTERVAL_MINUTES = 60; // How often to poll during daylight hours
 
 export class EnphaseAdapter extends BaseVendorAdapter {
-  readonly vendorType = 'enphase';
-  readonly displayName = 'Enphase';
-  readonly dataSource = 'poll' as const;
-  readonly supportsAddSystem = false;  // Enphase uses OAuth flow, not supported in Add System dialog yet
+  readonly vendorType = "enphase";
+  readonly displayName = "Enphase";
+  readonly dataSource = "poll" as const;
+  readonly supportsAddSystem = false; // Enphase uses OAuth flow, not supported in Add System dialog yet
 
   // Enphase has custom schedule logic - polls every 60 minutes during daylight hours
   protected pollIntervalMinutes = 60;
@@ -33,7 +40,8 @@ export class EnphaseAdapter extends BaseVendorAdapter {
    * Override getLastReading to read from readings_agg_5m table
    */
   async getLastReading(systemId: number): Promise<LatestReadingData | null> {
-    const [latestAgg] = await db.select()
+    const [latestAgg] = await db
+      .select()
       .from(readingsAgg5m)
       .where(eq(readingsAgg5m.systemId, systemId))
       .orderBy(desc(readingsAgg5m.intervalEnd))
@@ -52,8 +60,8 @@ export class EnphaseAdapter extends BaseVendorAdapter {
 
       solar: {
         powerW: latestAgg.solarWAvg,
-        localW: latestAgg.solarWAvg,  // Enphase measures at the panels
-        remoteW: null,  // Enphase doesn't have remote solar
+        localW: latestAgg.solarWAvg, // Enphase measures at the panels
+        remoteW: null, // Enphase doesn't have remote solar
       },
 
       battery: {
@@ -67,32 +75,34 @@ export class EnphaseAdapter extends BaseVendorAdapter {
 
       grid: {
         powerW: latestAgg.gridWAvg,
-        generatorStatus: null,  // Enphase doesn't have generator status
+        generatorStatus: null, // Enphase doesn't have generator status
       },
 
       connection: {
-        faultCode: null,  // Enphase doesn't provide fault codes
+        faultCode: null, // Enphase doesn't provide fault codes
         faultTimestamp: null,
       },
     };
   }
-
 
   /**
    * Override evaluateSchedule for Enphase-specific solar-aware logic
    * Poll every 60 minutes from 30 mins after dawn to 30 mins after dusk,
    * then hourly from 01:00-05:00 for yesterday's data
    */
-  protected evaluateSchedule(system: SystemWithPolling, lastPollTime: Date | null, now: Date): ScheduleEvaluation {
-
+  protected evaluateSchedule(
+    system: SystemWithPolling,
+    lastPollTime: Date | null,
+    now: Date,
+  ): ScheduleEvaluation {
     // Always poll if never polled before
     if (!lastPollTime) {
       console.log(`[Enphase] Never polled, polling now`);
       const nextPollTime = getNextMinuteBoundary(60, system.timezoneOffsetMin); // Next hour boundary
       return {
         shouldPoll: true,
-        reason: 'Never polled',
-        nextPollTime
+        reason: "Never polled",
+        nextPollTime,
       };
     }
 
@@ -102,9 +112,10 @@ export class EnphaseAdapter extends BaseVendorAdapter {
 
     if (system.location) {
       try {
-        const loc = typeof system.location === 'string'
-          ? JSON.parse(system.location)
-          : system.location;
+        const loc =
+          typeof system.location === "string"
+            ? JSON.parse(system.location)
+            : system.location;
         if (loc.lat && loc.lon) {
           lat = loc.lat;
           lon = loc.lon;
@@ -131,8 +142,10 @@ export class EnphaseAdapter extends BaseVendorAdapter {
     const dawnLocalTime = new Date(dawnUTC.getTime() + localOffset);
     const duskLocalTime = new Date(duskUTC.getTime() + localOffset);
 
-    let dawnMinutes = dawnLocalTime.getUTCHours() * 60 + dawnLocalTime.getUTCMinutes();
-    let duskMinutes = duskLocalTime.getUTCHours() * 60 + duskLocalTime.getUTCMinutes();
+    let dawnMinutes =
+      dawnLocalTime.getUTCHours() * 60 + dawnLocalTime.getUTCMinutes();
+    let duskMinutes =
+      duskLocalTime.getUTCHours() * 60 + duskLocalTime.getUTCMinutes();
 
     if (duskMinutes < dawnMinutes) {
       duskMinutes += 24 * 60;
@@ -148,20 +161,26 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       const targetIntervalMs = ENPHASE_POLLING_INTERVAL_MINUTES * 60 * 1000;
       const toleranceMs = this.toleranceSeconds * 1000;
 
-      if (msSinceLastPoll >= (targetIntervalMs - toleranceMs)) {
-        const nextPollTime = getNextMinuteBoundary(ENPHASE_POLLING_INTERVAL_MINUTES, system.timezoneOffsetMin);
+      if (msSinceLastPoll >= targetIntervalMs - toleranceMs) {
+        const nextPollTime = getNextMinuteBoundary(
+          ENPHASE_POLLING_INTERVAL_MINUTES,
+          system.timezoneOffsetMin,
+        );
         return {
           shouldPoll: true,
-          reason: 'Solar hours polling interval reached',
-          nextPollTime
+          reason: "Solar hours polling interval reached",
+          nextPollTime,
         };
       }
 
-      const nextPollTime = getNextMinuteBoundary(ENPHASE_POLLING_INTERVAL_MINUTES, system.timezoneOffsetMin);
+      const nextPollTime = getNextMinuteBoundary(
+        ENPHASE_POLLING_INTERVAL_MINUTES,
+        system.timezoneOffsetMin,
+      );
       return {
         shouldPoll: false,
         reason: `Active solar hours (next poll at ${formatJustTime_fromJSDate(nextPollTime.toDate(), system.timezoneOffsetMin)})`,
-        nextPollTime
+        nextPollTime,
       };
     }
 
@@ -171,12 +190,15 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       const targetIntervalMs = 60 * 60 * 1000; // Hourly
       const toleranceMs = this.toleranceSeconds * 1000;
 
-      if (msSinceLastPoll >= (targetIntervalMs - toleranceMs)) {
-        const nextPollTime = getNextMinuteBoundary(60, system.timezoneOffsetMin); // Hourly
+      if (msSinceLastPoll >= targetIntervalMs - toleranceMs) {
+        const nextPollTime = getNextMinuteBoundary(
+          60,
+          system.timezoneOffsetMin,
+        ); // Hourly
         return {
           shouldPoll: true,
-          reason: 'Night-time hourly check',
-          nextPollTime
+          reason: "Night-time hourly check",
+          nextPollTime,
         };
       }
 
@@ -184,7 +206,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       return {
         shouldPoll: false,
         reason: `Night-time check period (next at ${formatJustTime_fromJSDate(nextPollTime.toDate(), system.timezoneOffsetMin)})`,
-        nextPollTime
+        nextPollTime,
       };
     }
 
@@ -198,13 +220,18 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       const dawnTime = new Date(now.getTime() + minutesUntilDawn * 60 * 1000);
 
       // Get next hour boundary after dawn time
-      nextPollTime = getNextMinuteBoundary(60, system.timezoneOffsetMin, dawnTime);
+      nextPollTime = getNextMinuteBoundary(
+        60,
+        system.timezoneOffsetMin,
+        dawnTime,
+      );
 
       const hoursUntil = Math.floor(minutesUntilDawn / 60);
       const minsUntil = minutesUntilDawn % 60;
-      reason = hoursUntil > 0
-        ? `Before dawn (next poll in ${hoursUntil}h ${minsUntil}m)`
-        : `Before dawn (next poll in ${minsUntil}m)`;
+      reason =
+        hoursUntil > 0
+          ? `Before dawn (next poll in ${hoursUntil}h ${minsUntil}m)`
+          : `Before dawn (next poll in ${minsUntil}m)`;
     } else {
       // After dusk - next poll is tomorrow at 01:00 or dawn, whichever is earlier
       const tomorrow1AM = 25 * 60; // 01:00 tomorrow
@@ -214,62 +241,88 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       const targetTime = new Date(now.getTime() + minutesUntilNext * 60 * 1000);
 
       // Get next hour boundary after target time
-      nextPollTime = getNextMinuteBoundary(60, system.timezoneOffsetMin, targetTime);
+      nextPollTime = getNextMinuteBoundary(
+        60,
+        system.timezoneOffsetMin,
+        targetTime,
+      );
 
       const hoursUntil = Math.floor(minutesUntilNext / 60);
       const minsUntil = minutesUntilNext % 60;
-      reason = hoursUntil > 0
-        ? `After dusk (next poll in ${hoursUntil}h ${minsUntil}m)`
-        : `After dusk (next poll in ${minsUntil}m)`;
+      reason =
+        hoursUntil > 0
+          ? `After dusk (next poll in ${hoursUntil}h ${minsUntil}m)`
+          : `After dusk (next poll in ${minsUntil}m)`;
     }
 
     return {
       shouldPoll: false,
       reason,
-      nextPollTime
+      nextPollTime,
     };
   }
 
   /**
    * Perform the actual polling
    */
-  protected async doPoll(system: SystemWithPolling, credentials: any, now: Date): Promise<PollingResult> {
+  protected async doPoll(
+    system: SystemWithPolling,
+    credentials: any,
+    now: Date,
+    sessionId: number,
+  ): Promise<PollingResult> {
     const startTime = Date.now();
 
     try {
-      console.log(`[Enphase] Polling system ${system.id} (${system.displayName})`);
+      console.log(
+        `[Enphase] Polling system ${system.id} (${system.displayName})`,
+      );
 
       // Determine what to fetch
       let result;
       const localTime = getZonedNow(system.timezoneOffsetMin);
       const localHour = localTime.hour;
-      
+
       if (localHour >= 1 && localHour <= 5) {
         // During 01:00-05:00, check and fetch yesterday's data if incomplete
-        console.log(`[Enphase] Checking yesterday's data completeness for system ${system.id}`);
+        console.log(
+          `[Enphase] Checking yesterday's data completeness for system ${system.id}`,
+        );
         result = await checkAndFetchYesterdayIfNeeded(system.id, false);
       } else {
         // Otherwise fetch current day's data
-        result = await fetchEnphaseDay(system.id, null, system.timezoneOffsetMin, false);
+        result = await fetchEnphaseDay(
+          system.id,
+          null,
+          system.timezoneOffsetMin,
+          false,
+        );
       }
-      
+
       // Determine records upserted
       let recordsUpserted = 0;
-      if ('upsertedCount' in result) {
+      if ("upsertedCount" in result) {
         recordsUpserted = result.upsertedCount;
-      } else if ('fetched' in result && !result.fetched) {
+      } else if ("fetched" in result && !result.fetched) {
         // Yesterday's data was already complete
         recordsUpserted = 0;
       }
-      
+
       const duration = Date.now() - startTime;
-      console.log(`[Enphase] System ${system.id}: Upserted ${recordsUpserted} records in ${duration}ms`);
+      console.log(
+        `[Enphase] System ${system.id}: Upserted ${recordsUpserted} records in ${duration}ms`,
+      );
 
       // Get raw response if available
-      const rawResponse = 'rawResponse' in result ? result.rawResponse : undefined;
+      const rawResponse =
+        "rawResponse" in result ? result.rawResponse : undefined;
 
       // Calculate next poll time
-      const evaluation = this.evaluateSchedule(system, system.pollingStatus?.lastPollTime || null, now);
+      const evaluation = this.evaluateSchedule(
+        system,
+        system.pollingStatus?.lastPollTime || null,
+        now,
+      );
       const nextPoll = evaluation.nextPollTime; // Already a ZonedDateTime
 
       // Note: Enphase returns multiple records (5-minute intervals)
@@ -278,18 +331,20 @@ export class EnphaseAdapter extends BaseVendorAdapter {
         [], // Data already stored by fetchEnphaseDay
         recordsUpserted,
         nextPoll,
-        rawResponse
+        rawResponse,
       );
-      
     } catch (error) {
       console.error(`[Enphase] Error polling system ${system.id}:`, error);
-      return this.error(error instanceof Error ? error : 'Unknown error');
+      return this.error(error instanceof Error ? error : "Unknown error");
     }
   }
-  
+
   // getMostRecentReadings removed - not used externally
-  
-  async testConnection(system: SystemWithPolling, credentials: any): Promise<TestConnectionResult> {
+
+  async testConnection(
+    system: SystemWithPolling,
+    credentials: any,
+  ): Promise<TestConnectionResult> {
     try {
       console.log(`[Enphase] Testing connection for system ${system.id}`);
 
@@ -298,59 +353,64 @@ export class EnphaseAdapter extends BaseVendorAdapter {
         system.id,
         null, // null means fetch today
         system.timezoneOffsetMin,
-        true  // dryRun - don't actually save to database during test
+        true, // dryRun - don't actually save to database during test
       );
 
       // Get the most recent reading from the database to show current status
       const latestReading = await this.getLastReading(system.id);
 
       // Convert to test connection format
-      const latestData = latestReading ? {
-        timestamp: latestReading.timestamp,
-        solarW: latestReading.solar?.powerW || null,
-        solarLocalW: latestReading.solar?.localW || null,
-        loadW: latestReading.load?.powerW || null,
-        batteryW: latestReading.battery?.powerW || null,
-        gridW: latestReading.grid?.powerW || null,
-        batterySOC: latestReading.battery?.soc || null,
-        faultCode: latestReading.connection?.faultCode || null,
-        faultTimestamp: latestReading.connection?.faultTimestamp
-          ? new Date(latestReading.connection.faultTimestamp * 1000)  // Convert Unix seconds to Date
-          : null,
-        generatorStatus: latestReading.grid?.generatorStatus || null,
-        solarKwhTotal: null,
-        loadKwhTotal: null,
-        batteryInKwhTotal: null,
-        batteryOutKwhTotal: null,
-        gridInKwhTotal: null,
-        gridOutKwhTotal: null
-      } : null;
+      const latestData = latestReading
+        ? {
+            timestamp: latestReading.timestamp,
+            solarW: latestReading.solar?.powerW || null,
+            solarLocalW: latestReading.solar?.localW || null,
+            loadW: latestReading.load?.powerW || null,
+            batteryW: latestReading.battery?.powerW || null,
+            gridW: latestReading.grid?.powerW || null,
+            batterySOC: latestReading.battery?.soc || null,
+            faultCode: latestReading.connection?.faultCode || null,
+            faultTimestamp: latestReading.connection?.faultTimestamp
+              ? new Date(latestReading.connection.faultTimestamp * 1000) // Convert Unix seconds to Date
+              : null,
+            generatorStatus: latestReading.grid?.generatorStatus || null,
+            solarKwhTotal: null,
+            loadKwhTotal: null,
+            batteryInKwhTotal: null,
+            batteryOutKwhTotal: null,
+            gridInKwhTotal: null,
+            gridOutKwhTotal: null,
+          }
+        : null;
 
       // System info
       const systemInfo = {
-        model: 'Enphase System',
+        model: "Enphase System",
         serial: system.vendorSiteId,
         ratings: null,
         solarSize: null,
-        batterySize: null
+        batterySize: null,
       };
 
-      console.log(`[Enphase] Test connection successful for system ${system.vendorSiteId}`);
-      console.log(`[Enphase] Would have fetched ${result.intervalCount} intervals`);
+      console.log(
+        `[Enphase] Test connection successful for system ${system.vendorSiteId}`,
+      );
+      console.log(
+        `[Enphase] Would have fetched ${result.intervalCount} intervals`,
+      );
 
       return {
         success: true,
         systemInfo,
         latestData: latestData || undefined,
-        vendorResponse: result.rawResponse  // Return the raw Enphase production data
+        vendorResponse: result.rawResponse, // Return the raw Enphase production data
       };
     } catch (error) {
-      console.error('Error testing Enphase connection:', error);
+      console.error("Error testing Enphase connection:", error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : "Unknown error",
       };
     }
   }
-  
 }

@@ -1,17 +1,24 @@
-import { BaseVendorAdapter } from '../base-adapter';
-import type { PollingResult, TestConnectionResult, CredentialField } from '../types';
-import type { SystemWithPolling } from '@/lib/systems-manager';
-import type { CommonPollingData } from '@/lib/types/common';
-import { SelectronicFetchClient, type SelectronicData } from './selectronic-client';
-import { getNextMinuteBoundary } from '@/lib/date-utils';
+import { BaseVendorAdapter } from "../base-adapter";
+import type {
+  PollingResult,
+  TestConnectionResult,
+  CredentialField,
+} from "../types";
+import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { CommonPollingData } from "@/lib/types/common";
+import {
+  SelectronicFetchClient,
+  type SelectronicData,
+} from "./selectronic-client";
+import { getNextMinuteBoundary } from "@/lib/date-utils";
 
 /**
  * Vendor adapter for Selectronic/Select.Live systems
  */
 export class SelectronicAdapter extends BaseVendorAdapter {
-  readonly vendorType = 'selectronic';
-  readonly displayName = 'Selectronic';
-  readonly dataSource = 'poll' as const;
+  readonly vendorType = "selectronic";
+  readonly displayName = "Selectronic";
+  readonly dataSource = "poll" as const;
   readonly supportsAddSystem = true;
 
   // Selectronic polls every minute
@@ -20,71 +27,91 @@ export class SelectronicAdapter extends BaseVendorAdapter {
 
   readonly credentialFields: CredentialField[] = [
     {
-      name: 'email',
-      label: 'Email',
-      type: 'email',
-      placeholder: 'your@email.com',
+      name: "email",
+      label: "Email",
+      type: "email",
+      placeholder: "your@email.com",
       required: true,
-      helpText: 'Your Select.Live account email'
+      helpText: "Your Select.Live account email",
     },
     {
-      name: 'password',
-      label: 'Password',
-      type: 'password',
-      placeholder: 'Enter your password',
+      name: "password",
+      label: "Password",
+      type: "password",
+      placeholder: "Enter your password",
       required: true,
-      helpText: 'Your Select.Live account password'
-    }
+      helpText: "Your Select.Live account password",
+    },
   ];
-  
+
   // Cache for auth cookies
-  private static authCache = new Map<string, { cookie: string; expires: number }>();
-  
+  private static authCache = new Map<
+    string,
+    { cookie: string; expires: number }
+  >();
 
   /**
    * Perform the actual polling
    */
-  protected async doPoll(system: SystemWithPolling, credentials: any, now: Date): Promise<PollingResult> {
+  protected async doPoll(
+    system: SystemWithPolling,
+    credentials: any,
+    now: Date,
+    sessionId: number,
+  ): Promise<PollingResult> {
     try {
       const client = new SelectronicFetchClient({
         email: credentials.email,
         password: credentials.password,
-        systemNumber: system.vendorSiteId
+        systemNumber: system.vendorSiteId,
       });
-      
+
       // Try to use cached auth if available
       const cacheKey = `${credentials.email}:${system.vendorSiteId}`;
       const cached = SelectronicAdapter.authCache.get(cacheKey);
-      
+
       // If no valid cache, authenticate
       if (!cached || cached.expires < Date.now() + 300000) {
-        console.log(`[Selectronic] Authenticating for system ${system.vendorSiteId}...`);
+        console.log(
+          `[Selectronic] Authenticating for system ${system.vendorSiteId}...`,
+        );
         const authResult = await client.authenticate();
-        
+
         if (!authResult) {
-          return this.error('Authentication failed');
+          return this.error("Authentication failed");
         }
-        
+
         // Cache for 25 minutes (auth lasts 30 minutes)
         SelectronicAdapter.authCache.set(cacheKey, {
-          cookie: 'authenticated',
-          expires: Date.now() + 25 * 60 * 1000
+          cookie: "authenticated",
+          expires: Date.now() + 25 * 60 * 1000,
         });
       }
-      
+
       const response = await client.fetchData();
       if (!response.success || !response.data) {
-        return this.error(response.error || 'Failed to fetch data');
+        return this.error(response.error || "Failed to fetch data");
       }
-      
+
       const transformed = this.transformData(response.data);
-      
-      console.log(`[Selectronic] Poll successful -`,
-        'Solar:', transformed.solarW, 'W',
-        'Load:', transformed.loadW, 'W',
-        'Battery:', transformed.batteryW, 'W',
-        'SOC:', transformed.batterySOC != null ? transformed.batterySOC.toFixed(1) + '%' : 'N/A');
-      
+
+      console.log(
+        `[Selectronic] Poll successful -`,
+        "Solar:",
+        transformed.solarW,
+        "W",
+        "Load:",
+        transformed.loadW,
+        "W",
+        "Battery:",
+        transformed.batteryW,
+        "W",
+        "SOC:",
+        transformed.batterySOC != null
+          ? transformed.batterySOC.toFixed(1) + "%"
+          : "N/A",
+      );
+
       // Calculate next poll time at the beginning of the next minute
       const nextPollTime = getNextMinuteBoundary(1, system.timezoneOffsetMin); // 1-minute interval
 
@@ -92,21 +119,24 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         transformed,
         1,
         nextPollTime,
-        response.rawResponse  // Pass the raw response object
+        response.rawResponse, // Pass the raw response object
       );
     } catch (error) {
       console.error(`[Selectronic] Error polling system ${system.id}:`, error);
-      return this.error(error instanceof Error ? error : 'Unknown error');
+      return this.error(error instanceof Error ? error : "Unknown error");
     }
   }
-  async testConnection(system: SystemWithPolling, credentials: any): Promise<TestConnectionResult> {
+  async testConnection(
+    system: SystemWithPolling,
+    credentials: any,
+  ): Promise<TestConnectionResult> {
     try {
       // If no vendorSiteId provided, we need to discover available systems
       if (!system.vendorSiteId) {
         const discoveryClient = new SelectronicFetchClient({
           email: credentials.email,
           password: credentials.password,
-          systemNumber: '' // Empty to discover systems
+          systemNumber: "", // Empty to discover systems
         });
 
         // Authenticate first
@@ -114,7 +144,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         if (!authSuccess) {
           return {
             success: false,
-            error: 'Failed to authenticate with Select.Live'
+            error: "Failed to authenticate with Select.Live",
           };
         }
 
@@ -124,26 +154,27 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         if (!availableSystems || availableSystems.length === 0) {
           return {
             success: false,
-            error: 'No systems found for this Select.Live account'
+            error: "No systems found for this Select.Live account",
           };
         }
 
         // Use the first system (in future we could let user choose)
         const firstSystem = availableSystems[0];
-        const vendorSiteId = firstSystem.serialNumber || firstSystem.systemNumber;
+        const vendorSiteId =
+          firstSystem.serialNumber || firstSystem.systemNumber;
 
         // Now test with the discovered system
         const client = new SelectronicFetchClient({
           email: credentials.email,
           password: credentials.password,
-          systemNumber: vendorSiteId
+          systemNumber: vendorSiteId,
         });
 
         const result = await client.fetchData();
         if (!result.success || !result.data) {
           return {
             success: false,
-            error: result.error || 'Failed to fetch data from Select.Live'
+            error: result.error || "Failed to fetch data from Select.Live",
           };
         }
 
@@ -155,14 +186,14 @@ export class SelectronicAdapter extends BaseVendorAdapter {
           systemInfo: {
             vendorSiteId,
             displayName: firstSystem.name || `Selectronic ${vendorSiteId}`,
-            model: systemInfo?.model || firstSystem.model || 'SP PRO',
+            model: systemInfo?.model || firstSystem.model || "SP PRO",
             serial: systemInfo?.serial || firstSystem.serialNumber,
             solarSize: systemInfo?.solarSize,
             batterySize: systemInfo?.batterySize,
-            ratings: systemInfo?.ratings
+            ratings: systemInfo?.ratings,
           },
           latestData,
-          vendorResponse: { systems: availableSystems, data: result.data.raw }
+          vendorResponse: { systems: availableSystems, data: result.data.raw },
         };
       }
 
@@ -170,7 +201,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       const client = new SelectronicFetchClient({
         email: credentials.email,
         password: credentials.password,
-        systemNumber: system.vendorSiteId
+        systemNumber: system.vendorSiteId,
       });
 
       // Authenticate
@@ -178,7 +209,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       if (!authSuccess) {
         return {
           success: false,
-          error: 'Failed to authenticate with Select.Live'
+          error: "Failed to authenticate with Select.Live",
         };
       }
 
@@ -187,13 +218,16 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       if (!result.success || !result.data) {
         return {
           success: false,
-          error: result.error || 'Failed to fetch data from Select.Live'
+          error: result.error || "Failed to fetch data from Select.Live",
         };
       }
 
       // Also fetch system info
       const systemInfo = await client.fetchSystemInfo();
-      console.log('[Selectronic] System info received:', JSON.stringify(systemInfo, null, 2));
+      console.log(
+        "[Selectronic] System info received:",
+        JSON.stringify(systemInfo, null, 2),
+      );
 
       const latestData = this.transformData(result.data);
 
@@ -201,17 +235,17 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         success: true,
         systemInfo: systemInfo || undefined,
         latestData,
-        vendorResponse: result.data.raw // Include raw vendor response
+        vendorResponse: result.data.raw, // Include raw vendor response
       };
     } catch (error) {
-      console.error('Error testing Selectronic connection:', error);
+      console.error("Error testing Selectronic connection:", error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : "Unknown error",
       };
     }
   }
-  
+
   /**
    * Transform Selectronic vendor data to common format
    */
@@ -219,22 +253,25 @@ export class SelectronicAdapter extends BaseVendorAdapter {
     return {
       timestamp: vendorData.timestamp, // Already a Date object from client
       solarW: vendorData.solarW,
-      solarLocalW: vendorData.shuntW,           // Map old field name
-      solarRemoteW: vendorData.solarInverterW,  // Map old field name
+      solarLocalW: vendorData.shuntW, // Map old field name
+      solarRemoteW: vendorData.solarInverterW, // Map old field name
       loadW: vendorData.loadW,
       batteryW: vendorData.batteryW,
       gridW: vendorData.gridW,
       batterySOC: vendorData.batterySOC,
-      faultCode: vendorData.faultCode != null ? String(vendorData.faultCode) : null,
-      faultTimestamp: vendorData.faultTimestamp ? new Date(vendorData.faultTimestamp * 1000) : null,  // Convert Unix timestamp to Date, 0 to null
-      generatorStatus: vendorData.generatorStatus || null,  // Convert 0 to null when no generator
+      faultCode:
+        vendorData.faultCode != null ? String(vendorData.faultCode) : null,
+      faultTimestamp: vendorData.faultTimestamp
+        ? new Date(vendorData.faultTimestamp * 1000)
+        : null, // Convert Unix timestamp to Date, 0 to null
+      generatorStatus: vendorData.generatorStatus || null, // Convert 0 to null when no generator
       // Lifetime totals
       solarKwhTotal: vendorData.solarKwhTotal,
       loadKwhTotal: vendorData.loadKwhTotal,
       batteryInKwhTotal: vendorData.batteryInKwhTotal,
       batteryOutKwhTotal: vendorData.batteryOutKwhTotal,
       gridInKwhTotal: vendorData.gridInKwhTotal,
-      gridOutKwhTotal: vendorData.gridOutKwhTotal
+      gridOutKwhTotal: vendorData.gridOutKwhTotal,
     };
   }
 }

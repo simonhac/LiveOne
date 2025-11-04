@@ -69,9 +69,6 @@ export default function ViewDataModal({
     vendorType?: string;
   } | null>(null);
   const [isPointInfoModalOpen, setIsPointInfoModalOpen] = useState(false);
-  const [hoveredColumnIndex, setHoveredColumnIndex] = useState<number | null>(
-    null,
-  );
   const [showExtras, setShowExtras] = useState(true);
 
   const fetchData = useCallback(async () => {
@@ -135,8 +132,8 @@ export default function ViewDataModal({
   };
 
   const handleColumnHeaderClick = (header: ColumnHeader) => {
-    // Only open modal for point columns (not timestamp)
-    if (header.key === "timestamp") return;
+    // Only open modal for point columns (not timestamp or sessionId)
+    if (header.key === "timestamp" || header.key === "sessionId") return;
 
     setSelectedPointInfo({
       pointDbId: header.pointDbId,
@@ -217,7 +214,7 @@ export default function ViewDataModal({
 
   // Get unit display for header
   const getUnitDisplay = (header: ColumnHeader) => {
-    if (header.key === "timestamp") return "";
+    if (header.key === "timestamp" || header.key === "sessionId") return "";
 
     if (header.type === "energy") {
       return "MWh";
@@ -281,8 +278,66 @@ export default function ViewDataModal({
     return showExtras;
   });
 
+  // Helper component to render a header cell with common logic
+  const HeaderCell = ({
+    header,
+    colIndex,
+    rowKey,
+    isLastRow = false,
+    children,
+  }: {
+    header: ColumnHeader;
+    colIndex: number;
+    rowKey: string;
+    isLastRow?: boolean;
+    children: React.ReactNode;
+  }) => {
+    const hasSeriesId = getSeriesIdSuffix(header) !== null;
+    const nextHeader = filteredHeaders[colIndex + 1];
+    const nextHasSeriesId = nextHeader
+      ? getSeriesIdSuffix(nextHeader) !== null
+      : false;
+    const isLastSeriesIdColumn = hasSeriesId && !nextHasSeriesId;
+    const isSpecialColumn =
+      header.key === "timestamp" || header.key === "sessionId";
+
+    return (
+      <th
+        key={`${header.key}-${rowKey}`}
+        data-col={colIndex}
+        className={`py-1 ${isLastRow ? "pb-2" : ""} px-2 align-top bg-gray-900 transition-colors ${
+          !isSpecialColumn ? "text-right" : ""
+        } ${
+          !isSpecialColumn && header.pointDbId ? "cursor-pointer" : ""
+        } ${isLastSeriesIdColumn ? "border-r border-gray-700" : ""} ${
+          !header.active && !isSpecialColumn ? "opacity-50" : ""
+        }`}
+        onClick={() => handleColumnHeaderClick(header)}
+        title={
+          !isSpecialColumn && header.pointDbId
+            ? "Click to edit point info"
+            : undefined
+        }
+      >
+        {children}
+      </th>
+    );
+  };
+
+  // Generate CSS for column hover effect
+  const columnHoverStyles = filteredHeaders
+    .map(
+      (_, colIndex) => `
+    thead:has(th[data-col="${colIndex}"]:hover) th[data-col="${colIndex}"] {
+      background-color: rgb(55 65 81 / 0.5) !important;
+    }
+  `,
+    )
+    .join("\n");
+
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center px-10 py-4 z-50">
+      <style>{columnHoverStyles}</style>
       <div className="bg-gray-900 border border-gray-700 rounded-lg shadow-xl w-full max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
@@ -354,219 +409,115 @@ export default function ViewDataModal({
               <thead className="sticky top-0 text-left text-gray-400 bg-gray-900 z-10">
                 {/* Row 1: Name */}
                 <tr className="bg-gray-900">
-                  {filteredHeaders.map((header, colIndex) => {
-                    // Check if this is the last column with a series ID
-                    const hasSeriesId = getSeriesIdSuffix(header) !== null;
-                    const nextHeader = filteredHeaders[colIndex + 1];
-                    const nextHasSeriesId = nextHeader
-                      ? getSeriesIdSuffix(nextHeader) !== null
-                      : false;
-                    const isLastSeriesIdColumn =
-                      hasSeriesId && !nextHasSeriesId;
-
-                    return (
-                      <th
-                        key={`${header.key}-row1`}
-                        className={`pt-1 pb-1 px-2 align-top transition-colors ${
-                          header.key !== "timestamp" ? "text-right" : ""
-                        } ${
-                          hoveredColumnIndex === colIndex
-                            ? "bg-gray-700/50"
-                            : "bg-gray-900"
-                        } ${
-                          header.key !== "timestamp" && header.pointDbId
-                            ? "cursor-pointer"
-                            : ""
-                        } ${
-                          isLastSeriesIdColumn ? "border-r border-gray-700" : ""
-                        } ${!header.active && header.key !== "timestamp" ? "opacity-50" : ""}`}
-                        onClick={() => handleColumnHeaderClick(header)}
-                        onMouseEnter={() => setHoveredColumnIndex(colIndex)}
-                        onMouseLeave={() => setHoveredColumnIndex(null)}
-                        title={
-                          header.key !== "timestamp" && header.pointDbId
-                            ? "Click to edit point info"
-                            : undefined
-                        }
-                      >
-                        {header.key === "timestamp" ? (
-                          <span className="text-gray-300">Name</span>
-                        ) : (
-                          <span
-                            className={`${getSubsystemColor(header.subsystem)} ${
-                              !header.active ? "line-through" : ""
-                            }`}
-                          >
-                            {header.label}
-                          </span>
-                        )}
-                      </th>
-                    );
-                  })}
+                  {filteredHeaders.map((header, colIndex) => (
+                    <HeaderCell
+                      key={`${header.key}-row1`}
+                      header={header}
+                      colIndex={colIndex}
+                      rowKey="row1"
+                    >
+                      {header.key === "timestamp" ? (
+                        <span className="text-gray-300">Name</span>
+                      ) : header.key === "sessionId" ? (
+                        <span className="text-gray-300">Session</span>
+                      ) : (
+                        <span
+                          className={`${getSubsystemColor(header.subsystem)} ${
+                            !header.active ? "line-through" : ""
+                          }`}
+                        >
+                          {header.label}
+                        </span>
+                      )}
+                    </HeaderCell>
+                  ))}
                 </tr>
                 {/* Row 2: Series ID */}
                 <tr className="bg-gray-900">
-                  {filteredHeaders.map((header, colIndex) => {
-                    const hasSeriesId = getSeriesIdSuffix(header) !== null;
-                    const nextHeader = filteredHeaders[colIndex + 1];
-                    const nextHasSeriesId = nextHeader
-                      ? getSeriesIdSuffix(nextHeader) !== null
-                      : false;
-                    const isLastSeriesIdColumn =
-                      hasSeriesId && !nextHasSeriesId;
-
-                    return (
-                      <th
-                        key={`${header.key}-row2`}
-                        className={`py-1 px-2 align-top transition-colors ${
-                          header.key !== "timestamp" ? "text-right" : ""
-                        } ${
-                          hoveredColumnIndex === colIndex
-                            ? "bg-gray-700/50"
-                            : "bg-gray-900"
-                        } ${
-                          header.key !== "timestamp" && header.pointDbId
-                            ? "cursor-pointer"
-                            : ""
-                        } ${
-                          isLastSeriesIdColumn ? "border-r border-gray-700" : ""
-                        } ${!header.active && header.key !== "timestamp" ? "opacity-50" : ""}`}
-                        onClick={() => handleColumnHeaderClick(header)}
-                        onMouseEnter={() => setHoveredColumnIndex(colIndex)}
-                        onMouseLeave={() => setHoveredColumnIndex(null)}
-                        title={
-                          header.key !== "timestamp" && header.pointDbId
-                            ? "Click to edit point info"
-                            : undefined
-                        }
-                      >
-                        {header.key === "timestamp" ? (
-                          <span className="text-gray-300">Series</span>
-                        ) : getSeriesIdSuffix(header) ? (
-                          <span
-                            className={`text-xs text-gray-500 font-mono ${
-                              !header.active ? "line-through" : ""
-                            }`}
-                            dangerouslySetInnerHTML={{
-                              __html:
-                                getSeriesIdSuffix(header)?.replace(
-                                  /\./g,
-                                  ".<wbr />",
-                                ) || "",
-                            }}
-                          />
-                        ) : (
-                          <div></div>
-                        )}
-                      </th>
-                    );
-                  })}
+                  {filteredHeaders.map((header, colIndex) => (
+                    <HeaderCell
+                      key={`${header.key}-row2`}
+                      header={header}
+                      colIndex={colIndex}
+                      rowKey="row2"
+                    >
+                      {header.key === "timestamp" ? (
+                        <span className="text-gray-300">Series</span>
+                      ) : header.key === "sessionId" ? (
+                        <div></div>
+                      ) : getSeriesIdSuffix(header) ? (
+                        <span
+                          className={`text-xs text-gray-500 font-mono ${
+                            !header.active ? "line-through" : ""
+                          }`}
+                          dangerouslySetInnerHTML={{
+                            __html:
+                              getSeriesIdSuffix(header)?.replace(
+                                /\./g,
+                                ".<wbr />",
+                              ) || "",
+                          }}
+                        />
+                      ) : (
+                        <div></div>
+                      )}
+                    </HeaderCell>
+                  ))}
                 </tr>
                 {/* Row 3: Short name */}
                 <tr className="bg-gray-900">
-                  {filteredHeaders.map((header, colIndex) => {
-                    const hasSeriesId = getSeriesIdSuffix(header) !== null;
-                    const nextHeader = filteredHeaders[colIndex + 1];
-                    const nextHasSeriesId = nextHeader
-                      ? getSeriesIdSuffix(nextHeader) !== null
-                      : false;
-                    const isLastSeriesIdColumn =
-                      hasSeriesId && !nextHasSeriesId;
-
-                    return (
-                      <th
-                        key={`${header.key}-row3`}
-                        className={`py-1 px-2 align-top transition-colors ${
-                          header.key !== "timestamp" ? "text-right" : ""
-                        } ${
-                          hoveredColumnIndex === colIndex
-                            ? "bg-gray-700/50"
-                            : "bg-gray-900"
-                        } ${
-                          header.key !== "timestamp" && header.pointDbId
-                            ? "cursor-pointer"
-                            : ""
-                        } ${
-                          isLastSeriesIdColumn ? "border-r border-gray-700" : ""
-                        } ${!header.active && header.key !== "timestamp" ? "opacity-50" : ""}`}
-                        onClick={() => handleColumnHeaderClick(header)}
-                        onMouseEnter={() => setHoveredColumnIndex(colIndex)}
-                        onMouseLeave={() => setHoveredColumnIndex(null)}
-                        title={
-                          header.key !== "timestamp" && header.pointDbId
-                            ? "Click to edit point info"
-                            : undefined
-                        }
-                      >
-                        {header.key === "timestamp" ? (
-                          <span className="text-gray-300">Short Name</span>
-                        ) : header.shortName ? (
-                          <span
-                            className={`text-xs ${getSubsystemColor(header.subsystem)} ${
-                              !header.active ? "line-through" : ""
-                            }`}
-                          >
-                            {header.shortName}
-                          </span>
-                        ) : (
-                          <div></div>
-                        )}
-                      </th>
-                    );
-                  })}
+                  {filteredHeaders.map((header, colIndex) => (
+                    <HeaderCell
+                      key={`${header.key}-row3`}
+                      header={header}
+                      colIndex={colIndex}
+                      rowKey="row3"
+                    >
+                      {header.key === "timestamp" ? (
+                        <span className="text-gray-300">Short Name</span>
+                      ) : header.key === "sessionId" ? (
+                        <div></div>
+                      ) : header.shortName ? (
+                        <span
+                          className={`text-xs ${getSubsystemColor(header.subsystem)} ${
+                            !header.active ? "line-through" : ""
+                          }`}
+                        >
+                          {header.shortName}
+                        </span>
+                      ) : (
+                        <div></div>
+                      )}
+                    </HeaderCell>
+                  ))}
                 </tr>
                 {/* Row 4: Unit and Time */}
                 <tr className="bg-gray-900 border-b border-gray-700">
-                  {filteredHeaders.map((header, colIndex) => {
-                    const hasSeriesId = getSeriesIdSuffix(header) !== null;
-                    const nextHeader = filteredHeaders[colIndex + 1];
-                    const nextHasSeriesId = nextHeader
-                      ? getSeriesIdSuffix(nextHeader) !== null
-                      : false;
-                    const isLastSeriesIdColumn =
-                      hasSeriesId && !nextHasSeriesId;
-
-                    return (
-                      <th
-                        key={`${header.key}-row4`}
-                        className={`py-1 pb-2 px-2 align-top transition-colors ${
-                          header.key !== "timestamp" ? "text-right" : ""
-                        } ${
-                          hoveredColumnIndex === colIndex
-                            ? "bg-gray-700/50"
-                            : "bg-gray-900"
-                        } ${
-                          header.key !== "timestamp" && header.pointDbId
-                            ? "cursor-pointer"
-                            : ""
-                        } ${
-                          isLastSeriesIdColumn ? "border-r border-gray-700" : ""
-                        } ${!header.active && header.key !== "timestamp" ? "opacity-50" : ""}`}
-                        onClick={() => handleColumnHeaderClick(header)}
-                        onMouseEnter={() => setHoveredColumnIndex(colIndex)}
-                        onMouseLeave={() => setHoveredColumnIndex(null)}
-                        title={
-                          header.key !== "timestamp" && header.pointDbId
-                            ? "Click to edit point info"
-                            : undefined
-                        }
-                      >
-                        {header.key === "timestamp" ? (
-                          <span className="text-gray-300">Time</span>
-                        ) : getUnitDisplay(header) ? (
-                          <span
-                            className={`text-xs text-gray-400 ${
-                              !header.active ? "line-through" : ""
-                            }`}
-                          >
-                            {getUnitDisplay(header)}
-                          </span>
-                        ) : (
-                          <div></div>
-                        )}
-                      </th>
-                    );
-                  })}
+                  {filteredHeaders.map((header, colIndex) => (
+                    <HeaderCell
+                      key={`${header.key}-row4`}
+                      header={header}
+                      colIndex={colIndex}
+                      rowKey="row4"
+                      isLastRow
+                    >
+                      {header.key === "timestamp" ? (
+                        <span className="text-gray-300">Time</span>
+                      ) : header.key === "sessionId" ? (
+                        <div></div>
+                      ) : getUnitDisplay(header) ? (
+                        <span
+                          className={`text-xs text-gray-400 ${
+                            !header.active ? "line-through" : ""
+                          }`}
+                        >
+                          {getUnitDisplay(header)}
+                        </span>
+                      ) : (
+                        <div></div>
+                      )}
+                    </HeaderCell>
+                  ))}
                 </tr>
               </thead>
               <tbody className="text-gray-300">
@@ -590,16 +541,23 @@ export default function ViewDataModal({
                         <td
                           key={header.key}
                           className={`py-1 px-2 ${
-                            header.key !== "timestamp" ? "text-right" : ""
+                            header.key !== "timestamp" &&
+                            header.key !== "sessionId"
+                              ? "text-right"
+                              : ""
                           } ${
                             isLastSeriesIdColumn
                               ? "border-r border-gray-700"
                               : ""
-                          } ${!header.active && header.key !== "timestamp" ? "opacity-50" : ""}`}
+                          } ${!header.active && header.key !== "timestamp" && header.key !== "sessionId" ? "opacity-50" : ""}`}
                         >
                           {header.key === "timestamp" ? (
                             <span className="text-xs font-mono text-gray-300 whitespace-nowrap">
                               {formatDateTime(row[header.key]).display}
+                            </span>
+                          ) : header.key === "sessionId" ? (
+                            <span className="text-xs font-mono text-gray-400">
+                              {row[header.key] !== null ? row[header.key] : "-"}
                             </span>
                           ) : (
                             <span

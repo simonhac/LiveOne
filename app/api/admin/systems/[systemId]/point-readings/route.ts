@@ -122,6 +122,21 @@ export async function GET(
         systemId: 0,
         defaultName: "",
         shortName: null,
+        active: true,
+      },
+      {
+        key: "sessionId",
+        label: "Session",
+        type: "number",
+        unit: null,
+        subsystem: null,
+        pointId: "",
+        pointSubId: null,
+        pointDbId: 0,
+        systemId: 0,
+        defaultName: "",
+        shortName: null,
+        active: true,
       },
       ...sortedPoints.map((p) => ({
         key: `point_${p.id}`,
@@ -150,7 +165,16 @@ export async function GET(
       )
       .join(",\n  ");
 
+    // Get sessionIds for each point at each timestamp
+    const sessionIdColumns = points
+      .map(
+        (p) =>
+          `MAX(CASE WHEN system_id = ${systemId} AND point_id = ${p.id} THEN session_id END) as session_${p.id}`,
+      )
+      .join(",\n  ");
+
     // Query to get pivoted data - last N readings by unique timestamp
+    // Group by both timestamp AND session_id to split rows with different sessionIds
     const pivotQuery = `
       WITH recent_timestamps AS (
         SELECT DISTINCT measurement_time
@@ -162,12 +186,13 @@ export async function GET(
       )
       SELECT
         measurement_time,
-        ${pivotColumns}
+        ${pivotColumns},
+        ${sessionIdColumns}
       FROM point_readings
       WHERE system_id = ${systemId}
         AND measurement_time IN (SELECT measurement_time FROM recent_timestamps)
-      GROUP BY measurement_time
-      ORDER BY measurement_time DESC
+      GROUP BY measurement_time, session_id
+      ORDER BY measurement_time DESC, session_id
     `;
 
     const pivotStartTime = Date.now();
@@ -183,8 +208,19 @@ export async function GET(
       );
       const formattedTime = formatTimeAEST(zonedDate);
 
+      // Extract sessionId from the first non-null session_* column
+      let sessionId: number | null = null;
+      for (const p of sortedPoints) {
+        const sid = row[`session_${p.id}`];
+        if (sid !== null && sid !== undefined) {
+          sessionId = Number(sid);
+          break;
+        }
+      }
+
       const transformed: any = {
         timestamp: formattedTime,
+        sessionId: sessionId,
       };
 
       // Add point values in sorted order
