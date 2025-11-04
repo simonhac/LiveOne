@@ -11,6 +11,11 @@ import {
   type SelectronicData,
 } from "./selectronic-client";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
+import {
+  insertPointReadingsBatch,
+  type PointMetadata,
+} from "@/lib/monitoring-points-manager";
+import { SELECTRONIC_POINTS } from "./point-metadata";
 
 /**
  * Vendor adapter for Selectronic/Select.Live systems
@@ -93,7 +98,42 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         return this.error(response.error || "Failed to fetch data");
       }
 
-      const transformed = this.transformData(response.data);
+      const vendorData = response.data;
+      const transformed = this.transformData(vendorData);
+
+      // Insert into point_readings table
+      const measurementTime = vendorData.timestamp.getTime();
+      const receivedTime = Date.now();
+      const readingsToInsert = [];
+
+      // Build readings array from all configured points
+      for (const pointConfig of SELECTRONIC_POINTS) {
+        const value = vendorData[pointConfig.field];
+
+        // Skip null/undefined values
+        if (value == null) {
+          continue;
+        }
+
+        // Convert energy totals from kWh to Wh (multiply by 1000)
+        let convertedValue = Number(value);
+        if (pointConfig.metadata.metricType === "energy") {
+          convertedValue = Math.round(convertedValue * 1000);
+        }
+
+        readingsToInsert.push({
+          pointMetadata: pointConfig.metadata,
+          value: convertedValue,
+          measurementTime,
+          receivedTime,
+          dataQuality: "good" as const,
+          sessionId: sessionId,
+          error: null,
+        });
+      }
+
+      // Batch insert all readings - this will automatically ensure point_info entries exist
+      await insertPointReadingsBatch(system.id, readingsToInsert);
 
       console.log(
         `[Selectronic] Poll successful -`,
@@ -110,11 +150,13 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         transformed.batterySOC != null
           ? transformed.batterySOC.toFixed(1) + "%"
           : "N/A",
+        `- ${readingsToInsert.length} points inserted`,
       );
 
       // Calculate next poll time at the beginning of the next minute
       const nextPollTime = getNextMinuteBoundary(1, system.timezoneOffsetMin); // 1-minute interval
 
+      // Still insert into readings table for backward compatibility
       return this.polled(
         transformed,
         1,

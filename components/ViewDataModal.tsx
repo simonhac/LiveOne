@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { X } from "lucide-react";
 import { formatDateTime } from "@/lib/fe-date-format";
 import PointInfoModal from "./PointInfoModal";
+import SessionInfoModal from "./SessionInfoModal";
 
 interface ColumnHeader {
   key: string;
@@ -69,6 +70,8 @@ export default function ViewDataModal({
   const [isPointInfoModalOpen, setIsPointInfoModalOpen] = useState(false);
   const [showExtras, setShowExtras] = useState(true);
   const [dataSource, setDataSource] = useState<"raw" | "5m">("raw");
+  const [selectedSession, setSelectedSession] = useState<any | null>(null);
+  const [isSessionInfoModalOpen, setIsSessionInfoModalOpen] = useState(false);
 
   const fetchData = useCallback(async () => {
     // Prevent duplicate fetches
@@ -162,6 +165,36 @@ export default function ViewDataModal({
       vendorType: vendorType,
     });
     setIsPointInfoModalOpen(true);
+  };
+
+  const handleSessionClick = async (sessionId: number | null) => {
+    if (sessionId === null) return;
+
+    // Delay showing wait cursor by 500ms
+    const cursorTimeout = setTimeout(() => {
+      document.body.style.cursor = "wait";
+    }, 500);
+
+    try {
+      const response = await fetch(`/api/admin/sessions/${sessionId}`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch session: ${response.status}`);
+      }
+      const data = await response.json();
+
+      // Clear timeout and reset cursor
+      clearTimeout(cursorTimeout);
+      document.body.style.cursor = "";
+
+      // Set session data and open modal
+      setSelectedSession(data.session);
+      setIsSessionInfoModalOpen(true);
+    } catch (error) {
+      console.error("Error fetching session:", error);
+      clearTimeout(cursorTimeout);
+      document.body.style.cursor = "";
+      // Could show an error toast here if desired
+    }
   };
 
   const handleUpdatePointInfo = async (
@@ -559,23 +592,34 @@ export default function ViewDataModal({
                           key={header.key}
                           className={`py-1 px-2 ${
                             header.key !== "timestamp" &&
-                            header.key !== "sessionId"
+                            header.key !== "sessionLabel"
                               ? "text-right"
                               : ""
                           } ${
                             isLastSeriesIdColumn
                               ? "border-r border-gray-700"
                               : ""
-                          } ${!header.active && header.key !== "timestamp" && header.key !== "sessionId" ? "opacity-50" : ""}`}
+                          } ${!header.active && header.key !== "timestamp" && header.key !== "sessionLabel" ? "opacity-50" : ""}`}
                         >
                           {header.key === "timestamp" ? (
                             <span className="text-xs font-mono text-gray-300 whitespace-nowrap">
                               {formatDateTime(row[header.key]).display}
                             </span>
                           ) : header.key === "sessionLabel" ? (
-                            <span className="text-xs font-mono text-gray-400">
-                              {row[header.key] !== null ? row[header.key] : "-"}
-                            </span>
+                            row[header.key] !== null && row.sessionId ? (
+                              <button
+                                onClick={() =>
+                                  handleSessionClick(row.sessionId)
+                                }
+                                className="text-xs font-mono text-gray-400 hover:text-blue-400 hover:underline cursor-pointer"
+                              >
+                                {row[header.key]}
+                              </button>
+                            ) : (
+                              <span className="text-xs font-mono text-gray-400">
+                                -
+                              </span>
+                            )
                           ) : (
                             <span
                               className={`font-mono text-xs ${getSubsystemColor(header.subsystem)}`}
@@ -599,6 +643,12 @@ export default function ViewDataModal({
         onClose={() => setIsPointInfoModalOpen(false)}
         pointInfo={selectedPointInfo}
         onUpdate={handleUpdatePointInfo}
+      />
+
+      <SessionInfoModal
+        isOpen={isSessionInfoModalOpen}
+        onClose={() => setIsSessionInfoModalOpen(false)}
+        session={selectedSession}
       />
     </div>
   );

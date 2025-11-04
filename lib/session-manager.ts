@@ -310,6 +310,39 @@ export class SessionManager {
       };
     }
   }
+
+  /**
+   * Get a single session by ID
+   */
+  async getSessionById(sessionId: number): Promise<{
+    id: number;
+    sessionLabel: string | null;
+    systemId: number;
+    vendorType: string;
+    systemName: string;
+    cause: string;
+    started: Date;
+    duration: number;
+    successful: boolean;
+    errorCode: string | null;
+    error: string | null;
+    response: any | null;
+    numRows: number;
+    createdAt: Date;
+  } | null> {
+    try {
+      const results = await db
+        .select()
+        .from(sessions)
+        .where(eq(sessions.id, sessionId))
+        .limit(1);
+
+      return results.length > 0 ? results[0] : null;
+    } catch (error) {
+      console.error("[SessionManager] Failed to fetch session:", error);
+      return null;
+    }
+  }
 }
 
 // Export singleton instance

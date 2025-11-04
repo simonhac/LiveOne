@@ -259,6 +259,7 @@ export async function GET(
       const transformed: any = {
         timestamp: formattedTime,
         sessionLabel: sessionLabel,
+        sessionId: row.session_id || null,
       };
 
       // Add point values in sorted order

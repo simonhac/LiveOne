@@ -12,6 +12,9 @@ export interface PointMetadata {
   originSubId?: string;
   defaultName: string;
   subsystem?: string | null;
+  type?: string | null;
+  subtype?: string | null;
+  extension?: string | null;
   metricType: string;
   metricUnit: string;
 }
@@ -83,6 +86,9 @@ export async function ensurePointInfo(
       defaultName: metadata.defaultName,
       displayName: metadata.defaultName, // Initially same as default
       subsystem: metadata.subsystem || null,
+      type: metadata.type || null,
+      subtype: metadata.subtype || null,
+      extension: metadata.extension || null,
       metricType: metadata.metricType,
       metricUnit: metadata.metricUnit,
     })
@@ -90,8 +96,7 @@ export async function ensurePointInfo(
       target: [pointInfo.systemId, pointInfo.originId, pointInfo.originSubId],
       set: {
         defaultName: metadata.defaultName, // Update default name if changed from source
-        // Don't update 'displayName' as it's user-modifiable
-        // Don't update subsystem as it's user-modifiable
+        // Don't update 'displayName', 'subsystem', 'type', 'subtype', 'extension' as they're user-modifiable
       },
     })
     .returning();
