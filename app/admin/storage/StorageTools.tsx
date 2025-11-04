@@ -199,11 +199,15 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                   (sum: number, count: any) => sum + (count || 0),
                   0,
                 );
-                const daysText =
-                  daysToSync === 1 ? "1 day" : `${daysToSync} days`;
+                const periodText =
+                  daysToSync === 0.25
+                    ? "6 hours"
+                    : daysToSync === 1
+                      ? "1 day"
+                      : `${daysToSync} days`;
                 setSyncProgress((prev) => ({
                   ...prev,
-                  message: `Ready to sync ${totalRecords.toLocaleString()} records from last ${daysText} from production database`,
+                  message: `Ready to sync ${totalRecords.toLocaleString()} records from last ${periodText} from production database`,
                 }));
               } else if (update.type === "error") {
                 console.error("[SYNC] Error from backend:", update.message);
@@ -691,15 +695,16 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
               );
             })()}
 
-            {/* Days to Sync Dropdown */}
+            {/* Period Dropdown */}
             <div className="mb-3 flex items-center gap-3">
-              <label className="text-sm text-gray-300">Days to sync:</label>
+              <label className="text-sm text-gray-300">Period:</label>
               <select
                 value={daysToSync}
                 onChange={(e) => setDaysToSync(Number(e.target.value))}
                 disabled={!!syncAbortController || syncProgress.progress > 0}
                 className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
+                <option value={0.25}>Last 6 hours</option>
                 <option value={1}>Last 1 day</option>
                 <option value={3}>Last 3 days</option>
                 <option value={7}>Last 7 days</option>

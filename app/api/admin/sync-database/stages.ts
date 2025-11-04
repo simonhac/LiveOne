@@ -7,6 +7,7 @@ import {
   pollingStatus,
   readingsAgg5m,
   readingsAgg1d,
+  sessions,
 } from "@/lib/db/schema";
 import {
   pointInfo,
@@ -306,7 +307,7 @@ export interface SyncContext {
   mapSystemId: (prodSystemId: number) => number | undefined;
   localLatestTime?: Date;
   syncFromTime?: Date; // The actual time to sync from (configurable days back)
-  daysToSync: number; // Number of days to sync (1, 3, 7, or 14)
+  daysToSync: number; // Number of days to sync (0.25 = 6 hours, 1, 3, 7, or 14 days)
   totalToSync?: number;
   synced?: number;
   recordCounts?: Record<string, number>; // Map of stage id → record count
@@ -555,14 +556,15 @@ async function countRecordsToSync(ctx: SyncContext) {
   const syncFromTimestampSec = Math.floor(syncFromTime.getTime() / 1000);
   const syncFromTimestampMs = syncFromTime.getTime();
 
-  // Count local records in all 5 tables
+  // Count local records in all tables
   const localCountResult = await rawClient.execute(
     `SELECT
       (SELECT COUNT(*) FROM readings) as readings_count,
       (SELECT COUNT(*) FROM point_readings) as point_readings_count,
       (SELECT COUNT(*) FROM readings_agg_5m) as readings_agg_5m_count,
       (SELECT COUNT(*) FROM point_readings_agg_5m) as point_readings_agg_5m_count,
-      (SELECT COUNT(*) FROM readings_agg_1d) as readings_agg_1d_count`,
+      (SELECT COUNT(*) FROM readings_agg_1d) as readings_agg_1d_count,
+      (SELECT COUNT(*) FROM sessions) as sessions_count`,
   );
 
   const localRow = localCountResult.rows[0];
@@ -573,21 +575,24 @@ async function countRecordsToSync(ctx: SyncContext) {
     point_readings_agg_5m:
       (localRow?.point_readings_agg_5m_count as number) || 0,
     readings_agg_1d: (localRow?.readings_agg_1d_count as number) || 0,
+    sessions: (localRow?.sessions_count as number) || 0,
   };
 
-  // Count production records from all 5 tables (only records to sync)
+  // Count production records from all tables (only records to sync)
   const prodCountResult = await ctx.prodDb.execute(
     `SELECT
       (SELECT COUNT(*) FROM readings WHERE inverter_time > ?) as readings_count,
       (SELECT COUNT(*) FROM point_readings WHERE measurement_time > ?) as point_readings_count,
       (SELECT COUNT(*) FROM readings_agg_5m WHERE interval_end > ?) as readings_agg_5m_count,
       (SELECT COUNT(*) FROM point_readings_agg_5m WHERE interval_end > ?) as point_readings_agg_5m_count,
-      (SELECT COUNT(*) FROM readings_agg_1d) as readings_agg_1d_count`,
+      (SELECT COUNT(*) FROM readings_agg_1d) as readings_agg_1d_count,
+      (SELECT COUNT(*) FROM sessions WHERE started > ?) as sessions_count`,
     [
       syncFromTimestampSec,
       syncFromTimestampMs,
       syncFromTimestampSec,
       syncFromTimestampMs,
+      syncFromTimestampSec,
     ],
   );
 
@@ -599,6 +604,7 @@ async function countRecordsToSync(ctx: SyncContext) {
     "sync-point-5min-agg":
       (prodRow?.point_readings_agg_5m_count as number) || 0,
     "sync-daily-agg": (prodRow?.readings_agg_1d_count as number) || 0,
+    "sync-sessions": (prodRow?.sessions_count as number) || 0,
   };
 
   const totalToSync = counts["sync-readings"]; // Use readings count for overall progress
@@ -742,7 +748,70 @@ async function syncUserSystems(ctx: SyncContext) {
   };
 }
 
-// Stage 8: Sync 5-minute aggregations from production
+// Stage 8: Sync sessions
+async function syncSessions(ctx: SyncContext) {
+  const syncFromTime = ctx.syncFromTime || ctx.localLatestTime!;
+  const syncFromTimestamp = Math.floor(syncFromTime.getTime() / 1000);
+
+  // Get stage-specific total from recordCounts
+  const stageTotal = ctx.recordCounts?.["sync-sessions"] || 0;
+
+  console.log(
+    `[SYNC] Starting sessions sync: ${stageTotal} sessions to download from ${syncFromTime.toISOString()}`,
+  );
+
+  if (stageTotal === 0) {
+    return { detail: "No sessions to sync" };
+  }
+
+  // Clear existing sessions in the sync range
+  await ctx.db
+    .delete(sessions)
+    .where(gte(sessions.started, new Date(syncFromTimestamp * 1000)));
+
+  // Use generic sync function
+  const result = await syncTableData(ctx, "sessions", "sessions", {
+    query: `SELECT * FROM sessions WHERE started > ? ORDER BY started`,
+    queryParams: [syncFromTimestamp],
+    mapRow: (row) => {
+      // Map system IDs
+      const mappedSystemId = ctx.mapSystemId(row.system_id as number);
+      if (!mappedSystemId) {
+        console.warn(`Skipping session for unmapped system ${row.system_id}`);
+        return null;
+      }
+      return {
+        ...row,
+        system_id: mappedSystemId,
+      };
+    },
+    timestampField: "started",
+    onProgress: createProgressCallback(ctx, "sync-sessions"),
+    onComplete: (synced, firstTime, lastTime) => {
+      // Format the date range if we have data
+      let dateRangeStr = "";
+      if (firstTime && lastTime) {
+        const firstZoned = fromUnixTimestamp(
+          Math.floor(firstTime.getTime() / 1000),
+          600,
+        );
+        const lastZoned = fromUnixTimestamp(
+          Math.floor(lastTime.getTime() / 1000),
+          600,
+        );
+        dateRangeStr = ` (${formatDateRange(firstZoned, lastZoned, true)})`;
+      }
+      return `Synced ${synced.toLocaleString()} sessions${dateRangeStr}`;
+    },
+  });
+
+  return {
+    detail: result.detail,
+    context: { synced: result.synced },
+  };
+}
+
+// Stage: Sync 5-minute aggregations from production
 async function sync5MinAggregations(ctx: SyncContext) {
   const syncFromTime = ctx.syncFromTime!;
 
@@ -800,25 +869,16 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
   const syncFromTime = ctx.syncFromTime!;
   const syncFromTimestamp = syncFromTime.getTime(); // point_readings_agg_5m uses milliseconds
 
+  // Get stage-specific total from recordCounts
+  const stageTotal = ctx.recordCounts?.["sync-point-5min-agg"] || 0;
+
   console.log(
-    `[SYNC] Syncing point_readings 5-minute aggregations from ${syncFromTime.toISOString()}`,
+    `[SYNC] Starting point_readings 5-minute aggregations sync: ${stageTotal} aggregations to download from ${syncFromTime.toISOString()}`,
   );
 
-  // Count total to sync
-  const countResult = await ctx.prodDb.execute(
-    `SELECT COUNT(*) as count FROM point_readings_agg_5m WHERE interval_end > ?`,
-    [syncFromTimestamp],
-  );
-
-  const totalToSync = (countResult.rows[0]?.count as number) || 0;
-
-  if (totalToSync === 0) {
+  if (stageTotal === 0) {
     return { detail: "No point_readings 5-minute aggregations to sync" };
   }
-
-  console.log(
-    `[SYNC] Syncing ${totalToSync} point_readings 5-minute aggregations`,
-  );
 
   // Clear existing aggregations in the sync range
   await ctx.db
@@ -1196,23 +1256,16 @@ async function syncPointReadings(ctx: SyncContext) {
   const syncFromTime = ctx.syncFromTime!;
   const syncFromTimestamp = syncFromTime.getTime(); // point_readings uses milliseconds
 
+  // Get stage-specific total from recordCounts
+  const stageTotal = ctx.recordCounts?.["sync-point-readings"] || 0;
+
   console.log(
-    `[SYNC] Syncing point_readings from ${syncFromTime.toISOString()}`,
+    `[SYNC] Starting point_readings sync: ${stageTotal} point readings to download from ${syncFromTime.toISOString()}`,
   );
 
-  // Count total to sync
-  const countResult = await ctx.prodDb.execute(
-    `SELECT COUNT(*) as count FROM point_readings WHERE measurement_time > ?`,
-    [syncFromTimestamp],
-  );
-
-  const totalToSync = (countResult.rows[0]?.count as number) || 0;
-
-  if (totalToSync === 0) {
+  if (stageTotal === 0) {
     return { detail: "No point_readings to sync" };
   }
-
-  console.log(`[SYNC] Syncing ${totalToSync} point_readings`);
 
   // Clear existing point_readings in the sync range
   await ctx.db
@@ -1393,6 +1446,12 @@ export const syncStages: StageDefinition[] = [
     name: "Sync 5-min point reading aggregations",
     modifiesMetadata: false,
     execute: syncPointReadings5MinAggregations,
+  },
+  {
+    id: "sync-sessions",
+    name: "Sync sessions",
+    modifiesMetadata: false,
+    execute: syncSessions,
   },
   {
     id: "finalise",
