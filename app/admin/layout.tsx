@@ -1,54 +1,54 @@
-'use client'
+"use client";
 
-import { useState } from 'react'
-import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import { UserButton } from '@clerk/nextjs'
-import { 
-  Server, 
-  Users, 
-  Database, 
+import { useState } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { UserButton } from "@clerk/nextjs";
+import {
+  Server,
+  Users,
+  Database,
   Activity,
   Home,
   ChevronRight,
   Menu,
-  X
-} from 'lucide-react'
+  X,
+} from "lucide-react";
 
 const navItems = [
-  { 
-    name: 'Systems', 
-    href: '/admin', 
+  {
+    name: "Systems",
+    href: "/admin/systems",
     icon: Server,
-    description: 'Manage and monitor all systems'
+    description: "Manage and monitor all systems",
   },
-  { 
-    name: 'Users', 
-    href: '/admin/users', 
+  {
+    name: "Users",
+    href: "/admin/users",
     icon: Users,
-    description: 'Manage user access and permissions'
+    description: "Manage user access and permissions",
   },
-  { 
-    name: 'Activity', 
-    href: '/admin/activity', 
+  {
+    name: "Sessions",
+    href: "/admin/sessions",
     icon: Activity,
-    description: 'View system activity logs'
+    description: "View system activity",
   },
-  { 
-    name: 'Storage', 
-    href: '/admin/storage', 
+  {
+    name: "Readings",
+    href: "/admin/readings",
     icon: Database,
-    description: 'Manage data storage and retention'
+    description: "Manage syncing",
   },
-]
+];
 
 export default function AdminLayout({
   children,
 }: {
-  children: React.ReactNode
+  children: React.ReactNode;
 }) {
-  const pathname = usePathname()
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const pathname = usePathname();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-gray-900">
@@ -62,7 +62,11 @@ export default function AdminLayout({
                 onClick={() => setSidebarOpen(!sidebarOpen)}
                 className="lg:hidden p-2 text-gray-400 hover:text-white"
               >
-                {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+                {sidebarOpen ? (
+                  <X className="w-5 h-5" />
+                ) : (
+                  <Menu className="w-5 h-5" />
+                )}
               </button>
               <h1 className="text-2xl font-bold text-white">
                 <span className="hidden sm:inline">LiveOne </span>Administration
@@ -76,12 +80,12 @@ export default function AdminLayout({
                 <Home className="w-4 h-4" />
                 Dashboard
               </Link>
-              <UserButton 
+              <UserButton
                 afterSignOutUrl="/sign-in"
                 appearance={{
                   elements: {
-                    avatarBox: "w-8 h-8"
-                  }
+                    avatarBox: "w-8 h-8",
+                  },
                 }}
               />
             </div>
@@ -91,37 +95,49 @@ export default function AdminLayout({
 
       <div className="flex">
         {/* Sidebar - positioned under header with rounded corners */}
-        <div className={`fixed lg:relative top-[73px] lg:top-0 left-0 z-40 w-[220px] h-[calc(100vh-73px)] lg:h-[calc(100vh-73px)] transform transition-transform lg:translate-x-0 ${
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}>
+        <div
+          className={`fixed lg:relative top-[73px] lg:top-0 left-0 z-40 w-[220px] h-[calc(100vh-73px)] lg:h-[calc(100vh-73px)] transform transition-transform lg:translate-x-0 ${
+            sidebarOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
+        >
           <div className="bg-gray-800 h-full border-r border-t border-gray-700">
             <div className="flex flex-col h-full">
               {/* Navigation */}
               <nav className="flex-1 p-4 space-y-1">
                 {navItems.map((item) => {
-                  const isActive = pathname === item.href || 
-                                 (item.href === '/admin' && pathname === '/admin')
-                  const Icon = item.icon
-                  
+                  const isActive =
+                    pathname === item.href ||
+                    (item.href === "/admin/systems" &&
+                      pathname === "/admin/systems");
+                  const Icon = item.icon;
+
                   return (
                     <Link
                       key={item.href}
                       href={item.href}
                       className={`group flex items-center px-3 py-3 rounded-lg transition-all ${
                         isActive
-                          ? 'bg-blue-600 text-white'
-                          : 'text-gray-400 hover:bg-gray-700 hover:text-white'
+                          ? "bg-blue-600 text-white"
+                          : "text-gray-400 hover:bg-gray-700 hover:text-white"
                       }`}
                       onClick={() => setSidebarOpen(false)}
                     >
-                      <Icon className={`w-5 h-5 flex-shrink-0 ${
-                        isActive ? 'text-white' : 'text-gray-400 group-hover:text-white'
-                      }`} />
+                      <Icon
+                        className={`w-5 h-5 flex-shrink-0 ${
+                          isActive
+                            ? "text-white"
+                            : "text-gray-400 group-hover:text-white"
+                        }`}
+                      />
                       <div className="ml-3 flex-1">
                         <p className="text-sm font-medium">{item.name}</p>
-                        <p className={`text-xs mt-0.5 ${
-                          isActive ? 'text-blue-100' : 'text-gray-500 group-hover:text-gray-400'
-                        }`}>
+                        <p
+                          className={`text-xs mt-0.5 ${
+                            isActive
+                              ? "text-blue-100"
+                              : "text-gray-500 group-hover:text-gray-400"
+                          }`}
+                        >
                           {item.description}
                         </p>
                       </div>
@@ -129,7 +145,7 @@ export default function AdminLayout({
                         <ChevronRight className="w-4 h-4 flex-shrink-0 ml-2" />
                       )}
                     </Link>
-                  )
+                  );
                 })}
               </nav>
             </div>
@@ -152,5 +168,5 @@ export default function AdminLayout({
         />
       )}
     </div>
-  )
+  );
 }

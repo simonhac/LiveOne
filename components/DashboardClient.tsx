@@ -775,7 +775,7 @@ export default function DashboardClient({
               )}
               {isAdmin && (
                 <Link
-                  href="/admin"
+                  href="/admin/systems"
                   className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"
                 >
                   <Shield className="w-4 h-4" />

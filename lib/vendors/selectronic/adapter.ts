@@ -115,6 +115,15 @@ export class SelectronicAdapter extends BaseVendorAdapter {
           continue;
         }
 
+        // Replace 0 with null for fault_code and fault_ts (no fault = null)
+        if (
+          (pointConfig.metadata.originSubId === "fault_code" ||
+            pointConfig.metadata.originSubId === "fault_ts") &&
+          rawValue === 0
+        ) {
+          continue;
+        }
+
         // Convert energy totals from kWh to Wh (multiply by 1000)
         if (pointConfig.metadata.metricType === "energy") {
           rawValue = Math.round(Number(rawValue) * 1000);
@@ -301,10 +310,13 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       gridW: vendorData.gridW,
       batterySOC: vendorData.batterySOC,
       faultCode:
-        vendorData.faultCode != null ? String(vendorData.faultCode) : null,
-      faultTimestamp: vendorData.faultTimestamp
-        ? new Date(vendorData.faultTimestamp * 1000)
-        : null, // Convert Unix timestamp to Date, 0 to null
+        vendorData.faultCode != null && vendorData.faultCode !== 0
+          ? String(vendorData.faultCode)
+          : null,
+      faultTimestamp:
+        vendorData.faultTimestamp != null && vendorData.faultTimestamp !== 0
+          ? new Date(vendorData.faultTimestamp * 1000)
+          : null, // Convert Unix timestamp to Date, 0 to null
       generatorStatus: vendorData.generatorStatus || null, // Convert 0 to null when no generator
       // Lifetime totals
       solarKwhTotal: vendorData.solarKwhTotal,

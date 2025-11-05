@@ -152,7 +152,7 @@ export default function MobileMenu({
             {/* Admin Link */}
             {isAdmin && (
               <Link
-                href="/admin"
+                href="/admin/systems"
                 className="p-1.5 text-blue-500 hover:text-blue-400 transition-colors"
                 aria-label="Admin"
               >
