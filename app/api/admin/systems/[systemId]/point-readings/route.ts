@@ -210,10 +210,11 @@ export async function GET(
     } else {
       // Query raw point readings
       const pivotColumns = points
-        .map(
-          (p) =>
-            `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.id} THEN pr.value END) as point_${p.id}`,
-        )
+        .map((p) => {
+          // For text fields, use valueStr; for others, use value
+          const column = p.metricUnit === "text" ? "pr.value_str" : "pr.value";
+          return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.id} THEN ${column} END) as point_${p.id}`;
+        })
         .join(",\n  ");
 
       pivotQuery = `
@@ -265,7 +266,13 @@ export async function GET(
       // Add point values in sorted order
       sortedPoints.forEach((p) => {
         const value = row[`point_${p.id}`];
-        transformed[`point_${p.id}`] = value !== null ? Number(value) : null;
+        // For text fields, keep as string; for others, convert to number
+        if (value !== null) {
+          transformed[`point_${p.id}`] =
+            p.metricUnit === "text" ? String(value) : Number(value);
+        } else {
+          transformed[`point_${p.id}`] = null;
+        }
       });
 
       return transformed;

@@ -78,7 +78,8 @@ export const pointReadings = sqliteTable(
     receivedTime: integer("received_time").notNull(), // When we fetched
 
     // Core measurements (flexible schema)
-    value: real("value"), // Current value (e.g., power in Watts)
+    value: real("value"), // Numeric value (e.g., power in Watts, timestamp in ms)
+    valueStr: text("value_str"), // String value (e.g., fault codes, text data)
 
     // Quality & status
     error: text("error"), // Error message if any

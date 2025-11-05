@@ -236,18 +236,34 @@ export default function ViewDataModal({
   if (!isOpen) return null;
 
   // Format value based on metric type
-  const formatValue = (value: number | null, header: ColumnHeader) => {
+  const formatValue = (value: number | string | null, header: ColumnHeader) => {
     if (value === null) return "-";
+
+    // Handle text values (like fault codes)
+    if (header.unit === "text" || typeof value === "string") {
+      return String(value);
+    }
+
+    // From here on, value should be a number
+    const numValue = Number(value);
 
     if (header.type === "energy") {
       // Convert Wh to MWh for energy (divide by 1,000,000)
-      return `${(value / 1000000).toFixed(1)}`;
+      return `${(numValue / 1000000).toFixed(1)}`;
     } else if (header.type === "power") {
       // Always show power in kW to match header unit
-      return `${(value / 1000).toFixed(1)}`;
+      return `${(numValue / 1000).toFixed(1)}`;
+    } else if (header.unit === "epochMs") {
+      // Check for epoch 0 (Jan 1, 1970 00:00:00)
+      if (numValue === 0) {
+        return "epoch0";
+      }
+      // Format timestamp using the same formatter as the timestamp column
+      // Convert milliseconds to Date object first
+      return formatDateTime(new Date(numValue)).display;
     } else {
       // Default formatting
-      return `${value.toFixed(0)}`;
+      return `${numValue.toFixed(0)}`;
     }
   };
 
@@ -260,6 +276,9 @@ export default function ViewDataModal({
     } else if (header.type === "power") {
       // For power, we'll show kW for most values
       return "kW";
+    } else if (header.unit === "epochMs") {
+      // Don't show unit for timestamps (they're formatted as dates)
+      return "";
     } else if (header.unit) {
       return header.unit;
     }

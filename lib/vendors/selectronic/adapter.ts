@@ -108,22 +108,21 @@ export class SelectronicAdapter extends BaseVendorAdapter {
 
       // Build readings array from all configured points
       for (const pointConfig of SELECTRONIC_POINTS) {
-        const value = vendorData[pointConfig.field];
+        let rawValue = vendorData[pointConfig.field];
 
         // Skip null/undefined values
-        if (value == null) {
+        if (rawValue == null) {
           continue;
         }
 
         // Convert energy totals from kWh to Wh (multiply by 1000)
-        let convertedValue = Number(value);
         if (pointConfig.metadata.metricType === "energy") {
-          convertedValue = Math.round(convertedValue * 1000);
+          rawValue = Math.round(Number(rawValue) * 1000);
         }
 
         readingsToInsert.push({
           pointMetadata: pointConfig.metadata,
-          value: convertedValue,
+          rawValue,
           measurementTime,
           receivedTime,
           dataQuality: "good" as const,

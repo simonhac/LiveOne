@@ -1,25 +1,25 @@
 /**
- * Selectronic Point Metadata Configuration
+ * Fronius Point Metadata Configuration
  *
- * This defines all metadata for the key monitoring points from Selectronic/Select.Live systems.
- * Each entry maps a field from the SelectronicData interface to point_info metadata.
+ * This defines all metadata for the key monitoring points from Fronius systems.
+ * Each entry maps a field from the FroniusPushData interface to point_info metadata.
  *
- * Based on system ID 1 (Daylesford) - Selectronic SP PRO
+ * Fronius systems push data to /api/push/fronius endpoint
  */
 
 import type { PointMetadata } from "@/lib/monitoring-points-manager";
 
-export interface SelectronicPointConfig {
-  // Field name from SelectronicData interface
-  field: keyof import("./selectronic-client").SelectronicData;
+export interface FroniusPointConfig {
+  // Field name from FroniusPushData interface
+  field: keyof import("../../../app/api/push/fronius/route").FroniusPushData;
   // Metadata for point_info table
   metadata: PointMetadata;
 }
 
 /**
- * Monitoring points for Selectronic systems
+ * Monitoring points for Fronius systems
  */
-export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
+export const FRONIUS_POINTS: FroniusPointConfig[] = [
   // ============================================================================
   // POWER METRICS (W)
   // ============================================================================
@@ -28,8 +28,8 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "solarW",
     metadata: {
-      originId: "selectronic",
-      originSubId: "solar_w",
+      originId: "fronius",
+      originSubId: "solarW",
       defaultName: "Solar",
       subsystem: "solar",
       type: "source",
@@ -42,10 +42,10 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
 
   // Solar Power - Remote (Inverter)
   {
-    field: "solarInverterW",
+    field: "solarRemoteW",
     metadata: {
-      originId: "selectronic",
-      originSubId: "solarinverter_w",
+      originId: "fronius",
+      originSubId: "solarRemoteW",
       defaultName: "Solar Remote",
       subsystem: "solar",
       type: "source",
@@ -56,12 +56,12 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
     },
   },
 
-  // Solar Power - Local (Shunt)
+  // Solar Power - Local (Shunt/CT)
   {
-    field: "shuntW",
+    field: "solarLocalW",
     metadata: {
-      originId: "selectronic",
-      originSubId: "shunt_w",
+      originId: "fronius",
+      originSubId: "solarLocalW",
       defaultName: "Solar Local",
       subsystem: "solar",
       type: "source",
@@ -76,8 +76,8 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "loadW",
     metadata: {
-      originId: "selectronic",
-      originSubId: "load_w",
+      originId: "fronius",
+      originSubId: "loadW",
       defaultName: "Load",
       subsystem: "load",
       type: "load",
@@ -92,8 +92,8 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "batteryW",
     metadata: {
-      originId: "selectronic",
-      originSubId: "battery_w",
+      originId: "fronius",
+      originSubId: "batteryW",
       defaultName: "Battery",
       subsystem: "battery",
       type: "bidi",
@@ -108,8 +108,8 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "gridW",
     metadata: {
-      originId: "selectronic",
-      originSubId: "grid_w",
+      originId: "fronius",
+      originSubId: "gridW",
       defaultName: "Grid",
       subsystem: "grid",
       type: "bidi",
@@ -128,8 +128,8 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "batterySOC",
     metadata: {
-      originId: "selectronic",
-      originSubId: "battery_soc",
+      originId: "fronius",
+      originSubId: "batterySOC",
       defaultName: "Battery",
       subsystem: "battery",
       type: "bidi",
@@ -144,14 +144,14 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "faultCode",
     metadata: {
-      originId: "selectronic",
-      originSubId: "fault_code",
-      defaultName: "Fault Code",
-      subsystem: "system",
+      originId: "fronius",
+      originSubId: "faultCode",
+      defaultName: "Fault",
+      subsystem: null,
       type: null,
       subtype: null,
       extension: null,
-      metricType: "code",
+      metricType: "diagnostic",
       metricUnit: "text",
     },
   },
@@ -160,14 +160,14 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "faultTimestamp",
     metadata: {
-      originId: "selectronic",
-      originSubId: "fault_ts",
-      defaultName: "Fault Time",
-      subsystem: "system",
+      originId: "fronius",
+      originSubId: "faultTimestamp",
+      defaultName: "Fault",
+      subsystem: null,
       type: null,
       subtype: null,
       extension: null,
-      metricType: "time",
+      metricType: "diagnostic",
       metricUnit: "epochMs",
     },
   },
@@ -176,27 +176,27 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "generatorStatus",
     metadata: {
-      originId: "selectronic",
-      originSubId: "gen_status",
-      defaultName: "Generator Status",
-      subsystem: "generator",
+      originId: "fronius",
+      originSubId: "generatorStatus",
+      defaultName: "Generator",
+      subsystem: null,
       type: null,
       subtype: null,
       extension: null,
-      metricType: "active",
+      metricType: "status",
       metricUnit: "bool",
     },
   },
 
   // ============================================================================
-  // LIFETIME ENERGY TOTALS (Wh) - Source data is kWh, converted to Wh in adapter
+  // INTERVAL ENERGY METRICS (Wh) - Energy accumulated in this interval
   // ============================================================================
 
   {
-    field: "solarKwhTotal",
+    field: "solarWhInterval",
     metadata: {
-      originId: "selectronic",
-      originSubId: "solar_wh_total",
+      originId: "fronius",
+      originSubId: "solarWhInterval",
       defaultName: "Solar",
       subsystem: "solar",
       type: "source",
@@ -207,10 +207,10 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
     },
   },
   {
-    field: "loadKwhTotal",
+    field: "loadWhInterval",
     metadata: {
-      originId: "selectronic",
-      originSubId: "load_wh_total",
+      originId: "fronius",
+      originSubId: "loadWhInterval",
       defaultName: "Load",
       subsystem: "load",
       type: "load",
@@ -221,10 +221,10 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
     },
   },
   {
-    field: "batteryInKwhTotal",
+    field: "batteryInWhInterval",
     metadata: {
-      originId: "selectronic",
-      originSubId: "battery_in_wh_total",
+      originId: "fronius",
+      originSubId: "batteryInWhInterval",
       defaultName: "Battery Charge",
       subsystem: "battery",
       type: "bidi",
@@ -235,10 +235,10 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
     },
   },
   {
-    field: "batteryOutKwhTotal",
+    field: "batteryOutWhInterval",
     metadata: {
-      originId: "selectronic",
-      originSubId: "battery_out_wh_total",
+      originId: "fronius",
+      originSubId: "batteryOutWhInterval",
       defaultName: "Battery Discharge",
       subsystem: "battery",
       type: "bidi",
@@ -249,10 +249,10 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
     },
   },
   {
-    field: "gridInKwhTotal",
+    field: "gridInWhInterval",
     metadata: {
-      originId: "selectronic",
-      originSubId: "grid_in_wh_total",
+      originId: "fronius",
+      originSubId: "gridInWhInterval",
       defaultName: "Import",
       subsystem: "grid",
       type: "bidi",
@@ -263,10 +263,10 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
     },
   },
   {
-    field: "gridOutKwhTotal",
+    field: "gridOutWhInterval",
     metadata: {
-      originId: "selectronic",
-      originSubId: "grid_out_wh_total",
+      originId: "fronius",
+      originSubId: "gridOutWhInterval",
       defaultName: "Export",
       subsystem: "grid",
       type: "bidi",
@@ -282,7 +282,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
  * Helper to get metadata for a specific field
  */
 export function getPointMetadata(
-  field: keyof import("./selectronic-client").SelectronicData,
+  field: keyof import("../../../app/api/push/fronius/route").FroniusPushData,
 ): PointMetadata | undefined {
-  return SELECTRONIC_POINTS.find((p) => p.field === field)?.metadata;
+  return FRONIUS_POINTS.find((p) => p.field === field)?.metadata;
 }

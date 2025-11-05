@@ -112,12 +112,13 @@ export async function ensurePointInfo(
 export async function insertPointReading(
   systemId: number,
   pointInfoId: number,
-  value: number,
+  value: number | null,
   measurementTime: number,
   receivedTime: number,
   dataQuality: "good" | "error" | "estimated" | "interpolated" = "good",
   sessionId?: number | null,
   error?: string | null,
+  valueStr?: string | null,
 ): Promise<void> {
   await db
     .insert(pointReadings)
@@ -127,7 +128,8 @@ export async function insertPointReading(
       sessionId: sessionId || null,
       measurementTime,
       receivedTime,
-      value,
+      value: value !== null ? value : null,
+      valueStr: valueStr || null,
       error: error || null,
       dataQuality,
     })
@@ -138,7 +140,8 @@ export async function insertPointReading(
         pointReadings.measurementTime,
       ],
       set: {
-        value,
+        value: value !== null ? value : null,
+        valueStr: valueStr || null,
         receivedTime,
         error: error || null,
         dataQuality,
@@ -147,14 +150,50 @@ export async function insertPointReading(
 }
 
 /**
+ * Convert raw value to appropriate storage format based on metadata
+ */
+function convertValueByMetadata(
+  rawValue: any,
+  metadata: PointMetadata,
+): { value: number | null; valueStr: string | null } {
+  if (rawValue == null) {
+    return { value: null, valueStr: null };
+  }
+
+  // Handle text fields
+  if (metadata.metricUnit === "text") {
+    return { value: null, valueStr: String(rawValue) };
+  }
+
+  // Handle timestamp fields (epochMs)
+  if (metadata.metricUnit === "epochMs") {
+    // If it's already a number (Unix timestamp in seconds), convert to ms
+    if (typeof rawValue === "number") {
+      return { value: rawValue * 1000, valueStr: null };
+    }
+    // If it's a string (ISO format), parse and convert to ms
+    if (typeof rawValue === "string") {
+      return { value: new Date(rawValue).getTime(), valueStr: null };
+    }
+    // If it's a Date object
+    if (rawValue instanceof Date) {
+      return { value: rawValue.getTime(), valueStr: null };
+    }
+  }
+
+  // All other fields are numeric
+  return { value: Number(rawValue), valueStr: null };
+}
+
+/**
  * Batch insert readings for multiple monitoring points
- * Automatically ensures point_info entries exist
+ * Automatically ensures point_info entries exist and converts values based on metadata
  */
 export async function insertPointReadingsBatch(
   systemId: number,
   readings: Array<{
     pointMetadata: PointMetadata;
-    value: number;
+    rawValue: any; // Raw value from vendor (will be converted based on metadata)
     measurementTime: number;
     receivedTime: number;
     dataQuality?: "good" | "error" | "estimated" | "interpolated";
@@ -177,13 +216,20 @@ export async function insertPointReadingsBatch(
       reading.pointMetadata,
     );
 
+    // Convert raw value based on metadata
+    const { value, valueStr } = convertValueByMetadata(
+      reading.rawValue,
+      reading.pointMetadata,
+    );
+
     valuesToInsert.push({
       systemId,
       pointId: point.id,
       sessionId: reading.sessionId || null,
       measurementTime: reading.measurementTime,
       receivedTime: reading.receivedTime,
-      value: reading.value,
+      value,
+      valueStr,
       error: reading.error || null,
       dataQuality: reading.dataQuality || ("good" as const),
     });

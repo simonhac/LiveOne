@@ -91,6 +91,7 @@ interface SyncTableOptions {
   mapRow?: (row: any) => any | null; // Optional: transform/filter rows (return null to skip)
   timestampField?: string; // Field to use for date range tracking (e.g., 'inverter_time')
   idField: string; // Field to use as secondary cursor to handle duplicate timestamps (e.g., 'id')
+  chunkSize?: number; // Optional: Override chunk size for this table (default SYNC_CHUNK_SIZE)
   onProgress?: (
     synced: number,
     total: number,
@@ -114,12 +115,13 @@ async function syncTableData(
     mapRow,
     timestampField,
     idField,
+    chunkSize: customChunkSize,
     onProgress,
     onComplete,
   } = options;
 
   const batchSize = SYNC_BATCH_SIZE;
-  const chunkSize = SYNC_CHUNK_SIZE;
+  const chunkSize = customChunkSize || SYNC_CHUNK_SIZE;
 
   let totalSynced = 0;
   let totalSkipped = 0;
@@ -236,9 +238,12 @@ async function syncTableData(
     // Insert in chunks using raw SQL
     const insertStart = Date.now();
     let chunksInserted = 0;
+    let isFirstChunk = batchNum === 1 && totalSynced === 0;
 
     for (let i = 0; i < batchData.length; i += chunkSize) {
-      const chunk = batchData.slice(i, i + chunkSize);
+      // For the very first chunk of the sync, use size 1 as a test
+      const currentChunkSize = isFirstChunk ? 1 : chunkSize;
+      const chunk = batchData.slice(i, i + currentChunkSize);
 
       if (chunk.length > 0) {
         // Get column names from first row
@@ -260,10 +265,41 @@ async function syncTableData(
           )
           .join(",");
 
-        // Execute raw SQL insert
-        const insertQuery = sql`INSERT OR IGNORE INTO ${sql.raw(targetTable)} (${sql.raw(columns.join(","))}) VALUES ${sql.raw(values)}`;
-        await ctx.db.run(insertQuery);
-        chunksInserted++;
+        // Execute raw SQL insert using rawClient to avoid Drizzle's transaction handling
+        const insertSQL = `INSERT OR REPLACE INTO ${targetTable} (${columns.join(",")}) VALUES ${values}`;
+        const chunkLabel = isFirstChunk ? "[TEST]" : "";
+        console.log(
+          `[SYNC-RAW] ${chunkLabel} Executing INSERT OR REPLACE for ${targetTable}: ${chunk.length} rows (chunk ${chunksInserted + 1})`,
+        );
+        try {
+          await rawClient.execute(insertSQL);
+          chunksInserted++;
+          console.log(
+            `[SYNC-RAW] ✓ ${chunkLabel} Chunk ${chunksInserted} inserted successfully`,
+          );
+
+          // After first test chunk succeeds, switch to normal chunk size
+          if (isFirstChunk) {
+            console.log(
+              `[SYNC-RAW] ✓ Test insert succeeded, continuing with chunk size ${chunkSize}`,
+            );
+            isFirstChunk = false;
+          }
+        } catch (insertError) {
+          console.error(`[SYNC] INSERT failed for ${targetTable}:`);
+          console.error(
+            `  Error message:`,
+            insertError instanceof Error
+              ? insertError.message
+              : String(insertError),
+          );
+          console.error(`  Exact SQL statement:\n${insertSQL}`);
+          console.error(`  Columns (${columns.length}):`, columns);
+          console.error(`  Chunk size:`, chunk.length);
+          console.error(`  First row:`, chunk[0]);
+          console.error(`  Last row:`, chunk[chunk.length - 1]);
+          throw insertError;
+        }
       }
     }
 
@@ -896,14 +932,9 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
     return { detail: "No point_readings 5-minute aggregations to sync" };
   }
 
-  // Clear existing aggregations in the sync range
-  await ctx.db
-    .delete(pointReadingsAgg5m)
-    .where(gte(pointReadingsAgg5m.intervalEnd, syncFromTimestamp));
-
   // Get mapping of production point_info IDs to development point_info IDs
   const prodPointInfo = await ctx.prodDb.execute(
-    `SELECT id, system_id, point_id, point_sub_id FROM point_info`,
+    `SELECT id, system_id, origin_id, origin_sub_id FROM point_info`,
   );
 
   const devPointInfo = await ctx.db
@@ -915,8 +946,10 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
     })
     .from(pointInfo);
 
-  // Create mapping: prod point_info.id -> dev point_info.id
-  const pointIdMapping = new Map<number, number>();
+  // Create mapping: prod system_id:point_id -> dev point_id
+  // NOTE: Point IDs are NOT globally unique - they're system-specific (composite PK: system_id + id)
+  // So we must include system_id in the mapping key to avoid collisions
+  const pointIdMapping = new Map<string, number>();
 
   for (const prodPoint of prodPointInfo.rows) {
     const prodSystemId = prodPoint.system_id as number;
@@ -924,16 +957,18 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
 
     if (!devSystemId) continue;
 
-    // Find matching dev point_info by system_id, point_id, and point_sub_id
+    // Find matching dev point_info by system_id, origin_id, and origin_sub_id
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.originId === prodPoint.point_id &&
-        p.originSubId === prodPoint.point_sub_id,
+        p.originId === prodPoint.origin_id &&
+        p.originSubId === prodPoint.origin_sub_id,
     );
 
     if (devPoint) {
-      pointIdMapping.set(prodPoint.id as number, devPoint.id);
+      // Use composite key: ${prodSystemId}:${prodPointId}
+      const key = `${prodSystemId}:${prodPoint.id}`;
+      pointIdMapping.set(key, devPoint.id);
     }
   }
 
@@ -950,8 +985,9 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
       query: `SELECT * FROM point_readings_agg_5m WHERE interval_end > ? ORDER BY interval_end, system_id, point_id`,
       queryParams: [syncFromTimestamp],
       mapRow: (row) => {
-        // Map point_info IDs
-        const mappedPointId = pointIdMapping.get(row.point_id as number);
+        // Map point_info IDs using composite key (system_id:point_id)
+        const pointKey = `${row.system_id}:${row.point_id}`;
+        const mappedPointId = pointIdMapping.get(pointKey);
         if (!mappedPointId) {
           // Silently skip unmapped points (expected for systems we don't have)
           return null;
@@ -1285,14 +1321,9 @@ async function syncPointReadings(ctx: SyncContext) {
     return { detail: "No point_readings to sync" };
   }
 
-  // Clear existing point_readings in the sync range
-  await ctx.db
-    .delete(pointReadings)
-    .where(gte(pointReadings.measurementTime, syncFromTimestamp));
-
   // First, get mapping of production point_info IDs to development point_info IDs
   const prodPointInfo = await ctx.prodDb.execute(
-    `SELECT id, system_id, point_id, point_sub_id FROM point_info`,
+    `SELECT id, system_id, origin_id, origin_sub_id FROM point_info`,
   );
 
   const devPointInfo = await ctx.db
@@ -1304,8 +1335,10 @@ async function syncPointReadings(ctx: SyncContext) {
     })
     .from(pointInfo);
 
-  // Create mapping: prod point_info.id -> dev point_info.id
-  const pointIdMapping = new Map<number, number>();
+  // Create mapping: prod system_id:point_id -> dev point_id
+  // NOTE: Point IDs are NOT globally unique - they're system-specific (composite PK: system_id + id)
+  // So we must include system_id in the mapping key to avoid collisions
+  const pointIdMapping = new Map<string, number>();
 
   for (const prodPoint of prodPointInfo.rows) {
     const prodSystemId = prodPoint.system_id as number;
@@ -1313,16 +1346,18 @@ async function syncPointReadings(ctx: SyncContext) {
 
     if (!devSystemId) continue;
 
-    // Find matching dev point_info by system_id, point_id, and point_sub_id
+    // Find matching dev point_info by system_id, origin_id, and origin_sub_id
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.originId === prodPoint.point_id &&
-        p.originSubId === prodPoint.point_sub_id,
+        p.originId === prodPoint.origin_id &&
+        p.originSubId === prodPoint.origin_sub_id,
     );
 
     if (devPoint) {
-      pointIdMapping.set(prodPoint.id as number, devPoint.id);
+      // Use composite key: ${prodSystemId}:${prodPointId}
+      const key = `${prodSystemId}:${prodPoint.id}`;
+      pointIdMapping.set(key, devPoint.id);
     }
   }
 
@@ -1332,9 +1367,11 @@ async function syncPointReadings(ctx: SyncContext) {
   const result = await syncTableData(ctx, "point_readings", "point_readings", {
     query: `SELECT * FROM point_readings WHERE measurement_time > ? ORDER BY measurement_time, id`,
     queryParams: [syncFromTimestamp],
+    chunkSize: 1000, // Batch 1000 rows per INSERT (will test with 1 first)
     mapRow: (row) => {
-      // Map point_info IDs
-      const mappedPointId = pointIdMapping.get(row.point_id as number);
+      // Map point_info IDs using composite key (system_id:point_id)
+      const pointKey = `${row.system_id}:${row.point_id}`;
+      const mappedPointId = pointIdMapping.get(pointKey);
       if (!mappedPointId) {
         // Silently skip unmapped points (expected for systems we don't have)
         return null;
@@ -1350,6 +1387,7 @@ async function syncPointReadings(ctx: SyncContext) {
         ...row,
         point_id: mappedPointId,
         system_id: mappedSystemId,
+        value_str: null, // Production doesn't have value_str column yet, add it for dev compatibility
       };
     },
     timestampField: "measurement_time", // syncTableData handles milliseconds automatically
@@ -1437,6 +1475,12 @@ export const syncStages: StageDefinition[] = [
     execute: countRecordsToSync,
   },
   {
+    id: "sync-sessions",
+    name: "Sync sessions",
+    modifiesMetadata: false,
+    execute: syncSessions,
+  },
+  {
     id: "sync-readings",
     name: "Sync solar system readings",
     modifiesMetadata: false,
@@ -1465,12 +1509,6 @@ export const syncStages: StageDefinition[] = [
     name: "Sync 5-min point reading aggregations",
     modifiesMetadata: false,
     execute: syncPointReadings5MinAggregations,
-  },
-  {
-    id: "sync-sessions",
-    name: "Sync sessions",
-    modifiesMetadata: false,
-    execute: syncSessions,
   },
   {
     id: "finalise",
