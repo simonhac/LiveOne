@@ -209,7 +209,9 @@ export default function ViewDataModal({
     },
   ) => {
     try {
-      const response = await fetch(`/api/admin/points/${pointDbId}`, {
+      // Use composite key format: systemId.pointId
+      const compositeKey = `${systemId}.${pointDbId}`;
+      const response = await fetch(`/api/admin/point/${compositeKey}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),

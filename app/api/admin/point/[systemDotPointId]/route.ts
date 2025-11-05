@@ -2,12 +2,12 @@ import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { pointInfo } from "@/lib/db/schema-monitoring-points";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
 
 export async function PATCH(
   request: Request,
-  { params }: { params: Promise<{ pointId: string }> },
+  { params }: { params: Promise<{ systemDotPointId: string }> },
 ) {
   try {
     const { userId } = await auth();
@@ -26,11 +26,27 @@ export async function PATCH(
       );
     }
 
-    const { pointId: pointIdStr } = await params;
-    const pointId = parseInt(pointIdStr);
+    const { systemDotPointId } = await params;
 
-    if (isNaN(pointId)) {
-      return NextResponse.json({ error: "Invalid point ID" }, { status: 400 });
+    // Parse composite key format: systemId.pointId
+    const parts = systemDotPointId.split(".");
+    if (parts.length !== 2) {
+      return NextResponse.json(
+        { error: "Invalid point ID format. Expected: systemId.pointId" },
+        { status: 400 },
+      );
+    }
+
+    const systemId = parseInt(parts[0]);
+    const pointId = parseInt(parts[1]);
+
+    if (isNaN(systemId) || isNaN(pointId)) {
+      return NextResponse.json(
+        {
+          error: "Invalid point ID. Both systemId and pointId must be numbers",
+        },
+        { status: 400 },
+      );
     }
 
     const body = await request.json();
@@ -116,14 +132,17 @@ export async function PATCH(
           : shortName.trim();
     }
 
-    // Update the point info
-    await db.update(pointInfo).set(updates).where(eq(pointInfo.id, pointId));
+    // Update the point info (using composite key: system_id + id)
+    await db
+      .update(pointInfo)
+      .set(updates)
+      .where(and(eq(pointInfo.systemId, systemId), eq(pointInfo.id, pointId)));
 
     // Fetch and return the updated point info
     const [updatedPoint] = await db
       .select()
       .from(pointInfo)
-      .where(eq(pointInfo.id, pointId));
+      .where(and(eq(pointInfo.systemId, systemId), eq(pointInfo.id, pointId)));
 
     if (!updatedPoint) {
       return NextResponse.json({ error: "Point not found" }, { status: 404 });
