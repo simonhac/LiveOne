@@ -215,7 +215,21 @@ export default function DashboardClient({
   }>({ type: null });
   const [showSessionTimeout, setShowSessionTimeout] = useState(false);
   const [showViewDataModal, setShowViewDataModal] = useState(false);
-  const [mondoPeriod, setMondoPeriod] = useState<"1D" | "7D" | "30D">("1D");
+  // Helper function to get period duration in milliseconds
+  const getPeriodDuration = (period: "1D" | "7D" | "30D"): number => {
+    if (period === "1D") return 24 * 60 * 60 * 1000;
+    if (period === "7D") return 7 * 24 * 60 * 60 * 1000;
+    return 30 * 24 * 60 * 60 * 1000;
+  };
+
+  const [mondoPeriod, setMondoPeriod] = useState<"1D" | "7D" | "30D">(() => {
+    // Initialize from URL params if present, otherwise default to "1D"
+    const periodParam = searchParams.get("period");
+    if (periodParam === "1D" || periodParam === "7D" || periodParam === "30D") {
+      return periodParam;
+    }
+    return "1D";
+  });
   const [historyTimeRange, setHistoryTimeRange] = useState<{
     start?: string;
     end?: string;
@@ -224,12 +238,52 @@ export default function DashboardClient({
     const startEncoded = searchParams.get("start");
     const endEncoded = searchParams.get("end");
     const offsetEncoded = searchParams.get("offset");
+    const periodParam = searchParams.get("period");
 
-    if (startEncoded && endEncoded && offsetEncoded) {
-      const offsetMin = decodeUrlOffset(offsetEncoded);
+    if (!offsetEncoded || !periodParam) {
+      return {};
+    }
+
+    const offsetMin = decodeUrlOffset(offsetEncoded);
+    const period =
+      periodParam === "1D" || periodParam === "7D" || periodParam === "30D"
+        ? periodParam
+        : "1D";
+    const periodDuration = getPeriodDuration(period);
+
+    // Case 1: Both start and end provided
+    if (startEncoded && endEncoded) {
       const start = decodeUrlDate(startEncoded, offsetMin);
       const end = decodeUrlDate(endEncoded, offsetMin);
+
+      // Validate that start + period == end
+      const expectedEnd = new Date(new Date(start).getTime() + periodDuration);
+      const actualEnd = new Date(end);
+
+      if (expectedEnd.getTime() !== actualEnd.getTime()) {
+        console.error("URL parameters don't agree: start + period != end");
+        // Fall back to using start + period
+        return {
+          start,
+          end: expectedEnd.toISOString(),
+        };
+      }
+
       return { start, end };
+    }
+
+    // Case 2: Only start provided - calculate end
+    if (startEncoded) {
+      const start = decodeUrlDate(startEncoded, offsetMin);
+      const end = new Date(new Date(start).getTime() + periodDuration);
+      return { start, end: end.toISOString() };
+    }
+
+    // Case 3: Only end provided - calculate start
+    if (endEncoded) {
+      const end = decodeUrlDate(endEncoded, offsetMin);
+      const start = new Date(new Date(end).getTime() - periodDuration);
+      return { start: start.toISOString(), end };
     }
 
     return {};
@@ -532,6 +586,16 @@ export default function DashboardClient({
     historyFetchTrigger,
   ]);
 
+  // Ensure period is always in the URL
+  useEffect(() => {
+    const periodParam = searchParams.get("period");
+    if (!periodParam) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("period", mondoPeriod);
+      router.push(`?${params.toString()}`, { scroll: false });
+    }
+  }, []); // Run only on mount
+
   // Handle clicks outside of the dropdowns
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -578,11 +642,11 @@ export default function DashboardClient({
       });
       setHistoryFetchTrigger((prev) => prev + 1);
 
-      // Update URL with encoded time range
+      // Update URL with only start (period is already in URL, end can be calculated)
       const offsetMin = system.timezoneOffsetMin ?? 600;
       const params = new URLSearchParams(searchParams.toString());
       params.set("start", encodeUrlDate(newStartISO, offsetMin));
-      params.set("end", encodeUrlDate(newEndISO, offsetMin));
+      params.delete("end"); // Remove end - it's redundant with start + period
       params.set("offset", encodeUrlOffset(offsetMin));
       router.push(`?${params.toString()}`, { scroll: false });
     }
@@ -607,11 +671,11 @@ export default function DashboardClient({
       });
       setHistoryFetchTrigger((prev) => prev + 1);
 
-      // Update URL with encoded time range
+      // Update URL with only start (period is already in URL, end can be calculated)
       const offsetMin = system.timezoneOffsetMin ?? 600;
       const params = new URLSearchParams(searchParams.toString());
       params.set("start", encodeUrlDate(newStartISO, offsetMin));
-      params.set("end", encodeUrlDate(newEndISO, offsetMin));
+      params.delete("end"); // Remove end - it's redundant with start + period
       params.set("offset", encodeUrlOffset(offsetMin));
       router.push(`?${params.toString()}`, { scroll: false });
     }
