@@ -79,3 +79,8 @@ dev.db-journal
 .env.development
 .env.production.env.local
 liveone_backup.sql
+
+# Migration logs (keep directory structure but ignore actual log files)
+log/*.log
+log/*-migration.log
+log/*-validation.log

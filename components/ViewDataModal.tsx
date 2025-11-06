@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { X } from "lucide-react";
+import { X, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatDateTime } from "@/lib/fe-date-format";
 import PointInfoModal from "./PointInfoModal";
 import SessionInfoModal from "./SessionInfoModal";
@@ -73,6 +73,17 @@ export default function ViewDataModal({
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
   const [isSessionInfoModalOpen, setIsSessionInfoModalOpen] = useState(false);
   const [rawDataUnavailable, setRawDataUnavailable] = useState(false);
+  const [pagination, setPagination] = useState<{
+    firstCursor: number | null;
+    lastCursor: number | null;
+    hasOlder: boolean;
+    hasNewer: boolean;
+    limit: number;
+  } | null>(null);
+  const [currentCursor, setCurrentCursor] = useState<number | null>(null);
+  const [cursorDirection, setCursorDirection] = useState<"older" | "newer">(
+    "newer",
+  );
 
   const fetchData = useCallback(async () => {
     // Prevent duplicate fetches
@@ -84,8 +95,20 @@ export default function ViewDataModal({
     try {
       fetchingRef.current = true;
       setLoading(true);
+
+      // Build URL with pagination parameters
+      const params = new URLSearchParams({
+        limit: "200",
+        dataSource,
+      });
+
+      if (currentCursor !== null) {
+        params.set("cursor", currentCursor.toString());
+        params.set("direction", cursorDirection);
+      }
+
       const response = await fetch(
-        `/api/admin/systems/${systemId}/point-readings?limit=200&dataSource=${dataSource}`,
+        `/api/admin/systems/${systemId}/point-readings?${params}`,
       );
       if (!response.ok) throw new Error("Failed to fetch data");
 
@@ -93,6 +116,7 @@ export default function ViewDataModal({
       setHeaders(result.headers || []);
       setData(result.data || []);
       setMetadata(result.metadata || null);
+      setPagination(result.pagination || null);
       setInitialLoad(false); // Mark initial load as complete
 
       // If no data in current view but alternative has data, switch views
@@ -115,7 +139,7 @@ export default function ViewDataModal({
       setLoading(false);
       fetchingRef.current = false;
     }
-  }, [systemId, dataSource]);
+  }, [systemId, dataSource, currentCursor, cursorDirection]);
 
   useEffect(() => {
     if (isOpen) {
@@ -127,6 +151,9 @@ export default function ViewDataModal({
       fetchingRef.current = false; // Reset fetch guard
       setRawDataUnavailable(false); // Reset raw data unavailable flag
       setDataSource("raw"); // Reset to default view
+      setCurrentCursor(null); // Reset pagination
+      setCursorDirection("newer");
+      setPagination(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]); // Intentionally exclude fetchData to prevent double calls
@@ -138,6 +165,14 @@ export default function ViewDataModal({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataSource]);
+
+  // Refetch when pagination changes
+  useEffect(() => {
+    if (isOpen && (currentCursor !== null || cursorDirection !== "newer")) {
+      fetchData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentCursor, cursorDirection]);
 
   // Handle escape key
   useEffect(() => {
@@ -155,6 +190,26 @@ export default function ViewDataModal({
     if (newSource !== dataSource) {
       setLoading(true);
       setDataSource(newSource);
+      // Reset pagination when switching data sources
+      setCurrentCursor(null);
+      setCursorDirection("newer");
+      setPagination(null);
+    }
+  };
+
+  const handlePageOlder = () => {
+    if (pagination?.lastCursor) {
+      setCurrentCursor(pagination.lastCursor);
+      setCursorDirection("older");
+      setLoading(true);
+    }
+  };
+
+  const handlePageNewer = () => {
+    if (pagination?.firstCursor) {
+      setCurrentCursor(pagination.firstCursor);
+      setCursorDirection("newer");
+      setLoading(true);
     }
   };
 
@@ -432,7 +487,48 @@ export default function ViewDataModal({
               {vendorType && <> — {vendorType}</>}
             </h3>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4">
+            {/* Date range display */}
+            {pagination && data.length > 0 && (
+              <span className="text-xs text-gray-400">
+                {formatDateTime(new Date(pagination.firstCursor!)).display}
+                {" to "}
+                {formatDateTime(new Date(pagination.lastCursor!)).display}
+              </span>
+            )}
+            {/* Pagination controls */}
+            <div className="inline-flex rounded-md shadow-sm" role="group">
+              <button
+                onClick={handlePageNewer}
+                disabled={!pagination?.hasNewer || loading}
+                title="Newer data (forward in time)"
+                className={`
+                  px-3 py-1 text-xs font-medium transition-colors border rounded-l-md -ml-px
+                  ${
+                    pagination?.hasNewer && !loading
+                      ? "bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white"
+                      : "bg-gray-800 text-gray-600 border-gray-700 cursor-not-allowed"
+                  }
+                `}
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button
+                onClick={handlePageOlder}
+                disabled={!pagination?.hasOlder || loading}
+                title="Older data (back in time)"
+                className={`
+                  px-3 py-1 text-xs font-medium transition-colors border rounded-r-md -ml-px
+                  ${
+                    pagination?.hasOlder && !loading
+                      ? "bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white"
+                      : "bg-gray-800 text-gray-600 border-gray-700 cursor-not-allowed"
+                  }
+                `}
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
             <button
               onClick={() => setShowExtras(!showExtras)}
               className="px-3 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded transition-colors text-gray-300"

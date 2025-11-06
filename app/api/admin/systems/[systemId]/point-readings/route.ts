@@ -38,6 +38,8 @@ export async function GET(
     const { searchParams } = new URL(request.url);
     const limit = Math.min(parseInt(searchParams.get("limit") || "200"), 1000);
     const dataSource = searchParams.get("dataSource") || "raw"; // "raw" or "5m"
+    const cursor = searchParams.get("cursor"); // timestamp cursor for pagination
+    const direction = searchParams.get("direction") || "newer"; // "older" or "newer"
 
     // Track database elapsed time
     let dbElapsedMs = 0;
@@ -191,13 +193,24 @@ export async function GET(
         })
         .join(",\n  ");
 
+      // Build cursor filter
+      const cursorFilter = cursor
+        ? direction === "older"
+          ? `AND interval_end < ${cursor}`
+          : `AND interval_end > ${cursor}`
+        : "";
+
+      // For "newer" direction, we need to reverse the order to get the correct records
+      const orderDirection = direction === "newer" && cursor ? "ASC" : "DESC";
+
       pivotQuery = `
         WITH recent_timestamps AS (
           SELECT DISTINCT interval_end
           FROM point_readings_agg_5m pr
           INNER JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
           WHERE pi.system_id = ${systemId}
-          ORDER BY interval_end DESC
+          ${cursorFilter}
+          ORDER BY interval_end ${orderDirection}
           LIMIT ${limit}
         )
         SELECT
@@ -222,13 +235,24 @@ export async function GET(
         })
         .join(",\n  ");
 
+      // Build cursor filter
+      const cursorFilter = cursor
+        ? direction === "older"
+          ? `AND measurement_time < ${cursor}`
+          : `AND measurement_time > ${cursor}`
+        : "";
+
+      // For "newer" direction, we need to reverse the order to get the correct records
+      const orderDirection = direction === "newer" && cursor ? "ASC" : "DESC";
+
       pivotQuery = `
         WITH recent_timestamps AS (
           SELECT DISTINCT measurement_time
           FROM point_readings pr
           INNER JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
           WHERE pi.system_id = ${systemId}
-          ORDER BY measurement_time DESC
+          ${cursorFilter}
+          ORDER BY measurement_time ${orderDirection}
           LIMIT ${limit}
         )
         SELECT
@@ -298,6 +322,45 @@ export async function GET(
       return transformed;
     });
 
+    // Get pagination cursors
+    const firstCursor =
+      result.length > 0 ? (result[0] as any).measurement_time : null;
+    const lastCursor =
+      result.length > 0
+        ? (result[result.length - 1] as any).measurement_time
+        : null;
+
+    // Check if there are more records in each direction
+    let hasOlder = false;
+    let hasNewer = false;
+
+    if (result.length > 0) {
+      const tableName =
+        dataSource === "5m" ? "point_readings_agg_5m" : "point_readings";
+      const timeColumn =
+        dataSource === "5m" ? "interval_end" : "measurement_time";
+
+      const checkStartTime = Date.now();
+
+      // Check for older records
+      const olderCheck = (await db.all(
+        sql.raw(
+          `SELECT COUNT(*) as count FROM ${tableName} WHERE system_id = ${systemId} AND ${timeColumn} < ${lastCursor} LIMIT 1`,
+        ),
+      )) as Array<{ count: number }>;
+      hasOlder = (olderCheck[0]?.count || 0) > 0;
+
+      // Check for newer records
+      const newerCheck = (await db.all(
+        sql.raw(
+          `SELECT COUNT(*) as count FROM ${tableName} WHERE system_id = ${systemId} AND ${timeColumn} > ${firstCursor} LIMIT 1`,
+        ),
+      )) as Array<{ count: number }>;
+      hasNewer = (newerCheck[0]?.count || 0) > 0;
+
+      dbElapsedMs += Date.now() - checkStartTime;
+    }
+
     return NextResponse.json({
       headers,
       data,
@@ -310,6 +373,13 @@ export async function GET(
         rowCount: data.length,
         dbElapsedMs,
         hasAlternativeData,
+      },
+      pagination: {
+        firstCursor,
+        lastCursor,
+        hasOlder,
+        hasNewer,
+        limit,
       },
     });
   } catch (error) {
