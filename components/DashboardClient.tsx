@@ -27,6 +27,12 @@ import {
   fromUnixTimestamp,
   getNextMinuteBoundary,
 } from "@/lib/date-utils";
+import {
+  encodeUrlDate,
+  decodeUrlDate,
+  encodeUrlOffset,
+  decodeUrlOffset,
+} from "@/lib/url-date";
 import { format } from "date-fns";
 import {
   Sun,
@@ -215,9 +221,18 @@ export default function DashboardClient({
     end?: string;
   }>(() => {
     // Initialize from URL params if present
-    const start = searchParams.get("start");
-    const end = searchParams.get("end");
-    return start && end ? { start, end } : {};
+    const startEncoded = searchParams.get("start");
+    const endEncoded = searchParams.get("end");
+    const offsetEncoded = searchParams.get("offset");
+
+    if (startEncoded && endEncoded && offsetEncoded) {
+      const offsetMin = decodeUrlOffset(offsetEncoded);
+      const start = decodeUrlDate(startEncoded, offsetMin);
+      const end = decodeUrlDate(endEncoded, offsetMin);
+      return { start, end };
+    }
+
+    return {};
   });
   const [historyFetchTrigger, setHistoryFetchTrigger] = useState(0);
   const [processedHistoryData, setProcessedHistoryData] = useState<{
@@ -545,7 +560,7 @@ export default function DashboardClient({
 
   // Navigation handlers for prev/next buttons
   const handlePageNewer = () => {
-    if (historyTimeRange.start && historyTimeRange.end) {
+    if (historyTimeRange.start && historyTimeRange.end && system) {
       // Go forward in time by one period
       const currentStart = new Date(historyTimeRange.start);
       const currentEnd = new Date(historyTimeRange.end);
@@ -563,16 +578,18 @@ export default function DashboardClient({
       });
       setHistoryFetchTrigger((prev) => prev + 1);
 
-      // Update URL with time range (remove seconds and milliseconds for cleaner URLs)
+      // Update URL with encoded time range
+      const offsetMin = system.timezoneOffsetMin ?? 600;
       const params = new URLSearchParams(searchParams.toString());
-      params.set("start", newStartISO.replace(/:\d{2}\.\d{3}Z$/, "Z"));
-      params.set("end", newEndISO.replace(/:\d{2}\.\d{3}Z$/, "Z"));
+      params.set("start", encodeUrlDate(newStartISO, offsetMin));
+      params.set("end", encodeUrlDate(newEndISO, offsetMin));
+      params.set("offset", encodeUrlOffset(offsetMin));
       router.push(`?${params.toString()}`, { scroll: false });
     }
   };
 
   const handlePageOlder = () => {
-    if (historyTimeRange.start && historyTimeRange.end) {
+    if (historyTimeRange.start && historyTimeRange.end && system) {
       // Go back in time by one period
       const currentStart = new Date(historyTimeRange.start);
       const currentEnd = new Date(historyTimeRange.end);
@@ -590,10 +607,12 @@ export default function DashboardClient({
       });
       setHistoryFetchTrigger((prev) => prev + 1);
 
-      // Update URL with time range (remove seconds and milliseconds for cleaner URLs)
+      // Update URL with encoded time range
+      const offsetMin = system.timezoneOffsetMin ?? 600;
       const params = new URLSearchParams(searchParams.toString());
-      params.set("start", newStartISO.replace(/:\d{2}\.\d{3}Z$/, "Z"));
-      params.set("end", newEndISO.replace(/:\d{2}\.\d{3}Z$/, "Z"));
+      params.set("start", encodeUrlDate(newStartISO, offsetMin));
+      params.set("end", encodeUrlDate(newEndISO, offsetMin));
+      params.set("offset", encodeUrlOffset(offsetMin));
       router.push(`?${params.toString()}`, { scroll: false });
     }
   };
@@ -1230,6 +1249,7 @@ export default function DashboardClient({
                                   params.set("period", newPeriod);
                                   params.delete("start");
                                   params.delete("end");
+                                  params.delete("offset");
                                   router.push(`?${params.toString()}`, {
                                     scroll: false,
                                   });
@@ -1258,6 +1278,7 @@ export default function DashboardClient({
                                   params.set("period", newPeriod);
                                   params.delete("start");
                                   params.delete("end");
+                                  params.delete("offset");
                                   router.push(`?${params.toString()}`, {
                                     scroll: false,
                                   });
@@ -1311,6 +1332,7 @@ export default function DashboardClient({
                                   params.set("period", newPeriod);
                                   params.delete("start");
                                   params.delete("end");
+                                  params.delete("offset");
                                   router.push(`?${params.toString()}`, {
                                     scroll: false,
                                   });
