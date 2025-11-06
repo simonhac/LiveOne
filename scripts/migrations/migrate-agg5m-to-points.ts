@@ -254,13 +254,17 @@ function createDbClient(options: {
 // Helper Functions
 // ============================================================================
 
-function getVendorType(
-  systemId: number,
-): "selectronic" | "fronius" | "enphase" {
-  // System 3 is Enphase, 7 is Fronius, 1 and 2 are Selectronic
-  if (systemId === 3) return "enphase";
-  if (systemId === 7) return "fronius";
-  return "selectronic";
+async function getVendorType(db: any, systemId: number): Promise<string> {
+  const result = await db.execute({
+    sql: "SELECT vendor_type FROM systems WHERE id = ?",
+    args: [systemId],
+  });
+
+  if (result.rows.length === 0) {
+    throw new Error(`System ${systemId} not found in systems table`);
+  }
+
+  return (result.rows[0] as any).vendor_type;
 }
 
 function getMappings(vendorType: string): AggMapping[] {
@@ -427,6 +431,7 @@ async function migrateAggBatch(
   pointInfoMap: Map<string, PointInfo>,
   vendorType: string,
   dryRun: boolean,
+  warnedMissingFields: Set<string>,
 ): Promise<number> {
   if (aggs.length === 0) {
     return 0;
@@ -440,7 +445,14 @@ async function migrateAggBatch(
     for (const mapping of mappings) {
       const pointInfo = pointInfoMap.get(mapping.originSubId);
       if (!pointInfo) {
-        // Skip points that don't exist (e.g., Enphase doesn't have battery/grid)
+        // Only warn once per missing field
+        const warningKey = `${agg.system_id}:${mapping.originSubId}`;
+        if (!warnedMissingFields.has(warningKey)) {
+          console.warn(
+            `Warning: No point_info found for ${mapping.originSubId} in system ${agg.system_id}`,
+          );
+          warnedMissingFields.add(warningKey);
+        }
         continue;
       }
 
@@ -507,7 +519,7 @@ async function migrateSystem(
   systemId: number,
   dryRun: boolean,
 ): Promise<MigrationStats> {
-  const vendorType = getVendorType(systemId);
+  const vendorType = await getVendorType(db, systemId);
   const stats: MigrationStats = {
     systemId,
     vendorType,
@@ -567,6 +579,9 @@ async function migrateSystem(
 
   console.log(`\n🚀 Starting migration for system ${systemId}...`);
 
+  // Track which warnings we've already printed (to avoid spam)
+  const warnedMissingFields = new Set<string>();
+
   // Process in batches
   let batchNum = 0;
   while (true) {
@@ -593,6 +608,7 @@ async function migrateSystem(
       pointInfoMap,
       vendorType,
       dryRun,
+      warnedMissingFields,
     );
 
     // Update checkpoint
@@ -790,9 +806,21 @@ async function main() {
     await ensureMigrationProgressTable(db);
 
     // Determine which systems to migrate
-    const systemIds = options.system
-      ? [parseInt(options.system)]
-      : [1, 2, 3, 7]; // All systems with aggregated data
+    let systemIds: number[];
+    if (options.system) {
+      systemIds = [parseInt(options.system)];
+    } else {
+      // Get all systems from the database, excluding craighack
+      const result = await db.execute({
+        sql: `SELECT id FROM systems
+              WHERE vendor_type != 'craighack'
+              ORDER BY id`,
+      });
+      systemIds = result.rows.map((row: any) => row.id);
+      console.log(
+        `Found ${systemIds.length} systems to migrate: ${systemIds.join(", ")}`,
+      );
+    }
 
     // Validation only mode
     if (options.validateOnly) {

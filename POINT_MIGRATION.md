@@ -734,3 +734,52 @@ LIMIT 16000;  -- 1000 readings × 16 points
 | 2      | Selectronic | 72,480       | 15,235               | Both migrations      |
 | 3      | Enphase     | 0            | 15,055               | **Aggregation only** |
 | 7      | Fronius     | 56,347       | 10,931               | Both migrations      |
+
+---
+
+## ✅ PRODUCTION MIGRATION COMPLETE
+
+**Date**: 2025-11-06
+**Status**: Successfully completed
+**Database**: liveone-tokyo (production)
+
+### Production Results
+
+#### Raw Readings Migration
+
+- **Total migrated**: ~3.9M point_readings
+  - System 1: 93,408 readings → 1,494,528 point_readings (16 points)
+  - System 2: 96,425 readings → 1,542,800 point_readings (16 points)
+  - System 5: 64,384 readings → 836,992 point_readings (13 points)
+  - System 3: 0 (Enphase - aggregates only)
+  - System 6: Already complete (Mondo - new system)
+- **Migration time**: ~3 minutes
+- **Validation**: ✅ Zero readings missing
+
+#### Aggregation Migration
+
+- **Total migrated**: 553,973 point_aggregates
+  - System 1: 22,877 intervals → 245,509 aggregates (213.9s)
+  - System 2: 19,462 intervals → 207,944 aggregates (177.3s)
+  - System 3: 18,950 intervals → 37,410 aggregates (46.5s - Enphase)
+  - System 5: 12,892 intervals → 63,110 aggregates (63.8s - Fronius)
+  - System 6: 9,778 intervals (new data)
+- **Migration time**: ~8.4 minutes
+- **Validation**: ✅ All systems validated successfully
+- **Data quality**: ✅ No gaps in last 24 hours
+
+### Key Improvements Made
+
+1. **Dynamic system queries** - No longer hardcoded system IDs
+2. **Database-driven vendor types** - Queries `systems` table instead of hardcoded logic
+3. **Warn-once deduplication** - Prevents log spam from missing fields
+4. **Checkpoint/resume system** - Survived HTTP 502 error with zero data loss
+
+### Next Steps
+
+- Monitor system for 24 hours
+- Plan deprecation of legacy `readings` and `readings_agg_5m` tables
+- Update vendor adapters to use point system exclusively
+- Archive migration logs
+
+**Full migration details**: See `/log/TODO.md`
