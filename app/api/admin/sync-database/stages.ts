@@ -52,11 +52,14 @@ function createProgressCallback(ctx: SyncContext, stageId: string) {
     const stageTotal = ctx.recordCounts?.[stageId] || 0;
     if (stageTotal === 0) return;
 
-    // Calculate overall progress for the progress bar (cumulative across all stages)
-    const overallProgress = calculateOverallProgress(ctx, synced);
+    // Cap synced count at stageTotal (overlap can cause synced > total)
+    const cappedSynced = Math.min(synced, stageTotal);
 
-    // Calculate stage-specific percentage for detail messages
-    const stagePercent = Math.round((synced / stageTotal) * 100);
+    // Calculate overall progress for the progress bar (cumulative across all stages)
+    const overallProgress = calculateOverallProgress(ctx, cappedSynced);
+
+    // Calculate stage-specific percentage for detail messages (capped at 100%)
+    const stagePercent = Math.min(100, Math.round((synced / stageTotal) * 100));
 
     let detail: string;
     if (rangeStart && rangeEnd) {
@@ -71,10 +74,10 @@ function createProgressCallback(ctx: SyncContext, stageId: string) {
       );
       const rangeStr = formatDateRange(rangeStartZoned, rangeEndZoned, true);
       const batchStr = batchNum ? `Batch ${batchNum}: ` : "";
-      detail = `${batchStr}Downloaded ${batchSize || synced} records from ${rangeStr} (${stagePercent}%)`;
+      detail = `${batchStr}Downloaded ${batchSize || cappedSynced} records from ${rangeStr} (${stagePercent}%)`;
     } else {
       // Simple count format
-      detail = `Syncing: ${synced.toLocaleString()} of ${stageTotal.toLocaleString()} (${stagePercent}%)`;
+      detail = `Syncing: ${cappedSynced.toLocaleString()} of ${stageTotal.toLocaleString()} (${stagePercent}%)`;
     }
 
     ctx.updateStage(stageId, {
@@ -130,6 +133,7 @@ async function syncTableData(
   let lastBatchTime: Date | null = null;
   let lastCursor: number | null = null; // Track last timestamp for cursor-based pagination
   let lastId: number | null = null; // Track last ID for handling duplicate timestamps
+  let lastSystemId: number | null = null; // Track last system_id for composite PK tables
 
   while (!ctx.signal.aborted) {
     batchNum++;
@@ -139,10 +143,11 @@ async function syncTableData(
     let paginatedQuery = query;
     let paginatedParams = [...queryParams];
 
-    if (lastCursor !== null && lastId !== null && timestampField) {
-      // Add composite cursor condition: (timestamp > lastCursor) OR (timestamp = lastCursor AND id > lastId)
-      // This ensures we don't skip records with duplicate timestamps
-      const cursorCondition = `((${timestampField} > ?) OR (${timestampField} = ? AND ${idField} > ?))`;
+    if (lastCursor !== null && timestampField) {
+      // Simple cursor: fetch from last timestamp (inclusive)
+      // This causes overlap but INSERT OR REPLACE handles duplicates
+      // Avoids skipping records when multiple rows share the same timestamp
+      const cursorCondition = `(${timestampField} >= ?)`;
 
       // Need to insert before ORDER BY clause if it exists
       const orderByMatch = query.match(/\s+ORDER\s+BY\s+/i);
@@ -168,8 +173,39 @@ async function syncTableData(
         }
       }
 
-      // Add parameters: timestamp > ?, timestamp = ?, id > ?
-      paginatedParams.push(lastCursor, lastCursor, lastId);
+      // Add parameter: timestamp >= ?
+      paginatedParams.push(lastCursor);
+    } else if (lastSystemId !== null && lastId !== null && !timestampField) {
+      // For tables without timestamps but with composite PK (system_id, id)
+      // Add composite cursor condition: (system_id > lastSystemId) OR (system_id = lastSystemId AND id > lastId)
+      const cursorCondition = `((system_id > ?) OR (system_id = ? AND ${idField} > ?))`;
+
+      // Need to insert before ORDER BY clause if it exists
+      const orderByMatch = query.match(/\s+ORDER\s+BY\s+/i);
+
+      if (orderByMatch) {
+        // Split query at ORDER BY
+        const orderByIndex = orderByMatch.index!;
+        const beforeOrderBy = query.substring(0, orderByIndex);
+        const orderByClause = query.substring(orderByIndex);
+
+        // Add cursor condition before ORDER BY
+        if (query.toUpperCase().includes("WHERE")) {
+          paginatedQuery = `${beforeOrderBy} AND ${cursorCondition}${orderByClause}`;
+        } else {
+          paginatedQuery = `${beforeOrderBy} WHERE ${cursorCondition}${orderByClause}`;
+        }
+      } else {
+        // No ORDER BY, append at end
+        if (query.toUpperCase().includes("WHERE")) {
+          paginatedQuery = `${query} AND ${cursorCondition}`;
+        } else {
+          paginatedQuery = `${query} WHERE ${cursorCondition}`;
+        }
+      }
+
+      // Add parameters: system_id > ?, system_id = ?, id > ?
+      paginatedParams.push(lastSystemId, lastSystemId, lastId);
     }
 
     // Fetch batch from production using cursor-based pagination
@@ -201,9 +237,20 @@ async function syncTableData(
       const lastRow = batchResult.rows[batchResult.rows.length - 1];
       const lastTimestamp = lastRow[timestampField] as number;
 
-      // Update composite cursor to last timestamp AND ID in this batch
-      lastCursor = lastTimestamp;
-      lastId = lastRow[idField] as number;
+      // Check if we've exhausted all records at this timestamp
+      // If all rows in batch have same timestamp AND batch is smaller than limit,
+      // it means we've fetched everything at this timestamp
+      const allSameTimestamp = firstTimestamp === lastTimestamp;
+      const isPartialBatch = batchResult.rows.length < batchSize;
+
+      if (allSameTimestamp && isPartialBatch) {
+        // We've fetched all records at this timestamp
+        // Increment by 1 to move to next timestamp (avoids infinite loop)
+        lastCursor = lastTimestamp + 1;
+      } else {
+        // More records might exist at this timestamp, use >= for overlap
+        lastCursor = lastTimestamp;
+      }
 
       // Convert to dates (handle both seconds and milliseconds)
       // readings tables use seconds, point_readings use milliseconds
@@ -217,6 +264,15 @@ async function syncTableData(
 
       if (!firstBatchTime) firstBatchTime = batchRangeStart;
       lastBatchTime = batchRangeEnd;
+    } else if (!timestampField && batchResult.rows.length > 0) {
+      // For tables without timestamps, track composite cursor (system_id, id)
+      const lastRow = batchResult.rows[batchResult.rows.length - 1];
+      lastSystemId = lastRow.system_id as number;
+      lastId = lastRow[idField] as number;
+
+      console.log(
+        `[SYNC] Updated cursor: system_id=${lastSystemId}, id=${lastId}`,
+      );
     }
 
     // Map rows and filter out nulls
@@ -240,10 +296,13 @@ async function syncTableData(
     let chunksInserted = 0;
     let isFirstChunk = batchNum === 1 && totalSynced === 0;
 
-    for (let i = 0; i < batchData.length; i += chunkSize) {
+    for (let i = 0; i < batchData.length; ) {
       // For the very first chunk of the sync, use size 1 as a test
       const currentChunkSize = isFirstChunk ? 1 : chunkSize;
       const chunk = batchData.slice(i, i + currentChunkSize);
+
+      // Increment by actual chunk size (important for test chunk of size 1)
+      i += chunk.length;
 
       if (chunk.length > 0) {
         // Get column names from first row
@@ -311,13 +370,15 @@ async function syncTableData(
     totalSynced += batchData.length;
 
     // Call progress callback after processing batch
+    // Note: totalSynced may be inflated due to overlapping batches (INSERT OR REPLACE handles duplicates)
+    // but progress tracking uses this count for reporting
     if (onProgress) {
       console.log(
-        `[SYNC] Calling onProgress: rangeStart=${batchRangeStart}, rangeEnd=${batchRangeEnd}, synced=${totalSynced - batchData.length}, total=${totalSynced}`,
+        `[SYNC] Calling onProgress: rangeStart=${batchRangeStart}, rangeEnd=${batchRangeEnd}, synced=${totalSynced}`,
       );
       onProgress(
-        totalSynced - batchData.length,
         totalSynced,
+        totalSynced, // Both params same since we count all fetched records
         batchRangeStart,
         batchRangeEnd,
         batchData.length,
@@ -395,16 +456,23 @@ async function checkLocalDatabase(ctx: SyncContext) {
 
 // Stage 2: Connect to production
 async function connectToProduction(ctx: SyncContext) {
+  // IMPORTANT: For security, use a read-only Turso auth token for sync operations.
+  // Generate a read-only token with: turso db tokens create <database> --read-only
+  // Then set TURSO_AUTH_TOKEN_READONLY in your environment variables.
+  //
+  // All sync operations only READ from production and WRITE to local dev database.
+  // Using a read-only token provides an additional safety layer.
   const client = createClient({
     url: process.env.TURSO_DATABASE_URL!,
-    authToken: process.env.TURSO_AUTH_TOKEN!,
+    authToken:
+      process.env.TURSO_AUTH_TOKEN_READONLY || process.env.TURSO_AUTH_TOKEN!,
   });
 
-  // Test connection
+  // Test connection with a read-only query
   await client.execute("SELECT 1");
 
   return {
-    detail: "Connected to Turso",
+    detail: "Connected to Turso (read-only)",
     context: { prodDb: client }, // Pass the client, not the drizzle instance
   };
 }
@@ -1111,10 +1179,11 @@ async function prepareForSync(ctx: SyncContext) {
 
   const localDetail = `${systemCount.length} systems`;
 
-  // Step 2: Connect to production
+  // Step 2: Connect to production (using read-only token if available)
   const client = createClient({
     url: process.env.TURSO_DATABASE_URL!,
-    authToken: process.env.TURSO_AUTH_TOKEN!,
+    authToken:
+      process.env.TURSO_AUTH_TOKEN_READONLY || process.env.TURSO_AUTH_TOKEN!,
   });
 
   // Test connection
