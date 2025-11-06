@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
 import EnergyChart from "@/components/EnergyChart";
@@ -222,6 +222,13 @@ export default function DashboardClient({
     return 30 * 24 * 60 * 60 * 1000;
   };
 
+  // Helper function to get data interval in minutes for a given period
+  const getPeriodIntervalMinutes = (period: "1D" | "7D" | "30D"): number => {
+    if (period === "1D") return 5;
+    if (period === "7D") return 30;
+    return 24 * 60; // 1 day
+  };
+
   const [mondoPeriod, setMondoPeriod] = useState<"1D" | "7D" | "30D">(() => {
     // Initialize from URL params if present, otherwise default to "1D"
     const periodParam = searchParams.get("period");
@@ -288,6 +295,13 @@ export default function DashboardClient({
 
     return {};
   });
+
+  // Derive whether we're in historical navigation mode (vs live mode)
+  const isHistoricalMode = useMemo(
+    () => !!(historyTimeRange.start || historyTimeRange.end),
+    [historyTimeRange],
+  );
+
   const [historyFetchTrigger, setHistoryFetchTrigger] = useState(0);
   const [processedHistoryData, setProcessedHistoryData] = useState<{
     load: ChartData | null;
@@ -477,27 +491,15 @@ export default function DashboardClient({
         );
 
         if (!abortController.signal.aborted) {
-          console.log("[DashboardClient] Setting chart data:", {
-            load: processedData.load
-              ? {
-                  timestamps: processedData.load.timestamps?.length,
-                  series: processedData.load.series?.length,
-                  mode: processedData.load.mode,
-                }
-              : null,
-            generation: processedData.generation
-              ? {
-                  timestamps: processedData.generation.timestamps?.length,
-                  series: processedData.generation.series?.length,
-                  mode: processedData.generation.mode,
-                }
-              : null,
-          });
           setProcessedHistoryData(processedData);
           setLoadChartData(processedData.load);
           setGenerationChartData(processedData.generation);
-          // Store the request timestamps for navigation
-          if (processedData.requestStart && processedData.requestEnd) {
+          // Store the request timestamps for navigation (only when in historical mode)
+          if (
+            processedData.requestStart &&
+            processedData.requestEnd &&
+            isHistoricalMode
+          ) {
             setHistoryTimeRange({
               start: processedData.requestStart,
               end: processedData.requestEnd,
@@ -633,6 +635,23 @@ export default function DashboardClient({
       const newStart = new Date(currentEnd.getTime());
       const newEnd = new Date(currentEnd.getTime() + duration);
 
+      // Check if the new end would be past current time or very close to it
+      // If we're within one interval of "now", revert to live mode
+      const now = new Date();
+      const intervalMs = getPeriodIntervalMinutes(mondoPeriod) * 60 * 1000;
+      if (newEnd.getTime() > now.getTime() - intervalMs) {
+        // Revert to live mode - clear start/end/offset from URL
+        setHistoryTimeRange({});
+        setHistoryFetchTrigger((prev) => prev + 1);
+
+        const params = new URLSearchParams(searchParams.toString());
+        params.delete("start");
+        params.delete("end");
+        params.delete("offset");
+        router.push(`?${params.toString()}`, { scroll: false });
+        return;
+      }
+
       const newStartISO = newStart.toISOString();
       const newEndISO = newEnd.toISOString();
 
@@ -653,32 +672,52 @@ export default function DashboardClient({
   };
 
   const handlePageOlder = () => {
-    if (historyTimeRange.start && historyTimeRange.end && system) {
-      // Go back in time by one period
-      const currentStart = new Date(historyTimeRange.start);
-      const currentEnd = new Date(historyTimeRange.end);
-      const duration = currentEnd.getTime() - currentStart.getTime();
+    if (!system) return;
 
-      const newEnd = new Date(currentStart.getTime());
-      const newStart = new Date(currentStart.getTime() - duration);
+    let currentStart: Date;
+    let currentEnd: Date;
 
-      const newStartISO = newStart.toISOString();
-      const newEndISO = newEnd.toISOString();
+    if (isHistoricalMode && historyTimeRange.start && historyTimeRange.end) {
+      // Already in historical mode - go back from current position
+      currentStart = new Date(historyTimeRange.start);
+      currentEnd = new Date(historyTimeRange.end);
+    } else {
+      // In live mode - go back one period from now (rounded to interval boundary)
+      const intervalMinutes = getPeriodIntervalMinutes(mondoPeriod);
 
-      setHistoryTimeRange({
-        start: newStartISO,
-        end: newEndISO,
-      });
-      setHistoryFetchTrigger((prev) => prev + 1);
+      // Round current time down to nearest interval boundary
+      const now = new Date();
+      const roundedNow = new Date(now);
+      const minutes = now.getMinutes();
+      const roundedMinutes =
+        Math.floor(minutes / intervalMinutes) * intervalMinutes;
+      roundedNow.setMinutes(roundedMinutes, 0, 0); // Set seconds and ms to 0
 
-      // Update URL with only start (period is already in URL, end can be calculated)
-      const offsetMin = system.timezoneOffsetMin ?? 600;
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("start", encodeUrlDate(newStartISO, offsetMin));
-      params.delete("end"); // Remove end - it's redundant with start + period
-      params.set("offset", encodeUrlOffset(offsetMin));
-      router.push(`?${params.toString()}`, { scroll: false });
+      const duration = getPeriodDuration(mondoPeriod);
+      currentEnd = roundedNow;
+      currentStart = new Date(roundedNow.getTime() - duration);
     }
+
+    const duration = currentEnd.getTime() - currentStart.getTime();
+    const newEnd = new Date(currentStart.getTime());
+    const newStart = new Date(currentStart.getTime() - duration);
+
+    const newStartISO = newStart.toISOString();
+    const newEndISO = newEnd.toISOString();
+
+    setHistoryTimeRange({
+      start: newStartISO,
+      end: newEndISO,
+    });
+    setHistoryFetchTrigger((prev) => prev + 1);
+
+    // Update URL with only start (period is already in URL, end can be calculated)
+    const offsetMin = system.timezoneOffsetMin ?? 600;
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("start", encodeUrlDate(newStartISO, offsetMin));
+    params.delete("end"); // Remove end - it's redundant with start + period
+    params.set("offset", encodeUrlOffset(offsetMin));
+    router.push(`?${params.toString()}`, { scroll: false });
   };
 
   // Hover handlers that track which chart is active on touch devices
@@ -1285,15 +1324,9 @@ export default function DashboardClient({
                                 </button>
                                 <button
                                   onClick={handlePageNewer}
-                                  disabled={
-                                    (!historyTimeRange.start &&
-                                      !historyTimeRange.end) ||
-                                    historyLoading
-                                  }
+                                  disabled={!isHistoricalMode || historyLoading}
                                   className={`px-2 py-1 text-sm font-medium border-l-0 border rounded-r-lg ${
-                                    (!historyTimeRange.start &&
-                                      !historyTimeRange.end) ||
-                                    historyLoading
+                                    !isHistoricalMode || historyLoading
                                       ? "bg-gray-800 text-gray-600 border-gray-700 cursor-not-allowed"
                                       : "bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white"
                                   }`}
