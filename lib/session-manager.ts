@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { sessions, systems, type NewSession } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
-export type SessionCause = "POLL" | "ADMIN" | "USER" | "PUSH";
+export type SessionCause = "CRON" | "ADMIN" | "USER" | "PUSH" | "USER-TEST";
 
 export interface SessionData {
   sessionLabel?: string | null;

@@ -54,6 +54,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // Determine session cause: CRON (scheduled) vs ADMIN (manual trigger)
+    const authHeader = request.headers.get("authorization");
+    const isCronRequest = authHeader === `Bearer ${process.env.CRON_SECRET}`;
+    const sessionCause = isCronRequest ? "CRON" : "ADMIN";
+
     // In development, allow testing specific systems with force flag
     const searchParams = request.nextUrl.searchParams;
     const testSystemId = searchParams.get("systemId");
@@ -204,7 +209,7 @@ export async function GET(request: NextRequest) {
           systemId: system.id,
           vendorType: system.vendorType,
           systemName: system.displayName || `System ${system.id}`,
-          cause: "POLL",
+          cause: sessionCause,
           started: sessionStart,
         });
 

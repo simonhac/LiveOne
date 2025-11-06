@@ -72,6 +72,7 @@ export default function ViewDataModal({
   const [dataSource, setDataSource] = useState<"raw" | "5m">("raw");
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
   const [isSessionInfoModalOpen, setIsSessionInfoModalOpen] = useState(false);
+  const [rawDataUnavailable, setRawDataUnavailable] = useState(false);
 
   const fetchData = useCallback(async () => {
     // Prevent duplicate fetches
@@ -93,6 +94,21 @@ export default function ViewDataModal({
       setData(result.data || []);
       setMetadata(result.metadata || null);
       setInitialLoad(false); // Mark initial load as complete
+
+      // If no data in current view but alternative has data, switch views
+      if (
+        result.data.length === 0 &&
+        result.metadata?.hasAlternativeData === true
+      ) {
+        console.log(
+          `[ViewDataModal] No ${dataSource} data but alternative has data, switching views`,
+        );
+        // Track if raw data is unavailable so we can disable the button
+        if (dataSource === "raw") {
+          setRawDataUnavailable(true);
+        }
+        setDataSource(dataSource === "raw" ? "5m" : "raw");
+      }
     } catch (error) {
       console.error("Error fetching point readings:", error);
     } finally {
@@ -109,6 +125,8 @@ export default function ViewDataModal({
       // Reset state when modal closes
       setInitialLoad(true);
       fetchingRef.current = false; // Reset fetch guard
+      setRawDataUnavailable(false); // Reset raw data unavailable flag
+      setDataSource("raw"); // Reset to default view
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]); // Intentionally exclude fetchData to prevent double calls
@@ -330,10 +348,9 @@ export default function ViewDataModal({
 
   // Filter headers based on showExtras state
   const filteredHeaders = headers.filter((header) => {
-    // Always show timestamp
-    if (header.key === "timestamp") return true;
-    // Hide session column when viewing 5m data (5m aggregates don't have sessions)
-    if (header.key === "sessionLabel" && dataSource === "5m") return false;
+    // Always show timestamp and session columns
+    if (header.key === "timestamp" || header.key === "sessionLabel")
+      return true;
     // Always show columns with series ID
     if (getSeriesIdSuffix(header)) return true;
     // Only show columns without series ID if showExtras is true
@@ -425,12 +442,20 @@ export default function ViewDataModal({
             <div className="inline-flex rounded-md shadow-sm" role="group">
               <button
                 onClick={() => handleDataSourceChange("raw")}
+                disabled={rawDataUnavailable}
+                title={
+                  rawDataUnavailable
+                    ? "No raw data available - this system only has aggregated 5-minute data"
+                    : undefined
+                }
                 className={`
                   px-3 py-1 text-xs font-medium transition-colors border rounded-l-md -ml-px
                   ${
                     dataSource === "raw"
                       ? "bg-blue-900/50 text-blue-300 border-blue-800 z-10"
-                      : "bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300"
+                      : rawDataUnavailable
+                        ? "bg-gray-800 text-gray-600 border-gray-700 cursor-not-allowed"
+                        : "bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300"
                   }
                 `}
               >
@@ -464,7 +489,7 @@ export default function ViewDataModal({
           {/* Loading spinner - show during initial load or when switching data sources */}
           {loading ? (
             <div className="absolute inset-0 flex items-center justify-center z-20">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+              <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
             </div>
           ) : data.length === 0 ? (
             <div className="text-center text-gray-400 py-8">

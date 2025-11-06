@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
-import { pointReadings, pointInfo } from "@/lib/db/schema-monitoring-points";
+import {
+  pointReadings,
+  pointInfo,
+  pointReadingsAgg5m,
+} from "@/lib/db/schema-monitoring-points";
 import { eq, desc, sql } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { formatTimeAEST } from "@/lib/date-utils";
@@ -198,14 +202,15 @@ export async function GET(
         )
         SELECT
           pr.interval_end as measurement_time,
-          NULL as session_id,
-          NULL as session_label,
+          pr.session_id,
+          s.session_label,
           ${pivotColumns}
         FROM point_readings_agg_5m pr
+        LEFT JOIN sessions s ON pr.session_id = s.id
         WHERE pr.system_id = ${systemId}
           AND pr.interval_end IN (SELECT interval_end FROM recent_timestamps)
-        GROUP BY pr.interval_end
-        ORDER BY pr.interval_end DESC
+        GROUP BY pr.interval_end, pr.session_id
+        ORDER BY pr.interval_end DESC, pr.session_id
       `;
     } else {
       // Query raw point readings
@@ -243,6 +248,21 @@ export async function GET(
     const pivotStartTime = Date.now();
     const result = await db.all(sql.raw(pivotQuery));
     dbElapsedMs += Date.now() - pivotStartTime;
+
+    // If no data, check if the other table has data
+    let hasAlternativeData = false;
+    if (result.length === 0) {
+      const alternativeTableName =
+        dataSource === "raw" ? "point_readings_agg_5m" : "point_readings";
+      const checkStartTime = Date.now();
+      const checkResult = (await db.all(
+        sql.raw(
+          `SELECT COUNT(*) as count FROM ${alternativeTableName} WHERE system_id = ${systemId} LIMIT 1`,
+        ),
+      )) as Array<{ count: number }>;
+      dbElapsedMs += Date.now() - checkStartTime;
+      hasAlternativeData = (checkResult[0]?.count || 0) > 0;
+    }
 
     // Transform the data to include ISO timestamps with AEST formatting
     const data = result.map((row: any) => {
@@ -289,6 +309,7 @@ export async function GET(
         pointCount: points.length,
         rowCount: data.length,
         dbElapsedMs,
+        hasAlternativeData,
       },
     });
   } catch (error) {

@@ -17,6 +17,7 @@ import {
 } from "@/lib/date-utils";
 import { fromDate, type ZonedDateTime } from "@internationalized/date";
 import { getPollingStatus } from "@/lib/polling-utils";
+import { SessionManager } from "@/lib/session-manager";
 import * as SunCalc from "suncalc";
 
 /**
@@ -288,13 +289,18 @@ export class EnphaseAdapter extends BaseVendorAdapter {
         console.log(
           `[Enphase] Checking yesterday's data completeness for system ${system.id}`,
         );
-        result = await checkAndFetchYesterdayIfNeeded(system.id, false);
+        result = await checkAndFetchYesterdayIfNeeded(
+          system.id,
+          sessionId,
+          false,
+        );
       } else {
         // Otherwise fetch current day's data
         result = await fetchEnphaseDay(
           system.id,
           null,
           system.timezoneOffsetMin,
+          sessionId,
           false,
         );
       }
@@ -348,11 +354,22 @@ export class EnphaseAdapter extends BaseVendorAdapter {
     try {
       console.log(`[Enphase] Testing connection for system ${system.id}`);
 
+      // Create a session for this test connection
+      const sessionManager = SessionManager.getInstance();
+      const sessionId = await sessionManager.createSession({
+        systemId: system.id,
+        vendorType: system.vendorType,
+        systemName: system.displayName,
+        cause: "USER-TEST",
+        started: new Date(),
+      });
+
       // Fetch today's data to verify connection works
       const result = await fetchEnphaseDay(
         system.id,
         null, // null means fetch today
         system.timezoneOffsetMin,
+        sessionId,
         true, // dryRun - don't actually save to database during test
       );
 

@@ -1,6 +1,10 @@
 import { db } from "@/lib/db";
-import { pointInfo, pointReadings } from "@/lib/db/schema-monitoring-points";
-import { eq, and } from "drizzle-orm";
+import {
+  pointInfo,
+  pointReadings,
+  pointReadingsAgg5m,
+} from "@/lib/db/schema-monitoring-points";
+import { eq, and, sql } from "drizzle-orm";
 import { updatePointAggregates5m } from "./point-aggregation-helper";
 
 export interface PointInfoMap {
@@ -263,4 +267,88 @@ export async function insertPointReadingsBatch(
     uniquePointIds,
     readings[0].measurementTime,
   );
+}
+
+/**
+ * Batch insert pre-aggregated 5-minute readings directly to point_readings_agg_5m
+ * Use this when the vendor already provides 5-minute aggregated data (e.g., Enphase)
+ * Bypasses the point_readings table to avoid redundant storage
+ */
+export async function insertPointReadingsDirectTo5m(
+  systemId: number,
+  sessionId: number,
+  readings: Array<{
+    pointMetadata: PointMetadata;
+    rawValue: any; // Raw value from vendor (will be converted based on metadata)
+    intervalEndMs: number; // 5-minute interval end time in milliseconds
+    error?: string | null;
+  }>,
+): Promise<void> {
+  if (readings.length === 0) return;
+
+  // Load existing points for this system
+  const pointMap = await loadPointInfoMap(systemId);
+
+  // Process each reading
+  const aggregatesToInsert = [];
+  for (const reading of readings) {
+    // Ensure the point exists
+    const point = await ensurePointInfo(
+      systemId,
+      pointMap,
+      reading.pointMetadata,
+    );
+
+    // Convert raw value based on metadata
+    const { value, valueStr } = convertValueByMetadata(
+      reading.rawValue,
+      reading.pointMetadata,
+    );
+
+    // For pre-aggregated data with a single value per interval:
+    // avg = min = max = last = the value
+    // If value is null, this is an error reading
+    const isError = value === null;
+
+    aggregatesToInsert.push({
+      systemId,
+      pointId: point.id,
+      sessionId,
+      intervalEnd: reading.intervalEndMs,
+      avg: isError ? null : value,
+      min: isError ? null : value,
+      max: isError ? null : value,
+      last: isError ? null : value,
+      sampleCount: isError ? 0 : 1,
+      errorCount: isError ? 1 : 0,
+    });
+  }
+
+  // Batch upsert all aggregates
+  if (aggregatesToInsert.length > 0) {
+    await db
+      .insert(pointReadingsAgg5m)
+      .values(aggregatesToInsert)
+      .onConflictDoUpdate({
+        target: [
+          pointReadingsAgg5m.systemId,
+          pointReadingsAgg5m.pointId,
+          pointReadingsAgg5m.intervalEnd,
+        ],
+        set: {
+          sessionId: sql`excluded.session_id`,
+          avg: sql`excluded.avg`,
+          min: sql`excluded.min`,
+          max: sql`excluded.max`,
+          last: sql`excluded.last`,
+          sampleCount: sql`excluded.sample_count`,
+          errorCount: sql`excluded.error_count`,
+          updatedAt: sql`(unixepoch() * 1000)`,
+        },
+      });
+
+    console.log(
+      `[PointsManager] Inserted ${aggregatesToInsert.length} pre-aggregated 5m readings directly to point_readings_agg_5m`,
+    );
+  }
 }

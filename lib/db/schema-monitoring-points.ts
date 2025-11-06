@@ -118,6 +118,7 @@ export const pointReadingsAgg5m = sqliteTable(
       .references(() => systems.id, { onDelete: "cascade" }),
     pointId: integer("point_id").notNull(),
     // Composite foreign key to point_info(system_id, id)
+    sessionId: integer("session_id"), // Optional session ID for tracking data source
     intervalEnd: integer("interval_end").notNull(), // End of interval (ms)
 
     // Aggregates (generic - units determined by point_info.metricUnit)
@@ -146,6 +147,7 @@ export const pointReadingsAgg5m = sqliteTable(
       table.intervalEnd,
     ),
     intervalEndIdx: index("pr5m_interval_end_idx").on(table.intervalEnd),
+    sessionIdx: index("pr5m_session_idx").on(table.sessionId),
     // Composite foreign key to point_info
     pointInfoFk: foreignKey({
       columns: [table.systemId, table.pointId],
