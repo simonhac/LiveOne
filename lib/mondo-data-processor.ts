@@ -8,33 +8,48 @@ import {
 export interface ProcessedMondoData {
   load: ChartData | null;
   generation: ChartData | null;
+  requestStart?: string;
+  requestEnd?: string;
 }
 
 export async function fetchAndProcessMondoData(
   systemId: string,
   period: "1D" | "7D" | "30D",
+  startTime?: string,
+  endTime?: string,
 ): Promise<ProcessedMondoData> {
   // Map period to request parameters
   let requestInterval: string;
   let duration: string;
+  let durationMs: number;
 
   if (period === "1D") {
     requestInterval = "5m";
     duration = "24h";
+    durationMs = 24 * 60 * 60 * 1000;
   } else if (period === "7D") {
     requestInterval = "30m";
     duration = "168h";
+    durationMs = 7 * 24 * 60 * 60 * 1000;
   } else {
     requestInterval = "1d";
     duration = "30d";
+    durationMs = 30 * 24 * 60 * 60 * 1000;
   }
 
-  const response = await fetch(
-    `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId}`,
-    {
-      credentials: "same-origin",
-    },
-  );
+  // Build API URL - use absolute time if provided, otherwise use relative
+  let apiUrl: string;
+  if (startTime && endTime) {
+    // Historical data with specific time range
+    apiUrl = `/api/history?interval=${requestInterval}&startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}&systemId=${systemId}`;
+  } else {
+    // Current/live data - use relative time
+    apiUrl = `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId}`;
+  }
+
+  const response = await fetch(apiUrl, {
+    credentials: "same-origin",
+  });
 
   if (!response.ok) {
     throw new Error(`Failed to fetch data: ${response.status}`);
@@ -45,7 +60,12 @@ export async function fetchAndProcessMondoData(
   // Check if we have data
   if (!data || !data.data || !Array.isArray(data.data)) {
     console.warn("No data returned from history API:", data);
-    return { load: null, generation: null };
+    return {
+      load: null,
+      generation: null,
+      requestStart: data?.requestStart,
+      requestEnd: data?.requestEnd,
+    };
   }
 
   // Process the data once for both charts
@@ -53,7 +73,12 @@ export async function fetchAndProcessMondoData(
 
   if (powerSeries.length === 0) {
     console.warn("No power series data available in response");
-    return { load: null, generation: null };
+    return {
+      load: null,
+      generation: null,
+      requestStart: data.requestStart,
+      requestEnd: data.requestEnd,
+    };
   }
 
   // Create a map of available series by their full ID
@@ -66,11 +91,16 @@ export async function fetchAndProcessMondoData(
   const firstSeries = powerSeries[0];
   if (!firstSeries) {
     console.warn("No first series found");
-    return { load: null, generation: null };
+    return {
+      load: null,
+      generation: null,
+      requestStart: data.requestStart,
+      requestEnd: data.requestEnd,
+    };
   }
 
   const startTimeString = firstSeries.history.start;
-  const startTime = new Date(startTimeString);
+  const dataStartTime = new Date(startTimeString);
   const interval = firstSeries.history.interval;
 
   let intervalMs: number;
@@ -88,36 +118,55 @@ export async function fetchAndProcessMondoData(
 
   const timestamps = firstSeries.history.data.map(
     (_: any, index: number) =>
-      new Date(startTime.getTime() + index * intervalMs),
+      new Date(dataStartTime.getTime() + index * intervalMs),
   );
 
   // Filter to selected time range
-  const currentTime = new Date();
-  let windowHours: number;
-  let intervalMinutes: number;
+  let windowStart: Date;
+  let windowEnd: Date;
 
-  if (period === "1D") {
-    windowHours = 24;
-    intervalMinutes = 5;
-  } else if (period === "7D") {
-    windowHours = 24 * 7;
-    intervalMinutes = 30;
+  if (startTime && endTime) {
+    // Use the requested time range when explicitly provided
+    windowStart = new Date(startTime);
+    windowEnd = new Date(endTime);
+    console.log(
+      "[Mondo Processor] Historical mode - using explicit time range",
+    );
+    console.log("  windowStart:", windowStart.toISOString());
+    console.log("  windowEnd:", windowEnd.toISOString());
+    console.log("  dataStartTime:", dataStartTime.toISOString());
+    console.log("  First timestamp:", timestamps[0]?.toISOString());
+    console.log(
+      "  Last timestamp:",
+      timestamps[timestamps.length - 1]?.toISOString(),
+    );
   } else {
-    windowHours = 24 * 30;
-    intervalMinutes = 24 * 60;
+    // Use current time window for live/default view
+    const currentTime = new Date();
+    let windowHours: number;
+    let intervalMinutes: number;
+
+    if (period === "1D") {
+      windowHours = 24;
+      intervalMinutes = 5;
+    } else if (period === "7D") {
+      windowHours = 24 * 7;
+      intervalMinutes = 30;
+    } else {
+      windowHours = 24 * 30;
+      intervalMinutes = 24 * 60;
+    }
+
+    // Round down the current time to the nearest interval boundary
+    const currentMinutes = currentTime.getMinutes();
+    const roundedMinutes =
+      Math.floor(currentMinutes / intervalMinutes) * intervalMinutes;
+    windowEnd = new Date(currentTime);
+    windowEnd.setMinutes(roundedMinutes, 0, 0); // Round to interval boundary
+
+    // Start exactly windowHours before the end time
+    windowStart = new Date(windowEnd.getTime() - windowHours * 60 * 60 * 1000);
   }
-
-  // Round down the current time to the nearest interval boundary
-  const currentMinutes = currentTime.getMinutes();
-  const roundedMinutes =
-    Math.floor(currentMinutes / intervalMinutes) * intervalMinutes;
-  const windowEnd = new Date(currentTime);
-  windowEnd.setMinutes(roundedMinutes, 0, 0); // Round to interval boundary
-
-  // Start exactly windowHours before the end time
-  const windowStart = new Date(
-    windowEnd.getTime() - windowHours * 60 * 60 * 1000,
-  );
 
   const selectedIndices = timestamps
     .map((t: Date, i: number) => ({ time: t, index: i }))
@@ -126,6 +175,10 @@ export async function fetchAndProcessMondoData(
         time >= windowStart && time <= windowEnd,
     )
     .map(({ index }: { time: Date; index: number }) => index);
+
+  console.log("[Mondo Processor] Filtering results:");
+  console.log("  Total timestamps:", timestamps.length);
+  console.log("  Selected indices:", selectedIndices.length);
 
   const filteredTimestamps = selectedIndices.map((i: number) => timestamps[i]);
 
@@ -325,7 +378,17 @@ export async function fetchAndProcessMondoData(
       series: seriesData,
       mode: requestInterval === "1d" ? "energy" : "power",
     };
+    console.log(`[Mondo Processor] ${mode} chart data:`, {
+      timestamps: filteredTimestamps.length,
+      series: seriesData.length,
+      seriesNames: seriesData.map((s) => s.id),
+      sampleDataPoint: seriesData[0]?.data.slice(0, 5),
+    });
   });
 
-  return processedData;
+  return {
+    ...processedData,
+    requestStart: data.requestStart,
+    requestEnd: data.requestEnd,
+  };
 }

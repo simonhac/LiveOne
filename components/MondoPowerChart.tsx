@@ -366,6 +366,17 @@ export default function MondoPowerChart({
   );
 
   const { now, windowStart } = useMemo(() => {
+    // When chartData is available, use its actual timestamp range
+    // This ensures historical data is displayed correctly
+    if (chartData && chartData.timestamps && chartData.timestamps.length > 0) {
+      const timestamps = chartData.timestamps;
+      return {
+        windowStart: timestamps[0],
+        now: timestamps[timestamps.length - 1],
+      };
+    }
+
+    // Otherwise, use current time window (for initial render or live mode)
     const now = new Date();
     let windowHours: number;
     if (timeRange === "1D") {
@@ -377,7 +388,7 @@ export default function MondoPowerChart({
     }
     const windowStart = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
     return { now, windowStart };
-  }, [timeRange]);
+  }, [timeRange, chartData]);
 
   const options: ChartOptions<any> = useMemo(
     () => ({
@@ -563,20 +574,37 @@ export default function MondoPowerChart({
 
   // Use external data when provided
   useEffect(() => {
+    console.log(`[MondoPowerChart ${mode}] External data changed:`, {
+      isDefined: externalData !== undefined,
+      isNull: externalData === null,
+      hasData: externalData
+        ? {
+            timestamps: externalData.timestamps?.length,
+            series: externalData.series?.length,
+            mode: externalData.mode,
+          }
+        : null,
+    });
     // When using external data, we need to manage loading state differently
     if (externalData !== undefined) {
       if (externalData === null) {
         // If external data is null, keep loading state true
         // The parent component will pass actual data when it's ready
+        console.log(
+          `[MondoPowerChart ${mode}] Setting to loading state (external data is null)`,
+        );
         setLoading(true);
         setChartData(null);
       } else {
         // We have actual data
+        console.log(
+          `[MondoPowerChart ${mode}] Setting chartData from external data`,
+        );
         setChartData(externalData);
         setLoading(false);
       }
     }
-  }, [externalData]);
+  }, [externalData, mode]);
 
   // Call onDataChange when chart data updates
   useEffect(() => {
@@ -609,13 +637,12 @@ export default function MondoPowerChart({
           duration = "30d";
         }
 
-        const response = await fetch(
-          `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId.toString()}`,
-          {
-            credentials: "same-origin",
-            signal: abortController.signal,
-          },
-        );
+        const apiUrl = `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId.toString()}`;
+
+        const response = await fetch(apiUrl, {
+          credentials: "same-origin",
+          signal: abortController.signal,
+        });
 
         if (!response.ok) {
           const contentType = response.headers.get("content-type");
@@ -968,6 +995,18 @@ export default function MondoPowerChart({
   }, [onHoverIndexChange]);
 
   const renderChartContent = () => {
+    console.log(`[MondoPowerChart ${mode}] Rendering:`, {
+      loading,
+      hasChartData: !!chartData,
+      hasError: !!error,
+      chartDataDetails: chartData
+        ? {
+            timestamps: chartData.timestamps?.length,
+            series: chartData.series?.length,
+          }
+        : null,
+    });
+
     if (loading) {
       return (
         <div className="flex-1 flex items-center justify-center min-h-0">
@@ -1003,21 +1042,23 @@ export default function MondoPowerChart({
     >
       <div className="flex justify-between items-center mb-2 md:mb-3 px-1 md:px-0">
         <h3 className="text-sm font-medium text-gray-300">{title}</h3>
-        {showPeriodSwitcher && (
-          <PeriodSwitcher
-            value={timeRange}
-            onChange={(newPeriod) => {
-              if (onPeriodChange) {
-                onPeriodChange(newPeriod);
-              } else {
-                setInternalTimeRange(newPeriod);
-                const params = new URLSearchParams(searchParams.toString());
-                params.set("period", newPeriod);
-                router.push(`?${params.toString()}`, { scroll: false });
-              }
-            }}
-          />
-        )}
+        <div className="flex items-center gap-2">
+          {showPeriodSwitcher && (
+            <PeriodSwitcher
+              value={timeRange}
+              onChange={(newPeriod) => {
+                if (onPeriodChange) {
+                  onPeriodChange(newPeriod);
+                } else {
+                  setInternalTimeRange(newPeriod);
+                  const params = new URLSearchParams(searchParams.toString());
+                  params.set("period", newPeriod);
+                  router.push(`?${params.toString()}`, { scroll: false });
+                }
+              }}
+            />
+          )}
+        </div>
       </div>
       {renderChartContent()}
 

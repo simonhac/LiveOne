@@ -40,6 +40,8 @@ import {
   FlaskConical,
   Plus,
   MoreHorizontal,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -208,6 +210,16 @@ export default function DashboardClient({
   const [showSessionTimeout, setShowSessionTimeout] = useState(false);
   const [showViewDataModal, setShowViewDataModal] = useState(false);
   const [mondoPeriod, setMondoPeriod] = useState<"1D" | "7D" | "30D">("1D");
+  const [historyTimeRange, setHistoryTimeRange] = useState<{
+    start?: string;
+    end?: string;
+  }>(() => {
+    // Initialize from URL params if present
+    const start = searchParams.get("start");
+    const end = searchParams.get("end");
+    return start && end ? { start, end } : {};
+  });
+  const [historyFetchTrigger, setHistoryFetchTrigger] = useState(0);
   const [processedHistoryData, setProcessedHistoryData] = useState<{
     load: ChartData | null;
     generation: ChartData | null;
@@ -391,12 +403,37 @@ export default function DashboardClient({
         const processedData = await fetchAndProcessMondoData(
           systemId as string,
           mondoPeriod,
+          historyTimeRange.start,
+          historyTimeRange.end,
         );
 
         if (!abortController.signal.aborted) {
+          console.log("[DashboardClient] Setting chart data:", {
+            load: processedData.load
+              ? {
+                  timestamps: processedData.load.timestamps?.length,
+                  series: processedData.load.series?.length,
+                  mode: processedData.load.mode,
+                }
+              : null,
+            generation: processedData.generation
+              ? {
+                  timestamps: processedData.generation.timestamps?.length,
+                  series: processedData.generation.series?.length,
+                  mode: processedData.generation.mode,
+                }
+              : null,
+          });
           setProcessedHistoryData(processedData);
           setLoadChartData(processedData.load);
           setGenerationChartData(processedData.generation);
+          // Store the request timestamps for navigation
+          if (processedData.requestStart && processedData.requestEnd) {
+            setHistoryTimeRange({
+              start: processedData.requestStart,
+              end: processedData.requestEnd,
+            });
+          }
         }
       } catch (err) {
         console.error("Failed to fetch Mondo history data:", err);
@@ -460,8 +497,11 @@ export default function DashboardClient({
     // Initial fetch
     fetchMondoData();
 
-    // Schedule subsequent fetches at 15 seconds past each 5-minute interval
-    scheduleNextFetch();
+    // Only schedule subsequent fetches if we're not viewing historical data
+    // (i.e., no start/end URL parameters)
+    if (!historyTimeRange.start && !historyTimeRange.end) {
+      scheduleNextFetch();
+    }
 
     return () => {
       abortController.abort();
@@ -469,7 +509,13 @@ export default function DashboardClient({
         clearTimeout(timeoutId);
       }
     };
-  }, [systemId, system?.vendorType, system?.timezoneOffsetMin, mondoPeriod]);
+  }, [
+    systemId,
+    system?.vendorType,
+    system?.timezoneOffsetMin,
+    mondoPeriod,
+    historyFetchTrigger,
+  ]);
 
   // Handle clicks outside of the dropdowns
   useEffect(() => {
@@ -496,6 +542,61 @@ export default function DashboardClient({
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [showSystemDropdown, showSettingsDropdown]);
+
+  // Navigation handlers for prev/next buttons
+  const handlePageNewer = () => {
+    if (historyTimeRange.start && historyTimeRange.end) {
+      // Go forward in time by one period
+      const currentStart = new Date(historyTimeRange.start);
+      const currentEnd = new Date(historyTimeRange.end);
+      const duration = currentEnd.getTime() - currentStart.getTime();
+
+      const newStart = new Date(currentEnd.getTime());
+      const newEnd = new Date(currentEnd.getTime() + duration);
+
+      const newStartISO = newStart.toISOString();
+      const newEndISO = newEnd.toISOString();
+
+      setHistoryTimeRange({
+        start: newStartISO,
+        end: newEndISO,
+      });
+      setHistoryFetchTrigger((prev) => prev + 1);
+
+      // Update URL with time range (remove seconds and milliseconds for cleaner URLs)
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("start", newStartISO.replace(/:\d{2}\.\d{3}Z$/, "Z"));
+      params.set("end", newEndISO.replace(/:\d{2}\.\d{3}Z$/, "Z"));
+      router.push(`?${params.toString()}`, { scroll: false });
+    }
+  };
+
+  const handlePageOlder = () => {
+    if (historyTimeRange.start && historyTimeRange.end) {
+      // Go back in time by one period
+      const currentStart = new Date(historyTimeRange.start);
+      const currentEnd = new Date(historyTimeRange.end);
+      const duration = currentEnd.getTime() - currentStart.getTime();
+
+      const newEnd = new Date(currentStart.getTime());
+      const newStart = new Date(currentStart.getTime() - duration);
+
+      const newStartISO = newStart.toISOString();
+      const newEndISO = newEnd.toISOString();
+
+      setHistoryTimeRange({
+        start: newStartISO,
+        end: newEndISO,
+      });
+      setHistoryFetchTrigger((prev) => prev + 1);
+
+      // Update URL with time range (remove seconds and milliseconds for cleaner URLs)
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("start", newStartISO.replace(/:\d{2}\.\d{3}Z$/, "Z"));
+      params.set("end", newEndISO.replace(/:\d{2}\.\d{3}Z$/, "Z"));
+      router.push(`?${params.toString()}`, { scroll: false });
+    }
+  };
 
   // Hover handlers that track which chart is active on touch devices
   const handleLoadHoverIndexChange = useCallback(
@@ -1082,14 +1183,53 @@ export default function DashboardClient({
                                       }
                                     })()}
                               </span>
+                              {/* Prev/Next navigation buttons */}
+                              <div
+                                className="inline-flex rounded-md shadow-sm"
+                                role="group"
+                              >
+                                <button
+                                  onClick={handlePageOlder}
+                                  disabled={historyLoading}
+                                  className={`px-2 py-1 text-sm font-medium border rounded-l-lg ${
+                                    historyLoading
+                                      ? "bg-gray-800 text-gray-600 border-gray-700 cursor-not-allowed"
+                                      : "bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white"
+                                  }`}
+                                  title="Older (Previous)"
+                                >
+                                  <ChevronLeft className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={handlePageNewer}
+                                  disabled={
+                                    (!historyTimeRange.start &&
+                                      !historyTimeRange.end) ||
+                                    historyLoading
+                                  }
+                                  className={`px-2 py-1 text-sm font-medium border-l-0 border rounded-r-lg ${
+                                    (!historyTimeRange.start &&
+                                      !historyTimeRange.end) ||
+                                    historyLoading
+                                      ? "bg-gray-800 text-gray-600 border-gray-700 cursor-not-allowed"
+                                      : "bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white"
+                                  }`}
+                                  title="Newer (Next)"
+                                >
+                                  <ChevronRight className="w-4 h-4" />
+                                </button>
+                              </div>
                               <PeriodSwitcher
                                 value={mondoPeriod}
                                 onChange={(newPeriod) => {
                                   setMondoPeriod(newPeriod);
+                                  setHistoryTimeRange({}); // Reset to current when period changes
                                   const params = new URLSearchParams(
                                     searchParams.toString(),
                                   );
                                   params.set("period", newPeriod);
+                                  params.delete("start");
+                                  params.delete("end");
                                   router.push(`?${params.toString()}`, {
                                     scroll: false,
                                   });
@@ -1111,10 +1251,13 @@ export default function DashboardClient({
                                 period={mondoPeriod}
                                 onPeriodChange={(newPeriod) => {
                                   setMondoPeriod(newPeriod);
+                                  setHistoryTimeRange({}); // Reset to current when period changes
                                   const params = new URLSearchParams(
                                     searchParams.toString(),
                                   );
                                   params.set("period", newPeriod);
+                                  params.delete("start");
+                                  params.delete("end");
                                   router.push(`?${params.toString()}`, {
                                     scroll: false,
                                   });
@@ -1161,10 +1304,13 @@ export default function DashboardClient({
                                 period={mondoPeriod}
                                 onPeriodChange={(newPeriod) => {
                                   setMondoPeriod(newPeriod);
+                                  setHistoryTimeRange({}); // Reset to current when period changes
                                   const params = new URLSearchParams(
                                     searchParams.toString(),
                                   );
                                   params.set("period", newPeriod);
+                                  params.delete("start");
+                                  params.delete("end");
                                   router.push(`?${params.toString()}`, {
                                     scroll: false,
                                   });
