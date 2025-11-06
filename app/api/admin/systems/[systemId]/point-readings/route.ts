@@ -123,8 +123,8 @@ export async function GET(
       {
         key: "timestamp",
         label: "Time",
-        type: "datetime",
-        unit: null,
+        type: "time",
+        unit: "epochMs",
         subsystem: null,
         originId: "",
         originSubId: null,

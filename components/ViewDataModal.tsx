@@ -289,16 +289,17 @@ export default function ViewDataModal({
 
   // Get unit display for header
   const getUnitDisplay = (header: ColumnHeader) => {
-    if (header.key === "timestamp" || header.key === "sessionLabel") return "";
+    // Session label has no type/unit display
+    if (header.key === "sessionLabel") return "";
 
     if (header.type === "energy") {
       return "MWh";
     } else if (header.type === "power") {
       // For power, we'll show kW for most values
       return "kW";
-    } else if (header.unit === "epochMs") {
-      // Don't show unit for timestamps (they're formatted as dates)
-      return "";
+    } else if (header.type === "time" && header.unit === "epochMs") {
+      // Show just "time" for time columns
+      return "time";
     } else if (header.unit) {
       return header.unit;
     }
@@ -593,8 +594,8 @@ export default function ViewDataModal({
                     </HeaderCell>
                   ))}
                 </tr>
-                {/* Row 4: Unit and Time */}
-                <tr className="bg-gray-900 border-b border-gray-700">
+                {/* Row 4: Type and Unit */}
+                <tr className="bg-gray-900 border-b border-gray-700 border-t border-t-gray-600">
                   {filteredHeaders.map((header, colIndex) => (
                     <HeaderCell
                       key={`${header.key}-row4`}
@@ -603,11 +604,7 @@ export default function ViewDataModal({
                       rowKey="row4"
                       isLastRow
                     >
-                      {header.key === "timestamp" ? (
-                        <span className="text-gray-300">Time</span>
-                      ) : header.key === "sessionLabel" ? (
-                        <div></div>
-                      ) : getUnitDisplay(header) ? (
+                      {getUnitDisplay(header) ? (
                         <span
                           className={`text-xs text-gray-400 ${
                             !header.active ? "line-through" : ""
