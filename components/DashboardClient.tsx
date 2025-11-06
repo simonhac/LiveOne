@@ -1340,6 +1340,7 @@ export default function DashboardClient({
                                 onChange={(newPeriod) => {
                                   setMondoPeriod(newPeriod);
                                   setHistoryTimeRange({}); // Reset to current when period changes
+                                  setHistoryFetchTrigger((prev) => prev + 1); // Trigger data refetch
                                   const params = new URLSearchParams(
                                     searchParams.toString(),
                                   );
