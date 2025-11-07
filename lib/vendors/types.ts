@@ -78,6 +78,7 @@ export interface Capability {
 
 /**
  * Result from a polling operation
+ * Also used for cron API responses (with additional fields populated by the cron route)
  */
 export interface PollingResult {
   action: "POLLED" | "SKIPPED" | "ERROR";
@@ -88,6 +89,13 @@ export interface PollingResult {
   error?: string; // For ERROR
   errorCode?: string; // HTTP status code or other error code for ERROR
   nextPoll?: ZonedDateTime; // When to poll next
+
+  // Additional fields for cron API responses (populated by cron route, not adapters)
+  systemId?: number;
+  displayName?: string;
+  vendorType?: string;
+  sessionLabel?: string;
+  lastPoll?: string | null;
 }
 
 /**

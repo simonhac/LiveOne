@@ -165,7 +165,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     const check = await this.shouldPoll(system, force, now);
 
     if (!check.shouldPoll) {
-      return this.skipped(check.reason, check.nextPoll);
+      return this.skipped(check.reason || "Skipped", check.nextPoll);
     }
 
     // Delegate to the actual polling implementation

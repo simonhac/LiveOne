@@ -8,10 +8,10 @@ import { VendorRegistry } from "@/lib/vendors/registry";
 import { getSystemCredentials } from "@/lib/secure-credentials";
 import { sessionManager } from "@/lib/session-manager";
 import type { CommonPollingData } from "@/lib/types/common";
+import type { PollingResult } from "@/lib/vendors/types";
 import {
   updatePollingStatusSuccess,
   updatePollingStatusError,
-  type PollingResult,
 } from "@/lib/polling-utils";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { and } from "drizzle-orm";
@@ -116,10 +116,10 @@ export async function GET(request: NextRequest) {
       if (!adapter) {
         console.error(`[Cron] Unknown vendor type: ${system.vendorType}`);
         results.push({
+          action: "ERROR",
           systemId: system.id,
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
-          status: "error",
           error: `Unknown vendor type: ${system.vendorType}`,
           lastPoll: system.pollingStatus?.lastPollTime
             ? formatTimeAEST(
@@ -129,7 +129,6 @@ export async function GET(request: NextRequest) {
                 ),
               )
             : null,
-          nextPoll: undefined,
         });
         continue;
       }
@@ -143,14 +142,17 @@ export async function GET(request: NextRequest) {
         `[Cron] Processing systemId=${system.id} (${system.vendorType}/${system.vendorSiteId} '${system.displayName}') with session ${sessionLabel}`,
       );
 
-      // Check if system has an owner
-      if (!system.ownerClerkUserId) {
+      // Check if we should poll - if not time yet, skip without creating session
+      const now = new Date();
+      const shouldPollCheck = await adapter.shouldPoll(system, forceTest, now);
+
+      if (!shouldPollCheck.shouldPoll) {
         results.push({
+          action: "SKIPPED",
           systemId: system.id,
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
-          status: "error",
-          error: "No owner configured",
+          reason: shouldPollCheck.reason,
           lastPoll: system.pollingStatus?.lastPollTime
             ? formatTimeAEST(
                 fromDate(
@@ -159,61 +161,41 @@ export async function GET(request: NextRequest) {
                 ),
               )
             : null,
-          nextPoll: undefined,
         });
-        continue;
-      }
-
-      // Get credentials for this system
-      const credentials = await getSystemCredentials(
-        system.ownerClerkUserId,
-        system.id,
-      );
-
-      if (
-        !credentials &&
-        adapter.vendorType !== "craighack" &&
-        adapter.vendorType !== "fronius"
-      ) {
-        console.error(
-          `[Cron] No credentials found for ${system.vendorType} system ${system.id}`,
+        console.log(
+          `[Cron] ${formatSystemId(system)} - Skipped: ${shouldPollCheck.reason}`,
         );
-        results.push({
-          systemId: system.id,
-          displayName: system.displayName || undefined,
-          vendorType: system.vendorType,
-          status: "error",
-          error: "No credentials found",
-          lastPoll: system.pollingStatus?.lastPollTime
-            ? formatTimeAEST(
-                fromDate(
-                  system.pollingStatus.lastPollTime,
-                  "Australia/Brisbane",
-                ),
-              )
-            : null,
-          nextPoll: undefined,
-        });
-        continue;
+        continue; // Skip to next system
       }
+
+      // We're going to attempt polling - create session now
+      const sessionStart = new Date();
+      const dbSessionId = await sessionManager.createSession({
+        sessionLabel,
+        systemId: system.id,
+        vendorType: system.vendorType,
+        systemName: system.displayName || `System ${system.id}`,
+        cause: sessionCause,
+        started: sessionStart,
+      });
 
       try {
-        // Check if we should poll before creating a session
-        const now = new Date();
-        const shouldPollCheck = await adapter.shouldPoll(
-          system,
-          forceTest,
-          now,
-        );
-
-        // If skipped, don't create a session
-        if (!shouldPollCheck.shouldPoll) {
+        // Check if system has an owner
+        if (!system.ownerClerkUserId) {
+          const duration = Date.now() - sessionStart.getTime();
+          await sessionManager.updateSessionResult(dbSessionId, {
+            duration,
+            successful: false,
+            error: "No owner configured",
+            numRows: 0,
+          });
           results.push({
+            action: "ERROR",
             systemId: system.id,
             displayName: system.displayName || undefined,
             vendorType: system.vendorType,
-            status: "skipped",
-            skipReason: shouldPollCheck.reason,
+            sessionLabel: sessionLabel || undefined,
+            error: "No owner configured",
             lastPoll: system.pollingStatus?.lastPollTime
               ? formatTimeAEST(
                   fromDate(
@@ -222,26 +204,49 @@ export async function GET(request: NextRequest) {
                   ),
                 )
               : null,
-            nextPoll: shouldPollCheck.nextPoll
-              ? formatTimeAEST(shouldPollCheck.nextPoll)
-              : undefined,
           });
-          console.log(
-            `[Cron] ${formatSystemId(system)} - Skipped: ${shouldPollCheck.reason}`,
-          );
-          continue; // Skip to next system
+          continue;
         }
 
-        // We're going to poll - create session
-        const sessionStart = new Date();
-        const dbSessionId = await sessionManager.createSession({
-          sessionLabel,
-          systemId: system.id,
-          vendorType: system.vendorType,
-          systemName: system.displayName || `System ${system.id}`,
-          cause: sessionCause,
-          started: sessionStart,
-        });
+        // Get credentials for this system
+        const credentials = await getSystemCredentials(
+          system.ownerClerkUserId,
+          system.id,
+        );
+
+        if (
+          !credentials &&
+          adapter.vendorType !== "craighack" &&
+          adapter.vendorType !== "fronius"
+        ) {
+          console.error(
+            `[Cron] No credentials found for ${system.vendorType} system ${system.id}`,
+          );
+          const duration = Date.now() - sessionStart.getTime();
+          await sessionManager.updateSessionResult(dbSessionId, {
+            duration,
+            successful: false,
+            error: "No credentials found",
+            numRows: 0,
+          });
+          results.push({
+            action: "ERROR",
+            systemId: system.id,
+            displayName: system.displayName || undefined,
+            vendorType: system.vendorType,
+            sessionLabel: sessionLabel || undefined,
+            error: "No credentials found",
+            lastPoll: system.pollingStatus?.lastPollTime
+              ? formatTimeAEST(
+                  fromDate(
+                    system.pollingStatus.lastPollTime,
+                    "Australia/Brisbane",
+                  ),
+                )
+              : null,
+          });
+          continue;
+        }
 
         // Let the adapter handle the polling logic
         const result = await adapter.poll(
@@ -362,19 +367,16 @@ export async function GET(request: NextRequest) {
             });
 
             results.push({
+              action: "POLLED",
               systemId: system.id,
               displayName: system.displayName || undefined,
               vendorType: system.vendorType,
-              status: "polled",
               sessionLabel: sessionLabel || undefined,
-              recordsUpserted: result.recordsProcessed,
+              recordsProcessed: result.recordsProcessed,
               ...(includeRaw && result.rawResponse
                 ? { rawResponse: result.rawResponse }
                 : {}),
               lastPoll: formatTimeAEST(fromDate(now, "Australia/Brisbane")),
-              nextPoll: result.nextPoll
-                ? formatTimeAEST(result.nextPoll)
-                : undefined,
             });
 
             console.log(
@@ -406,10 +408,10 @@ export async function GET(request: NextRequest) {
             });
 
             results.push({
+              action: "ERROR",
               systemId: system.id,
               displayName: system.displayName || undefined,
               vendorType: system.vendorType,
-              status: "error",
               sessionLabel: sessionLabel || undefined,
               error: result.error,
               lastPoll: system.pollingStatus?.lastPollTime
@@ -420,7 +422,6 @@ export async function GET(request: NextRequest) {
                     ),
                   )
                 : null,
-              nextPoll: undefined,
             });
             console.error(
               `[Cron] ${formatSystemId(system)} - Error: ${result.error}`,
@@ -436,29 +437,27 @@ export async function GET(request: NextRequest) {
           error instanceof Error ? error : "Unknown error",
         );
 
-        // Update session with unexpected error if session was created
-        if (dbSessionId !== null && sessionStart !== null) {
-          try {
-            const duration = Date.now() - sessionStart.getTime();
-            await sessionManager.updateSessionResult(dbSessionId, {
-              duration,
-              successful: false,
-              error: error instanceof Error ? error.message : "Unknown error",
-              numRows: 0,
-            });
-          } catch (sessionError) {
-            console.error(
-              `[Cron] Failed to update session for error:`,
-              sessionError,
-            );
-          }
+        // Update session with unexpected error
+        try {
+          const duration = Date.now() - sessionStart.getTime();
+          await sessionManager.updateSessionResult(dbSessionId, {
+            duration,
+            successful: false,
+            error: error instanceof Error ? error.message : "Unknown error",
+            numRows: 0,
+          });
+        } catch (sessionError) {
+          console.error(
+            `[Cron] Failed to update session for error:`,
+            sessionError,
+          );
         }
 
         results.push({
+          action: "ERROR",
           systemId: system.id,
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
-          status: "error",
           sessionLabel: sessionLabel || undefined,
           error: error instanceof Error ? error.message : "Unknown error",
           lastPoll: system.pollingStatus?.lastPollTime
@@ -469,14 +468,13 @@ export async function GET(request: NextRequest) {
                 ),
               )
             : null,
-          nextPoll: undefined,
         });
       }
     }
 
-    const successCount = results.filter((r) => r.status === "polled").length;
-    const skippedCount = results.filter((r) => r.status === "skipped").length;
-    const failureCount = results.filter((r) => r.status === "error").length;
+    const successCount = results.filter((r) => r.action === "POLLED").length;
+    const skippedCount = results.filter((r) => r.action === "SKIPPED").length;
+    const failureCount = results.filter((r) => r.action === "ERROR").length;
 
     // Create sanitized results for logging (truncate rawResponse if present)
     const resultsForLogging = results.map((r) => {
