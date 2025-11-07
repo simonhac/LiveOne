@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { SystemsManager, SystemWithPolling } from "@/lib/systems-manager";
-import { OpenNEMResponse, OpenNEMDataSeries } from "@/types/opennem";
-import { formatOpenNEMResponse } from "@/lib/history/format-opennem";
+import { OpenNEMDataSeries } from "@/types/opennem";
+import {
+  formatOpenNEMResponse,
+  formatDataArray,
+} from "@/lib/history/format-opennem";
 import {
   formatTimeAEST,
   formatDateAEST,
@@ -15,10 +18,6 @@ import {
 import { CalendarDate, ZonedDateTime, now } from "@internationalized/date";
 import { HistoryService } from "@/lib/history/history-service";
 import { isUserAdmin } from "@/lib/auth-utils";
-import {
-  parseSeriesPath,
-  resolveSystemFromSiteId,
-} from "@/lib/series-path-utils";
 
 // ============================================================================
 // Types and Interfaces
@@ -32,14 +31,6 @@ interface AuthResult {
 interface SystemAccess {
   system: SystemWithPolling;
   hasAccess: boolean;
-}
-
-interface ParsedParams {
-  systemId: number;
-  interval: "5m" | "30m" | "1d";
-  startTime: ZonedDateTime | CalendarDate;
-  endTime: ZonedDateTime | CalendarDate;
-  systemTimezoneOffsetMin: number;
 }
 
 interface ValidationResult {
@@ -322,7 +313,7 @@ async function getSystemHistoryInOpenNEMFormat(
   startTime: ZonedDateTime | CalendarDate,
   endTime: ZonedDateTime | CalendarDate,
   interval: "5m" | "30m" | "1d",
-): Promise<OpenNEMDataSeries[]> {
+): Promise<{ series: OpenNEMDataSeries[]; debug?: any }> {
   // Special handling for craighack systems (combine systems 2 & 3)
   if (system.vendorType === "craighack") {
     // Get both systems' data and combine them
@@ -353,7 +344,7 @@ async function getSystemHistoryInOpenNEMFormat(
       ]);
 
       // Combine all data
-      return [...data2, ...data3];
+      return { series: [...data2, ...data3] };
     } catch (error) {
       console.error("Error fetching craighack data:", error);
       throw error;
@@ -368,172 +359,250 @@ async function getSystemHistoryInOpenNEMFormat(
       const metadata = system.metadata as any;
 
       // If composite system has no configuration yet, return empty data
-      if (!metadata || metadata.version !== 1 || !metadata.mappings) {
+      if (!metadata || metadata.version !== 2 || !metadata.mappings) {
         console.log(
-          `[Composite History] System ${system.id} has no configuration yet, returning empty data`,
+          `[Composite History] System ${system.id} has no configuration yet or wrong version, returning empty data`,
         );
-        return [];
+        return { series: [] };
       }
 
       // Check if mappings is empty (all categories have empty arrays)
       const hasAnyMappings = Object.values(metadata.mappings).some(
-        (paths) => Array.isArray(paths) && paths.length > 0,
+        (pointRefs) => Array.isArray(pointRefs) && pointRefs.length > 0,
       );
       if (!hasAnyMappings) {
         console.log(
           `[Composite History] System ${system.id} has empty mappings, returning empty data`,
         );
-        return [];
+        return { series: [] };
       }
 
-      // Collect all series paths from mappings
-      // Composite config stores capability-level paths, we need to expand them to full series paths
-      const expectedSeriesPaths = new Set<string>();
-      const sourceSystemIds = new Set<number>();
+      // Collect all point references (systemId.pointId format)
+      const pointRefsMap = new Map<string, string>(); // Maps "systemId.pointId" -> category
 
-      for (const [category, paths] of Object.entries(metadata.mappings)) {
-        if (Array.isArray(paths)) {
-          for (const basePath of paths as string[]) {
-            // Parse to extract source system and capability info
-            const parsed = parseSeriesPath(basePath);
-            if (!parsed) {
-              console.warn(
-                `[Composite History] Failed to parse path: ${basePath}`,
-              );
-              continue;
-            }
+      for (const [category, pointRefs] of Object.entries(metadata.mappings)) {
+        if (Array.isArray(pointRefs)) {
+          for (const pointRef of pointRefs as string[]) {
+            // pointRef format: "systemId.pointId" (e.g., "3.1", "2.5")
+            const [systemIdStr, pointIdStr] = pointRef.split(".");
+            const sourceSystemId = parseInt(systemIdStr);
+            const pointId = parseInt(pointIdStr);
 
-            // Track source system
-            const sourceSystem = await resolveSystemFromSiteId(parsed.siteId);
-            if (sourceSystem) {
-              sourceSystemIds.add(sourceSystem.id);
+            if (!isNaN(sourceSystemId) && !isNaN(pointId)) {
+              pointRefsMap.set(pointRef, category);
             } else {
               console.warn(
-                `[Composite History] Could not resolve system from siteId: ${parsed.siteId}`,
+                `[Composite History] Invalid point reference: ${pointRef}`,
               );
-            }
-
-            // Extract capability subtype from pointId (e.g., "bidi.battery" -> "battery")
-            const pointIdParts = parsed.pointId.split(".");
-            const capabilitySubtype = pointIdParts[pointIdParts.length - 1];
-
-            // All capabilities get power.avg
-            expectedSeriesPaths.add(`${basePath}.power.avg`);
-
-            // Battery capabilities also get soc.last
-            if (capabilitySubtype === "battery") {
-              expectedSeriesPaths.add(`${basePath}.soc.last`);
             }
           }
         }
       }
 
-      console.log(
-        `[Composite History] Expected series paths:`,
-        JSON.stringify(Array.from(expectedSeriesPaths), null, 2),
-      );
+      // Query point_info to resolve all point references in one query
+      const { db } = await import("@/lib/db");
+      const { pointInfo } = await import("@/lib/db/schema-monitoring-points");
+      const { sql } = await import("drizzle-orm");
 
-      if (sourceSystemIds.size === 0) {
-        throw new Error(
-          "No valid source systems found in composite configuration",
+      // Build WHERE clause to match all point references
+      const pointQueries = Array.from(pointRefsMap.keys()).map((pointRef) => {
+        const [systemIdStr, pointIdStr] = pointRef.split(".");
+        return {
+          systemId: parseInt(systemIdStr),
+          pointId: parseInt(pointIdStr),
+        };
+      });
+
+      // Fetch all points in one query
+      const conditions = pointQueries.map(
+        (p) => sql`(system_id = ${p.systemId} AND id = ${p.pointId})`,
+      );
+      const pointsData = await db
+        .select()
+        .from(pointInfo)
+        .where(sql`${sql.join(conditions, sql` OR `)}`);
+
+      // Build metadata for each point
+      const pointsWithMetadata: Array<{
+        systemId: number;
+        pointId: number;
+        category: string;
+        metricType: string;
+        displayName: string | null;
+        capabilityPath: string;
+        aggregationField: "avg" | "last";
+      }> = [];
+
+      for (const [pointRef, category] of pointRefsMap.entries()) {
+        const [systemIdStr, pointIdStr] = pointRef.split(".");
+        const systemId = parseInt(systemIdStr);
+        const pointId = parseInt(pointIdStr);
+
+        const point = pointsData.find(
+          (p) => p.systemId === systemId && p.id === pointId,
         );
+
+        if (!point) {
+          console.warn(
+            `[Composite History] Point ${pointRef} not found in point_info`,
+          );
+          continue;
+        }
+
+        if (!point.type) {
+          console.warn(
+            `[Composite History] Point ${pointRef} has no type defined`,
+          );
+          continue;
+        }
+
+        // Build capability path from type.subtype.extension
+        const pathParts = [point.type, point.subtype, point.extension].filter(
+          Boolean,
+        );
+        const capabilityPath = pathParts.join(".");
+
+        // Determine which aggregation field to use based on metric_type
+        const aggregationField =
+          point.metricType === "power" ? ("avg" as const) : ("last" as const);
+
+        pointsWithMetadata.push({
+          systemId,
+          pointId,
+          category,
+          metricType: point.metricType,
+          displayName: point.displayName,
+          capabilityPath,
+          aggregationField,
+        });
       }
 
-      // Fetch data from all source systems
-      const allSourceData = await Promise.all(
-        Array.from(sourceSystemIds).map(async (sourceSystemId) => {
-          const sourceSystem = await systemsManager.getSystem(sourceSystemId);
-          if (!sourceSystem) {
-            console.warn(
-              `[Composite History] Source system ${sourceSystemId} not found`,
-            );
-            return [];
-          }
+      console.log(
+        `[Composite History] Points to fetch:`,
+        JSON.stringify(
+          pointsWithMetadata.map((p) => ({
+            ref: `${p.systemId}.${p.pointId}`,
+            name: p.displayName,
+            path: p.capabilityPath,
+            metric: p.metricType,
+            field: p.aggregationField,
+          })),
+          null,
+          2,
+        ),
+      );
 
-          const data = await HistoryService.getHistoryInOpenNEMFormat(
-            sourceSystem,
-            startTime,
-            endTime,
-            interval,
+      if (pointsWithMetadata.length === 0) {
+        console.warn(
+          `[Composite History] No valid points resolved from configuration`,
+        );
+        return { series: [] };
+      }
+
+      // Query the appropriate aggregation table based on interval
+      const aggTable =
+        interval === "5m"
+          ? "point_readings_agg_5m"
+          : interval === "30m"
+            ? "point_readings_agg_30m"
+            : "point_readings_agg_1d";
+
+      // Calculate time range in Unix epoch milliseconds (point_readings_agg_* uses milliseconds)
+      const startEpoch =
+        interval === "1d"
+          ? (startTime as CalendarDate).toDate("UTC").getTime()
+          : (startTime as ZonedDateTime).toDate().getTime();
+
+      const endEpoch =
+        interval === "1d"
+          ? (endTime as CalendarDate).toDate("UTC").getTime()
+          : (endTime as ZonedDateTime).toDate().getTime();
+
+      // Fetch data for each point
+      const { buildSiteIdFromSystem } = await import("@/lib/series-path-utils");
+      const allSeries: OpenNEMDataSeries[] = [];
+
+      for (const point of pointsWithMetadata) {
+        const sourceSystem = await systemsManager.getSystem(point.systemId);
+        if (!sourceSystem) {
+          console.warn(
+            `[Composite History] System ${point.systemId} not found`,
           );
+          continue;
+        }
+
+        // Query aggregation table
+        const rows = (await db.all(sql`
+          SELECT interval_end, ${sql.identifier(point.aggregationField)} as value
+          FROM ${sql.identifier(aggTable)}
+          WHERE system_id = ${point.systemId}
+            AND point_id = ${point.pointId}
+            AND interval_end >= ${startEpoch}
+            AND interval_end < ${endEpoch}
+          ORDER BY interval_end ASC
+        `)) as Array<{ interval_end: number; value: number | null }>;
+
+        if (rows.length > 0) {
+          // Build series ID: liveone.{siteId}.{capabilityPath}.{metricType}.{aggregation}
+          const siteId = buildSiteIdFromSystem(sourceSystem);
+          const seriesId = `liveone.${siteId}.${point.capabilityPath}.${point.metricType}.${point.aggregationField}`;
+
+          // Convert to OpenNEM format and apply number formatting (4 sig figs)
+          const rawData = rows.map((row) => row.value);
+          const data = formatDataArray(rawData);
+          const firstTimestamp = rows[0].interval_end;
+          const lastTimestamp = rows[rows.length - 1].interval_end;
+
+          // Format timestamps with system timezone
+          const { formatTime_fromJSDate } = await import("@/lib/date-utils");
+          const timezoneOffsetMin = system.timezoneOffsetMin ?? 600; // Default to Brisbane (+10:00)
+          const startFormatted = formatTime_fromJSDate(
+            new Date(firstTimestamp),
+            timezoneOffsetMin,
+          );
+          const endFormatted = formatTime_fromJSDate(
+            new Date(lastTimestamp),
+            timezoneOffsetMin,
+          );
+
+          allSeries.push({
+            id: seriesId,
+            type: "power",
+            units: point.metricType === "power" ? "MW" : "",
+            path: point.capabilityPath, // Add point path (type.subtype.extension)
+            history: {
+              start: startFormatted,
+              last: endFormatted,
+              interval: interval,
+              data,
+            },
+          });
 
           console.log(
-            `[Composite History] System ${sourceSystemId} returned ${data.length} series:`,
-            JSON.stringify(
-              data.map((s) => s.id),
-              null,
-              2,
-            ),
+            `[Composite History] Fetched ${rows.length} data points for ${seriesId}`,
           );
-
-          return data;
-        }),
-      );
-
-      // Flatten all series from all sources
-      const allSeries = allSourceData.flat();
-      console.log(
-        `[Composite History] Total series from all sources: ${allSeries.length}`,
-      );
-
-      // Build a map of expected paths with resolved system IDs for smart matching
-      const expectedPathsResolved = await Promise.all(
-        Array.from(expectedSeriesPaths).map(async (path) => {
-          const parsed = parseSeriesPath(path);
-          if (!parsed) return null;
-
-          const system = await resolveSystemFromSiteId(parsed.siteId);
-          if (!system) return null;
-
-          return {
-            originalPath: path,
-            systemId: system.id,
-            pointId: parsed.pointId,
-          };
-        }),
-      );
-
-      const validExpectedPaths = expectedPathsResolved.filter(
-        (p) => p !== null,
-      );
-
-      // Filter series using smart matching (resolve siteIds to system IDs)
-      const filteredSeries = await Promise.all(
-        allSeries.map(async (series) => {
-          const parsed = parseSeriesPath(series.id);
-          if (!parsed) return null;
-
-          const system = await resolveSystemFromSiteId(parsed.siteId);
-          if (!system) return null;
-
-          // Check if this series matches any expected path
-          const matches = validExpectedPaths.some(
-            (expected) =>
-              expected.systemId === system.id &&
-              expected.pointId === parsed.pointId,
+        } else {
+          console.warn(
+            `[Composite History] No data found for point ${point.systemId}.${point.pointId} (${point.capabilityPath})`,
           );
-
-          return matches ? series : null;
-        }),
-      );
-
-      const finalSeries = filteredSeries.filter((s) => s !== null);
-      console.log(
-        `[Composite History] Filtered down to ${finalSeries.length} series`,
-      );
-
-      if (finalSeries.length === 0) {
-        console.warn(
-          `[Composite History] No matching series found! Available series:`,
-          JSON.stringify(
-            allSeries.map((s) => s.id),
-            null,
-            2,
-          ),
-        );
+        }
       }
 
-      return finalSeries;
+      console.log(
+        `[Composite History] Total: ${allSeries.length} series with data`,
+      );
+
+      return {
+        series: allSeries,
+        debug: {
+          pointsQueried: pointsWithMetadata.map((p) => ({
+            pointRef: `${p.systemId}.${p.pointId}`,
+            path: p.capabilityPath,
+            metric: p.metricType,
+            field: p.aggregationField,
+          })),
+        },
+      };
     } catch (error) {
       console.error("Error fetching composite data:", error);
       throw error;
@@ -541,12 +610,13 @@ async function getSystemHistoryInOpenNEMFormat(
   }
 
   // For all other systems, use the history service which extracts fields dynamically
-  return HistoryService.getHistoryInOpenNEMFormat(
+  const series = await HistoryService.getHistoryInOpenNEMFormat(
     system,
     startTime,
     endTime,
     interval,
   );
+  return { series };
 }
 
 // ============================================================================
@@ -558,6 +628,7 @@ function buildResponse(
   startTime: ZonedDateTime | CalendarDate,
   endTime: ZonedDateTime | CalendarDate,
   interval: "5m" | "30m" | "1d",
+  debug?: any,
 ): NextResponse {
   // Format date strings based on interval type
   let requestStartStr: string;
@@ -579,7 +650,7 @@ function buildResponse(
       throw new Error(`Unsupported interval: ${interval}`);
   }
 
-  const response: OpenNEMResponse = {
+  const response: any = {
     type: "energy",
     version: "v4.1",
     network: "liveone",
@@ -588,6 +659,11 @@ function buildResponse(
     requestEnd: requestEndStr,
     data: dataSeries,
   };
+
+  // Add debug info if provided
+  if (debug) {
+    response.debug = debug;
+  }
 
   const jsonStr = formatOpenNEMResponse(response);
 
@@ -660,7 +736,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Step 6: Fetch data using new abstraction
-    const dataSeries = await getSystemHistoryInOpenNEMFormat(
+    const { series: dataSeries, debug } = await getSystemHistoryInOpenNEMFormat(
       system,
       timeRange.startTime!,
       timeRange.endTime!,
@@ -673,6 +749,7 @@ export async function GET(request: NextRequest) {
       timeRange.startTime!,
       timeRange.endTime!,
       basicParams.interval as "5m" | "30m" | "1d",
+      debug,
     );
   } catch (error) {
     console.error("Error fetching historical data:", error);

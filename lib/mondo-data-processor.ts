@@ -2,7 +2,6 @@ import {
   ChartData,
   SeriesData,
   generateSeriesConfig,
-  parseSeriesId,
 } from "@/components/MondoPowerChart";
 
 export interface ProcessedMondoData {
@@ -96,6 +95,10 @@ export async function fetchAndProcessMondoData(
   powerSeries.forEach((series: any) => {
     seriesMap.set(series.id, series);
   });
+  console.log(
+    "[Mondo Processor] Available series IDs in data:",
+    Array.from(seriesMap.keys()),
+  );
 
   // Get first available series to extract timestamps
   const firstSeries = powerSeries[0];
@@ -175,6 +178,18 @@ export async function fetchAndProcessMondoData(
     )
     .map(({ index }: { time: Date; index: number }) => index);
 
+  console.log(
+    `[Mondo Processor] Time window: ${windowStart.toISOString()} to ${windowEnd.toISOString()}`,
+  );
+  console.log(
+    `[Mondo Processor] Total timestamps: ${timestamps.length}, Selected: ${selectedIndices.length}`,
+  );
+  if (timestamps.length > 0) {
+    console.log(
+      `[Mondo Processor] First timestamp: ${timestamps[0].toISOString()}, Last: ${timestamps[timestamps.length - 1].toISOString()}`,
+    );
+  }
+
   const filteredTimestamps = selectedIndices.map((i: number) => timestamps[i]);
 
   // Process data for both load and generation modes
@@ -188,6 +203,10 @@ export async function fetchAndProcessMondoData(
   modes.forEach((mode) => {
     // Generate series configuration dynamically from available data
     const seriesConfig = generateSeriesConfig(powerSeries, mode);
+    console.log(
+      `[Mondo Processor] ${mode} mode - Generated ${seriesConfig.length} series configs:`,
+      seriesConfig.map((c) => ({ id: c.id, label: c.label })),
+    );
     const seriesData: SeriesData[] = [];
 
     // For rest of house calculation
@@ -206,7 +225,13 @@ export async function fetchAndProcessMondoData(
 
       // Find the matching series in our data
       const dataSeries = seriesMap.get(config.id);
-      if (!dataSeries) return; // Skip if series not found in data
+      if (!dataSeries) {
+        console.log(
+          `[Mondo Processor] ${mode} mode - Series not found in data:`,
+          config.id,
+        );
+        return; // Skip if series not found in data
+      }
 
       // Extract the data for selected indices and convert from W to kW
       let seriesValues = selectedIndices.map((i: number) => {
@@ -227,11 +252,16 @@ export async function fetchAndProcessMondoData(
         data: seriesValues,
         color: config.color,
       });
+      console.log(
+        `[Mondo Processor] ${mode} mode - Added series ${config.label} with ${seriesValues.length} data points`,
+      );
 
       // Accumulate values for rest of house calculation (load mode)
       if (mode === "load") {
-        const parsed = parseSeriesId(config.id);
-        if (parsed?.type === "load") {
+        // Use the path attribute from the series data if available
+        const path = dataSeries.path || "";
+        const [type] = path.split(".");
+        if (type === "load") {
           // This is a measured load
           if (measuredLoadsSum === null) {
             measuredLoadsSum = new Array(seriesValues.length).fill(0);
@@ -243,25 +273,21 @@ export async function fetchAndProcessMondoData(
               measuredLoadsSum![idx] = null;
             }
           });
-        } else if (
-          parsed?.type === "bidi" &&
-          parsed?.subtype === "battery" &&
-          config.label === "Battery Charge"
-        ) {
+        } else if (config.label === "Battery Charge") {
+          // Battery charge is identified by the label
           batteryChargeValues = seriesValues;
-        } else if (
-          parsed?.type === "bidi" &&
-          parsed?.subtype === "grid" &&
-          config.label === "Grid Export"
-        ) {
+        } else if (config.label === "Grid Export") {
+          // Grid export is identified by the label
           gridExportValues = seriesValues;
         }
       }
 
       // Accumulate total generation (generation mode)
       if (mode === "generation") {
-        const parsed = parseSeriesId(config.id);
-        if (parsed?.type === "source" && parsed?.subtype === "solar") {
+        // Use the path attribute from the series data if available
+        const path = dataSeries.path || "";
+        const [type, subtype] = path.split(".");
+        if (type === "source" && subtype === "solar") {
           if (totalGenerationValues === null) {
             totalGenerationValues = new Array(seriesValues.length).fill(0);
           }
@@ -279,20 +305,23 @@ export async function fetchAndProcessMondoData(
 
     // Calculate rest of house if in load mode
     if (mode === "load" && measuredLoadsSum) {
-      // Find solar, grid, and battery series using the new structure
+      // Find solar, grid, and battery series using the path attribute
       const solarSeriesList = Array.from(seriesMap.values()).filter((s) => {
-        const parsed = parseSeriesId(s.id);
-        return parsed?.type === "source" && parsed?.subtype === "solar";
+        const path = s.path || "";
+        const [type, subtype] = path.split(".");
+        return type === "source" && subtype === "solar";
       });
 
       const gridSeries = Array.from(seriesMap.values()).find((s) => {
-        const parsed = parseSeriesId(s.id);
-        return parsed?.type === "bidi" && parsed?.subtype === "grid";
+        const path = s.path || "";
+        const [type, subtype] = path.split(".");
+        return type === "bidi" && subtype === "grid";
       });
 
       const battSeries = Array.from(seriesMap.values()).find((s) => {
-        const parsed = parseSeriesId(s.id);
-        return parsed?.type === "bidi" && parsed?.subtype === "battery";
+        const path = s.path || "";
+        const [type, subtype] = path.split(".");
+        return type === "bidi" && subtype === "battery";
       });
 
       const totalGeneration = selectedIndices.map((i: number) => {

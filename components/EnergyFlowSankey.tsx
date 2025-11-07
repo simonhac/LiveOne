@@ -263,7 +263,7 @@ export default function EnergyFlowSankey({
         "http://www.w3.org/2000/svg",
         "title",
       );
-      title.textContent = `${link.source.name} → ${link.target.name}: ${link.value.toFixed(2)} kWh`;
+      title.textContent = `${link.source.name} → ${link.target.name}: ${link.value.toFixed(1)} kWh`;
       path.appendChild(title);
 
       svgElement.appendChild(path);

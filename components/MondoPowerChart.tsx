@@ -149,10 +149,13 @@ export function generateSeriesConfig(
       const { subtype, extension } = series.parsed!;
       const loadType = extension || subtype;
       // Use label from API if available, otherwise fallback to lookup table or capitalized load type
+      // If loadType is empty (just "load" with no subtype), use "Load" as default
       const label =
         series.label ||
-        LOAD_LABELS[loadType] ||
-        loadType.charAt(0).toUpperCase() + loadType.slice(1);
+        (loadType ? LOAD_LABELS[loadType] : undefined) ||
+        (loadType
+          ? loadType.charAt(0).toUpperCase() + loadType.slice(1)
+          : "Load");
       const color = LOAD_COLORS[idx % LOAD_COLORS.length];
 
       configs.push({

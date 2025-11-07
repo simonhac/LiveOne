@@ -16,6 +16,7 @@ export interface OpenNEMDataSeries {
   source?: string;
   label?: string;
   note?: string;
+  path?: string; // Point path in format type.subtype.extension (e.g., "source.solar", "bidi.battery", "load")
 }
 
 export interface OpenNEMResponse {
