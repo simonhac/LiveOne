@@ -247,15 +247,28 @@ export default function DashboardClient({
     const offsetEncoded = searchParams.get("offset");
     const periodParam = searchParams.get("period");
 
-    if (!offsetEncoded || !periodParam) {
+    if (!periodParam) {
       return {};
     }
 
-    const offsetMin = decodeUrlOffset(offsetEncoded);
     const period =
       periodParam === "1D" || periodParam === "7D" || periodParam === "30D"
         ? periodParam
         : "1D";
+
+    // For 30D (day-based), use offset=0 (no timezone conversion)
+    // For other periods, offset is required
+    const offsetMin =
+      period === "30D"
+        ? 0
+        : offsetEncoded
+          ? decodeUrlOffset(offsetEncoded)
+          : null;
+
+    if (offsetMin === null) {
+      return {}; // offset is required for non-day-based periods
+    }
+
     const periodDuration = getPeriodDuration(period);
 
     // Case 1: Both start and end provided
@@ -664,9 +677,15 @@ export default function DashboardClient({
       // Update URL with only start (period is already in URL, end can be calculated)
       const offsetMin = system.timezoneOffsetMin ?? 600;
       const params = new URLSearchParams(searchParams.toString());
-      params.set("start", encodeUrlDate(newStartISO, offsetMin));
+      const isDateOnly = mondoPeriod === "30D";
+      params.set("start", encodeUrlDate(newStartISO, offsetMin, isDateOnly));
       params.delete("end"); // Remove end - it's redundant with start + period
-      params.set("offset", encodeUrlOffset(offsetMin));
+      // Only include offset for time-based periods (1D, 7D)
+      if (isDateOnly) {
+        params.delete("offset");
+      } else {
+        params.set("offset", encodeUrlOffset(offsetMin));
+      }
       router.push(`?${params.toString()}`, { scroll: false });
     }
   };
@@ -714,9 +733,14 @@ export default function DashboardClient({
     // Update URL with only start (period is already in URL, end can be calculated)
     const offsetMin = system.timezoneOffsetMin ?? 600;
     const params = new URLSearchParams(searchParams.toString());
-    params.set("start", encodeUrlDate(newStartISO, offsetMin));
+    const isDateOnly = mondoPeriod === "30D";
+    params.set("start", encodeUrlDate(newStartISO, offsetMin, isDateOnly));
     params.delete("end"); // Remove end - it's redundant with start + period
-    params.set("offset", encodeUrlOffset(offsetMin));
+    if (isDateOnly) {
+      params.delete("offset"); // No offset for day-based periods
+    } else {
+      params.set("offset", encodeUrlOffset(offsetMin));
+    }
     router.push(`?${params.toString()}`, { scroll: false });
   };
 
@@ -1251,7 +1275,7 @@ export default function DashboardClient({
                                               {formatDateRange(
                                                 start,
                                                 end,
-                                                true,
+                                                mondoPeriod !== "30D",
                                               )}
                                             </span>
                                             <span className="sm:hidden">
@@ -1265,43 +1289,83 @@ export default function DashboardClient({
                                         );
                                       } else {
                                         // Fallback to calculated range if no data yet
-                                        const now = new Date();
-                                        let windowHours: number;
-                                        if (mondoPeriod === "1D")
-                                          windowHours = 24;
-                                        else if (mondoPeriod === "7D")
-                                          windowHours = 24 * 7;
-                                        else windowHours = 24 * 30;
-                                        const windowStart = new Date(
-                                          now.getTime() -
-                                            windowHours * 60 * 60 * 1000,
-                                        );
-                                        const start = fromUnixTimestamp(
-                                          windowStart.getTime() / 1000,
-                                          timezoneOffset,
-                                        );
-                                        const end = fromUnixTimestamp(
-                                          now.getTime() / 1000,
-                                          timezoneOffset,
-                                        );
-                                        return (
-                                          <>
-                                            <span className="hidden sm:inline">
-                                              {formatDateRange(
-                                                start,
-                                                end,
-                                                true,
-                                              )}
-                                            </span>
-                                            <span className="sm:hidden">
-                                              {formatDateRange(
-                                                start,
-                                                end,
-                                                false,
-                                              )}
-                                            </span>
-                                          </>
-                                        );
+                                        // Use historyTimeRange if in historical mode, otherwise use current time
+                                        if (
+                                          isHistoricalMode &&
+                                          historyTimeRange.start &&
+                                          historyTimeRange.end
+                                        ) {
+                                          // Use the requested historical time range
+                                          const start = fromUnixTimestamp(
+                                            new Date(
+                                              historyTimeRange.start,
+                                            ).getTime() / 1000,
+                                            timezoneOffset,
+                                          );
+                                          const end = fromUnixTimestamp(
+                                            new Date(
+                                              historyTimeRange.end,
+                                            ).getTime() / 1000,
+                                            timezoneOffset,
+                                          );
+                                          return (
+                                            <>
+                                              <span className="hidden sm:inline">
+                                                {formatDateRange(
+                                                  start,
+                                                  end,
+                                                  mondoPeriod !== "30D",
+                                                )}
+                                              </span>
+                                              <span className="sm:hidden">
+                                                {formatDateRange(
+                                                  start,
+                                                  end,
+                                                  false,
+                                                )}
+                                              </span>
+                                            </>
+                                          );
+                                        } else {
+                                          // Fallback to current time if not in historical mode
+                                          const now = new Date();
+                                          let windowHours: number;
+                                          if (mondoPeriod === "1D")
+                                            windowHours = 24;
+                                          else if (mondoPeriod === "7D")
+                                            windowHours = 24 * 7;
+                                          else windowHours = 24 * 30;
+                                          const windowStart = new Date(
+                                            now.getTime() -
+                                              windowHours * 60 * 60 * 1000,
+                                          );
+                                          const start = fromUnixTimestamp(
+                                            windowStart.getTime() / 1000,
+                                            timezoneOffset,
+                                          );
+                                          const end = fromUnixTimestamp(
+                                            now.getTime() / 1000,
+                                            timezoneOffset,
+                                          );
+                                          return (
+                                            <>
+                                              <span className="hidden sm:inline">
+                                                {formatDateRange(
+                                                  start,
+                                                  end,
+                                                  mondoPeriod !== "30D",
+                                                )}
+                                              </span>
+                                              <span className="sm:hidden">
+                                                {formatDateRange(
+                                                  start,
+                                                  end,
+                                                  false,
+                                                )}
+                                              </span>
+                                            </>
+                                          );
+                                        }
                                       }
                                     })()}
                               </span>
@@ -1392,6 +1456,7 @@ export default function DashboardClient({
                                 }
                                 onVisibilityChange={setLoadVisibleSeries}
                                 data={processedHistoryData.load}
+                                isLoading={historyLoading}
                               />
                             </div>
                             <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
@@ -1448,6 +1513,7 @@ export default function DashboardClient({
                                 }
                                 onVisibilityChange={setGenerationVisibleSeries}
                                 data={processedHistoryData.generation}
+                                isLoading={historyLoading}
                               />
                             </div>
                             <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">

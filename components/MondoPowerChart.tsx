@@ -10,6 +10,7 @@ import {
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
   Legend,
@@ -17,7 +18,7 @@ import {
   ChartOptions,
   Filler,
 } from "chart.js";
-import { Line } from "react-chartjs-2";
+import { Line, Bar } from "react-chartjs-2";
 import { format } from "date-fns";
 import "chartjs-adapter-date-fns";
 import annotationPlugin from "chartjs-plugin-annotation";
@@ -28,6 +29,7 @@ import {
   parseDeviceMetric,
   parseDeviceId,
 } from "@/lib/series-path-parser";
+import { CalendarX2 } from "lucide-react";
 
 // Register Chart.js components
 ChartJS.register(
@@ -35,6 +37,7 @@ ChartJS.register(
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
   Legend,
@@ -59,6 +62,7 @@ interface MondoPowerChartProps {
   visibleSeries?: Set<string>; // Control which series are visible
   onVisibilityChange?: (visibleSeries: Set<string>) => void; // Callback when visibility changes
   data?: ChartData | null; // Pre-processed data from parent
+  isLoading?: boolean; // External loading state from parent
 }
 
 export interface SeriesData {
@@ -275,11 +279,13 @@ export default function MondoPowerChart({
   visibleSeries: externalVisibleSeries,
   onVisibilityChange,
   data: externalData,
+  isLoading: externalIsLoading,
 }: MondoPowerChartProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [chartData, setChartData] = useState<ChartData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showSpinner, setShowSpinner] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [serverError, setServerError] = useState<{
     type: "connection" | "server" | null;
@@ -390,6 +396,9 @@ export default function MondoPowerChart({
     return { now, windowStart };
   }, [timeRange, chartData]);
 
+  // Determine if we should use bar chart (for energy/daily data)
+  const isBarChart = chartData?.mode === "energy";
+
   const options: ChartOptions<any> = useMemo(
     () => ({
       responsive: true,
@@ -404,6 +413,11 @@ export default function MondoPowerChart({
         axis: "x" as const, // Only consider x-axis for hover (more stable)
       },
       onHover: handleHover,
+      // Bar chart specific configuration
+      ...(isBarChart && {
+        barPercentage: 0.95, // Increase bar width (default 0.9)
+        categoryPercentage: 0.95, // Increase category width (default 0.8)
+      }),
       plugins: {
         legend: {
           display: false, // Legend now shown in the table
@@ -569,42 +583,51 @@ export default function MondoPowerChart({
         },
       },
     }),
-    [handleHover, windowStart, now, timeRange, hoveredTimestamp],
+    [handleHover, windowStart, now, timeRange, hoveredTimestamp, isBarChart],
   );
 
   // Use external data when provided
   useEffect(() => {
-    console.log(`[MondoPowerChart ${mode}] External data changed:`, {
-      isDefined: externalData !== undefined,
-      isNull: externalData === null,
-      hasData: externalData
-        ? {
-            timestamps: externalData.timestamps?.length,
-            series: externalData.series?.length,
-            mode: externalData.mode,
-          }
-        : null,
-    });
     // When using external data, we need to manage loading state differently
     if (externalData !== undefined) {
       if (externalData === null) {
-        // If external data is null, keep loading state true
-        // The parent component will pass actual data when it's ready
-        console.log(
-          `[MondoPowerChart ${mode}] Setting to loading state (external data is null)`,
-        );
-        setLoading(true);
+        // If external data is null, check if parent is still loading
+        if (externalIsLoading) {
+          // Parent is still loading, keep spinner
+          setLoading(true);
+        } else {
+          // Parent finished loading but data is null (no data available)
+          setLoading(false);
+        }
         setChartData(null);
       } else {
         // We have actual data
-        console.log(
-          `[MondoPowerChart ${mode}] Setting chartData from external data`,
-        );
         setChartData(externalData);
         setLoading(false);
       }
     }
-  }, [externalData, mode]);
+  }, [externalData, externalIsLoading, mode]);
+
+  // Delay showing spinner to avoid flash on quick loads
+  useEffect(() => {
+    let timerId: NodeJS.Timeout;
+
+    if (loading) {
+      // Start a timer when loading becomes true
+      timerId = setTimeout(() => {
+        setShowSpinner(true);
+      }, 1000);
+    } else {
+      // Immediately hide spinner when loading is done
+      setShowSpinner(false);
+    }
+
+    return () => {
+      if (timerId) {
+        clearTimeout(timerId);
+      }
+    };
+  }, [loading]);
 
   // Call onDataChange when chart data updates
   useEffect(() => {
@@ -945,20 +968,36 @@ export default function MondoPowerChart({
         labels: chartData.timestamps,
         datasets: chartData.series
           .filter((series) => effectiveVisibleSeries.has(series.id)) // Filter by visibility
-          .map((series, idx) => ({
-            label: series.description, // Description already contains the display label
-            data: series.data, // Already in kW from earlier conversion
-            borderColor: series.color,
-            backgroundColor: series.color, // Use solid color, not transparent
-            yAxisID: "y",
-            tension: 0, // Use straight lines instead of curved
-            borderWidth: 2,
-            pointRadius: 0,
-            pointHoverRadius: 0, // No dots on hover either
-            fill: "stack", // Fill according to stack configuration
-            stack: "stack0", // Ensure all datasets stack together
-            order: idx,
-          })),
+          .map((series, idx) => {
+            const baseConfig = {
+              label: series.description, // Description already contains the display label
+              data: series.data, // Already in kW from earlier conversion
+              backgroundColor: series.color, // Use solid color
+              yAxisID: "y",
+              stack: "stack0", // Ensure all datasets stack together
+              order: idx,
+            };
+
+            if (isBarChart) {
+              // Bar chart configuration
+              return {
+                ...baseConfig,
+                borderColor: series.color,
+                borderWidth: 0,
+              };
+            } else {
+              // Line chart configuration
+              return {
+                ...baseConfig,
+                borderColor: series.color,
+                tension: 0, // Use straight lines instead of curved
+                borderWidth: 2,
+                pointRadius: 0,
+                pointHoverRadius: 0, // No dots on hover either
+                fill: "stack", // Fill according to stack configuration
+              };
+            }
+          }),
       };
 
   const formatHoverTimestamp = (
@@ -995,19 +1034,7 @@ export default function MondoPowerChart({
   }, [onHoverIndexChange]);
 
   const renderChartContent = () => {
-    console.log(`[MondoPowerChart ${mode}] Rendering:`, {
-      loading,
-      hasChartData: !!chartData,
-      hasError: !!error,
-      chartDataDetails: chartData
-        ? {
-            timestamps: chartData.timestamps?.length,
-            series: chartData.series?.length,
-          }
-        : null,
-    });
-
-    if (loading) {
+    if (loading && showSpinner) {
       return (
         <div className="flex-1 flex items-center justify-center min-h-0">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400"></div>
@@ -1015,11 +1042,19 @@ export default function MondoPowerChart({
       );
     }
 
+    if (loading && !showSpinner) {
+      // Still loading but spinner delay hasn't elapsed - show nothing
+      return <div className="flex-1 min-h-0" />;
+    }
+
     if (error || !chartData) {
       return (
         <div className="flex-1 flex items-center justify-center min-h-0">
-          <div className="text-red-400">
-            Error: {error || "No data available"}
+          <div className="flex flex-col items-center gap-3">
+            <CalendarX2 className="w-12 h-12 text-gray-500" />
+            <p className="text-sm text-gray-300">
+              {error ? "Unable to load data" : "No data available"}
+            </p>
           </div>
         </div>
       );
@@ -1030,7 +1065,11 @@ export default function MondoPowerChart({
         className="flex-1 min-h-0 w-full overflow-hidden"
         onMouseLeave={handleMouseLeave}
       >
-        <Line ref={chartRef} data={data} options={options} />
+        {isBarChart ? (
+          <Bar ref={chartRef} data={data} options={options} />
+        ) : (
+          <Line ref={chartRef} data={data} options={options} />
+        )}
       </div>
     );
   };

@@ -41,7 +41,17 @@ export async function fetchAndProcessMondoData(
   let apiUrl: string;
   if (startTime && endTime) {
     // Historical data with specific time range
-    apiUrl = `/api/history?interval=${requestInterval}&startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}&systemId=${systemId}`;
+    // For 1d interval, convert ISO timestamps to YYYY-MM-DD format
+    let start = startTime;
+    let end = endTime;
+
+    if (requestInterval === "1d") {
+      // Extract just the date part (YYYY-MM-DD)
+      start = startTime.split("T")[0];
+      end = endTime.split("T")[0];
+    }
+
+    apiUrl = `/api/history?interval=${requestInterval}&startTime=${encodeURIComponent(start)}&endTime=${encodeURIComponent(end)}&systemId=${systemId}`;
   } else {
     // Current/live data - use relative time
     apiUrl = `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId}`;
@@ -129,17 +139,6 @@ export async function fetchAndProcessMondoData(
     // Use the requested time range when explicitly provided
     windowStart = new Date(startTime);
     windowEnd = new Date(endTime);
-    console.log(
-      "[Mondo Processor] Historical mode - using explicit time range",
-    );
-    console.log("  windowStart:", windowStart.toISOString());
-    console.log("  windowEnd:", windowEnd.toISOString());
-    console.log("  dataStartTime:", dataStartTime.toISOString());
-    console.log("  First timestamp:", timestamps[0]?.toISOString());
-    console.log(
-      "  Last timestamp:",
-      timestamps[timestamps.length - 1]?.toISOString(),
-    );
   } else {
     // Use current time window for live/default view
     const currentTime = new Date();
@@ -175,10 +174,6 @@ export async function fetchAndProcessMondoData(
         time >= windowStart && time <= windowEnd,
     )
     .map(({ index }: { time: Date; index: number }) => index);
-
-  console.log("[Mondo Processor] Filtering results:");
-  console.log("  Total timestamps:", timestamps.length);
-  console.log("  Selected indices:", selectedIndices.length);
 
   const filteredTimestamps = selectedIndices.map((i: number) => timestamps[i]);
 
@@ -378,12 +373,6 @@ export async function fetchAndProcessMondoData(
       series: seriesData,
       mode: requestInterval === "1d" ? "energy" : "power",
     };
-    console.log(`[Mondo Processor] ${mode} chart data:`, {
-      timestamps: filteredTimestamps.length,
-      series: seriesData.length,
-      seriesNames: seriesData.map((s) => s.id),
-      sampleDataPoint: seriesData[0]?.data.slice(0, 5),
-    });
   });
 
   return {
