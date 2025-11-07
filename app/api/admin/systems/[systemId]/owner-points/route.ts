@@ -46,6 +46,13 @@ export async function GET(
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
+    if (!targetSystem.ownerClerkUserId) {
+      return NextResponse.json(
+        { error: "System has no owner" },
+        { status: 400 },
+      );
+    }
+
     // Get all systems owned by the target system's owner
     const ownedSystems = await db
       .select()
