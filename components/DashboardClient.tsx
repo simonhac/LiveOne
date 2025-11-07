@@ -20,6 +20,8 @@ import SystemSettingsDialog from "@/components/SystemSettingsDialog";
 import MondoPowerChart, { type ChartData } from "@/components/MondoPowerChart";
 import EnergyTable from "@/components/EnergyTable";
 import { fetchAndProcessMondoData } from "@/lib/mondo-data-processor";
+import EnergyFlowSankey from "@/components/EnergyFlowSankey";
+import { calculateEnergyFlowMatrix } from "@/lib/energy-flow-matrix";
 import PeriodSwitcher from "@/components/PeriodSwitcher";
 import { formatDateTime } from "@/lib/fe-date-format";
 import {
@@ -1532,6 +1534,30 @@ export default function DashboardClient({
                             </div>
                           </div>
                         </div>
+
+                        {/* Energy Flow Sankey Diagram */}
+                        {processedHistoryData.generation &&
+                          processedHistoryData.load &&
+                          (() => {
+                            const matrix = calculateEnergyFlowMatrix({
+                              generation: processedHistoryData.generation,
+                              load: processedHistoryData.load,
+                            });
+                            return matrix ? (
+                              <div className="p-2 sm:p-4">
+                                <h3 className="text-lg font-semibold text-white mb-4">
+                                  Energy Flow
+                                </h3>
+                                <div className="flex justify-center">
+                                  <EnergyFlowSankey
+                                    matrix={matrix}
+                                    width={600}
+                                    height={680}
+                                  />
+                                </div>
+                              </div>
+                            ) : null;
+                          })()}
                       </div>
                     )
                   ) : (

@@ -166,13 +166,47 @@ LIMIT 20;
 
 ### Backup & Restore
 
-```bash
-# Backup
-turso db export liveone-tokyo > backup-$(date +%Y%m%d).sql
+#### Recommended: Turso Snapshots (Instant, Copy-on-Write)
 
-# Restore
-turso db create liveone-restored --location hnd
-turso db shell liveone-restored < backup-20250817.sql
+Turso's native branching feature creates instant point-in-time snapshots using copy-on-write:
+
+```bash
+# Create instant snapshot (recommended before migrations or risky operations)
+~/.turso/turso db create liveone-snapshot-$(date +%Y%m%d-%H%M%S) \
+  --from-db liveone-tokyo \
+  --location aws-ap-northeast-1 \
+  --wait
+
+# Verify snapshot has data
+~/.turso/turso db shell liveone-snapshot-YYYYMMDD-HHMMSS \
+  "SELECT COUNT(*) FROM readings; SELECT COUNT(*) FROM systems;"
+
+# List all snapshots
+~/.turso/turso db list | grep snapshot
+
+# Delete old snapshot when no longer needed
+~/.turso/turso db destroy liveone-snapshot-YYYYMMDD-HHMMSS
+```
+
+Benefits:
+
+- Instant creation (seconds, not minutes)
+- No storage cost until data diverges (copy-on-write)
+- Can query directly without restore
+- Perfect for pre-migration snapshots
+
+#### Alternative: File Export (for offline backups)
+
+```bash
+# Backup to file (slower, but portable)
+~/.turso/turso db export liveone-tokyo > backup-$(date +%Y%m%d).sql
+
+# Or use the backup script (includes compression)
+./scripts/utils/backup-prod-db.sh
+
+# Restore from file
+~/.turso/turso db create liveone-restored --location aws-ap-northeast-1
+~/.turso/turso db shell liveone-restored < backup-20250817.sql
 ```
 
 ## Database Migrations
@@ -265,6 +299,13 @@ sqlite3 dev.db "SELECT * FROM migrations WHERE id = '0017_add_new_feature'"
 1. **Always backup production first**:
 
    ```bash
+   # Recommended: Create instant Turso snapshot (seconds, not minutes)
+   ~/.turso/turso db create liveone-snapshot-$(date +%Y%m%d-%H%M%S) \
+     --from-db liveone-tokyo \
+     --location aws-ap-northeast-1 \
+     --wait
+
+   # Alternative: File-based backup (slower)
    ./scripts/utils/backup-prod-db.sh
    # Verify backup is at least 6MB and contains expected data
    ls -lh db-backups/ | tail -1

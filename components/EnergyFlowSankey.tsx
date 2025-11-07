@@ -331,7 +331,7 @@ export default function EnergyFlowSankey({
       const spacing = 15;
 
       // Minimum heights needed for each element
-      const minHeightForLabel = labelBoxHeight + 20; // label + some padding
+      const minHeightForLabel = labelBoxHeight + 10; // label + some padding
       const minHeightForValue = minHeightForLabel + energyValueHeight + spacing;
       const minHeightForUnit = 65; // Show kWh unit when box is at least 65px tall
       const minHeightForPercentage = 100; // Show percentage when box is at least 100px tall
@@ -378,7 +378,7 @@ export default function EnergyFlowSankey({
             "text",
           );
           energyText.setAttribute("x", String(centerX));
-          energyText.setAttribute("y", String(labelBoxY + labelBoxHeight + 16));
+          energyText.setAttribute("y", String(labelBoxY + labelBoxHeight + 20));
           energyText.setAttribute("text-anchor", "middle");
           energyText.setAttribute("font-family", "DM Sans, sans-serif");
           energyText.setAttribute("font-size", "20px");
@@ -475,7 +475,7 @@ export default function EnergyFlowSankey({
   }, [matrix, width, height]);
 
   return (
-    <div className="w-full overflow-auto bg-black rounded-lg p-4">
+    <div className="w-full flex justify-center">
       <svg
         ref={svgRef}
         width={width}
