@@ -363,8 +363,10 @@ export async function fetchAndProcessMondoData(
       const restOfHouse = totalGeneration.map(
         (gen: number | null, idx: number) => {
           const measured = measuredLoadsSum![idx];
-          const batteryCharge = batteryChargeValues![idx];
-          const gridExport = gridExportValues![idx];
+          const batteryCharge = batteryChargeValues
+            ? batteryChargeValues[idx]
+            : null;
+          const gridExport = gridExportValues ? gridExportValues[idx] : null;
 
           // If we don't have generation or measured loads data, return null
           if (gen === null || measured === null) return null;
