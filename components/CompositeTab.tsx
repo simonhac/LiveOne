@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Plus, X, Sun, Home, Battery, Zap } from "lucide-react";
 import { createPortal } from "react-dom";
+import { useUser } from "@clerk/nextjs";
 
 interface CompositeMapping {
   [key: string]: string[]; // Allow any category keys
@@ -20,6 +21,7 @@ interface CompositeTabProps {
   shouldLoad?: boolean;
   onDirtyChange?: (isDirty: boolean) => void;
   onSaveFunctionReady?: (saveFunction: () => Promise<CompositeMapping>) => void;
+  ownerUserId?: string; // Optional: owner user ID for fetching points (for new systems)
 }
 
 const CATEGORY_CONFIG = {
@@ -58,7 +60,9 @@ export default function CompositeTab({
   shouldLoad = false,
   onDirtyChange,
   onSaveFunctionReady,
+  ownerUserId,
 }: CompositeTabProps) {
+  const { user } = useUser();
   const [mappings, setMappings] = useState<CompositeMapping>({
     solar: [],
     battery: [],
@@ -98,10 +102,19 @@ export default function CompositeTab({
   const fetchCompositeConfig = async () => {
     fetchingRef.current = true;
     try {
-      // Fetch available points from system owner's systems
-      const pointsResponse = await fetch(
-        `/api/admin/systems/${systemId}/owner-points`,
-      );
+      // Determine which user ID to use for fetching points
+      // Priority: ownerUserId prop > current user ID
+      const userId = ownerUserId || user?.id;
+
+      if (!userId) {
+        console.error("No user ID available to fetch points");
+        setLoading(false);
+        fetchingRef.current = false;
+        return;
+      }
+
+      // Fetch available points from user's systems
+      const pointsResponse = await fetch(`/api/admin/user/${userId}/points`);
       const pointsData = await pointsResponse.json();
 
       if (!pointsData.success) {

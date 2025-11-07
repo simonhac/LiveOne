@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
-import { systems } from "@/lib/db/schema";
 import { pointInfo } from "@/lib/db/schema-monitoring-points";
 import { eq, and } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
+import { SystemsManager } from "@/lib/systems-manager";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ systemId: string }> },
+  { params }: { params: Promise<{ userId: string }> },
 ) {
   try {
     // Check if user is authenticated
-    const { userId } = await auth();
+    const { userId: currentUserId } = await auth();
 
-    if (!userId) {
+    if (!currentUserId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -28,40 +28,15 @@ export async function GET(
       );
     }
 
-    const { systemId: systemIdStr } = await params;
-    const systemId = parseInt(systemIdStr);
+    const { userId } = await params;
 
-    if (isNaN(systemId)) {
-      return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
-    }
+    // Get all systems using SystemsManager
+    const systemsManager = SystemsManager.getInstance();
+    const allSystems = await systemsManager.getAllSystems();
 
-    // Get the target system to find its owner
-    const [targetSystem] = await db
-      .select()
-      .from(systems)
-      .where(eq(systems.id, systemId))
-      .limit(1);
-
-    if (!targetSystem) {
-      return NextResponse.json({ error: "System not found" }, { status: 404 });
-    }
-
-    if (!targetSystem.ownerClerkUserId) {
-      return NextResponse.json(
-        { error: "System has no owner" },
-        { status: 400 },
-      );
-    }
-
-    // Get all systems owned by the target system's owner
-    const ownedSystems = await db
-      .select()
-      .from(systems)
-      .where(eq(systems.ownerClerkUserId, targetSystem.ownerClerkUserId));
-
-    // Filter out composite systems
-    const nonCompositeSystems = ownedSystems.filter(
-      (s) => s.vendorType !== "composite",
+    // Filter to systems owned by this user (excluding composite systems)
+    const nonCompositeSystems = allSystems.filter(
+      (s) => s.ownerClerkUserId === userId && s.vendorType !== "composite",
     );
 
     if (nonCompositeSystems.length === 0) {
@@ -144,7 +119,7 @@ export async function GET(
       referencedSystems,
     });
   } catch (error) {
-    console.error("Error fetching available points for system:", error);
+    console.error("Error fetching available points for user:", error);
 
     return NextResponse.json(
       {
