@@ -179,6 +179,7 @@ export class OpenNEMConverter {
       const type = metadata.type;
       const units = metadata.unit;
       const label = metadata.label;
+      const path = metadata.path;
 
       // Build series ID using standard format: liveone.{siteId}.{pointId}
       const seriesId = buildSeriesPath(siteId, fieldId);
@@ -196,6 +197,7 @@ export class OpenNEMConverter {
         network: "liveone",
         source: system.vendorType,
         label,
+        ...(path && { path }),
       });
     }
 

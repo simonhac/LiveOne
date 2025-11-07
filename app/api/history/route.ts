@@ -542,48 +542,84 @@ async function getSystemHistoryInOpenNEMFormat(
           ORDER BY interval_end ASC
         `)) as Array<{ interval_end: number; value: number | null }>;
 
+        // Build series ID: liveone.{siteId}.{capabilityPath}.{metricType}.{aggregation}
+        const siteId = buildSiteIdFromSystem(sourceSystem);
+        const seriesId = `liveone.${siteId}.${point.capabilityPath}.${point.metricType}.${point.aggregationField}`;
+
+        // Format timestamps with system timezone
+        const { formatTime_fromJSDate } = await import("@/lib/date-utils");
+        const timezoneOffsetMin = system.timezoneOffsetMin ?? 600; // Default to Brisbane (+10:00)
+
+        // Calculate interval parameters for gap filling
+        const intervalMs =
+          interval === "5m"
+            ? 5 * 60 * 1000
+            : interval === "30m"
+              ? 30 * 60 * 1000
+              : 24 * 60 * 60 * 1000; // 1d
+
+        // Build complete data array with gap filling (like opennem-converter.ts does)
+        const fieldData: (number | null)[] = [];
+        let dataIndex = 0;
+
+        // Walk through all expected intervals
+        for (
+          let expectedIntervalEnd = startEpoch;
+          expectedIntervalEnd < endEpoch;
+          expectedIntervalEnd += intervalMs
+        ) {
+          // Check if we have data for this interval
+          if (dataIndex < rows.length) {
+            const dataPoint = rows[dataIndex];
+            const dataIntervalEnd = dataPoint.interval_end;
+
+            if (dataIntervalEnd === expectedIntervalEnd) {
+              // We have data for this interval - apply formatting (4 sig figs)
+              const value = dataPoint.value;
+              fieldData.push(
+                value === null ? null : parseFloat(value.toPrecision(4)),
+              );
+              dataIndex++;
+            } else {
+              // No data for this interval
+              fieldData.push(null);
+            }
+          } else {
+            // No more data points
+            fieldData.push(null);
+          }
+        }
+
+        // Use query range for start/end (all series should have same time range)
+        const startFormatted = formatTime_fromJSDate(
+          new Date(startEpoch),
+          timezoneOffsetMin,
+        );
+        const endFormatted = formatTime_fromJSDate(
+          new Date(endEpoch - intervalMs),
+          timezoneOffsetMin,
+        );
+
+        allSeries.push({
+          id: seriesId,
+          type: "power",
+          units: point.metricType === "power" ? "MW" : "",
+          path: point.capabilityPath, // Add point path (type.subtype.extension)
+          history: {
+            start: startFormatted,
+            last: endFormatted,
+            interval: interval,
+            data: fieldData,
+          },
+        });
+
         if (rows.length > 0) {
-          // Build series ID: liveone.{siteId}.{capabilityPath}.{metricType}.{aggregation}
-          const siteId = buildSiteIdFromSystem(sourceSystem);
-          const seriesId = `liveone.${siteId}.${point.capabilityPath}.${point.metricType}.${point.aggregationField}`;
-
-          // Convert to OpenNEM format and apply number formatting (4 sig figs)
-          const rawData = rows.map((row) => row.value);
-          const data = formatDataArray(rawData);
-          const firstTimestamp = rows[0].interval_end;
-          const lastTimestamp = rows[rows.length - 1].interval_end;
-
-          // Format timestamps with system timezone
-          const { formatTime_fromJSDate } = await import("@/lib/date-utils");
-          const timezoneOffsetMin = system.timezoneOffsetMin ?? 600; // Default to Brisbane (+10:00)
-          const startFormatted = formatTime_fromJSDate(
-            new Date(firstTimestamp),
-            timezoneOffsetMin,
-          );
-          const endFormatted = formatTime_fromJSDate(
-            new Date(lastTimestamp),
-            timezoneOffsetMin,
-          );
-
-          allSeries.push({
-            id: seriesId,
-            type: "power",
-            units: point.metricType === "power" ? "MW" : "",
-            path: point.capabilityPath, // Add point path (type.subtype.extension)
-            history: {
-              start: startFormatted,
-              last: endFormatted,
-              interval: interval,
-              data,
-            },
-          });
-
           console.log(
-            `[Composite History] Fetched ${rows.length} data points for ${seriesId}`,
+            `[Composite History] Fetched ${rows.length} data points (${fieldData.length} with gap filling) for ${seriesId}`,
           );
         } else {
           console.warn(
-            `[Composite History] No data found for point ${point.systemId}.${point.pointId} (${point.capabilityPath})`,
+            `[Composite History] No data found for point ${point.systemId}.${point.pointId} (${point.capabilityPath}) - returning ${fieldData.length} nulls`,
           );
         }
       }

@@ -170,6 +170,22 @@ export default function EnergyFlowSankey({
       }
     }
 
+    // If there are no nodes or links, show a message instead of rendering
+    if (nodes.length === 0 || links.length === 0) {
+      const noDataText = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "text",
+      );
+      noDataText.setAttribute("x", String(width / 2));
+      noDataText.setAttribute("y", String(height / 2));
+      noDataText.setAttribute("text-anchor", "middle");
+      noDataText.setAttribute("fill", "#9CA3AF");
+      noDataText.setAttribute("font-size", "14");
+      noDataText.textContent = "No energy flow data for this period";
+      svg.appendChild(noDataText);
+      return;
+    }
+
     // Configure sankey layout with wider boxes
     const nodeWidth = 96; // 20% narrower than 120
     const margin = { left: 60, right: 60, top: 35, bottom: 20 };

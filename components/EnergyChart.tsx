@@ -55,6 +55,7 @@ interface ChartData {
   batterySOC: number[];
   batterySOCMin?: number[]; // Min SOC for daily data
   batterySOCMax?: number[]; // Max SOC for daily data
+  grid?: number[]; // Grid power/energy (optional - not all systems have grid data)
   mode: "power" | "energy"; // Mode based on interval: power (≤30m) or energy (≥1d)
 }
 
@@ -90,11 +91,15 @@ export default function EnergyChart({
   const [hoveredData, setHoveredData] = useState<{
     solar: number | null;
     load: number | null;
+    battery: number | null;
+    grid: number | null;
     batterySOC: number | null;
     timestamp: Date | null;
   }>({
     solar: null,
     load: null,
+    battery: null,
+    grid: null,
     batterySOC: null,
     timestamp: null,
   });
@@ -129,12 +134,30 @@ export default function EnergyChart({
               : chartData.load[dataIndex] !== null
                 ? chartData.load[dataIndex] / 1000
                 : null; // Convert W to kW
+          const batteryPowerValue =
+            chartData.batteryW && chartData.batteryW[dataIndex] !== undefined
+              ? chartData.mode === "energy"
+                ? chartData.batteryW[dataIndex]
+                : chartData.batteryW[dataIndex] !== null
+                  ? chartData.batteryW[dataIndex] / 1000
+                  : null
+              : null; // Convert W to kW
+          const gridValue =
+            chartData.grid && chartData.grid[dataIndex] !== undefined
+              ? chartData.mode === "energy"
+                ? chartData.grid[dataIndex]
+                : chartData.grid[dataIndex] !== null
+                  ? chartData.grid[dataIndex] / 1000
+                  : null
+              : null; // Convert W to kW
           const batteryValue = chartData.batterySOC[dataIndex];
           const timestamp = chartData.timestamps[dataIndex];
 
           setHoveredData({
             solar: solarValue,
             load: loadValue,
+            battery: batteryPowerValue,
+            grid: gridValue,
             batterySOC: batteryValue,
             timestamp: timestamp,
           });
@@ -142,6 +165,8 @@ export default function EnergyChart({
           setHoveredData({
             solar: null,
             load: null,
+            battery: null,
+            grid: null,
             batterySOC: null,
             timestamp: null,
           });
@@ -322,7 +347,8 @@ export default function EnergyChart({
           },
           // Use maxPowerHint for power mode, auto-scale for energy mode
           suggestedMax: chartData?.mode === "energy" ? undefined : maxPowerHint,
-          min: 0, // Always start from zero for power/energy
+          // Allow negative values for grid/battery charging
+          // min: 0 removed to allow y-axis to go negative
           grid: {
             color: "rgb(55, 65, 81)", // gray-700
             display: true,
@@ -475,6 +501,15 @@ export default function EnergyChart({
           ? data.data.find((d: any) => d.id.includes(".battery.soc.max"))
           : null;
 
+        // Grid data (optional - use path attribute to identify)
+        const gridData = isEnergyMode
+          ? data.data.find(
+              (d: any) => d.path === "bidi.grid" && d.id.includes(".energy"),
+            )
+          : data.data.find(
+              (d: any) => d.path === "bidi.grid" && d.id.includes(".power."),
+            );
+
         if (!solarData || !loadData || !batterySOCData) {
           throw new Error("Missing data series");
         }
@@ -554,6 +589,9 @@ export default function EnergyChart({
             ? selectedIndices.map(
                 (i: number) => batterySOCMaxData.history.data[i],
               )
+            : undefined,
+          grid: gridData
+            ? selectedIndices.map((i: number) => gridData.history.data[i])
             : undefined,
           mode: isEnergyMode ? "energy" : "power",
         });
@@ -660,6 +698,34 @@ export default function EnergyChart({
               barPercentage: 0.9,
               categoryPercentage: 0.8,
             },
+            // Add battery power if available (for energy mode, this would be battery energy)
+            ...(chartData.batteryW
+              ? [
+                  {
+                    label: "Battery",
+                    data: chartData.batteryW, // Already in kWh for energy mode
+                    backgroundColor: "rgb(251, 146, 60)", // orange-400 solid
+                    borderWidth: 0, // No border
+                    yAxisID: "y",
+                    barPercentage: 0.9,
+                    categoryPercentage: 0.8,
+                  },
+                ]
+              : []),
+            // Add grid if available
+            ...(chartData.grid
+              ? [
+                  {
+                    label: "Grid",
+                    data: chartData.grid, // Already in kWh for energy mode
+                    backgroundColor: "rgb(239, 68, 68)", // red-500 solid
+                    borderWidth: 0, // No border
+                    yAxisID: "y",
+                    barPercentage: 0.9,
+                    categoryPercentage: 0.8,
+                  },
+                ]
+              : []),
             // Add SOC range area if we have min/max data
             ...(paddedSOCData
               ? [
@@ -748,6 +814,42 @@ export default function EnergyChart({
               pointRadius: 0,
               fill: false, // Don't fill under the line
             },
+            // Add battery power if available
+            ...(chartData.batteryW
+              ? [
+                  {
+                    label: "Battery",
+                    data: chartData.batteryW.map((w) =>
+                      w === null ? null : w / 1000,
+                    ), // Convert W to kW for power mode
+                    borderColor: "rgb(251, 146, 60)", // orange-400
+                    backgroundColor: "rgb(251, 146, 60)", // Solid color for legend
+                    yAxisID: "y",
+                    tension: 0.1,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: false, // Don't fill under the line
+                  },
+                ]
+              : []),
+            // Add grid if available
+            ...(chartData.grid
+              ? [
+                  {
+                    label: "Grid",
+                    data: chartData.grid.map((w) =>
+                      w === null ? null : w / 1000,
+                    ), // Convert W to kW for power mode
+                    borderColor: "rgb(239, 68, 68)", // red-500
+                    backgroundColor: "rgb(239, 68, 68)", // Solid color for legend
+                    yAxisID: "y",
+                    tension: 0.1,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: false, // Don't fill under the line
+                  },
+                ]
+              : []),
             {
               label: "Battery SOC",
               data: chartData.batterySOC, // Already in percentage
@@ -820,6 +922,8 @@ export default function EnergyChart({
           <ChartTooltip
             solar={hoveredData.solar}
             load={hoveredData.load}
+            battery={hoveredData.battery}
+            grid={hoveredData.grid}
             batterySOC={hoveredData.batterySOC}
             unit={chartData?.mode === "energy" ? "kWh" : "kW"}
             visible={true}

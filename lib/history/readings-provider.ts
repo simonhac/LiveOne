@@ -97,6 +97,7 @@ export class ReadingsProvider implements HistoryDataProvider {
         label: "Solar (total)",
         type: "power",
         unit: "W",
+        path: "source.solar.total",
       },
       data: solarData,
     });
@@ -122,6 +123,7 @@ export class ReadingsProvider implements HistoryDataProvider {
         label: "Load",
         type: "power",
         unit: "W",
+        path: "load",
       },
       data: loadData,
     });
@@ -147,6 +149,7 @@ export class ReadingsProvider implements HistoryDataProvider {
         label: "Battery",
         type: "power",
         unit: "W",
+        path: "bidi.battery",
       },
       data: batteryData,
     });
@@ -172,6 +175,7 @@ export class ReadingsProvider implements HistoryDataProvider {
         label: "Grid",
         type: "power",
         unit: "W",
+        path: "bidi.grid",
       },
       data: gridData,
     });
@@ -195,6 +199,7 @@ export class ReadingsProvider implements HistoryDataProvider {
         label: "Battery SOC",
         type: "percentage",
         unit: "%",
+        path: "bidi.battery",
       },
       data: socData,
     });

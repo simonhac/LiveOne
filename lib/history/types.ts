@@ -9,6 +9,7 @@ export interface MeasurementPointMetadata {
   label: string; // User-friendly label
   type: string; // Metric type (e.g., "power", "energy", "percentage")
   unit: string; // Unit of measurement (e.g., "W", "kWh", "%")
+  path?: string; // Optional: Point capability path (e.g., "source.solar", "bidi.grid", "load")
 }
 
 /**

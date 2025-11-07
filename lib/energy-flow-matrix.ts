@@ -142,20 +142,18 @@ export function calculateEnergyFlowMatrix(
     const deltaHours = (time2 - time1) / (1000 * 60 * 60);
 
     // Calculate total generation power at this instant (using aggregated data)
+    // Only count sources with non-null values
     let totalGenPower = 0;
-    let hasNullSource = false;
 
     for (const sourceSeries of aggregatedGeneration) {
       const power = sourceSeries.data[i];
-      if (power === null) {
-        hasNullSource = true;
-        break;
+      if (power !== null) {
+        totalGenPower += power;
       }
-      totalGenPower += power;
     }
 
-    // Skip this interval if we have null values or no generation
-    if (hasNullSource || totalGenPower <= 0) {
+    // Skip this interval if no generation
+    if (totalGenPower <= 0) {
       continue;
     }
 
