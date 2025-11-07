@@ -271,27 +271,27 @@
 
 ## Post-Migration Tasks
 
-- [ ] **Update documentation**
-  - [ ] Mark migration as complete in `POINT_MIGRATION.md`
-  - [ ] Update `SCHEMA.md` to reflect point system as primary
-  - [ ] Document any issues encountered: `_______________________`
+- [x] **Update documentation**
+  - [x] Mark migration as complete in `POINT_MIGRATION.md` ✓
+  - [ ] Update `SCHEMA.md` to reflect point system as primary (future task)
+  - [x] Document any issues encountered: See Issues Encountered section above ✓
 
 - [ ] **Monitor system**
-  - [ ] Check for 24 hours after migration
+  - [ ] Check for 24 hours after migration (in progress - started 2025-11-06 20:36)
   - [ ] Monitor database size growth
   - [ ] Watch for any query performance changes
   - [ ] Check error logs for issues
 
-- [ ] **Archive migration logs**
-  - [ ] All log files saved in `log/` directory
-  - [ ] Backup log directory: `cp -r log/ log-backup-YYYYMMDD/`
-  - [ ] Log archive location: `_______________________`
+- [x] **Archive migration logs**
+  - [x] All log files saved in `log/` directory ✓
+  - [ ] Backup log directory: Not needed - logs committed to git
+  - [x] Log archive location: Committed to repository in `/log/` ✓
 
 - [ ] **Plan deprecation of legacy tables**
   - [ ] Set cutoff date for dual writes
   - [ ] Plan eventual archival of `readings` table
   - [ ] Update vendor adapters to use point system only
-  - [ ] Target deprecation date: `_______________________`
+  - [ ] Target deprecation date: `TBD - monitor for 1-2 weeks first`
 
 ## Notes
 

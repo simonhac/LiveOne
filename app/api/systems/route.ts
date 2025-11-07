@@ -42,30 +42,19 @@ export async function POST(request: NextRequest) {
         `[Create System] Creating composite system for user ${userId}`,
       );
 
-      // Create the composite system
-      const [newSystem] = await db
-        .insert(systems)
-        .values({
-          ownerClerkUserId: userId,
-          vendorType: "composite",
-          vendorSiteId: uuidv7(), // UUIDv7 for time-ordered unique identifier
-          displayName: displayName.trim(),
-          status: "active",
-          metadata: {
-            version: 2, // Version 2 uses new mapping format
-            mappings: metadata.mappings,
-          },
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .returning();
-
-      console.log(
-        `[Create System] Created composite system ${newSystem.id} for user ${userId}`,
-      );
-
-      // Invalidate SystemsManager cache so the new system appears immediately
-      SystemsManager.clearInstance();
+      // Create the composite system using SystemsManager
+      const systemsManager = SystemsManager.getInstance();
+      const newSystem = await systemsManager.createSystem({
+        ownerClerkUserId: userId,
+        vendorType: "composite",
+        vendorSiteId: uuidv7(), // UUIDv7 for time-ordered unique identifier
+        displayName: displayName.trim(),
+        status: "active",
+        metadata: {
+          version: 2, // Version 2 uses new mapping format
+          mappings: metadata.mappings,
+        },
+      });
 
       // Success!
       return NextResponse.json({
@@ -111,32 +100,21 @@ export async function POST(request: NextRequest) {
     // Allow multiple systems for the same vendor site
     // This is useful for testing, multiple users monitoring the same site, etc.
 
-    // Create the system in the database
-    const [newSystem] = await db
-      .insert(systems)
-      .values({
-        ownerClerkUserId: userId,
-        vendorType,
-        vendorSiteId: systemInfo.vendorSiteId,
-        status: "active",
-        displayName: systemInfo.displayName || `${adapter.displayName} System`,
-        model: systemInfo.model || null,
-        serial: systemInfo.serial || null,
-        ratings: systemInfo.ratings || null,
-        solarSize: systemInfo.solarSize || null,
-        batterySize: systemInfo.batterySize || null,
-        timezoneOffsetMin: 600, // Default to AEST
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .returning();
-
-    console.log(
-      `[Create System] Created system ${newSystem.id} for user ${userId}`,
-    );
-
-    // Invalidate SystemsManager cache so the new system appears immediately
-    SystemsManager.clearInstance();
+    // Create the system using SystemsManager
+    const systemsManager = SystemsManager.getInstance();
+    const newSystem = await systemsManager.createSystem({
+      ownerClerkUserId: userId,
+      vendorType,
+      vendorSiteId: systemInfo.vendorSiteId,
+      status: "active",
+      displayName: systemInfo.displayName || `${adapter.displayName} System`,
+      model: systemInfo.model || null,
+      serial: systemInfo.serial || null,
+      ratings: systemInfo.ratings || null,
+      solarSize: systemInfo.solarSize || null,
+      batterySize: systemInfo.batterySize || null,
+      timezoneOffsetMin: 600, // Default to AEST
+    });
 
     // Store the credentials in Clerk
     const credentialResult = await storeSystemCredentials(

@@ -1,0 +1,487 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+import {
+  sankey as d3Sankey,
+  sankeyLinkHorizontal,
+  SankeyGraph,
+  SankeyNode,
+  SankeyLink,
+} from "d3-sankey";
+import { EnergyFlowMatrix } from "@/lib/energy-flow-matrix";
+
+interface EnergyFlowSankeyProps {
+  matrix: EnergyFlowMatrix;
+  width?: number;
+  height?: number;
+}
+
+// Color mapping for sources and loads
+const SOURCE_COLORS: Record<string, string> = {
+  solar: "#FDB813", // Yellow
+  battery: "#14B8A6", // Teal
+  grid: "#A855F7", // Purple
+};
+
+const LOAD_COLORS: Record<string, string> = {
+  battery: "#14B8A6", // Teal
+  grid: "#A855F7", // Purple
+  ev: "#60A5FA", // Blue
+  hvac: "#F472B6", // Pink
+  "heat pump": "#F97316", // Orange
+  house: "#EC4899", // Pink
+  pool: "#06B6D4", // Aqua/Cyan
+};
+
+interface SankeyNodeData {
+  name: string;
+  color: string;
+}
+
+interface SankeyLinkData {
+  source: number;
+  target: number;
+  value: number;
+}
+
+// Helper function to shorten labels
+function shortenLabel(label: string): string {
+  const lower = label.toLowerCase();
+
+  if (lower.includes("battery discharge")) return "Battery";
+  if (lower.includes("battery charge")) return "Battery";
+  if (lower.includes("battery")) return "Battery";
+  if (lower.includes("grid import")) return "Grid";
+  if (lower.includes("grid export")) return "Grid";
+  if (lower.includes("grid")) return "Grid";
+  if (lower.includes("rest of house")) return "House";
+
+  return label;
+}
+
+// Helper function to get color for a node
+function getNodeColor(label: string, isSource: boolean): string {
+  const normalizedLabel = label.toLowerCase();
+
+  if (isSource) {
+    if (normalizedLabel.includes("solar")) return SOURCE_COLORS.solar;
+    if (normalizedLabel.includes("battery")) return SOURCE_COLORS.battery;
+    if (normalizedLabel.includes("grid")) return SOURCE_COLORS.grid;
+  } else {
+    if (normalizedLabel.includes("battery")) return LOAD_COLORS.battery;
+    if (normalizedLabel.includes("grid")) return LOAD_COLORS.grid;
+    if (normalizedLabel.includes("ev")) return LOAD_COLORS.ev;
+    if (normalizedLabel.includes("hvac")) return LOAD_COLORS.hvac;
+    if (normalizedLabel.includes("heat") || normalizedLabel.includes("pump"))
+      return LOAD_COLORS["heat pump"];
+    if (normalizedLabel.includes("house")) return LOAD_COLORS.house;
+    if (normalizedLabel.includes("pool")) return LOAD_COLORS.pool;
+  }
+
+  // Default colors
+  return isSource ? "#FDB813" : "#60A5FA";
+}
+
+/**
+ * Energy Flow Sankey Diagram
+ *
+ * Visualizes energy flow from sources (left) to loads (right) with:
+ * - Color gradients from source → target
+ * - Proportional band widths
+ * - Interactive tooltips
+ */
+export default function EnergyFlowSankey({
+  matrix,
+  width = 600,
+  height = 680,
+}: EnergyFlowSankeyProps) {
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  useEffect(() => {
+    if (!svgRef.current) return;
+
+    // Clear previous render
+    const svg = svgRef.current;
+    svg.innerHTML = "";
+
+    // Filter out sources and loads with < 0.1 kWh
+    const MIN_ENERGY = 0.1;
+
+    const filteredSources = matrix.sources.filter(
+      (_, i) => matrix.sourceTotals[i] >= MIN_ENERGY,
+    );
+    const filteredLoads = matrix.loads.filter(
+      (_, i) => matrix.loadTotals[i] >= MIN_ENERGY,
+    );
+
+    // Create mapping from original indices to filtered indices
+    const sourceIndexMap = new Map<number, number>();
+    const loadIndexMap = new Map<number, number>();
+
+    let filteredSourceIdx = 0;
+    matrix.sources.forEach((_, i) => {
+      if (matrix.sourceTotals[i] >= MIN_ENERGY) {
+        sourceIndexMap.set(i, filteredSourceIdx++);
+      }
+    });
+
+    let filteredLoadIdx = 0;
+    matrix.loads.forEach((_, i) => {
+      if (matrix.loadTotals[i] >= MIN_ENERGY) {
+        loadIndexMap.set(i, filteredLoadIdx++);
+      }
+    });
+
+    // Prepare data for d3-sankey with custom colors and shortened labels
+    const nodes: SankeyNodeData[] = [
+      // Sources (left side)
+      ...filteredSources.map((source) => ({
+        name: shortenLabel(source.label),
+        color: getNodeColor(source.label, true),
+      })),
+      // Loads (right side)
+      ...filteredLoads.map((load) => ({
+        name: shortenLabel(load.label),
+        color: getNodeColor(load.label, false),
+      })),
+    ];
+
+    const links: SankeyLinkData[] = [];
+    const sourceCount = filteredSources.length;
+
+    // Create links from matrix data (only for filtered sources/loads)
+    for (let s = 0; s < matrix.sources.length; s++) {
+      const filteredSourceIdx = sourceIndexMap.get(s);
+      if (filteredSourceIdx === undefined) continue; // Skip filtered out sources
+
+      for (let l = 0; l < matrix.loads.length; l++) {
+        const filteredLoadIdx = loadIndexMap.get(l);
+        if (filteredLoadIdx === undefined) continue; // Skip filtered out loads
+
+        const value = matrix.matrix[s][l];
+        if (value > 0.01) {
+          // Only include links with meaningful energy flow
+          links.push({
+            source: filteredSourceIdx,
+            target: sourceCount + filteredLoadIdx,
+            value,
+          });
+        }
+      }
+    }
+
+    // Configure sankey layout with wider boxes
+    const nodeWidth = 96; // 20% narrower than 120
+    const margin = { left: 60, right: 60, top: 35, bottom: 20 };
+    const sankey = d3Sankey<SankeyNodeData, SankeyLinkData>()
+      .nodeId((d: any) => d.index)
+      .nodeWidth(nodeWidth)
+      .nodePadding(15)
+      .extent([
+        [margin.left, margin.top],
+        [width - margin.right, height - margin.bottom],
+      ]);
+
+    // Generate the sankey diagram
+    const graph: SankeyGraph<SankeyNodeData, SankeyLinkData> = sankey({
+      nodes: nodes.map((d, i) => ({ ...d, index: i })) as any,
+      links: links.map((d) => ({ ...d })) as any,
+    });
+
+    // Create SVG container
+    const svgElement = svg as any;
+
+    // Add gradient definitions
+    const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+
+    graph.links.forEach((link: any, i: number) => {
+      const gradient = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "linearGradient",
+      );
+      gradient.setAttribute("id", `gradient-${i}`);
+      gradient.setAttribute("gradientUnits", "userSpaceOnUse");
+      gradient.setAttribute("x1", String(link.source.x1));
+      gradient.setAttribute(
+        "y1",
+        String(link.source.y0 + (link.source.y1 - link.source.y0) / 2),
+      );
+      gradient.setAttribute("x2", String(link.target.x0));
+      gradient.setAttribute(
+        "y2",
+        String(link.target.y0 + (link.target.y1 - link.target.y0) / 2),
+      );
+
+      const stop1 = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "stop",
+      );
+      stop1.setAttribute("offset", "0%");
+      stop1.setAttribute("stop-color", link.source.color);
+      stop1.setAttribute("stop-opacity", "0.6");
+
+      const stop2 = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "stop",
+      );
+      stop2.setAttribute("offset", "100%");
+      stop2.setAttribute("stop-color", link.target.color);
+      stop2.setAttribute("stop-opacity", "0.6");
+
+      gradient.appendChild(stop1);
+      gradient.appendChild(stop2);
+      defs.appendChild(gradient);
+    });
+
+    svgElement.appendChild(defs);
+
+    // Draw links with gradients
+    graph.links.forEach((link: any, i: number) => {
+      const path = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "path",
+      );
+      path.setAttribute("d", sankeyLinkHorizontal()(link) || "");
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", `url(#gradient-${i})`);
+      path.setAttribute("stroke-width", String(Math.max(1, link.width)));
+      path.setAttribute("opacity", "0.6");
+      path.setAttribute("class", "sankey-link");
+
+      // Add hover effect
+      path.addEventListener("mouseenter", () => {
+        path.setAttribute("opacity", "0.9");
+        path.setAttribute("stroke-width", String(Math.max(1, link.width) + 2));
+      });
+      path.addEventListener("mouseleave", () => {
+        path.setAttribute("opacity", "0.6");
+        path.setAttribute("stroke-width", String(Math.max(1, link.width)));
+      });
+
+      // Tooltip
+      const title = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "title",
+      );
+      title.textContent = `${link.source.name} → ${link.target.name}: ${link.value.toFixed(2)} kWh`;
+      path.appendChild(title);
+
+      svgElement.appendChild(path);
+    });
+
+    // Calculate total energy for filtered nodes
+    const filteredTotalEnergy = [...sourceIndexMap.keys()].reduce(
+      (sum, i) => sum + matrix.sourceTotals[i],
+      0,
+    );
+
+    // Draw nodes with labels inside
+    graph.nodes.forEach((node: any) => {
+      const isSource = node.index < sourceCount;
+      const nodeIdx = isSource ? node.index : node.index - sourceCount;
+
+      // Get original index from filtered index
+      let originalIdx = -1;
+      if (isSource) {
+        for (const [origIdx, filtIdx] of sourceIndexMap.entries()) {
+          if (filtIdx === nodeIdx) {
+            originalIdx = origIdx;
+            break;
+          }
+        }
+      } else {
+        for (const [origIdx, filtIdx] of loadIndexMap.entries()) {
+          if (filtIdx === nodeIdx) {
+            originalIdx = origIdx;
+            break;
+          }
+        }
+      }
+
+      const totalEnergy = isSource
+        ? matrix.sourceTotals[originalIdx]
+        : matrix.loadTotals[originalIdx];
+      const percentage = ((totalEnergy / filteredTotalEnergy) * 100).toFixed(0);
+
+      // Draw rectangle
+      const rect = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "rect",
+      );
+      rect.setAttribute("x", String(node.x0));
+      rect.setAttribute("y", String(node.y0));
+      rect.setAttribute("width", String(node.x1 - node.x0));
+      rect.setAttribute("height", String(node.y1 - node.y0));
+      rect.setAttribute("fill", node.color);
+      rect.setAttribute("stroke", "none");
+      rect.setAttribute("rx", "4");
+      rect.setAttribute("class", "sankey-node");
+
+      svgElement.appendChild(rect);
+
+      const centerX = (node.x0 + node.x1) / 2;
+      const boxHeight = node.y1 - node.y0;
+      const topY = node.y0 + 10;
+
+      // Calculate space requirements
+      const labelBoxHeight = 18;
+      const energyValueHeight = 20;
+      const kwhUnitHeight = 8;
+      const percentageHeight = 12;
+      const spacing = 15;
+
+      // Minimum heights needed for each element
+      const minHeightForLabel = labelBoxHeight + 20; // label + some padding
+      const minHeightForValue = minHeightForLabel + energyValueHeight + spacing;
+      const minHeightForUnit = 65; // Show kWh unit when box is at least 65px tall
+      const minHeightForPercentage = 100; // Show percentage when box is at least 100px tall
+
+      // Only show elements if there's enough room
+      if (boxHeight >= minHeightForLabel) {
+        // Add label box with background
+        const labelBoxWidth = 80;
+        const labelBoxX = centerX - labelBoxWidth / 2;
+        const labelBoxY = topY;
+
+        const labelBox = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "rect",
+        );
+        labelBox.setAttribute("x", String(labelBoxX));
+        labelBox.setAttribute("y", String(labelBoxY));
+        labelBox.setAttribute("width", String(labelBoxWidth));
+        labelBox.setAttribute("height", String(labelBoxHeight));
+        labelBox.setAttribute("fill", "rgba(255, 255, 255, 0.2)");
+        labelBox.setAttribute("rx", "3");
+        svgElement.appendChild(labelBox);
+
+        // Add label text inside box
+        const nameText = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "text",
+        );
+        nameText.setAttribute("x", String(centerX));
+        nameText.setAttribute("y", String(labelBoxY + labelBoxHeight / 2 + 1));
+        nameText.setAttribute("text-anchor", "middle");
+        nameText.setAttribute("dominant-baseline", "middle");
+        nameText.setAttribute("font-family", "DM Sans, sans-serif");
+        nameText.setAttribute("font-size", "11px");
+        nameText.setAttribute("font-weight", "500");
+        nameText.setAttribute("fill", "#000000");
+        nameText.textContent = node.name.toUpperCase();
+        svgElement.appendChild(nameText);
+
+        if (boxHeight >= minHeightForValue) {
+          // Add energy value directly under label box
+          const energyText = document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "text",
+          );
+          energyText.setAttribute("x", String(centerX));
+          energyText.setAttribute("y", String(labelBoxY + labelBoxHeight + 16));
+          energyText.setAttribute("text-anchor", "middle");
+          energyText.setAttribute("font-family", "DM Sans, sans-serif");
+          energyText.setAttribute("font-size", "20px");
+          energyText.setAttribute("font-weight", "700");
+          energyText.setAttribute("fill", "#000000");
+          energyText.textContent = totalEnergy.toFixed(1);
+          svgElement.appendChild(energyText);
+
+          if (boxHeight >= minHeightForUnit) {
+            // Add kWh unit
+            const unitText = document.createElementNS(
+              "http://www.w3.org/2000/svg",
+              "text",
+            );
+            unitText.setAttribute("x", String(centerX));
+            unitText.setAttribute("y", String(labelBoxY + labelBoxHeight + 33));
+            unitText.setAttribute("text-anchor", "middle");
+            unitText.setAttribute("font-family", "DM Sans, sans-serif");
+            unitText.setAttribute("font-size", "8px");
+            unitText.setAttribute("fill", "#000000");
+            unitText.setAttribute("opacity", "0.8");
+            unitText.textContent = "kWh";
+            svgElement.appendChild(unitText);
+          }
+        }
+
+        if (boxHeight >= minHeightForPercentage) {
+          // Add percentage at bottom
+          const percentText = document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "text",
+          );
+          percentText.setAttribute("x", String(centerX));
+          percentText.setAttribute("y", String(node.y1 - 10));
+          percentText.setAttribute("text-anchor", "middle");
+          percentText.setAttribute("font-family", "DM Sans, sans-serif");
+          percentText.setAttribute("font-size", "12px");
+          percentText.setAttribute("font-weight", "600");
+          percentText.setAttribute("fill", "#000000");
+          percentText.textContent = `${percentage}%`;
+          svgElement.appendChild(percentText);
+        }
+      }
+    });
+
+    // Add column headers
+    if (graph.nodes.length > 0) {
+      // Find leftmost source node and rightmost load node for positioning
+      const sourceNodes = graph.nodes.slice(0, sourceCount);
+      const loadNodes = graph.nodes.slice(sourceCount);
+
+      if (sourceNodes.length > 0) {
+        // "SOURCES" label above left column
+        const firstSourceNode = sourceNodes[0] as any;
+        const sourceLabelX = (firstSourceNode.x0 + firstSourceNode.x1) / 2;
+
+        const sourcesLabel = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "text",
+        );
+        sourcesLabel.setAttribute("x", String(sourceLabelX));
+        sourcesLabel.setAttribute("y", String(margin.top - 10));
+        sourcesLabel.setAttribute("text-anchor", "middle");
+        sourcesLabel.setAttribute("font-family", "DM Sans, sans-serif");
+        sourcesLabel.setAttribute("font-size", "12px");
+        sourcesLabel.setAttribute("font-weight", "600");
+        sourcesLabel.setAttribute("fill", "#FFFFFF");
+        sourcesLabel.setAttribute("opacity", "0.7");
+        sourcesLabel.textContent = "SOURCES";
+        svgElement.appendChild(sourcesLabel);
+      }
+
+      if (loadNodes.length > 0) {
+        // "LOADS" label above right column
+        const firstLoadNode = loadNodes[0] as any;
+        const loadLabelX = (firstLoadNode.x0 + firstLoadNode.x1) / 2;
+
+        const loadsLabel = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "text",
+        );
+        loadsLabel.setAttribute("x", String(loadLabelX));
+        loadsLabel.setAttribute("y", String(margin.top - 10));
+        loadsLabel.setAttribute("text-anchor", "middle");
+        loadsLabel.setAttribute("font-family", "DM Sans, sans-serif");
+        loadsLabel.setAttribute("font-size", "12px");
+        loadsLabel.setAttribute("font-weight", "600");
+        loadsLabel.setAttribute("fill", "#FFFFFF");
+        loadsLabel.setAttribute("opacity", "0.7");
+        loadsLabel.textContent = "LOADS";
+        svgElement.appendChild(loadsLabel);
+      }
+    }
+  }, [matrix, width, height]);
+
+  return (
+    <div className="w-full overflow-auto bg-black rounded-lg p-4">
+      <svg
+        ref={svgRef}
+        width={width}
+        height={height}
+        className="energy-flow-sankey"
+      />
+    </div>
+  );
+}

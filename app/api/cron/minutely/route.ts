@@ -197,14 +197,44 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      // Declare session variables outside try block so they're accessible in catch
-      let sessionStart: Date | null = null;
-      let dbSessionId: number | null = null;
-
       try {
-        // Create session BEFORE polling to get session ID
-        sessionStart = new Date();
-        dbSessionId = await sessionManager.createSession({
+        // Check if we should poll before creating a session
+        const now = new Date();
+        const shouldPollCheck = await adapter.shouldPoll(
+          system,
+          forceTest,
+          now,
+        );
+
+        // If skipped, don't create a session
+        if (!shouldPollCheck.shouldPoll) {
+          results.push({
+            systemId: system.id,
+            displayName: system.displayName || undefined,
+            vendorType: system.vendorType,
+            status: "skipped",
+            skipReason: shouldPollCheck.reason,
+            lastPoll: system.pollingStatus?.lastPollTime
+              ? formatTimeAEST(
+                  fromDate(
+                    system.pollingStatus.lastPollTime,
+                    "Australia/Brisbane",
+                  ),
+                )
+              : null,
+            nextPoll: shouldPollCheck.nextPoll
+              ? formatTimeAEST(shouldPollCheck.nextPoll)
+              : undefined,
+          });
+          console.log(
+            `[Cron] ${formatSystemId(system)} - Skipped: ${shouldPollCheck.reason}`,
+          );
+          continue; // Skip to next system
+        }
+
+        // We're going to poll - create session
+        const sessionStart = new Date();
+        const dbSessionId = await sessionManager.createSession({
           sessionLabel,
           systemId: system.id,
           vendorType: system.vendorType,
@@ -214,7 +244,6 @@ export async function GET(request: NextRequest) {
         });
 
         // Let the adapter handle the polling logic
-        const now = new Date();
         const result = await adapter.poll(
           system,
           credentials,
@@ -337,6 +366,7 @@ export async function GET(request: NextRequest) {
               displayName: system.displayName || undefined,
               vendorType: system.vendorType,
               status: "polled",
+              sessionLabel: sessionLabel || undefined,
               recordsUpserted: result.recordsProcessed,
               ...(includeRaw && result.rawResponse
                 ? { rawResponse: result.rawResponse }
@@ -353,26 +383,9 @@ export async function GET(request: NextRequest) {
             break;
 
           case "SKIPPED":
-            results.push({
-              systemId: system.id,
-              displayName: system.displayName || undefined,
-              vendorType: system.vendorType,
-              status: "skipped",
-              skipReason: result.reason,
-              lastPoll: system.pollingStatus?.lastPollTime
-                ? formatTimeAEST(
-                    fromDate(
-                      system.pollingStatus.lastPollTime,
-                      "Australia/Brisbane",
-                    ),
-                  )
-                : null,
-              nextPoll: result.nextPoll
-                ? formatTimeAEST(result.nextPoll)
-                : undefined,
-            });
-            console.log(
-              `[Cron] ${formatSystemId(system)} - Skipped: ${result.reason}`,
+            // This case should never be reached since we check shouldPoll before creating session
+            console.warn(
+              `[Cron] ${formatSystemId(system)} - Unexpected SKIPPED result after shouldPoll check`,
             );
             break;
 
@@ -397,6 +410,7 @@ export async function GET(request: NextRequest) {
               displayName: system.displayName || undefined,
               vendorType: system.vendorType,
               status: "error",
+              sessionLabel: sessionLabel || undefined,
               error: result.error,
               lastPoll: system.pollingStatus?.lastPollTime
                 ? formatTimeAEST(
@@ -445,6 +459,7 @@ export async function GET(request: NextRequest) {
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
           status: "error",
+          sessionLabel: sessionLabel || undefined,
           error: error instanceof Error ? error.message : "Unknown error",
           lastPoll: system.pollingStatus?.lastPollTime
             ? formatTimeAEST(

@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { db, dbUtils, isProduction } from "@/lib/db";
 import { systems, userSystems, pollingStatus } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
@@ -252,5 +252,73 @@ export class SystemsManager {
         status: s.status,
         ownerClerkUserId: s.ownerClerkUserId,
       }));
+  }
+
+  /**
+   * Create a new system in the database and update the cache
+   * @param systemData - The system data to insert
+   * @returns The created system
+   */
+  async createSystem(systemData: {
+    ownerClerkUserId: string;
+    vendorType: string;
+    vendorSiteId: string;
+    status?: string;
+    displayName: string;
+    shortName?: string | null;
+    model?: string | null;
+    serial?: string | null;
+    ratings?: string | null;
+    solarSize?: string | null;
+    batterySize?: string | null;
+    location?: any;
+    metadata?: any;
+    timezoneOffsetMin?: number;
+  }): Promise<System> {
+    await this.loadPromise;
+
+    // In dev environment, get explicit ID starting from 10000
+    const systemId = !isProduction
+      ? await dbUtils.getNextDevSystemId()
+      : undefined;
+
+    // Create the system in the database
+    const [newSystem] = await db
+      .insert(systems)
+      .values({
+        id: systemId, // Only set in dev mode, undefined in production (auto-increment)
+        ownerClerkUserId: systemData.ownerClerkUserId,
+        vendorType: systemData.vendorType,
+        vendorSiteId: systemData.vendorSiteId,
+        status: systemData.status || "active",
+        displayName: systemData.displayName,
+        shortName: systemData.shortName,
+        model: systemData.model,
+        serial: systemData.serial,
+        ratings: systemData.ratings,
+        solarSize: systemData.solarSize,
+        batterySize: systemData.batterySize,
+        location: systemData.location,
+        metadata: systemData.metadata,
+        timezoneOffsetMin: systemData.timezoneOffsetMin ?? 600, // Default to AEST
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    console.log(
+      `[SystemsManager] Created system ${newSystem.id} (${systemData.vendorType}) for user ${systemData.ownerClerkUserId}`,
+    );
+
+    // Invalidate cache and refresh immediately
+    SystemsManager.clearInstance();
+    const freshManager = SystemsManager.getInstance();
+    await freshManager.loadPromise;
+
+    console.log(
+      `[SystemsManager] Cache refreshed after creating system ${newSystem.id}`,
+    );
+
+    return newSystem;
   }
 }

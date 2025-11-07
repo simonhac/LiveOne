@@ -96,6 +96,9 @@ export const db = (() => {
 export * from "./schema";
 export { schema };
 
+// Export environment flag for system ID management
+export { isProduction };
+
 // Database utility functions
 export const dbUtils = {
   /**
@@ -149,6 +152,29 @@ export const dbUtils = {
     } catch (error) {
       console.error("[DB] Cleanup failed:", error);
     }
+  },
+
+  /**
+   * Get next available system ID for development environment.
+   * In dev, system IDs start from 10000 to avoid collision with production IDs.
+   * This function returns the next available ID (max of current max ID + 1, or 10000).
+   */
+  async getNextDevSystemId(): Promise<number> {
+    const DEV_SYSTEM_ID_START = 10000;
+
+    // Get the current max system ID
+    const result = await rawClient.execute(
+      "SELECT MAX(id) as maxId FROM systems",
+    );
+    const maxId = (result.rows[0] as any)?.maxId;
+
+    // If no systems exist or max is below 10000, start from 10000
+    if (!maxId || maxId < DEV_SYSTEM_ID_START) {
+      return DEV_SYSTEM_ID_START;
+    }
+
+    // Otherwise, return max + 1
+    return maxId + 1;
   },
 };
 

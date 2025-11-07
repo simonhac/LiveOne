@@ -111,6 +111,43 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   }
 
   /**
+   * Check if system should be polled based on schedule
+   * @param system - The system to check
+   * @param force - If true, always returns { shouldPoll: true }
+   * @param now - Current time
+   * @returns Object with shouldPoll flag, reason if skipped, and nextPoll time
+   */
+  async shouldPoll(
+    system: SystemWithPolling,
+    force: boolean,
+    now: Date,
+  ): Promise<{
+    shouldPoll: boolean;
+    reason?: string;
+    nextPoll?: ZonedDateTime;
+  }> {
+    if (this.dataSource === "push") {
+      return {
+        shouldPoll: false,
+        reason: `${this.vendorType} is a push-only system`,
+      };
+    }
+
+    if (force) {
+      return { shouldPoll: true };
+    }
+
+    const lastPollTime = await this.getLastPollTime(system);
+    const evaluation = this.evaluateSchedule(system, lastPollTime, now);
+
+    return {
+      shouldPoll: evaluation.shouldPoll,
+      reason: evaluation.reason,
+      nextPoll: evaluation.nextPollTime,
+    };
+  }
+
+  /**
    * Poll for new data. Only applicable for poll-based systems.
    * Push-only systems should not override this method.
    * @param system - The system to poll
@@ -125,24 +162,10 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     now: Date,
     sessionId: number,
   ): Promise<PollingResult> {
-    if (this.dataSource === "push") {
-      console.error(
-        `[${this.vendorType}] poll() called on push-only system ${system.id}. This should never happen.`,
-      );
-      return this.error(
-        `${this.vendorType} is a push-only system and should not be polled`,
-      );
-    }
+    const check = await this.shouldPoll(system, force, now);
 
-    // Check schedule unless forced
-    if (!force) {
-      const lastPollTime = await this.getLastPollTime(system);
-      const evaluation = this.evaluateSchedule(system, lastPollTime, now);
-
-      if (!evaluation.shouldPoll) {
-        // nextPollTime is already a ZonedDateTime
-        return this.skipped(evaluation.reason, evaluation.nextPollTime);
-      }
+    if (!check.shouldPoll) {
+      return this.skipped(check.reason, check.nextPoll);
     }
 
     // Delegate to the actual polling implementation
