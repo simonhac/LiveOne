@@ -27,6 +27,7 @@ export const systems = sqliteTable(
     location: text("location", { mode: "json" }), // JSON object for address, city/state/country, or lat/lon
     metadata: text("metadata", { mode: "json" }), // JSON object for vendor-specific config (e.g., composite system sources)
     timezoneOffsetMin: integer("timezone_offset_min").notNull().default(600), // Standard timezone offset in minutes (e.g., 600 for AEST/UTC+10, DST calculated separately)
+    created: integer("created").notNull().default(0), // Creation timestamp (Unix milliseconds)
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
       .default(sql`(unixepoch())`),

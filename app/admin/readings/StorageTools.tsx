@@ -12,23 +12,24 @@ import {
   Shield,
   Download,
   X,
-  ChevronDown,
-  ChevronRight,
-  ChevronUp,
-  Check,
   RefreshCw,
 } from "lucide-react";
-import { formatDateTime } from "@/lib/fe-date-format";
+import { formatDateTime, formatDate } from "@/lib/fe-date-format";
+import SyncModal from "./SyncModal";
+
+interface TableStat {
+  name: string;
+  count: number;
+  earliestTimestamp?: string;
+  latestTimestamp?: string;
+  recordsPerDay?: number | null;
+}
 
 interface DatabaseInfo {
   type: "development" | "production";
   provider: string;
   stats?: {
-    tables: number;
-    totalReadings: number;
-    oldestReading: string;
-    newestReading: string;
-    diskSize?: string;
+    tableStats: TableStat[];
   };
 }
 
@@ -66,45 +67,9 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
   const [syncAbortController, setSyncAbortController] =
     useState<AbortController | null>(null);
   const [syncStages, setSyncStages] = useState<SyncStage[]>([]);
-  const [showSyncDetails, setShowSyncDetails] = useState(true);
-  const [scrollIndicators, setScrollIndicators] = useState({
-    top: false,
-    bottom: false,
-  });
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [syncMetadata, setSyncMetadata] = useState(false);
   const [daysToSync, setDaysToSync] = useState(1);
   const [recordCounts, setRecordCounts] = useState<Record<string, number>>({});
-  const lastDetailRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-
-  const checkScrollIndicators = () => {
-    if (scrollContainerRef.current) {
-      const { scrollTop, scrollHeight, clientHeight } =
-        scrollContainerRef.current;
-      setScrollIndicators({
-        top: scrollTop > 0,
-        bottom: scrollTop + clientHeight < scrollHeight - 1, // -1 for rounding
-      });
-    }
-  };
-
-  const scrollUp = () => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollBy({
-        top: -100,
-        behavior: "smooth",
-      });
-    }
-  };
-
-  const scrollDown = () => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollBy({
-        top: 100,
-        behavior: "smooth",
-      });
-    }
-  };
 
   const fetchSettings = async () => {
     try {
@@ -571,58 +536,6 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
     }
   }, [syncMetadata, daysToSync, syncProgress.isActive]);
 
-  // Handle ESC key to close modal
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && syncProgress.isActive) {
-        setSyncProgress({
-          isActive: false,
-          message: "",
-          progress: 0,
-          total: 0,
-        });
-        setSyncStages([]);
-        setRecordCounts({});
-      }
-    };
-
-    document.addEventListener("keydown", handleEscape);
-    return () => document.removeEventListener("keydown", handleEscape);
-  }, [syncProgress.isActive]);
-
-  useEffect(() => {
-    // Check scroll indicators when stages change or details toggle
-    if (showSyncDetails) {
-      setTimeout(checkScrollIndicators, 0); // Delay to ensure DOM is updated
-    }
-  }, [syncStages, showSyncDetails]);
-
-  // Auto-scroll new messages into view
-  useEffect(() => {
-    if (!scrollContainerRef.current) return;
-
-    // Find the last detail across all stages
-    let lastStageId: string | null = null;
-    let lastDetailIndex = -1;
-
-    syncStages.forEach((stage) => {
-      if (stage.details && stage.details.length > 0) {
-        lastStageId = stage.id;
-        lastDetailIndex = stage.details.length - 1;
-      }
-    });
-
-    // Scroll the last detail into view
-    if (lastStageId !== null && lastDetailIndex >= 0) {
-      const lastDetailEl = lastDetailRefs.current.get(
-        `${lastStageId}-${lastDetailIndex}`,
-      );
-      if (lastDetailEl) {
-        lastDetailEl.scrollIntoView({ behavior: "smooth", block: "end" });
-      }
-    }
-  }, [syncStages]);
-
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
@@ -644,466 +557,152 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
       )}
 
       {/* Sync Progress Modal */}
-      {syncProgress.isActive && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-[50px] overflow-y-auto">
-          <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 max-w-[752px] w-full h-fit max-h-[1000px] overflow-y-auto">
-            <div className="mb-4">
-              <h3 className="text-lg font-semibold text-white">
-                Sync Database
-              </h3>
-            </div>
+      <SyncModal
+        isOpen={syncProgress.isActive}
+        syncProgress={syncProgress}
+        syncStages={syncStages}
+        syncAbortController={syncAbortController}
+        daysToSync={daysToSync}
+        syncMetadata={syncMetadata}
+        recordCounts={recordCounts}
+        onDaysToSyncChange={setDaysToSync}
+        onSyncMetadataChange={setSyncMetadata}
+        onStartSync={startSync}
+        onCancelSync={cancelSync}
+        onClose={() => {
+          setSyncProgress({
+            isActive: false,
+            message: "",
+            progress: 0,
+            total: 0,
+          });
+          setSyncStages([]);
+          setRecordCounts({});
+        }}
+      />
 
-            {(() => {
-              // Find the current stage (in_progress or last non-pending)
-              const currentStage =
-                syncStages.find((s) => s.status === "in_progress") ||
-                syncStages
-                  .slice()
-                  .reverse()
-                  .find((s) => s.status !== "pending");
-
-              // Find the most recent log message across all stages
-              let latestMessage = "";
-              for (let i = syncStages.length - 1; i >= 0; i--) {
-                const stage = syncStages[i];
-                if (stage.details && stage.details.length > 0) {
-                  latestMessage = stage.details[stage.details.length - 1];
-                  break;
-                }
-              }
-
-              return (
-                <div className="mb-4 space-y-1">
-                  {currentStage && (
-                    <p className="text-sm text-gray-400">
-                      <span className="font-medium text-white">
-                        {currentStage.name}
-                      </span>
-                    </p>
-                  )}
-                  {latestMessage && (
-                    <p className="text-sm text-gray-400">{latestMessage}</p>
-                  )}
-                  {!currentStage && !latestMessage && syncProgress.message && (
-                    <p
-                      className={`text-sm ${syncProgress.message.startsWith("Error:") ? "text-red-400" : "text-gray-400"}`}
+      {/* Database Tables */}
+      {databaseInfo && databaseInfo.stats && databaseInfo.stats.tableStats && (
+        <div className="mb-8 -mx-2 sm:mx-0">
+          <div className="bg-gray-800 border border-gray-700 sm:rounded-lg overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-700">
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      Table
+                    </th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      Records
+                    </th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      Earliest
+                    </th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      Latest
+                    </th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      Per Day
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {databaseInfo.stats.tableStats.map((table, index) => (
+                    <tr
+                      key={table.name}
+                      className={`${index % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"}`}
                     >
-                      {syncProgress.message}
-                    </p>
-                  )}
-                </div>
-              );
-            })()}
-
-            {/* Period Dropdown */}
-            <div className="mb-3 flex items-center gap-3">
-              <label className="text-sm text-gray-300">Period:</label>
-              <select
-                value={daysToSync}
-                onChange={(e) => setDaysToSync(Number(e.target.value))}
-                disabled={!!syncAbortController || syncProgress.progress > 0}
-                className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <option value={0.25}>Last 6 hours</option>
-                <option value={1}>Last 1 day</option>
-                <option value={3}>Last 3 days</option>
-                <option value={7}>Last 7 days</option>
-                <option value={14}>Last 14 days</option>
-              </select>
-            </div>
-
-            {/* Sync Metadata Checkbox */}
-            <div className="mb-4">
-              <label
-                className={`flex items-center gap-2 ${syncAbortController || syncProgress.progress > 0 ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
-              >
-                <input
-                  type="checkbox"
-                  checked={syncMetadata}
-                  onChange={(e) => setSyncMetadata(e.target.checked)}
-                  disabled={!!syncAbortController || syncProgress.progress > 0}
-                  className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                />
-                <span className="text-sm text-gray-300">
-                  Sync metadata (destructive)
-                </span>
-              </label>
-              <p className="text-xs text-gray-500 mt-1 ml-6">
-                {syncMetadata
-                  ? "Will sync systems, users, and point info (overwrites existing metadata)"
-                  : "Will only sync readings and aggregations (preserves existing metadata)"}
-              </p>
-            </div>
-
-            {/* Progress bar - only show after sync has started */}
-            {syncProgress.progress > 0 && (
-              <div className="mb-4">
-                <div className="bg-gray-900 rounded-full h-2 overflow-hidden">
-                  <div
-                    className={`h-full transition-all duration-300 ${
-                      syncProgress.progress === 100
-                        ? "bg-green-500"
-                        : "bg-blue-500"
-                    }`}
-                    style={{
-                      width: `${(syncProgress.progress / syncProgress.total) * 100}%`,
-                    }}
-                  />
-                </div>
-                <div className="mt-2 text-xs text-gray-500 text-right">
-                  {Math.round(
-                    (syncProgress.progress / syncProgress.total) * 100,
-                  )}
-                  %
-                </div>
-              </div>
-            )}
-
-            {/* Detailed Progress Table */}
-            {syncStages.length > 0 && (
-              <div className="mb-4">
-                <button
-                  onClick={() => setShowSyncDetails(!showSyncDetails)}
-                  className="flex items-center gap-1 text-sm text-gray-400 hover:text-white transition-colors mb-2"
-                >
-                  {showSyncDetails ? (
-                    <ChevronDown className="w-4 h-4" />
-                  ) : (
-                    <ChevronRight className="w-4 h-4" />
-                  )}
-                  Details
-                </button>
-
-                {showSyncDetails && (
-                  <div className="bg-gray-900 rounded-lg p-3 h-[400px] overflow-hidden flex flex-col relative">
-                    {/* Top scroll indicator with clickable chevron */}
-                    {scrollIndicators.top && (
-                      <>
-                        <div className="absolute top-3 left-3 right-3 h-8 bg-gradient-to-b from-gray-900 via-gray-900/40 to-transparent pointer-events-none z-10" />
-                        <button
-                          onClick={scrollUp}
-                          className="absolute top-3 left-1/2 -translate-x-1/2 z-20 hover:scale-110 transition-transform"
-                          aria-label="Scroll up"
-                        >
-                          <ChevronUp className="w-4 h-4 text-gray-400 hover:text-gray-300 animate-pulse" />
-                        </button>
-                      </>
-                    )}
-
-                    <div
-                      ref={scrollContainerRef}
-                      className="overflow-y-auto flex-1"
-                      onScroll={checkScrollIndicators}
-                    >
-                      <table className="w-full text-sm">
-                        <tbody>
-                          {syncStages.map((stage) => {
-                            const count = recordCounts[stage.id];
-                            const showCount = count !== undefined && count > 0;
-                            return (
-                              <tr
-                                key={stage.id}
-                                className="border-b border-gray-800 last:border-0"
-                              >
-                                <td className="py-2 pr-3 w-8 text-center align-top">
-                                  {stage.status === "completed" ? (
-                                    <Check className="w-4 h-4 text-green-500 inline" />
-                                  ) : stage.status === "in_progress" ? (
-                                    <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin inline-block" />
-                                  ) : stage.status === "error" ? (
-                                    <XCircle className="w-4 h-4 text-red-500 inline" />
-                                  ) : (
-                                    <div className="w-4 h-4" />
-                                  )}
-                                </td>
-                                <td className="py-2 pr-3">
-                                  <div className="font-medium text-white flex items-center gap-1.5">
-                                    {stage.modifiesMetadata && (
-                                      <span className="text-yellow-500">
-                                        ⚠️
-                                      </span>
-                                    )}
-                                    <span>{stage.name}</span>
-                                    {showCount && (
-                                      <span className="text-gray-500 font-normal">
-                                        {count.toLocaleString()} records
-                                      </span>
-                                    )}
-                                  </div>
-                                  {stage.details &&
-                                    Array.isArray(stage.details) &&
-                                    stage.details.length > 0 && (
-                                      <div className="text-xs text-gray-400 mt-0.5 space-y-0.5">
-                                        {stage.details.map((detail, index) => (
-                                          <div
-                                            key={index}
-                                            ref={(el) => {
-                                              if (el) {
-                                                lastDetailRefs.current.set(
-                                                  `${stage.id}-${index}`,
-                                                  el,
-                                                );
-                                              }
-                                            }}
-                                          >
-                                            {detail}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                </td>
-                                <td className="py-2 text-right text-gray-400 w-20 align-top">
-                                  {stage.duration !== undefined
-                                    ? `${stage.duration.toFixed(1)} s`
-                                    : ""}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {/* Bottom scroll indicator with clickable chevron */}
-                    {scrollIndicators.bottom && (
-                      <>
-                        <div className="absolute bottom-3 left-3 right-3 h-8 bg-gradient-to-t from-gray-900 via-gray-900/40 to-transparent pointer-events-none z-10" />
-                        <button
-                          onClick={scrollDown}
-                          className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 hover:scale-110 transition-transform"
-                          aria-label="Scroll down"
-                        >
-                          <ChevronDown className="w-4 h-4 text-gray-400 hover:text-gray-300 animate-pulse" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Action Buttons */}
-            <div className="flex gap-2 justify-end">
-              {syncAbortController ? (
-                // Show Stop button when running
-                <button
-                  onClick={cancelSync}
-                  className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors min-w-[120px]"
-                >
-                  Stop
-                </button>
-              ) : syncProgress.progress > 0 ||
-                syncStages.some((s) => s.status !== "pending") ? (
-                // Show Start Again button when completed/failed/stopped
-                <button
-                  onClick={startSync}
-                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors min-w-[120px]"
-                >
-                  Start Again
-                </button>
-              ) : (
-                // Show Start button when not started yet
-                <button
-                  onClick={startSync}
-                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors min-w-[120px]"
-                >
-                  Start Sync
-                </button>
-              )}
-              <button
-                onClick={() => {
-                  setSyncProgress({
-                    isActive: false,
-                    message: "",
-                    progress: 0,
-                    total: 0,
-                  });
-                  setSyncStages([]);
-                  setRecordCounts({});
-                }}
-                disabled={!!syncAbortController}
-                className={`px-6 py-2 rounded-lg transition-colors min-w-[120px] ${
-                  syncAbortController
-                    ? "bg-gray-500 text-gray-400 cursor-not-allowed"
-                    : "bg-gray-600 hover:bg-gray-700 text-white"
-                }`}
-              >
-                Close
-              </button>
+                      <td className="px-4 py-2 text-sm text-gray-300 font-mono">
+                        {table.name}
+                      </td>
+                      <td className="px-4 py-2 text-sm text-gray-300 text-right">
+                        {table.count.toLocaleString()}
+                      </td>
+                      <td className="px-4 py-2 text-sm text-gray-300">
+                        {table.earliestTimestamp
+                          ? table.name === "readings_agg_1d"
+                            ? formatDate(table.earliestTimestamp)
+                            : formatDateTime(table.earliestTimestamp).display
+                          : "—"}
+                      </td>
+                      <td className="px-4 py-2 text-sm text-gray-300">
+                        {table.latestTimestamp
+                          ? table.name === "readings_agg_1d"
+                            ? formatDate(table.latestTimestamp)
+                            : formatDateTime(table.latestTimestamp).display
+                          : "—"}
+                      </td>
+                      <td className="px-4 py-2 text-sm text-gray-300 text-right">
+                        {table.recordsPerDay !== undefined &&
+                        table.recordsPerDay !== null
+                          ? table.recordsPerDay < 1
+                            ? "< 1"
+                            : Math.round(table.recordsPerDay).toLocaleString()
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
       )}
 
-      {/* Database Information */}
-      <div className="mb-8 -mx-2 sm:mx-0">
-        <h2 className="text-xl font-semibold text-white mb-4 px-2 sm:px-0">
-          Database
-        </h2>
-
-        <div className="bg-gray-800 border border-gray-700 sm:rounded-lg p-4 sm:p-6">
-          {databaseInfo && (
-            <div className="space-y-4">
-              {/* Database Type Badge */}
-              <div className="flex items-center gap-4">
-                <span className="text-gray-400">Environment:</span>
-                <span
-                  className={`inline-flex items-center gap-1 px-3 py-1 text-sm font-medium border rounded-full ${
-                    databaseInfo.type === "production"
-                      ? "bg-green-900/50 text-green-300 border-green-700"
-                      : "bg-yellow-900/50 text-yellow-300 border-yellow-700"
-                  }`}
-                >
-                  {databaseInfo.type === "production" ? (
-                    <Globe className="w-4 h-4" />
-                  ) : (
-                    <Server className="w-4 h-4" />
-                  )}
-                  {databaseInfo.type === "production"
-                    ? "Production"
-                    : "Development"}
-                </span>
-              </div>
-
-              {/* Database Provider */}
-              <div className="flex items-center gap-4">
-                <span className="text-gray-400">Provider:</span>
-                <span className="text-white font-medium">
-                  {databaseInfo.provider}
-                </span>
-              </div>
-
-              {/* Database Statistics */}
-              {databaseInfo.stats && (
-                <div className="mt-6 pt-6 border-t border-gray-700">
-                  <h3 className="text-sm font-semibold text-gray-400 mb-3">
-                    Database Statistics
-                  </h3>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div>
-                      <p className="text-xs text-gray-500">Tables</p>
-                      <p className="text-lg font-semibold text-white">
-                        {databaseInfo.stats.tables}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500">Total Readings</p>
-                      <p className="text-lg font-semibold text-white">
-                        {databaseInfo.stats.totalReadings.toLocaleString()}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500">Oldest Reading</p>
-                      <div className="text-sm text-white">
-                        {databaseInfo.stats.oldestReading === "No data" ? (
-                          "No data"
-                        ) : (
-                          <>
-                            <div>
-                              {new Date(
-                                databaseInfo.stats.oldestReading,
-                              ).toLocaleDateString("en-AU", {
-                                day: "numeric",
-                                month: "short",
-                                year: "numeric",
-                              })}
-                            </div>
-                            <div className="text-xs text-gray-400">
-                              {
-                                formatDateTime(
-                                  databaseInfo.stats.oldestReading,
-                                  { includeSeconds: false },
-                                ).time
-                              }
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500">Newest Reading</p>
-                      <div className="text-sm text-white">
-                        {databaseInfo.stats.newestReading === "No data" ? (
-                          "No data"
-                        ) : (
-                          <>
-                            <div>
-                              {new Date(
-                                databaseInfo.stats.newestReading,
-                              ).toLocaleDateString("en-AU", {
-                                day: "numeric",
-                                month: "short",
-                                year: "numeric",
-                              })}
-                            </div>
-                            <div className="text-xs text-gray-400">
-                              {
-                                formatDateTime(
-                                  databaseInfo.stats.newestReading,
-                                  { includeSeconds: false },
-                                ).time
-                              }
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    {databaseInfo.stats.diskSize && (
-                      <div>
-                        <p className="text-xs text-gray-500">Disk Size</p>
-                        <p className="text-lg font-semibold text-white">
-                          {databaseInfo.stats.diskSize}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Actions Section */}
-              <div className="mt-6 pt-6 border-t border-gray-700">
-                <h3 className="text-sm font-semibold text-gray-400 mb-3">
-                  Actions
-                </h3>
-                <div className="flex flex-wrap gap-3">
-                  {databaseInfo.type === "development" && (
-                    <button
-                      onClick={openSyncDialog}
-                      disabled={syncProgress.isActive}
-                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white rounded-lg transition-colors text-sm"
-                    >
-                      <Download className="w-4 h-4" />
-                      Sync from Production…
-                    </button>
-                  )}
-                  <button
-                    onClick={recreateDailies}
-                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors text-sm"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                    Recreate Dailies
-                  </button>
-                </div>
-              </div>
+      {/* Environment Info and Actions - Single Line */}
+      {databaseInfo && (
+        <div className="mb-8 -mx-2 sm:mx-0 flex items-center justify-between gap-6 text-sm">
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2">
+              <span className="text-gray-400">Environment:</span>
+              <span
+                className={`inline-flex items-center gap-1 px-3 py-1 text-sm font-medium border rounded-full ${
+                  databaseInfo.type === "production"
+                    ? "bg-green-900/50 text-green-300 border-green-700"
+                    : "bg-yellow-900/50 text-yellow-300 border-yellow-700"
+                }`}
+              >
+                {databaseInfo.type === "production" ? (
+                  <Globe className="w-4 h-4" />
+                ) : (
+                  <Server className="w-4 h-4" />
+                )}
+                {databaseInfo.type === "production"
+                  ? "Production"
+                  : "Development"}
+              </span>
             </div>
-          )}
-        </div>
-      </div>
 
-      {/* Info Notice */}
-      <div className="mt-8 -mx-2 sm:mx-0 bg-blue-900/20 border border-blue-700/50 sm:rounded-lg p-4">
-        <div className="flex items-start gap-3">
-          <Info className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
-          <div className="text-sm text-blue-300">
-            <p className="font-semibold mb-1">Database Information</p>
-            <p className="text-blue-200">
-              {databaseInfo?.type === "production"
-                ? "You are connected to the production Turso database. All changes will affect live data."
-                : "You are connected to the local SQLite development database. Changes will not affect production."}
-            </p>
+            <div className="flex items-center gap-2">
+              <span className="text-gray-400">Provider:</span>
+              <span className="text-white font-medium">
+                {databaseInfo.provider}
+              </span>
+            </div>
+          </div>
+
+          {/* Actions - Right Aligned */}
+          <div className="flex items-center gap-3">
+            {databaseInfo.type === "development" && (
+              <button
+                onClick={openSyncDialog}
+                disabled={syncProgress.isActive}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white rounded-lg transition-colors text-sm"
+              >
+                <Download className="w-4 h-4" />
+                Sync from Production…
+              </button>
+            )}
+            <button
+              onClick={recreateDailies}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors text-sm"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Recreate Dailies
+            </button>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

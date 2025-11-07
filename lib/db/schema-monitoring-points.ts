@@ -40,6 +40,9 @@ export const pointInfo = sqliteTable(
     // Type and unit
     metricType: text("metric_type").notNull(), // eg. 'power', 'energy', 'soc'
     metricUnit: text("metric_unit").notNull(), // eg. 'W', 'Wh', '%'
+
+    // Timestamps
+    created: integer("created").notNull().default(0), // Creation timestamp (Unix milliseconds)
   },
   (table) => ({
     pk: primaryKey({ columns: [table.systemId, table.id] }),
