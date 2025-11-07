@@ -2,23 +2,16 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { Sun, Battery, Zap, Home, Activity } from "lucide-react";
 
 interface PointInfo {
-  pointDbId: number;
-  label: string;
+  id: number; // point ID within system
+  systemId: number;
+  displayName: string;
   subsystem: string | null;
-  type: string | null; // type component of series ID
+  type: string | null; // series ID type component (e.g., "source", "load", "bidi")
   subtype: string | null;
   extension: string | null;
+  metricType: string; // metric type (e.g., "power", "energy", "soc")
+  metricUnit: string;
   active: boolean;
-}
-
-interface CapabilityNode {
-  key: string; // type.subtype.extension or type.subtype.extension.metricType (for leaf nodes)
-  label: string;
-  children?: CapabilityNode[];
-  level: number;
-  isLeaf: boolean; // True if this is an actual point (not just a grouping node)
-  active?: boolean; // Only set for leaf nodes
-  subsystem?: string | null; // Only set for leaf nodes
 }
 
 const SUBSYSTEM_CONFIG = {
@@ -104,16 +97,19 @@ export default function CapabilitiesTab({
       const data = await response.json();
 
       if (data.headers) {
-        // Convert headers to PointInfo objects, filtering out timestamp column
+        // Convert headers to PointInfo objects, filtering out timestamp and sessionLabel columns
         const pointsData: PointInfo[] = data.headers
-          .filter((h: any) => h.key !== "timestamp")
+          .filter((h: any) => h.key !== "timestamp" && h.key !== "sessionLabel")
           .map((h: any) => ({
-            pointDbId: h.pointDbId,
-            label: h.label,
+            id: h.pointDbId,
+            systemId: h.systemId,
+            displayName: h.label,
             subsystem: h.subsystem,
             type: h.pointType || null,
             subtype: h.subtype || null,
             extension: h.extension || null,
+            metricType: h.type,
+            metricUnit: h.unit,
             active: h.active,
           }));
 
@@ -128,23 +124,12 @@ export default function CapabilitiesTab({
     }
   };
 
-  // Helper to get display label for a capability part
-  const getDisplayLabel = (label: string, level: number): string => {
-    // For top-level types (level 0), use proper display names
-    if (level === 0) {
-      const typeLabels: Record<string, string> = {
-        bidi: "Bidirectional",
-        load: "Load",
-        source: "Source",
-      };
-      return typeLabels[label.toLowerCase()] || label;
-    }
-    return label;
-  };
-
-  // Group points by subsystem
+  // Group points by subsystem and get paths with their metric types
   const pointsBySubsystem = useMemo(() => {
-    const grouped: Record<string, PointInfo[]> = {
+    const grouped: Record<
+      string,
+      Array<{ path: string; metricTypes: string[] }>
+    > = {
       solar: [],
       battery: [],
       grid: [],
@@ -153,126 +138,57 @@ export default function CapabilitiesTab({
       other: [],
     };
 
+    // Build a map of path -> metric types
+    const pathToMetricTypes = new Map<string, Set<string>>();
+
     points.forEach((point) => {
-      const subsystem = point.subsystem || "other";
-      if (grouped[subsystem]) {
-        grouped[subsystem].push(point);
-      } else {
-        grouped.other.push(point);
+      // Only include points that have a type
+      if (!point.type) return;
+
+      const parts = [point.type, point.subtype, point.extension].filter(
+        (part): part is string => Boolean(part),
+      );
+      const path = parts.join(".");
+
+      if (!path) return;
+
+      // Use the actual metric type from the database
+      const metricType = point.metricType;
+
+      if (!pathToMetricTypes.has(path)) {
+        pathToMetricTypes.set(path, new Set());
       }
+      pathToMetricTypes.get(path)!.add(metricType);
+    });
+
+    // Now group by subsystem
+    points.forEach((point) => {
+      if (!point.type) return;
+
+      const subsystem = point.subsystem || "other";
+      const parts = [point.type, point.subtype, point.extension].filter(
+        (part): part is string => Boolean(part),
+      );
+      const path = parts.join(".");
+
+      if (!path) return;
+
+      const metricTypes = Array.from(pathToMetricTypes.get(path) || []).sort();
+
+      const targetArray = grouped[subsystem] || grouped.other;
+      // Only add if not already present
+      if (!targetArray.some((item) => item.path === path)) {
+        targetArray.push({ path, metricTypes });
+      }
+    });
+
+    // Sort paths within each subsystem
+    Object.keys(grouped).forEach((key) => {
+      grouped[key].sort((a, b) => a.path.localeCompare(b.path));
     });
 
     return grouped;
   }, [points]);
-
-  // Build tree structure for a given subsystem's points
-  const buildTreeForSubsystem = (
-    subsystemPoints: PointInfo[],
-  ): CapabilityNode[] => {
-    const nodeMap = new Map<string, CapabilityNode>();
-
-    // Only include points that have a series ID (type is not null)
-    const pointsWithSeriesId = subsystemPoints.filter((p) => p.type);
-
-    pointsWithSeriesId.forEach((point) => {
-      // Build series ID path: type.subtype.extension
-      const parts = [point.type, point.subtype, point.extension].filter(
-        (p): p is string => Boolean(p),
-      );
-
-      // Build all parent paths (grouping nodes)
-      for (let i = 1; i < parts.length; i++) {
-        const pathParts = parts.slice(0, i);
-        const key = pathParts.join(".");
-        const rawLabel = pathParts[pathParts.length - 1];
-        const label = getDisplayLabel(rawLabel, i - 1);
-
-        if (!nodeMap.has(key)) {
-          nodeMap.set(key, {
-            key,
-            label,
-            children: [],
-            level: i - 1,
-            isLeaf: false,
-          });
-        }
-      }
-
-      // Add the point itself as a leaf node (use the display label)
-      const pointKey = parts.join(".");
-      nodeMap.set(pointKey, {
-        key: pointKey,
-        label: point.label,
-        children: [],
-        level: parts.length - 1,
-        isLeaf: true,
-        active: point.active,
-        subsystem: point.subsystem,
-      });
-    });
-
-    // Build parent-child relationships
-    nodeMap.forEach((node) => {
-      const parts = node.key.split(".");
-      if (parts.length > 1) {
-        const parentKey = parts.slice(0, -1).join(".");
-        const parent = nodeMap.get(parentKey);
-        if (parent && !parent.children!.some((c) => c.key === node.key)) {
-          parent.children!.push(node);
-        }
-      }
-    });
-
-    // Get root nodes (level 0)
-    const roots = Array.from(nodeMap.values()).filter((n) => n.level === 0);
-
-    // Sort children at each level
-    const sortChildren = (nodes: CapabilityNode[]) => {
-      nodes.sort((a, b) => a.label.localeCompare(b.label));
-      nodes.forEach((node) => {
-        if (node.children && node.children.length > 0) {
-          sortChildren(node.children);
-        }
-      });
-    };
-
-    sortChildren(roots);
-
-    return roots;
-  };
-
-  const renderNode = (node: CapabilityNode) => {
-    const hasChildren = node.children && node.children.length > 0;
-    const isActive = node.isLeaf ? node.active : true;
-    const textColor = node.isLeaf
-      ? isActive
-        ? "text-gray-300"
-        : "text-gray-600"
-      : "text-gray-300";
-
-    return (
-      <div key={node.key}>
-        <div
-          className="flex items-center gap-2 py-0.5 px-2"
-          style={{ paddingLeft: `${node.level * 16 + 8}px` }}
-        >
-          <span
-            className={`text-sm ${textColor} ${
-              node.level === 0 ? "font-semibold" : ""
-            } ${node.isLeaf && !isActive ? "line-through" : ""}`}
-          >
-            {node.label}
-            {hasChildren ? ":" : ""}
-          </span>
-        </div>
-
-        {/* Render children */}
-        {hasChildren && (
-          <div>{node.children!.map((child) => renderNode(child))}</div>
-        )}
-      </div>
-    );
-  };
 
   if (loading) {
     return (
@@ -302,13 +218,12 @@ export default function CapabilitiesTab({
       {(
         Object.keys(SUBSYSTEM_CONFIG) as Array<keyof typeof SUBSYSTEM_CONFIG>
       ).map((subsystem) => {
-        const subsystemPoints = pointsBySubsystem[subsystem];
-        if (!subsystemPoints || subsystemPoints.length === 0) {
+        const subsystemPaths = pointsBySubsystem[subsystem];
+        if (!subsystemPaths || subsystemPaths.length === 0) {
           return null; // Skip empty subsystems
         }
 
         const config = SUBSYSTEM_CONFIG[subsystem];
-        const tree = buildTreeForSubsystem(subsystemPoints);
 
         return (
           <div
@@ -325,17 +240,20 @@ export default function CapabilitiesTab({
               </h3>
             </div>
 
-            {/* Content - Capability Tree */}
+            {/* Content - Point Paths */}
             <div className="flex-1 min-w-0">
-              {tree.length > 0 ? (
-                <div className="space-y-0.5">
-                  {tree.map((node) => renderNode(node))}
-                </div>
-              ) : (
-                <div className="text-sm text-gray-500 italic py-1">
-                  No {subsystem} points configured
-                </div>
-              )}
+              <div className="space-y-1">
+                {subsystemPaths.map((item) => (
+                  <div key={item.path} className="text-sm text-gray-300">
+                    <span className="font-sans">{item.path}</span>
+                    {item.metricTypes.length > 0 && (
+                      <span className="text-gray-500 ml-2 font-sans">
+                        {item.metricTypes.join(", ")}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         );
