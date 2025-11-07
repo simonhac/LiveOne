@@ -29,6 +29,17 @@ export interface VendorAdapter {
   readonly credentialFields?: CredentialField[];
   readonly supportsAddSystem?: boolean; // Whether this vendor supports the Add System flow
 
+  // Check if system should be polled based on schedule
+  shouldPoll(
+    system: SystemWithPolling,
+    force: boolean,
+    now: Date,
+  ): Promise<{
+    shouldPoll: boolean;
+    reason?: string;
+    nextPoll?: ZonedDateTime;
+  }>;
+
   // Main polling function - handles all data collection
   poll(
     system: SystemWithPolling,
