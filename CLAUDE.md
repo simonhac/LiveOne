@@ -34,6 +34,13 @@ TURSO_DATABASE_URL=libsql://liveone-tokyo-simonhac.aws-ap-northeast-1.turso.io
 TURSO_AUTH_TOKEN=<your-token>  # Generate with: ~/.turso/turso db tokens create liveone-tokyo
 ```
 
+### Git Best Practices
+
+- **Never discard uncommitted changes with `git restore`** - Always use `git stash` instead to preserve work
+- If you need to temporarily set aside changes: `git stash push -m "description"`
+- To restore stashed changes: `git stash pop` or `git stash apply`
+- Lesson learned: `git restore` permanently deletes uncommitted work and it cannot be recovered
+
 ## Testing Guidelines
 
 - **Framework**: Use Jest for all tests (not Vitest or other frameworks)
