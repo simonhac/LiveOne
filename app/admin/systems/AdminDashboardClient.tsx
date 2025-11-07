@@ -727,6 +727,7 @@ export default function AdminDashboardClient() {
               }
             : null
         }
+        isAdmin={true}
         onUpdate={updateSystem}
       />
 

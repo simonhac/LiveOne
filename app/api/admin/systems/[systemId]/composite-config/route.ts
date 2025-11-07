@@ -3,7 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { systems } from "@/lib/db/schema";
 import { pointInfo } from "@/lib/db/schema-monitoring-points";
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
 
 export async function GET(
@@ -197,32 +197,29 @@ export async function PATCH(
     }
 
     // Validate that points have compatible paths for their categories
-    // Collect all point DB IDs from mappings
-    const allPointDbIds = new Set<number>();
+    // Collect all point references (systemId.pointId) from mappings
+    const allPointRefs = new Set<string>();
     for (const pointIds of Object.values(mappings)) {
       if (Array.isArray(pointIds)) {
         for (const pointId of pointIds) {
-          const [, pointDbIdStr] = pointId.split(".");
-          allPointDbIds.add(parseInt(pointDbIdStr));
+          allPointRefs.add(pointId);
         }
       }
     }
 
     // Fetch all referenced points from database
-    if (allPointDbIds.size > 0) {
-      const points = await db
-        .select()
-        .from(pointInfo)
-        .where(inArray(pointInfo.id, Array.from(allPointDbIds)));
+    if (allPointRefs.size > 0) {
+      const points = await db.select().from(pointInfo);
 
-      // Build map of pointDbId -> path
-      const pointPaths = new Map<number, string>();
+      // Build map of "systemId.pointId" -> path
+      const pointPaths = new Map<string, string>();
       for (const point of points) {
         if (point.type) {
           const pathParts = [point.type, point.subtype, point.extension].filter(
             Boolean,
           );
-          pointPaths.set(point.id, pathParts.join("."));
+          const key = `${point.systemId}.${point.id}`;
+          pointPaths.set(key, pathParts.join("."));
         }
       }
 
@@ -250,9 +247,7 @@ export async function PATCH(
         }
 
         for (const pointId of pointIds) {
-          const [, pointDbIdStr] = pointId.split(".");
-          const pointDbId = parseInt(pointDbIdStr);
-          const path = pointPaths.get(pointDbId);
+          const path = pointPaths.get(pointId);
 
           if (!path) {
             return NextResponse.json(

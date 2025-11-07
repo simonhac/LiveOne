@@ -12,6 +12,7 @@ interface AvailablePoint {
   name: string; // Display name
   systemId: number;
   systemName: string;
+  metricType: string; // e.g., "power", "energy", "soc"
 }
 
 interface CompositeTabProps {
@@ -97,8 +98,10 @@ export default function CompositeTab({
   const fetchCompositeConfig = async () => {
     fetchingRef.current = true;
     try {
-      // Fetch available points from user's systems (works for both new and existing systems)
-      const pointsResponse = await fetch("/api/admin/systems/points/me");
+      // Fetch available points from system owner's systems
+      const pointsResponse = await fetch(
+        `/api/admin/systems/${systemId}/owner-points`,
+      );
       const pointsData = await pointsResponse.json();
 
       if (!pointsData.success) {
@@ -172,23 +175,32 @@ export default function CompositeTab({
   // Helper to get display label components for a point ID
   const getDisplayLabelParts = (
     pointId: string, // Format: "systemId.pointId"
-  ): { systemName: string; pointName: string } | null => {
+  ): {
+    systemName: string;
+    pointName: string;
+    path: string;
+    metricType: string;
+  } | null => {
     const point = availablePoints.find((p) => p.id === pointId);
 
     if (point) {
       return {
         systemName: point.systemName,
         pointName: point.name,
+        path: point.path,
+        metricType: point.metricType,
       };
     }
 
-    // Fallback: parse the ID
+    // Fallback: parse the ID - but we don't have path/metricType info
     const parts = pointId.split(".");
     if (parts.length !== 2) return null;
 
     return {
       systemName: `System ${parts[0]}`,
       pointName: `Point ${parts[1]}`,
+      path: "",
+      metricType: "",
     };
   };
 
@@ -374,6 +386,9 @@ export default function CompositeTab({
                             <span className="ml-2 text-gray-600">
                               {point.path}
                             </span>
+                            <span className="ml-2 text-gray-500">
+                              {point.metricType}
+                            </span>
                           </button>
                         ))}
                     </div>
@@ -462,6 +477,12 @@ export default function CompositeTab({
                               </span>{" "}
                               <span className="text-gray-400">
                                 {labelParts.pointName}
+                              </span>
+                              <span className="ml-2 text-gray-600">
+                                {labelParts.path}
+                              </span>
+                              <span className="ml-2 text-gray-500">
+                                {labelParts.metricType}
                               </span>
                             </>
                           ) : (

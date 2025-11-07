@@ -124,11 +124,11 @@ export default function CapabilitiesTab({
     }
   };
 
-  // Group points by subsystem and get paths with their metric types
+  // Group points by subsystem
   const pointsBySubsystem = useMemo(() => {
     const grouped: Record<
       string,
-      Array<{ path: string; metricTypes: string[] }>
+      Array<{ displayName: string; path: string; metricTypes: string[] }>
     > = {
       solar: [],
       battery: [],
@@ -138,8 +138,8 @@ export default function CapabilitiesTab({
       other: [],
     };
 
-    // Build a map of path -> metric types
-    const pathToMetricTypes = new Map<string, Set<string>>();
+    // Build a map of (displayName, path) -> metricTypes
+    const pointGroups = new Map<string, Set<string>>();
 
     points.forEach((point) => {
       // Only include points that have a type
@@ -152,13 +152,11 @@ export default function CapabilitiesTab({
 
       if (!path) return;
 
-      // Use the actual metric type from the database
-      const metricType = point.metricType;
-
-      if (!pathToMetricTypes.has(path)) {
-        pathToMetricTypes.set(path, new Set());
+      const key = `${point.displayName}|||${path}`;
+      if (!pointGroups.has(key)) {
+        pointGroups.set(key, new Set());
       }
-      pathToMetricTypes.get(path)!.add(metricType);
+      pointGroups.get(key)!.add(point.metricType);
     });
 
     // Now group by subsystem
@@ -173,18 +171,28 @@ export default function CapabilitiesTab({
 
       if (!path) return;
 
-      const metricTypes = Array.from(pathToMetricTypes.get(path) || []).sort();
+      const key = `${point.displayName}|||${path}`;
+      const metricTypes = Array.from(pointGroups.get(key) || []).sort();
 
       const targetArray = grouped[subsystem] || grouped.other;
       // Only add if not already present
-      if (!targetArray.some((item) => item.path === path)) {
-        targetArray.push({ path, metricTypes });
+      if (
+        !targetArray.some(
+          (item) =>
+            item.displayName === point.displayName && item.path === path,
+        )
+      ) {
+        targetArray.push({
+          displayName: point.displayName,
+          path,
+          metricTypes,
+        });
       }
     });
 
-    // Sort paths within each subsystem
+    // Sort by display name within each subsystem
     Object.keys(grouped).forEach((key) => {
-      grouped[key].sort((a, b) => a.path.localeCompare(b.path));
+      grouped[key].sort((a, b) => a.displayName.localeCompare(b.displayName));
     });
 
     return grouped;
@@ -240,12 +248,15 @@ export default function CapabilitiesTab({
               </h3>
             </div>
 
-            {/* Content - Point Paths */}
+            {/* Content - Points */}
             <div className="flex-1 min-w-0">
               <div className="space-y-1">
-                {subsystemPaths.map((item) => (
-                  <div key={item.path} className="text-sm text-gray-300">
-                    <span className="font-sans">{item.path}</span>
+                {subsystemPaths.map((item, idx) => (
+                  <div key={idx} className="text-sm text-gray-300">
+                    <span className="font-semibold">{item.displayName}</span>
+                    <span className="text-gray-400 ml-2 font-sans">
+                      {item.path}
+                    </span>
                     {item.metricTypes.length > 0 && (
                       <span className="text-gray-500 ml-2 font-sans">
                         {item.metricTypes.join(", ")}

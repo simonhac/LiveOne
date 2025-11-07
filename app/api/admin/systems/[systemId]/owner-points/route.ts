@@ -8,7 +8,7 @@ import { isUserAdmin } from "@/lib/auth-utils";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ user: string }> },
+  { params }: { params: Promise<{ systemId: string }> },
 ) {
   try {
     // Check if user is authenticated
@@ -17,8 +17,6 @@ export async function GET(
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-
-    const { user: targetUsername } = await params;
 
     // Check if user is admin
     const isAdmin = await isUserAdmin();
@@ -30,13 +28,29 @@ export async function GET(
       );
     }
 
-    // For now, we'll get all systems owned by the current user
-    // In the future, you might want to resolve targetUsername to a clerkUserId
-    // and fetch that user's systems instead
+    const { systemId: systemIdStr } = await params;
+    const systemId = parseInt(systemIdStr);
+
+    if (isNaN(systemId)) {
+      return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
+    }
+
+    // Get the target system to find its owner
+    const [targetSystem] = await db
+      .select()
+      .from(systems)
+      .where(eq(systems.id, systemId))
+      .limit(1);
+
+    if (!targetSystem) {
+      return NextResponse.json({ error: "System not found" }, { status: 404 });
+    }
+
+    // Get all systems owned by the target system's owner
     const ownedSystems = await db
       .select()
       .from(systems)
-      .where(eq(systems.ownerClerkUserId, userId));
+      .where(eq(systems.ownerClerkUserId, targetSystem.ownerClerkUserId));
 
     // Filter out composite systems
     const nonCompositeSystems = ownedSystems.filter(
@@ -58,19 +72,20 @@ export async function GET(
       .from(pointInfo)
       .where(and(eq(pointInfo.active, true)));
 
-    // Filter to only points from the user's systems and build the response
+    // Filter to only points from the owner's systems and build the response
     const availablePoints: Array<{
       id: string;
       path: string;
       name: string;
       systemId: number;
       systemName: string;
+      metricType: string;
     }> = [];
 
     const referencedSystemIds = new Set<number>();
 
     for (const point of points) {
-      // Skip points not from the user's systems
+      // Skip points not from the owner's systems
       if (!systemIds.includes(point.systemId)) {
         continue;
       }
@@ -80,7 +95,7 @@ export async function GET(
         continue;
       }
 
-      // Build series ID path from type.subtype.extension.metricType
+      // Build series ID path from type.subtype.extension
       const pathParts = [point.type, point.subtype, point.extension].filter(
         (p): p is string => Boolean(p),
       );
@@ -101,6 +116,7 @@ export async function GET(
         name: point.displayName || point.defaultName,
         systemId: point.systemId,
         systemName: system.displayName,
+        metricType: point.metricType,
       });
 
       referencedSystemIds.add(point.systemId);
@@ -121,12 +137,12 @@ export async function GET(
       referencedSystems,
     });
   } catch (error) {
-    console.error("Error fetching points for user:", error);
+    console.error("Error fetching available points for system:", error);
 
     return NextResponse.json(
       {
         success: false,
-        error: "Failed to fetch points for user",
+        error: "Failed to fetch available points",
       },
       { status: 500 },
     );

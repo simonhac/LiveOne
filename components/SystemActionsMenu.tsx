@@ -128,6 +128,19 @@ export default function SystemActionsMenu({
               opacity: isPositioned ? 1 : 0,
             }}
           >
+            {/* View Data - Available for all systems */}
+            {onViewData && (
+              <button
+                onClick={() => handleMenuClick(onViewData)}
+                className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+              >
+                <Database className="w-4 h-4" />
+                View Data
+              </button>
+            )}
+            {onViewData && (
+              <div className="border-t border-gray-700 my-1"></div>
+            )}
             {/* Test Connection - Only show for vendors that support polling */}
             {supportsPolling && (
               <button
@@ -146,16 +159,6 @@ export default function SystemActionsMenu({
               >
                 <RefreshCw className="w-4 h-4" />
                 Poll Now
-              </button>
-            )}
-            {/* View Data - Available for all systems */}
-            {onViewData && (
-              <button
-                onClick={() => handleMenuClick(onViewData)}
-                className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
-              >
-                <Database className="w-4 h-4" />
-                View Data
               </button>
             )}
             {onPollingStats && (
