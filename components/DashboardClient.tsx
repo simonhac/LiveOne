@@ -1114,7 +1114,7 @@ export default function DashboardClient({
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-1 sm:px-6 lg:px-8 py-4">
+      <main className="max-w-7xl mx-auto px-0.5 sm:px-6 lg:px-8 py-4">
         {/* Removed System Banner - Show regardless of data availability */}
         {system?.status === "removed" && (
           <div className="mb-4 p-4 bg-orange-900/50 border border-orange-700 text-orange-300 rounded-lg flex items-center gap-3">
@@ -1544,8 +1544,8 @@ export default function DashboardClient({
                               load: processedHistoryData.load,
                             });
                             return matrix ? (
-                              <div className="p-2 sm:p-4">
-                                <h3 className="text-lg font-semibold text-white mb-4">
+                              <div className="sm:p-4">
+                                <h3 className="text-lg font-semibold text-white mb-4 px-2 sm:px-0">
                                   Energy Flow
                                 </h3>
                                 <div className="flex justify-center">

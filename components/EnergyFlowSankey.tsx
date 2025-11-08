@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   sankey as d3Sankey,
   sankeyLinkHorizontal,
@@ -96,6 +96,29 @@ export default function EnergyFlowSankey({
   height = 680,
 }: EnergyFlowSankeyProps) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isMobile, setIsMobile] = useState(false);
+  const [actualWidth, setActualWidth] = useState(width);
+
+  // Detect mobile screen size and container width
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 640; // Tailwind's sm breakpoint
+      setIsMobile(mobile);
+
+      // On mobile, use full container width
+      if (mobile && containerRef.current) {
+        const containerWidth = containerRef.current.offsetWidth;
+        setActualWidth(containerWidth);
+      } else {
+        setActualWidth(width);
+      }
+    };
+
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, [width]);
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -176,7 +199,7 @@ export default function EnergyFlowSankey({
         "http://www.w3.org/2000/svg",
         "text",
       );
-      noDataText.setAttribute("x", String(width / 2));
+      noDataText.setAttribute("x", String(actualWidth / 2));
       noDataText.setAttribute("y", String(height / 2));
       noDataText.setAttribute("text-anchor", "middle");
       noDataText.setAttribute("fill", "#9CA3AF");
@@ -186,16 +209,18 @@ export default function EnergyFlowSankey({
       return;
     }
 
-    // Configure sankey layout with wider boxes
-    const nodeWidth = 96; // 20% narrower than 120
-    const margin = { left: 60, right: 60, top: 35, bottom: 20 };
+    // Configure sankey layout with responsive margins and node width
+    const nodeWidth = isMobile ? 86 : 96; // 10px narrower on mobile
+    const margin = isMobile
+      ? { left: 0, right: 0, top: 35, bottom: 20 } // No margins on mobile
+      : { left: 60, right: 60, top: 35, bottom: 20 };
     const sankey = d3Sankey<SankeyNodeData, SankeyLinkData>()
       .nodeId((d: any) => d.index)
       .nodeWidth(nodeWidth)
       .nodePadding(15)
       .extent([
         [margin.left, margin.top],
-        [width - margin.right, height - margin.bottom],
+        [actualWidth - margin.right, height - margin.bottom],
       ]);
 
     // Generate the sankey diagram
@@ -488,13 +513,13 @@ export default function EnergyFlowSankey({
         svgElement.appendChild(loadsLabel);
       }
     }
-  }, [matrix, width, height]);
+  }, [matrix, actualWidth, height, isMobile]);
 
   return (
-    <div className="w-full flex justify-center">
+    <div ref={containerRef} className="w-full flex justify-center">
       <svg
         ref={svgRef}
-        width={width}
+        width={actualWidth}
         height={height}
         className="energy-flow-sankey"
       />
