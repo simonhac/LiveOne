@@ -724,6 +724,7 @@ export default function AdminDashboardClient() {
                 shortName: settingsModal.system.shortName,
                 vendorType: settingsModal.system.vendor.type,
                 metadata: settingsModal.system.metadata,
+                ownerClerkUserId: settingsModal.system.owner.clerkId,
               }
             : null
         }

@@ -17,6 +17,7 @@ interface SystemSettingsDialogProps {
     shortName: string | null;
     vendorType: string;
     metadata?: any;
+    ownerClerkUserId?: string;
   } | null;
   isAdmin?: boolean;
   onUpdate?: (
@@ -414,6 +415,7 @@ export default function SystemSettingsDialog({
                   onSaveFunctionReady={(fn) => {
                     compositeSaveRef.current = fn;
                   }}
+                  ownerUserId={system.ownerClerkUserId}
                 />
               </div>
             )}
