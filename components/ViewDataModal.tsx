@@ -407,9 +407,9 @@ export default function ViewDataModal({
     // Always show timestamp and session columns
     if (header.key === "timestamp" || header.key === "sessionLabel")
       return true;
-    // Always show columns with series ID
-    if (getSeriesIdSuffix(header)) return true;
-    // Only show columns without series ID if showExtras is true
+    // Show columns with series ID only if they are active
+    if (getSeriesIdSuffix(header) && header.active) return true;
+    // Only show other columns (inactive with series ID, or no series ID) if showExtras is true
     return showExtras;
   });
 
@@ -427,12 +427,14 @@ export default function ViewDataModal({
     isLastRow?: boolean;
     children: React.ReactNode;
   }) => {
-    const hasSeriesId = getSeriesIdSuffix(header) !== null;
+    // Only consider active columns with series IDs for divider positioning
+    const hasActiveSeriesId =
+      getSeriesIdSuffix(header) !== null && header.active;
     const nextHeader = filteredHeaders[colIndex + 1];
-    const nextHasSeriesId = nextHeader
-      ? getSeriesIdSuffix(nextHeader) !== null
+    const nextHasActiveSeriesId = nextHeader
+      ? getSeriesIdSuffix(nextHeader) !== null && nextHeader.active
       : false;
-    const isLastSeriesIdColumn = hasSeriesId && !nextHasSeriesId;
+    const isLastSeriesIdColumn = hasActiveSeriesId && !nextHasActiveSeriesId;
     const isSpecialColumn =
       header.key === "timestamp" || header.key === "sessionLabel";
 
@@ -724,13 +726,16 @@ export default function ViewDataModal({
                     } hover:bg-gray-700/50 transition-colors`}
                   >
                     {filteredHeaders.map((header, colIndex) => {
-                      const hasSeriesId = getSeriesIdSuffix(header) !== null;
+                      // Only consider active columns with series IDs for divider positioning
+                      const hasActiveSeriesId =
+                        getSeriesIdSuffix(header) !== null && header.active;
                       const nextHeader = filteredHeaders[colIndex + 1];
-                      const nextHasSeriesId = nextHeader
-                        ? getSeriesIdSuffix(nextHeader) !== null
+                      const nextHasActiveSeriesId = nextHeader
+                        ? getSeriesIdSuffix(nextHeader) !== null &&
+                          nextHeader.active
                         : false;
                       const isLastSeriesIdColumn =
-                        hasSeriesId && !nextHasSeriesId;
+                        hasActiveSeriesId && !nextHasActiveSeriesId;
 
                       return (
                         <td
