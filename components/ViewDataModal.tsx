@@ -22,6 +22,7 @@ interface ColumnHeader {
   defaultName: string;
   shortName: string | null;
   active: boolean;
+  transform?: string | null;
 }
 
 interface ViewDataModalProps {
@@ -60,6 +61,7 @@ export default function ViewDataModal({
     displayName: string | null;
     shortName: string | null;
     active: boolean;
+    transform: string | null;
     metricType: string;
     metricUnit: string | null;
     vendorSiteId: string;
@@ -230,6 +232,7 @@ export default function ViewDataModal({
       displayName: header.label,
       shortName: header.shortName || null,
       active: header.active,
+      transform: header.transform || null,
       metricType: header.type,
       metricUnit: header.unit,
       vendorSiteId: vendorSiteId,
@@ -279,6 +282,7 @@ export default function ViewDataModal({
       displayName?: string | null;
       shortName?: string | null;
       active: boolean;
+      transform?: string | null;
     },
   ) => {
     try {

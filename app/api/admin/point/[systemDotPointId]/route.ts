@@ -58,6 +58,7 @@ export async function PATCH(
       displayName,
       shortName,
       active,
+      transform,
     } = body;
 
     // Validate that active is provided (required field)
@@ -131,6 +132,9 @@ export async function PATCH(
           ? null
           : shortName.trim();
     }
+    if (transform !== undefined) {
+      updates.transform = transform || null;
+    }
 
     // Update the point info (using composite key: system_id + id)
     await db
@@ -162,6 +166,7 @@ export async function PATCH(
         displayName: updatedPoint.displayName,
         shortName: updatedPoint.shortName,
         active: updatedPoint.active,
+        transform: updatedPoint.transform,
         metricType: updatedPoint.metricType,
         metricUnit: updatedPoint.metricUnit,
       },

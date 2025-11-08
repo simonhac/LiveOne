@@ -17,6 +17,7 @@ interface PointInfo {
   displayName: string | null;
   shortName: string | null;
   active: boolean;
+  transform: string | null;
   metricType: string;
   metricUnit: string | null;
   vendorSiteId?: string;
@@ -38,6 +39,7 @@ interface PointInfoModalProps {
       displayName?: string | null;
       shortName?: string | null;
       active: boolean;
+      transform?: string | null;
     },
   ) => Promise<void>;
 }
@@ -60,12 +62,16 @@ export default function PointInfoModal({
     pointInfo?.shortName || "",
   );
   const [editedActive, setEditedActive] = useState(!!pointInfo?.active);
+  const [editedTransform, setEditedTransform] = useState(
+    pointInfo?.transform || "n",
+  );
   const [isTypeDirty, setIsTypeDirty] = useState(false);
   const [isSubtypeDirty, setIsSubtypeDirty] = useState(false);
   const [isExtensionDirty, setIsExtensionDirty] = useState(false);
   const [isDisplayNameDirty, setIsDisplayNameDirty] = useState(false);
   const [isShortNameDirty, setIsShortNameDirty] = useState(false);
   const [isActiveDirty, setIsActiveDirty] = useState(false);
+  const [isTransformDirty, setIsTransformDirty] = useState(false);
   const [shortNameError, setShortNameError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -76,12 +82,14 @@ export default function PointInfoModal({
     setEditedDisplayName(pointInfo?.displayName || "");
     setEditedShortName(pointInfo?.shortName || "");
     setEditedActive(!!pointInfo?.active);
+    setEditedTransform(pointInfo?.transform || "n");
     setIsTypeDirty(false);
     setIsSubtypeDirty(false);
     setIsExtensionDirty(false);
     setIsDisplayNameDirty(false);
     setIsShortNameDirty(false);
     setIsActiveDirty(false);
+    setIsTransformDirty(false);
     setShortNameError(null);
   }, [pointInfo, isOpen]);
 
@@ -124,13 +132,19 @@ export default function PointInfoModal({
     setIsActiveDirty(value !== !!pointInfo?.active);
   };
 
+  const handleTransformChange = (value: string) => {
+    setEditedTransform(value);
+    setIsTransformDirty(value !== (pointInfo?.transform || "n"));
+  };
+
   const hasChanges =
     isTypeDirty ||
     isSubtypeDirty ||
     isExtensionDirty ||
     isDisplayNameDirty ||
     isShortNameDirty ||
-    isActiveDirty;
+    isActiveDirty ||
+    isTransformDirty;
 
   const handleSave = async () => {
     if (!pointInfo || shortNameError) return;
@@ -143,6 +157,8 @@ export default function PointInfoModal({
       if (isExtensionDirty) updates.extension = editedExtension || null;
       if (isDisplayNameDirty) updates.displayName = editedDisplayName || null;
       if (isShortNameDirty) updates.shortName = editedShortName || null;
+      if (isTransformDirty)
+        updates.transform = editedTransform === "n" ? null : editedTransform;
 
       await onUpdate(pointInfo.pointDbId, updates);
 
@@ -153,6 +169,7 @@ export default function PointInfoModal({
       setIsDisplayNameDirty(false);
       setIsShortNameDirty(false);
       setIsActiveDirty(false);
+      setIsTransformDirty(false);
 
       // Close modal on successful save
       onClose();
@@ -302,6 +319,22 @@ export default function PointInfoModal({
                     {editedActive ? "Enabled" : "Disabled"}
                   </span>
                 </div>
+              </div>
+
+              {/* Editable: Transform */}
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
+                  Transform:
+                </label>
+                <select
+                  value={editedTransform}
+                  onChange={(e) => handleTransformChange(e.target.value)}
+                  className="px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                  disabled={isSaving}
+                >
+                  <option value="n">none (unchanged)</option>
+                  <option value="i">invert (multiply by -1)</option>
+                </select>
               </div>
 
               {/* Editable: Display Name */}

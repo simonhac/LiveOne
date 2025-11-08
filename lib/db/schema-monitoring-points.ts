@@ -36,6 +36,7 @@ export const pointInfo = sqliteTable(
     displayName: text("display_name").notNull(), // user settable, will generally be the same as pointName
     shortName: text("short_name"), // Optional short name (letters, digits, underscore only) - used in history API IDs
     active: integer("active", { mode: "boolean" }).notNull().default(true), // Whether this point is active (enabled)
+    transform: text("transform"), // Optional transform: null = no transform, 'i' = invert
 
     // Type and unit
     metricType: text("metric_type").notNull(), // eg. 'power', 'energy', 'soc'

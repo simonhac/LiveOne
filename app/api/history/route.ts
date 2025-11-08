@@ -20,6 +20,25 @@ import { HistoryService } from "@/lib/history/history-service";
 import { isUserAdmin } from "@/lib/auth-utils";
 
 // ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Apply transform to a numeric value based on the transform type
+ * - null or 'n': no transform (return original value)
+ * - 'i': invert (multiply by -1)
+ */
+function applyTransform(
+  value: number | null,
+  transform: string | null,
+): number | null {
+  if (value === null) return null;
+  if (!transform || transform === "n") return value;
+  if (transform === "i") return -value;
+  return value;
+}
+
+// ============================================================================
 // Types and Interfaces
 // ============================================================================
 
@@ -431,6 +450,7 @@ async function getSystemHistoryInOpenNEMFormat(
         displayName: string | null;
         capabilityPath: string;
         aggregationField: "avg" | "last";
+        transform: string | null;
       }> = [];
 
       for (const [pointRef, category] of pointRefsMap.entries()) {
@@ -474,6 +494,7 @@ async function getSystemHistoryInOpenNEMFormat(
           displayName: point.displayName,
           capabilityPath,
           aggregationField,
+          transform: point.transform,
         });
       }
 
@@ -538,6 +559,12 @@ async function getSystemHistoryInOpenNEMFormat(
             AND interval_end < ${endEpoch}
           ORDER BY interval_end ASC
         `)) as Array<{ interval_end: number; value: number | null }>;
+
+        // Apply transform to all values immediately after query
+        rows = rows.map((row) => ({
+          interval_end: row.interval_end,
+          value: applyTransform(row.value, point.transform),
+        }));
 
         // If we're using 30m interval but querying 5m table, aggregate the data
         if (interval === "30m" && aggTable === "point_readings_agg_5m") {

@@ -12,6 +12,21 @@ import { formatTimeAEST } from "@/lib/date-utils";
 import { fromDate } from "@internationalized/date";
 import { SystemsManager } from "@/lib/systems-manager";
 
+/**
+ * Apply transform to a numeric value based on the transform type
+ * - null or 'n': no transform (return original value)
+ * - 'i': invert (multiply by -1)
+ */
+function applyTransform(
+  value: number | null,
+  transform: string | null,
+): number | null {
+  if (value === null) return null;
+  if (!transform || transform === "n") return value;
+  if (transform === "i") return -value;
+  return value;
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ systemId: string }> },
@@ -177,6 +192,7 @@ export async function GET(
           defaultName: p.defaultName,
           shortName: p.shortName,
           active: p.active,
+          transform: p.transform,
         };
       }),
     ];
@@ -310,10 +326,17 @@ export async function GET(
       // Add point values in sorted order
       sortedPoints.forEach((p) => {
         const value = row[`point_${p.id}`];
-        // For text fields, keep as string; for others, convert to number
+        // For text fields, keep as string; for others, convert to number and apply transform
         if (value !== null) {
-          transformed[`point_${p.id}`] =
-            p.metricUnit === "text" ? String(value) : Number(value);
+          if (p.metricUnit === "text") {
+            transformed[`point_${p.id}`] = String(value);
+          } else {
+            const numValue = Number(value);
+            transformed[`point_${p.id}`] = applyTransform(
+              numValue,
+              p.transform,
+            );
+          }
         } else {
           transformed[`point_${p.id}`] = null;
         }

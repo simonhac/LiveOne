@@ -22,6 +22,21 @@ import {
 } from "./types";
 
 /**
+ * Apply transform to a numeric value based on the transform type
+ * - null or 'n': no transform (return original value)
+ * - 'i': invert (multiply by -1)
+ */
+function applyTransform(
+  value: number | null,
+  transform: string | null,
+): number | null {
+  if (value === null) return null;
+  if (!transform || transform === "n") return value;
+  if (transform === "i") return -value;
+  return value;
+}
+
+/**
  * Generate a point ID in the format:
  * - If type and subtype are set: use series ID {type}.{subtype}.{extension}.{metricType}.{aggregation}
  * - Otherwise if shortName is set: use shortName
@@ -152,6 +167,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
           type: p.type,
           subtype: p.subtype,
           extension: p.extension,
+          transform: p.transform,
         },
       ]),
     );
@@ -195,10 +211,10 @@ export class PointReadingsProvider implements HistoryDataProvider {
           data.push({
             timestamp: fromUnixTimestamp(agg.intervalEnd / 1000, 600), // Use AEST timezone
             value: {
-              avg: agg.avg,
-              min: agg.min,
-              max: agg.max,
-              last: agg.last,
+              avg: applyTransform(agg.avg, pointMeta.transform),
+              min: applyTransform(agg.min, pointMeta.transform),
+              max: applyTransform(agg.max, pointMeta.transform),
+              last: applyTransform(agg.last, pointMeta.transform),
               count: agg.sampleCount,
             },
           });
