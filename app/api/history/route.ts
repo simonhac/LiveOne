@@ -500,12 +500,9 @@ async function getSystemHistoryInOpenNEMFormat(
       }
 
       // Query the appropriate aggregation table based on interval
+      // Note: We only have 5m and 1d aggregation tables. For 30m, use 5m table.
       const aggTable =
-        interval === "5m"
-          ? "point_readings_agg_5m"
-          : interval === "30m"
-            ? "point_readings_agg_30m"
-            : "point_readings_agg_1d";
+        interval === "1d" ? "point_readings_agg_1d" : "point_readings_agg_5m"; // Use 5m table for both 5m and 30m intervals
 
       // Calculate time range in Unix epoch milliseconds (point_readings_agg_* uses milliseconds)
       const startEpoch =
@@ -532,7 +529,7 @@ async function getSystemHistoryInOpenNEMFormat(
         }
 
         // Query aggregation table
-        const rows = (await db.all(sql`
+        let rows = (await db.all(sql`
           SELECT interval_end, ${sql.identifier(point.aggregationField)} as value
           FROM ${sql.identifier(aggTable)}
           WHERE system_id = ${point.systemId}
@@ -541,6 +538,46 @@ async function getSystemHistoryInOpenNEMFormat(
             AND interval_end < ${endEpoch}
           ORDER BY interval_end ASC
         `)) as Array<{ interval_end: number; value: number | null }>;
+
+        // If we're using 30m interval but querying 5m table, aggregate the data
+        if (interval === "30m" && aggTable === "point_readings_agg_5m") {
+          const aggregated: Array<{
+            interval_end: number;
+            value: number | null;
+          }> = [];
+          const intervalMs = 30 * 60 * 1000; // 30 minutes in ms
+
+          // Group rows by 30-minute buckets
+          const buckets = new Map<number, number[]>();
+
+          for (const row of rows) {
+            // Round down to nearest 30-minute boundary
+            const bucketEnd =
+              Math.floor(row.interval_end / intervalMs) * intervalMs +
+              intervalMs;
+
+            if (!buckets.has(bucketEnd)) {
+              buckets.set(bucketEnd, []);
+            }
+
+            if (row.value !== null) {
+              buckets.get(bucketEnd)!.push(row.value);
+            }
+          }
+
+          // Calculate average for each bucket
+          for (const [bucketEnd, values] of buckets.entries()) {
+            const avg =
+              values.length > 0
+                ? values.reduce((sum, v) => sum + v, 0) / values.length
+                : null;
+            aggregated.push({ interval_end: bucketEnd, value: avg });
+          }
+
+          // Sort by interval_end
+          aggregated.sort((a, b) => a.interval_end - b.interval_end);
+          rows = aggregated;
+        }
 
         // Build series ID: liveone.{siteId}.{capabilityPath}.{metricType}.{aggregation}
         const siteId = buildSiteIdFromSystem(sourceSystem);
