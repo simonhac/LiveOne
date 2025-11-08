@@ -50,6 +50,7 @@ import {
   MoreHorizontal,
   ChevronLeft,
   ChevronRight,
+  Table,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -1087,56 +1088,60 @@ export default function DashboardClient({
 
                   {showSettingsDropdown && (
                     <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
-                      {/* Track if we have any items above the divider */}
-                      {(() => {
-                        const hasItemsAbove = data?.supportsPolling;
-                        return (
-                          <>
-                            {/* Test Connection - Only show for vendors that support polling */}
-                            {data?.supportsPolling && (
-                              <button
-                                onClick={() => {
-                                  setShowTestConnection(true);
-                                  setShowSettingsDropdown(false);
-                                }}
-                                className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
-                              >
-                                <FlaskConical className="w-4 h-4" />
-                                Test Connection
-                              </button>
-                            )}
+                      {/* View Data - Only show for admin users */}
+                      {isAdmin && (
+                        <>
+                          <button
+                            onClick={() => {
+                              setShowViewDataModal(true);
+                              setShowSettingsDropdown(false);
+                            }}
+                            className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
+                          >
+                            <Table className="w-4 h-4" />
+                            View Data
+                          </button>
+                          <div className="border-t border-gray-700 my-1"></div>
+                        </>
+                      )}
 
-                            {/* Show divider if there are items above */}
-                            {hasItemsAbove && (
-                              <div className="border-t border-gray-700 my-1"></div>
-                            )}
+                      {/* Test Connection - Only show for vendors that support polling */}
+                      {data?.supportsPolling && (
+                        <button
+                          onClick={() => {
+                            setShowTestConnection(true);
+                            setShowSettingsDropdown(false);
+                          }}
+                          className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
+                        >
+                          <FlaskConical className="w-4 h-4" />
+                          Test Connection
+                        </button>
+                      )}
 
-                            {/* Always show Add System */}
-                            <button
-                              onClick={() => {
-                                setShowSettingsDropdown(false);
-                                setShowAddSystemDialog(true);
-                              }}
-                              className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
-                            >
-                              <Plus className="w-4 h-4" />
-                              Add System…
-                            </button>
+                      {/* Always show Add System */}
+                      <button
+                        onClick={() => {
+                          setShowSettingsDropdown(false);
+                          setShowAddSystemDialog(true);
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Add System…
+                      </button>
 
-                            {/* System Settings */}
-                            <button
-                              onClick={() => {
-                                setShowSettingsDropdown(false);
-                                setShowSystemSettingsDialog(true);
-                              }}
-                              className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
-                            >
-                              <SettingsIcon className="w-4 h-4" />
-                              System Settings
-                            </button>
-                          </>
-                        );
-                      })()}
+                      {/* System Settings */}
+                      <button
+                        onClick={() => {
+                          setShowSettingsDropdown(false);
+                          setShowSystemSettingsDialog(true);
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
+                      >
+                        <SettingsIcon className="w-4 h-4" />
+                        System Settings
+                      </button>
                     </div>
                   )}
                 </div>
