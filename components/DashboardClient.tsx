@@ -1419,15 +1419,14 @@ export default function DashboardClient({
                               >
                                 <button
                                   onClick={handlePageOlder}
-                                  disabled={historyLoading}
-                                  className="px-2 py-1 text-sm font-medium border rounded-l-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-none"
+                                  className="px-2 py-1 text-sm font-medium border rounded-l-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white transition-none"
                                   title="Older (Previous)"
                                 >
                                   <ChevronLeft className="w-4 h-4" />
                                 </button>
                                 <button
                                   onClick={handlePageNewer}
-                                  disabled={!isHistoricalMode || historyLoading}
+                                  disabled={!isHistoricalMode}
                                   className="px-2 py-1 text-sm font-medium border-l-0 border rounded-r-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-none"
                                   title="Newer (Next)"
                                 >
