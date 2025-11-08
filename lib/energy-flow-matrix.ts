@@ -274,18 +274,22 @@ export function logEnergyFlowMatrix(matrix: EnergyFlowMatrix): void {
   console.log("\n" + "=".repeat(80) + "\n");
 
   // Validation check
+  // Note: With master load (path="load"), source totals may not equal load totals
+  // due to system losses (inverter efficiency, battery roundtrip, etc.)
+  // This is expected and not an error.
   const sourceSum = matrix.sourceTotals.reduce((a, b) => a + b, 0);
   const loadSum = matrix.loadTotals.reduce((a, b) => a + b, 0);
   const diff = Math.abs(sourceSum - loadSum);
 
+  console.log(
+    `📊 Energy flow: ${sourceSum.toFixed(2)} kWh generated → ${loadSum.toFixed(2)} kWh consumed`,
+  );
   if (diff > 0.01) {
-    console.warn(
-      `⚠️  Matrix imbalance detected: source total (${sourceSum.toFixed(2)}) ` +
-        `!= load total (${loadSum.toFixed(2)}), diff: ${diff.toFixed(4)}`,
+    const diffPercent = (diff / Math.max(sourceSum, loadSum)) * 100;
+    console.log(
+      `   Difference: ${diff.toFixed(2)} kWh (${diffPercent.toFixed(1)}%) - may include system losses`,
     );
   } else {
-    console.log(
-      `✓ Matrix balanced: ${matrix.totalEnergy.toFixed(2)} kWh total energy flow`,
-    );
+    console.log(`   ✓ Perfectly balanced (no apparent losses)`);
   }
 }

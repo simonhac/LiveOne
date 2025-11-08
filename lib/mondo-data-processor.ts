@@ -210,10 +210,8 @@ export async function fetchAndProcessMondoData(
     const seriesData: SeriesData[] = [];
 
     // For rest of house calculation
-    let measuredLoadsSum: (number | null)[] | null = null;
-    let batteryChargeValues: (number | null)[] | null = null;
-    let gridExportValues: (number | null)[] | null = null;
-    let totalGenerationValues: (number | null)[] | null = null;
+    let masterLoadValues: (number | null)[] | null = null; // Master load (path="load")
+    let childLoadsSum: (number | null)[] | null = null; // Sum of child loads (path="load.xxx")
 
     // Process each configured series
     seriesConfig.forEach((config) => {
@@ -260,136 +258,68 @@ export async function fetchAndProcessMondoData(
       if (mode === "load") {
         // Use the path attribute from the series data if available
         const path = dataSeries.path || "";
-        const [type] = path.split(".");
-        if (type === "load") {
-          // This is a measured load
-          if (measuredLoadsSum === null) {
-            measuredLoadsSum = new Array(seriesValues.length).fill(0);
-          }
-          seriesValues.forEach((val: number | null, idx: number) => {
-            if (val !== null && measuredLoadsSum![idx] !== null) {
-              measuredLoadsSum![idx] = (measuredLoadsSum![idx] as number) + val;
-            } else if (val === null) {
-              measuredLoadsSum![idx] = null;
-            }
-          });
-        } else if (config.label === "Battery Charge") {
-          // Battery charge is identified by the label
-          batteryChargeValues = seriesValues;
-        } else if (config.label === "Grid Export") {
-          // Grid export is identified by the label
-          gridExportValues = seriesValues;
-        }
-      }
-
-      // Accumulate total generation (generation mode)
-      if (mode === "generation") {
-        // Use the path attribute from the series data if available
-        const path = dataSeries.path || "";
         const [type, subtype] = path.split(".");
-        if (type === "source" && subtype === "solar") {
-          if (totalGenerationValues === null) {
-            totalGenerationValues = new Array(seriesValues.length).fill(0);
-          }
-          seriesValues.forEach((val: number | null, idx: number) => {
-            if (val !== null && totalGenerationValues![idx] !== null) {
-              totalGenerationValues![idx] =
-                (totalGenerationValues![idx] as number) + val;
-            } else if (val === null) {
-              totalGenerationValues![idx] = null;
+        if (type === "load") {
+          if (subtype === undefined || subtype === "") {
+            // Master load (path = "load" exactly)
+            masterLoadValues = seriesValues;
+            console.log(`[Mondo Processor] Found master load: ${config.label}`);
+          } else {
+            // Child load (path = "load.xxx")
+            if (childLoadsSum === null) {
+              childLoadsSum = new Array(seriesValues.length).fill(0);
             }
-          });
+            seriesValues.forEach((val: number | null, idx: number) => {
+              if (val !== null && childLoadsSum![idx] !== null) {
+                childLoadsSum![idx] = (childLoadsSum![idx] as number) + val;
+              } else if (val === null) {
+                childLoadsSum![idx] = null;
+              }
+            });
+          }
         }
       }
     });
 
     // Calculate rest of house if in load mode
-    if (mode === "load" && measuredLoadsSum) {
-      // Find solar, grid, and battery series using the path attribute
-      const solarSeriesList = Array.from(seriesMap.values()).filter((s) => {
-        const path = s.path || "";
-        const [type, subtype] = path.split(".");
-        return type === "source" && subtype === "solar";
-      });
+    // Only add "rest of house" if we have a master load and child loads
+    if (mode === "load") {
+      if (masterLoadValues !== null && childLoadsSum !== null) {
+        // TypeScript doesn't narrow let variables in nested scopes, so we create const copies
+        const master: (number | null)[] = masterLoadValues;
+        const children: (number | null)[] = childLoadsSum;
 
-      const gridSeries = Array.from(seriesMap.values()).find((s) => {
-        const path = s.path || "";
-        const [type, subtype] = path.split(".");
-        return type === "bidi" && subtype === "grid";
-      });
+        // Rest of House = Master Load - Sum of Child Loads
+        const restOfHouse: (number | null)[] = master.map(
+          (masterLoad: number | null, idx: number) => {
+            const childSum = children[idx];
 
-      const battSeries = Array.from(seriesMap.values()).find((s) => {
-        const path = s.path || "";
-        const [type, subtype] = path.split(".");
-        return type === "bidi" && subtype === "battery";
-      });
+            // If we don't have both values, return null
+            if (masterLoad === null || childSum === null) return null;
 
-      const totalGeneration = selectedIndices.map((i: number) => {
-        // Sum all solar arrays
-        let totalSolar = 0;
-        let hasNullSolar = false;
-        for (const solarSeries of solarSeriesList) {
-          const solarRaw = solarSeries.history.data[i];
-          if (solarRaw === null || solarRaw === undefined) {
-            hasNullSolar = true;
-            break;
-          }
-          totalSolar += solarRaw / 1000; // Convert W to kW
-        }
+            const rest = masterLoad - childSum;
+            return Math.max(0, rest); // Don't show negative values
+          },
+        );
 
-        const gridIn = gridSeries ? gridSeries.history.data[i] : null;
-        const battOut = battSeries ? battSeries.history.data[i] : null;
-
-        // Convert W to kW and handle nulls
-        let total = totalSolar;
-        let hasAnyData = totalSolar > 0;
-
-        // Grid import: positive values mean importing from grid
-        if (gridIn !== null && gridIn !== undefined && gridIn > 0) {
-          total += gridIn / 1000;
-          hasAnyData = true;
-        }
-        // Battery discharge: positive values mean discharging
-        if (battOut !== null && battOut !== undefined && battOut > 0) {
-          total += battOut / 1000;
-          hasAnyData = true;
-        }
-
-        return hasAnyData && !hasNullSolar ? total : null;
-      });
-
-      // Calculate rest of house
-      // Rest of House = Total Generation - Measured Loads - Battery Charge - Grid Export
-      const restOfHouse = totalGeneration.map(
-        (gen: number | null, idx: number) => {
-          const measured = measuredLoadsSum![idx];
-          const batteryCharge = batteryChargeValues
-            ? batteryChargeValues[idx]
-            : null;
-          const gridExport = gridExportValues ? gridExportValues[idx] : null;
-
-          // If we don't have generation or measured loads data, return null
-          if (gen === null || measured === null) return null;
-
-          // Battery charge and grid export might be null (treat as 0)
-          const battCharge =
-            batteryCharge !== null && batteryCharge !== undefined
-              ? batteryCharge
-              : 0;
-          const gridExp =
-            gridExport !== null && gridExport !== undefined ? gridExport : 0;
-
-          const rest = gen - measured - battCharge - gridExp;
-          return Math.max(0, rest); // Don't show negative values
-        },
-      );
-
-      seriesData.push({
-        id: "rest_of_house",
-        description: "Rest of House",
-        data: restOfHouse,
-        color: "rgb(107, 114, 128)", // gray-500
-      });
+        seriesData.push({
+          id: "rest_of_house",
+          description: "Rest of House",
+          data: restOfHouse,
+          color: "rgb(107, 114, 128)", // gray-500
+        });
+        console.log(
+          `[Mondo Processor] Added rest of house (master load - child loads)`,
+        );
+      } else if (masterLoadValues !== null && childLoadsSum === null) {
+        console.log(
+          `[Mondo Processor] Master load exists but no child loads - skipping rest of house`,
+        );
+      } else if (masterLoadValues === null && childLoadsSum !== null) {
+        console.log(
+          `[Mondo Processor] Child loads exist but no master load - skipping rest of house`,
+        );
+      }
     }
 
     // Sort series by order from config

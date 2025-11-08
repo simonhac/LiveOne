@@ -63,6 +63,8 @@ export default function EnergyTable({
   // Keep the original order from the chart configuration - no sorting
 
   // Calculate totals (only include visible series)
+  // Note: When a master load exists (path="load"), the total should equal the master load
+  // because child loads + rest of house = master load
   let powerTotal: number | null = null;
   let energyTotal: number | null = null;
   let hasAnyValue = false;
