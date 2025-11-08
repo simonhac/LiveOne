@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatDateTime } from "@/lib/fe-date-format";
 import PointInfoModal from "./PointInfoModal";
@@ -312,8 +312,6 @@ export default function ViewDataModal({
     }
   };
 
-  if (!isOpen) return null;
-
   // Format value based on metric type
   const formatValue = (value: number | string | null, header: ColumnHeader) => {
     if (value === null) return "-";
@@ -417,6 +415,26 @@ export default function ViewDataModal({
     return showExtras;
   });
 
+  // Generate CSS for column hover effect (exclude timestamp and sessionLabel columns)
+  // Memoize to prevent re-rendering and flashing when hovering
+  const columnHoverStyles = useMemo(() => {
+    return filteredHeaders
+      .map((header, colIndex) => {
+        // Don't add hover effect for timestamp or sessionLabel columns
+        if (header.key === "timestamp" || header.key === "sessionLabel") {
+          return "";
+        }
+        return `
+    thead:has(th[data-col="${colIndex}"]:hover) th[data-col="${colIndex}"] {
+      background-color: rgb(55 65 81 / 0.5) !important;
+    }
+  `;
+      })
+      .join("\n");
+  }, [filteredHeaders]);
+
+  if (!isOpen) return null;
+
   // Helper component to render a header cell with common logic
   const HeaderCell = ({
     header,
@@ -464,21 +482,6 @@ export default function ViewDataModal({
       </th>
     );
   };
-
-  // Generate CSS for column hover effect (exclude timestamp and sessionLabel columns)
-  const columnHoverStyles = filteredHeaders
-    .map((header, colIndex) => {
-      // Don't add hover effect for timestamp or sessionLabel columns
-      if (header.key === "timestamp" || header.key === "sessionLabel") {
-        return "";
-      }
-      return `
-    thead:has(th[data-col="${colIndex}"]:hover) th[data-col="${colIndex}"] {
-      background-color: rgb(55 65 81 / 0.5) !important;
-    }
-  `;
-    })
-    .join("\n");
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-5 z-50">

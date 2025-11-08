@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
+import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { systems } from "@/lib/db/schema";
 import { eq, and, ne } from "drizzle-orm";
@@ -216,6 +217,9 @@ export async function PATCH(
 
     // Invalidate SystemsManager cache so next request gets fresh data
     SystemsManager.clearInstance();
+
+    // Revalidate dashboard paths to refresh server-side data
+    revalidatePath("/dashboard", "layout");
 
     return NextResponse.json({
       success: true,
