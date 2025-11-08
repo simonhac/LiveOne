@@ -640,7 +640,7 @@ export default function DashboardClient({
   }, [showSystemDropdown, showSettingsDropdown]);
 
   // Navigation handlers for prev/next buttons
-  const handlePageNewer = () => {
+  const handlePageNewer = useCallback(() => {
     if (historyTimeRange.start && historyTimeRange.end && system) {
       // Go forward in time by one period
       const currentStart = new Date(historyTimeRange.start);
@@ -690,9 +690,9 @@ export default function DashboardClient({
       }
       router.push(`?${params.toString()}`, { scroll: false });
     }
-  };
+  }, [historyTimeRange, system, mondoPeriod, searchParams, router]);
 
-  const handlePageOlder = () => {
+  const handlePageOlder = useCallback(() => {
     if (!system) return;
 
     let currentStart: Date;
@@ -744,7 +744,48 @@ export default function DashboardClient({
       params.set("offset", encodeUrlOffset(offsetMin));
     }
     router.push(`?${params.toString()}`, { scroll: false });
-  };
+  }, [
+    system,
+    isHistoricalMode,
+    historyTimeRange,
+    mondoPeriod,
+    searchParams,
+    router,
+  ]);
+
+  // Keyboard navigation for prev/next buttons
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle arrow keys when not typing in an input
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      if (e.key === "ArrowLeft") {
+        // Left arrow = Previous/Older
+        if (!historyLoading) {
+          e.preventDefault();
+          e.stopPropagation();
+          handlePageOlder();
+        }
+      } else if (e.key === "ArrowRight") {
+        // Right arrow = Next/Newer
+        if (isHistoricalMode && !historyLoading) {
+          e.preventDefault();
+          e.stopPropagation();
+          handlePageNewer();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [historyLoading, isHistoricalMode, handlePageOlder, handlePageNewer]);
 
   // Hover handlers that track which chart is active on touch devices
   const handleLoadHoverIndexChange = useCallback(
@@ -1379,11 +1420,7 @@ export default function DashboardClient({
                                 <button
                                   onClick={handlePageOlder}
                                   disabled={historyLoading}
-                                  className={`px-2 py-1 text-sm font-medium border rounded-l-lg ${
-                                    historyLoading
-                                      ? "bg-gray-800 text-gray-600 border-gray-700 cursor-not-allowed"
-                                      : "bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white"
-                                  }`}
+                                  className="px-2 py-1 text-sm font-medium border rounded-l-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-none"
                                   title="Older (Previous)"
                                 >
                                   <ChevronLeft className="w-4 h-4" />
@@ -1391,11 +1428,7 @@ export default function DashboardClient({
                                 <button
                                   onClick={handlePageNewer}
                                   disabled={!isHistoricalMode || historyLoading}
-                                  className={`px-2 py-1 text-sm font-medium border-l-0 border rounded-r-lg ${
-                                    !isHistoricalMode || historyLoading
-                                      ? "bg-gray-800 text-gray-600 border-gray-700 cursor-not-allowed"
-                                      : "bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white"
-                                  }`}
+                                  className="px-2 py-1 text-sm font-medium border-l-0 border rounded-r-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-none"
                                   title="Newer (Next)"
                                 >
                                   <ChevronRight className="w-4 h-4" />
