@@ -352,6 +352,17 @@ export const clerkIdMapping = sqliteTable("clerk_id_mapping", {
     .default(sql`(unixepoch())`),
 });
 
+// Sync status table - tracks last synced timestamps for automatic sync
+// WARNING: This table should ONLY exist in development databases
+export const syncStatus = sqliteTable("sync_status", {
+  tableName: text("table_name").primaryKey(), // e.g., 'readings', 'readings_agg_5m', 'point_readings'
+  lastEntryMs: integer("last_entry_ms"), // Unix timestamp in milliseconds (for time-based tables)
+  lastEntryDate: text("last_entry_date"), // Calendar date YYYY-MM-DD (for date-based tables like daily agg)
+  updatedAt: integer("updated_at")
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`), // Last update time (ms)
+});
+
 export type Reading = typeof readings.$inferSelect;
 export type NewReading = typeof readings.$inferInsert;
 export type PollingStatus = typeof pollingStatus.$inferSelect;

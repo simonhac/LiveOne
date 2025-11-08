@@ -84,6 +84,23 @@ export default function CompositeTab({
   );
   const fetchingRef = useRef(false);
 
+  // Handle Escape key to close menu
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && addingToCategory) {
+        e.stopPropagation(); // Prevent event from bubbling to parent dialog
+        handleCloseMenu();
+      }
+    };
+
+    if (addingToCategory) {
+      document.addEventListener("keydown", handleKeyDown, true); // Use capture phase
+      return () => {
+        document.removeEventListener("keydown", handleKeyDown, true);
+      };
+    }
+  }, [addingToCategory]);
+
   // Reset hasLoaded when modal closes
   useEffect(() => {
     if (!shouldLoad && hasLoaded) {

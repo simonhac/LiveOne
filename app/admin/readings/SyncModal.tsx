@@ -35,6 +35,7 @@ interface SyncModalProps {
   daysToSync: number;
   syncMetadata: boolean;
   recordCounts: Record<string, number>;
+  hasSyncStatus?: boolean;
   onDaysToSyncChange: (days: number) => void;
   onSyncMetadataChange: (checked: boolean) => void;
   onStartSync: () => void;
@@ -50,6 +51,7 @@ export default function SyncModal({
   daysToSync,
   syncMetadata,
   recordCounts,
+  hasSyncStatus = false,
   onDaysToSyncChange,
   onSyncMetadataChange,
   onStartSync,
@@ -186,11 +188,14 @@ export default function SyncModal({
             disabled={!!syncAbortController}
             className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <option value={0.25}>Last 6 hours</option>
-            <option value={1}>Last 1 day</option>
-            <option value={3}>Last 3 days</option>
-            <option value={7}>Last 7 days</option>
-            <option value={14}>Last 14 days</option>
+            <option value={-1} disabled={!hasSyncStatus}>
+              automatic{!hasSyncStatus ? " (requires previous sync)" : ""}
+            </option>
+            <option value={0.25}>last 6 hours</option>
+            <option value={1}>last 1 day</option>
+            <option value={3}>last 3 days</option>
+            <option value={7}>last 7 days</option>
+            <option value={14}>last 14 days</option>
           </select>
         </div>
 

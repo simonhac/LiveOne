@@ -8,6 +8,7 @@ import {
   readingsAgg5m,
   readingsAgg1d,
   sessions,
+  syncStatus,
 } from "@/lib/db/schema";
 import {
   pointInfo,
@@ -111,7 +112,12 @@ async function syncTableData(
   sourceTable: string,
   targetTable: string,
   options: SyncTableOptions,
-): Promise<{ synced: number; skipped: number; detail?: string }> {
+): Promise<{
+  synced: number;
+  skipped: number;
+  detail?: string;
+  lastBatchTime?: Date | null;
+}> {
   const {
     query,
     queryParams,
@@ -402,7 +408,41 @@ async function syncTableData(
     );
   }
 
-  return { synced: totalSynced, skipped: totalSkipped, detail };
+  return {
+    synced: totalSynced,
+    skipped: totalSkipped,
+    detail,
+    lastBatchTime: lastBatchTime || undefined, // Return the last timestamp for updating sync_status
+  };
+}
+
+// Helper function to update sync_status table after a sync
+async function updateSyncStatus(
+  ctx: SyncContext,
+  tableName: string,
+  lastTime?: Date,
+  lastDate?: string,
+) {
+  try {
+    const lastEntryMs = lastTime ? lastTime.getTime() : null;
+
+    // Upsert sync_status
+    await rawClient.execute(
+      `INSERT INTO sync_status (table_name, last_entry_ms, last_entry_date, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(table_name) DO UPDATE SET
+         last_entry_ms = excluded.last_entry_ms,
+         last_entry_date = excluded.last_entry_date,
+         updated_at = excluded.updated_at`,
+      [tableName, lastEntryMs, lastDate || null, Date.now()],
+    );
+
+    console.log(
+      `[SYNC] Updated sync_status for ${tableName}: ${lastTime ? lastTime.toISOString() : lastDate || "N/A"}`,
+    );
+  } catch (err) {
+    console.error(`[SYNC] Failed to update sync_status for ${tableName}:`, err);
+  }
 }
 
 export interface SyncContext {
@@ -417,11 +457,12 @@ export interface SyncContext {
   mapSystemId: (prodSystemId: number) => number | undefined;
   localLatestTime?: Date;
   syncFromTime?: Date; // The actual time to sync from (configurable days back)
-  daysToSync: number; // Number of days to sync (0.25 = 6 hours, 1, 3, 7, or 14 days)
+  daysToSync: number; // Number of days to sync (0.25 = 6 hours, 1, 3, 7, or 14 days, -1 = automatic)
   totalToSync?: number;
   synced?: number;
   recordCounts?: Record<string, number>; // Map of stage id → record count
   cumulativeSynced?: number; // Total synced across all completed stages
+  syncStatusMap?: Map<string, { ms?: number; date?: string }>; // Map of table name → last sync timestamp/date
   formatDateTime: (date: Date) => string;
 }
 
@@ -666,12 +707,50 @@ async function syncSystems(ctx: SyncContext) {
 
 // Stage 5: Count records to sync from all tables
 async function countRecordsToSync(ctx: SyncContext) {
-  // Sync the specified number of days
-  const daysAgo = new Date(Date.now() - ctx.daysToSync * 24 * 60 * 60 * 1000);
-  const syncFromTime = daysAgo;
+  let syncFromTime: Date;
+  let syncFromTimestampSec: number;
+  let syncFromTimestampMs: number;
 
-  const syncFromTimestampSec = Math.floor(syncFromTime.getTime() / 1000);
-  const syncFromTimestampMs = syncFromTime.getTime();
+  // Check if automatic mode (daysToSync === -1)
+  if (ctx.daysToSync === -1) {
+    // Automatic mode: Load last sync timestamps from sync_status table
+    const syncStatusData = await ctx.db.select().from(syncStatus);
+    const syncStatusMap = new Map<string, { ms?: number; date?: string }>();
+
+    for (const row of syncStatusData) {
+      syncStatusMap.set(row.tableName, {
+        ms: row.lastEntryMs || undefined,
+        date: row.lastEntryDate || undefined,
+      });
+    }
+
+    // Find the earliest timestamp across all tables (to use as default)
+    const timestamps = syncStatusData
+      .map((row: { lastEntryMs: number | null }) => row.lastEntryMs)
+      .filter(
+        (ms: number | null): ms is number => ms !== null && ms !== undefined,
+      );
+
+    if (timestamps.length === 0) {
+      throw new Error(
+        "Automatic sync requires previous sync data. Please run a manual sync first.",
+      );
+    }
+
+    const earliestMs = Math.min(...timestamps);
+    syncFromTime = new Date(earliestMs);
+    syncFromTimestampSec = Math.floor(earliestMs / 1000);
+    syncFromTimestampMs = earliestMs;
+
+    // Store sync status map in context for later use
+    ctx.syncStatusMap = syncStatusMap;
+  } else {
+    // Manual mode: Sync the specified number of days
+    const daysAgo = new Date(Date.now() - ctx.daysToSync * 24 * 60 * 60 * 1000);
+    syncFromTime = daysAgo;
+    syncFromTimestampSec = Math.floor(syncFromTime.getTime() / 1000);
+    syncFromTimestampMs = syncFromTime.getTime();
+  }
 
   // Count local records in all tables
   const localCountResult = await rawClient.execute(
@@ -790,6 +869,11 @@ async function syncReadings(ctx: SyncContext) {
       return `Synced ${synced.toLocaleString()} readings${dateRangeStr}`;
     },
   });
+
+  // Update sync_status with the last synced timestamp
+  if (result.lastBatchTime) {
+    await updateSyncStatus(ctx, "readings", result.lastBatchTime);
+  }
 
   return {
     detail: result.detail,
@@ -924,6 +1008,11 @@ async function syncSessions(ctx: SyncContext) {
     },
   });
 
+  // Update sync_status with the last synced timestamp
+  if (result.lastBatchTime !== null && result.lastBatchTime !== undefined) {
+    await updateSyncStatus(ctx, "sessions", result.lastBatchTime);
+  }
+
   return {
     detail: result.detail,
     context: { synced: result.synced },
@@ -978,6 +1067,11 @@ async function sync5MinAggregations(ctx: SyncContext) {
       onProgress: createProgressCallback(ctx, "sync-5min-agg"),
     },
   );
+
+  // Update sync_status with the last synced timestamp
+  if (result.lastBatchTime) {
+    await updateSyncStatus(ctx, "readings_agg_5m", result.lastBatchTime);
+  }
 
   return {
     detail: `Synced ${result.synced.toLocaleString()} 5-minute aggregations`,
@@ -1079,6 +1173,11 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
     },
   );
 
+  // Update sync_status with the last synced timestamp
+  if (result.lastBatchTime !== null && result.lastBatchTime !== undefined) {
+    await updateSyncStatus(ctx, "point_readings_agg_5m", result.lastBatchTime);
+  }
+
   return {
     detail: `Synced ${result.synced.toLocaleString()} point_readings 5-minute aggregations`,
   };
@@ -1157,6 +1256,12 @@ async function syncDailyAggregations(ctx: SyncContext) {
     const insertQuery = sql`INSERT OR IGNORE INTO ${sql.raw("readings_agg_1d")} (${sql.raw(columns.join(","))}) VALUES ${sql.raw(values)}`;
     await ctx.db.run(insertQuery);
     synced = mappedData.length;
+
+    // Update sync_status with the last synced date
+    const lastDay = prodData.rows[prodData.rows.length - 1]?.day as string;
+    if (lastDay) {
+      await updateSyncStatus(ctx, "readings_agg_1d", undefined, lastDay);
+    }
   }
 
   return {
@@ -1479,6 +1584,11 @@ async function syncPointReadings(ctx: SyncContext) {
       return `Synced ${synced.toLocaleString()} point_readings${dateRangeStr}`;
     },
   });
+
+  // Update sync_status with the last synced timestamp
+  if (result.lastBatchTime !== null && result.lastBatchTime !== undefined) {
+    await updateSyncStatus(ctx, "point_readings", result.lastBatchTime);
+  }
 
   return {
     detail: result.detail,

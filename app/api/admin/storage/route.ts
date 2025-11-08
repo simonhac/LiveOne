@@ -167,6 +167,20 @@ export async function GET(request: NextRequest) {
       console.error("Error fetching database stats:", err);
     }
 
+    // Check if sync_status table exists and has entries (development only)
+    let hasSyncStatus = false;
+    if (!isUsingTurso) {
+      try {
+        const syncStatusResult = await rawClient.execute(
+          `SELECT COUNT(*) as count FROM sync_status`,
+        );
+        hasSyncStatus = (syncStatusResult.rows[0]?.count as number) > 0;
+      } catch (err) {
+        // Table might not exist, that's fine
+        hasSyncStatus = false;
+      }
+    }
+
     // Prepare response
     const response = {
       success: true,
@@ -174,6 +188,7 @@ export async function GET(request: NextRequest) {
         type: isUsingTurso ? ("production" as const) : ("development" as const),
         provider: isUsingTurso ? "Turso (LibSQL)" : "SQLite",
         stats,
+        hasSyncStatus, // Whether automatic sync is available
       },
       environment: {
         nodeEnv: process.env.NODE_ENV || "development",

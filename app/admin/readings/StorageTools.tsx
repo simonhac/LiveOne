@@ -28,6 +28,7 @@ interface TableStat {
 interface DatabaseInfo {
   type: "development" | "production";
   provider: string;
+  hasSyncStatus?: boolean;
   stats?: {
     tableStats: TableStat[];
   };
@@ -165,17 +166,24 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                   0,
                 );
                 const periodText =
-                  daysToSync === 0.25
-                    ? "6 hours"
-                    : daysToSync === 1
-                      ? "1 day"
-                      : `${daysToSync} days`;
+                  daysToSync === -1
+                    ? "automatic (since last sync)"
+                    : daysToSync === 0.25
+                      ? "last 6 hours"
+                      : daysToSync === 1
+                        ? "last 1 day"
+                        : `last ${daysToSync} days`;
                 setSyncProgress((prev) => ({
                   ...prev,
-                  message: `Ready to sync ${totalRecords.toLocaleString()} records from last ${periodText} from production database`,
+                  message: `Ready to sync ${totalRecords.toLocaleString()} records from ${periodText} from production database`,
                 }));
               } else if (update.type === "error") {
                 console.error("[SYNC] Error from backend:", update.message);
+                // Display error in the UI
+                setSyncProgress((prev) => ({
+                  ...prev,
+                  message: `Error: ${update.message}`,
+                }));
               }
             } catch (e) {
               // Silently ignore JSON parse errors
@@ -565,6 +573,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
         daysToSync={daysToSync}
         syncMetadata={syncMetadata}
         recordCounts={recordCounts}
+        hasSyncStatus={databaseInfo?.hasSyncStatus}
         onDaysToSyncChange={setDaysToSync}
         onSyncMetadataChange={setSyncMetadata}
         onStartSync={startSync}
