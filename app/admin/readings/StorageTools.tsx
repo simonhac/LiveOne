@@ -533,6 +533,17 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
     fetchSettings();
   }, []);
 
+  // Set default daysToSync based on hasSyncStatus when databaseInfo loads
+  useEffect(() => {
+    if (databaseInfo && daysToSync === 1) {
+      // Only update if still at the default value (1)
+      // If hasSyncStatus is true, default to automatic (-1)
+      if (databaseInfo.hasSyncStatus) {
+        setDaysToSync(-1);
+      }
+    }
+  }, [databaseInfo, daysToSync]);
+
   // Update stages when syncMetadata or daysToSync changes (only if dialog is open and not started)
   useEffect(() => {
     if (
