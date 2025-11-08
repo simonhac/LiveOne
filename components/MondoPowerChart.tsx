@@ -643,6 +643,9 @@ export default function MondoPowerChart({
     // Skip fetching if we're using external data
     if (externalData !== undefined) return;
 
+    // Capture current visibility state at the start of the effect
+    const currentVisibleSeries = externalVisibleSeries ?? internalVisibleSeries;
+
     let abortController = new AbortController();
 
     const fetchData = async () => {
@@ -692,13 +695,11 @@ export default function MondoPowerChart({
         const seriesConfig = generateSeriesConfig(powerSeries, mode);
 
         // Initialize visible series if not set yet
-        let currentVisibleSeries =
-          externalVisibleSeries ?? internalVisibleSeries;
         if (currentVisibleSeries.size === 0) {
-          currentVisibleSeries = new Set(seriesConfig.map((s) => s.id));
-          setInternalVisibleSeries(currentVisibleSeries);
+          const newVisibleSeries = new Set(seriesConfig.map((s) => s.id));
+          setInternalVisibleSeries(newVisibleSeries);
           if (onVisibilityChange) {
-            onVisibilityChange(currentVisibleSeries);
+            onVisibilityChange(newVisibleSeries);
           }
         }
 
@@ -963,7 +964,15 @@ export default function MondoPowerChart({
       clearInterval(interval);
       abortController.abort();
     };
-  }, [timeRange, systemId, mode, externalData]);
+  }, [
+    timeRange,
+    systemId,
+    mode,
+    externalData,
+    externalVisibleSeries,
+    internalVisibleSeries,
+    onVisibilityChange,
+  ]);
 
   const data: any = !chartData
     ? {}

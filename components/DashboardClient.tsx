@@ -453,7 +453,7 @@ export default function DashboardClient({
     if (data?.displayName && !currentDisplayName) {
       setCurrentDisplayName(data.displayName);
     }
-  }, [data?.displayName]);
+  }, [data?.displayName, currentDisplayName]);
 
   useEffect(() => {
     // Initial fetch
@@ -602,6 +602,9 @@ export default function DashboardClient({
     system?.timezoneOffsetMin,
     mondoPeriod,
     historyFetchTrigger,
+    historyTimeRange.start,
+    historyTimeRange.end,
+    isHistoricalMode,
   ]);
 
   // Ensure period is always in the URL
@@ -612,7 +615,8 @@ export default function DashboardClient({
       params.set("period", mondoPeriod);
       router.push(`?${params.toString()}`, { scroll: false });
     }
-  }, []); // Run only on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run only on mount - intentionally ignoring dependencies
 
   // Handle clicks outside of the dropdowns
   useEffect(() => {

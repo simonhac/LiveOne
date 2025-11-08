@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { X, Shield } from "lucide-react";
@@ -65,7 +65,7 @@ export default function SystemSettingsDialog({
       // Reset tab to general when modal closes (prevents flash on next open)
       setActiveTab("general");
     }
-  }, [isOpen, system?.systemId]); // Only depend on isOpen and systemId, not entire system object
+  }, [isOpen, system?.systemId, system?.displayName, system?.shortName]);
 
   const validateShortName = (value: string): string | null => {
     if (!value) return null; // Empty is valid (optional field)
@@ -93,7 +93,7 @@ export default function SystemSettingsDialog({
     isNameDirty || isShortNameDirty || isCompositeDirty || isAdminDirty;
   const hasGeneralChanges = isNameDirty || isShortNameDirty;
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!hasChanges || !system || shortNameError) return;
 
     setIsSaving(true);
@@ -207,16 +207,29 @@ export default function SystemSettingsDialog({
     } finally {
       setIsSaving(false);
     }
-  };
+  }, [
+    hasChanges,
+    system,
+    shortNameError,
+    isNameDirty,
+    isShortNameDirty,
+    editedName,
+    editedShortName,
+    onUpdate,
+    isCompositeDirty,
+    isAdminDirty,
+    onClose,
+    router,
+  ]);
 
-  const handleCancel = () => {
+  const handleCancel = useCallback(() => {
     setEditedName(system?.displayName || "");
     setEditedShortName(system?.shortName || "");
     setIsNameDirty(false);
     setIsShortNameDirty(false);
     setShortNameError(null);
     onClose();
-  };
+  }, [system?.displayName, system?.shortName, onClose]);
 
   // Prevent body scroll when modal is open
   useEffect(() => {
