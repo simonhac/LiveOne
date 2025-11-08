@@ -198,8 +198,11 @@ export async function fetchAndProcessMondoData(
     generation: null,
   };
 
-  // Process each mode
-  const modes: ("load" | "generation")[] = ["load", "generation"];
+  // Store processed generation data for Case 3 calculation
+  let totalGenerationValues: (number | null)[] | null = null;
+
+  // Process each mode - generation MUST be processed first for Case 3 calculation
+  const modes: ("load" | "generation")[] = ["generation", "load"];
   modes.forEach((mode) => {
     // Generate series configuration dynamically from available data
     const seriesConfig = generateSeriesConfig(powerSeries, mode);
@@ -259,7 +262,9 @@ export async function fetchAndProcessMondoData(
         // Use the path attribute from the series data if available
         const path = dataSeries.path || "";
         const [type, subtype] = path.split(".");
-        if (type === "load") {
+
+        if (path && type === "load") {
+          // Path information is available - use it to distinguish master vs child loads
           if (subtype === undefined || subtype === "") {
             // Master load (path = "load" exactly)
             masterLoadValues = seriesValues;
@@ -276,16 +281,29 @@ export async function fetchAndProcessMondoData(
                 childLoadsSum![idx] = null;
               }
             });
+            console.log(`[Mondo Processor] Added child load: ${config.label}`);
           }
+        } else if (!path) {
+          // No path information - sum ALL loads for Case 3 calculation
+          // (All series in load mode are loads by definition)
+          if (childLoadsSum === null) {
+            childLoadsSum = new Array(seriesValues.length).fill(0);
+          }
+          seriesValues.forEach((val: number | null, idx: number) => {
+            if (val !== null && childLoadsSum![idx] !== null) {
+              childLoadsSum![idx] = (childLoadsSum![idx] as number) + val;
+            } else if (val === null) {
+              childLoadsSum![idx] = null;
+            }
+          });
         }
       }
     });
 
     // Calculate rest of house if in load mode
-    // Only add "rest of house" if we have a master load and child loads
     if (mode === "load") {
+      // Case 1: Master load exists WITH child loads
       if (masterLoadValues !== null && childLoadsSum !== null) {
-        // TypeScript doesn't narrow let variables in nested scopes, so we create const copies
         const master: (number | null)[] = masterLoadValues;
         const children: (number | null)[] = childLoadsSum;
 
@@ -293,10 +311,7 @@ export async function fetchAndProcessMondoData(
         const restOfHouse: (number | null)[] = master.map(
           (masterLoad: number | null, idx: number) => {
             const childSum = children[idx];
-
-            // If we don't have both values, return null
             if (masterLoad === null || childSum === null) return null;
-
             const rest = masterLoad - childSum;
             return Math.max(0, rest); // Don't show negative values
           },
@@ -309,17 +324,67 @@ export async function fetchAndProcessMondoData(
           color: "rgb(107, 114, 128)", // gray-500
         });
         console.log(
-          `[Mondo Processor] Added rest of house (master load - child loads)`,
-        );
-      } else if (masterLoadValues !== null && childLoadsSum === null) {
-        console.log(
-          `[Mondo Processor] Master load exists but no child loads - skipping rest of house`,
-        );
-      } else if (masterLoadValues === null && childLoadsSum !== null) {
-        console.log(
-          `[Mondo Processor] Child loads exist but no master load - skipping rest of house`,
+          `[Mondo Processor] Case 1: Added rest of house (master load - child loads)`,
         );
       }
+      // Case 2: Master load exists WITHOUT child loads
+      else if (masterLoadValues !== null && childLoadsSum === null) {
+        console.log(
+          `[Mondo Processor] Case 2: Master load exists but no child loads - skipping rest of house`,
+        );
+      }
+      // Case 3: No master load, but we have child loads
+      else if (
+        masterLoadValues === null &&
+        childLoadsSum !== null &&
+        totalGenerationValues !== null
+      ) {
+        const children: (number | null)[] = childLoadsSum;
+        const generation: (number | null)[] = totalGenerationValues;
+
+        // Rest of House = Total Generation - Sum of Known Child Loads
+        const restOfHouse: (number | null)[] = generation.map(
+          (totalGen: number | null, idx: number) => {
+            const childSum = children[idx];
+            if (totalGen === null || childSum === null) return null;
+            const rest = totalGen - childSum;
+            return Math.max(0, rest); // Don't show negative values
+          },
+        );
+
+        seriesData.push({
+          id: "rest_of_house",
+          description: "Rest of House",
+          data: restOfHouse,
+          color: "rgb(107, 114, 128)", // gray-500
+        });
+        console.log(
+          `[Mondo Processor] Case 3: Added rest of house (total generation - known loads)`,
+        );
+      } else {
+        console.log(
+          `[Mondo Processor] Cannot calculate rest of house - insufficient data`,
+        );
+      }
+    }
+
+    // After processing generation mode, calculate total generation for Case 3
+    if (mode === "generation" && seriesData.length > 0) {
+      // Sum all generation series (already transformed with correct signs)
+      totalGenerationValues = new Array(filteredTimestamps.length).fill(0);
+      seriesData.forEach((series) => {
+        series.data.forEach((val: number | null, idx: number) => {
+          if (val !== null && totalGenerationValues![idx] !== null) {
+            totalGenerationValues![idx] =
+              (totalGenerationValues![idx] as number) + val;
+          } else if (val === null) {
+            totalGenerationValues![idx] = null;
+          }
+        });
+      });
+      console.log(
+        `[Mondo Processor] Calculated total generation from ${seriesData.length} processed series`,
+      );
     }
 
     // Sort series by order from config
