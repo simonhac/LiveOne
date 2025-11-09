@@ -192,13 +192,18 @@ export default function ViewDataModal({
   // Handle escape key
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isOpen && !isPointInfoModalOpen) {
+      if (
+        e.key === "Escape" &&
+        isOpen &&
+        !isPointInfoModalOpen &&
+        !isReadingInspectorOpen
+      ) {
         onClose();
       }
     };
     document.addEventListener("keydown", handleEscape);
     return () => document.removeEventListener("keydown", handleEscape);
-  }, [isOpen, isPointInfoModalOpen, onClose]);
+  }, [isOpen, isPointInfoModalOpen, isReadingInspectorOpen, onClose]);
 
   const handleDataSourceChange = (newSource: "raw" | "5m") => {
     // Set loading state immediately for instant UI feedback

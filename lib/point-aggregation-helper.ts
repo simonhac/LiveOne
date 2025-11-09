@@ -145,12 +145,14 @@ export async function updatePointAggregates5m(
         }
 
         const values = validReadings.map((r) => r.value);
-        const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
         const last = validReadings[validReadings.length - 1].value;
 
         // Calculate delta for points with transform='d'
         const transform = pointTransforms.get(pointId);
         let delta: number | null = null;
+        let avg: number | null;
+        let min: number | null;
+        let max: number | null;
 
         if (transform === "d") {
           // Differentiate: delta = last - previous interval's last
@@ -159,6 +161,16 @@ export async function updatePointAggregates5m(
             delta = last - previousLast;
           }
           // If no previous value, delta remains null (can't calculate delta for first interval)
+
+          // For differentiated points, don't calculate avg/min/max (they're not meaningful)
+          avg = null;
+          min = null;
+          max = null;
+        } else {
+          // For non-differentiated points, calculate avg/min/max as normal
+          avg = values.reduce((sum, v) => sum + v, 0) / values.length;
+          min = Math.min(...values);
+          max = Math.max(...values);
         }
 
         return {
@@ -166,8 +178,8 @@ export async function updatePointAggregates5m(
           pointId,
           intervalEnd: intervalEndMs,
           avg,
-          min: Math.min(...values),
-          max: Math.max(...values),
+          min,
+          max,
           last,
           delta,
           sampleCount,

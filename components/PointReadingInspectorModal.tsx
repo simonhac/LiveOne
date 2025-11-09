@@ -262,7 +262,10 @@ export default function PointReadingInspectorModal({
       nonNullValues.length > 0 &&
       nonNullValues.every((v) => Number.isInteger(v));
 
-    return allWhole ? value.toFixed(0) : value.toFixed(1);
+    return value.toLocaleString("en-US", {
+      minimumFractionDigits: allWhole ? 0 : 1,
+      maximumFractionDigits: allWhole ? 0 : 1,
+    });
   };
 
   return (
