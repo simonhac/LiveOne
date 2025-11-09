@@ -7,7 +7,7 @@ import {
   formatDate,
   formatDateTimeRange,
 } from "@/lib/fe-date-format";
-import { parseDateYYYYMMDD, fromUnixTimestamp } from "@/lib/date-utils";
+import { parseDateISO, fromUnixTimestamp } from "@/lib/date-utils";
 import PointInfoModal from "./PointInfoModal";
 import SessionInfoModal from "./SessionInfoModal";
 import PointReadingInspectorModal from "./PointReadingInspectorModal";
@@ -594,7 +594,8 @@ export default function ViewDataModal({
                       pagination.firstCursor / 1000,
                       timezoneOffsetMin,
                     );
-                    return formatDateTimeRange(start, end, true);
+                    // Show dates only for daily data, times for raw/5m data
+                    return formatDateTimeRange(start, end, source !== "daily");
                   })()}
                 </span>
               )}
@@ -902,9 +903,7 @@ export default function ViewDataModal({
                           ) : key === "date" ? (
                             <span className="text-xs font-mono text-gray-300 whitespace-nowrap">
                               {(() => {
-                                const calendarDate = parseDateYYYYMMDD(
-                                  row[key],
-                                );
+                                const calendarDate = parseDateISO(row[key]);
                                 // Convert CalendarDate to JS Date for formatting
                                 const jsDate = new Date(
                                   calendarDate.year,

@@ -74,24 +74,36 @@ export function formatDateAEST(date: CalendarDate): string {
 }
 
 /**
- * Format a CalendarDate as YYYYMMDD
+ * Format a CalendarDate as YYYY-MM-DD (ISO 8601 date format)
  * @param date - The CalendarDate to format
- * @returns Date string in YYYYMMDD format
+ * @returns Date string in YYYY-MM-DD format
+ * @deprecated Use formatDateAEST instead (same functionality)
  */
 export function formatDateYYYYMMDD(date: CalendarDate): string {
-  const year = date.year;
-  const month = String(date.month).padStart(2, "0");
-  const day = String(date.day).padStart(2, "0");
-
-  return `${year}${month}${day}`;
+  return formatDateAEST(date);
 }
 
 /**
- * Parse a YYYYMMDD string to CalendarDate
- * @param dateStr - Date string in YYYYMMDD format (e.g., "20250817")
+ * Parse a YYYY-MM-DD string to CalendarDate
+ * @param dateStr - Date string in YYYY-MM-DD format (e.g., "2025-08-17")
  * @returns CalendarDate object
  */
+export function parseDateISO(dateStr: string): CalendarDate {
+  return parseDate(dateStr);
+}
+
+/**
+ * Parse a YYYY-MM-DD string to CalendarDate
+ * @param dateStr - Date string in YYYY-MM-DD format (e.g., "2025-08-17")
+ * @returns CalendarDate object
+ * @deprecated Use parseDateISO instead
+ */
 export function parseDateYYYYMMDD(dateStr: string): CalendarDate {
+  // Support both YYYY-MM-DD and YYYYMMDD formats for backward compatibility
+  if (dateStr.includes("-")) {
+    return parseDate(dateStr);
+  }
+  // Legacy YYYYMMDD format
   const year = parseInt(dateStr.slice(0, 4));
   const month = parseInt(dateStr.slice(4, 6));
   const day = parseInt(dateStr.slice(6, 8));

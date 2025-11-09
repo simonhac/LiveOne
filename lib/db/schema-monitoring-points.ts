@@ -173,7 +173,7 @@ export const pointReadingsAgg1d = sqliteTable(
       .notNull()
       .references(() => systems.id, { onDelete: "cascade" }),
     pointId: integer("point_id").notNull(),
-    day: text("day").notNull(), // YYYYMMDD format (system local timezone)
+    day: text("day").notNull(), // YYYY-MM-DD format (system local timezone)
 
     // Aggregates (generic - units determined by point_info.metricUnit)
     // These can be null if all readings in the interval were errors
