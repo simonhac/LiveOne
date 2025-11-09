@@ -337,7 +337,12 @@ export default function ViewDataModal({
     const numValue = Number(value);
 
     if (header.pointInfo?.metricType === "energy") {
-      // Display interval energy in Wh (no conversion)
+      // For differentiated points in raw view, show as MWh with 3 decimal places
+      if (header.pointInfo?.transform === "d" && dataSource === "raw") {
+        const mwh = numValue / 1_000_000;
+        return `${mwh.toFixed(3)}`;
+      }
+      // Otherwise display in Wh (no conversion)
       return `${numValue.toFixed(0)}`;
     } else if (header.pointInfo?.metricType === "power") {
       // Always show power in kW to match header unit
@@ -364,6 +369,10 @@ export default function ViewDataModal({
     if (header.key === "sessionLabel") return "";
 
     if (header.pointInfo?.metricType === "energy") {
+      // For differentiated points in raw view, show MWh
+      if (header.pointInfo?.transform === "d" && dataSource === "raw") {
+        return "MWh";
+      }
       return "Wh";
     } else if (header.pointInfo?.metricType === "power") {
       // For power, we'll show kW for most values
