@@ -34,6 +34,7 @@ interface ViewDataModalProps {
   systemName: string;
   vendorType: string;
   vendorSiteId: string;
+  timezoneOffsetMin: number;
 }
 
 export default function ViewDataModal({
@@ -43,6 +44,7 @@ export default function ViewDataModal({
   systemName,
   vendorType,
   vendorSiteId,
+  timezoneOffsetMin,
 }: ViewDataModalProps) {
   const [headers, setHeaders] = useState<ColumnHeader[]>([]);
   const [data, setData] = useState<any[]>([]);
@@ -341,7 +343,9 @@ export default function ViewDataModal({
       return `${numValue.toFixed(0)}`;
     } else if (header.type === "power") {
       // Always show power in kW to match header unit
-      return `${(numValue / 1000).toFixed(1)}`;
+      const kw = numValue / 1000;
+      // Only show decimal if not a whole number
+      return kw % 1 === 0 ? `${kw.toFixed(0)}` : `${kw.toFixed(1)}`;
     } else if (header.unit === "epochMs") {
       // Check for epoch 0 (Jan 1, 1970 00:00:00)
       if (numValue === 0) {
@@ -476,7 +480,7 @@ export default function ViewDataModal({
       <th
         key={`${header.key}-${rowKey}`}
         data-col={colIndex}
-        className={`py-1 ${isLastRow ? "pb-2" : ""} px-2 align-top bg-gray-900 transition-colors ${
+        className={`py-1 ${isLastRow ? "pb-2" : ""} px-2 align-top bg-gray-900 ${
           !isSpecialColumn ? "text-right" : ""
         } ${
           !isSpecialColumn && header.pointDbId ? "cursor-pointer" : ""
@@ -870,6 +874,7 @@ export default function ViewDataModal({
             vendorType: vendorType,
             vendorSiteId: vendorSiteId,
             ownerUsername: metadata?.ownerUsername,
+            timezoneOffsetMin: metadata?.timezoneOffsetMin ?? timezoneOffsetMin,
           }}
         />
       )}

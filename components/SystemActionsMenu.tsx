@@ -128,8 +128,8 @@ export default function SystemActionsMenu({
               opacity: isPositioned ? 1 : 0,
             }}
           >
-            {/* View Data - Available for all systems */}
-            {onViewData && (
+            {/* View Data - Available for all systems except composite */}
+            {onViewData && vendorType !== "composite" && (
               <button
                 onClick={() => handleMenuClick(onViewData)}
                 className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
@@ -138,7 +138,7 @@ export default function SystemActionsMenu({
                 View Data
               </button>
             )}
-            {onViewData && (
+            {onViewData && vendorType !== "composite" && (
               <div className="border-t border-gray-700 my-1"></div>
             )}
             {/* Test Connection - Only show for vendors that support polling */}

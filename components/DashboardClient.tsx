@@ -1092,8 +1092,8 @@ export default function DashboardClient({
 
                   {showSettingsDropdown && (
                     <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
-                      {/* View Data - Only show for admin users */}
-                      {isAdmin && (
+                      {/* View Data - Only show for admin users and non-composite systems */}
+                      {isAdmin && system?.vendorType !== "composite" && (
                         <>
                           <button
                             onClick={() => {
@@ -1806,14 +1806,17 @@ export default function DashboardClient({
       />
 
       {/* View Data Modal for point_readings systems */}
-      {showViewDataModal && systemId && (
+      {showViewDataModal && systemId && system && (
         <ViewDataModal
           isOpen={showViewDataModal}
           onClose={() => setShowViewDataModal(false)}
           systemId={parseInt(systemId)}
           systemName={data?.displayName || currentDisplayName || "System"}
-          vendorType={data?.vendorType || system?.vendorType}
-          vendorSiteId={data?.vendorSiteId || system?.vendorSiteId || ""}
+          vendorType={data?.vendorType || system.vendorType}
+          vendorSiteId={data?.vendorSiteId || system.vendorSiteId || ""}
+          timezoneOffsetMin={
+            data?.timezoneOffsetMin ?? system.timezoneOffsetMin ?? 600
+          }
         />
       )}
 

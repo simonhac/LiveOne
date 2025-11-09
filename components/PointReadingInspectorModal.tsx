@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import SessionInfoModal from "./SessionInfoModal";
 import { formatDateTime } from "@/lib/fe-date-format";
+import { encodeUrlDateFromEpoch, encodeUrlOffset } from "@/lib/url-date";
 
 // Matches ColumnHeader from ViewDataModal
 interface ColumnHeader {
@@ -28,6 +29,7 @@ interface SystemContext {
   vendorType: string;
   vendorSiteId: string | number;
   ownerUsername?: string;
+  timezoneOffsetMin: number;
 }
 
 interface PointReadingInspectorModalProps {
@@ -75,6 +77,13 @@ export default function PointReadingInspectorModal({
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
   const [isSessionInfoModalOpen, setIsSessionInfoModalOpen] = useState(false);
 
+  // Sync dataSource with initialDataSource when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setDataSource(initialDataSource);
+    }
+  }, [isOpen, initialDataSource]);
+
   useEffect(() => {
     if (!isOpen) {
       setReadings([]);
@@ -82,21 +91,30 @@ export default function PointReadingInspectorModal({
       return;
     }
 
+    let cancelled = false;
+    let spinnerTimeout: NodeJS.Timeout;
+
     const fetchReadings = async () => {
       setLoading(true);
       setShowSpinner(false);
       setError(null);
 
       // Delay showing spinner for 1000ms
-      const spinnerTimeout = setTimeout(() => {
-        if (loading) {
+      spinnerTimeout = setTimeout(() => {
+        if (!cancelled) {
           setShowSpinner(true);
         }
       }, 1000);
 
       try {
+        const encodedTime = encodeUrlDateFromEpoch(
+          timestamp,
+          system.timezoneOffsetMin,
+          false,
+        );
+        const encodedOffset = encodeUrlOffset(system.timezoneOffsetMin);
         const response = await fetch(
-          `/api/admin/point/${header.systemId}.${header.pointDbId}/readings?timestamp=${timestamp}&dataSource=${dataSource}`,
+          `/api/admin/point/${header.systemId}.${header.pointDbId}/readings?time=${encodedTime}&offset=${encodedOffset}&dataSource=${dataSource}`,
         );
 
         if (!response.ok) {
@@ -104,20 +122,31 @@ export default function PointReadingInspectorModal({
         }
 
         const data = await response.json();
-        setReadings(data.readings || []);
+        if (!cancelled) {
+          setReadings(data.readings || []);
+        }
       } catch (err) {
         console.error("Error fetching point readings:", err);
-        setError(
-          err instanceof Error ? err.message : "Failed to load readings",
-        );
+        if (!cancelled) {
+          setError(
+            err instanceof Error ? err.message : "Failed to load readings",
+          );
+        }
       } finally {
         clearTimeout(spinnerTimeout);
-        setLoading(false);
-        setShowSpinner(false);
+        if (!cancelled) {
+          setLoading(false);
+          setShowSpinner(false);
+        }
       }
     };
 
     fetchReadings();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(spinnerTimeout);
+    };
   }, [isOpen, header.systemId, header.pointDbId, timestamp, dataSource]);
 
   const handleSessionClick = async (sessionId: number | null) => {
@@ -214,6 +243,27 @@ export default function PointReadingInspectorModal({
     Boolean,
   );
   const pointPath = pathParts.length > 0 ? pathParts.join(".") : null;
+
+  // Helper function to format a numeric column value
+  // Dynamically checks if all values in the column are whole numbers
+  const formatColumnValue = (
+    value: number | null | undefined,
+    getColumnValues: () => (number | null | undefined)[],
+  ): string => {
+    if (value === null || value === undefined) return "—";
+
+    // Check if all non-null values in this column are whole numbers
+    const columnValues = getColumnValues();
+    const nonNullValues = columnValues.filter(
+      (v) => v !== null && v !== undefined,
+    ) as number[];
+
+    const allWhole =
+      nonNullValues.length > 0 &&
+      nonNullValues.every((v) => Number.isInteger(v));
+
+    return allWhole ? value.toFixed(0) : value.toFixed(1);
+  };
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4">
@@ -547,42 +597,37 @@ export default function PointReadingInspectorModal({
                               <td
                                 className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" ? "hidden" : ""}`}
                               >
-                                {reading!.avg !== null &&
-                                reading!.avg !== undefined
-                                  ? reading!.avg.toFixed(1)
-                                  : "—"}
+                                {formatColumnValue(reading!.avg, () =>
+                                  readings.map((r) => r.avg),
+                                )}
                               </td>
                               <td
                                 className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" ? "hidden" : ""}`}
                               >
-                                {reading!.min !== null &&
-                                reading!.min !== undefined
-                                  ? reading!.min.toFixed(1)
-                                  : "—"}
+                                {formatColumnValue(reading!.min, () =>
+                                  readings.map((r) => r.min),
+                                )}
                               </td>
                               <td
                                 className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" ? "hidden" : ""}`}
                               >
-                                {reading!.max !== null &&
-                                reading!.max !== undefined
-                                  ? reading!.max.toFixed(1)
-                                  : "—"}
+                                {formatColumnValue(reading!.max, () =>
+                                  readings.map((r) => r.max),
+                                )}
                               </td>
                               <td
                                 className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" ? "hidden" : ""}`}
                               >
-                                {reading!.last !== null &&
-                                reading!.last !== undefined
-                                  ? reading!.last.toFixed(1)
-                                  : "—"}
+                                {formatColumnValue(reading!.last, () =>
+                                  readings.map((r) => r.last),
+                                )}
                               </td>
                               <td
                                 className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" || header.transform !== "d" ? "hidden" : ""}`}
                               >
-                                {reading!.delta !== null &&
-                                reading!.delta !== undefined
-                                  ? reading!.delta.toFixed(1)
-                                  : "—"}
+                                {formatColumnValue(reading!.delta, () =>
+                                  readings.map((r) => r.delta),
+                                )}
                               </td>
                               <td
                                 className={`py-1 px-2 text-xs text-gray-300 text-right ${dataSource === "raw" ? "hidden" : ""}`}
@@ -599,10 +644,9 @@ export default function PointReadingInspectorModal({
                                 className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "5m" ? "hidden" : ""}`}
                               >
                                 {reading!.valueStr ||
-                                  (reading!.value !== null &&
-                                  reading!.value !== undefined
-                                    ? reading!.value.toFixed(1)
-                                    : "—")}
+                                  formatColumnValue(reading!.value, () =>
+                                    readings.map((r) => r.value),
+                                  )}
                               </td>
                               <td
                                 className={`py-1 px-2 text-xs text-gray-300 ${dataSource === "5m" ? "hidden" : ""}`}

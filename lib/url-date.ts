@@ -41,6 +41,33 @@ export function encodeUrlDate(
 }
 
 /**
+ * Encode epoch milliseconds and timezone offset into a URL-friendly format
+ *
+ * @param epochMs - Unix timestamp in milliseconds
+ * @param timezoneOffsetMin - Timezone offset in minutes (e.g., 600 for AEST)
+ * @param dateOnly - If true, encode as date only (YYYYMMDD) for 30D view
+ * @returns URL-friendly date string (e.g., "2025-11-02_14.15" or "20251107")
+ */
+export function encodeUrlDateFromEpoch(
+  epochMs: number,
+  timezoneOffsetMin: number,
+  dateOnly = false,
+): string {
+  if (!Number.isFinite(epochMs) || epochMs <= 0) {
+    throw new Error(
+      `Invalid epochMs: ${epochMs}. Must be a positive finite number.`,
+    );
+  }
+  if (!Number.isFinite(timezoneOffsetMin)) {
+    throw new Error(
+      `Invalid timezoneOffsetMin: ${timezoneOffsetMin}. Must be a finite number.`,
+    );
+  }
+  const date = new Date(epochMs);
+  return encodeUrlDate(date.toISOString(), timezoneOffsetMin, dateOnly);
+}
+
+/**
  * Decode a URL-friendly date string back to ISO timestamp
  *
  * @param urlDate - URL-friendly date string (e.g., "2025-11-02_14.15" or "20251107")
@@ -78,12 +105,32 @@ export function decodeUrlDate(
 }
 
 /**
+ * Decode a URL-friendly date string back to epoch milliseconds
+ *
+ * @param urlDate - URL-friendly date string (e.g., "2025-11-02_14.15" or "20251107")
+ * @param timezoneOffsetMin - Timezone offset in minutes (e.g., 600 for AEST)
+ * @returns Unix timestamp in milliseconds
+ */
+export function decodeUrlDateToEpoch(
+  urlDate: string,
+  timezoneOffsetMin: number,
+): number {
+  const isoString = decodeUrlDate(urlDate, timezoneOffsetMin);
+  return new Date(isoString).getTime();
+}
+
+/**
  * Encode timezone offset for URL
  *
  * @param offsetMinutes - Offset in minutes (e.g., 600)
  * @returns URL-friendly offset string (e.g., "600m")
  */
 export function encodeUrlOffset(offsetMinutes: number): string {
+  if (!Number.isFinite(offsetMinutes)) {
+    throw new Error(
+      `Invalid offsetMinutes: ${offsetMinutes}. Must be a finite number.`,
+    );
+  }
   return `${offsetMinutes}m`;
 }
 

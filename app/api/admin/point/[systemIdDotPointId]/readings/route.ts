@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
+import { decodeUrlDateToEpoch, decodeUrlOffset } from "@/lib/url-date";
 
 export async function GET(
   request: Request,
@@ -47,12 +48,37 @@ export async function GET(
       );
     }
 
-    const timestamp = parseInt(searchParams.get("timestamp") || "0");
+    // Support both raw epoch milliseconds and encoded timestamps
+    const timestampParam = searchParams.get("timestamp");
+    const timeParam = searchParams.get("time"); // URL-encoded time
+    const offsetParam = searchParams.get("offset"); // Timezone offset
     const dataSource = searchParams.get("dataSource") || "raw";
 
-    if (!timestamp) {
+    let timestamp: number;
+
+    if (timeParam && offsetParam) {
+      // Decode URL-encoded time with timezone
+      try {
+        const offsetMin = decodeUrlOffset(offsetParam);
+        timestamp = decodeUrlDateToEpoch(timeParam, offsetMin);
+      } catch (error) {
+        return NextResponse.json(
+          { error: "Invalid time or offset parameter" },
+          { status: 400 },
+        );
+      }
+    } else if (timestampParam) {
+      // Legacy: raw epoch milliseconds
+      timestamp = parseInt(timestampParam);
+      if (isNaN(timestamp) || !timestamp) {
+        return NextResponse.json(
+          { error: "Invalid timestamp parameter" },
+          { status: 400 },
+        );
+      }
+    } else {
       return NextResponse.json(
-        { error: "timestamp parameter required" },
+        { error: "Either timestamp or time+offset parameters required" },
         { status: 400 },
       );
     }
