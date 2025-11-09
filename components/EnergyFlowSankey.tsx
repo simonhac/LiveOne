@@ -214,10 +214,30 @@ export default function EnergyFlowSankey({
     const margin = isMobile
       ? { left: 0, right: 0, top: 35, bottom: 20 } // No margins on mobile
       : { left: 60, right: 60, top: 35, bottom: 20 };
+
+    // Custom node sorting to control vertical order
+    // Order from top to bottom: Solar, Other loads, House, Battery, Grid
+    const getNodeOrder = (node: any): number => {
+      // Access the name from the node's data
+      const name = node.name || "";
+      const lower = name.toLowerCase();
+
+      if (lower.includes("solar")) return 0;
+      if (lower.includes("house")) return 2;
+      if (lower.includes("battery")) return 3;
+      if (lower.includes("grid")) return 4;
+      return 1; // Other loads between solar and house
+    };
+
     const sankey = d3Sankey<SankeyNodeData, SankeyLinkData>()
       .nodeId((d: any) => d.index)
       .nodeWidth(nodeWidth)
       .nodePadding(15)
+      .nodeSort((a: any, b: any) => {
+        const orderA = getNodeOrder(a);
+        const orderB = getNodeOrder(b);
+        return orderA - orderB;
+      })
       .extent([
         [margin.left, margin.top],
         [actualWidth - margin.right, height - margin.bottom],
