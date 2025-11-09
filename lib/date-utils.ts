@@ -99,17 +99,7 @@ export function parseDateISO(dateStr: string): CalendarDate {
  * @deprecated Use parseDateISO instead
  */
 export function parseDateYYYYMMDD(dateStr: string): CalendarDate {
-  // Support both YYYY-MM-DD and YYYYMMDD formats for backward compatibility
-  if (dateStr.includes("-")) {
-    return parseDate(dateStr);
-  }
-  // Legacy YYYYMMDD format
-  const year = parseInt(dateStr.slice(0, 4));
-  const month = parseInt(dateStr.slice(4, 6));
-  const day = parseInt(dateStr.slice(6, 8));
-  return parseDate(
-    `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
-  );
+  return parseDate(dateStr);
 }
 
 /**

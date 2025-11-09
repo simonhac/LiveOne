@@ -3,7 +3,7 @@
  *
  * Converts between ISO timestamps and URL-friendly local time formats.
  * - 1D/7D Format: YYYY-MM-DD_HH.MM (e.g., "2025-11-02_14.15")
- * - 30D Format: YYYYMMDD (e.g., "20251107")
+ * - 30D Format: YYYY-MM-DD (e.g., "2025-11-07")
  */
 
 /**
@@ -11,8 +11,8 @@
  *
  * @param isoTimestamp - ISO 8601 timestamp (e.g., "2025-11-02T14:15:00Z")
  * @param timezoneOffsetMin - Timezone offset in minutes (e.g., 600 for AEST)
- * @param dateOnly - If true, encode as date only (YYYYMMDD) for 30D view
- * @returns URL-friendly date string (e.g., "2025-11-02_14.15" or "20251107")
+ * @param dateOnly - If true, encode as date only (YYYY-MM-DD) for 30D view
+ * @returns URL-friendly date string (e.g., "2025-11-02_14.15" or "2025-11-07")
  */
 export function encodeUrlDate(
   isoTimestamp: string,
@@ -29,8 +29,8 @@ export function encodeUrlDate(
   const day = String(localTime.getUTCDate()).padStart(2, "0");
 
   if (dateOnly) {
-    // Format as YYYYMMDD (for 30D view)
-    return `${year}${month}${day}`;
+    // Format as YYYY-MM-DD (for 30D view)
+    return `${year}-${month}-${day}`;
   }
 
   // Format as YYYY-MM-DD_HH.MM (for 1D/7D view)
@@ -45,8 +45,8 @@ export function encodeUrlDate(
  *
  * @param epochMs - Unix timestamp in milliseconds
  * @param timezoneOffsetMin - Timezone offset in minutes (e.g., 600 for AEST)
- * @param dateOnly - If true, encode as date only (YYYYMMDD) for 30D view
- * @returns URL-friendly date string (e.g., "2025-11-02_14.15" or "20251107")
+ * @param dateOnly - If true, encode as date only (YYYY-MM-DD) for 30D view
+ * @returns URL-friendly date string (e.g., "2025-11-02_14.15" or "2025-11-07")
  */
 export function encodeUrlDateFromEpoch(
   epochMs: number,
@@ -70,7 +70,7 @@ export function encodeUrlDateFromEpoch(
 /**
  * Decode a URL-friendly date string back to ISO timestamp
  *
- * @param urlDate - URL-friendly date string (e.g., "2025-11-02_14.15" or "20251107")
+ * @param urlDate - URL-friendly date string (e.g., "2025-11-02_14.15" or "2025-11-07")
  * @param timezoneOffsetMin - Timezone offset in minutes (e.g., 600 for AEST)
  * @returns ISO 8601 timestamp string
  */
@@ -80,12 +80,10 @@ export function decodeUrlDate(
 ): string {
   let year: number, month: number, day: number, hours: number, minutes: number;
 
-  // Check if it's date-only format (YYYYMMDD - 8 digits)
-  if (/^\d{8}$/.test(urlDate)) {
-    // Parse YYYYMMDD
-    year = parseInt(urlDate.substring(0, 4), 10);
-    month = parseInt(urlDate.substring(4, 6), 10);
-    day = parseInt(urlDate.substring(6, 8), 10);
+  // Check if it's date-only format (YYYY-MM-DD without time)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(urlDate)) {
+    // Parse YYYY-MM-DD
+    [year, month, day] = urlDate.split("-").map(Number);
     hours = 0; // Start of day
     minutes = 0;
   } else {
@@ -107,7 +105,7 @@ export function decodeUrlDate(
 /**
  * Decode a URL-friendly date string back to epoch milliseconds
  *
- * @param urlDate - URL-friendly date string (e.g., "2025-11-02_14.15" or "20251107")
+ * @param urlDate - URL-friendly date string (e.g., "2025-11-02_14.15" or "2025-11-07")
  * @param timezoneOffsetMin - Timezone offset in minutes (e.g., 600 for AEST)
  * @returns Unix timestamp in milliseconds
  */

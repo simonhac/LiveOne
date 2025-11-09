@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import SessionInfoModal from "./SessionInfoModal";
 import { formatDateTime, formatDate } from "@/lib/fe-date-format";
-import { encodeUrlOffset } from "@/lib/url-date";
+import { encodeUrlOffset, encodeUrlDate } from "@/lib/url-date";
 import { PointInfo } from "@/lib/point-info";
 import { formatTimeAEST, formatDateAEST } from "@/lib/date-utils";
 import {
@@ -22,7 +22,8 @@ interface SystemContext {
 interface PointReadingInspectorModalProps {
   isOpen: boolean;
   onClose: () => void;
-  timestamp: ZonedDateTime | CalendarDate; // ISO8601 time or YYYY-MM-DD date
+  targetTime?: ZonedDateTime; // For raw/5m data
+  targetDate?: CalendarDate; // For daily data
   initialSource: "raw" | "5m" | "daily";
   pointInfo: PointInfo;
   system: SystemContext;
@@ -52,7 +53,8 @@ interface ReadingData {
 export default function PointReadingInspectorModal({
   isOpen,
   onClose,
-  timestamp,
+  targetTime,
+  targetDate,
   initialSource,
   pointInfo,
   system,
@@ -65,23 +67,11 @@ export default function PointReadingInspectorModal({
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
   const [isSessionInfoModalOpen, setIsSessionInfoModalOpen] = useState(false);
 
-  // Helper to check if timestamp is CalendarDate
-  const isCalendarDate = (
-    ts: ZonedDateTime | CalendarDate,
-  ): ts is CalendarDate => {
-    return "day" in ts && !("hour" in ts);
-  };
-
   useEffect(() => {
     if (!isOpen) {
       setReadings([]);
       setError(null);
       return;
-    }
-
-    // Sync source state (but don't trigger refetch since we use initialSource below)
-    if (source !== initialSource) {
-      setSource(initialSource);
     }
 
     let cancelled = false;
@@ -101,15 +91,44 @@ export default function PointReadingInspectorModal({
 
       try {
         // Convert typed timestamp to API format
-        const encodedTime = isCalendarDate(timestamp)
-          ? formatDateAEST(timestamp) // CalendarDate → "2025-11-09"
-          : formatTimeAEST(timestamp); // ZonedDateTime → "2025-11-09T14:30:00+10:00"
+        let encodedTime: string;
+        if (source === "daily") {
+          // For daily data, we need just the date (YYYY-MM-DD)
+          // If switching from raw/5m to daily, extract date from targetTime
+          if (targetDate) {
+            encodedTime = formatDateAEST(targetDate);
+          } else if (targetTime) {
+            // Extract date from ZonedDateTime
+            encodedTime = `${targetTime.year}-${String(targetTime.month).padStart(2, "0")}-${String(targetTime.day).padStart(2, "0")}`;
+          } else {
+            throw new Error("No target time or date provided");
+          }
+        } else {
+          // For raw/5m data, use URL-encoded time format
+          if (targetTime) {
+            // ZonedDateTime → "2025-11-09_14.30" (URL-encoded format)
+            encodedTime = encodeUrlDate(
+              formatTimeAEST(targetTime),
+              system.timezoneOffsetMin,
+              false,
+            );
+          } else if (targetDate) {
+            // CalendarDate - convert to start of day
+            encodedTime = encodeUrlDate(
+              `${targetDate.year}-${String(targetDate.month).padStart(2, "0")}-${String(targetDate.day).padStart(2, "0")}T00:00:00Z`,
+              system.timezoneOffsetMin,
+              false,
+            );
+          } else {
+            throw new Error("No target time or date provided");
+          }
+        }
 
         const encodedOffset = encodeUrlOffset(system.timezoneOffsetMin);
         // Use "date" parameter for daily data, "time" for raw/5m
-        const timeParam = initialSource === "daily" ? "date" : "time";
+        const timeParam = source === "daily" ? "date" : "time";
         const response = await fetch(
-          `/api/admin/point/${pointInfo.getIdentifier()}/readings?${timeParam}=${encodedTime}&offset=${encodedOffset}&source=${initialSource}`,
+          `/api/admin/point/${pointInfo.getIdentifier()}/readings?${timeParam}=${encodedTime}&offset=${encodedOffset}&source=${source}`,
         );
 
         if (!response.ok) {
@@ -142,7 +161,14 @@ export default function PointReadingInspectorModal({
       cancelled = true;
       clearTimeout(spinnerTimeout);
     };
-  }, [isOpen, pointInfo, timestamp, initialSource, system.timezoneOffsetMin]);
+  }, [
+    isOpen,
+    pointInfo,
+    targetTime,
+    targetDate,
+    source,
+    system.timezoneOffsetMin,
+  ]);
 
   const handleSessionClick = async (sessionId: number | null) => {
     if (sessionId === null) return;
@@ -194,8 +220,19 @@ export default function PointReadingInspectorModal({
   const targetIndex = readings.findIndex((r) => {
     if (source === "daily") {
       // For daily data, compare date strings directly
-      if (!r.date || !isCalendarDate(timestamp)) return false;
-      const targetDateStr = formatDateAEST(timestamp); // "YYYY-MM-DD"
+      if (!r.date) return false;
+
+      // Get target date string from either targetDate or targetTime
+      let targetDateStr: string;
+      if (targetDate) {
+        targetDateStr = formatDateAEST(targetDate);
+      } else if (targetTime) {
+        // Extract date from ZonedDateTime
+        targetDateStr = `${targetTime.year}-${String(targetTime.month).padStart(2, "0")}-${String(targetTime.day).padStart(2, "0")}`;
+      } else {
+        return false;
+      }
+
       return r.date === targetDateStr;
     }
 
@@ -206,20 +243,21 @@ export default function PointReadingInspectorModal({
     // Convert reading time (Unix ms) to ZonedDateTime for comparison
     const readingZoned = fromDate(new Date(readingTime), "Australia/Sydney");
 
-    // Compare based on timestamp type
-    if (isCalendarDate(timestamp)) {
-      // For daily data view (shouldn't hit this case now)
-      return (
-        readingZoned.year === timestamp.year &&
-        readingZoned.month === timestamp.month &&
-        readingZoned.day === timestamp.day
-      );
-    } else {
-      // For raw/5m data, compare ISO8601 strings
+    // Compare with targetTime
+    if (targetTime) {
       const readingISO = formatTimeAEST(readingZoned);
-      const targetISO = formatTimeAEST(timestamp);
+      const targetISO = formatTimeAEST(targetTime);
       return readingISO === targetISO;
+    } else if (targetDate) {
+      // If we only have targetDate, compare just the date part
+      return (
+        readingZoned.year === targetDate.year &&
+        readingZoned.month === targetDate.month &&
+        readingZoned.day === targetDate.day
+      );
     }
+
+    return false;
   });
 
   const timeField = source === "5m" ? "intervalEnd" : "measurementTime";

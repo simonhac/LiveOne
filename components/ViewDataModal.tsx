@@ -1045,7 +1045,16 @@ export default function ViewDataModal({
             setIsReadingInspectorOpen(false);
             setSelectedReading(null);
           }}
-          timestamp={selectedReading.timestamp}
+          targetTime={
+            "hour" in selectedReading.timestamp
+              ? selectedReading.timestamp
+              : undefined
+          }
+          targetDate={
+            "hour" in selectedReading.timestamp
+              ? undefined
+              : selectedReading.timestamp
+          }
           initialSource={source}
           pointInfo={selectedReading.pointInfo}
           system={{
