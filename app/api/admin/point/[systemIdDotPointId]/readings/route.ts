@@ -124,7 +124,7 @@ export async function GET(
         SELECT
           pr.system_id as systemId,
           pr.point_id as pointId,
-          pr.day,
+          pr.day as date,
           pr.avg,
           pr.min,
           pr.max,
@@ -144,7 +144,7 @@ export async function GET(
 
       // Find target index
       const targetIndex = allReadings.findIndex(
-        (r: any) => r.day === targetDate,
+        (r: any) => r.date === targetDate,
       );
 
       if (targetIndex === -1) {

@@ -7,7 +7,13 @@ import {
   formatDate,
   formatDateTimeRange,
 } from "@/lib/fe-date-format";
-import { parseDateISO, fromUnixTimestamp } from "@/lib/date-utils";
+import { parseDateISO, formatTimeAEST, formatDateAEST } from "@/lib/date-utils";
+import {
+  parseAbsolute,
+  toZoned,
+  type ZonedDateTime,
+  type CalendarDate,
+} from "@internationalized/date";
 import PointInfoModal from "./PointInfoModal";
 import SessionInfoModal from "./SessionInfoModal";
 import PointReadingInspectorModal from "./PointReadingInspectorModal";
@@ -67,7 +73,7 @@ export default function ViewDataModal({
   // Point Reading Inspector state
   const [selectedReading, setSelectedReading] = useState<{
     pointInfo: PointInfo;
-    timestamp: number;
+    timestamp: ZonedDateTime | CalendarDate;
   } | null>(null);
   const [isReadingInspectorOpen, setIsReadingInspectorOpen] = useState(false);
 
@@ -77,16 +83,25 @@ export default function ViewDataModal({
   const [isSessionInfoModalOpen, setIsSessionInfoModalOpen] = useState(false);
   const [rawDataUnavailable, setRawDataUnavailable] = useState(false);
   const [pagination, setPagination] = useState<{
-    firstCursor: number | null;
-    lastCursor: number | null;
+    firstCursor: ZonedDateTime | CalendarDate | null;
+    lastCursor: ZonedDateTime | CalendarDate | null;
     hasOlder: boolean;
     hasNewer: boolean;
     limit: number;
   } | null>(null);
-  const [currentCursor, setCurrentCursor] = useState<number | null>(null);
+  const [currentCursor, setCurrentCursor] = useState<
+    ZonedDateTime | CalendarDate | null
+  >(null);
   const [cursorDirection, setCursorDirection] = useState<"older" | "newer">(
     "newer",
   );
+
+  // Helper to check if cursor is CalendarDate
+  const isCalendarDate = (
+    cursor: ZonedDateTime | CalendarDate,
+  ): cursor is CalendarDate => {
+    return "day" in cursor && !("hour" in cursor);
+  };
 
   const fetchData = useCallback(async () => {
     // Prevent duplicate fetches
@@ -105,8 +120,18 @@ export default function ViewDataModal({
         source,
       });
 
+      // Always send offset for raw/5m data
+      if (source !== "daily") {
+        params.set("offset", `${timezoneOffsetMin}m`); // Send as "600m" format
+      }
+
       if (currentCursor !== null) {
-        params.set("cursor", currentCursor.toString());
+        // Convert typed cursor to API format
+        const cursorStr = isCalendarDate(currentCursor)
+          ? formatDateAEST(currentCursor) // CalendarDate → "2025-11-09"
+          : formatTimeAEST(currentCursor); // ZonedDateTime → "2025-11-09T14:30:00+10:00"
+
+        params.set("cursor", cursorStr);
         params.set("direction", cursorDirection);
       }
 
@@ -128,7 +153,33 @@ export default function ViewDataModal({
       setHeaders(headersMap);
       setData(result.data || []);
       setMetadata(result.metadata || null);
-      setPagination(result.pagination || null);
+
+      // Parse pagination cursors from API (string → ZonedDateTime | CalendarDate)
+      if (result.pagination) {
+        const parsedPagination = {
+          ...result.pagination,
+          firstCursor: result.pagination.firstCursor
+            ? source === "daily"
+              ? parseDateISO(result.pagination.firstCursor) // "2025-11-09" → CalendarDate
+              : toZoned(
+                  parseAbsolute(result.pagination.firstCursor, "UTC"),
+                  "Australia/Sydney",
+                ) // ISO8601 → ZonedDateTime
+            : null,
+          lastCursor: result.pagination.lastCursor
+            ? source === "daily"
+              ? parseDateISO(result.pagination.lastCursor)
+              : toZoned(
+                  parseAbsolute(result.pagination.lastCursor, "UTC"),
+                  "Australia/Sydney",
+                )
+            : null,
+        };
+        setPagination(parsedPagination);
+      } else {
+        setPagination(null);
+      }
+
       setInitialLoad(false); // Mark initial load as complete
 
       // If no data in current view but alternative has data, switch views
@@ -250,9 +301,9 @@ export default function ViewDataModal({
     key: string,
     pointInfo: PointInfo | null,
   ) => {
-    // Only open modal for point columns (not timestamp/date or sessionLabel)
+    // Only open modal for point columns (not time/date or sessionLabel)
     if (
-      key === "timestamp" ||
+      key === "time" ||
       key === "date" ||
       key === "sessionLabel" ||
       !pointInfo
@@ -450,7 +501,7 @@ export default function ViewDataModal({
 
   // Get label for column header
   const getHeaderLabel = (key: string, pointInfo: PointInfo | null): string => {
-    if (key === "timestamp") return "Time";
+    if (key === "time") return "Time";
     if (key === "date") return "Date";
     if (key === "sessionLabel") return "Session";
     return pointInfo?.displayName || pointInfo?.defaultName || key;
@@ -482,8 +533,8 @@ export default function ViewDataModal({
   // Filter headers based on showExtras state
   const filteredHeaders = Array.from(headers.entries()).filter(
     ([key, pointInfo]) => {
-      // Always show timestamp/date and session columns
-      if (key === "timestamp" || key === "date" || key === "sessionLabel")
+      // Always show time/date and session columns
+      if (key === "time" || key === "date" || key === "sessionLabel")
         return true;
       // Show columns with series ID only if they are active
       if (getSeriesIdSuffix(key, pointInfo) && pointInfo?.active) return true;
@@ -492,13 +543,13 @@ export default function ViewDataModal({
     },
   );
 
-  // Generate CSS for column hover effect (exclude timestamp/date and sessionLabel columns)
+  // Generate CSS for column hover effect (exclude time/date and sessionLabel columns)
   // Memoize to prevent re-rendering and flashing when hovering
   const columnHoverStyles = useMemo(() => {
     return filteredHeaders
       .map(([key], colIndex) => {
-        // Don't add hover effect for timestamp/date or sessionLabel columns
-        if (key === "timestamp" || key === "date" || key === "sessionLabel") {
+        // Don't add hover effect for time/date or sessionLabel columns
+        if (key === "time" || key === "date" || key === "sessionLabel") {
           return "";
         }
         return `
@@ -538,7 +589,7 @@ export default function ViewDataModal({
       : false;
     const isLastSeriesIdColumn = hasActiveSeriesId && !nextHasActiveSeriesId;
     const isSpecialColumn =
-      headerKey === "timestamp" ||
+      headerKey === "time" ||
       headerKey === "date" ||
       headerKey === "sessionLabel";
 
@@ -585,17 +636,32 @@ export default function ViewDataModal({
               pagination.lastCursor && (
                 <span className="text-xs text-gray-400">
                   {(() => {
-                    // Convert millisecond timestamps to ZonedDateTime
-                    const start = fromUnixTimestamp(
-                      pagination.lastCursor / 1000,
-                      timezoneOffsetMin,
-                    );
-                    const end = fromUnixTimestamp(
-                      pagination.firstCursor / 1000,
-                      timezoneOffsetMin,
-                    );
-                    // Show dates only for daily data, times for raw/5m data
-                    return formatDateTimeRange(start, end, source !== "daily");
+                    // Handle both CalendarDate (daily) and ZonedDateTime (raw/5m)
+                    if (isCalendarDate(pagination.firstCursor!)) {
+                      // Daily data: Simple date range display
+                      const startDate = formatDate(
+                        new Date(
+                          pagination.lastCursor.year,
+                          pagination.lastCursor.month - 1,
+                          pagination.lastCursor.day,
+                        ),
+                      );
+                      const endDate = formatDate(
+                        new Date(
+                          pagination.firstCursor.year,
+                          pagination.firstCursor.month - 1,
+                          pagination.firstCursor.day,
+                        ),
+                      );
+                      return `${startDate} – ${endDate}`;
+                    } else {
+                      // Raw/5m data: Full time range with formatDateTimeRange
+                      return formatDateTimeRange(
+                        pagination.lastCursor as ZonedDateTime,
+                        pagination.firstCursor as ZonedDateTime,
+                        true, // Always show times for raw/5m
+                      );
+                    }
                   })()}
                 </span>
               )}
@@ -732,7 +798,7 @@ export default function ViewDataModal({
                       colIndex={colIndex}
                       rowKey="row1"
                     >
-                      {key === "timestamp" ? (
+                      {key === "time" ? (
                         <span className="text-gray-300">Name</span>
                       ) : key === "date" ? (
                         <span className="text-gray-300">Name</span>
@@ -760,7 +826,7 @@ export default function ViewDataModal({
                       colIndex={colIndex}
                       rowKey="row2"
                     >
-                      {key === "timestamp" ? (
+                      {key === "time" ? (
                         <span className="text-gray-300">Series</span>
                       ) : key === "date" ? (
                         <span className="text-gray-300">Series</span>
@@ -795,7 +861,7 @@ export default function ViewDataModal({
                       colIndex={colIndex}
                       rowKey="row3"
                     >
-                      {key === "timestamp" ? (
+                      {key === "time" ? (
                         <span className="text-gray-300">Alias</span>
                       ) : key === "date" ? (
                         <span className="text-gray-300">Alias</span>
@@ -866,7 +932,7 @@ export default function ViewDataModal({
                         <td
                           key={key}
                           className={`py-1 px-2 ${
-                            key !== "timestamp" &&
+                            key !== "time" &&
                             key !== "date" &&
                             key !== "sessionLabel"
                               ? "text-right cursor-pointer"
@@ -875,11 +941,11 @@ export default function ViewDataModal({
                             isLastSeriesIdColumn
                               ? "border-r border-gray-700"
                               : ""
-                          } ${!pointInfo?.active && key !== "timestamp" && key !== "date" && key !== "sessionLabel" ? "opacity-50" : ""}`}
+                          } ${!pointInfo?.active && key !== "time" && key !== "date" && key !== "sessionLabel" ? "opacity-50" : ""}`}
                           onClick={() => {
-                            // Only open inspector for data cells (not timestamp/date or sessionLabel)
+                            // Only open inspector for data cells (not time/date or sessionLabel)
                             if (
-                              key !== "timestamp" &&
+                              key !== "time" &&
                               key !== "date" &&
                               key !== "sessionLabel" &&
                               pointInfo
@@ -888,17 +954,30 @@ export default function ViewDataModal({
                               const pointInfoInstance = PointInfo.from(
                                 pointInfo as any,
                               );
+
+                              // Parse time/date string to typed object
+                              const timestamp = row.time
+                                ? toZoned(
+                                    parseAbsolute(row.time, "UTC"),
+                                    "Australia/Sydney",
+                                  ) // ISO8601 → ZonedDateTime
+                                : parseDateISO(row.date); // YYYY-MM-DD → CalendarDate
+
                               setSelectedReading({
                                 pointInfo: pointInfoInstance,
-                                timestamp: row.timestamp || row.date,
+                                timestamp,
                               });
                               setIsReadingInspectorOpen(true);
                             }
                           }}
                         >
-                          {key === "timestamp" ? (
+                          {key === "time" ? (
                             <span className="text-xs font-mono text-gray-300 whitespace-nowrap">
-                              {formatDateTime(new Date(row[key])).display}
+                              {(() => {
+                                // Parse ISO8601 string to Date for formatting
+                                const date = new Date(row[key]);
+                                return formatDateTime(date).display;
+                              })()}
                             </span>
                           ) : key === "date" ? (
                             <span className="text-xs font-mono text-gray-300 whitespace-nowrap">
@@ -967,7 +1046,7 @@ export default function ViewDataModal({
             setSelectedReading(null);
           }}
           timestamp={selectedReading.timestamp}
-          initialDataSource={source}
+          initialSource={source}
           pointInfo={selectedReading.pointInfo}
           system={{
             name: systemName,

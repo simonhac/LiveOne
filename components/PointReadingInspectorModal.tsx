@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import SessionInfoModal from "./SessionInfoModal";
-import { formatDateTime } from "@/lib/fe-date-format";
-import { encodeUrlDateFromEpoch, encodeUrlOffset } from "@/lib/url-date";
+import { formatDateTime, formatDate } from "@/lib/fe-date-format";
+import { encodeUrlOffset } from "@/lib/url-date";
 import { PointInfo } from "@/lib/point-info";
+import { formatTimeAEST, formatDateAEST } from "@/lib/date-utils";
+import {
+  type ZonedDateTime,
+  type CalendarDate,
+  fromDate,
+} from "@internationalized/date";
 
 interface SystemContext {
   name: string;
@@ -16,8 +22,8 @@ interface SystemContext {
 interface PointReadingInspectorModalProps {
   isOpen: boolean;
   onClose: () => void;
-  timestamp: number; // Unix timestamp in ms
-  initialDataSource: "raw" | "5m" | "daily";
+  timestamp: ZonedDateTime | CalendarDate; // ISO8601 time or YYYY-MM-DD date
+  initialSource: "raw" | "5m" | "daily";
   pointInfo: PointInfo;
   system: SystemContext;
 }
@@ -25,6 +31,7 @@ interface PointReadingInspectorModalProps {
 interface ReadingData {
   measurementTime?: number; // For raw data
   intervalEnd?: number; // For 5m data
+  date?: string; // For daily data (YYYY-MM-DD format)
   sessionId?: number | null;
   sessionLabel?: string | null;
   // Raw data fields
@@ -46,13 +53,11 @@ export default function PointReadingInspectorModal({
   isOpen,
   onClose,
   timestamp,
-  initialDataSource,
+  initialSource,
   pointInfo,
   system,
 }: PointReadingInspectorModalProps) {
-  const [source, setSource] = useState<"raw" | "5m" | "daily">(
-    initialDataSource,
-  );
+  const [source, setSource] = useState<"raw" | "5m" | "daily">(initialSource);
   const [readings, setReadings] = useState<ReadingData[]>([]);
   const [loading, setLoading] = useState(false);
   const [showSpinner, setShowSpinner] = useState(false);
@@ -60,18 +65,23 @@ export default function PointReadingInspectorModal({
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
   const [isSessionInfoModalOpen, setIsSessionInfoModalOpen] = useState(false);
 
-  // Sync source with initialDataSource when modal opens
-  useEffect(() => {
-    if (isOpen) {
-      setSource(initialDataSource);
-    }
-  }, [isOpen, initialDataSource]);
+  // Helper to check if timestamp is CalendarDate
+  const isCalendarDate = (
+    ts: ZonedDateTime | CalendarDate,
+  ): ts is CalendarDate => {
+    return "day" in ts && !("hour" in ts);
+  };
 
   useEffect(() => {
     if (!isOpen) {
       setReadings([]);
       setError(null);
       return;
+    }
+
+    // Sync source state (but don't trigger refetch since we use initialSource below)
+    if (source !== initialSource) {
+      setSource(initialSource);
     }
 
     let cancelled = false;
@@ -90,14 +100,16 @@ export default function PointReadingInspectorModal({
       }, 1000);
 
       try {
-        const encodedTime = encodeUrlDateFromEpoch(
-          timestamp,
-          system.timezoneOffsetMin,
-          false,
-        );
+        // Convert typed timestamp to API format
+        const encodedTime = isCalendarDate(timestamp)
+          ? formatDateAEST(timestamp) // CalendarDate → "2025-11-09"
+          : formatTimeAEST(timestamp); // ZonedDateTime → "2025-11-09T14:30:00+10:00"
+
         const encodedOffset = encodeUrlOffset(system.timezoneOffsetMin);
+        // Use "date" parameter for daily data, "time" for raw/5m
+        const timeParam = initialSource === "daily" ? "date" : "time";
         const response = await fetch(
-          `/api/admin/point/${pointInfo.getIdentifier()}/readings?time=${encodedTime}&offset=${encodedOffset}&source=${source}`,
+          `/api/admin/point/${pointInfo.getIdentifier()}/readings?${timeParam}=${encodedTime}&offset=${encodedOffset}&source=${initialSource}`,
         );
 
         if (!response.ok) {
@@ -130,7 +142,7 @@ export default function PointReadingInspectorModal({
       cancelled = true;
       clearTimeout(spinnerTimeout);
     };
-  }, [isOpen, pointInfo, timestamp, source, system.timezoneOffsetMin]);
+  }, [isOpen, pointInfo, timestamp, initialSource, system.timezoneOffsetMin]);
 
   const handleSessionClick = async (sessionId: number | null) => {
     if (sessionId === null) return;
@@ -180,8 +192,34 @@ export default function PointReadingInspectorModal({
 
   // Find the target reading index (in chronological order, oldest first)
   const targetIndex = readings.findIndex((r) => {
+    if (source === "daily") {
+      // For daily data, compare date strings directly
+      if (!r.date || !isCalendarDate(timestamp)) return false;
+      const targetDateStr = formatDateAEST(timestamp); // "YYYY-MM-DD"
+      return r.date === targetDateStr;
+    }
+
+    // For raw/5m data, compare timestamps
     const readingTime = source === "5m" ? r.intervalEnd : r.measurementTime;
-    return readingTime === timestamp;
+    if (readingTime == null) return false;
+
+    // Convert reading time (Unix ms) to ZonedDateTime for comparison
+    const readingZoned = fromDate(new Date(readingTime), "Australia/Sydney");
+
+    // Compare based on timestamp type
+    if (isCalendarDate(timestamp)) {
+      // For daily data view (shouldn't hit this case now)
+      return (
+        readingZoned.year === timestamp.year &&
+        readingZoned.month === timestamp.month &&
+        readingZoned.day === timestamp.day
+      );
+    } else {
+      // For raw/5m data, compare ISO8601 strings
+      const readingISO = formatTimeAEST(readingZoned);
+      const targetISO = formatTimeAEST(timestamp);
+      return readingISO === targetISO;
+    }
   });
 
   const timeField = source === "5m" ? "intervalEnd" : "measurementTime";
@@ -408,17 +446,17 @@ export default function PointReadingInspectorModal({
                       </th>
                       {/* Raw columns */}
                       <th
-                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "5m" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${source !== "raw" ? "hidden" : ""}`}
                       >
                         Value
                       </th>
                       <th
-                        className={`px-2 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "5m" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700 ${source !== "raw" ? "hidden" : ""}`}
                       >
                         Quality
                       </th>
                       <th
-                        className={`px-2 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "5m" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700 ${source !== "raw" ? "hidden" : ""}`}
                       >
                         Error
                       </th>
@@ -454,13 +492,14 @@ export default function PointReadingInspectorModal({
                       <>
                         {/* Always render exactly 11 rows (newest at top) */}
                         {displayReadings.map((reading, displayIndex) => {
-                          // Check if this is the target reading
+                          // Check if this is the target reading by comparing to actual target
+                          const actualIndex = reading
+                            ? readings.indexOf(reading)
+                            : -1;
                           const isTarget =
                             reading !== null &&
                             targetIndex !== -1 &&
-                            (source === "5m"
-                              ? reading.intervalEnd
-                              : reading.measurementTime) === timestamp;
+                            actualIndex === targetIndex;
 
                           // Use alternating colors, but highlight target
                           const bgColor = isTarget
@@ -520,17 +559,17 @@ export default function PointReadingInspectorModal({
                                 </td>
                                 {/* Raw columns */}
                                 <td
-                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "5m" ? "hidden" : ""}`}
+                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source !== "raw" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
                                 <td
-                                  className={`py-1 px-2 text-xs text-gray-300 ${source === "5m" ? "hidden" : ""}`}
+                                  className={`py-1 px-2 text-xs text-gray-300 ${source !== "raw" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
                                 <td
-                                  className={`py-1 px-2 text-xs text-gray-300 truncate ${source === "5m" ? "hidden" : ""}`}
+                                  className={`py-1 px-2 text-xs text-gray-300 truncate ${source !== "raw" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
@@ -545,11 +584,15 @@ export default function PointReadingInspectorModal({
                               className={`h-7 ${bgColor} ${isTarget ? "font-medium" : ""} hover:bg-gray-700/50 transition-colors`}
                             >
                               <td className="py-1 px-2 text-xs text-gray-300 whitespace-nowrap font-mono">
-                                {reading![timeField] != null
-                                  ? formatDateTime(
-                                      new Date(reading![timeField]!),
-                                    ).display
-                                  : "—"}
+                                {source === "daily"
+                                  ? reading!.date
+                                    ? formatDate(reading!.date)
+                                    : "—"
+                                  : reading![timeField] != null
+                                    ? formatDateTime(
+                                        new Date(reading![timeField]!),
+                                      ).display
+                                    : "—"}
                               </td>
                               <td className="py-1 px-2 text-xs text-gray-400">
                                 {reading!.sessionLabel ? (
@@ -615,7 +658,7 @@ export default function PointReadingInspectorModal({
                               </td>
                               {/* Raw columns */}
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "5m" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source !== "raw" ? "hidden" : ""}`}
                               >
                                 {reading!.valueStr ||
                                   formatColumnValue(reading!.value, () =>
@@ -623,12 +666,12 @@ export default function PointReadingInspectorModal({
                                   )}
                               </td>
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 ${source === "5m" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-gray-300 ${source !== "raw" ? "hidden" : ""}`}
                               >
                                 {reading!.dataQuality || "—"}
                               </td>
                               <td
-                                className={`py-1 px-2 text-xs truncate ${source === "5m" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs truncate ${source !== "raw" ? "hidden" : ""}`}
                               >
                                 {reading!.error ? (
                                   <span className="text-red-400">
