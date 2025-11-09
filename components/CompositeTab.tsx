@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Plus, X, Sun, Home, Battery, Zap } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useUser } from "@clerk/nextjs";
@@ -110,13 +110,7 @@ export default function CompositeTab({
     }
   }, [shouldLoad, hasLoaded]);
 
-  useEffect(() => {
-    if (shouldLoad && !hasLoaded && !fetchingRef.current) {
-      fetchCompositeConfig();
-    }
-  }, [systemId, shouldLoad, hasLoaded]);
-
-  const fetchCompositeConfig = async () => {
+  const fetchCompositeConfig = useCallback(async () => {
     fetchingRef.current = true;
     try {
       // Determine which user ID to use for fetching points
@@ -181,7 +175,13 @@ export default function CompositeTab({
       setLoading(false);
       fetchingRef.current = false;
     }
-  };
+  }, [systemId, ownerUserId, user?.id]);
+
+  useEffect(() => {
+    if (shouldLoad && !hasLoaded && !fetchingRef.current) {
+      fetchCompositeConfig();
+    }
+  }, [systemId, shouldLoad, hasLoaded, fetchCompositeConfig]);
 
   // Check if mappings are dirty
   const isDirty = useMemo(() => {
@@ -194,13 +194,13 @@ export default function CompositeTab({
   }, [isDirty, onDirtyChange]);
 
   // Provide save function to parent
-  const getMappingsData = async (): Promise<CompositeMapping> => {
+  const getMappingsData = useCallback(async (): Promise<CompositeMapping> => {
     return mappings;
-  };
+  }, [mappings]);
 
   useEffect(() => {
     onSaveFunctionReady?.(getMappingsData);
-  }, [mappings, onSaveFunctionReady]);
+  }, [onSaveFunctionReady, getMappingsData]);
 
   // Helper to get display label components for a point ID
   const getDisplayLabelParts = (

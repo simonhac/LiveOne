@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import {
   Clock,
@@ -202,7 +202,7 @@ export default function AdminDashboardClient() {
   };
 
   // Track if any modal is open
-  const isAnyModalOpen = () => {
+  const isAnyModalOpen = useCallback(() => {
     return (
       testModal.isOpen ||
       pollingStatsModal.isOpen ||
@@ -210,9 +210,15 @@ export default function AdminDashboardClient() {
       pollNowModal.isOpen ||
       viewDataModal.isOpen
     );
-  };
+  }, [
+    testModal.isOpen,
+    pollingStatsModal.isOpen,
+    settingsModal.isOpen,
+    pollNowModal.isOpen,
+    viewDataModal.isOpen,
+  ]);
 
-  const fetchSystems = async () => {
+  const fetchSystems = useCallback(async () => {
     // Skip fetch if any modal is open
     if (isAnyModalOpen()) {
       console.log("[AdminDashboard] Skipping fetch - modal is open");
@@ -244,7 +250,7 @@ export default function AdminDashboardClient() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isAnyModalOpen]);
 
   const updateSystemStatus = async (
     systemId: number,
@@ -333,7 +339,7 @@ export default function AdminDashboardClient() {
         clearInterval(intervalRef.current);
       }
     };
-  }, []);
+  }, [fetchSystems]);
 
   // Pause/resume fetching based on modal state
   useEffect(() => {
@@ -358,6 +364,8 @@ export default function AdminDashboardClient() {
     settingsModal.isOpen,
     pollNowModal.isOpen,
     viewDataModal.isOpen,
+    fetchSystems,
+    isAnyModalOpen,
   ]);
 
   if (loading) {

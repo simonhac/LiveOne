@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import {
   Database,
   Server,
@@ -97,7 +97,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
     }
   };
 
-  const resetStagesAndCount = async () => {
+  const resetStagesAndCount = useCallback(async () => {
     // Filter stages based on syncMetadata checkbox
     const filteredStages = syncMetadata
       ? initialStages
@@ -207,7 +207,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
         message: "Ready to sync from production database",
       }));
     }
-  };
+  }, [syncMetadata, daysToSync, initialStages]);
 
   const openSyncDialog = () => {
     setSyncProgress({
@@ -554,7 +554,14 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
     ) {
       resetStagesAndCount();
     }
-  }, [syncMetadata, daysToSync, syncProgress.isActive]);
+  }, [
+    syncMetadata,
+    daysToSync,
+    syncProgress.isActive,
+    syncProgress.progress,
+    syncAbortController,
+    resetStagesAndCount,
+  ]);
 
   if (loading) {
     return (

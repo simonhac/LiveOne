@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Plus, X, Eye, Crown } from "lucide-react";
 import { createPortal } from "react-dom";
 
@@ -58,13 +58,7 @@ export default function AdminTab({
     }
   }, [shouldLoad, hasLoaded]);
 
-  useEffect(() => {
-    if (shouldLoad && !hasLoaded && !fetchingRef.current) {
-      fetchAdminData();
-    }
-  }, [systemId, shouldLoad, hasLoaded]);
-
-  const fetchAdminData = async () => {
+  const fetchAdminData = useCallback(async () => {
     fetchingRef.current = true;
     try {
       // Fetch all users
@@ -102,7 +96,13 @@ export default function AdminTab({
       setLoading(false);
       fetchingRef.current = false;
     }
-  };
+  }, [systemId]);
+
+  useEffect(() => {
+    if (shouldLoad && !hasLoaded && !fetchingRef.current) {
+      fetchAdminData();
+    }
+  }, [systemId, shouldLoad, hasLoaded, fetchAdminData]);
 
   // Check if data is dirty
   const isDirty = useMemo(() => {
@@ -119,7 +119,7 @@ export default function AdminTab({
   }, [isDirty, onDirtyChange]);
 
   // Provide save function to parent
-  const getAdminData = async (): Promise<AdminData> => {
+  const getAdminData = useCallback(async (): Promise<AdminData> => {
     return {
       ownerClerkUserId,
       viewers: viewers.map((v) => ({
@@ -130,11 +130,11 @@ export default function AdminTab({
         username: v.username,
       })),
     };
-  };
+  }, [ownerClerkUserId, viewers]);
 
   useEffect(() => {
     onSaveFunctionReady?.(getAdminData);
-  }, [ownerClerkUserId, viewers, onSaveFunctionReady]);
+  }, [onSaveFunctionReady, getAdminData]);
 
   // Get display name for a user
   const getDisplayName = (user: User | Viewer): string => {

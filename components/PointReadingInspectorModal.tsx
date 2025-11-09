@@ -128,7 +128,7 @@ export default function PointReadingInspectorModal({
       cancelled = true;
       clearTimeout(spinnerTimeout);
     };
-  }, [isOpen, pointInfo, timestamp, dataSource]);
+  }, [isOpen, pointInfo, timestamp, dataSource, system.timezoneOffsetMin]);
 
   const handleSessionClick = async (sessionId: number | null) => {
     if (sessionId === null) return;

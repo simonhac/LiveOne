@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Sun, Battery, Zap, Home, Activity } from "lucide-react";
 
 interface PointInfo {
@@ -82,13 +82,7 @@ export default function CapabilitiesTab({
     }
   }, [shouldLoad, hasLoaded]);
 
-  useEffect(() => {
-    if (shouldLoad && !hasLoaded && !fetchingRef.current) {
-      fetchPoints();
-    }
-  }, [systemId, shouldLoad, hasLoaded]);
-
-  const fetchPoints = async () => {
+  const fetchPoints = useCallback(async () => {
     fetchingRef.current = true;
     try {
       const response = await fetch(
@@ -122,7 +116,13 @@ export default function CapabilitiesTab({
       setLoading(false);
       fetchingRef.current = false;
     }
-  };
+  }, [systemId]);
+
+  useEffect(() => {
+    if (shouldLoad && !hasLoaded && !fetchingRef.current) {
+      fetchPoints();
+    }
+  }, [systemId, shouldLoad, hasLoaded, fetchPoints]);
 
   // Group points by subsystem
   const pointsBySubsystem = useMemo(() => {
