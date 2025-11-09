@@ -2,7 +2,12 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
-import { formatDateTime } from "@/lib/fe-date-format";
+import {
+  formatDateTime,
+  formatDate,
+  formatDateTimeRange,
+} from "@/lib/fe-date-format";
+import { parseDateYYYYMMDD, fromUnixTimestamp } from "@/lib/date-utils";
 import PointInfoModal from "./PointInfoModal";
 import SessionInfoModal from "./SessionInfoModal";
 import PointReadingInspectorModal from "./PointReadingInspectorModal";
@@ -185,19 +190,33 @@ export default function ViewDataModal({
 
   // Handle escape key
   useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (
-        e.key === "Escape" &&
-        isOpen &&
-        !isPointInfoModalOpen &&
-        !isReadingInspectorOpen
-      ) {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't handle keyboard events if modal is not open or if user is typing in an input
+      if (!isOpen || isPointInfoModalOpen || isReadingInspectorOpen) return;
+
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+
+      if (e.key === "Escape") {
         onClose();
+      } else if (e.key === "ArrowLeft" && pagination?.hasOlder && !loading) {
+        e.preventDefault();
+        handlePageOlder();
+      } else if (e.key === "ArrowRight" && pagination?.hasNewer && !loading) {
+        e.preventDefault();
+        handlePageNewer();
       }
     };
-    document.addEventListener("keydown", handleEscape);
-    return () => document.removeEventListener("keydown", handleEscape);
-  }, [isOpen, isPointInfoModalOpen, isReadingInspectorOpen, onClose]);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [
+    isOpen,
+    isPointInfoModalOpen,
+    isReadingInspectorOpen,
+    onClose,
+    pagination,
+    loading,
+  ]);
 
   const handleSourceChange = (newSource: "raw" | "5m" | "daily") => {
     // Set loading state immediately for instant UI feedback
@@ -231,8 +250,14 @@ export default function ViewDataModal({
     key: string,
     pointInfo: PointInfo | null,
   ) => {
-    // Only open modal for point columns (not timestamp or sessionLabel)
-    if (key === "timestamp" || key === "sessionLabel" || !pointInfo) return;
+    // Only open modal for point columns (not timestamp/date or sessionLabel)
+    if (
+      key === "timestamp" ||
+      key === "date" ||
+      key === "sessionLabel" ||
+      !pointInfo
+    )
+      return;
 
     setSelectedPointInfo({
       pointDbId: pointInfo.id,
@@ -349,6 +374,11 @@ export default function ViewDataModal({
         const mwh = numValue / 1_000_000;
         return `${mwh.toFixed(3)}`;
       }
+      // For differentiated points in daily view, show as kWh with 1 decimal place
+      if (pointInfo?.transform === "d" && source === "daily") {
+        const kwh = numValue / 1000;
+        return `${kwh.toFixed(1)}`;
+      }
       // Otherwise display in Wh (no conversion)
       return `${numValue.toFixed(0)}`;
     } else if (pointInfo?.metricType === "power") {
@@ -379,6 +409,10 @@ export default function ViewDataModal({
       // For differentiated points in raw view, show MWh
       if (pointInfo?.transform === "d" && source === "raw") {
         return "MWh";
+      }
+      // For differentiated points in daily view, show kWh
+      if (pointInfo?.transform === "d" && source === "daily") {
+        return "kWh";
       }
       return "Wh";
     } else if (pointInfo?.metricType === "power") {
@@ -417,6 +451,7 @@ export default function ViewDataModal({
   // Get label for column header
   const getHeaderLabel = (key: string, pointInfo: PointInfo | null): string => {
     if (key === "timestamp") return "Time";
+    if (key === "date") return "Date";
     if (key === "sessionLabel") return "Session";
     return pointInfo?.displayName || pointInfo?.defaultName || key;
   };
@@ -447,8 +482,9 @@ export default function ViewDataModal({
   // Filter headers based on showExtras state
   const filteredHeaders = Array.from(headers.entries()).filter(
     ([key, pointInfo]) => {
-      // Always show timestamp and session columns
-      if (key === "timestamp" || key === "sessionLabel") return true;
+      // Always show timestamp/date and session columns
+      if (key === "timestamp" || key === "date" || key === "sessionLabel")
+        return true;
       // Show columns with series ID only if they are active
       if (getSeriesIdSuffix(key, pointInfo) && pointInfo?.active) return true;
       // Only show other columns (inactive with series ID, or no series ID) if showExtras is true
@@ -456,13 +492,13 @@ export default function ViewDataModal({
     },
   );
 
-  // Generate CSS for column hover effect (exclude timestamp and sessionLabel columns)
+  // Generate CSS for column hover effect (exclude timestamp/date and sessionLabel columns)
   // Memoize to prevent re-rendering and flashing when hovering
   const columnHoverStyles = useMemo(() => {
     return filteredHeaders
       .map(([key], colIndex) => {
-        // Don't add hover effect for timestamp or sessionLabel columns
-        if (key === "timestamp" || key === "sessionLabel") {
+        // Don't add hover effect for timestamp/date or sessionLabel columns
+        if (key === "timestamp" || key === "date" || key === "sessionLabel") {
           return "";
         }
         return `
@@ -502,7 +538,9 @@ export default function ViewDataModal({
       : false;
     const isLastSeriesIdColumn = hasActiveSeriesId && !nextHasActiveSeriesId;
     const isSpecialColumn =
-      headerKey === "timestamp" || headerKey === "sessionLabel";
+      headerKey === "timestamp" ||
+      headerKey === "date" ||
+      headerKey === "sessionLabel";
 
     return (
       <th
@@ -537,28 +575,39 @@ export default function ViewDataModal({
             <h3 className="text-lg font-semibold text-white">
               Data for {systemName}{" "}
               <span className="text-gray-500">ID: {systemId}</span>
-              {vendorType && <> — {vendorType}</>}
             </h3>
           </div>
           <div className="flex items-center gap-4">
             {/* Date range display */}
-            {pagination && data.length > 0 && (
-              <span className="text-xs text-gray-400">
-                {formatDateTime(new Date(pagination.firstCursor!)).display}
-                {" to "}
-                {formatDateTime(new Date(pagination.lastCursor!)).display}
-              </span>
-            )}
+            {pagination &&
+              data.length > 0 &&
+              pagination.firstCursor &&
+              pagination.lastCursor && (
+                <span className="text-xs text-gray-400">
+                  {(() => {
+                    // Convert millisecond timestamps to ZonedDateTime
+                    const start = fromUnixTimestamp(
+                      pagination.lastCursor / 1000,
+                      timezoneOffsetMin,
+                    );
+                    const end = fromUnixTimestamp(
+                      pagination.firstCursor / 1000,
+                      timezoneOffsetMin,
+                    );
+                    return formatDateTimeRange(start, end, true);
+                  })()}
+                </span>
+              )}
             {/* Pagination controls */}
             <div className="inline-flex rounded-md shadow-sm" role="group">
               <button
-                onClick={handlePageNewer}
-                disabled={!pagination?.hasNewer || loading}
-                title="Newer data (forward in time)"
+                onClick={handlePageOlder}
+                disabled={!pagination?.hasOlder || loading}
+                title="Older data (back in time)"
                 className={`
                   px-3 py-1 text-xs font-medium transition-colors border rounded-l-md -ml-px
                   ${
-                    pagination?.hasNewer && !loading
+                    pagination?.hasOlder && !loading
                       ? "bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white"
                       : "bg-gray-800 text-gray-600 border-gray-700 cursor-not-allowed"
                   }
@@ -567,13 +616,13 @@ export default function ViewDataModal({
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <button
-                onClick={handlePageOlder}
-                disabled={!pagination?.hasOlder || loading}
-                title="Older data (back in time)"
+                onClick={handlePageNewer}
+                disabled={!pagination?.hasNewer || loading}
+                title="Newer data (forward in time)"
                 className={`
                   px-3 py-1 text-xs font-medium transition-colors border rounded-r-md -ml-px
                   ${
-                    pagination?.hasOlder && !loading
+                    pagination?.hasNewer && !loading
                       ? "bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white"
                       : "bg-gray-800 text-gray-600 border-gray-700 cursor-not-allowed"
                   }
@@ -684,6 +733,8 @@ export default function ViewDataModal({
                     >
                       {key === "timestamp" ? (
                         <span className="text-gray-300">Name</span>
+                      ) : key === "date" ? (
+                        <span className="text-gray-300">Name</span>
                       ) : key === "sessionLabel" ? (
                         <span className="text-gray-300">Session</span>
                       ) : (
@@ -709,6 +760,8 @@ export default function ViewDataModal({
                       rowKey="row2"
                     >
                       {key === "timestamp" ? (
+                        <span className="text-gray-300">Series</span>
+                      ) : key === "date" ? (
                         <span className="text-gray-300">Series</span>
                       ) : key === "sessionLabel" ? (
                         <div></div>
@@ -742,6 +795,8 @@ export default function ViewDataModal({
                       rowKey="row3"
                     >
                       {key === "timestamp" ? (
+                        <span className="text-gray-300">Alias</span>
+                      ) : key === "date" ? (
                         <span className="text-gray-300">Alias</span>
                       ) : key === "sessionLabel" ? (
                         <div></div>
@@ -810,18 +865,21 @@ export default function ViewDataModal({
                         <td
                           key={key}
                           className={`py-1 px-2 ${
-                            key !== "timestamp" && key !== "sessionLabel"
+                            key !== "timestamp" &&
+                            key !== "date" &&
+                            key !== "sessionLabel"
                               ? "text-right cursor-pointer"
                               : ""
                           } ${
                             isLastSeriesIdColumn
                               ? "border-r border-gray-700"
                               : ""
-                          } ${!pointInfo?.active && key !== "timestamp" && key !== "sessionLabel" ? "opacity-50" : ""}`}
+                          } ${!pointInfo?.active && key !== "timestamp" && key !== "date" && key !== "sessionLabel" ? "opacity-50" : ""}`}
                           onClick={() => {
-                            // Only open inspector for data cells (not timestamp or sessionLabel)
+                            // Only open inspector for data cells (not timestamp/date or sessionLabel)
                             if (
                               key !== "timestamp" &&
+                              key !== "date" &&
                               key !== "sessionLabel" &&
                               pointInfo
                             ) {
@@ -831,7 +889,7 @@ export default function ViewDataModal({
                               );
                               setSelectedReading({
                                 pointInfo: pointInfoInstance,
-                                timestamp: row.timestamp,
+                                timestamp: row.timestamp || row.date,
                               });
                               setIsReadingInspectorOpen(true);
                             }
@@ -840,6 +898,21 @@ export default function ViewDataModal({
                           {key === "timestamp" ? (
                             <span className="text-xs font-mono text-gray-300 whitespace-nowrap">
                               {formatDateTime(new Date(row[key])).display}
+                            </span>
+                          ) : key === "date" ? (
+                            <span className="text-xs font-mono text-gray-300 whitespace-nowrap">
+                              {(() => {
+                                const calendarDate = parseDateYYYYMMDD(
+                                  row[key],
+                                );
+                                // Convert CalendarDate to JS Date for formatting
+                                const jsDate = new Date(
+                                  calendarDate.year,
+                                  calendarDate.month - 1,
+                                  calendarDate.day,
+                                );
+                                return formatDate(jsDate);
+                              })()}
                             </span>
                           ) : key === "sessionLabel" ? (
                             row[key] !== null && row.sessionId ? (

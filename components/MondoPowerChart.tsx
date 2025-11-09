@@ -23,7 +23,7 @@ import { format } from "date-fns";
 import "chartjs-adapter-date-fns";
 import annotationPlugin from "chartjs-plugin-annotation";
 import { formatDateTime } from "@/lib/fe-date-format";
-import { formatDateRange, fromUnixTimestamp } from "@/lib/date-utils";
+import { fromUnixTimestamp } from "@/lib/date-utils";
 import { CalendarX2 } from "lucide-react";
 
 // Register Chart.js components

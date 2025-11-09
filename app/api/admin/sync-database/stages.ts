@@ -17,7 +17,8 @@ import {
   pointReadingsAgg1d,
 } from "@/lib/db/schema-monitoring-points";
 import { createClient } from "@libsql/client";
-import { formatDateRange, fromUnixTimestamp } from "@/lib/date-utils";
+import { fromUnixTimestamp } from "@/lib/date-utils";
+import { formatDateTimeRange } from "@/lib/fe-date-format";
 import { rawClient } from "@/lib/db";
 
 // Sync configuration constants
@@ -74,7 +75,11 @@ function createProgressCallback(ctx: SyncContext, stageId: string) {
         Math.floor(rangeEnd.getTime() / 1000),
         600,
       );
-      const rangeStr = formatDateRange(rangeStartZoned, rangeEndZoned, true);
+      const rangeStr = formatDateTimeRange(
+        rangeStartZoned,
+        rangeEndZoned,
+        true,
+      );
       const batchStr = batchNum ? `Batch ${batchNum}: ` : "";
       detail = `${batchStr}Downloaded ${batchSize || cappedSynced} records from ${rangeStr} (${stagePercent}%)`;
     } else {
@@ -871,7 +876,7 @@ async function syncReadings(ctx: SyncContext) {
           Math.floor(lastTime.getTime() / 1000),
           600,
         );
-        dateRangeStr = ` (${formatDateRange(firstZoned, lastZoned, true)})`;
+        dateRangeStr = ` (${formatDateTimeRange(firstZoned, lastZoned, true)})`;
       }
       return `Synced ${synced.toLocaleString()} readings${dateRangeStr}`;
     },
@@ -1009,7 +1014,7 @@ async function syncSessions(ctx: SyncContext) {
           Math.floor(lastTime.getTime() / 1000),
           600,
         );
-        dateRangeStr = ` (${formatDateRange(firstZoned, lastZoned, true)})`;
+        dateRangeStr = ` (${formatDateTimeRange(firstZoned, lastZoned, true)})`;
       }
       return `Synced ${synced.toLocaleString()} sessions${dateRangeStr}`;
     },
@@ -1645,7 +1650,7 @@ async function syncPointReadings(ctx: SyncContext) {
           Math.floor(lastTime.getTime() / 1000),
           600,
         );
-        dateRangeStr = ` (${formatDateRange(firstZoned, lastZoned, true)})`;
+        dateRangeStr = ` (${formatDateTimeRange(firstZoned, lastZoned, true)})`;
       }
       return `Synced ${synced.toLocaleString()} point_readings${dateRangeStr}`;
     },

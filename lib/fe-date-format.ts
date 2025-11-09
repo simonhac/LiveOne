@@ -8,7 +8,7 @@
  * Returns time in 12-hour format with no leading zero and lowercase am/pm
  * Date in short month format
  *
- * @param date - Date to format (Date object or ISO string)
+ * @param date - Date to format (Date object or ISO string) - must not be null
  * @param options - Formatting options
  * @returns Object with formatted strings and metadata
  *
@@ -21,7 +21,7 @@ export function formatDateTime(
   options: {
     includeSeconds?: boolean;
     includeDate?: boolean;
-  } = {}
+  } = {},
 ): {
   time: string;
   date: string;
@@ -31,7 +31,7 @@ export function formatDateTime(
   const { includeSeconds = true, includeDate = true } = options;
 
   // Convert to Date object if string
-  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  const dateObj = typeof date === "string" ? new Date(date) : date;
 
   // Check if it's today
   const now = new Date();
@@ -45,19 +45,31 @@ export function formatDateTime(
   const minutes = dateObj.getMinutes();
   const seconds = dateObj.getSeconds();
 
-  const period = hours >= 12 ? 'pm' : 'am';
+  const period = hours >= 12 ? "pm" : "am";
   const displayHour = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
 
   // Build time string
-  let timeStr = `${displayHour}:${minutes.toString().padStart(2, '0')}`;
+  let timeStr = `${displayHour}:${minutes.toString().padStart(2, "0")}`;
   if (includeSeconds) {
-    timeStr += `:${seconds.toString().padStart(2, '0')}`;
+    timeStr += `:${seconds.toString().padStart(2, "0")}`;
   }
   timeStr += `\u00A0${period}`; // Non-breaking space before am/pm
 
   // Format date (short month)
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                  'Jul', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec'];
+  const months = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sept",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
   const day = dateObj.getDate();
   const month = months[dateObj.getMonth()];
   const year = dateObj.getFullYear();
@@ -75,13 +87,13 @@ export function formatDateTime(
     time: timeStr,
     date: dateStr,
     isToday,
-    display
+    display,
   };
 }
 
 /**
  * Format just the time portion
- * @param date - Date to format
+ * @param date - Date to format - must not be null
  * @param includeSeconds - Whether to include seconds
  * @returns Formatted time string
  */
@@ -91,7 +103,7 @@ export function formatTime(date: Date | string, includeSeconds = true): string {
 
 /**
  * Format just the date portion
- * @param date - Date to format
+ * @param date - Date to format - must not be null
  * @returns Formatted date string
  */
 export function formatDate(date: Date | string): string {
@@ -149,11 +161,11 @@ export function formatDuration(ms: number): string {
 
 /**
  * Format a relative time (e.g., "5 minutes ago", "in 2 hours")
- * @param date - Date to compare to now
+ * @param date - Date to compare to now - must not be null
  * @returns Relative time string
  */
 export function formatRelativeTime(date: Date | string): string {
-  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  const dateObj = typeof date === "string" ? new Date(date) : date;
   const now = new Date();
   const diffMs = now.getTime() - dateObj.getTime();
   const absDiffMs = Math.abs(diffMs);
@@ -162,7 +174,7 @@ export function formatRelativeTime(date: Date | string): string {
   if (absDiffMs < 60000) {
     const seconds = Math.floor(absDiffMs / 1000);
     if (seconds < 5) {
-      return 'just now';
+      return "just now";
     }
     return diffMs > 0 ? `${seconds}s ago` : `in ${seconds}s`;
   }
@@ -214,4 +226,98 @@ export function formatSecondsSince(seconds: number): string {
 
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+/**
+ * Format a date/time range for display
+ * Intelligently handles same day, same month, same year cases
+ *
+ * @param start - Start of the range (ZonedDateTime)
+ * @param end - End of the range (ZonedDateTime)
+ * @param includeTime - Whether to include time in the output (default: false)
+ * @returns Formatted range string
+ *
+ * Examples:
+ * - Same point: "2 Sept 2025" or "4:30pm, 2 Sept 2025"
+ * - Same day: "4:30pm – 7:35pm, 2 Sept 2025"
+ * - Same month: "3 – 5 Sept 2025"
+ * - Same year: "28 Nov – 3 Dec 2025" or "4:35pm, 2 Oct – 7:10am, 11 Nov 2024"
+ * - Different years: "30 Dec 2024 – 2 Jan 2025"
+ */
+export function formatDateTimeRange(
+  start: import("@internationalized/date").ZonedDateTime,
+  end: import("@internationalized/date").ZonedDateTime,
+  includeTime = false,
+): string {
+  // Determine if we need to show minutes (if either time has non-zero minutes)
+  const needMinutes = includeTime && (start.minute !== 0 || end.minute !== 0);
+
+  // Helper to format time in 12-hour format (e.g., "4:30pm" or "4:00pm" if needMinutes)
+  const formatTimeInner = (
+    zdt: import("@internationalized/date").ZonedDateTime,
+  ): string => {
+    const hour = zdt.hour;
+    const minute = zdt.minute;
+    const period = hour >= 12 ? "pm" : "am";
+    const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+    // Include minutes if needed (either time has non-zero minutes)
+    const minuteStr = needMinutes
+      ? `:${String(minute).padStart(2, "0")}`
+      : minute === 0
+        ? ""
+        : `:${String(minute).padStart(2, "0")}`;
+    return `${displayHour}${minuteStr}${period}`;
+  };
+
+  // Helper to format month using locale (e.g., "Sep", "Oct")
+  const formatMonth = (month: number): string => {
+    const date = new Date(2000, month - 1, 1);
+    return date.toLocaleDateString("en-AU", { month: "short" });
+  };
+
+  // Check if it's the same point in time
+  if (start.compare(end) === 0) {
+    if (includeTime) {
+      return `${formatTimeInner(start)}, ${start.day} ${formatMonth(start.month)} ${start.year}`;
+    }
+    return `${start.day} ${formatMonth(start.month)} ${start.year}`;
+  }
+
+  const sameDay =
+    start.year === end.year &&
+    start.month === end.month &&
+    start.day === end.day;
+  const sameYear = start.year === end.year;
+
+  if (includeTime) {
+    if (sameDay) {
+      // Same day, different times: "4:30pm – 7:35pm, 2 Sep 2025"
+      return `${formatTimeInner(start)} – ${formatTimeInner(end)}, ${start.day} ${formatMonth(start.month)} ${start.year}`;
+    } else if (sameYear) {
+      // Different days, same year: "4:35pm, 2 Oct – 7:10am, 11 Nov 2024"
+      return `${formatTimeInner(start)}, ${start.day} ${formatMonth(start.month)} – ${formatTimeInner(end)}, ${end.day} ${formatMonth(end.month)} ${end.year}`;
+    } else {
+      // Different years: "4:35pm, 30 Dec 2024 – 7:10am, 2 Jan 2025"
+      return `${formatTimeInner(start)}, ${start.day} ${formatMonth(start.month)} ${start.year} – ${formatTimeInner(end)}, ${end.day} ${formatMonth(end.month)} ${end.year}`;
+    }
+  } else {
+    // Date-only formatting (no time)
+    if (sameDay) {
+      // Same day: "2 Sep 2025" (not "2 – 2 Sep 2025")
+      return `${start.day} ${formatMonth(start.month)} ${start.year}`;
+    }
+
+    const sameMonth = start.year === end.year && start.month === end.month;
+
+    if (sameMonth) {
+      // Same month and year: "3 – 5 Sep 2025"
+      return `${start.day} – ${end.day} ${formatMonth(end.month)} ${end.year}`;
+    } else if (sameYear) {
+      // Different months, same year: "28 Nov – 3 Dec 2025"
+      return `${start.day} ${formatMonth(start.month)} – ${end.day} ${formatMonth(end.month)} ${end.year}`;
+    } else {
+      // Different years: "30 Dec 2024 – 2 Jan 2025"
+      return `${start.day} ${formatMonth(start.month)} ${start.year} – ${end.day} ${formatMonth(end.month)} ${end.year}`;
+    }
+  }
 }

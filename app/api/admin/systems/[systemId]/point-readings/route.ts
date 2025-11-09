@@ -146,10 +146,17 @@ export async function GET(
     };
 
     // Build headers map from key to PointInfo
-    const headers: Record<string, any> = {
-      timestamp: null, // Special column, no point info
-      sessionLabel: null, // Special column, no point info
-    };
+    const headers: Record<string, any> = {};
+
+    // Add timestamp or date header first
+    if (source === "daily") {
+      headers.date = null; // Special column for daily data (YYYYMMDD string)
+    } else {
+      headers.timestamp = null; // Special column for raw/5m data (Unix timestamp)
+    }
+
+    // Add session label second
+    headers.sessionLabel = null; // Special column, no point info
 
     sortedPoints.forEach((p) => {
       // For agg data, append the summary type to the extension field
@@ -357,10 +364,16 @@ export async function GET(
         row.session_label || row.session_id?.toString() || null;
 
       const transformed: any = {
-        timestamp: row.measurement_time, // Return raw Unix timestamp (epochMs)
         sessionLabel: sessionLabel,
         sessionId: row.session_id || null,
       };
+
+      // For daily data, use "date" field; for others, use "timestamp"
+      if (source === "daily") {
+        transformed.date = row.measurement_time; // YYYYMMDD string
+      } else {
+        transformed.timestamp = row.measurement_time; // Unix timestamp (epochMs)
+      }
 
       // Add point values in sorted order
       sortedPoints.forEach((p) => {

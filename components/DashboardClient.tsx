@@ -23,12 +23,8 @@ import { fetchAndProcessMondoData } from "@/lib/mondo-data-processor";
 import EnergyFlowSankey from "@/components/EnergyFlowSankey";
 import { calculateEnergyFlowMatrix } from "@/lib/energy-flow-matrix";
 import PeriodSwitcher from "@/components/PeriodSwitcher";
-import { formatDateTime } from "@/lib/fe-date-format";
-import {
-  formatDateRange,
-  fromUnixTimestamp,
-  getNextMinuteBoundary,
-} from "@/lib/date-utils";
+import { formatDateTime, formatDateTimeRange } from "@/lib/fe-date-format";
+import { fromUnixTimestamp, getNextMinuteBoundary } from "@/lib/date-utils";
 import {
   encodeUrlDate,
   decodeUrlDate,
@@ -1326,14 +1322,14 @@ export default function DashboardClient({
                                         return (
                                           <>
                                             <span className="hidden sm:inline">
-                                              {formatDateRange(
+                                              {formatDateTimeRange(
                                                 start,
                                                 end,
                                                 mondoPeriod !== "30D",
                                               )}
                                             </span>
                                             <span className="sm:hidden">
-                                              {formatDateRange(
+                                              {formatDateTimeRange(
                                                 start,
                                                 end,
                                                 false,
@@ -1365,14 +1361,14 @@ export default function DashboardClient({
                                           return (
                                             <>
                                               <span className="hidden sm:inline">
-                                                {formatDateRange(
+                                                {formatDateTimeRange(
                                                   start,
                                                   end,
                                                   mondoPeriod !== "30D",
                                                 )}
                                               </span>
                                               <span className="sm:hidden">
-                                                {formatDateRange(
+                                                {formatDateTimeRange(
                                                   start,
                                                   end,
                                                   false,
@@ -1404,14 +1400,14 @@ export default function DashboardClient({
                                           return (
                                             <>
                                               <span className="hidden sm:inline">
-                                                {formatDateRange(
+                                                {formatDateTimeRange(
                                                   start,
                                                   end,
                                                   mondoPeriod !== "30D",
                                                 )}
                                               </span>
                                               <span className="sm:hidden">
-                                                {formatDateRange(
+                                                {formatDateTimeRange(
                                                   start,
                                                   end,
                                                   false,
