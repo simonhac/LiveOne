@@ -359,78 +359,70 @@ export default function PointReadingInspectorModal({
 
             {!error && (
               <div className="border border-gray-700 rounded-md overflow-hidden">
-                <table className="w-full table-fixed">
+                <table className="w-full">
                   <thead className="bg-gray-800 sticky top-0">
                     <tr>
                       <th
-                        className="px-3 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700"
-                        style={{
-                          width: "208px",
-                          minWidth: "208px",
-                          maxWidth: "208px",
-                        }}
+                        className="px-2 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700"
+                        style={{ width: "208px" }}
                       >
                         Time
                       </th>
                       <th
-                        className="px-3 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700"
-                        style={{
-                          width: "144px",
-                          minWidth: "144px",
-                          maxWidth: "144px",
-                        }}
+                        className="px-2 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700"
+                        style={{ width: "144px" }}
                       >
                         Session
                       </th>
                       {/* 5m columns */}
                       <th
-                        className={`px-3 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 w-20 ${dataSource === "raw" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" ? "hidden" : ""}`}
                       >
                         Avg
                       </th>
                       <th
-                        className={`px-3 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 w-20 ${dataSource === "raw" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" ? "hidden" : ""}`}
                       >
                         Min
                       </th>
                       <th
-                        className={`px-3 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 w-20 ${dataSource === "raw" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" ? "hidden" : ""}`}
                       >
                         Max
                       </th>
                       <th
-                        className={`px-3 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 w-20 ${dataSource === "raw" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" ? "hidden" : ""}`}
                       >
                         Last
                       </th>
                       <th
-                        className={`px-3 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 w-20 ${dataSource === "raw" || header.transform !== "d" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" || header.transform !== "d" ? "hidden" : ""}`}
                       >
                         Delta
                       </th>
                       <th
-                        className={`px-3 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 w-20 ${dataSource === "raw" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" ? "hidden" : ""}`}
                       >
                         Samples
                       </th>
                       <th
-                        className={`px-3 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 w-20 ${dataSource === "raw" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" ? "hidden" : ""}`}
                       >
                         Errors
                       </th>
                       {/* Raw columns */}
                       <th
-                        className={`px-3 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 w-24 ${dataSource === "5m" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "5m" ? "hidden" : ""}`}
                       >
                         Value
                       </th>
                       <th
-                        className={`px-3 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700 w-24 ${dataSource === "5m" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "5m" ? "hidden" : ""}`}
                       >
                         Quality
                       </th>
                       <th
-                        className={`px-3 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "5m" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "5m" ? "hidden" : ""}`}
                       >
                         Error
                       </th>
@@ -556,28 +548,14 @@ export default function PointReadingInspectorModal({
                               key={displayIndex}
                               className={`h-7 ${bgColor} ${isTarget ? "font-medium" : ""} hover:bg-gray-700/50 transition-colors`}
                             >
-                              <td
-                                className="py-1 px-2 text-xs text-gray-300 whitespace-nowrap font-mono"
-                                style={{
-                                  width: "208px",
-                                  minWidth: "208px",
-                                  maxWidth: "208px",
-                                }}
-                              >
+                              <td className="py-1 px-2 text-xs text-gray-300 whitespace-nowrap font-mono">
                                 {reading![timeField] != null
                                   ? formatDateTime(
                                       new Date(reading![timeField]!),
                                     ).display
                                   : "—"}
                               </td>
-                              <td
-                                className="py-1 px-2 text-xs text-gray-400"
-                                style={{
-                                  width: "144px",
-                                  minWidth: "144px",
-                                  maxWidth: "144px",
-                                }}
-                              >
+                              <td className="py-1 px-2 text-xs text-gray-400">
                                 {reading!.sessionLabel ? (
                                   <button
                                     onClick={() =>
