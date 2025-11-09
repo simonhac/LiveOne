@@ -37,6 +37,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       extension: null,
       metricType: "power",
       metricUnit: "W",
+      transform: null,
     },
   },
 
@@ -53,6 +54,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       extension: "remote",
       metricType: "power",
       metricUnit: "W",
+      transform: null,
     },
   },
 
@@ -69,6 +71,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       extension: "local",
       metricType: "power",
       metricUnit: "W",
+      transform: null,
     },
   },
 
@@ -85,6 +88,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       extension: null,
       metricType: "power",
       metricUnit: "W",
+      transform: null,
     },
   },
 
@@ -101,6 +105,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       extension: null,
       metricType: "power",
       metricUnit: "W",
+      transform: null,
     },
   },
 
@@ -117,6 +122,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       extension: null,
       metricType: "power",
       metricUnit: "W",
+      transform: null,
     },
   },
 
@@ -137,6 +143,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       extension: null,
       metricType: "soc",
       metricUnit: "%",
+      transform: null,
     },
   },
 
@@ -153,6 +160,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       extension: null,
       metricType: "code",
       metricUnit: "text",
+      transform: null,
     },
   },
 
@@ -169,6 +177,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       extension: null,
       metricType: "time",
       metricUnit: "epochMs",
+      transform: null,
     },
   },
 
@@ -185,6 +194,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       extension: null,
       metricType: "active",
       metricUnit: "bool",
+      transform: null,
     },
   },
 
@@ -203,8 +213,9 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       type: "source",
       subtype: "solar",
       extension: null,
-      metricType: "energy_monotonic",
+      metricType: "energy",
       metricUnit: "Wh",
+      transform: "d",
     },
   },
   {
@@ -217,8 +228,9 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       type: "load",
       subtype: null,
       extension: null,
-      metricType: "energy_monotonic",
+      metricType: "energy",
       metricUnit: "Wh",
+      transform: "d",
     },
   },
   {
@@ -231,8 +243,9 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       type: "bidi",
       subtype: "battery",
       extension: "charge",
-      metricType: "energy_monotonic",
+      metricType: "energy",
       metricUnit: "Wh",
+      transform: "d",
     },
   },
   {
@@ -245,8 +258,9 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       type: "bidi",
       subtype: "battery",
       extension: "discharge",
-      metricType: "energy_monotonic",
+      metricType: "energy",
       metricUnit: "Wh",
+      transform: "d",
     },
   },
   {
@@ -259,8 +273,9 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       type: "bidi",
       subtype: "grid",
       extension: "import",
-      metricType: "energy_monotonic",
+      metricType: "energy",
       metricUnit: "Wh",
+      transform: "d",
     },
   },
   {
@@ -273,8 +288,9 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       type: "bidi",
       subtype: "grid",
       extension: "export",
-      metricType: "energy_monotonic",
+      metricType: "energy",
       metricUnit: "Wh",
+      transform: "d",
     },
   },
 ];

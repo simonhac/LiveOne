@@ -50,7 +50,7 @@ import {
   MoreHorizontal,
   ChevronLeft,
   ChevronRight,
-  Table,
+  Database,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -1102,7 +1102,7 @@ export default function DashboardClient({
                             }}
                             className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
                           >
-                            <Table className="w-4 h-4" />
+                            <Database className="w-4 h-4" />
                             View Data
                           </button>
                           <div className="border-t border-gray-700 my-1"></div>

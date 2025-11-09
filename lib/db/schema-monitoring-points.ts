@@ -37,7 +37,7 @@ export const pointInfo = sqliteTable(
     shortName: text("short_name"), // Optional short name (letters, digits, underscore only) - used in history API IDs
 
     // Type and unit
-    metricType: text("metric_type").notNull(), // eg. 'power', 'energy', 'energy_monotonic', 'soc'
+    metricType: text("metric_type").notNull(), // eg. 'power', 'energy', 'soc'
     metricUnit: text("metric_unit").notNull(), // eg. 'W', 'Wh', '%'
 
     // Flags

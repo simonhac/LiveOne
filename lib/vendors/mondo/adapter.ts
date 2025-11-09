@@ -264,6 +264,7 @@ export class MondoAdapter extends BaseVendorAdapter {
               subsystem,
               metricType: "power",
               metricUnit: "W",
+              transform: null,
             },
             rawValue: row.energyNowW,
             measurementTime,
@@ -273,15 +274,16 @@ export class MondoAdapter extends BaseVendorAdapter {
             error: null,
           });
 
-          // Add energy reading (monotonic total)
+          // Add energy reading (monotonic total with differentiate transform)
           readingsToInsert.push({
             pointMetadata: {
               originId: row.monitoringPointId,
               originSubId: "totalEnergyWh",
               defaultName: row.monitoringPointName,
               subsystem,
-              metricType: "energy_monotonic",
+              metricType: "energy",
               metricUnit: "Wh",
+              transform: "d",
             },
             rawValue: row.totalEnergyWh,
             measurementTime,

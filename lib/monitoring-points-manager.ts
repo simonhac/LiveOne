@@ -24,6 +24,7 @@ export interface PointMetadata {
   extension?: string | null;
   metricType: string;
   metricUnit: string;
+  transform: string | null;
 }
 
 /**
@@ -98,6 +99,7 @@ export async function ensurePointInfo(
       extension: metadata.extension || null,
       metricType: metadata.metricType,
       metricUnit: metadata.metricUnit,
+      transform: metadata.transform,
       created: Date.now(),
     })
     .onConflictDoUpdate({
@@ -105,6 +107,8 @@ export async function ensurePointInfo(
       set: {
         // Update default name from source if it changed
         defaultName: metadata.defaultName,
+        // Update transform if it changed
+        transform: metadata.transform,
       },
     })
     .returning();

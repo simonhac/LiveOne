@@ -71,6 +71,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
   const [syncMetadata, setSyncMetadata] = useState(false);
   const [daysToSync, setDaysToSync] = useState(1);
   const [recordCounts, setRecordCounts] = useState<Record<string, number>>({});
+  const initialDefaultSet = useRef(false);
 
   const fetchSettings = async () => {
     try {
@@ -533,16 +534,16 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
     fetchSettings();
   }, []);
 
-  // Set default daysToSync based on hasSyncStatus when databaseInfo loads
+  // Set default daysToSync based on hasSyncStatus when databaseInfo loads (only once)
   useEffect(() => {
-    if (databaseInfo && daysToSync === 1) {
-      // Only update if still at the default value (1)
-      // If hasSyncStatus is true, default to automatic (-1)
+    if (databaseInfo && !initialDefaultSet.current) {
+      // Only update on initial load, not when user changes the value
       if (databaseInfo.hasSyncStatus) {
         setDaysToSync(-1);
       }
+      initialDefaultSet.current = true;
     }
-  }, [databaseInfo, daysToSync]);
+  }, [databaseInfo]);
 
   // Update stages when syncMetadata or daysToSync changes (only if dialog is open and not started)
   useEffect(() => {

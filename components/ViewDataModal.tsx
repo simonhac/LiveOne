@@ -336,10 +336,7 @@ export default function ViewDataModal({
     // From here on, value should be a number
     const numValue = Number(value);
 
-    if (header.type === "energy_monotonic") {
-      // Convert Wh to MWh for monotonic energy (divide by 1,000,000)
-      return `${(numValue / 1000000).toFixed(1)}`;
-    } else if (header.type === "energy") {
+    if (header.type === "energy") {
       // Display interval energy in Wh (no conversion)
       return `${numValue.toFixed(0)}`;
     } else if (header.type === "power") {
@@ -364,9 +361,7 @@ export default function ViewDataModal({
     // Session label has no type/unit display
     if (header.key === "sessionLabel") return "";
 
-    if (header.type === "energy_monotonic") {
-      return "MWh-mono";
-    } else if (header.type === "energy") {
+    if (header.type === "energy") {
       return "Wh";
     } else if (header.type === "power") {
       // For power, we'll show kW for most values
@@ -831,7 +826,7 @@ export default function ViewDataModal({
                             )
                           ) : (
                             <span
-                              className={`font-mono text-xs ${getSubsystemColor(header.subsystem)}`}
+                              className={`font-mono text-xs hover:underline ${getSubsystemColor(header.subsystem)}`}
                             >
                               {formatValue(row[header.key], header)}
                             </span>

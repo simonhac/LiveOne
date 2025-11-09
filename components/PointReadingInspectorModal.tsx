@@ -276,6 +276,9 @@ export default function PointReadingInspectorModal({
                   <span className="font-mono text-gray-300 ml-3">
                     {pointPath}
                   </span>
+                  <span className="font-mono text-gray-500 ml-3">
+                    {header.type} ({header.unit || "—"})
+                  </span>
                 </div>
               )}
               {header.active && (
@@ -309,10 +312,24 @@ export default function PointReadingInspectorModal({
                 <table className="w-full table-fixed">
                   <thead className="bg-gray-800 sticky top-0">
                     <tr>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700 w-40">
+                      <th
+                        className="px-3 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700"
+                        style={{
+                          width: "208px",
+                          minWidth: "208px",
+                          maxWidth: "208px",
+                        }}
+                      >
                         Time
                       </th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700 w-32">
+                      <th
+                        className="px-3 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700"
+                        style={{
+                          width: "144px",
+                          minWidth: "144px",
+                          maxWidth: "144px",
+                        }}
+                      >
                         Session
                       </th>
                       {/* 5m columns */}
@@ -489,13 +506,28 @@ export default function PointReadingInspectorModal({
                               key={displayIndex}
                               className={`h-7 ${bgColor} ${isTarget ? "font-medium" : ""} hover:bg-gray-700/50 transition-colors`}
                             >
-                              <td className="py-1 px-2 text-xs text-gray-300 whitespace-nowrap font-mono">
-                                {
-                                  formatDateTime(new Date(reading![timeField]!))
-                                    .display
-                                }
+                              <td
+                                className="py-1 px-2 text-xs text-gray-300 whitespace-nowrap font-mono"
+                                style={{
+                                  width: "208px",
+                                  minWidth: "208px",
+                                  maxWidth: "208px",
+                                }}
+                              >
+                                {reading![timeField] != null
+                                  ? formatDateTime(
+                                      new Date(reading![timeField]!),
+                                    ).display
+                                  : "—"}
                               </td>
-                              <td className="py-1 px-2 text-xs text-gray-400">
+                              <td
+                                className="py-1 px-2 text-xs text-gray-400"
+                                style={{
+                                  width: "144px",
+                                  minWidth: "144px",
+                                  maxWidth: "144px",
+                                }}
+                              >
                                 {reading!.sessionLabel ? (
                                   <button
                                     onClick={() =>
