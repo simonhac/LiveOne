@@ -1296,10 +1296,12 @@ async function prepareForSync(ctx: SyncContext) {
 
   // Step 3: Load Clerk ID mappings
   const clerkMappings = new Map<string, string>();
+  let clerkMappingsCount = 0;
 
   try {
     const mappings = await ctx.db.select().from(clerkIdMapping);
     console.log(`[SYNC] Found ${mappings.length} Clerk ID mappings`);
+    clerkMappingsCount = mappings.length;
 
     for (const mapping of mappings) {
       clerkMappings.set(mapping.prodClerkId, mapping.devClerkId);
@@ -1307,129 +1309,83 @@ async function prepareForSync(ctx: SyncContext) {
         `[SYNC] Loaded mapping: ${mapping.username} - prod:${mapping.prodClerkId.slice(0, 15)}... -> dev:${mapping.devClerkId.slice(0, 15)}...`,
       );
     }
-
-    const mapClerkId = (
-      prodId: string | null | undefined,
-    ): string | undefined => {
-      if (!prodId) return undefined;
-      const mapped = clerkMappings.get(prodId);
-      if (!mapped) {
-        console.log(
-          `Warning: No dev Clerk ID mapping for production ID: ${prodId} - skipping`,
-        );
-      }
-      return mapped;
-    };
-
-    // Step 4: Build system ID mappings (non-destructive - just match existing systems)
-    const systemIdMappings = new Map<number, number>();
-
-    try {
-      // Get all production systems
-      const prodSystems = await client.execute("SELECT * FROM systems");
-
-      // Get all dev systems and index by vendor_type:vendor_site_id
-      const devSystems = await ctx.db.select().from(systems);
-      const devSystemsMap = new Map<string, (typeof devSystems)[0]>();
-      for (const devSys of devSystems) {
-        const key = `${devSys.vendorType}:${devSys.vendorSiteId}`;
-        devSystemsMap.set(key, devSys);
-      }
-
-      // Match prod systems to dev systems by vendor_type:vendor_site_id
-      for (const sys of prodSystems.rows) {
-        const prodSystemId = sys.id as number;
-        const vendorType = sys.vendor_type as string;
-        const vendorSiteId = sys.vendor_site_id as string;
-        const key = `${vendorType}:${vendorSiteId}`;
-
-        // Check if this system exists in dev
-        const existingDevSystem = devSystemsMap.get(key);
-        if (existingDevSystem) {
-          systemIdMappings.set(prodSystemId, existingDevSystem.id);
-          console.log(
-            `[SYNC] System mapping: prod ${prodSystemId} (${key}) -> dev ${existingDevSystem.id}`,
-          );
-        }
-      }
-
-      console.log(`[SYNC] Built ${systemIdMappings.size} system ID mappings`);
-
-      const mapSystemId = (prodSystemId: number): number | undefined => {
-        const mapped = systemIdMappings.get(prodSystemId);
-        if (!mapped) {
-          console.warn(
-            `Warning: No dev system ID mapping for production ID: ${prodSystemId}`,
-          );
-        }
-        return mapped;
-      };
-
-      return {
-        detail: `${localDetail}, ${mappings.length} Clerk mappings, ${systemIdMappings.size} system mappings`,
-        context: {
-          localLatestTime,
-          prodDb: client,
-          clerkMappings,
-          mapClerkId,
-          systemIdMappings,
-          mapSystemId,
-        },
-      };
-    } catch (err: any) {
-      console.error("[SYNC] Error building system ID mappings:", err.message);
-
-      const mapSystemId = (prodSystemId: number): number | undefined => {
-        console.warn(
-          `Warning: No dev system ID mapping for production ID: ${prodSystemId}`,
-        );
-        return undefined;
-      };
-
-      return {
-        detail: `${localDetail}, ${mappings.length} Clerk mappings, 0 system mappings`,
-        context: {
-          localLatestTime,
-          prodDb: client,
-          clerkMappings,
-          mapClerkId,
-          systemIdMappings,
-          mapSystemId,
-        },
-      };
-    }
   } catch (err: any) {
     console.error("[SYNC] Error loading Clerk ID mappings:", err.message);
+    // Continue without Clerk mappings - system mappings can still work
+  }
 
-    const mapClerkId = (
-      prodId: string | null | undefined,
-    ): string | undefined => {
+  const mapClerkId = (
+    prodId: string | null | undefined,
+  ): string | undefined => {
+    if (!prodId) return undefined;
+    const mapped = clerkMappings.get(prodId);
+    if (!mapped) {
       console.log(
         `Warning: No dev Clerk ID mapping for production ID: ${prodId} - skipping`,
       );
-      return undefined;
-    };
+    }
+    return mapped;
+  };
 
-    const systemIdMappings = new Map<number, number>();
-    const mapSystemId = (prodSystemId: number): number | undefined => {
+  // Step 4: Build system ID mappings (non-destructive - just match existing systems)
+  const systemIdMappings = new Map<number, number>();
+
+  try {
+    // Get all production systems
+    const prodSystems = await client.execute("SELECT * FROM systems");
+
+    // Get all dev systems and index by vendor_type:vendor_site_id
+    const devSystems = await ctx.db.select().from(systems);
+    const devSystemsMap = new Map<string, (typeof devSystems)[0]>();
+    for (const devSys of devSystems) {
+      const key = `${devSys.vendorType}:${devSys.vendorSiteId}`;
+      devSystemsMap.set(key, devSys);
+    }
+
+    // Match prod systems to dev systems by vendor_type:vendor_site_id
+    for (const sys of prodSystems.rows) {
+      const prodSystemId = sys.id as number;
+      const vendorType = sys.vendor_type as string;
+      const vendorSiteId = sys.vendor_site_id as string;
+      const key = `${vendorType}:${vendorSiteId}`;
+
+      // Check if this system exists in dev
+      const existingDevSystem = devSystemsMap.get(key);
+      if (existingDevSystem) {
+        systemIdMappings.set(prodSystemId, existingDevSystem.id);
+        console.log(
+          `[SYNC] System mapping: prod ${prodSystemId} (${key}) -> dev ${existingDevSystem.id}`,
+        );
+      }
+    }
+
+    console.log(`[SYNC] Built ${systemIdMappings.size} system ID mappings`);
+  } catch (err: any) {
+    console.error("[SYNC] Error building system ID mappings:", err.message);
+    // Continue with empty system mappings - sessions/readings will be skipped
+  }
+
+  const mapSystemId = (prodSystemId: number): number | undefined => {
+    const mapped = systemIdMappings.get(prodSystemId);
+    if (!mapped) {
       console.warn(
         `Warning: No dev system ID mapping for production ID: ${prodSystemId}`,
       );
-      return undefined;
-    };
+    }
+    return mapped;
+  };
 
-    return {
-      detail: `${localDetail}, no mappings`,
-      context: {
-        localLatestTime,
-        prodDb: client,
-        clerkMappings,
-        mapClerkId,
-        systemIdMappings,
-        mapSystemId,
-      },
-    };
-  }
+  return {
+    detail: `${localDetail}, ${clerkMappingsCount} Clerk mappings, ${systemIdMappings.size} system mappings`,
+    context: {
+      localLatestTime,
+      prodDb: client,
+      clerkMappings,
+      mapClerkId,
+      systemIdMappings,
+      mapSystemId,
+    },
+  };
 }
 
 // Stage 10: Sync point_info (monitoring points metadata)

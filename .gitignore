@@ -84,3 +84,4 @@ liveone_backup.sql
 log/*.log
 log/*-migration.log
 log/*-validation.log
+*.corrupt
