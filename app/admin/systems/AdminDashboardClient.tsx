@@ -50,6 +50,7 @@ interface SystemData {
   location?: any; // Location data
   metadata?: any; // Vendor-specific metadata (e.g., composite system configuration)
   compositeSourceSystems?: Array<{ id: number; shortName: string | null }>; // Only present for composite systems
+  timezoneOffsetMin: number; // Timezone offset in minutes
   systemInfo?: SystemInfo | null;
   polling: {
     isActive: boolean;
@@ -154,12 +155,14 @@ export default function AdminDashboardClient() {
     systemName: string | null;
     vendorType: string | null;
     vendorSiteId: string | null;
+    timezoneOffsetMin: number | null;
   }>({
     isOpen: false,
     systemId: null,
     systemName: null,
     vendorType: null,
     vendorSiteId: null,
+    timezoneOffsetMin: null,
   });
 
   const openTestModal = (system: SystemData) => {
@@ -485,6 +488,7 @@ export default function AdminDashboardClient() {
                                 systemName: system.displayName,
                                 vendorType: system.vendor.type,
                                 vendorSiteId: system.vendor.siteId,
+                                timezoneOffsetMin: system.timezoneOffsetMin,
                               });
                             }}
                           />
@@ -747,7 +751,8 @@ export default function AdminDashboardClient() {
         viewDataModal.systemId &&
         viewDataModal.systemName &&
         viewDataModal.vendorType &&
-        viewDataModal.vendorSiteId && (
+        viewDataModal.vendorSiteId &&
+        viewDataModal.timezoneOffsetMin !== null && (
           <ViewDataModal
             isOpen={viewDataModal.isOpen}
             onClose={() =>
@@ -757,12 +762,14 @@ export default function AdminDashboardClient() {
                 systemName: null,
                 vendorType: null,
                 vendorSiteId: null,
+                timezoneOffsetMin: null,
               })
             }
             systemId={viewDataModal.systemId}
             systemName={viewDataModal.systemName}
             vendorType={viewDataModal.vendorType}
             vendorSiteId={viewDataModal.vendorSiteId}
+            timezoneOffsetMin={viewDataModal.timezoneOffsetMin}
           />
         )}
     </>

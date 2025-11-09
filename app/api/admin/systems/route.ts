@@ -157,6 +157,7 @@ export async function GET(request: NextRequest) {
         metadata: system.metadata, // Vendor-specific metadata (e.g., composite system configuration)
         compositeSourceSystems, // Only present for composite systems
         status: system.status, // System status: active, disabled, or removed
+        timezoneOffsetMin: system.timezoneOffsetMin, // Timezone offset in minutes
         systemInfo: {
           model: system.model,
           serial: system.serial,
