@@ -767,11 +767,9 @@ async function main() {
     if (options.system) {
       systemIds = [parseInt(options.system)];
     } else {
-      // Get all systems from the database, excluding craighack
+      // Get all systems from the database
       const result = await db.execute({
-        sql: `SELECT id FROM systems
-              WHERE vendor_type != 'craighack'
-              ORDER BY id`,
+        sql: `SELECT id FROM systems ORDER BY id`,
       });
       systemIds = result.rows.map((row: any) => row.id);
       console.log(

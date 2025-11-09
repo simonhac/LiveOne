@@ -333,43 +333,6 @@ async function getSystemHistoryInOpenNEMFormat(
   endTime: ZonedDateTime | CalendarDate,
   interval: "5m" | "30m" | "1d",
 ): Promise<{ series: OpenNEMDataSeries[]; debug?: any }> {
-  // Special handling for craighack systems (combine systems 2 & 3)
-  if (system.vendorType === "craighack") {
-    // Get both systems' data and combine them
-    const systemsManager = SystemsManager.getInstance();
-
-    try {
-      const system2 = await systemsManager.getSystem(2);
-      const system3 = await systemsManager.getSystem(3);
-
-      if (!system2 || !system3) {
-        throw new Error("Unable to fetch craighack systems 2 and 3");
-      }
-
-      // Fetch data for both systems (fields are extracted dynamically)
-      const [data2, data3] = await Promise.all([
-        HistoryService.getHistoryInOpenNEMFormat(
-          system2,
-          startTime,
-          endTime,
-          interval,
-        ),
-        HistoryService.getHistoryInOpenNEMFormat(
-          system3,
-          startTime,
-          endTime,
-          interval,
-        ),
-      ]);
-
-      // Combine all data
-      return { series: [...data2, ...data3] };
-    } catch (error) {
-      console.error("Error fetching craighack data:", error);
-      throw error;
-    }
-  }
-
   // Special handling for composite systems
   if (system.vendorType === "composite") {
     const systemsManager = SystemsManager.getInstance();

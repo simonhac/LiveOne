@@ -214,11 +214,7 @@ export async function GET(request: NextRequest) {
           system.id,
         );
 
-        if (
-          !credentials &&
-          adapter.vendorType !== "craighack" &&
-          adapter.vendorType !== "fronius"
-        ) {
+        if (!credentials && adapter.vendorType !== "fronius") {
           console.error(
             `[Cron] No credentials found for ${system.vendorType} system ${system.id}`,
           );

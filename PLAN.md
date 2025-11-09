@@ -3,6 +3,7 @@
 ## Current State
 
 ### What We've Built
+
 1. **Abstraction Layer** (`lib/history/`)
    - `types.ts`: Defines `HistoryDataProvider` interface and `MeasurementPointSeries` type
    - `readings-provider.ts`: Provider for standard readings table
@@ -19,6 +20,7 @@
    - System uses union type `CalendarDate | ZonedDateTime` for intervalEnd
 
 ### Current Problems
+
 1. The existing `/api/history` endpoint doesn't use our new abstraction
 2. Mondo systems (point_readings) show "Charts coming soon" in the dashboard
 3. The history API requires a `fields` parameter that we want to remove
@@ -34,6 +36,7 @@
    - For point_readings systems: map points to standard fields initially
 
 2. **Integration with new abstraction**
+
    ```typescript
    // Instead of old fetchHistoryData + buildDataSeries
    const systemsManager = SystemsManager.getInstance();
@@ -45,12 +48,11 @@
      startTime,
      endTime,
      interval,
-     ['solar', 'load', 'battery', 'grid'] // Fixed fields for now
+     ["solar", "load", "battery", "grid"], // Fixed fields for now
    );
    ```
 
 3. **Handle special cases**
-   - Keep the craighack system combination logic (systems 2 & 3)
    - Ensure response format matches existing API exactly
 
 ### Phase 2: Validate Compatibility

@@ -63,6 +63,11 @@ export default async function DashboardPage({ params }: PageProps) {
 
   const systemExists = !!system;
 
+  // Block access to removed systems (even for admins)
+  if (system && system.status === "removed") {
+    redirect("/dashboard");
+  }
+
   // Check if user has access to this system
   let hasAccess = false;
 

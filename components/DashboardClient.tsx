@@ -177,7 +177,7 @@ interface DashboardClientProps {
 
 // Helper function to get stale threshold based on vendor type
 function getStaleThreshold(vendorType?: string): number {
-  // 35 minutes (2100 seconds) for Enphase, 5 minutes (300 seconds) for selectronic and craighack
+  // 35 minutes (2100 seconds) for Enphase, 5 minutes (300 seconds) for selectronic
   return vendorType === "enphase" ? 2100 : 300;
 }
 

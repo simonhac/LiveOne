@@ -135,6 +135,16 @@ export async function GET(request: NextRequest) {
           ? await getCompositeSourceSystems(system.metadata)
           : undefined;
 
+      // Handle unknown vendor types gracefully (e.g., removed systems with legacy vendors)
+      let dataStore: "readings" | "point_readings" = "readings";
+      try {
+        dataStore = VendorRegistry.getDataStore(system.vendorType);
+      } catch (error) {
+        console.warn(
+          `Unknown vendor type "${system.vendorType}" for system ${system.id}, defaulting to "readings"`,
+        );
+      }
+
       systemsData.push({
         systemId: system.id, // Our internal ID
         owner: {
@@ -151,7 +161,7 @@ export async function GET(request: NextRequest) {
           siteId: system.vendorSiteId, // Vendor's identifier
           userId: null, // Don't fetch credentials to reduce API calls
           supportsPolling: VendorRegistry.supportsPolling(system.vendorType),
-          dataStore: VendorRegistry.getDataStore(system.vendorType),
+          dataStore,
         },
         location: system.location, // Location data (address, city/state/country, or lat/lon)
         metadata: system.metadata, // Vendor-specific metadata (e.g., composite system configuration)
