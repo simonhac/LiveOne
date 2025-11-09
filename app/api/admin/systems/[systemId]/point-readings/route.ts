@@ -47,8 +47,8 @@ export async function GET(
     const systemId = parseInt(systemIdStr);
     const { searchParams } = new URL(request.url);
     const limit = Math.min(parseInt(searchParams.get("limit") || "200"), 1000);
-    const dataSource = searchParams.get("dataSource") || "raw"; // "raw" or "5m"
-    const cursor = searchParams.get("cursor"); // timestamp cursor for pagination
+    const source = searchParams.get("source") || "raw"; // "raw", "5m", or "daily"
+    const cursor = searchParams.get("cursor"); // timestamp cursor for pagination (or day for daily)
     const direction = searchParams.get("direction") || "newer"; // "older" or "newer"
 
     // Track database elapsed time
@@ -125,8 +125,18 @@ export async function GET(
       return aName.localeCompare(bName);
     });
 
-    // Determine which aggregate column to use for each point (when using 5m data)
-    const getAggColumn = (metricType: string, transform: string | null) => {
+    // Determine which aggregate column to use for each point (when using 5m or daily data)
+    const getAggColumn = (
+      metricType: string,
+      transform: string | null,
+      src: string,
+    ) => {
+      if (src === "daily") {
+        // For daily data: delta for energy (transform='d'), avg for everything else
+        if (transform === "d") return "delta";
+        return "avg";
+      }
+      // For 5m data:
       // Points with transform='d' use delta column
       if (transform === "d") return "delta";
       // Power points use average
@@ -135,64 +145,95 @@ export async function GET(
       return "last";
     };
 
-    // Build headers with metadata for each column
-    const headers = [
-      {
-        key: "timestamp",
-        label: "Time",
-        pointInfo: null, // Special column, no point info
-      },
-      {
-        key: "sessionLabel",
-        label: "Session Label",
-        pointInfo: null, // Special column, no point info
-      },
-      ...sortedPoints.map((p) => {
-        // For agg data, append the summary type to the extension field
-        const aggColumn =
-          dataSource === "5m" ? getAggColumn(p.metricType, p.transform) : null;
-        const extension =
-          dataSource === "5m" && aggColumn
-            ? p.extension
-              ? `${p.extension}.${aggColumn}`
-              : aggColumn
-            : p.extension;
+    // Build headers map from key to PointInfo
+    const headers: Record<string, any> = {
+      timestamp: null, // Special column, no point info
+      sessionLabel: null, // Special column, no point info
+    };
 
-        // Create PointInfo with modified extension for 5m aggregates
-        const pointInfo = new PointInfo(
-          p.id,
-          systemId,
-          p.originId,
-          p.originSubId,
-          p.shortName,
-          p.defaultName,
-          p.displayName,
-          p.subsystem,
-          p.type,
-          p.subtype,
-          extension,
-          p.metricType,
-          p.metricUnit,
-          p.transform,
-          p.active,
-        );
+    sortedPoints.forEach((p) => {
+      // For agg data, append the summary type to the extension field
+      const aggColumn =
+        source === "5m" || source === "daily"
+          ? getAggColumn(p.metricType, p.transform, source)
+          : null;
+      const extension =
+        (source === "5m" || source === "daily") && aggColumn
+          ? p.extension
+            ? `${p.extension}.${aggColumn}`
+            : aggColumn
+          : p.extension;
 
-        return {
-          key: `point_${p.id}`,
-          label: p.displayName || p.defaultName,
-          pointInfo,
-        };
-      }),
-    ];
+      // Create PointInfo with modified extension for 5m aggregates
+      const pointInfo = new PointInfo(
+        p.id,
+        systemId,
+        p.originId,
+        p.originSubId,
+        p.shortName,
+        p.defaultName,
+        p.displayName,
+        p.subsystem,
+        p.type,
+        p.subtype,
+        extension,
+        p.metricType,
+        p.metricUnit,
+        p.transform,
+        p.active,
+      );
+
+      headers[`point_${p.id}`] = pointInfo;
+    });
 
     // Build dynamic SQL for pivot query based on data source
     let pivotQuery: string;
 
-    if (dataSource === "5m") {
+    if (source === "daily") {
+      // Query daily aggregated data
+      const pivotColumns = points
+        .map((p) => {
+          const aggCol = getAggColumn(p.metricType, p.transform, source);
+          return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.id} THEN pr.${aggCol} END) as point_${p.id}`;
+        })
+        .join(",\n  ");
+
+      // Build cursor filter (day is in YYYYMMDD format)
+      const cursorFilter = cursor
+        ? direction === "older"
+          ? `AND day < '${cursor}'`
+          : `AND day > '${cursor}'`
+        : "";
+
+      // For "newer" direction, we need to reverse the order to get the correct records
+      const orderDirection = direction === "newer" && cursor ? "ASC" : "DESC";
+
+      pivotQuery = `
+        WITH recent_days AS (
+          SELECT DISTINCT day
+          FROM point_readings_agg_1d pr
+          INNER JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
+          WHERE pi.system_id = ${systemId}
+          ${cursorFilter}
+          ORDER BY day ${orderDirection}
+          LIMIT ${limit}
+        )
+        SELECT
+          pr.day as measurement_time,
+          NULL as session_id,
+          NULL as session_label,
+          ${pivotColumns}
+        FROM point_readings_agg_1d pr
+        WHERE pr.system_id = ${systemId}
+          AND pr.day IN (SELECT day FROM recent_days)
+        GROUP BY pr.day
+        ORDER BY pr.day DESC
+      `;
+    } else if (source === "5m") {
       // Query 5-minute aggregated data
       const pivotColumns = points
         .map((p) => {
-          const aggCol = getAggColumn(p.metricType, p.transform);
+          const aggCol = getAggColumn(p.metricType, p.transform, source);
           return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.id} THEN pr.${aggCol} END) as point_${p.id}`;
         })
         .join(",\n  ");
@@ -274,14 +315,31 @@ export async function GET(
     }
 
     const pivotStartTime = Date.now();
-    const result = await db.all(sql.raw(pivotQuery));
+    let result: any[] = [];
+    try {
+      result = await db.all(sql.raw(pivotQuery));
+    } catch (error: any) {
+      // Handle case where table doesn't exist yet (e.g., migration not run)
+      if (error?.message?.includes("no such table")) {
+        console.warn(
+          `Table for ${source} data source not found. Returning empty result.`,
+        );
+        result = [];
+      } else {
+        throw error;
+      }
+    }
     dbElapsedMs += Date.now() - pivotStartTime;
 
-    // If no data, check if the other table has data
+    // If no data, check if the other tables have data
     let hasAlternativeData = false;
     if (result.length === 0) {
       const alternativeTableName =
-        dataSource === "raw" ? "point_readings_agg_5m" : "point_readings";
+        source === "raw"
+          ? "point_readings_agg_5m"
+          : source === "daily"
+            ? "point_readings"
+            : "point_readings";
       const checkStartTime = Date.now();
       const checkResult = (await db.all(
         sql.raw(
@@ -340,16 +398,34 @@ export async function GET(
 
     if (result.length > 0) {
       const tableName =
-        dataSource === "5m" ? "point_readings_agg_5m" : "point_readings";
+        source === "daily"
+          ? "point_readings_agg_1d"
+          : source === "5m"
+            ? "point_readings_agg_5m"
+            : "point_readings";
       const timeColumn =
-        dataSource === "5m" ? "interval_end" : "measurement_time";
+        source === "daily"
+          ? "day"
+          : source === "5m"
+            ? "interval_end"
+            : "measurement_time";
 
       const checkStartTime = Date.now();
+
+      // For daily data, cursor is a YYYYMMDD string; for others it's a timestamp
+      const olderCondition =
+        source === "daily"
+          ? `${timeColumn} < '${lastCursor}'`
+          : `${timeColumn} < ${lastCursor}`;
+      const newerCondition =
+        source === "daily"
+          ? `${timeColumn} > '${firstCursor}'`
+          : `${timeColumn} > ${firstCursor}`;
 
       // Check for older records
       const olderCheck = (await db.all(
         sql.raw(
-          `SELECT COUNT(*) as count FROM ${tableName} WHERE system_id = ${systemId} AND ${timeColumn} < ${lastCursor} LIMIT 1`,
+          `SELECT COUNT(*) as count FROM ${tableName} WHERE system_id = ${systemId} AND ${olderCondition} LIMIT 1`,
         ),
       )) as Array<{ count: number }>;
       hasOlder = (olderCheck[0]?.count || 0) > 0;
@@ -357,7 +433,7 @@ export async function GET(
       // Check for newer records
       const newerCheck = (await db.all(
         sql.raw(
-          `SELECT COUNT(*) as count FROM ${tableName} WHERE system_id = ${systemId} AND ${timeColumn} > ${firstCursor} LIMIT 1`,
+          `SELECT COUNT(*) as count FROM ${tableName} WHERE system_id = ${systemId} AND ${newerCondition} LIMIT 1`,
         ),
       )) as Array<{ count: number }>;
       hasNewer = (newerCheck[0]?.count || 0) > 0;

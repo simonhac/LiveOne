@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { decodeUrlDateToEpoch, decodeUrlOffset } from "@/lib/url-date";
+import { formatDateYYYYMMDD, parseDateYYYYMMDD } from "@/lib/date-utils";
 
 export async function GET(
   request: Request,
@@ -52,52 +53,126 @@ export async function GET(
     const timestampParam = searchParams.get("timestamp");
     const timeParam = searchParams.get("time"); // URL-encoded time
     const offsetParam = searchParams.get("offset"); // Timezone offset
-    const dataSource = searchParams.get("dataSource") || "raw";
+    const dateParam = searchParams.get("date"); // YYYYMMDD format for daily data
+    const source = searchParams.get("source") || "raw";
 
-    let timestamp: number;
+    let timestamp: number | null = null;
+    let targetDate: string | null = null;
 
-    if (timeParam && offsetParam) {
-      // Decode URL-encoded time with timezone
-      try {
-        const offsetMin = decodeUrlOffset(offsetParam);
-        timestamp = decodeUrlDateToEpoch(timeParam, offsetMin);
-      } catch (error) {
+    if (source === "daily") {
+      // For daily data, expect date parameter in YYYYMMDD format
+      if (!dateParam) {
         return NextResponse.json(
-          { error: "Invalid time or offset parameter" },
+          { error: "date parameter required for daily data source" },
           { status: 400 },
         );
       }
-    } else if (timestampParam) {
-      // Legacy: raw epoch milliseconds
-      timestamp = parseInt(timestampParam);
-      if (isNaN(timestamp) || !timestamp) {
-        return NextResponse.json(
-          { error: "Invalid timestamp parameter" },
-          { status: 400 },
-        );
-      }
+      targetDate = dateParam;
     } else {
+      // For raw and 5m data, expect timestamp
+      if (timeParam && offsetParam) {
+        // Decode URL-encoded time with timezone
+        try {
+          const offsetMin = decodeUrlOffset(offsetParam);
+          timestamp = decodeUrlDateToEpoch(timeParam, offsetMin);
+        } catch (error) {
+          return NextResponse.json(
+            { error: "Invalid time or offset parameter" },
+            { status: 400 },
+          );
+        }
+      } else if (timestampParam) {
+        // Legacy: raw epoch milliseconds
+        timestamp = parseInt(timestampParam);
+        if (isNaN(timestamp) || !timestamp) {
+          return NextResponse.json(
+            { error: "Invalid timestamp parameter" },
+            { status: 400 },
+          );
+        }
+      } else {
+        return NextResponse.json(
+          { error: "Either timestamp or time+offset parameters required" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (source !== "raw" && source !== "5m" && source !== "daily") {
       return NextResponse.json(
-        { error: "Either timestamp or time+offset parameters required" },
+        { error: "source must be 'raw', '5m', or 'daily'" },
         { status: 400 },
       );
     }
-
-    if (dataSource !== "raw" && dataSource !== "5m") {
-      return NextResponse.json(
-        { error: "dataSource must be 'raw' or '5m'" },
-        { status: 400 },
-      );
-    }
-
-    // Calculate ±1 hour window
-    const oneHour = 60 * 60 * 1000;
-    const startTime = timestamp - oneHour;
-    const endTime = timestamp + oneHour;
 
     let readings: any[] = [];
 
-    if (dataSource === "5m") {
+    if (source === "daily") {
+      // targetDate is guaranteed to be non-null by validation above
+      const date = parseDateYYYYMMDD(targetDate!);
+
+      // Fetch wider range: 9 days before and 9 days after
+      const startDay = date.subtract({ days: 9 });
+      const endDay = date.add({ days: 9 });
+
+      // Format as YYYYMMDD strings
+      const startDayStr = formatDateYYYYMMDD(startDay);
+      const endDayStr = formatDateYYYYMMDD(endDay);
+
+      // Query daily aggregated data
+      const query = `
+        SELECT
+          pr.system_id as systemId,
+          pr.point_id as pointId,
+          pr.day,
+          pr.avg,
+          pr.min,
+          pr.max,
+          pr.last,
+          pr.delta,
+          pr.sample_count as sampleCount,
+          pr.error_count as errorCount
+        FROM point_readings_agg_1d pr
+        WHERE pr.system_id = ${systemId}
+          AND pr.point_id = ${pointId}
+          AND pr.day >= '${startDayStr}'
+          AND pr.day <= '${endDayStr}'
+        ORDER BY pr.day ASC
+      `;
+
+      const allReadings = await db.all(sql.raw(query));
+
+      // Find target index
+      const targetIndex = allReadings.findIndex(
+        (r: any) => r.day === targetDate,
+      );
+
+      if (targetIndex === -1) {
+        // Target not found, return all readings
+        readings = allReadings;
+      } else {
+        // Calculate ideal range: 5 before, target, 5 after
+        let startIndex = Math.max(0, targetIndex - 5);
+        let endIndex = Math.min(allReadings.length, targetIndex + 6);
+
+        // If we don't have enough before, show more after (up to 10 after)
+        if (targetIndex < 5) {
+          endIndex = Math.min(allReadings.length, targetIndex + 11);
+        }
+
+        // If we don't have enough after, show more before (up to 10 before)
+        if (targetIndex + 6 > allReadings.length) {
+          startIndex = Math.max(0, targetIndex - 10);
+        }
+
+        readings = allReadings.slice(startIndex, endIndex);
+      }
+    } else if (source === "5m") {
+      // timestamp is guaranteed to be non-null for 5m data
+      const oneHour = 60 * 60 * 1000;
+      const startTime = timestamp! - oneHour;
+      const endTime = timestamp! + oneHour;
+
       // Query 5-minute aggregated data with session labels
       const query = `
         SELECT
@@ -150,6 +225,11 @@ export async function GET(
         readings = allReadings.slice(startIndex, endIndex);
       }
     } else {
+      // timestamp is guaranteed to be non-null for raw data
+      const oneHour = 60 * 60 * 1000;
+      const startTime = timestamp! - oneHour;
+      const endTime = timestamp! + oneHour;
+
       // Query raw point readings with session labels
       const query = `
         SELECT
@@ -207,10 +287,8 @@ export async function GET(
       metadata: {
         systemId,
         pointId,
-        timestamp,
-        dataSource,
-        windowStart: startTime,
-        windowEnd: endTime,
+        ...(source === "daily" ? { targetDate } : { timestamp }),
+        source,
         totalInWindow: readings.length,
       },
     });

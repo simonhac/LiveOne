@@ -17,7 +17,7 @@ interface PointReadingInspectorModalProps {
   isOpen: boolean;
   onClose: () => void;
   timestamp: number; // Unix timestamp in ms
-  initialDataSource: "raw" | "5m";
+  initialDataSource: "raw" | "5m" | "daily";
   pointInfo: PointInfo;
   system: SystemContext;
 }
@@ -50,7 +50,9 @@ export default function PointReadingInspectorModal({
   pointInfo,
   system,
 }: PointReadingInspectorModalProps) {
-  const [dataSource, setDataSource] = useState<"raw" | "5m">(initialDataSource);
+  const [source, setSource] = useState<"raw" | "5m" | "daily">(
+    initialDataSource,
+  );
   const [readings, setReadings] = useState<ReadingData[]>([]);
   const [loading, setLoading] = useState(false);
   const [showSpinner, setShowSpinner] = useState(false);
@@ -58,10 +60,10 @@ export default function PointReadingInspectorModal({
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
   const [isSessionInfoModalOpen, setIsSessionInfoModalOpen] = useState(false);
 
-  // Sync dataSource with initialDataSource when modal opens
+  // Sync source with initialDataSource when modal opens
   useEffect(() => {
     if (isOpen) {
-      setDataSource(initialDataSource);
+      setSource(initialDataSource);
     }
   }, [isOpen, initialDataSource]);
 
@@ -95,7 +97,7 @@ export default function PointReadingInspectorModal({
         );
         const encodedOffset = encodeUrlOffset(system.timezoneOffsetMin);
         const response = await fetch(
-          `/api/admin/point/${pointInfo.getIdentifier()}/readings?time=${encodedTime}&offset=${encodedOffset}&dataSource=${dataSource}`,
+          `/api/admin/point/${pointInfo.getIdentifier()}/readings?time=${encodedTime}&offset=${encodedOffset}&source=${source}`,
         );
 
         if (!response.ok) {
@@ -128,7 +130,7 @@ export default function PointReadingInspectorModal({
       cancelled = true;
       clearTimeout(spinnerTimeout);
     };
-  }, [isOpen, pointInfo, timestamp, dataSource, system.timezoneOffsetMin]);
+  }, [isOpen, pointInfo, timestamp, source, system.timezoneOffsetMin]);
 
   const handleSessionClick = async (sessionId: number | null) => {
     if (sessionId === null) return;
@@ -178,11 +180,11 @@ export default function PointReadingInspectorModal({
 
   // Find the target reading index (in chronological order, oldest first)
   const targetIndex = readings.findIndex((r) => {
-    const readingTime = dataSource === "5m" ? r.intervalEnd : r.measurementTime;
+    const readingTime = source === "5m" ? r.intervalEnd : r.measurementTime;
     return readingTime === timestamp;
   });
 
-  const timeField = dataSource === "5m" ? "intervalEnd" : "measurementTime";
+  const timeField = source === "5m" ? "intervalEnd" : "measurementTime";
 
   // Calculate which 11 readings to display (in reverse chronological order)
   // We want to show 5 before + target + 5 after, but adjust if we don't have enough on one side
@@ -258,14 +260,14 @@ export default function PointReadingInspectorModal({
             </span>
           </h2>
           <div className="flex items-center gap-3">
-            {/* Raw|5m switcher - matches ViewDataModal styling */}
+            {/* Raw|5m|Daily switcher - matches ViewDataModal styling */}
             <div className="flex">
               <button
-                onClick={() => setDataSource("raw")}
+                onClick={() => setSource("raw")}
                 className={`
                   px-3 py-1 text-xs font-medium transition-colors border rounded-l-md
                   ${
-                    dataSource === "raw"
+                    source === "raw"
                       ? "bg-blue-900/50 text-blue-300 border-blue-800 z-10"
                       : "bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300"
                   }
@@ -274,17 +276,30 @@ export default function PointReadingInspectorModal({
                 Raw
               </button>
               <button
-                onClick={() => setDataSource("5m")}
+                onClick={() => setSource("5m")}
                 className={`
-                  px-3 py-1 text-xs font-medium transition-colors border rounded-r-md -ml-px
+                  px-3 py-1 text-xs font-medium transition-colors border -ml-px
                   ${
-                    dataSource === "5m"
+                    source === "5m"
                       ? "bg-blue-900/50 text-blue-300 border-blue-800 z-10"
                       : "bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300"
                   }
                 `}
               >
                 5m
+              </button>
+              <button
+                onClick={() => setSource("daily")}
+                className={`
+                  px-3 py-1 text-xs font-medium transition-colors border rounded-r-md -ml-px
+                  ${
+                    source === "daily"
+                      ? "bg-blue-900/50 text-blue-300 border-blue-800 z-10"
+                      : "bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300"
+                  }
+                `}
+              >
+                Daily
               </button>
             </div>
             <button
@@ -357,53 +372,53 @@ export default function PointReadingInspectorModal({
                       </th>
                       {/* 5m columns */}
                       <th
-                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "raw" ? "hidden" : ""}`}
                       >
                         Avg
                       </th>
                       <th
-                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "raw" ? "hidden" : ""}`}
                       >
                         Min
                       </th>
                       <th
-                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "raw" ? "hidden" : ""}`}
                       >
                         Max
                       </th>
                       <th
-                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "raw" ? "hidden" : ""}`}
                       >
                         Last
                       </th>
                       <th
-                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" || pointInfo.transform !== "d" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "raw" || pointInfo.transform !== "d" ? "hidden" : ""}`}
                       >
                         Delta
                       </th>
                       <th
-                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "raw" ? "hidden" : ""}`}
                       >
                         Samples
                       </th>
                       <th
-                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "raw" ? "hidden" : ""}`}
                       >
                         Errors
                       </th>
                       {/* Raw columns */}
                       <th
-                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "5m" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "5m" ? "hidden" : ""}`}
                       >
                         Value
                       </th>
                       <th
-                        className={`px-2 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "5m" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "5m" ? "hidden" : ""}`}
                       >
                         Quality
                       </th>
                       <th
-                        className={`px-2 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "5m" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "5m" ? "hidden" : ""}`}
                       >
                         Error
                       </th>
@@ -443,7 +458,7 @@ export default function PointReadingInspectorModal({
                           const isTarget =
                             reading !== null &&
                             targetIndex !== -1 &&
-                            (dataSource === "5m"
+                            (source === "5m"
                               ? reading.intervalEnd
                               : reading.measurementTime) === timestamp;
 
@@ -469,53 +484,53 @@ export default function PointReadingInspectorModal({
                                 </td>
                                 {/* 5m columns */}
                                 <td
-                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" ? "hidden" : ""}`}
+                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
                                 <td
-                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" ? "hidden" : ""}`}
+                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
                                 <td
-                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" ? "hidden" : ""}`}
+                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
                                 <td
-                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" ? "hidden" : ""}`}
+                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
                                 <td
-                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" || pointInfo.transform !== "d" ? "hidden" : ""}`}
+                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" || pointInfo.transform !== "d" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
                                 <td
-                                  className={`py-1 px-2 text-xs text-gray-300 text-right ${dataSource === "raw" ? "hidden" : ""}`}
+                                  className={`py-1 px-2 text-xs text-gray-300 text-right ${source === "raw" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
                                 <td
-                                  className={`py-1 px-2 text-xs text-gray-300 text-right ${dataSource === "raw" ? "hidden" : ""}`}
+                                  className={`py-1 px-2 text-xs text-gray-300 text-right ${source === "raw" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
                                 {/* Raw columns */}
                                 <td
-                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "5m" ? "hidden" : ""}`}
+                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "5m" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
                                 <td
-                                  className={`py-1 px-2 text-xs text-gray-300 ${dataSource === "5m" ? "hidden" : ""}`}
+                                  className={`py-1 px-2 text-xs text-gray-300 ${source === "5m" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
                                 <td
-                                  className={`py-1 px-2 text-xs text-gray-300 truncate ${dataSource === "5m" ? "hidden" : ""}`}
+                                  className={`py-1 px-2 text-xs text-gray-300 truncate ${source === "5m" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
@@ -554,53 +569,53 @@ export default function PointReadingInspectorModal({
                               </td>
                               {/* 5m columns */}
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" ? "hidden" : ""}`}
                               >
                                 {formatColumnValue(reading!.avg, () =>
                                   readings.map((r) => r.avg),
                                 )}
                               </td>
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" ? "hidden" : ""}`}
                               >
                                 {formatColumnValue(reading!.min, () =>
                                   readings.map((r) => r.min),
                                 )}
                               </td>
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" ? "hidden" : ""}`}
                               >
                                 {formatColumnValue(reading!.max, () =>
                                   readings.map((r) => r.max),
                                 )}
                               </td>
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" ? "hidden" : ""}`}
                               >
                                 {formatColumnValue(reading!.last, () =>
                                   readings.map((r) => r.last),
                                 )}
                               </td>
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" || pointInfo.transform !== "d" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" || pointInfo.transform !== "d" ? "hidden" : ""}`}
                               >
                                 {formatColumnValue(reading!.delta, () =>
                                   readings.map((r) => r.delta),
                                 )}
                               </td>
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right ${dataSource === "raw" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-gray-300 text-right ${source === "raw" ? "hidden" : ""}`}
                               >
                                 {reading!.sampleCount ?? "—"}
                               </td>
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right ${dataSource === "raw" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-gray-300 text-right ${source === "raw" ? "hidden" : ""}`}
                               >
                                 {reading!.errorCount ?? "—"}
                               </td>
                               {/* Raw columns */}
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "5m" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "5m" ? "hidden" : ""}`}
                               >
                                 {reading!.valueStr ||
                                   formatColumnValue(reading!.value, () =>
@@ -608,12 +623,12 @@ export default function PointReadingInspectorModal({
                                   )}
                               </td>
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 ${dataSource === "5m" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-gray-300 ${source === "5m" ? "hidden" : ""}`}
                               >
                                 {reading!.dataQuality || "—"}
                               </td>
                               <td
-                                className={`py-1 px-2 text-xs truncate ${dataSource === "5m" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs truncate ${source === "5m" ? "hidden" : ""}`}
                               >
                                 {reading!.error ? (
                                   <span className="text-red-400">

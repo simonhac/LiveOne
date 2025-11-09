@@ -8,13 +8,6 @@ import SessionInfoModal from "./SessionInfoModal";
 import PointReadingInspectorModal from "./PointReadingInspectorModal";
 import { PointInfo } from "@/lib/point-info";
 
-interface ColumnHeader {
-  key: string;
-  label: string;
-  pointInfo: PointInfo | null; // null for special columns like timestamp/sessionLabel
-  derived?: boolean; // For frontend-added columns
-}
-
 interface ViewDataModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -34,7 +27,9 @@ export default function ViewDataModal({
   vendorSiteId,
   timezoneOffsetMin,
 }: ViewDataModalProps) {
-  const [headers, setHeaders] = useState<ColumnHeader[]>([]);
+  const [headers, setHeaders] = useState<Map<string, PointInfo | null>>(
+    new Map(),
+  );
   const [data, setData] = useState<any[]>([]);
   const [metadata, setMetadata] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -72,7 +67,7 @@ export default function ViewDataModal({
   const [isReadingInspectorOpen, setIsReadingInspectorOpen] = useState(false);
 
   const [showExtras, setShowExtras] = useState(true);
-  const [dataSource, setDataSource] = useState<"raw" | "5m">("raw");
+  const [source, setSource] = useState<"raw" | "5m" | "daily">("raw");
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
   const [isSessionInfoModalOpen, setIsSessionInfoModalOpen] = useState(false);
   const [rawDataUnavailable, setRawDataUnavailable] = useState(false);
@@ -102,7 +97,7 @@ export default function ViewDataModal({
       // Build URL with pagination parameters
       const params = new URLSearchParams({
         limit: "200",
-        dataSource,
+        source,
       });
 
       if (currentCursor !== null) {
@@ -116,25 +111,36 @@ export default function ViewDataModal({
       if (!response.ok) throw new Error("Failed to fetch data");
 
       const result = await response.json();
-      setHeaders(result.headers || []);
+
+      // Convert headers object to Map
+      const headersMap = new Map<string, PointInfo | null>();
+      if (result.headers) {
+        Object.entries(result.headers).forEach(([key, value]) => {
+          headersMap.set(key, value ? PointInfo.from(value as any) : null);
+        });
+      }
+
+      setHeaders(headersMap);
       setData(result.data || []);
       setMetadata(result.metadata || null);
       setPagination(result.pagination || null);
       setInitialLoad(false); // Mark initial load as complete
 
       // If no data in current view but alternative has data, switch views
+      // Only auto-switch between raw and 5m views, not daily
       if (
         result.data.length === 0 &&
-        result.metadata?.hasAlternativeData === true
+        result.metadata?.hasAlternativeData === true &&
+        source !== "daily"
       ) {
         console.log(
-          `[ViewDataModal] No ${dataSource} data but alternative has data, switching views`,
+          `[ViewDataModal] No ${source} data but alternative has data, switching views`,
         );
         // Track if raw data is unavailable so we can disable the button
-        if (dataSource === "raw") {
+        if (source === "raw") {
           setRawDataUnavailable(true);
         }
-        setDataSource(dataSource === "raw" ? "5m" : "raw");
+        setSource(source === "raw" ? "5m" : "raw");
       }
     } catch (error) {
       console.error("Error fetching point readings:", error);
@@ -142,7 +148,7 @@ export default function ViewDataModal({
       setLoading(false);
       fetchingRef.current = false;
     }
-  }, [systemId, dataSource, currentCursor, cursorDirection]);
+  }, [systemId, source, currentCursor, cursorDirection]);
 
   useEffect(() => {
     if (isOpen) {
@@ -153,7 +159,7 @@ export default function ViewDataModal({
       setInitialLoad(true);
       fetchingRef.current = false; // Reset fetch guard
       setRawDataUnavailable(false); // Reset raw data unavailable flag
-      setDataSource("raw"); // Reset to default view
+      setSource("raw"); // Reset to default view
       setCurrentCursor(null); // Reset pagination
       setCursorDirection("newer");
       setPagination(null);
@@ -161,13 +167,13 @@ export default function ViewDataModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]); // Intentionally exclude fetchData to prevent double calls
 
-  // Refetch when data source changes
+  // Refetch when source changes
   useEffect(() => {
     if (isOpen) {
       fetchData();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataSource]);
+  }, [source]);
 
   // Refetch when pagination changes
   useEffect(() => {
@@ -193,11 +199,11 @@ export default function ViewDataModal({
     return () => document.removeEventListener("keydown", handleEscape);
   }, [isOpen, isPointInfoModalOpen, isReadingInspectorOpen, onClose]);
 
-  const handleDataSourceChange = (newSource: "raw" | "5m") => {
+  const handleSourceChange = (newSource: "raw" | "5m" | "daily") => {
     // Set loading state immediately for instant UI feedback
-    if (newSource !== dataSource) {
+    if (newSource !== source) {
       setLoading(true);
-      setDataSource(newSource);
+      setSource(newSource);
       // Reset pagination when switching data sources
       setCurrentCursor(null);
       setCursorDirection("newer");
@@ -221,32 +227,30 @@ export default function ViewDataModal({
     }
   };
 
-  const handleColumnHeaderClick = (header: ColumnHeader) => {
+  const handleColumnHeaderClick = (
+    key: string,
+    pointInfo: PointInfo | null,
+  ) => {
     // Only open modal for point columns (not timestamp or sessionLabel)
-    if (
-      header.key === "timestamp" ||
-      header.key === "sessionLabel" ||
-      !header.pointInfo
-    )
-      return;
+    if (key === "timestamp" || key === "sessionLabel" || !pointInfo) return;
 
     setSelectedPointInfo({
-      pointDbId: header.pointInfo.id,
-      systemId: header.pointInfo.systemId,
-      originId: header.pointInfo.originId,
-      originSubId: header.pointInfo.originSubId,
-      subsystem: header.pointInfo.subsystem,
-      type: header.pointInfo.type,
-      subtype: header.pointInfo.subtype,
-      extension: header.pointInfo.extension,
-      defaultName: header.pointInfo.defaultName,
-      displayName: header.pointInfo.displayName,
-      shortName: header.pointInfo.shortName,
-      active: header.pointInfo.active,
-      transform: header.pointInfo.transform,
-      metricType: header.pointInfo.metricType,
-      metricUnit: header.pointInfo.metricUnit,
-      derived: header.derived || false,
+      pointDbId: pointInfo.id,
+      systemId: pointInfo.systemId,
+      originId: pointInfo.originId,
+      originSubId: pointInfo.originSubId,
+      subsystem: pointInfo.subsystem,
+      type: pointInfo.type,
+      subtype: pointInfo.subtype,
+      extension: pointInfo.extension,
+      defaultName: pointInfo.defaultName,
+      displayName: pointInfo.displayName,
+      shortName: pointInfo.shortName,
+      active: pointInfo.active,
+      transform: pointInfo.transform,
+      metricType: pointInfo.metricType,
+      metricUnit: pointInfo.metricUnit,
+      derived: false,
       vendorSiteId: vendorSiteId,
       systemShortName: metadata?.systemShortName || undefined,
       ownerUsername: metadata?.ownerUsername || "",
@@ -325,31 +329,34 @@ export default function ViewDataModal({
   };
 
   // Format value based on metric type
-  const formatValue = (value: number | string | null, header: ColumnHeader) => {
+  const formatValue = (
+    value: number | string | null,
+    pointInfo: PointInfo | null,
+  ) => {
     if (value === null) return "-";
 
     // Handle text values (like fault codes)
-    if (header.pointInfo?.metricUnit === "text" || typeof value === "string") {
+    if (pointInfo?.metricUnit === "text" || typeof value === "string") {
       return String(value);
     }
 
     // From here on, value should be a number
     const numValue = Number(value);
 
-    if (header.pointInfo?.metricType === "energy") {
+    if (pointInfo?.metricType === "energy") {
       // For differentiated points in raw view, show as MWh with 3 decimal places
-      if (header.pointInfo?.transform === "d" && dataSource === "raw") {
+      if (pointInfo?.transform === "d" && source === "raw") {
         const mwh = numValue / 1_000_000;
         return `${mwh.toFixed(3)}`;
       }
       // Otherwise display in Wh (no conversion)
       return `${numValue.toFixed(0)}`;
-    } else if (header.pointInfo?.metricType === "power") {
+    } else if (pointInfo?.metricType === "power") {
       // Always show power in kW to match header unit
       const kw = numValue / 1000;
       // Only show decimal if not a whole number
       return kw % 1 === 0 ? `${kw.toFixed(0)}` : `${kw.toFixed(1)}`;
-    } else if (header.pointInfo?.metricUnit === "epochMs") {
+    } else if (pointInfo?.metricUnit === "epochMs") {
       // Check for epoch 0 (Jan 1, 1970 00:00:00)
       if (numValue === 0) {
         return "epoch0";
@@ -364,27 +371,27 @@ export default function ViewDataModal({
   };
 
   // Get unit display for header
-  const getUnitDisplay = (header: ColumnHeader) => {
+  const getUnitDisplay = (key: string, pointInfo: PointInfo | null) => {
     // Session label has no type/unit display
-    if (header.key === "sessionLabel") return "";
+    if (key === "sessionLabel") return "";
 
-    if (header.pointInfo?.metricType === "energy") {
+    if (pointInfo?.metricType === "energy") {
       // For differentiated points in raw view, show MWh
-      if (header.pointInfo?.transform === "d" && dataSource === "raw") {
+      if (pointInfo?.transform === "d" && source === "raw") {
         return "MWh";
       }
       return "Wh";
-    } else if (header.pointInfo?.metricType === "power") {
+    } else if (pointInfo?.metricType === "power") {
       // For power, we'll show kW for most values
       return "kW";
     } else if (
-      header.pointInfo?.metricType === "time" &&
-      header.pointInfo?.metricUnit === "epochMs"
+      pointInfo?.metricType === "time" &&
+      pointInfo?.metricUnit === "epochMs"
     ) {
       // Show just "time" for time columns
       return "time";
-    } else if (header.pointInfo?.metricUnit) {
-      return header.pointInfo.metricUnit;
+    } else if (pointInfo?.metricUnit) {
+      return pointInfo.metricUnit;
     }
     return "";
   };
@@ -407,47 +414,55 @@ export default function ViewDataModal({
     }
   };
 
+  // Get label for column header
+  const getHeaderLabel = (key: string, pointInfo: PointInfo | null): string => {
+    if (key === "timestamp") return "Time";
+    if (key === "sessionLabel") return "Session";
+    return pointInfo?.displayName || pointInfo?.defaultName || key;
+  };
+
   // Get series ID suffix (without the liveone.mondo.{system} prefix)
-  const getSeriesIdSuffix = (header: ColumnHeader) => {
+  const getSeriesIdSuffix = (key: string, pointInfo: PointInfo | null) => {
     // Must have pointType to be a valid series
-    if (!header.pointInfo?.type) {
+    if (!pointInfo?.type) {
       console.log(
-        `[ViewData] ${header.label}: NO pointType - skipping (subtype=${header.pointInfo?.subtype}, ext=${header.pointInfo?.extension}, metricType=${header.pointInfo?.metricType})`,
+        `[ViewData] ${getHeaderLabel(key, pointInfo)}: NO pointType - skipping (subtype=${pointInfo?.subtype}, ext=${pointInfo?.extension}, metricType=${pointInfo?.metricType})`,
       );
       return null;
     }
 
     const parts = [];
-    if (header.pointInfo.type) parts.push(header.pointInfo.type);
-    if (header.pointInfo.subtype) parts.push(header.pointInfo.subtype);
-    if (header.pointInfo.extension) parts.push(header.pointInfo.extension);
-    if (header.pointInfo.metricType) parts.push(header.pointInfo.metricType); // metricType
+    if (pointInfo.type) parts.push(pointInfo.type);
+    if (pointInfo.subtype) parts.push(pointInfo.subtype);
+    if (pointInfo.extension) parts.push(pointInfo.extension);
+    if (pointInfo.metricType) parts.push(pointInfo.metricType); // metricType
 
     const seriesId = parts.join(".");
     console.log(
-      `[ViewData] ${header.label}: pointType=${header.pointInfo.type}, subtype=${header.pointInfo.subtype}, ext=${header.pointInfo.extension}, metricType=${header.pointInfo.metricType} => seriesId=${seriesId || "NULL"}`,
+      `[ViewData] ${getHeaderLabel(key, pointInfo)}: pointType=${pointInfo.type}, subtype=${pointInfo.subtype}, ext=${pointInfo.extension}, metricType=${pointInfo.metricType} => seriesId=${seriesId || "NULL"}`,
     );
     return seriesId || null;
   };
 
   // Filter headers based on showExtras state
-  const filteredHeaders = headers.filter((header) => {
-    // Always show timestamp and session columns
-    if (header.key === "timestamp" || header.key === "sessionLabel")
-      return true;
-    // Show columns with series ID only if they are active
-    if (getSeriesIdSuffix(header) && header.pointInfo?.active) return true;
-    // Only show other columns (inactive with series ID, or no series ID) if showExtras is true
-    return showExtras;
-  });
+  const filteredHeaders = Array.from(headers.entries()).filter(
+    ([key, pointInfo]) => {
+      // Always show timestamp and session columns
+      if (key === "timestamp" || key === "sessionLabel") return true;
+      // Show columns with series ID only if they are active
+      if (getSeriesIdSuffix(key, pointInfo) && pointInfo?.active) return true;
+      // Only show other columns (inactive with series ID, or no series ID) if showExtras is true
+      return showExtras;
+    },
+  );
 
   // Generate CSS for column hover effect (exclude timestamp and sessionLabel columns)
   // Memoize to prevent re-rendering and flashing when hovering
   const columnHoverStyles = useMemo(() => {
     return filteredHeaders
-      .map((header, colIndex) => {
+      .map(([key], colIndex) => {
         // Don't add hover effect for timestamp or sessionLabel columns
-        if (header.key === "timestamp" || header.key === "sessionLabel") {
+        if (key === "timestamp" || key === "sessionLabel") {
           return "";
         }
         return `
@@ -463,13 +478,15 @@ export default function ViewDataModal({
 
   // Helper component to render a header cell with common logic
   const HeaderCell = ({
-    header,
+    headerKey,
+    pointInfo,
     colIndex,
     rowKey,
     isLastRow = false,
     children,
   }: {
-    header: ColumnHeader;
+    headerKey: string;
+    pointInfo: PointInfo | null;
     colIndex: number;
     rowKey: string;
     isLastRow?: boolean;
@@ -477,29 +494,30 @@ export default function ViewDataModal({
   }) => {
     // Only consider active columns with series IDs for divider positioning
     const hasActiveSeriesId =
-      getSeriesIdSuffix(header) !== null && header.pointInfo?.active;
+      getSeriesIdSuffix(headerKey, pointInfo) !== null && pointInfo?.active;
     const nextHeader = filteredHeaders[colIndex + 1];
     const nextHasActiveSeriesId = nextHeader
-      ? getSeriesIdSuffix(nextHeader) !== null && nextHeader.pointInfo?.active
+      ? getSeriesIdSuffix(nextHeader[0], nextHeader[1]) !== null &&
+        nextHeader[1]?.active
       : false;
     const isLastSeriesIdColumn = hasActiveSeriesId && !nextHasActiveSeriesId;
     const isSpecialColumn =
-      header.key === "timestamp" || header.key === "sessionLabel";
+      headerKey === "timestamp" || headerKey === "sessionLabel";
 
     return (
       <th
-        key={`${header.key}-${rowKey}`}
+        key={`${headerKey}-${rowKey}`}
         data-col={colIndex}
         className={`py-1 ${isLastRow ? "pb-2" : ""} px-2 align-top bg-gray-900 ${
           !isSpecialColumn ? "text-right" : ""
         } ${
-          !isSpecialColumn && header.pointInfo?.id ? "cursor-pointer" : ""
+          !isSpecialColumn && pointInfo?.id ? "cursor-pointer" : ""
         } ${isLastSeriesIdColumn ? "border-r border-gray-700" : ""} ${
-          !header.pointInfo?.active && !isSpecialColumn ? "opacity-50" : ""
+          !pointInfo?.active && !isSpecialColumn ? "opacity-50" : ""
         }`}
-        onClick={() => handleColumnHeaderClick(header)}
+        onClick={() => handleColumnHeaderClick(headerKey, pointInfo)}
         title={
-          !isSpecialColumn && header.pointInfo?.id
+          !isSpecialColumn && pointInfo?.id
             ? "Click to edit point info"
             : undefined
         }
@@ -573,7 +591,7 @@ export default function ViewDataModal({
             {/* Data Source Toggle */}
             <div className="inline-flex rounded-md shadow-sm" role="group">
               <button
-                onClick={() => handleDataSourceChange("raw")}
+                onClick={() => handleSourceChange("raw")}
                 disabled={rawDataUnavailable}
                 title={
                   rawDataUnavailable
@@ -583,7 +601,7 @@ export default function ViewDataModal({
                 className={`
                   px-3 py-1 text-xs font-medium transition-colors border rounded-l-md -ml-px
                   ${
-                    dataSource === "raw"
+                    source === "raw"
                       ? "bg-blue-900/50 text-blue-300 border-blue-800 z-10"
                       : rawDataUnavailable
                         ? "bg-gray-800 text-gray-600 border-gray-700 cursor-not-allowed"
@@ -594,17 +612,30 @@ export default function ViewDataModal({
                 Raw
               </button>
               <button
-                onClick={() => handleDataSourceChange("5m")}
+                onClick={() => handleSourceChange("5m")}
                 className={`
-                  px-3 py-1 text-xs font-medium transition-colors border rounded-r-md -ml-px
+                  px-3 py-1 text-xs font-medium transition-colors border -ml-px
                   ${
-                    dataSource === "5m"
+                    source === "5m"
                       ? "bg-blue-900/50 text-blue-300 border-blue-800 z-10"
                       : "bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300"
                   }
                 `}
               >
                 5m
+              </button>
+              <button
+                onClick={() => handleSourceChange("daily")}
+                className={`
+                  px-3 py-1 text-xs font-medium transition-colors border rounded-r-md -ml-px
+                  ${
+                    source === "daily"
+                      ? "bg-blue-900/50 text-blue-300 border-blue-800 z-10"
+                      : "bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300"
+                  }
+                `}
+              >
+                Daily
               </button>
             </div>
             <button
@@ -643,24 +674,25 @@ export default function ViewDataModal({
               <thead className="sticky top-0 text-left text-gray-400 bg-gray-900 z-10">
                 {/* Row 1: Name */}
                 <tr className="bg-gray-900">
-                  {filteredHeaders.map((header, colIndex) => (
+                  {filteredHeaders.map(([key, pointInfo], colIndex) => (
                     <HeaderCell
-                      key={`${header.key}-row1`}
-                      header={header}
+                      key={`${key}-row1`}
+                      headerKey={key}
+                      pointInfo={pointInfo}
                       colIndex={colIndex}
                       rowKey="row1"
                     >
-                      {header.key === "timestamp" ? (
+                      {key === "timestamp" ? (
                         <span className="text-gray-300">Name</span>
-                      ) : header.key === "sessionLabel" ? (
+                      ) : key === "sessionLabel" ? (
                         <span className="text-gray-300">Session</span>
                       ) : (
                         <span
-                          className={`${getSubsystemColor(header.pointInfo?.subsystem || null)} ${
-                            !header.pointInfo?.active ? "line-through" : ""
+                          className={`${getSubsystemColor(pointInfo?.subsystem || null)} ${
+                            !pointInfo?.active ? "line-through" : ""
                           }`}
                         >
-                          {header.label}
+                          {getHeaderLabel(key, pointInfo)}
                         </span>
                       )}
                     </HeaderCell>
@@ -668,25 +700,26 @@ export default function ViewDataModal({
                 </tr>
                 {/* Row 2: Series ID */}
                 <tr className="bg-gray-900">
-                  {filteredHeaders.map((header, colIndex) => (
+                  {filteredHeaders.map(([key, pointInfo], colIndex) => (
                     <HeaderCell
-                      key={`${header.key}-row2`}
-                      header={header}
+                      key={`${key}-row2`}
+                      headerKey={key}
+                      pointInfo={pointInfo}
                       colIndex={colIndex}
                       rowKey="row2"
                     >
-                      {header.key === "timestamp" ? (
+                      {key === "timestamp" ? (
                         <span className="text-gray-300">Series</span>
-                      ) : header.key === "sessionLabel" ? (
+                      ) : key === "sessionLabel" ? (
                         <div></div>
-                      ) : getSeriesIdSuffix(header) ? (
+                      ) : getSeriesIdSuffix(key, pointInfo) ? (
                         <span
                           className={`text-xs text-gray-500 font-mono ${
-                            !header.pointInfo?.active ? "line-through" : ""
+                            !pointInfo?.active ? "line-through" : ""
                           }`}
                           dangerouslySetInnerHTML={{
                             __html:
-                              getSeriesIdSuffix(header)?.replace(
+                              getSeriesIdSuffix(key, pointInfo)?.replace(
                                 /\./g,
                                 ".<wbr />",
                               ) || "",
@@ -700,24 +733,25 @@ export default function ViewDataModal({
                 </tr>
                 {/* Row 3: Short name */}
                 <tr className="bg-gray-900">
-                  {filteredHeaders.map((header, colIndex) => (
+                  {filteredHeaders.map(([key, pointInfo], colIndex) => (
                     <HeaderCell
-                      key={`${header.key}-row3`}
-                      header={header}
+                      key={`${key}-row3`}
+                      headerKey={key}
+                      pointInfo={pointInfo}
                       colIndex={colIndex}
                       rowKey="row3"
                     >
-                      {header.key === "timestamp" ? (
+                      {key === "timestamp" ? (
                         <span className="text-gray-300">Alias</span>
-                      ) : header.key === "sessionLabel" ? (
+                      ) : key === "sessionLabel" ? (
                         <div></div>
-                      ) : header.pointInfo?.shortName ? (
+                      ) : pointInfo?.shortName ? (
                         <span
-                          className={`text-xs ${getSubsystemColor(header.pointInfo?.subsystem || null)} ${
-                            !header.pointInfo?.active ? "line-through" : ""
+                          className={`text-xs ${getSubsystemColor(pointInfo?.subsystem || null)} ${
+                            !pointInfo?.active ? "line-through" : ""
                           }`}
                         >
-                          {header.pointInfo.shortName}
+                          {pointInfo.shortName}
                         </span>
                       ) : (
                         <div></div>
@@ -727,21 +761,22 @@ export default function ViewDataModal({
                 </tr>
                 {/* Row 4: Type and Unit */}
                 <tr className="bg-gray-900 border-b border-gray-700 border-t border-t-gray-600">
-                  {filteredHeaders.map((header, colIndex) => (
+                  {filteredHeaders.map(([key, pointInfo], colIndex) => (
                     <HeaderCell
-                      key={`${header.key}-row4`}
-                      header={header}
+                      key={`${key}-row4`}
+                      headerKey={key}
+                      pointInfo={pointInfo}
                       colIndex={colIndex}
                       rowKey="row4"
                       isLastRow
                     >
-                      {getUnitDisplay(header) ? (
+                      {getUnitDisplay(key, pointInfo) ? (
                         <span
                           className={`text-xs text-gray-400 ${
-                            !header.pointInfo?.active ? "line-through" : ""
+                            !pointInfo?.active ? "line-through" : ""
                           }`}
                         >
-                          {getUnitDisplay(header)}
+                          {getUnitDisplay(key, pointInfo)}
                         </span>
                       ) : (
                         <div></div>
@@ -758,86 +793,63 @@ export default function ViewDataModal({
                       idx % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"
                     } hover:bg-gray-700/50 transition-colors`}
                   >
-                    {filteredHeaders.map((header, colIndex) => {
+                    {filteredHeaders.map(([key, pointInfo], colIndex) => {
                       // Only consider active columns with series IDs for divider positioning
                       const hasActiveSeriesId =
-                        getSeriesIdSuffix(header) !== null &&
-                        header.pointInfo?.active;
+                        getSeriesIdSuffix(key, pointInfo) !== null &&
+                        pointInfo?.active;
                       const nextHeader = filteredHeaders[colIndex + 1];
                       const nextHasActiveSeriesId = nextHeader
-                        ? getSeriesIdSuffix(nextHeader) !== null &&
-                          nextHeader.pointInfo?.active
+                        ? getSeriesIdSuffix(nextHeader[0], nextHeader[1]) !==
+                            null && nextHeader[1]?.active
                         : false;
                       const isLastSeriesIdColumn =
                         hasActiveSeriesId && !nextHasActiveSeriesId;
 
-                      // Get background color for derived points
-                      const getDerivedBg = (header: ColumnHeader) => {
-                        if (!header.derived) return undefined;
-                        // Use subsystem color with low opacity for tint
-                        switch (header.pointInfo?.subsystem) {
-                          case "solar":
-                            return "rgba(234, 179, 8, 0.08)"; // yellow-500 at 8% opacity
-                          case "battery":
-                            return "rgba(34, 197, 94, 0.08)"; // green-500 at 8% opacity
-                          case "grid":
-                            return "rgba(59, 130, 246, 0.08)"; // blue-500 at 8% opacity
-                          case "load":
-                            return "rgba(239, 68, 68, 0.08)"; // red-500 at 8% opacity
-                          default:
-                            return "rgba(156, 163, 175, 0.08)"; // gray-400 at 8% opacity
-                        }
-                      };
-
                       return (
                         <td
-                          key={header.key}
+                          key={key}
                           className={`py-1 px-2 ${
-                            header.key !== "timestamp" &&
-                            header.key !== "sessionLabel"
+                            key !== "timestamp" && key !== "sessionLabel"
                               ? "text-right cursor-pointer"
                               : ""
                           } ${
                             isLastSeriesIdColumn
                               ? "border-r border-gray-700"
                               : ""
-                          } ${!header.pointInfo?.active && header.key !== "timestamp" && header.key !== "sessionLabel" ? "opacity-50" : ""}`}
-                          style={{ backgroundColor: getDerivedBg(header) }}
+                          } ${!pointInfo?.active && key !== "timestamp" && key !== "sessionLabel" ? "opacity-50" : ""}`}
                           onClick={() => {
                             // Only open inspector for data cells (not timestamp or sessionLabel)
                             if (
-                              header.key !== "timestamp" &&
-                              header.key !== "sessionLabel" &&
-                              header.pointInfo
+                              key !== "timestamp" &&
+                              key !== "sessionLabel" &&
+                              pointInfo
                             ) {
                               // Convert plain object from API to PointInfo instance
-                              const pointInfo = PointInfo.from(
-                                header.pointInfo as any,
+                              const pointInfoInstance = PointInfo.from(
+                                pointInfo as any,
                               );
                               setSelectedReading({
-                                pointInfo,
+                                pointInfo: pointInfoInstance,
                                 timestamp: row.timestamp,
                               });
                               setIsReadingInspectorOpen(true);
                             }
                           }}
                         >
-                          {header.key === "timestamp" ? (
+                          {key === "timestamp" ? (
                             <span className="text-xs font-mono text-gray-300 whitespace-nowrap">
-                              {
-                                formatDateTime(new Date(row[header.key]))
-                                  .display
-                              }
+                              {formatDateTime(new Date(row[key])).display}
                             </span>
-                          ) : header.key === "sessionLabel" ? (
-                            row[header.key] !== null && row.sessionId ? (
+                          ) : key === "sessionLabel" ? (
+                            row[key] !== null && row.sessionId ? (
                               <button
                                 onClick={() =>
                                   handleSessionClick(row.sessionId)
                                 }
                                 className="text-xs font-mono text-gray-400 hover:text-blue-400 hover:underline cursor-pointer"
                               >
-                                {row[header.key]}
+                                {row[key]}
                               </button>
                             ) : (
                               <span className="text-xs font-mono text-gray-400">
@@ -846,9 +858,9 @@ export default function ViewDataModal({
                             )
                           ) : (
                             <span
-                              className={`font-mono text-xs hover:underline ${getSubsystemColor(header.pointInfo?.subsystem || null)}`}
+                              className={`font-mono text-xs hover:underline ${getSubsystemColor(pointInfo?.subsystem || null)}`}
                             >
-                              {formatValue(row[header.key], header)}
+                              {formatValue(row[key], pointInfo)}
                             </span>
                           )}
                         </td>
@@ -883,7 +895,7 @@ export default function ViewDataModal({
             setSelectedReading(null);
           }}
           timestamp={selectedReading.timestamp}
-          initialDataSource={dataSource}
+          initialDataSource={source}
           pointInfo={selectedReading.pointInfo}
           system={{
             name: systemName,

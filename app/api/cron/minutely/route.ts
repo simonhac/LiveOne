@@ -13,36 +13,11 @@ import {
   updatePollingStatusSuccess,
   updatePollingStatusError,
 } from "@/lib/polling-utils";
-import { isUserAdmin } from "@/lib/auth-utils";
+import { validateCronRequest } from "@/lib/cron-utils";
 import { and } from "drizzle-orm";
 import { fromDate } from "@internationalized/date";
 import { formatTimeAEST } from "@/lib/date-utils";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
-
-// Verify the request is from Vercel Cron or an admin user
-async function validateCronRequest(request: NextRequest): Promise<boolean> {
-  const authHeader = request.headers.get("authorization");
-
-  // In production, check for either CRON_SECRET or admin user
-  if (process.env.CRON_SECRET) {
-    // First check if it's a valid cron request
-    if (authHeader === `Bearer ${process.env.CRON_SECRET}`) {
-      return true;
-    }
-
-    // Otherwise check if it's an admin user
-    const isAdmin = await isUserAdmin();
-    if (isAdmin) {
-      console.log("[Cron] Admin user authorized to run cron job");
-      return true;
-    }
-
-    return false;
-  }
-
-  // In development, allow all requests
-  return process.env.NODE_ENV === "development";
-}
 
 export async function GET(request: NextRequest) {
   const apiStartTime = Date.now(); // Track API call start time

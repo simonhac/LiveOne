@@ -14,6 +14,7 @@ import {
   pointInfo,
   pointReadings,
   pointReadingsAgg5m,
+  pointReadingsAgg1d,
 } from "@/lib/db/schema-monitoring-points";
 import { createClient } from "@libsql/client";
 import { formatDateRange, fromUnixTimestamp } from "@/lib/date-utils";
@@ -760,6 +761,7 @@ async function countRecordsToSync(ctx: SyncContext) {
       (SELECT COUNT(*) FROM readings_agg_5m) as readings_agg_5m_count,
       (SELECT COUNT(*) FROM point_readings_agg_5m) as point_readings_agg_5m_count,
       (SELECT COUNT(*) FROM readings_agg_1d) as readings_agg_1d_count,
+      (SELECT COUNT(*) FROM point_readings_agg_1d) as point_readings_agg_1d_count,
       (SELECT COUNT(*) FROM sessions) as sessions_count`,
   );
 
@@ -771,6 +773,8 @@ async function countRecordsToSync(ctx: SyncContext) {
     point_readings_agg_5m:
       (localRow?.point_readings_agg_5m_count as number) || 0,
     readings_agg_1d: (localRow?.readings_agg_1d_count as number) || 0,
+    point_readings_agg_1d:
+      (localRow?.point_readings_agg_1d_count as number) || 0,
     sessions: (localRow?.sessions_count as number) || 0,
   };
 
@@ -782,6 +786,7 @@ async function countRecordsToSync(ctx: SyncContext) {
       (SELECT COUNT(*) FROM readings_agg_5m WHERE interval_end > ?) as readings_agg_5m_count,
       (SELECT COUNT(*) FROM point_readings_agg_5m WHERE interval_end > ?) as point_readings_agg_5m_count,
       (SELECT COUNT(*) FROM readings_agg_1d) as readings_agg_1d_count,
+      (SELECT COUNT(*) FROM point_readings_agg_1d) as point_readings_agg_1d_count,
       (SELECT COUNT(*) FROM sessions WHERE started > ?) as sessions_count`,
     [
       syncFromTimestampSec,
@@ -800,6 +805,8 @@ async function countRecordsToSync(ctx: SyncContext) {
     "sync-point-5min-agg":
       (prodRow?.point_readings_agg_5m_count as number) || 0,
     "sync-daily-agg": (prodRow?.readings_agg_1d_count as number) || 0,
+    "sync-point-daily-agg":
+      (prodRow?.point_readings_agg_1d_count as number) || 0,
     "sync-sessions": (prodRow?.sessions_count as number) || 0,
   };
 
@@ -1269,6 +1276,109 @@ async function syncDailyAggregations(ctx: SyncContext) {
   };
 }
 
+// Stage: Sync point_readings_agg_1d (daily aggregations for monitoring points)
+async function syncPointDailyAggregations(ctx: SyncContext) {
+  const totalToSync = ctx.recordCounts?.["sync-point-daily-agg"] || 0;
+
+  if (totalToSync === 0) {
+    return { detail: "No point daily aggregations to sync" };
+  }
+
+  console.log(`[SYNC] Syncing ${totalToSync} point daily aggregations`);
+
+  // Clear ALL existing point daily aggregations to replace with production data
+  await ctx.db.delete(pointReadingsAgg1d);
+
+  // Get mapping of production point_info IDs to development point_info IDs
+  const prodPointInfo = await ctx.prodDb.execute(
+    `SELECT id, system_id, origin_id, origin_sub_id FROM point_info`,
+  );
+
+  const devPointInfo = await ctx.db
+    .select({
+      id: pointInfo.id,
+      systemId: pointInfo.systemId,
+      originId: pointInfo.originId,
+      originSubId: pointInfo.originSubId,
+    })
+    .from(pointInfo);
+
+  // Create mapping: prod system_id:point_id -> dev point_id
+  const pointIdMapping = new Map<string, number>();
+
+  for (const prodPoint of prodPointInfo.rows) {
+    const prodSystemId = prodPoint.system_id as number;
+    const devSystemId = ctx.mapSystemId(prodSystemId);
+
+    if (!devSystemId) continue;
+
+    // Find matching dev point_info by system_id, origin_id, and origin_sub_id
+    const devPoint = devPointInfo.find(
+      (p: any) =>
+        p.systemId === devSystemId &&
+        p.originId === prodPoint.origin_id &&
+        p.originSubId === prodPoint.origin_sub_id,
+    );
+
+    if (devPoint) {
+      // Use composite key: ${prodSystemId}:${prodPointId}
+      const key = `${prodSystemId}:${prodPoint.id}`;
+      pointIdMapping.set(key, devPoint.id);
+    }
+  }
+
+  console.log(
+    `[SYNC] Mapped ${pointIdMapping.size} point_info IDs for daily aggregations`,
+  );
+
+  // Use generic sync function
+  const result = await syncTableData(
+    ctx,
+    "point_readings_agg_1d",
+    "point_readings_agg_1d",
+    {
+      query: `SELECT * FROM point_readings_agg_1d ORDER BY system_id, point_id, day`,
+      queryParams: [],
+      mapRow: (row) => {
+        // Map point_info IDs using composite key (system_id:point_id)
+        const pointKey = `${row.system_id}:${row.point_id}`;
+        const mappedPointId = pointIdMapping.get(pointKey);
+        if (!mappedPointId) {
+          // Silently skip unmapped points (expected for systems we don't have)
+          return null;
+        }
+
+        // Map system IDs
+        const mappedSystemId = ctx.mapSystemId(row.system_id as number);
+        if (!mappedSystemId) {
+          return null;
+        }
+
+        return {
+          ...row,
+          point_id: mappedPointId,
+          system_id: mappedSystemId,
+        };
+      },
+      idField: "point_id", // Use point_id as cursor (part of composite PK)
+      onProgress: createProgressCallback(ctx, "sync-point-daily-agg"),
+    },
+  );
+
+  // Update sync_status with the last synced day
+  const prodData = await ctx.prodDb.execute(
+    `SELECT day FROM point_readings_agg_1d ORDER BY day DESC LIMIT 1`,
+  );
+  const lastDay = prodData.rows[0]?.day as string;
+  if (lastDay) {
+    await updateSyncStatus(ctx, "point_readings_agg_1d", undefined, lastDay);
+  }
+
+  return {
+    detail: `Synced ${result.synced.toLocaleString()} point daily aggregations`,
+  };
+}
+
 // Combined stage: Prepare for sync (combines check local, connect to prod, load mappings)
 async function prepareForSync(ctx: SyncContext) {
   // Step 1: Check local database
@@ -1644,6 +1754,12 @@ export const syncStages: StageDefinition[] = [
     name: "Sync 5-min point reading aggregations",
     modifiesMetadata: false,
     execute: syncPointReadings5MinAggregations,
+  },
+  {
+    id: "sync-point-daily-agg",
+    name: "Sync daily point reading aggregations",
+    modifiesMetadata: false,
+    execute: syncPointDailyAggregations,
   },
   {
     id: "finalise",

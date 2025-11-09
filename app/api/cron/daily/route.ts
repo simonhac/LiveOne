@@ -1,68 +1,47 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { aggregateYesterdayForAllSystems } from '@/lib/db/aggregate-daily';
-import { db } from '@/lib/db';
-import { readingsAgg1d } from '@/lib/db/schema';
-import { isUserAdmin } from '@/lib/auth-utils';
-
-// Verify the request is from Vercel Cron or an admin user
-async function validateCronRequest(request: NextRequest): Promise<boolean> {
-  const authHeader = request.headers.get('authorization');
-  
-  // In production, check for either CRON_SECRET or admin user
-  if (process.env.CRON_SECRET) {
-    // First check if it's a valid cron request
-    if (authHeader === `Bearer ${process.env.CRON_SECRET}`) {
-      return true;
-    }
-    
-    // Otherwise check if it's an admin user
-    const isAdmin = await isUserAdmin();
-    if (isAdmin) {
-      console.log('[Cron] Admin user authorized to run daily aggregation');
-      return true;
-    }
-    
-    return false;
-  }
-  
-  // In development, allow all requests
-  return process.env.NODE_ENV === 'development';
-}
+import { NextRequest, NextResponse } from "next/server";
+import {
+  aggregateYesterdayPointsForAllSystems,
+  aggregateAllPointsForADay,
+  aggregateAllMissingDaysForAllPoints,
+  aggregateLastNDaysForAllPoints,
+} from "@/lib/db/aggregate-daily-points";
+import { db } from "@/lib/db";
+import { pointReadingsAgg1d } from "@/lib/db/schema-monitoring-points";
+import { validateCronRequest } from "@/lib/cron-utils";
+import { parseDateYYYYMMDD } from "@/lib/date-utils";
 
 // This endpoint will be called daily at 00:05 (5 minutes after midnight)
 export async function GET(request: NextRequest) {
   try {
     // Validate cron request or admin user
     if (!(await validateCronRequest(request))) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    console.log('[Cron] Starting daily aggregation job');
+    console.log("[Cron] Starting daily point aggregation job");
     const startTime = Date.now();
-    
-    // Aggregate yesterday's data for all systems
-    const results = await aggregateYesterdayForAllSystems();
-    
+
+    // Aggregate yesterday's point data for all systems
+    const pointsResults = await aggregateYesterdayPointsForAllSystems();
+
     const duration = Date.now() - startTime;
-    console.log(`[Cron] Daily aggregation completed in ${duration}ms`);
-    
+    console.log(`[Cron] Daily point aggregation completed in ${duration}ms`);
+
     return NextResponse.json({
       success: true,
-      message: `Aggregated data for ${results.length} systems`,
+      message: `Aggregated points for ${pointsResults.length} systems`,
+      pointsResults,
       duration,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('[Cron] Daily aggregation failed:', error);
+    console.error("[Cron] Daily point aggregation failed:", error);
     return NextResponse.json(
-      { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -70,60 +49,77 @@ export async function GET(request: NextRequest) {
 // Allow manual triggering with POST (admin only in production)
 export async function POST(request: NextRequest) {
   try {
-    // In development, allow without auth
-    if (process.env.NODE_ENV !== 'development') {
-      // Check if user is admin (isUserAdmin checks authentication internally)
-      const userIsAdmin = await isUserAdmin();
-      if (!userIsAdmin) {
-        return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-      }
+    // Validate request (allows all in dev, requires admin or CRON_SECRET in production)
+    if (!(await validateCronRequest(request))) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const body = await request.json().catch(() => ({}));
-    const { action } = body;
+    const { action, date } = body;
 
-    if (action === 'regenerate') {
-      // Clear the entire table and regenerate all historical data
-      console.log('[Daily] Regenerating all daily aggregations...');
-      
-      // Clear the table
-      await db.delete(readingsAgg1d).execute();
-      console.log('[Daily] Table cleared');
-      
-      // Regenerate all missing days for all systems
-      const { aggregateAllMissingDaysForAllSystems } = await import('@/lib/db/aggregate-daily');
-      const results = await aggregateAllMissingDaysForAllSystems();
-      
+    // Check if a specific date was provided (YYYYMMDD format)
+    if (date) {
+      console.log(`[Daily Points] Aggregating specific date: ${date}`);
+
+      // Parse YYYYMMDD to CalendarDate
+      const calendarDate = parseDateYYYYMMDD(date);
+
+      // Aggregate points for all systems for this specific date
+      const pointsResults = await aggregateAllPointsForADay(calendarDate);
+
       return NextResponse.json({
         success: true,
-        action: 'regenerate',
-        message: `Regenerated all daily aggregations`,
-        systems: results,
-        timestamp: new Date().toISOString()
+        action: "specific-date",
+        date,
+        ...pointsResults,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    if (action === "regenerate") {
+      // Clear the entire table and regenerate all historical data
+      console.log(
+        "[Daily Points] Regenerating all daily point aggregations...",
+      );
+
+      // Clear the table
+      await db.delete(pointReadingsAgg1d).execute();
+      console.log("[Daily Points] Table cleared");
+
+      // Regenerate all missing days for all systems
+      const pointsResults = await aggregateAllMissingDaysForAllPoints();
+
+      return NextResponse.json({
+        success: true,
+        action: "regenerate",
+        message: `Regenerated all daily point aggregations`,
+        pointsResults,
+        timestamp: new Date().toISOString(),
       });
     } else {
       // Default: Update last 7 days for all systems
-      console.log('[Daily] Updating last 7 days of aggregations...');
-      
-      const { aggregateLastNDaysForAllSystems } = await import('@/lib/db/aggregate-daily');
-      const results = await aggregateLastNDaysForAllSystems(7);
-      
+      console.log(
+        "[Daily Points] Updating last 7 days of point aggregations...",
+      );
+
+      const pointsResults = await aggregateLastNDaysForAllPoints(7);
+
       return NextResponse.json({
         success: true,
-        action: 'update',
-        message: `Updated last 7 days for ${results.length} systems`,
-        systems: results,
-        timestamp: new Date().toISOString()
+        action: "update",
+        message: `Updated last 7 days for ${pointsResults.length} systems`,
+        pointsResults,
+        timestamp: new Date().toISOString(),
       });
     }
   } catch (error) {
-    console.error('[Cron] Manual aggregation failed:', error);
+    console.error("[Cron] Manual point aggregation failed:", error);
     return NextResponse.json(
-      { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
