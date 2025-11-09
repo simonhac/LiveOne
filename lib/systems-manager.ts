@@ -251,6 +251,7 @@ export class SystemsManager {
         vendorType: s.vendorType,
         status: s.status,
         ownerClerkUserId: s.ownerClerkUserId,
+        shortName: s.shortName,
       }));
   }
 

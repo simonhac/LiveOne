@@ -32,6 +32,8 @@ interface AvailableSystem {
   displayName: string;
   vendorSiteId: string;
   ownerClerkUserId?: string | null;
+  shortName?: string | null;
+  ownerUsername?: string | null;
 }
 
 interface MobileMenuProps {
@@ -95,7 +97,16 @@ export default function MobileMenu({
   }, [isSystemDropdownOpen]);
 
   const handleSystemSelect = (systemId: number) => {
-    router.push(`/dashboard/${systemId}`);
+    // Find the system to get username and shortname
+    const system = availableSystems.find((s) => s.id === systemId);
+
+    // Prefer username/shortname path if available, otherwise use system ID
+    const path =
+      system?.ownerUsername && system?.shortName
+        ? `/dashboard/${system.ownerUsername}/${system.shortName}`
+        : `/dashboard/${systemId}`;
+
+    router.push(path);
     setIsSystemDropdownOpen(false);
   };
 

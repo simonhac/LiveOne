@@ -85,6 +85,17 @@ export default async function DashboardPage({ params }: PageProps) {
     true,
   ); // true = active only
 
+  // Get current user's username for their own systems (enables username/shortname paths)
+  const clerk = await clerkClient();
+  const currentUser = await clerk.users.getUser(userId);
+  const currentUsername = currentUser.username || null;
+
+  // Add username to systems owned by current user
+  const systemsWithUsernames = availableSystems.map((sys) => ({
+    ...sys,
+    ownerUsername: sys.ownerClerkUserId === userId ? currentUsername : null,
+  }));
+
   // Get the dataStore type for this system's vendor (only if system exists)
   const dataStore = system
     ? VendorRegistry.getDataStore(system.vendorType)
@@ -97,7 +108,7 @@ export default async function DashboardPage({ params }: PageProps) {
       hasAccess={hasAccess}
       systemExists={systemExists}
       isAdmin={isAdmin}
-      availableSystems={availableSystems}
+      availableSystems={systemsWithUsernames}
       userId={userId}
       dataStore={dataStore}
     />

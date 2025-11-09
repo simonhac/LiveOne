@@ -162,6 +162,8 @@ interface AvailableSystem {
   displayName: string;
   vendorSiteId: string;
   ownerClerkUserId?: string | null;
+  shortName?: string | null;
+  ownerUsername?: string | null;
 }
 
 interface DashboardClientProps {
