@@ -51,6 +51,7 @@ export const ENPHASE_POINTS: EnphasePointConfig[] = [
       extension: null,
       metricType: "power",
       metricUnit: "W",
+      transform: null,
     },
   },
 
@@ -71,6 +72,7 @@ export const ENPHASE_POINTS: EnphasePointConfig[] = [
       extension: null,
       metricType: "energy",
       metricUnit: "Wh",
+      transform: null,
     },
   },
 ];

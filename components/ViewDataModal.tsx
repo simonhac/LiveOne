@@ -6,25 +6,13 @@ import { formatDateTime } from "@/lib/fe-date-format";
 import PointInfoModal from "./PointInfoModal";
 import SessionInfoModal from "./SessionInfoModal";
 import PointReadingInspectorModal from "./PointReadingInspectorModal";
+import { PointInfo } from "@/lib/point-info";
 
 interface ColumnHeader {
   key: string;
   label: string;
-  type: string;
-  unit: string | null;
-  subsystem: string | null;
-  pointType?: string | null;
-  subtype?: string | null;
-  extension?: string | null;
-  originId: string;
-  originSubId: string | null;
-  pointDbId: number;
-  systemId: number;
-  defaultName: string;
-  shortName: string | null;
-  active: boolean;
-  transform?: string | null;
-  derived?: boolean;
+  pointInfo: PointInfo | null; // null for special columns like timestamp/sessionLabel
+  derived?: boolean; // For frontend-added columns
 }
 
 interface ViewDataModalProps {
@@ -78,7 +66,7 @@ export default function ViewDataModal({
 
   // Point Reading Inspector state
   const [selectedReading, setSelectedReading] = useState<{
-    header: ColumnHeader;
+    pointInfo: PointInfo;
     timestamp: number;
   } | null>(null);
   const [isReadingInspectorOpen, setIsReadingInspectorOpen] = useState(false);
@@ -235,24 +223,29 @@ export default function ViewDataModal({
 
   const handleColumnHeaderClick = (header: ColumnHeader) => {
     // Only open modal for point columns (not timestamp or sessionLabel)
-    if (header.key === "timestamp" || header.key === "sessionLabel") return;
+    if (
+      header.key === "timestamp" ||
+      header.key === "sessionLabel" ||
+      !header.pointInfo
+    )
+      return;
 
     setSelectedPointInfo({
-      pointDbId: header.pointDbId,
-      systemId: header.systemId,
-      originId: header.originId,
-      originSubId: header.originSubId || null,
-      subsystem: header.subsystem,
-      type: header.pointType || null,
-      subtype: header.subtype || null,
-      extension: header.extension || null,
-      defaultName: header.defaultName || header.label,
-      displayName: header.label,
-      shortName: header.shortName || null,
-      active: header.active,
-      transform: header.transform || null,
-      metricType: header.type,
-      metricUnit: header.unit,
+      pointDbId: header.pointInfo.id,
+      systemId: header.pointInfo.systemId,
+      originId: header.pointInfo.originId,
+      originSubId: header.pointInfo.originSubId,
+      subsystem: header.pointInfo.subsystem,
+      type: header.pointInfo.type,
+      subtype: header.pointInfo.subtype,
+      extension: header.pointInfo.extension,
+      defaultName: header.pointInfo.defaultName,
+      displayName: header.pointInfo.displayName,
+      shortName: header.pointInfo.shortName,
+      active: header.pointInfo.active,
+      transform: header.pointInfo.transform,
+      metricType: header.pointInfo.metricType,
+      metricUnit: header.pointInfo.metricUnit,
       derived: header.derived || false,
       vendorSiteId: vendorSiteId,
       systemShortName: metadata?.systemShortName || undefined,
@@ -336,22 +329,22 @@ export default function ViewDataModal({
     if (value === null) return "-";
 
     // Handle text values (like fault codes)
-    if (header.unit === "text" || typeof value === "string") {
+    if (header.pointInfo?.metricUnit === "text" || typeof value === "string") {
       return String(value);
     }
 
     // From here on, value should be a number
     const numValue = Number(value);
 
-    if (header.type === "energy") {
+    if (header.pointInfo?.metricType === "energy") {
       // Display interval energy in Wh (no conversion)
       return `${numValue.toFixed(0)}`;
-    } else if (header.type === "power") {
+    } else if (header.pointInfo?.metricType === "power") {
       // Always show power in kW to match header unit
       const kw = numValue / 1000;
       // Only show decimal if not a whole number
       return kw % 1 === 0 ? `${kw.toFixed(0)}` : `${kw.toFixed(1)}`;
-    } else if (header.unit === "epochMs") {
+    } else if (header.pointInfo?.metricUnit === "epochMs") {
       // Check for epoch 0 (Jan 1, 1970 00:00:00)
       if (numValue === 0) {
         return "epoch0";
@@ -370,16 +363,19 @@ export default function ViewDataModal({
     // Session label has no type/unit display
     if (header.key === "sessionLabel") return "";
 
-    if (header.type === "energy") {
+    if (header.pointInfo?.metricType === "energy") {
       return "Wh";
-    } else if (header.type === "power") {
+    } else if (header.pointInfo?.metricType === "power") {
       // For power, we'll show kW for most values
       return "kW";
-    } else if (header.type === "time" && header.unit === "epochMs") {
+    } else if (
+      header.pointInfo?.metricType === "time" &&
+      header.pointInfo?.metricUnit === "epochMs"
+    ) {
       // Show just "time" for time columns
       return "time";
-    } else if (header.unit) {
-      return header.unit;
+    } else if (header.pointInfo?.metricUnit) {
+      return header.pointInfo.metricUnit;
     }
     return "";
   };
@@ -405,22 +401,22 @@ export default function ViewDataModal({
   // Get series ID suffix (without the liveone.mondo.{system} prefix)
   const getSeriesIdSuffix = (header: ColumnHeader) => {
     // Must have pointType to be a valid series
-    if (!header.pointType) {
+    if (!header.pointInfo?.type) {
       console.log(
-        `[ViewData] ${header.label}: NO pointType - skipping (subtype=${header.subtype}, ext=${header.extension}, metricType=${header.type})`,
+        `[ViewData] ${header.label}: NO pointType - skipping (subtype=${header.pointInfo?.subtype}, ext=${header.pointInfo?.extension}, metricType=${header.pointInfo?.metricType})`,
       );
       return null;
     }
 
     const parts = [];
-    if (header.pointType) parts.push(header.pointType);
-    if (header.subtype) parts.push(header.subtype);
-    if (header.extension) parts.push(header.extension);
-    if (header.type) parts.push(header.type); // metricType
+    if (header.pointInfo.type) parts.push(header.pointInfo.type);
+    if (header.pointInfo.subtype) parts.push(header.pointInfo.subtype);
+    if (header.pointInfo.extension) parts.push(header.pointInfo.extension);
+    if (header.pointInfo.metricType) parts.push(header.pointInfo.metricType); // metricType
 
     const seriesId = parts.join(".");
     console.log(
-      `[ViewData] ${header.label}: pointType=${header.pointType}, subtype=${header.subtype}, ext=${header.extension}, metricType=${header.type} => seriesId=${seriesId || "NULL"}`,
+      `[ViewData] ${header.label}: pointType=${header.pointInfo.type}, subtype=${header.pointInfo.subtype}, ext=${header.pointInfo.extension}, metricType=${header.pointInfo.metricType} => seriesId=${seriesId || "NULL"}`,
     );
     return seriesId || null;
   };
@@ -431,7 +427,7 @@ export default function ViewDataModal({
     if (header.key === "timestamp" || header.key === "sessionLabel")
       return true;
     // Show columns with series ID only if they are active
-    if (getSeriesIdSuffix(header) && header.active) return true;
+    if (getSeriesIdSuffix(header) && header.pointInfo?.active) return true;
     // Only show other columns (inactive with series ID, or no series ID) if showExtras is true
     return showExtras;
   });
@@ -472,10 +468,10 @@ export default function ViewDataModal({
   }) => {
     // Only consider active columns with series IDs for divider positioning
     const hasActiveSeriesId =
-      getSeriesIdSuffix(header) !== null && header.active;
+      getSeriesIdSuffix(header) !== null && header.pointInfo?.active;
     const nextHeader = filteredHeaders[colIndex + 1];
     const nextHasActiveSeriesId = nextHeader
-      ? getSeriesIdSuffix(nextHeader) !== null && nextHeader.active
+      ? getSeriesIdSuffix(nextHeader) !== null && nextHeader.pointInfo?.active
       : false;
     const isLastSeriesIdColumn = hasActiveSeriesId && !nextHasActiveSeriesId;
     const isSpecialColumn =
@@ -488,13 +484,13 @@ export default function ViewDataModal({
         className={`py-1 ${isLastRow ? "pb-2" : ""} px-2 align-top bg-gray-900 ${
           !isSpecialColumn ? "text-right" : ""
         } ${
-          !isSpecialColumn && header.pointDbId ? "cursor-pointer" : ""
+          !isSpecialColumn && header.pointInfo?.id ? "cursor-pointer" : ""
         } ${isLastSeriesIdColumn ? "border-r border-gray-700" : ""} ${
-          !header.active && !isSpecialColumn ? "opacity-50" : ""
+          !header.pointInfo?.active && !isSpecialColumn ? "opacity-50" : ""
         }`}
         onClick={() => handleColumnHeaderClick(header)}
         title={
-          !isSpecialColumn && header.pointDbId
+          !isSpecialColumn && header.pointInfo?.id
             ? "Click to edit point info"
             : undefined
         }
@@ -651,8 +647,8 @@ export default function ViewDataModal({
                         <span className="text-gray-300">Session</span>
                       ) : (
                         <span
-                          className={`${getSubsystemColor(header.subsystem)} ${
-                            !header.active ? "line-through" : ""
+                          className={`${getSubsystemColor(header.pointInfo?.subsystem || null)} ${
+                            !header.pointInfo?.active ? "line-through" : ""
                           }`}
                         >
                           {header.label}
@@ -677,7 +673,7 @@ export default function ViewDataModal({
                       ) : getSeriesIdSuffix(header) ? (
                         <span
                           className={`text-xs text-gray-500 font-mono ${
-                            !header.active ? "line-through" : ""
+                            !header.pointInfo?.active ? "line-through" : ""
                           }`}
                           dangerouslySetInnerHTML={{
                             __html:
@@ -706,13 +702,13 @@ export default function ViewDataModal({
                         <span className="text-gray-300">Alias</span>
                       ) : header.key === "sessionLabel" ? (
                         <div></div>
-                      ) : header.shortName ? (
+                      ) : header.pointInfo?.shortName ? (
                         <span
-                          className={`text-xs ${getSubsystemColor(header.subsystem)} ${
-                            !header.active ? "line-through" : ""
+                          className={`text-xs ${getSubsystemColor(header.pointInfo?.subsystem || null)} ${
+                            !header.pointInfo?.active ? "line-through" : ""
                           }`}
                         >
-                          {header.shortName}
+                          {header.pointInfo.shortName}
                         </span>
                       ) : (
                         <div></div>
@@ -733,7 +729,7 @@ export default function ViewDataModal({
                       {getUnitDisplay(header) ? (
                         <span
                           className={`text-xs text-gray-400 ${
-                            !header.active ? "line-through" : ""
+                            !header.pointInfo?.active ? "line-through" : ""
                           }`}
                         >
                           {getUnitDisplay(header)}
@@ -756,11 +752,12 @@ export default function ViewDataModal({
                     {filteredHeaders.map((header, colIndex) => {
                       // Only consider active columns with series IDs for divider positioning
                       const hasActiveSeriesId =
-                        getSeriesIdSuffix(header) !== null && header.active;
+                        getSeriesIdSuffix(header) !== null &&
+                        header.pointInfo?.active;
                       const nextHeader = filteredHeaders[colIndex + 1];
                       const nextHasActiveSeriesId = nextHeader
                         ? getSeriesIdSuffix(nextHeader) !== null &&
-                          nextHeader.active
+                          nextHeader.pointInfo?.active
                         : false;
                       const isLastSeriesIdColumn =
                         hasActiveSeriesId && !nextHasActiveSeriesId;
@@ -769,7 +766,7 @@ export default function ViewDataModal({
                       const getDerivedBg = (header: ColumnHeader) => {
                         if (!header.derived) return undefined;
                         // Use subsystem color with low opacity for tint
-                        switch (header.subsystem) {
+                        switch (header.pointInfo?.subsystem) {
                           case "solar":
                             return "rgba(234, 179, 8, 0.08)"; // yellow-500 at 8% opacity
                           case "battery":
@@ -795,16 +792,21 @@ export default function ViewDataModal({
                             isLastSeriesIdColumn
                               ? "border-r border-gray-700"
                               : ""
-                          } ${!header.active && header.key !== "timestamp" && header.key !== "sessionLabel" ? "opacity-50" : ""}`}
+                          } ${!header.pointInfo?.active && header.key !== "timestamp" && header.key !== "sessionLabel" ? "opacity-50" : ""}`}
                           style={{ backgroundColor: getDerivedBg(header) }}
                           onClick={() => {
                             // Only open inspector for data cells (not timestamp or sessionLabel)
                             if (
                               header.key !== "timestamp" &&
-                              header.key !== "sessionLabel"
+                              header.key !== "sessionLabel" &&
+                              header.pointInfo
                             ) {
+                              // Convert plain object from API to PointInfo instance
+                              const pointInfo = PointInfo.from(
+                                header.pointInfo as any,
+                              );
                               setSelectedReading({
-                                header,
+                                pointInfo,
                                 timestamp: row.timestamp,
                               });
                               setIsReadingInspectorOpen(true);
@@ -835,7 +837,7 @@ export default function ViewDataModal({
                             )
                           ) : (
                             <span
-                              className={`font-mono text-xs hover:underline ${getSubsystemColor(header.subsystem)}`}
+                              className={`font-mono text-xs hover:underline ${getSubsystemColor(header.pointInfo?.subsystem || null)}`}
                             >
                               {formatValue(row[header.key], header)}
                             </span>
@@ -873,7 +875,7 @@ export default function ViewDataModal({
           }}
           timestamp={selectedReading.timestamp}
           initialDataSource={dataSource}
-          header={selectedReading.header}
+          pointInfo={selectedReading.pointInfo}
           system={{
             name: systemName,
             vendorType: vendorType,

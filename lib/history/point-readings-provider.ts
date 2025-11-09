@@ -1,7 +1,6 @@
 import { db } from "@/lib/db";
 import {
   pointReadings,
-  pointInfo,
   pointReadingsAgg5m,
 } from "@/lib/db/schema-monitoring-points";
 import { eq, and, gte, lte, inArray } from "drizzle-orm";
@@ -20,6 +19,8 @@ import {
   MeasurementValue,
   TimeSeriesPoint,
 } from "./types";
+import { PointManager } from "@/lib/point-manager";
+import { PointInfo } from "@/lib/point-info";
 
 /**
  * Apply transform to a numeric value based on the transform type
@@ -38,7 +39,8 @@ function applyTransform(
 
 /**
  * Generate a point ID in the format:
- * - If type and subtype are set: use series ID {type}.{subtype}.{extension}.{metricType}.{aggregation}
+ * - If type is set: use series ID {path}.{metricType}.{aggregation}
+ *   where path = type.subtype.extension (omitting null parts)
  * - Otherwise if shortName is set: use shortName
  * - Otherwise: {originId}.{originSubId}.{metricType}.{aggregation} (omitting originSubId if null)
  *
@@ -49,84 +51,45 @@ function applyTransform(
  *
  * Note: The vendor prefix (liveone.{vendorType}.{vendorSiteId}) is added by OpenNEMConverter
  */
-function generatePointId(
-  originId: string,
-  originSubId: string | null,
-  metricType: string,
-  shortName: string | null,
-  type: string | null,
-  subtype: string | null,
-  extension: string | null,
-): string {
+function generatePointId(point: PointInfo): string {
   // Determine aggregation type based on metric type
-  const aggregationType = metricType === "soc" ? "last" : "avg";
+  const aggregationType = point.metricType === "soc" ? "last" : "avg";
 
-  // If type and subtype are set, use series ID
-  if (type && subtype) {
-    const parts = [type, subtype];
-    if (extension) parts.push(extension);
-    parts.push(metricType);
-    parts.push(aggregationType);
-    return parts.join(".");
+  // If type and subtype are set, use series ID with path
+  const path = point.getPath();
+  if (path) {
+    return `${path}.${point.metricType}.${aggregationType}`;
   }
 
   // If shortName is set, use it directly
-  if (shortName) {
-    return shortName;
+  if (point.shortName) {
+    return point.shortName;
   }
 
   // Otherwise, build from components
-  const parts = [originId];
-  if (originSubId) {
-    parts.push(originSubId);
+  const parts = [point.originId];
+  if (point.originSubId) {
+    parts.push(point.originSubId);
   }
-  parts.push(metricType);
+  parts.push(point.metricType);
   parts.push(aggregationType);
   return parts.join(".");
 }
 
 export class PointReadingsProvider implements HistoryDataProvider {
   /**
-   * Helper to build capability string from point
-   */
-  private buildCapabilityString(point: typeof pointInfo.$inferSelect): string {
-    const parts = [point.type];
-    if (point.subtype) parts.push(point.subtype);
-    if (point.extension) parts.push(point.extension);
-    return parts.join(".");
-  }
-
-  /**
    * Helper method to filter and sort points by series ID
    * Filters to only include active points with type set
    */
-  private filterAndSortPoints(
-    points: (typeof pointInfo.$inferSelect)[],
-  ): (typeof pointInfo.$inferSelect)[] {
+  private filterAndSortPoints(points: PointInfo[]): PointInfo[] {
     return points
       .filter((p) => {
         // Must have type and be active
         return p.type && p.active;
       })
       .sort((a, b) => {
-        const aSeriesId = generatePointId(
-          a.originId,
-          a.originSubId,
-          a.metricType,
-          a.shortName,
-          a.type,
-          a.subtype,
-          a.extension,
-        );
-        const bSeriesId = generatePointId(
-          b.originId,
-          b.originSubId,
-          b.metricType,
-          b.shortName,
-          b.type,
-          b.subtype,
-          b.extension,
-        );
+        const aSeriesId = generatePointId(a);
+        const bSeriesId = generatePointId(b);
         return aSeriesId.localeCompare(bSeriesId);
       });
   }
@@ -139,38 +102,19 @@ export class PointReadingsProvider implements HistoryDataProvider {
     const startMs = toUnixTimestamp(startTime) * 1000;
     const endMs = toUnixTimestamp(endTime) * 1000;
 
-    // Get all active points for this system
-    const points = await db
-      .select()
-      .from(pointInfo)
-      .where(eq(pointInfo.systemId, system.id));
+    // Get all active points for this system using PointManager
+    const pointManager = PointManager.getInstance();
+    const allPoints = await pointManager.getPointsForSystem(system.id);
 
     // Only include active points with type set, sorted by series ID
-    const filteredPoints = this.filterAndSortPoints(points);
+    const filteredPoints = this.filterAndSortPoints(allPoints);
 
     if (filteredPoints.length === 0) {
       return [];
     }
 
-    // Map point IDs to their metadata
-    const pointMap = new Map(
-      filteredPoints.map((p) => [
-        p.id,
-        {
-          originId: p.originId,
-          originSubId: p.originSubId,
-          shortName: p.shortName,
-          name: p.displayName || p.defaultName,
-          subsystem: p.subsystem,
-          metricType: p.metricType,
-          metricUnit: p.metricUnit,
-          type: p.type,
-          subtype: p.subtype,
-          extension: p.extension,
-          transform: p.transform,
-        },
-      ]),
-    );
+    // Map point IDs to their PointInfo objects
+    const pointMap = new Map(filteredPoints.map((p) => [p.id, p]));
 
     // Fetch aggregated point readings within the time range
     const aggregates = await db
@@ -222,15 +166,10 @@ export class PointReadingsProvider implements HistoryDataProvider {
       }
 
       // Always include series with metadata, even if no data
-      const fieldId = generatePointId(
-        pointMeta.originId,
-        pointMeta.originSubId,
-        pointMeta.metricType,
-        pointMeta.shortName,
-        pointMeta.type,
-        pointMeta.subtype,
-        pointMeta.extension,
-      );
+      const fieldId = generatePointId(pointMeta);
+
+      // Get path using PointInfo method
+      const path = pointMeta.getPath();
 
       result.push({
         field: fieldId,
@@ -239,6 +178,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
           label: pointMeta.name,
           type: pointMeta.metricType,
           unit: pointMeta.metricUnit,
+          path: path ?? undefined, // Convert null to undefined for optional field
         },
         data,
       });

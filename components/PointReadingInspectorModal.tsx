@@ -3,26 +3,7 @@ import { X } from "lucide-react";
 import SessionInfoModal from "./SessionInfoModal";
 import { formatDateTime } from "@/lib/fe-date-format";
 import { encodeUrlDateFromEpoch, encodeUrlOffset } from "@/lib/url-date";
-
-// Matches ColumnHeader from ViewDataModal
-interface ColumnHeader {
-  key: string;
-  label: string;
-  type: string; // metricType
-  unit: string | null; // metricUnit
-  subsystem: string | null;
-  pointType?: string | null;
-  subtype?: string | null;
-  extension?: string | null;
-  originId: string;
-  originSubId: string | null;
-  pointDbId: number;
-  systemId: number;
-  defaultName: string;
-  shortName: string | null;
-  active: boolean;
-  transform?: string | null;
-}
+import { PointInfo } from "@/lib/point-info";
 
 interface SystemContext {
   name: string;
@@ -37,7 +18,7 @@ interface PointReadingInspectorModalProps {
   onClose: () => void;
   timestamp: number; // Unix timestamp in ms
   initialDataSource: "raw" | "5m";
-  header: ColumnHeader;
+  pointInfo: PointInfo;
   system: SystemContext;
 }
 
@@ -66,7 +47,7 @@ export default function PointReadingInspectorModal({
   onClose,
   timestamp,
   initialDataSource,
-  header,
+  pointInfo,
   system,
 }: PointReadingInspectorModalProps) {
   const [dataSource, setDataSource] = useState<"raw" | "5m">(initialDataSource);
@@ -114,7 +95,7 @@ export default function PointReadingInspectorModal({
         );
         const encodedOffset = encodeUrlOffset(system.timezoneOffsetMin);
         const response = await fetch(
-          `/api/admin/point/${header.systemId}.${header.pointDbId}/readings?time=${encodedTime}&offset=${encodedOffset}&dataSource=${dataSource}`,
+          `/api/admin/point/${pointInfo.getIdentifier()}/readings?time=${encodedTime}&offset=${encodedOffset}&dataSource=${dataSource}`,
         );
 
         if (!response.ok) {
@@ -147,7 +128,7 @@ export default function PointReadingInspectorModal({
       cancelled = true;
       clearTimeout(spinnerTimeout);
     };
-  }, [isOpen, header.systemId, header.pointDbId, timestamp, dataSource]);
+  }, [isOpen, pointInfo, timestamp, dataSource]);
 
   const handleSessionClick = async (sessionId: number | null) => {
     if (sessionId === null) return;
@@ -238,11 +219,8 @@ export default function PointReadingInspectorModal({
     }
   }
 
-  // Build point path if any components exist
-  const pathParts = [header.pointType, header.subtype, header.extension].filter(
-    Boolean,
-  );
-  const pointPath = pathParts.length > 0 ? pathParts.join(".") : null;
+  // Get point path using PointInfo method
+  const pointPath = pointInfo.getPath();
 
   // Helper function to format a numeric column value
   // Dynamically checks if all values in the column are whole numbers
@@ -274,9 +252,9 @@ export default function PointReadingInspectorModal({
         {/* Header */}
         <div className="flex items-center justify-between p-4">
           <h2 className="text-lg font-semibold text-white">
-            Point Readings for {system.name} {header.label}{" "}
+            Point Readings for {system.name} {pointInfo.name}{" "}
             <span className="text-gray-500">
-              ID: {header.systemId}.{header.pointDbId}
+              ID: {pointInfo.getIdentifier()}
             </span>
           </h2>
           <div className="flex items-center gap-3">
@@ -321,7 +299,7 @@ export default function PointReadingInspectorModal({
         {/* Content */}
         <div className="px-6 pt-2 pb-2 overflow-y-auto flex-1">
           {/* Point Path and Badges */}
-          {(pointPath || header.active || header.transform) && (
+          {(pointPath || pointInfo.active || pointInfo.transform) && (
             <div className="flex items-center gap-3">
               {pointPath && (
                 <div className="text-sm text-gray-400">
@@ -330,21 +308,21 @@ export default function PointReadingInspectorModal({
                     {pointPath}
                   </span>
                   <span className="font-mono text-gray-500 ml-3">
-                    {header.type} ({header.unit || "—"})
+                    {pointInfo.metricType} ({pointInfo.metricUnit || "—"})
                   </span>
                 </div>
               )}
-              {header.active && (
+              {pointInfo.active && (
                 <span className="px-2 py-1 bg-green-500/20 text-green-400 text-xs font-medium rounded border border-green-500/30">
                   ACTIVE
                 </span>
               )}
-              {header.transform === "d" && (
+              {pointInfo.transform === "d" && (
                 <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 text-xs font-medium rounded border border-yellow-500/30">
                   DIFFERENTIATED
                 </span>
               )}
-              {header.transform === "i" && (
+              {pointInfo.transform === "i" && (
                 <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 text-xs font-medium rounded border border-yellow-500/30">
                   INVERTED
                 </span>
@@ -399,7 +377,7 @@ export default function PointReadingInspectorModal({
                         Last
                       </th>
                       <th
-                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" || header.transform !== "d" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${dataSource === "raw" || pointInfo.transform !== "d" ? "hidden" : ""}`}
                       >
                         Delta
                       </th>
@@ -511,7 +489,7 @@ export default function PointReadingInspectorModal({
                                   &nbsp;
                                 </td>
                                 <td
-                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" || header.transform !== "d" ? "hidden" : ""}`}
+                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" || pointInfo.transform !== "d" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
@@ -604,7 +582,7 @@ export default function PointReadingInspectorModal({
                                 )}
                               </td>
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" || header.transform !== "d" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${dataSource === "raw" || pointInfo.transform !== "d" ? "hidden" : ""}`}
                               >
                                 {formatColumnValue(reading!.delta, () =>
                                   readings.map((r) => r.delta),

@@ -24,11 +24,6 @@ import "chartjs-adapter-date-fns";
 import annotationPlugin from "chartjs-plugin-annotation";
 import { formatDateTime } from "@/lib/fe-date-format";
 import { formatDateRange, fromUnixTimestamp } from "@/lib/date-utils";
-import {
-  parseSeriesPath,
-  parseDeviceMetric,
-  parseDeviceId,
-} from "@/lib/series-path-parser";
 import { CalendarX2 } from "lucide-react";
 
 // Register Chart.js components
@@ -87,27 +82,20 @@ interface SeriesConfig {
   order?: number;
 }
 
-// Parse series ID from format: liveone.{siteId}.{deviceId}.{metric}[.summariser]
-// Returns: { type, subtype, extension } extracted from deviceId, or null if not parseable
-export function parseSeriesId(
-  seriesId: string,
+// Parse path from format: type.subtype.extension (or type.subtype or just type)
+// Returns: { type, subtype, extension } extracted from path, or null if not parseable
+export function parsePath(
+  path: string | null | undefined,
 ): { type: string; subtype: string; extension?: string } | null {
-  // Parse the full series path to get siteId and pointId
-  const parsed = parseSeriesPath(seriesId);
-  if (!parsed) return null;
+  if (!path) return null;
 
-  // Parse the pointId to extract deviceId (strips off metric/summariser)
-  const deviceMetric = parseDeviceMetric(parsed.pointId);
-  if (!deviceMetric) return null;
-
-  // Parse the deviceId to get type, subtype, and extension
-  const deviceIdParsed = parseDeviceId(deviceMetric.deviceId);
-  if (!deviceIdParsed) return null;
+  const parts = path.split(".");
+  if (parts.length === 0) return null;
 
   return {
-    type: deviceIdParsed.type,
-    subtype: deviceIdParsed.subtype || "",
-    extension: deviceIdParsed.extension,
+    type: parts[0],
+    subtype: parts[1] || "",
+    extension: parts[2],
   };
 }
 
@@ -133,7 +121,7 @@ const LOAD_LABELS: Record<string, string> = {
 
 // Generate series configurations dynamically from available data
 export function generateSeriesConfig(
-  availableSeries: Array<{ id: string; label?: string }>,
+  availableSeries: Array<{ id: string; label?: string; path?: string }>,
   mode: "load" | "generation",
 ): SeriesConfig[] {
   const configs: SeriesConfig[] = [];
@@ -141,7 +129,7 @@ export function generateSeriesConfig(
   if (mode === "load") {
     // Find all load series
     const loadSeries = availableSeries
-      .map((s) => ({ ...s, parsed: parseSeriesId(s.id) }))
+      .map((s) => ({ ...s, parsed: parsePath(s.path) }))
       .filter((s) => s.parsed?.type === "load");
 
     // Create config for each load
@@ -176,7 +164,7 @@ export function generateSeriesConfig(
 
     // Add battery charge (negative battery power)
     const batterySeries = availableSeries.find((s) => {
-      const parsed = parseSeriesId(s.id);
+      const parsed = parsePath(s.path);
       return parsed?.type === "bidi" && parsed?.subtype === "battery";
     });
     if (batterySeries) {
@@ -191,7 +179,7 @@ export function generateSeriesConfig(
 
     // Add grid export (negative grid power)
     const gridSeries = availableSeries.find((s) => {
-      const parsed = parseSeriesId(s.id);
+      const parsed = parsePath(s.path);
       return parsed?.type === "bidi" && parsed?.subtype === "grid";
     });
     if (gridSeries) {
@@ -207,7 +195,7 @@ export function generateSeriesConfig(
     // generation mode
     // Find solar series
     const solarSeries = availableSeries
-      .map((s) => ({ ...s, parsed: parseSeriesId(s.id) }))
+      .map((s) => ({ ...s, parsed: parsePath(s.path) }))
       .filter(
         (s) => s.parsed?.type === "source" && s.parsed?.subtype === "solar",
       )
@@ -235,7 +223,7 @@ export function generateSeriesConfig(
 
     // Add battery discharge (positive battery power) - before grid import
     const batterySeries = availableSeries.find((s) => {
-      const parsed = parseSeriesId(s.id);
+      const parsed = parsePath(s.path);
       return parsed?.type === "bidi" && parsed?.subtype === "battery";
     });
     if (batterySeries) {
@@ -250,7 +238,7 @@ export function generateSeriesConfig(
 
     // Add grid import (positive grid power) - after battery
     const gridSeries = availableSeries.find((s) => {
-      const parsed = parseSeriesId(s.id);
+      const parsed = parsePath(s.path);
       return parsed?.type === "bidi" && parsed?.subtype === "grid";
     });
     if (gridSeries) {
@@ -794,7 +782,8 @@ export default function MondoPowerChart({
 
           // Accumulate values for rest of house calculation (load mode)
           if (mode === "load") {
-            const parsed = parseSeriesId(config.id);
+            const series = seriesMap.get(config.id);
+            const parsed = parsePath(series?.path);
             if (parsed?.type === "load") {
               // Accumulate measured loads
               if (!measuredLoadsSum) {
@@ -836,17 +825,17 @@ export default function MondoPowerChart({
         if (mode === "load") {
           // Find solar, grid, and battery series using the new structure
           const solarSeriesList = Array.from(seriesMap.values()).filter((s) => {
-            const parsed = parseSeriesId(s.id);
+            const parsed = parsePath(s.path);
             return parsed?.type === "source" && parsed?.subtype === "solar";
           });
 
           const gridSeries = Array.from(seriesMap.values()).find((s) => {
-            const parsed = parseSeriesId(s.id);
+            const parsed = parsePath(s.path);
             return parsed?.type === "bidi" && parsed?.subtype === "grid";
           });
 
           const battSeries = Array.from(seriesMap.values()).find((s) => {
-            const parsed = parseSeriesId(s.id);
+            const parsed = parsePath(s.path);
             return parsed?.type === "bidi" && parsed?.subtype === "battery";
           });
 

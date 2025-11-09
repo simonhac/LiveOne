@@ -232,6 +232,7 @@ export class ReadingsProvider implements HistoryDataProvider {
           label: "Total solar energy generated",
           type: "energy",
           unit: "kWh",
+          path: "source.solar.total",
         },
         data: solarEnergyData,
       });
@@ -257,6 +258,7 @@ export class ReadingsProvider implements HistoryDataProvider {
           label: "Total load energy consumed",
           type: "energy",
           unit: "kWh",
+          path: "load",
         },
         data: loadEnergyData,
       });
@@ -282,6 +284,7 @@ export class ReadingsProvider implements HistoryDataProvider {
           label: "Average battery state of charge",
           type: "percentage",
           unit: "%",
+          path: "bidi.battery",
         },
         data: socAvgData,
       });
@@ -307,6 +310,7 @@ export class ReadingsProvider implements HistoryDataProvider {
           label: "Minimum battery state of charge",
           type: "percentage",
           unit: "%",
+          path: "bidi.battery",
         },
         data: socMinData,
       });
@@ -332,6 +336,7 @@ export class ReadingsProvider implements HistoryDataProvider {
           label: "Maximum battery state of charge",
           type: "percentage",
           unit: "%",
+          path: "bidi.battery",
         },
         data: socMaxData,
       });

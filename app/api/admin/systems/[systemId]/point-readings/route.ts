@@ -5,6 +5,7 @@ import { pointInfo } from "@/lib/db/schema-monitoring-points";
 import { eq, sql } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
+import { PointInfo } from "@/lib/point-info";
 
 /**
  * Apply transform to a numeric value based on the transform type
@@ -139,30 +140,12 @@ export async function GET(
       {
         key: "timestamp",
         label: "Time",
-        type: "time",
-        unit: "epochMs",
-        subsystem: null,
-        originId: "",
-        originSubId: null,
-        pointDbId: 0,
-        systemId: 0,
-        defaultName: "",
-        shortName: null,
-        active: true,
+        pointInfo: null, // Special column, no point info
       },
       {
         key: "sessionLabel",
         label: "Session Label",
-        type: "string",
-        unit: null,
-        subsystem: null,
-        originId: "",
-        originSubId: null,
-        pointDbId: 0,
-        systemId: 0,
-        defaultName: "",
-        shortName: null,
-        active: true,
+        pointInfo: null, // Special column, no point info
       },
       ...sortedPoints.map((p) => {
         // For agg data, append the summary type to the extension field
@@ -175,23 +158,29 @@ export async function GET(
               : aggColumn
             : p.extension;
 
+        // Create PointInfo with modified extension for 5m aggregates
+        const pointInfo = new PointInfo(
+          p.id,
+          systemId,
+          p.originId,
+          p.originSubId,
+          p.shortName,
+          p.defaultName,
+          p.displayName,
+          p.subsystem,
+          p.type,
+          p.subtype,
+          extension,
+          p.metricType,
+          p.metricUnit,
+          p.transform,
+          p.active,
+        );
+
         return {
           key: `point_${p.id}`,
           label: p.displayName || p.defaultName,
-          type: p.metricType,
-          unit: p.metricUnit,
-          subsystem: p.subsystem,
-          pointType: p.type,
-          subtype: p.subtype,
-          extension: extension,
-          originId: p.originId,
-          originSubId: p.originSubId,
-          pointDbId: p.id,
-          systemId: systemId,
-          defaultName: p.defaultName,
-          shortName: p.shortName,
-          active: p.active,
-          transform: p.transform,
+          pointInfo,
         };
       }),
     ];

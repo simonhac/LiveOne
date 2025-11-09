@@ -37,6 +37,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: null,
       metricType: "power",
       metricUnit: "W",
+      transform: null,
     },
   },
 
@@ -53,6 +54,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: "remote",
       metricType: "power",
       metricUnit: "W",
+      transform: null,
     },
   },
 
@@ -69,6 +71,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: "local",
       metricType: "power",
       metricUnit: "W",
+      transform: null,
     },
   },
 
@@ -85,6 +88,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: null,
       metricType: "power",
       metricUnit: "W",
+      transform: null,
     },
   },
 
@@ -101,6 +105,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: null,
       metricType: "power",
       metricUnit: "W",
+      transform: null,
     },
   },
 
@@ -117,6 +122,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: null,
       metricType: "power",
       metricUnit: "W",
+      transform: null,
     },
   },
 
@@ -137,6 +143,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: null,
       metricType: "soc",
       metricUnit: "%",
+      transform: null,
     },
   },
 
@@ -153,6 +160,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: null,
       metricType: "diagnostic",
       metricUnit: "text",
+      transform: null,
     },
   },
 
@@ -169,6 +177,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: null,
       metricType: "diagnostic",
       metricUnit: "epochMs",
+      transform: null,
     },
   },
 
@@ -185,6 +194,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: null,
       metricType: "status",
       metricUnit: "bool",
+      transform: null,
     },
   },
 
@@ -204,6 +214,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: null,
       metricType: "energy",
       metricUnit: "Wh",
+      transform: null,
     },
   },
   {
@@ -218,6 +229,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: null,
       metricType: "energy",
       metricUnit: "Wh",
+      transform: null,
     },
   },
   {
@@ -232,6 +244,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: "charge",
       metricType: "energy",
       metricUnit: "Wh",
+      transform: null,
     },
   },
   {
@@ -246,6 +259,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: "discharge",
       metricType: "energy",
       metricUnit: "Wh",
+      transform: null,
     },
   },
   {
@@ -260,6 +274,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: "import",
       metricType: "energy",
       metricUnit: "Wh",
+      transform: null,
     },
   },
   {
@@ -274,6 +289,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
       extension: "export",
       metricType: "energy",
       metricUnit: "Wh",
+      transform: null,
     },
   },
 ];
