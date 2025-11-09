@@ -2,9 +2,49 @@ import { db } from "./db";
 import {
   pointReadingsAgg5m,
   pointReadings,
+  pointInfo,
 } from "./db/schema-monitoring-points";
-import { and, gt, lte, eq, sql } from "drizzle-orm";
+import { and, gt, lte, eq, sql, inArray } from "drizzle-orm";
 import { formatTimeAEST, fromUnixTimestamp } from "./date-utils";
+
+/**
+ * Get the last values from a specific 5-minute interval for specified points
+ * Used for calculating deltas for points with transform='d'
+ *
+ * @param systemId - The system ID
+ * @param pointIds - Array of point IDs to fetch last values for (only points with transform='d')
+ * @param intervalEnd - The interval end time in milliseconds
+ * @returns Map of pointId -> last value from the interval
+ */
+export async function getPointsLastValues5m(
+  systemId: number,
+  pointIds: number[],
+  intervalEnd: number,
+): Promise<Map<number, number>> {
+  if (pointIds.length === 0) return new Map();
+
+  // Fetch aggregates for the specified interval
+  const aggs = await db
+    .select()
+    .from(pointReadingsAgg5m)
+    .where(
+      and(
+        eq(pointReadingsAgg5m.systemId, systemId),
+        inArray(pointReadingsAgg5m.pointId, pointIds),
+        eq(pointReadingsAgg5m.intervalEnd, intervalEnd),
+      ),
+    );
+
+  // Build map of pointId -> last value
+  const lastValues = new Map<number, number>();
+  for (const agg of aggs) {
+    if (agg.last !== null) {
+      lastValues.set(agg.pointId, agg.last);
+    }
+  }
+
+  return lastValues;
+}
 
 /**
  * Updates the 5-minute aggregated data for multiple points in a single interval
@@ -13,19 +53,29 @@ import { formatTimeAEST, fromUnixTimestamp } from "./date-utils";
  * This efficiently handles multiple points at once:
  * - 1 query to fetch all readings for all points
  * - 1 batch upsert for all aggregates
+ * - For points with transform='d': calculates delta from previous interval
+ *
+ * @param systemId - The system ID
+ * @param points - Array of pointInfo objects (with id and transform fields)
+ * @param measurementTime - Unix timestamp in milliseconds of the readings
+ * @param previousLastValues - Map of pointId -> last value from previous interval (for transform='d' delta calculation)
  */
 export async function updatePointAggregates5m(
   systemId: number,
-  pointIds: number[],
+  points: Array<{ id: number; transform: string | null }>,
   measurementTime: number, // Unix timestamp in milliseconds
+  previousLastValues: Map<number, number> = new Map(),
 ): Promise<void> {
-  if (pointIds.length === 0) return;
+  if (points.length === 0) return;
 
   try {
     // Calculate the 5-minute interval boundaries (in milliseconds)
     const intervalMs = 5 * 60 * 1000;
     const intervalEndMs = Math.ceil(measurementTime / intervalMs) * intervalMs;
     const intervalStartMs = intervalEndMs - intervalMs;
+
+    // Build a map of pointId -> transform for quick lookup
+    const pointTransforms = new Map(points.map((p) => [p.id, p.transform]));
 
     // QUERY 1: Fetch all readings for all points in this interval (single query!)
     // Use > intervalStart AND <= intervalEnd (exclusive start, inclusive end)
@@ -88,21 +138,38 @@ export async function updatePointAggregates5m(
             min: null,
             max: null,
             last: null,
+            delta: null,
             sampleCount: 0,
             errorCount,
           };
         }
 
         const values = validReadings.map((r) => r.value);
+        const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
+        const last = validReadings[validReadings.length - 1].value;
+
+        // Calculate delta for points with transform='d'
+        const transform = pointTransforms.get(pointId);
+        let delta: number | null = null;
+
+        if (transform === "d") {
+          // Differentiate: delta = last - previous interval's last
+          const previousLast = previousLastValues.get(pointId);
+          if (previousLast !== undefined) {
+            delta = last - previousLast;
+          }
+          // If no previous value, delta remains null (can't calculate delta for first interval)
+        }
 
         return {
           systemId,
           pointId,
           intervalEnd: intervalEndMs,
-          avg: values.reduce((sum, v) => sum + v, 0) / values.length,
+          avg,
           min: Math.min(...values),
           max: Math.max(...values),
-          last: validReadings[validReadings.length - 1].value, // Last chronologically
+          last,
+          delta,
           sampleCount,
           errorCount,
         };
@@ -126,6 +193,7 @@ export async function updatePointAggregates5m(
           min: sql`excluded.min`,
           max: sql`excluded.max`,
           last: sql`excluded.last`,
+          delta: sql`excluded.delta`,
           sampleCount: sql`excluded.sample_count`,
           errorCount: sql`excluded.error_count`,
           updatedAt: sql`(unixepoch() * 1000)`,

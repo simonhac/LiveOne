@@ -5,6 +5,7 @@ import { X, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatDateTime } from "@/lib/fe-date-format";
 import PointInfoModal from "./PointInfoModal";
 import SessionInfoModal from "./SessionInfoModal";
+import PointReadingInspectorModal from "./PointReadingInspectorModal";
 
 interface ColumnHeader {
   key: string;
@@ -23,6 +24,7 @@ interface ColumnHeader {
   shortName: string | null;
   active: boolean;
   transform?: string | null;
+  derived?: boolean;
 }
 
 interface ViewDataModalProps {
@@ -64,12 +66,21 @@ export default function ViewDataModal({
     transform: string | null;
     metricType: string;
     metricUnit: string | null;
+    derived: boolean;
     vendorSiteId: string;
     systemShortName?: string;
     ownerUsername: string;
     vendorType?: string;
   } | null>(null);
   const [isPointInfoModalOpen, setIsPointInfoModalOpen] = useState(false);
+
+  // Point Reading Inspector state
+  const [selectedReading, setSelectedReading] = useState<{
+    header: ColumnHeader;
+    timestamp: number;
+  } | null>(null);
+  const [isReadingInspectorOpen, setIsReadingInspectorOpen] = useState(false);
+
   const [showExtras, setShowExtras] = useState(true);
   const [dataSource, setDataSource] = useState<"raw" | "5m">("raw");
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
@@ -235,6 +246,7 @@ export default function ViewDataModal({
       transform: header.transform || null,
       metricType: header.type,
       metricUnit: header.unit,
+      derived: header.derived || false,
       vendorSiteId: vendorSiteId,
       systemShortName: metadata?.systemShortName || undefined,
       ownerUsername: metadata?.ownerUsername || "",
@@ -324,9 +336,12 @@ export default function ViewDataModal({
     // From here on, value should be a number
     const numValue = Number(value);
 
-    if (header.type === "energy") {
-      // Convert Wh to MWh for energy (divide by 1,000,000)
+    if (header.type === "energy_monotonic") {
+      // Convert Wh to MWh for monotonic energy (divide by 1,000,000)
       return `${(numValue / 1000000).toFixed(1)}`;
+    } else if (header.type === "energy") {
+      // Display interval energy in Wh (no conversion)
+      return `${numValue.toFixed(0)}`;
     } else if (header.type === "power") {
       // Always show power in kW to match header unit
       return `${(numValue / 1000).toFixed(1)}`;
@@ -349,8 +364,10 @@ export default function ViewDataModal({
     // Session label has no type/unit display
     if (header.key === "sessionLabel") return "";
 
-    if (header.type === "energy") {
-      return "MWh";
+    if (header.type === "energy_monotonic") {
+      return "MWh-mono";
+    } else if (header.type === "energy") {
+      return "Wh";
     } else if (header.type === "power") {
       // For power, we'll show kW for most values
       return "kW";
@@ -744,23 +761,58 @@ export default function ViewDataModal({
                       const isLastSeriesIdColumn =
                         hasActiveSeriesId && !nextHasActiveSeriesId;
 
+                      // Get background color for derived points
+                      const getDerivedBg = (header: ColumnHeader) => {
+                        if (!header.derived) return undefined;
+                        // Use subsystem color with low opacity for tint
+                        switch (header.subsystem) {
+                          case "solar":
+                            return "rgba(234, 179, 8, 0.08)"; // yellow-500 at 8% opacity
+                          case "battery":
+                            return "rgba(34, 197, 94, 0.08)"; // green-500 at 8% opacity
+                          case "grid":
+                            return "rgba(59, 130, 246, 0.08)"; // blue-500 at 8% opacity
+                          case "load":
+                            return "rgba(239, 68, 68, 0.08)"; // red-500 at 8% opacity
+                          default:
+                            return "rgba(156, 163, 175, 0.08)"; // gray-400 at 8% opacity
+                        }
+                      };
+
                       return (
                         <td
                           key={header.key}
                           className={`py-1 px-2 ${
                             header.key !== "timestamp" &&
                             header.key !== "sessionLabel"
-                              ? "text-right"
+                              ? "text-right cursor-pointer"
                               : ""
                           } ${
                             isLastSeriesIdColumn
                               ? "border-r border-gray-700"
                               : ""
                           } ${!header.active && header.key !== "timestamp" && header.key !== "sessionLabel" ? "opacity-50" : ""}`}
+                          style={{ backgroundColor: getDerivedBg(header) }}
+                          onClick={() => {
+                            // Only open inspector for data cells (not timestamp or sessionLabel)
+                            if (
+                              header.key !== "timestamp" &&
+                              header.key !== "sessionLabel"
+                            ) {
+                              setSelectedReading({
+                                header,
+                                timestamp: row.timestamp,
+                              });
+                              setIsReadingInspectorOpen(true);
+                            }
+                          }}
                         >
                           {header.key === "timestamp" ? (
                             <span className="text-xs font-mono text-gray-300 whitespace-nowrap">
-                              {formatDateTime(row[header.key]).display}
+                              {
+                                formatDateTime(new Date(row[header.key]))
+                                  .display
+                              }
                             </span>
                           ) : header.key === "sessionLabel" ? (
                             row[header.key] !== null && row.sessionId ? (
@@ -807,6 +859,25 @@ export default function ViewDataModal({
         onClose={() => setIsSessionInfoModalOpen(false)}
         session={selectedSession}
       />
+
+      {selectedReading && (
+        <PointReadingInspectorModal
+          isOpen={isReadingInspectorOpen}
+          onClose={() => {
+            setIsReadingInspectorOpen(false);
+            setSelectedReading(null);
+          }}
+          timestamp={selectedReading.timestamp}
+          initialDataSource={dataSource}
+          header={selectedReading.header}
+          system={{
+            name: systemName,
+            vendorType: vendorType,
+            vendorSiteId: vendorSiteId,
+            ownerUsername: metadata?.ownerUsername,
+          }}
+        />
+      )}
     </div>
   );
 }

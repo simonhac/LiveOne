@@ -190,6 +190,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
 
   // ============================================================================
   // LIFETIME ENERGY TOTALS (Wh) - Source data is kWh, converted to Wh in adapter
+  // These are monotonically increasing lifetime totals - deltas are calculated for derived points
   // ============================================================================
 
   {
@@ -202,7 +203,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       type: "source",
       subtype: "solar",
       extension: null,
-      metricType: "energy",
+      metricType: "energy_monotonic",
       metricUnit: "Wh",
     },
   },
@@ -216,7 +217,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       type: "load",
       subtype: null,
       extension: null,
-      metricType: "energy",
+      metricType: "energy_monotonic",
       metricUnit: "Wh",
     },
   },
@@ -230,7 +231,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       type: "bidi",
       subtype: "battery",
       extension: "charge",
-      metricType: "energy",
+      metricType: "energy_monotonic",
       metricUnit: "Wh",
     },
   },
@@ -244,7 +245,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       type: "bidi",
       subtype: "battery",
       extension: "discharge",
-      metricType: "energy",
+      metricType: "energy_monotonic",
       metricUnit: "Wh",
     },
   },
@@ -258,7 +259,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       type: "bidi",
       subtype: "grid",
       extension: "import",
-      metricType: "energy",
+      metricType: "energy_monotonic",
       metricUnit: "Wh",
     },
   },
@@ -272,7 +273,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       type: "bidi",
       subtype: "grid",
       extension: "export",
-      metricType: "energy",
+      metricType: "energy_monotonic",
       metricUnit: "Wh",
     },
   },

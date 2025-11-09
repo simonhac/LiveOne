@@ -273,14 +273,14 @@ export class MondoAdapter extends BaseVendorAdapter {
             error: null,
           });
 
-          // Add energy reading
+          // Add energy reading (monotonic total)
           readingsToInsert.push({
             pointMetadata: {
               originId: row.monitoringPointId,
               originSubId: "totalEnergyWh",
               defaultName: row.monitoringPointName,
               subsystem,
-              metricType: "energy",
+              metricType: "energy_monotonic",
               metricUnit: "Wh",
             },
             rawValue: row.totalEnergyWh,

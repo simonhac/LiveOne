@@ -31,7 +31,7 @@ interface PollResult {
   displayName: string;
   vendorType: string;
   status: "polled" | "skipped" | "error";
-  recordsUpserted?: number;
+  recordsProcessed?: number;
   skipReason?: string;
   error?: string;
   rawResponse?: any;
@@ -100,7 +100,16 @@ export default function PollNowModal({
       const systemResult = data.results?.find(
         (r: any) => r.systemId === systemId,
       );
-      setResult(systemResult || data);
+
+      // Map action to status (API returns "action", modal expects "status")
+      const mappedResult = systemResult
+        ? {
+            ...systemResult,
+            status: systemResult.action?.toLowerCase() || "error",
+          }
+        : data;
+
+      setResult(mappedResult);
     } catch (err) {
       console.error("Poll now error:", err);
       setError(err instanceof Error ? err.message : "Failed to poll system");
@@ -242,8 +251,8 @@ export default function PollNowModal({
                     <div>
                       <p className="text-xs text-gray-500">Records Processed</p>
                       <p className="text-sm font-medium text-white">
-                        {result.recordsUpserted !== undefined
-                          ? result.recordsUpserted
+                        {result.recordsProcessed !== undefined
+                          ? result.recordsProcessed
                           : "—"}
                       </p>
                     </div>

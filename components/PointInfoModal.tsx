@@ -20,6 +20,7 @@ interface PointInfo {
   transform: string | null;
   metricType: string;
   metricUnit: string | null;
+  derived: boolean;
   vendorSiteId?: string;
   systemShortName?: string;
   ownerUsername: string;
@@ -92,6 +93,18 @@ export default function PointInfoModal({
     setIsTransformDirty(false);
     setShortNameError(null);
   }, [pointInfo, isOpen]);
+
+  // Handle escape key to close modal
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isOpen) {
+        onClose();
+      }
+    };
+
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [isOpen, onClose]);
 
   const validateShortName = (value: string): string | null => {
     if (!value) return null; // Empty is valid (optional field)
@@ -271,8 +284,13 @@ export default function PointInfoModal({
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
                   Sub-Point:
                 </label>
-                <div className="px-2 text-gray-400 font-mono text-sm flex-1">
-                  {pointInfo.originSubId || "N/A"}
+                <div className="px-2 text-gray-400 font-mono text-sm flex-1 flex items-center gap-2">
+                  <span>{pointInfo.originSubId || "N/A"}</span>
+                  {pointInfo.derived && (
+                    <span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 text-xs rounded-md border border-purple-500/30">
+                      DERIVED
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -334,6 +352,7 @@ export default function PointInfoModal({
                 >
                   <option value="n">none (unchanged)</option>
                   <option value="i">invert (multiply by -1)</option>
+                  <option value="d">differentiate (delta from previous)</option>
                 </select>
               </div>
 

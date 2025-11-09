@@ -35,18 +35,21 @@ export const pointInfo = sqliteTable(
     extension: text("extension"), // eg. additional qualifier - user settable free text
     displayName: text("display_name").notNull(), // user settable, will generally be the same as pointName
     shortName: text("short_name"), // Optional short name (letters, digits, underscore only) - used in history API IDs
-    active: integer("active", { mode: "boolean" }).notNull().default(true), // Whether this point is active (enabled)
-    transform: text("transform"), // Optional transform: null = no transform, 'i' = invert
 
     // Type and unit
-    metricType: text("metric_type").notNull(), // eg. 'power', 'energy', 'soc'
+    metricType: text("metric_type").notNull(), // eg. 'power', 'energy', 'energy_monotonic', 'soc'
     metricUnit: text("metric_unit").notNull(), // eg. 'W', 'Wh', '%'
 
+    // Flags
+    active: integer("active", { mode: "boolean" }).notNull().default(true), // Whether this point is active (enabled)
+    transform: text("transform"), // Optional transform: null = no transform, 'i' = invert, 'd' = differentiate
+
     // Timestamps
-    created: integer("created").notNull().default(0), // Creation timestamp (Unix milliseconds)
+    created: integer("created"), // Creation timestamp (Unix milliseconds)
   },
   (table) => ({
     pk: primaryKey({ columns: [table.systemId, table.id] }),
+    // Unique constraint on origin point (system + origin_id + origin_sub_id)
     systemPointUnique: uniqueIndex("pi_system_point_unique").on(
       table.systemId,
       table.originId,
@@ -131,6 +134,7 @@ export const pointReadingsAgg5m = sqliteTable(
     min: real("min"),
     max: real("max"),
     last: real("last"),
+    delta: real("delta"), // For differentiated values (points with transform='d')
 
     // Sampling metadata
     sampleCount: integer("sample_count").notNull(),

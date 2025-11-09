@@ -5,7 +5,10 @@ import {
   pointReadingsAgg5m,
 } from "@/lib/db/schema-monitoring-points";
 import { eq, and, sql } from "drizzle-orm";
-import { updatePointAggregates5m } from "./point-aggregation-helper";
+import {
+  updatePointAggregates5m,
+  getPointsLastValues5m,
+} from "./point-aggregation-helper";
 
 export interface PointInfoMap {
   [key: string]: typeof pointInfo.$inferSelect;
@@ -54,10 +57,10 @@ export async function ensurePointInfo(
   pointMap: PointInfoMap,
   metadata: PointMetadata,
 ): Promise<typeof pointInfo.$inferSelect> {
-  // Create composite key
-  const key = metadata.originSubId
-    ? `${metadata.originId}:${metadata.originSubId}`
-    : metadata.originId;
+  // Create composite key including metricType for uniqueness
+  const key = [metadata.originId, metadata.originSubId, metadata.metricType]
+    .filter(Boolean)
+    .join(":");
 
   // Return existing if found
   if (pointMap[key]) {
@@ -65,7 +68,7 @@ export async function ensurePointInfo(
   }
 
   console.log(
-    `[PointsManager] Creating point_info for ${metadata.defaultName}${metadata.originSubId ? "." + metadata.originSubId : ""}`,
+    `[PointsManager] Creating point_info for ${metadata.defaultName}${metadata.originSubId ? "." + metadata.originSubId : ""} (${metadata.metricType})`,
   );
 
   // Get the next available id for this system
@@ -88,19 +91,20 @@ export async function ensurePointInfo(
       originId: metadata.originId,
       originSubId: metadata.originSubId || null,
       defaultName: metadata.defaultName,
-      displayName: metadata.defaultName, // Initially same as default
+      displayName: metadata.defaultName, // Initially same as defaultName
       subsystem: metadata.subsystem || null,
       type: metadata.type || null,
       subtype: metadata.subtype || null,
       extension: metadata.extension || null,
       metricType: metadata.metricType,
       metricUnit: metadata.metricUnit,
+      created: Date.now(),
     })
     .onConflictDoUpdate({
       target: [pointInfo.systemId, pointInfo.originId, pointInfo.originSubId],
       set: {
-        defaultName: metadata.defaultName, // Update default name if changed from source
-        // Don't update 'displayName', 'subsystem', 'type', 'subtype', 'extension' as they're user-modifiable
+        // Update default name from source if it changed
+        defaultName: metadata.defaultName,
       },
     })
     .returning();
@@ -262,10 +266,38 @@ export async function insertPointReadingsBatch(
 
   // Aggregate the readings we just inserted
   const uniquePointIds = [...new Set(valuesToInsert.map((v) => v.pointId))];
+
+  // Build array of point objects with id and transform for aggregation
+  const pointsForAggregation = uniquePointIds.map((id) => {
+    const point = Object.values(pointMap).find((p) => p.id === id);
+    return {
+      id,
+      transform: point?.transform || null,
+    };
+  });
+
+  // Calculate interval boundaries to get previous interval's last values
+  const measurementTime = readings[0].measurementTime;
+  const intervalMs = 5 * 60 * 1000;
+  const currentIntervalEnd =
+    Math.ceil(measurementTime / intervalMs) * intervalMs;
+  const previousIntervalEnd = currentIntervalEnd - intervalMs;
+
+  // Get previous interval's last values for points with transform='d'
+  const differentiatePointIds = pointsForAggregation
+    .filter((p) => p.transform === "d")
+    .map((p) => p.id);
+  const previousLastValues = await getPointsLastValues5m(
+    systemId,
+    differentiatePointIds,
+    previousIntervalEnd,
+  );
+
   await updatePointAggregates5m(
     systemId,
-    uniquePointIds,
-    readings[0].measurementTime,
+    pointsForAggregation,
+    measurementTime,
+    previousLastValues,
   );
 }
 
@@ -306,7 +338,8 @@ export async function insertPointReadingsDirectTo5m(
     );
 
     // For pre-aggregated data with a single value per interval:
-    // avg = min = max = last = the value
+    // avg = min = max = last = sum = the value
+    // (sum = avg for interval energy from Enphase)
     // If value is null, this is an error reading
     const isError = value === null;
 
@@ -319,6 +352,7 @@ export async function insertPointReadingsDirectTo5m(
       min: isError ? null : value,
       max: isError ? null : value,
       last: isError ? null : value,
+      delta: null, // No delta calculation for pre-aggregated data
       sampleCount: isError ? 0 : 1,
       errorCount: isError ? 1 : 0,
     });
@@ -341,6 +375,7 @@ export async function insertPointReadingsDirectTo5m(
           min: sql`excluded.min`,
           max: sql`excluded.max`,
           last: sql`excluded.last`,
+          delta: sql`excluded.delta`,
           sampleCount: sql`excluded.sample_count`,
           errorCount: sql`excluded.error_count`,
           updatedAt: sql`(unixepoch() * 1000)`,

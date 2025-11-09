@@ -1,15 +1,9 @@
 import { NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
-import {
-  pointReadings,
-  pointInfo,
-  pointReadingsAgg5m,
-} from "@/lib/db/schema-monitoring-points";
-import { eq, desc, sql } from "drizzle-orm";
+import { pointInfo } from "@/lib/db/schema-monitoring-points";
+import { eq, sql } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
-import { formatTimeAEST } from "@/lib/date-utils";
-import { fromDate } from "@internationalized/date";
 import { SystemsManager } from "@/lib/systems-manager";
 
 /**
@@ -131,8 +125,13 @@ export async function GET(
     });
 
     // Determine which aggregate column to use for each point (when using 5m data)
-    const getAggColumn = (metricType: string) => {
-      return metricType === "power" ? "avg" : "last";
+    const getAggColumn = (metricType: string, transform: string | null) => {
+      // Points with transform='d' use delta column
+      if (transform === "d") return "delta";
+      // Power points use average
+      if (metricType === "power") return "avg";
+      // Everything else uses last
+      return "last";
     };
 
     // Build headers with metadata for each column
@@ -168,7 +167,7 @@ export async function GET(
       ...sortedPoints.map((p) => {
         // For agg data, append the summary type to the extension field
         const aggColumn =
-          dataSource === "5m" ? getAggColumn(p.metricType) : null;
+          dataSource === "5m" ? getAggColumn(p.metricType, p.transform) : null;
         const extension =
           dataSource === "5m" && aggColumn
             ? p.extension
@@ -204,7 +203,7 @@ export async function GET(
       // Query 5-minute aggregated data
       const pivotColumns = points
         .map((p) => {
-          const aggCol = getAggColumn(p.metricType);
+          const aggCol = getAggColumn(p.metricType, p.transform);
           return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.id} THEN pr.${aggCol} END) as point_${p.id}`;
         })
         .join(",\n  ");
@@ -304,21 +303,14 @@ export async function GET(
       hasAlternativeData = (checkResult[0]?.count || 0) > 0;
     }
 
-    // Transform the data to include ISO timestamps with AEST formatting
+    // Transform the data
     const data = result.map((row: any) => {
-      // Convert Unix timestamp (ms) to ZonedDateTime and format with AEST
-      const zonedDate = fromDate(
-        new Date(row.measurement_time),
-        "Australia/Brisbane",
-      );
-      const formattedTime = formatTimeAEST(zonedDate);
-
       // Use session_label from the joined sessions table, or fallback to session_id if label is null
       const sessionLabel =
         row.session_label || row.session_id?.toString() || null;
 
       const transformed: any = {
-        timestamp: formattedTime,
+        timestamp: row.measurement_time, // Return raw Unix timestamp (epochMs)
         sessionLabel: sessionLabel,
         sessionId: row.session_id || null,
       };
