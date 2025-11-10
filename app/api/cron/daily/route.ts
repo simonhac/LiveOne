@@ -1,24 +1,130 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  aggregateDaily,
-  regenerateDate,
-  regenerateLastNDays,
-  deleteRange,
-  aggregateRange,
-} from "@/lib/db/aggregate-daily-points";
+import { deleteRange, aggregateRange } from "@/lib/db/aggregate-daily-points";
 import { validateCronRequest } from "@/lib/cron-utils";
 import { parseDate, CalendarDate } from "@internationalized/date";
+import {
+  getNowFormattedAEST,
+  getYesterdayInTimezone,
+  getTodayInTimezone,
+} from "@/lib/date-utils";
+import { SystemsManager } from "@/lib/systems-manager";
+
+// Earliest date for point data aggregation (when point data collection began)
+const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
+
+/**
+ * Parse and validate date parameters
+ * @param date - Single date parameter (YYYY-MM-DD)
+ * @param start - Start date parameter (YYYY-MM-DD)
+ * @param end - End date parameter (YYYY-MM-DD)
+ * @param last - Last N days parameter (e.g., "7d")
+ * @param action - The action being performed (delete/aggregate/regenerate)
+ * @param timezoneOffsetMin - Timezone offset for calculating "today/yesterday"
+ * @returns Object with parsed start/end dates (clamped to LIVEONE_BIRTHDATE minimum)
+ * @throws Error with user-friendly message if validation fails
+ */
+function parseDateParams(
+  date: string | null,
+  start: string | null,
+  end: string | null,
+  last: string | null,
+  action: string | null,
+  timezoneOffsetMin: number,
+): {
+  startDate: CalendarDate | null;
+  endDate: CalendarDate | null;
+} {
+  let startDate: CalendarDate | null = null;
+  let endDate: CalendarDate | null = null;
+
+  // Check for ambiguous parameter combinations
+  const paramCount = [last, date, start || end].filter(Boolean).length;
+  if (paramCount > 1) {
+    throw new Error(
+      "Only one date specification allowed: use 'last', 'date', or 'start+end' (not multiple)",
+    );
+  }
+
+  // If last parameter is provided (e.g., "7d"), calculate date range
+  if (last) {
+    const days = parseInt(last.replace("d", ""), 10);
+    if (isNaN(days) || days <= 0) {
+      throw new Error("Invalid 'last' parameter. Expected format: '7d'");
+    }
+
+    const today = getTodayInTimezone(timezoneOffsetMin);
+    startDate = today.subtract({ days: days - 1 });
+    endDate = today;
+  }
+  // If date parameter is provided, use it for both start and end
+  else if (date) {
+    try {
+      const calendarDate = parseDate(date);
+      startDate = calendarDate;
+      endDate = calendarDate;
+    } catch (error) {
+      throw new Error("Invalid 'date' parameter. Expected format: YYYY-MM-DD");
+    }
+  }
+  // If start or end provided, both must be provided
+  else if (start || end) {
+    if (!start || !end) {
+      throw new Error("Both start and end must be provided together");
+    }
+    try {
+      startDate = parseDate(start);
+      endDate = parseDate(end);
+    } catch (error) {
+      throw new Error(
+        "Invalid date format. Expected start and end in YYYY-MM-DD format",
+      );
+    }
+  }
+  // No date parameters - default behavior depends on action
+  else {
+    // For delete with no params, return nulls (means "all data")
+    if (action === "delete") {
+      return { startDate: null, endDate: null };
+    }
+
+    // Default to yesterday for aggregate/regenerate/no-action (cron behavior)
+    const yesterday = getYesterdayInTimezone(timezoneOffsetMin);
+    startDate = yesterday;
+    endDate = yesterday;
+  }
+
+  // Clamp start date to minimum (when point data collection began)
+  if (startDate && startDate.compare(LIVEONE_BIRTHDATE) < 0) {
+    console.log(
+      `[Daily Points] Clamping start date from ${startDate.toString()} to ${LIVEONE_BIRTHDATE.toString()}`,
+    );
+    startDate = LIVEONE_BIRTHDATE;
+  }
+
+  // Validate date range order (if both provided)
+  if (startDate && endDate && startDate.compare(endDate) > 0) {
+    throw new Error(
+      `Start date ${startDate.toString()} must be before or equal to end date ${endDate.toString()}`,
+    );
+  }
+
+  return { startDate, endDate };
+}
 
 /**
  * Shared aggregation handler for both GET and POST
- * Supports the following paths:
- * 1. action=delete&start=YYYY-MM-DD&end=YYYY-MM-DD - Delete aggregations for date range
- * 2. action=delete (no start/end) - Delete all aggregations
- * 3. action=aggregate&start=YYYY-MM-DD&end=YYYY-MM-DD - Aggregate date range
- * 4. action=aggregate (no start/end) - Aggregate all available data
- * 5. action=regenerate&last=7d - Delete and regenerate last N days (legacy)
- * 6. action=regenerate&date=YYYY-MM-DD - Delete and regenerate specific date (legacy)
- * 7. No parameters - Aggregate yesterday (default cron behavior)
+ *
+ * Actions:
+ * - action=delete - Delete aggregations
+ * - action=aggregate - Create/update aggregations
+ * - action=regenerate - Delete then re-aggregate (delete + aggregate)
+ * - No action - Aggregate yesterday (default cron behavior)
+ *
+ * Date range parameters (apply to all actions):
+ * - date=YYYY-MM-DD - Specific date
+ * - start=YYYY-MM-DD&end=YYYY-MM-DD - Date range
+ * - last=7d - Last N days (from today back)
+ * - No date params - All available data (or yesterday for default cron)
  */
 async function handleAggregation(request: NextRequest) {
   try {
@@ -40,143 +146,113 @@ async function handleAggregation(request: NextRequest) {
 
     const startTime = Date.now();
 
-    // Path 1: action=delete - Delete aggregations for date range
+    // Get timezone offset from first system (needed for date calculations)
+    const systemsManager = SystemsManager.getInstance();
+    const systems = await systemsManager.getActiveSystems();
+
+    if (systems.length === 0) {
+      return NextResponse.json({ error: "No systems found" }, { status: 404 });
+    }
+
+    const timezoneOffsetMin = systems[0].timezoneOffsetMin;
+
+    // Parse date parameters for all actions (including no action = default cron)
+    let parsedDates: {
+      startDate: CalendarDate | null;
+      endDate: CalendarDate | null;
+    };
+
+    try {
+      parsedDates = parseDateParams(
+        date,
+        start,
+        end,
+        last,
+        action,
+        timezoneOffsetMin,
+      );
+    } catch (error) {
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error ? error.message : "Invalid date parameters",
+        },
+        { status: 400 },
+      );
+    }
+
+    // Path 1: action=delete - Delete aggregations
     if (action === "delete") {
-      let startDate: CalendarDate | null = null;
-      let endDate: CalendarDate | null = null;
-
-      // Parse start and end dates if provided
-      if (start && end) {
-        try {
-          startDate = parseDate(start);
-          endDate = parseDate(end);
-        } catch (error) {
-          return NextResponse.json(
-            {
-              error:
-                "Invalid date format. Expected start and end in YYYY-MM-DD format",
-            },
-            { status: 400 },
-          );
-        }
-      } else if (start || end) {
-        return NextResponse.json(
-          { error: "Both start and end must be provided, or both omitted" },
-          { status: 400 },
-        );
-      }
-
-      const result = await deleteRange(startDate, endDate);
-      const duration = Date.now() - startTime;
+      const result = await deleteRange(
+        parsedDates.startDate,
+        parsedDates.endDate,
+      );
+      const durationMs = Date.now() - startTime;
 
       return NextResponse.json({
         success: true,
         action: "delete",
         ...result,
-        duration,
-        timestamp: new Date().toISOString(),
+        statistics: {
+          rowsDeleted: result.rowsDeleted,
+          queryCount: result.queryCount,
+          durationMs,
+        },
+        executedAt: getNowFormattedAEST(),
       });
     }
 
-    // Path 2: action=aggregate - Aggregate data for date range
-    if (action === "aggregate") {
-      let startDate: CalendarDate | null = null;
-      let endDate: CalendarDate | null = null;
-
-      // Parse start and end dates if provided
-      if (start && end) {
-        try {
-          startDate = parseDate(start);
-          endDate = parseDate(end);
-        } catch (error) {
-          return NextResponse.json(
-            {
-              error:
-                "Invalid date format. Expected start and end in YYYY-MM-DD format",
-            },
-            { status: 400 },
-          );
-        }
-      } else if (start || end) {
-        return NextResponse.json(
-          { error: "Both start and end must be provided, or both omitted" },
-          { status: 400 },
-        );
-      }
-
-      const result = await aggregateRange(startDate, endDate);
-      const duration = Date.now() - startTime;
+    // Path 2: action=aggregate or no action - Aggregate data
+    // (no action defaults to yesterday, treated as aggregate)
+    if (action === "aggregate" || !action) {
+      const result = await aggregateRange(
+        parsedDates.startDate,
+        parsedDates.endDate,
+      );
+      const durationMs = Date.now() - startTime;
 
       return NextResponse.json({
         success: true,
-        action: "aggregate",
+        action: action || "daily",
         ...result,
-        duration,
-        timestamp: new Date().toISOString(),
+        statistics: {
+          pointsAggregated: result.pointsAggregated,
+          rowsCreated: result.rowsCreated,
+          queryCount: result.queryCount,
+          durationMs,
+        },
+        executedAt: getNowFormattedAEST(),
       });
     }
 
-    // Path 3a: action=regenerate&last=7d (or any number of days) - LEGACY
-    if (action === "regenerate" && last) {
-      const days = parseInt(last.replace("d", ""), 10);
-      if (isNaN(days) || days <= 0) {
-        return NextResponse.json(
-          { error: "Invalid 'last' parameter. Expected format: '7d'" },
-          { status: 400 },
-        );
-      }
+    // Path 3: action=regenerate - Delete then re-aggregate
+    if (action === "regenerate") {
+      // Delete existing aggregations
+      const deleteResult = await deleteRange(
+        parsedDates.startDate,
+        parsedDates.endDate,
+      );
 
-      const results = await regenerateLastNDays(days);
-      const duration = Date.now() - startTime;
+      // Regenerate aggregations
+      const aggregateResult = await aggregateRange(
+        parsedDates.startDate,
+        parsedDates.endDate,
+      );
 
-      return NextResponse.json({
-        success: true,
-        action: "regenerate-last-n-days",
-        last: `${days}d`,
-        message: `Regenerated last ${days} days for ${results.length} systems`,
-        results,
-        duration,
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // Path 3b: action=regenerate&date=YYYY-MM-DD - LEGACY
-    if (action === "regenerate" && date) {
-      // Parse YYYY-MM-DD to CalendarDate
-      let calendarDate;
-      try {
-        calendarDate = parseDate(date);
-      } catch (error) {
-        return NextResponse.json(
-          { error: "Invalid 'date' parameter. Expected format: YYYY-MM-DD" },
-          { status: 400 },
-        );
-      }
-
-      const result = await regenerateDate(calendarDate);
-      const duration = Date.now() - startTime;
+      const durationMs = Date.now() - startTime;
 
       return NextResponse.json({
         success: true,
-        action: "regenerate-date",
-        ...result,
-        duration,
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // Path 4: No parameters - Default daily aggregation (aggregate yesterday)
-    if (!action && !last && !date && !start && !end) {
-      const results = await aggregateDaily();
-      const duration = Date.now() - startTime;
-
-      return NextResponse.json({
-        success: true,
-        action: "daily",
-        message: `Aggregated yesterday's points for ${results.length} systems`,
-        results,
-        duration,
-        timestamp: new Date().toISOString(),
+        action: "regenerate",
+        ...aggregateResult,
+        statistics: {
+          pointsAggregated: aggregateResult.pointsAggregated,
+          rowsDeleted: deleteResult.rowsDeleted,
+          rowsCreated: aggregateResult.rowsCreated,
+          queryCount: deleteResult.queryCount + aggregateResult.queryCount,
+          durationMs,
+        },
+        executedAt: getNowFormattedAEST(),
       });
     }
 
@@ -184,7 +260,7 @@ async function handleAggregation(request: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "Invalid parameters. Expected: 'action=delete[&start=YYYY-MM-DD&end=YYYY-MM-DD]', 'action=aggregate[&start=YYYY-MM-DD&end=YYYY-MM-DD]', 'action=regenerate&last=7d', 'action=regenerate&date=YYYY-MM-DD', or no params for daily aggregation",
+          "Invalid parameters. Expected: action (delete/aggregate/regenerate) with optional date range (date=YYYY-MM-DD, start=YYYY-MM-DD&end=YYYY-MM-DD, or last=7d), or no params for daily aggregation",
       },
       { status: 400 },
     );
