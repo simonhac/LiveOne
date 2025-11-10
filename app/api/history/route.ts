@@ -62,7 +62,17 @@ interface ValidationResult {
 // Authentication & Access Control
 // ============================================================================
 
-async function authenticateUser(): Promise<AuthResult | NextResponse> {
+async function authenticateUser(
+  request?: NextRequest,
+): Promise<AuthResult | NextResponse> {
+  // In development, allow using X-CLAUDE header to bypass auth
+  if (
+    process.env.NODE_ENV === "development" &&
+    request?.headers.get("x-claude") === "true"
+  ) {
+    return { userId: "claude-dev", isAdmin: true };
+  }
+
   const { userId } = await auth();
 
   if (!userId) {
@@ -691,6 +701,7 @@ function buildResponse(
   startTime: ZonedDateTime | CalendarDate,
   endTime: ZonedDateTime | CalendarDate,
   interval: "5m" | "30m" | "1d",
+  durationMs: number,
   debug?: any,
 ): NextResponse {
   // Format date strings based on interval type
@@ -720,6 +731,7 @@ function buildResponse(
     created_at: formatTimeAEST(now("Australia/Brisbane")),
     requestStart: requestStartStr,
     requestEnd: requestEndStr,
+    durationMs,
     data: dataSeries,
   };
 
@@ -743,9 +755,10 @@ function buildResponse(
 // ============================================================================
 
 export async function GET(request: NextRequest) {
+  const startTime = Date.now();
   try {
     // Step 1: Authentication
-    const authResult = await authenticateUser();
+    const authResult = await authenticateUser(request);
     if (authResult instanceof NextResponse) {
       return authResult;
     }
@@ -807,11 +820,13 @@ export async function GET(request: NextRequest) {
     );
 
     // Step 7: Build and return response
+    const durationMs = Date.now() - startTime;
     return buildResponse(
       dataSeries,
       timeRange.startTime!,
       timeRange.endTime!,
       basicParams.interval as "5m" | "30m" | "1d",
+      durationMs,
       debug,
     );
   } catch (error) {

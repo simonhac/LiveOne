@@ -20,6 +20,7 @@ export interface MeasurementValue {
   min?: number | null;
   max?: number | null;
   last?: number | null; // Last value in the interval (chronologically)
+  delta?: number | null; // Cumulative change over the interval (for energy metrics)
   count?: number; // Number of samples in this aggregation
 }
 
