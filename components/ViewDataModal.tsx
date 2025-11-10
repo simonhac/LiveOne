@@ -204,7 +204,7 @@ export default function ViewDataModal({
       setLoading(false);
       fetchingRef.current = false;
     }
-  }, [systemId, source, currentCursor, cursorDirection]);
+  }, [systemId, source, currentCursor, cursorDirection, timezoneOffsetMin]);
 
   useEffect(() => {
     if (isOpen) {
@@ -239,6 +239,22 @@ export default function ViewDataModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentCursor, cursorDirection]);
 
+  const handlePageOlder = useCallback(() => {
+    if (pagination?.lastCursor) {
+      setCurrentCursor(pagination.lastCursor);
+      setCursorDirection("older");
+      setLoading(true);
+    }
+  }, [pagination?.lastCursor]);
+
+  const handlePageNewer = useCallback(() => {
+    if (pagination?.firstCursor) {
+      setCurrentCursor(pagination.firstCursor);
+      setCursorDirection("newer");
+      setLoading(true);
+    }
+  }, [pagination?.firstCursor]);
+
   // Handle escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -267,6 +283,8 @@ export default function ViewDataModal({
     onClose,
     pagination,
     loading,
+    handlePageOlder,
+    handlePageNewer,
   ]);
 
   const handleSourceChange = (newSource: "raw" | "5m" | "daily") => {
@@ -278,22 +296,6 @@ export default function ViewDataModal({
       setCurrentCursor(null);
       setCursorDirection("newer");
       setPagination(null);
-    }
-  };
-
-  const handlePageOlder = () => {
-    if (pagination?.lastCursor) {
-      setCurrentCursor(pagination.lastCursor);
-      setCursorDirection("older");
-      setLoading(true);
-    }
-  };
-
-  const handlePageNewer = () => {
-    if (pagination?.firstCursor) {
-      setCurrentCursor(pagination.firstCursor);
-      setCursorDirection("newer");
-      setLoading(true);
     }
   };
 
