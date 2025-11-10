@@ -151,8 +151,13 @@ export class PointReadingsProvider implements HistoryDataProvider {
       const pointAggregates = pointSeriesMap.get(pointId) || [];
 
       for (const agg of pointAggregates) {
-        // Only include if we have valid aggregate data
-        if (agg.avg !== null || agg.min !== null || agg.max !== null) {
+        // Only include if we have valid aggregate data (check all aggregate fields)
+        if (
+          agg.avg !== null ||
+          agg.min !== null ||
+          agg.max !== null ||
+          agg.last !== null
+        ) {
           data.push({
             timestamp: fromUnixTimestamp(agg.intervalEnd / 1000, 600), // Use AEST timezone
             value: {

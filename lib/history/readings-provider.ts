@@ -197,7 +197,7 @@ export class ReadingsProvider implements HistoryDataProvider {
       metadata: {
         id: "bidi.battery.soc.last",
         label: "Battery SOC",
-        type: "percentage",
+        type: "soc",
         unit: "%",
         path: "bidi.battery",
       },
@@ -282,7 +282,7 @@ export class ReadingsProvider implements HistoryDataProvider {
         metadata: {
           id: "battery.soc.avg",
           label: "Average battery state of charge",
-          type: "percentage",
+          type: "soc",
           unit: "%",
           path: "bidi.battery",
         },
@@ -308,7 +308,7 @@ export class ReadingsProvider implements HistoryDataProvider {
         metadata: {
           id: "battery.soc.min",
           label: "Minimum battery state of charge",
-          type: "percentage",
+          type: "soc",
           unit: "%",
           path: "bidi.battery",
         },
@@ -334,7 +334,7 @@ export class ReadingsProvider implements HistoryDataProvider {
         metadata: {
           id: "battery.soc.max",
           label: "Maximum battery state of charge",
-          type: "percentage",
+          type: "soc",
           unit: "%",
           path: "bidi.battery",
         },
