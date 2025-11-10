@@ -42,6 +42,7 @@ export class CompositeAdapter extends BaseVendorAdapter {
   readonly vendorType = "composite";
   readonly displayName = "Composite System";
   readonly dataSource = "push" as const;
+  readonly dataStore = "point_readings" as const;
 
   /**
    * Determine which system to pull each metric from

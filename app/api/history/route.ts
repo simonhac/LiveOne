@@ -523,15 +523,40 @@ async function getSystemHistoryInOpenNEMFormat(
         }
 
         // Query aggregation table
-        let rows = (await db.all(sql`
-          SELECT interval_end, ${sql.identifier(point.aggregationField)} as value
-          FROM ${sql.identifier(aggTable)}
-          WHERE system_id = ${point.systemId}
-            AND point_id = ${point.pointId}
-            AND interval_end >= ${startEpoch}
-            AND interval_end < ${endEpoch}
-          ORDER BY interval_end ASC
-        `)) as Array<{ interval_end: number; value: number | null }>;
+        let rows: Array<{ interval_end: number; value: number | null }>;
+
+        if (interval === "1d") {
+          // Daily aggregation uses 'day' column (YYYY-MM-DD string), not interval_end
+          const startDate = (startTime as CalendarDate).toString();
+          const endDate = (endTime as CalendarDate).toString();
+
+          const dailyRows = (await db.all(sql`
+            SELECT day, ${sql.identifier(point.aggregationField)} as value
+            FROM ${sql.identifier(aggTable)}
+            WHERE system_id = ${point.systemId}
+              AND point_id = ${point.pointId}
+              AND day >= ${startDate}
+              AND day <= ${endDate}
+            ORDER BY day ASC
+          `)) as Array<{ day: string; value: number | null }>;
+
+          // Convert day strings to interval_end timestamps for consistent processing
+          rows = dailyRows.map((row) => ({
+            interval_end: new Date(row.day + "T00:00:00Z").getTime(),
+            value: row.value,
+          }));
+        } else {
+          // 5-minute and 30-minute aggregations use interval_end
+          rows = (await db.all(sql`
+            SELECT interval_end, ${sql.identifier(point.aggregationField)} as value
+            FROM ${sql.identifier(aggTable)}
+            WHERE system_id = ${point.systemId}
+              AND point_id = ${point.pointId}
+              AND interval_end >= ${startEpoch}
+              AND interval_end < ${endEpoch}
+            ORDER BY interval_end ASC
+          `)) as Array<{ interval_end: number; value: number | null }>;
+        }
 
         // Apply transform to all values immediately after query
         rows = rows.map((row) => ({
