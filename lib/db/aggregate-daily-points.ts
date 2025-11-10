@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { db, rawClient } from "@/lib/db";
 import { systems } from "@/lib/db/schema";
 import {
   pointReadingsAgg5m,
@@ -203,12 +203,13 @@ async function aggregateDailyPointData(
  * @param sinceMs - Look for systems with data since this timestamp (in milliseconds)
  */
 async function getSystemsWithRecentPointData(sinceMs: number) {
-  const recentPoints = await db
-    .select()
-    .from(pointReadingsAgg5m)
-    .where(gte(pointReadingsAgg5m.intervalEnd, sinceMs));
+  // Use raw SQL with DISTINCT to efficiently get unique system IDs
+  const result = await rawClient.execute({
+    sql: "SELECT DISTINCT system_id FROM point_readings_agg_5m WHERE interval_end >= ?",
+    args: [sinceMs],
+  });
 
-  const uniqueSystemIds = [...new Set(recentPoints.map((r) => r.systemId))];
+  const uniqueSystemIds = result.rows.map((row) => row.system_id as number);
 
   if (uniqueSystemIds.length === 0) {
     return [];

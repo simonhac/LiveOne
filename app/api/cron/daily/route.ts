@@ -79,12 +79,16 @@ function parseDateParams(
   }
   // No date parameters - default behavior depends on action
   else {
-    // For delete with no params, return nulls (means "all data")
-    if (action === "delete") {
+    // For actions with explicit action parameter, operate on all data
+    if (
+      action === "delete" ||
+      action === "aggregate" ||
+      action === "regenerate"
+    ) {
       return { startDate: null, endDate: null };
     }
 
-    // Default to yesterday for aggregate/regenerate/no-action (cron behavior)
+    // Default to yesterday for no-action (cron behavior)
     const yesterday = getYesterdayInTimezone(timezoneOffsetMin);
     startDate = yesterday;
     endDate = yesterday;
