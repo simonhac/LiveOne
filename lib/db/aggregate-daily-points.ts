@@ -5,11 +5,7 @@ import {
   pointReadingsAgg1d,
 } from "@/lib/db/schema-monitoring-points";
 import { eq, and, gte, lte, asc, inArray, sql } from "drizzle-orm";
-import {
-  getYesterdayInTimezone,
-  getTodayInTimezone,
-  formatDateYYYYMMDD,
-} from "@/lib/date-utils";
+import { getYesterdayInTimezone, getTodayInTimezone } from "@/lib/date-utils";
 import { dayToUnixRangeForAggregation } from "@/lib/db/aggregate-daily";
 import { CalendarDate } from "@internationalized/date";
 
@@ -26,7 +22,7 @@ export async function aggregateDailyPointData(
   day: CalendarDate,
 ) {
   const startTime = performance.now();
-  const dayYYYYMMDD = formatDateYYYYMMDD(day);
+  const dayStr = day.toString();
 
   // Get the Unix timestamp range for this day (00:05 to 00:00 next day, in seconds)
   const [dayStartUnix, dayEndUnix] = dayToUnixRangeForAggregation(
@@ -57,9 +53,7 @@ export async function aggregateDailyPointData(
       .orderBy(asc(pointReadingsAgg5m.intervalEnd));
 
     if (allData.length === 0) {
-      console.log(
-        `No point data found for system ${system.id} on ${dayYYYYMMDD}`,
-      );
+      console.log(`No point data found for system ${system.id} on ${dayStr}`);
       return null;
     }
 
@@ -72,9 +66,7 @@ export async function aggregateDailyPointData(
     );
 
     if (fiveMinData.length === 0) {
-      console.log(
-        `No 5-min data found for system ${system.id} on ${dayYYYYMMDD}`,
-      );
+      console.log(`No 5-min data found for system ${system.id} on ${dayStr}`);
       return null;
     }
 
@@ -143,7 +135,7 @@ export async function aggregateDailyPointData(
       dailyAggregates.push({
         systemId: system.id,
         pointId,
-        day: dayYYYYMMDD,
+        day: dayStr,
         avg,
         min,
         max,
@@ -158,7 +150,7 @@ export async function aggregateDailyPointData(
 
     if (dailyAggregates.length === 0) {
       console.log(
-        `No aggregates calculated for system ${system.id} on ${dayYYYYMMDD}`,
+        `No aggregates calculated for system ${system.id} on ${dayStr}`,
       );
       return null;
     }
@@ -187,13 +179,13 @@ export async function aggregateDailyPointData(
 
     const processingTime = performance.now() - startTime;
     console.log(
-      `Aggregated ${dailyAggregates.length} points for system ${system.id} on ${dayYYYYMMDD} in ${processingTime.toFixed(2)}ms`,
+      `Aggregated ${dailyAggregates.length} points for system ${system.id} on ${dayStr} in ${processingTime.toFixed(2)}ms`,
     );
 
     return dailyAggregates;
   } catch (error) {
     console.error(
-      `Error aggregating daily point data for system ${system.id} on ${dayYYYYMMDD}:`,
+      `Error aggregating daily point data for system ${system.id} on ${dayStr}:`,
       error,
     );
     throw error;
@@ -201,162 +193,408 @@ export async function aggregateDailyPointData(
 }
 
 /**
- * Aggregate all points for a specific calendar date (all systems)
- * Each system interprets the date in its own timezone
- * @param day - The day as CalendarDate
+ * Get all systems with recent point data
+ * @param sinceMs - Look for systems with data since this timestamp (in milliseconds)
  */
-export async function aggregateAllPointsForADay(day: CalendarDate) {
-  try {
-    const dayYYYYMMDD = formatDateYYYYMMDD(day);
-    console.log(`[Daily Points] Aggregating all systems for ${dayYYYYMMDD}`);
+async function getSystemsWithRecentPointData(sinceMs: number) {
+  const recentPoints = await db
+    .select()
+    .from(pointReadingsAgg5m)
+    .where(gte(pointReadingsAgg5m.intervalEnd, sinceMs));
 
-    // Get all systems with recent point data (last 7 days)
-    const sevenDaysAgo =
-      Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1000) / 1000) * 1000; // ms
+  const uniqueSystemIds = [...new Set(recentPoints.map((r) => r.systemId))];
 
-    const recentPoints = await db
+  if (uniqueSystemIds.length === 0) {
+    return [];
+  }
+
+  return db.select().from(systems).where(inArray(systems.id, uniqueSystemIds));
+}
+
+/**
+ * Delete daily aggregations for a date range (all systems)
+ * @param start - Start date (inclusive) or null for earliest available
+ * @param end - End date (inclusive) or null for latest available
+ * @throws Error if validation fails
+ */
+export async function deleteRange(
+  start: CalendarDate | null,
+  end: CalendarDate | null,
+) {
+  // Determine actual date range
+  let startDate: CalendarDate;
+  let endDate: CalendarDate;
+
+  if (start === null && end === null) {
+    // Query earliest 5-minute data to determine start
+    const earliest = await db
       .select()
       .from(pointReadingsAgg5m)
-      .where(gte(pointReadingsAgg5m.intervalEnd, sevenDaysAgo));
+      .orderBy(asc(pointReadingsAgg5m.intervalEnd))
+      .limit(1);
 
-    const uniqueSystemIds = [...new Set(recentPoints.map((r) => r.systemId))];
-
-    if (uniqueSystemIds.length === 0) {
-      console.log("[Daily Points] No systems with recent point data found");
-      return {
-        day: dayYYYYMMDD,
-        systemsProcessed: 0,
-        pointsAggregated: 0,
-        results: [],
-      };
+    if (earliest.length === 0) {
+      throw new Error("No 5-minute point data found");
     }
 
-    // Get system details
-    const systemDetails = await db
-      .select()
-      .from(systems)
-      .where(inArray(systems.id, uniqueSystemIds));
-
-    console.log(
-      `[Daily Points] Found ${systemDetails.length} systems with recent point data`,
+    const earliestDate = new Date(earliest[0].intervalEnd);
+    startDate = new CalendarDate(
+      earliestDate.getFullYear(),
+      earliestDate.getMonth() + 1,
+      earliestDate.getDate(),
     );
 
-    const results = [];
-    let totalPoints = 0;
-
-    for (const system of systemDetails) {
-      try {
-        const aggregates = await aggregateDailyPointData(system, day);
-        if (aggregates) {
-          results.push({
-            systemId: system.id,
-            pointsAggregated: aggregates.length,
-          });
-          totalPoints += aggregates.length;
-        }
-      } catch (error) {
-        console.error(
-          `Failed to aggregate points for system ${system.id} on ${dayYYYYMMDD}:`,
-          error,
-        );
-      }
+    // Get yesterday as end date (using first system's timezone)
+    const systemDetails = await getSystemsWithRecentPointData(0);
+    if (systemDetails.length === 0) {
+      throw new Error("No systems found");
     }
-
-    console.log(
-      `[Daily Points] Aggregated ${totalPoints} points across ${results.length} systems for ${dayYYYYMMDD}`,
+    endDate = getYesterdayInTimezone(systemDetails[0].timezoneOffsetMin);
+  } else if (start === null || end === null) {
+    throw new Error(
+      "Both start and end must be null, or both must be provided",
     );
-
-    return {
-      day: dayYYYYMMDD,
-      systemsProcessed: results.length,
-      pointsAggregated: totalPoints,
-      results,
-    };
-  } catch (error) {
-    console.error(
-      `Error aggregating all points for day ${formatDateYYYYMMDD(day)}:`,
-      error,
-    );
-    throw error;
+  } else {
+    startDate = start;
+    endDate = end;
   }
+
+  // Validate date range
+  const minDate = new CalendarDate(2025, 1, 1);
+  if (startDate.compare(minDate) < 0) {
+    throw new Error(
+      `Start date ${startDate.toString()} is earlier than minimum allowed date 2025-01-01`,
+    );
+  }
+
+  if (startDate.compare(endDate) > 0) {
+    throw new Error(
+      `Start date ${startDate.toString()} must be before or equal to end date ${endDate.toString()}`,
+    );
+  }
+
+  const startStr = startDate.toString();
+  const endStr = endDate.toString();
+
+  console.log(
+    `[Daily Points] Deleting aggregations from ${startStr} to ${endStr}`,
+  );
+
+  // Count rows before deleting
+  const existingRows = await db
+    .select()
+    .from(pointReadingsAgg1d)
+    .where(
+      and(
+        gte(pointReadingsAgg1d.day, startStr),
+        lte(pointReadingsAgg1d.day, endStr),
+      ),
+    );
+
+  const rowsToDelete = existingRows.length;
+
+  // Delete all aggregations in the range
+  await db
+    .delete(pointReadingsAgg1d)
+    .where(
+      and(
+        gte(pointReadingsAgg1d.day, startStr),
+        lte(pointReadingsAgg1d.day, endStr),
+      ),
+    )
+    .execute();
+
+  console.log(
+    `[Daily Points] Deleted ${rowsToDelete} aggregation rows from ${startStr} to ${endStr}`,
+  );
+
+  return {
+    startDate: startStr,
+    endDate: endStr,
+    rowsDeleted: rowsToDelete,
+    message: `Deleted ${rowsToDelete} aggregation rows from ${startStr} to ${endStr}`,
+  };
+}
+
+/**
+ * Aggregate daily point data for a date range (all systems)
+ * @param start - Start date (inclusive) or null for earliest available
+ * @param end - End date (inclusive) or null for latest available
+ * @throws Error if validation fails
+ */
+export async function aggregateRange(
+  start: CalendarDate | null,
+  end: CalendarDate | null,
+) {
+  // Determine actual date range
+  let startDate: CalendarDate;
+  let endDate: CalendarDate;
+
+  if (start === null && end === null) {
+    // Query earliest 5-minute data to determine start
+    const earliest = await db
+      .select()
+      .from(pointReadingsAgg5m)
+      .orderBy(asc(pointReadingsAgg5m.intervalEnd))
+      .limit(1);
+
+    if (earliest.length === 0) {
+      throw new Error("No 5-minute point data found");
+    }
+
+    const earliestDate = new Date(earliest[0].intervalEnd);
+    startDate = new CalendarDate(
+      earliestDate.getFullYear(),
+      earliestDate.getMonth() + 1,
+      earliestDate.getDate(),
+    );
+
+    // Get yesterday as end date (using first system's timezone)
+    const systemDetails = await getSystemsWithRecentPointData(0);
+    if (systemDetails.length === 0) {
+      throw new Error("No systems found");
+    }
+    endDate = getYesterdayInTimezone(systemDetails[0].timezoneOffsetMin);
+  } else if (start === null || end === null) {
+    throw new Error(
+      "Both start and end must be null, or both must be provided",
+    );
+  } else {
+    startDate = start;
+    endDate = end;
+  }
+
+  // Validate date range
+  const minDate = new CalendarDate(2025, 1, 1);
+  if (startDate.compare(minDate) < 0) {
+    throw new Error(
+      `Start date ${startDate.toString()} is earlier than minimum allowed date 2025-01-01`,
+    );
+  }
+
+  if (startDate.compare(endDate) > 0) {
+    throw new Error(
+      `Start date ${startDate.toString()} must be before or equal to end date ${endDate.toString()}`,
+    );
+  }
+
+  const startStr = startDate.toString();
+  const endStr = endDate.toString();
+
+  console.log(
+    `[Daily Points] Aggregating date range from ${startStr} to ${endStr}`,
+  );
+
+  // Get all systems with data in the range
+  const rangeStartMs = new Date(startStr).getTime();
+  const systemDetails = await getSystemsWithRecentPointData(rangeStartMs);
+
+  if (systemDetails.length === 0) {
+    console.log("[Daily Points] No systems with data in the specified range");
+    return {
+      startDate: startStr,
+      endDate: endStr,
+      systemsProcessed: 0,
+      daysAggregated: 0,
+      pointsAggregated: 0,
+      results: [],
+    };
+  }
+
+  console.log(
+    `[Daily Points] Found ${systemDetails.length} systems to process`,
+  );
+
+  // Generate list of all days in range
+  const allDays: CalendarDate[] = [];
+  let currentDate = startDate;
+  while (currentDate.compare(endDate) <= 0) {
+    allDays.push(currentDate);
+    currentDate = currentDate.add({ days: 1 });
+  }
+
+  console.log(`[Daily Points] Aggregating ${allDays.length} days`);
+
+  const results = [];
+  let totalPoints = 0;
+  let totalRowsCreated = 0;
+
+  for (const system of systemDetails) {
+    try {
+      let aggregatedCount = 0;
+      let rowsCreatedForSystem = 0;
+
+      for (const day of allDays) {
+        try {
+          const result = await aggregateDailyPointData(system, day);
+          if (result) {
+            aggregatedCount += result.length;
+            rowsCreatedForSystem += result.length;
+          }
+        } catch (error) {
+          console.error(
+            `Failed to aggregate ${day.toString()} for system ${system.id}:`,
+            error,
+          );
+        }
+      }
+
+      results.push({
+        systemId: system.id,
+        daysAggregated: allDays.length,
+        pointsAggregated: aggregatedCount,
+        rowsCreated: rowsCreatedForSystem,
+      });
+
+      totalPoints += aggregatedCount;
+      totalRowsCreated += rowsCreatedForSystem;
+
+      console.log(
+        `[Daily Points] Aggregated ${aggregatedCount} points (${rowsCreatedForSystem} rows) across ${allDays.length} days for system ${system.id}`,
+      );
+    } catch (error) {
+      console.error(
+        `Failed to aggregate range for system ${system.id}:`,
+        error,
+      );
+    }
+  }
+
+  console.log(
+    `[Daily Points] Successfully aggregated ${totalPoints} points (${totalRowsCreated} rows created) across ${allDays.length} days for ${results.length} systems`,
+  );
+
+  return {
+    startDate: startStr,
+    endDate: endStr,
+    systemsProcessed: results.length,
+    daysAggregated: allDays.length,
+    pointsAggregated: totalPoints,
+    rowsCreated: totalRowsCreated,
+    results,
+  };
+}
+
+/**
+ * Regenerate aggregations for a specific date (all systems)
+ * Deletes existing aggregations for that date, then regenerates them
+ * @param day - The date to regenerate as CalendarDate
+ */
+export async function regenerateDate(day: CalendarDate) {
+  const dayStr = day.toString();
+
+  console.log(`[Daily Points] Regenerating date: ${dayStr}`);
+
+  // Delete existing aggregations for this date
+  await db
+    .delete(pointReadingsAgg1d)
+    .where(eq(pointReadingsAgg1d.day, dayStr))
+    .execute();
+
+  console.log(`[Daily Points] Deleted existing aggregations for ${dayStr}`);
+
+  // Get systems with recent data (last 7 days)
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const systemDetails = await getSystemsWithRecentPointData(sevenDaysAgo);
+
+  if (systemDetails.length === 0) {
+    console.log("[Daily Points] No systems with recent point data found");
+    return {
+      day: dayStr,
+      systemsProcessed: 0,
+      pointsAggregated: 0,
+      results: [],
+    };
+  }
+
+  console.log(
+    `[Daily Points] Found ${systemDetails.length} systems with recent point data`,
+  );
+
+  const results = [];
+  let totalPoints = 0;
+
+  for (const system of systemDetails) {
+    try {
+      const aggregates = await aggregateDailyPointData(system, day);
+      if (aggregates) {
+        results.push({
+          systemId: system.id,
+          pointsAggregated: aggregates.length,
+        });
+        totalPoints += aggregates.length;
+      }
+    } catch (error) {
+      console.error(
+        `Failed to aggregate points for system ${system.id} on ${dayStr}:`,
+        error,
+      );
+    }
+  }
+
+  console.log(
+    `[Daily Points] Aggregated ${totalPoints} points across ${results.length} systems for ${dayStr}`,
+  );
+
+  return {
+    day: dayStr,
+    systemsProcessed: results.length,
+    pointsAggregated: totalPoints,
+    results,
+  };
 }
 
 /**
  * Aggregate yesterday's point data for all active systems
  * This should be run daily via cron job
  */
-export async function aggregateYesterdayPointsForAllSystems() {
-  try {
-    // Get all systems with recent point data (last 7 days)
-    const sevenDaysAgo =
-      Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1000) / 1000) * 1000; // ms
-    console.log(
-      `[Daily Points] Looking for systems with point data after ${new Date(sevenDaysAgo).toISOString()}`,
-    );
+export async function aggregateDaily() {
+  console.log("[Daily Points] Starting daily aggregation (yesterday)");
 
-    const recentPoints = await db
-      .select()
-      .from(pointReadingsAgg5m)
-      .where(gte(pointReadingsAgg5m.intervalEnd, sevenDaysAgo));
+  // Get systems with recent data (last 7 days)
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const systemDetails = await getSystemsWithRecentPointData(sevenDaysAgo);
 
-    const uniqueSystemIds = [...new Set(recentPoints.map((r) => r.systemId))];
-    console.log(
-      `[Daily Points] Unique system IDs found: ${uniqueSystemIds.join(", ") || "none"}`,
-    );
-
-    if (uniqueSystemIds.length === 0) {
-      console.log("[Daily Points] No systems with recent point data found");
-      return [];
-    }
-
-    // Get system details with timezone info
-    const systemDetails = await db
-      .select()
-      .from(systems)
-      .where(inArray(systems.id, uniqueSystemIds));
-
-    console.log(
-      `[Daily Points] Aggregating yesterday's point data for ${systemDetails.length} systems`,
-    );
-
-    const results = [];
-    for (const system of systemDetails) {
-      try {
-        // Calculate yesterday for this specific system's timezone
-        const yesterday = getYesterdayInTimezone(system.timezoneOffsetMin);
-        const yesterdayYYYYMMDD = formatDateYYYYMMDD(yesterday);
-
-        console.log(
-          `[Daily Points] Aggregating ${yesterdayYYYYMMDD} for system ${system.id} (timezone offset: ${system.timezoneOffsetMin} minutes)`,
-        );
-
-        const aggregates = await aggregateDailyPointData(system, yesterday);
-        if (aggregates) {
-          results.push({
-            systemId: system.id,
-            day: yesterdayYYYYMMDD,
-            pointsAggregated: aggregates.length,
-          });
-        }
-      } catch (error) {
-        console.error(
-          `Failed to aggregate yesterday's point data for system ${system.id}:`,
-          error,
-        );
-      }
-    }
-
-    console.log(
-      `[Daily Points] Successfully aggregated yesterday's point data for ${results.length} systems`,
-    );
-    return results;
-  } catch (error) {
-    console.error(
-      "[Daily Points] Error aggregating yesterday data for all systems:",
-      error,
-    );
-    throw error;
+  if (systemDetails.length === 0) {
+    console.log("[Daily Points] No systems with recent point data found");
+    return [];
   }
+
+  console.log(
+    `[Daily Points] Aggregating yesterday's point data for ${systemDetails.length} systems`,
+  );
+
+  const results = [];
+  for (const system of systemDetails) {
+    try {
+      // Calculate yesterday for this specific system's timezone
+      const yesterday = getYesterdayInTimezone(system.timezoneOffsetMin);
+      const dayStr = yesterday.toString();
+
+      console.log(
+        `[Daily Points] Aggregating ${dayStr} for system ${system.id}`,
+      );
+
+      const aggregates = await aggregateDailyPointData(system, yesterday);
+      if (aggregates) {
+        results.push({
+          systemId: system.id,
+          day: dayStr,
+          pointsAggregated: aggregates.length,
+        });
+      }
+    } catch (error) {
+      console.error(
+        `Failed to aggregate yesterday's point data for system ${system.id}:`,
+        error,
+      );
+    }
+  }
+
+  console.log(
+    `[Daily Points] Successfully aggregated yesterday's point data for ${results.length} systems`,
+  );
+  return results;
 }
 
 /**
@@ -417,11 +655,8 @@ export async function aggregateAllMissingDaysForAllPoints() {
           .where(
             and(
               eq(pointReadingsAgg1d.systemId, system.id),
-              gte(
-                pointReadingsAgg1d.day,
-                formatDateYYYYMMDD(earliestCalendarDate),
-              ),
-              lte(pointReadingsAgg1d.day, formatDateYYYYMMDD(latestDate)),
+              gte(pointReadingsAgg1d.day, earliestCalendarDate.toString()),
+              lte(pointReadingsAgg1d.day, latestDate.toString()),
             ),
           );
 
@@ -432,8 +667,8 @@ export async function aggregateAllMissingDaysForAllPoints() {
         let currentDate = earliestCalendarDate;
 
         while (currentDate.compare(latestDate) <= 0) {
-          const dayYYYYMMDD = formatDateYYYYMMDD(currentDate);
-          if (!existingDaySet.has(dayYYYYMMDD)) {
+          const dayStr = currentDate.toString();
+          if (!existingDaySet.has(dayStr)) {
             allDays.push(currentDate);
           }
           currentDate = currentDate.add({ days: 1 });
@@ -453,7 +688,7 @@ export async function aggregateAllMissingDaysForAllPoints() {
             }
           } catch (error) {
             console.error(
-              `Failed to aggregate ${formatDateYYYYMMDD(day)} for system ${system.id}:`,
+              `Failed to aggregate ${day.toString()} for system ${system.id}:`,
               error,
             );
           }
@@ -491,100 +726,95 @@ export async function aggregateAllMissingDaysForAllPoints() {
 }
 
 /**
- * Aggregate the last N days for all active systems
- * Used for updating recent data without regenerating everything
- * @param days - Number of days to look back (default 7)
+ * Regenerate aggregations for the last N days (all systems)
+ * Deletes existing aggregations for that date range, then regenerates them
+ * @param days - Number of days to regenerate (e.g., 7 for last 7 days)
  */
-export async function aggregateLastNDaysForAllPoints(days: number = 7) {
-  try {
-    // Get all systems with recent point data
-    const daysAgoMs = Date.now() - days * 24 * 60 * 60 * 1000;
-    console.log(
-      `[Daily Points] Looking for systems with point data after ${new Date(daysAgoMs).toISOString()}`,
-    );
+export async function regenerateLastNDays(days: number) {
+  console.log(`[Daily Points] Regenerating last ${days} days`);
 
-    const recentPoints = await db
-      .select()
-      .from(pointReadingsAgg5m)
-      .where(gte(pointReadingsAgg5m.intervalEnd, daysAgoMs));
+  // Calculate date range (using first system's timezone for the range calculation)
+  // Each system will then interpret these dates in their own timezone
+  const systemDetails = await getSystemsWithRecentPointData(
+    Date.now() - days * 24 * 60 * 60 * 1000,
+  );
 
-    const uniqueSystemIds = [...new Set(recentPoints.map((r) => r.systemId))];
-    console.log(
-      `[Daily Points] Unique system IDs found: ${uniqueSystemIds.join(", ") || "none"}`,
-    );
-
-    if (uniqueSystemIds.length === 0) {
-      console.log("[Daily Points] No systems with recent point data found");
-      return [];
-    }
-
-    // Get system details with timezone info
-    const systemDetails = await db
-      .select()
-      .from(systems)
-      .where(inArray(systems.id, uniqueSystemIds));
-
-    console.log(
-      `[Daily Points] Updating last ${days} days for ${systemDetails.length} systems`,
-    );
-
-    const results = [];
-    for (const system of systemDetails) {
-      try {
-        // Calculate the date range for this system's timezone
-        const today = getTodayInTimezone(system.timezoneOffsetMin);
-
-        // Generate list of days
-        const daysToAggregate: CalendarDate[] = [];
-        for (let i = 0; i < days; i++) {
-          daysToAggregate.push(today.subtract({ days: i }));
-        }
-
-        console.log(
-          `[Daily Points] Updating system ${system.id} for days: ${daysToAggregate.map((d) => formatDateYYYYMMDD(d)).join(", ")}`,
-        );
-
-        let aggregatedCount = 0;
-        for (const day of daysToAggregate) {
-          try {
-            const result = await aggregateDailyPointData(system, day);
-            if (result) {
-              aggregatedCount += result.length;
-            }
-          } catch (error) {
-            console.error(
-              `Failed to aggregate ${formatDateYYYYMMDD(day)} for system ${system.id}:`,
-              error,
-            );
-          }
-        }
-
-        results.push({
-          systemId: system.id,
-          daysUpdated: daysToAggregate.length,
-          pointsAggregated: aggregatedCount,
-        });
-
-        console.log(
-          `[Daily Points] Updated ${daysToAggregate.length} days for system ${system.id}`,
-        );
-      } catch (error) {
-        console.error(
-          `Failed to update last ${days} days for system ${system.id}:`,
-          error,
-        );
-      }
-    }
-
-    console.log(
-      `[Daily Points] Successfully updated last ${days} days for ${results.length} systems`,
-    );
-    return results;
-  } catch (error) {
-    console.error(
-      `[Daily Points] Error updating last ${days} days for all systems:`,
-      error,
-    );
-    throw error;
+  if (systemDetails.length === 0) {
+    console.log("[Daily Points] No systems with recent point data found");
+    return [];
   }
+
+  // Use first system's timezone to calculate date range
+  const today = getTodayInTimezone(systemDetails[0].timezoneOffsetMin);
+  const startDate = today.subtract({ days: days - 1 });
+  const startDateStr = startDate.toString();
+  const endDateStr = today.toString();
+
+  // Delete existing aggregations for this date range (all systems)
+  await db
+    .delete(pointReadingsAgg1d)
+    .where(
+      and(
+        gte(pointReadingsAgg1d.day, startDateStr),
+        lte(pointReadingsAgg1d.day, endDateStr),
+      ),
+    )
+    .execute();
+
+  console.log(
+    `[Daily Points] Deleted aggregations from ${startDateStr} to ${endDateStr}`,
+  );
+
+  console.log(
+    `[Daily Points] Regenerating last ${days} days for ${systemDetails.length} systems`,
+  );
+
+  const results = [];
+  for (const system of systemDetails) {
+    try {
+      // Calculate the date range for this system's timezone
+      const systemToday = getTodayInTimezone(system.timezoneOffsetMin);
+
+      // Generate list of days (from today back N days)
+      const daysToAggregate: CalendarDate[] = [];
+      for (let i = 0; i < days; i++) {
+        daysToAggregate.push(systemToday.subtract({ days: i }));
+      }
+
+      let aggregatedCount = 0;
+      for (const day of daysToAggregate) {
+        try {
+          const result = await aggregateDailyPointData(system, day);
+          if (result) {
+            aggregatedCount += result.length;
+          }
+        } catch (error) {
+          console.error(
+            `Failed to aggregate ${day.toString()} for system ${system.id}:`,
+            error,
+          );
+        }
+      }
+
+      results.push({
+        systemId: system.id,
+        daysAggregated: daysToAggregate.length,
+        pointsAggregated: aggregatedCount,
+      });
+
+      console.log(
+        `[Daily Points] Regenerated ${daysToAggregate.length} days for system ${system.id}`,
+      );
+    } catch (error) {
+      console.error(
+        `Failed to regenerate last ${days} days for system ${system.id}:`,
+        error,
+      );
+    }
+  }
+
+  console.log(
+    `[Daily Points] Successfully regenerated last ${days} days for ${results.length} systems`,
+  );
+  return results;
 }
