@@ -2,11 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { deleteRange, aggregateRange } from "@/lib/db/aggregate-daily-points";
 import { validateCronRequest } from "@/lib/cron-utils";
 import { parseDate, CalendarDate } from "@internationalized/date";
-import {
-  getNowFormattedAEST,
-  getYesterdayInTimezone,
-  getTodayInTimezone,
-} from "@/lib/date-utils";
+import { getNowFormattedAEST, getYesterdayInTimezone } from "@/lib/date-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 
 // Earliest date for point data aggregation (when point data collection began)
@@ -46,15 +42,16 @@ function parseDateParams(
   }
 
   // If last parameter is provided (e.g., "7d"), calculate date range
+  // Note: Uses yesterday as end date to avoid aggregating incomplete data for today
   if (last) {
     const days = parseInt(last.replace("d", ""), 10);
     if (isNaN(days) || days <= 0) {
       throw new Error("Invalid 'last' parameter. Expected format: '7d'");
     }
 
-    const today = getTodayInTimezone(timezoneOffsetMin);
-    startDate = today.subtract({ days: days - 1 });
-    endDate = today;
+    const yesterday = getYesterdayInTimezone(timezoneOffsetMin);
+    startDate = yesterday.subtract({ days: days - 1 });
+    endDate = yesterday;
   }
   // If date parameter is provided, use it for both start and end
   else if (date) {
