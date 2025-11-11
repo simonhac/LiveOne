@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { PointManager } from "@/lib/point-manager";
 import { resolveSystemFromIdentifier } from "@/lib/series-path-utils";
 import { isUserAdmin } from "@/lib/auth-utils";
+import { splitBraceAware } from "@/lib/series-filter-utils";
 
 /**
  * Validate a glob pattern for series filtering
@@ -183,11 +184,8 @@ export async function GET(
     // Validate filter patterns if provided
     let filter: string[] | undefined;
     if (filterParam) {
-      // Split by comma to get individual patterns
-      const rawPatterns = filterParam
-        .split(",")
-        .map((p) => p.trim())
-        .filter((p) => p.length > 0);
+      // Split by comma (brace-aware) to get individual patterns
+      const rawPatterns = splitBraceAware(filterParam);
 
       if (rawPatterns.length === 0) {
         return NextResponse.json(

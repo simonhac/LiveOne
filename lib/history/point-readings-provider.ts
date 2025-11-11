@@ -3,7 +3,7 @@ import {
   pointReadingsAgg5m,
   pointReadingsAgg1d,
 } from "@/lib/db/schema-monitoring-points";
-import { eq, and, gte, lte } from "drizzle-orm";
+import { eq, and, gte, lte, inArray } from "drizzle-orm";
 import {
   CalendarDate,
   ZonedDateTime,
@@ -18,7 +18,6 @@ import {
 } from "./types";
 import { PointManager } from "@/lib/point-manager";
 import { PointInfo } from "@/lib/point-info";
-import micromatch from "micromatch";
 
 /**
  * Apply transform to a numeric value based on the transform type
@@ -36,41 +35,25 @@ function applyTransform(
 }
 
 /**
- * Generate a series path (pointPath/pointFlavour format) for a point:
- * - If type is set: use {pointPath}/{pointFlavour}
- *   where pointPath = type.subtype.extension
- *   and pointFlavour = metricType.aggregation
- * - Otherwise if shortName is set: use shortName
- * - Otherwise: use point's database ID as pointPath
+ * Generate a series path (pointPath/pointFlavour format) for a point
+ * This is used to build the field name for the MeasurementSeries
  *
- * Examples:
- *   - source.solar/power.avg
- *   - bidi.battery/energy.delta
- *   - load.hvac/power.avg
- *   - 123/power.avg (fallback using point ID)
- *
- * The aggregation type depends on metricType and interval:
- * - For daily (1d) intervals:
- *   - energy: use delta (daily total)
- *   - soc: use avg/min/max (daily statistics)
- *   - power: use avg (average power)
- * - For 5m/30m intervals:
- *   - power, energy: use avg (average over the interval)
- *   - soc: NOT INCLUDED (removed from 5m/30m)
- *   - default: use avg
- *
- * Note: The system prefix (systemIdentifier/) is added by OpenNEMConverter
- * to create the full series ID: {systemIdentifier}/{pointPath}/{pointFlavour}
+ * Note: PointManager now handles series filtering and interval logic.
+ * This function is only used for constructing field names in the result.
  */
 function generateSeriesPath(
   point: PointInfo,
-  interval?: "5m" | "30m" | "1d",
+  interval: "5m" | "30m" | "1d",
+  column?: string,
 ): string {
   // Determine aggregation type based on metric type and interval
+  // Use provided column if available (from SeriesInfo), otherwise infer from metricType
   let aggregationType: string;
 
-  if (interval === "1d") {
-    // Daily intervals use delta for energy, avg for power/other
+  if (column) {
+    aggregationType = column;
+  } else if (interval === "1d") {
+    // Daily intervals use delta for energy, avg for power/soc
     aggregationType = point.metricType === "energy" ? "delta" : "avg";
   } else {
     // 5m/30m intervals use delta for energy, last for SOC, avg for power/other
@@ -86,8 +69,6 @@ function generateSeriesPath(
   // If type and subtype are set, use series ID with path
   const pointPath = point.getPath();
   if (pointPath) {
-    // Format: {pointPath}/{pointFlavour}
-    // where pointFlavour = metricType.aggregation
     return `${pointPath}/${point.metricType}.${aggregationType}`;
   }
 
@@ -101,28 +82,6 @@ function generateSeriesPath(
 }
 
 export class PointReadingsProvider implements HistoryDataProvider {
-  /**
-   * Helper method to filter and sort points by series ID
-   * Filters to only include active points with type set
-   */
-  private filterAndSortPoints(
-    points: PointInfo[],
-    interval: "5m" | "30m" | "1d",
-  ): PointInfo[] {
-    return points
-      .filter((p) => {
-        // Must have type and be active
-        if (!p.type || !p.active) return false;
-
-        return true;
-      })
-      .sort((a, b) => {
-        const aSeriesPath = generateSeriesPath(a, interval);
-        const bSeriesPath = generateSeriesPath(b, interval);
-        return aSeriesPath.localeCompare(bSeriesPath);
-      });
-  }
-
   async fetch5MinuteData(
     system: SystemWithPolling,
     startTime: ZonedDateTime,
@@ -132,36 +91,43 @@ export class PointReadingsProvider implements HistoryDataProvider {
     const startMs = toUnixTimestamp(startTime) * 1000;
     const endMs = toUnixTimestamp(endTime) * 1000;
 
-    // Get all active points for this system using PointManager
+    // Use PointManager to get filtered series (handles both pattern filtering and interval filtering)
     const pointManager = PointManager.getInstance();
-    const allPoints = await pointManager.getPointsForSystem(system.id);
+    const filteredSeries = await pointManager.getFilteredSeriesForSystem(
+      system.id,
+      seriesPatterns,
+      "5m",
+    );
 
-    // Only include active points with type set, sorted by series ID
-    // Excludes SOC for 5m intervals
-    let filteredPoints = this.filterAndSortPoints(allPoints, "5m");
-
-    // Apply series pattern filtering if provided (OR logic - match any pattern)
-    if (seriesPatterns && seriesPatterns.length > 0) {
-      filteredPoints = filteredPoints.filter((p) => {
-        const seriesPath = generateSeriesPath(p, "5m");
-        return micromatch.isMatch(seriesPath, seriesPatterns);
-      });
-    }
-
-    if (filteredPoints.length === 0) {
+    if (filteredSeries.length === 0) {
       return [];
     }
 
-    // Map point IDs to their PointInfo objects
-    const pointMap = new Map(filteredPoints.map((p) => [p.id, p]));
+    // Get unique point IDs from the filtered series
+    const pointIds = [...new Set(filteredSeries.map((s) => s.pointIndex))];
+
+    // Fetch PointInfo for these points
+    const allPoints = await pointManager.getPointsForSystem(system.id);
+    const allPointsMap = new Map(allPoints.map((p) => [p.id, p]));
+
+    // Build map of point IDs to their PointInfo objects (only for points we need)
+    const pointMap = new Map<number, PointInfo>();
+    for (const pointId of pointIds) {
+      const point = allPointsMap.get(pointId);
+      if (point) {
+        pointMap.set(pointId, point);
+      }
+    }
 
     // Fetch aggregated point readings within the time range
+    // Only query for the specific point IDs we need
     const aggregates = await db
       .select()
       .from(pointReadingsAgg5m)
       .where(
         and(
           eq(pointReadingsAgg5m.systemId, system.id),
+          inArray(pointReadingsAgg5m.pointId, pointIds),
           gte(pointReadingsAgg5m.intervalEnd, startMs),
           lte(pointReadingsAgg5m.intervalEnd, endMs),
         ),
@@ -242,36 +208,53 @@ export class PointReadingsProvider implements HistoryDataProvider {
     const startDateStr = startDate.toString(); // YYYY-MM-DD format
     const endDateStr = endDate.toString(); // YYYY-MM-DD format
 
-    // Get all active points for this system using PointManager
+    // Use PointManager to get filtered series (handles both pattern filtering and interval filtering)
     const pointManager = PointManager.getInstance();
-    const allPoints = await pointManager.getPointsForSystem(system.id);
+    const filteredSeries = await pointManager.getFilteredSeriesForSystem(
+      system.id,
+      seriesPatterns,
+      "1d",
+    );
 
-    // Only include active points with type set, sorted by series ID
-    // Includes SOC for daily intervals
-    let filteredPoints = this.filterAndSortPoints(allPoints, "1d");
-
-    // Apply series pattern filtering if provided (OR logic - match any pattern)
-    if (seriesPatterns && seriesPatterns.length > 0) {
-      filteredPoints = filteredPoints.filter((p) => {
-        const seriesPath = generateSeriesPath(p, "1d");
-        return micromatch.isMatch(seriesPath, seriesPatterns);
-      });
-    }
-
-    if (filteredPoints.length === 0) {
+    if (filteredSeries.length === 0) {
       return [];
     }
 
-    // Map point IDs to their PointInfo objects
-    const pointMap = new Map(filteredPoints.map((p) => [p.id, p]));
+    // Get unique point IDs from the filtered series
+    const pointIds = [...new Set(filteredSeries.map((s) => s.pointIndex))];
+
+    // Build a map of which specific (pointId, column) combinations were requested
+    // This ensures we only create series for the requested aggregations
+    const requestedColumns = new Map<number, Set<string>>();
+    for (const series of filteredSeries) {
+      if (!requestedColumns.has(series.pointIndex)) {
+        requestedColumns.set(series.pointIndex, new Set());
+      }
+      requestedColumns.get(series.pointIndex)!.add(series.column);
+    }
+
+    // Fetch PointInfo for these points
+    const allPoints = await pointManager.getPointsForSystem(system.id);
+    const allPointsMap = new Map(allPoints.map((p) => [p.id, p]));
+
+    // Build map of point IDs to their PointInfo objects (only for points we need)
+    const pointMap = new Map<number, PointInfo>();
+    for (const pointId of pointIds) {
+      const point = allPointsMap.get(pointId);
+      if (point) {
+        pointMap.set(pointId, point);
+      }
+    }
 
     // Fetch daily aggregated point readings within the date range
+    // Only query for the specific point IDs we need
     const aggregates = await db
       .select()
       .from(pointReadingsAgg1d)
       .where(
         and(
           eq(pointReadingsAgg1d.systemId, system.id),
+          inArray(pointReadingsAgg1d.pointId, pointIds),
           gte(pointReadingsAgg1d.day, startDateStr),
           lte(pointReadingsAgg1d.day, endDateStr),
         ),
@@ -332,11 +315,21 @@ export class PointReadingsProvider implements HistoryDataProvider {
         });
       };
 
-      // For SOC metrics in daily intervals, create 3 separate series (avg, min, max)
+      // For SOC metrics in daily intervals, create separate series for each requested aggregation
       if (pointMeta.metricType === "soc") {
-        createSeries("soc.avg", "(avg)", (agg) => agg.avg);
-        createSeries("soc.min", "(min)", (agg) => agg.min);
-        createSeries("soc.max", "(max)", (agg) => agg.max);
+        const columns = requestedColumns.get(pointId);
+        if (columns?.has("avg")) {
+          createSeries("soc.avg", "(avg)", (agg) => agg.avg);
+        }
+        if (columns?.has("min")) {
+          createSeries("soc.min", "(min)", (agg) => agg.min);
+        }
+        if (columns?.has("max")) {
+          createSeries("soc.max", "(max)", (agg) => agg.max);
+        }
+        if (columns?.has("last")) {
+          createSeries("soc.last", "(last)", (agg) => agg.last);
+        }
       } else {
         // For non-SOC metrics, create a single series with all aggregate fields
         const data: TimeSeriesPoint[] = [];

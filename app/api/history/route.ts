@@ -15,6 +15,7 @@ import {
 import { CalendarDate, ZonedDateTime, now } from "@internationalized/date";
 import { HistoryService } from "@/lib/history/history-service";
 import { isUserAdmin } from "@/lib/auth-utils";
+import { splitBraceAware } from "@/lib/series-filter-utils";
 
 // ============================================================================
 // Helper Functions
@@ -879,16 +880,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Step 6: Parse series patterns (comma-separated)
+    // Step 6: Parse series patterns (comma-separated with brace expansion support)
     // series parameter allows glob-based filtering of which series to fetch
     // Format: ?series=pattern1,pattern2,pattern3
+    // Supports brace expansion: ?series=bidi.battery/soc.{avg,min,max}
     const seriesParam = searchParams.get("series");
-    const seriesPatterns = seriesParam
-      ? seriesParam
-          .split(",")
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0)
-      : [];
+    const seriesPatterns = seriesParam ? splitBraceAware(seriesParam) : [];
 
     if (seriesPatterns.length > 0) {
       const validation = validateSeriesPatterns(seriesPatterns);
