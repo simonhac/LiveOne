@@ -35,6 +35,37 @@ function applyTransform(
   return value;
 }
 
+/**
+ * Validate glob patterns for series filtering
+ * @param patterns - Array of glob patterns to validate (parsed from comma-separated string)
+ * @returns Validation result with error message if invalid
+ */
+function validateSeriesPatterns(patterns: string[]): {
+  valid: boolean;
+  error?: string;
+} {
+  if (patterns.length === 0) {
+    return { valid: true };
+  }
+
+  // Validate each pattern
+  for (let i = 0; i < patterns.length; i++) {
+    const pattern = patterns[i];
+
+    // Check pattern length (prevent extremely long patterns)
+    if (pattern.length > 200) {
+      return {
+        valid: false,
+        error: `Series pattern ${i + 1} too long (max 200 characters)`,
+      };
+    }
+
+    // Micromatch handles glob patterns safely, no additional validation needed
+  }
+
+  return { valid: true };
+}
+
 // ============================================================================
 // Types and Interfaces
 // ============================================================================
@@ -339,7 +370,7 @@ async function getSystemHistoryInOpenNEMFormat(
   startTime: ZonedDateTime | CalendarDate,
   endTime: ZonedDateTime | CalendarDate,
   interval: "5m" | "30m" | "1d",
-  matchLegacy = false,
+  seriesPatterns?: string[],
 ): Promise<{ series: OpenNEMDataSeries[]; debug?: any; dataSource?: string }> {
   // Special handling for composite systems
   if (system.vendorType === "composite") {
@@ -713,7 +744,7 @@ async function getSystemHistoryInOpenNEMFormat(
     startTime,
     endTime,
     interval,
-    matchLegacy,
+    seriesPatterns,
   );
 }
 
@@ -729,6 +760,7 @@ function buildResponse(
   durationMs: number,
   dataSource?: string,
   debug?: any,
+  seriesPatterns?: string[],
 ): NextResponse {
   // Format date strings based on interval type
   let requestStartStr: string;
@@ -769,6 +801,11 @@ function buildResponse(
   // Add debug info if provided
   if (debug) {
     response.debug = debug;
+  }
+
+  // Add series patterns if provided
+  if (seriesPatterns && seriesPatterns.length > 0) {
+    response.seriesPatterns = seriesPatterns;
   }
 
   const jsonStr = formatOpenNEMResponse(response);
@@ -842,10 +879,23 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Step 6: Parse matchLegacy flag
-    // matchLegacy=true filters output to only return series that legacy provider would return
-    const matchLegacyParam = searchParams.get("matchLegacy");
-    const matchLegacy = matchLegacyParam === "true";
+    // Step 6: Parse series patterns (comma-separated)
+    // series parameter allows glob-based filtering of which series to fetch
+    // Format: ?series=pattern1,pattern2,pattern3
+    const seriesParam = searchParams.get("series");
+    const seriesPatterns = seriesParam
+      ? seriesParam
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0)
+      : [];
+
+    if (seriesPatterns.length > 0) {
+      const validation = validateSeriesPatterns(seriesPatterns);
+      if (!validation.valid) {
+        return NextResponse.json({ error: validation.error }, { status: 400 });
+      }
+    }
 
     // Step 7: Fetch data using point readings provider
     const {
@@ -857,7 +907,7 @@ export async function GET(request: NextRequest) {
       timeRange.startTime!,
       timeRange.endTime!,
       basicParams.interval as "5m" | "30m" | "1d",
-      matchLegacy,
+      seriesPatterns.length > 0 ? seriesPatterns : undefined,
     );
 
     // Step 8: Build and return response
@@ -870,6 +920,7 @@ export async function GET(request: NextRequest) {
       durationMs,
       dataSource,
       debug,
+      seriesPatterns.length > 0 ? seriesPatterns : undefined,
     );
   } catch (error) {
     console.error("Error fetching historical data:", error);

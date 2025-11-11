@@ -5,10 +5,7 @@ import { formatDataArray } from "./format-opennem";
 import { CalendarDate, ZonedDateTime } from "@internationalized/date";
 import { toUnixTimestamp } from "@/lib/date-utils";
 import { SystemWithPolling } from "@/lib/systems-manager";
-import {
-  buildSeriesPath,
-  buildSiteIdFromSystem,
-} from "@/lib/series-path-utils";
+import { buildSeriesId, buildSiteIdFromSystem } from "@/lib/series-path-utils";
 
 /**
  * Converts MeasurementSeries data to OpenNEM format
@@ -112,7 +109,7 @@ export class OpenNEMConverter {
             if (dataDate.compare(currentDate) === 0) {
               // We have data for this date
               // For energy.delta series, use delta value; otherwise use avg
-              const value = metadata.id.endsWith(".energy.delta")
+              const value = metadata.id.endsWith("/energy.delta")
                 ? dataPoint.value.delta
                 : dataPoint.value.avg;
               fieldData.push(value ?? null);
@@ -168,7 +165,7 @@ export class OpenNEMConverter {
             if (dataIntervalEnd === expectedIntervalEnd) {
               // We have data for this interval
               // For energy.delta series, use delta value; otherwise use avg
-              const value = metadata.id.endsWith(".energy.delta")
+              const value = metadata.id.endsWith("/energy.delta")
                 ? dataPoint.value.delta
                 : dataPoint.value.avg;
               fieldData.push(value ?? null);
@@ -191,8 +188,10 @@ export class OpenNEMConverter {
       const label = metadata.label;
       const path = metadata.path;
 
-      // Build series ID using standard format: liveone.{siteId}.{pointId}
-      const seriesId = buildSeriesPath(siteId, fieldId);
+      // Build series ID: split fieldId into pointPath and pointFlavour
+      // fieldId format is {pointPath}/{pointFlavour}
+      const [pointPath, pointFlavour] = fieldId.split("/");
+      const seriesId = buildSeriesId(siteId, pointPath, pointFlavour);
 
       dataSeries.push({
         id: seriesId,

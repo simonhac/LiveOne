@@ -63,7 +63,6 @@ export default function EnergyChart({
   className = "",
   maxPowerHint,
   systemId,
-  vendorType,
   initialPeriod,
 }: EnergyChartProps) {
   const router = useRouter();
@@ -75,6 +74,9 @@ export default function EnergyChart({
     type: "connection" | "server" | null;
     details?: string;
   }>({ type: null });
+
+  // Track if a fetch is in progress to prevent duplicate fetches
+  const fetchInProgressRef = useRef(false);
 
   // Initialize timeRange from URL param or prop
   const getInitialTimeRange = () => {
@@ -395,16 +397,49 @@ export default function EnergyChart({
     };
   }, []);
 
+  // Helper function to build history API URL with series patterns
+  const buildHistoryUrl = (
+    requestInterval: string,
+    duration: string,
+    systemId: number,
+  ): string => {
+    // Build series patterns based on what data we need
+    const isEnergyMode = requestInterval === "1d";
+    const seriesPatterns: string[] = [];
+
+    if (isEnergyMode) {
+      // Daily energy mode - request specific series we use
+      seriesPatterns.push(
+        "source.solar/energy.delta", // Solar energy
+        "load*/energy.delta", // Load energy (includes load, load.hvac, etc.)
+        "bidi.battery/power.avg", // Battery power
+        "bidi.battery/soc.{avg,min,max}", // Battery SOC stats
+        "bidi.grid/energy.delta", // Grid energy
+      );
+    } else {
+      // 5m/30m power mode - request specific series we use
+      seriesPatterns.push(
+        "source.solar/power.avg", // Solar power
+        "load*/power.avg", // Load power (includes load, load.hvac, etc.)
+        "bidi.battery/power.avg", // Battery power
+        "bidi.battery/soc.last", // Battery SOC
+        "bidi.grid/power.avg", // Grid power
+      );
+    }
+
+    // Build URL with series patterns (comma-separated)
+    // Construct manually to avoid encoding / and , characters
+    const seriesParam = seriesPatterns.join(",");
+    return `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId}&series=${seriesParam}`;
+  };
+
   useEffect(() => {
-    let abortController = new AbortController();
+    let cancelled = false;
 
     const fetchData = async () => {
-      // Create a new abort controller for this specific request
-      abortController = new AbortController();
-
       try {
         // Fetch will automatically include cookies
-        // Use different intervals based on vendor type and time range
+        // Use different intervals based on time range
         let requestInterval: string;
         let duration: string;
 
@@ -420,13 +455,14 @@ export default function EnergyChart({
           duration = "30d"; // 30 days
         }
 
-        const response = await fetch(
-          `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId.toString()}&matchLegacy=true`,
-          {
-            credentials: "same-origin", // Include cookies
-            signal: abortController.signal,
-          },
-        );
+        const isEnergyMode = requestInterval === "1d";
+
+        // Build the URL using the helper function
+        const url = buildHistoryUrl(requestInterval, duration, systemId);
+
+        const response = await fetch(url, {
+          credentials: "same-origin", // Include cookies
+        });
 
         if (!response.ok) {
           // Check if the response is HTML (like a 404 page) instead of JSON
@@ -446,56 +482,75 @@ export default function EnergyChart({
 
         const data = await response.json();
 
-        // Determine mode based on interval
-        const isEnergyMode = requestInterval === "1d";
+        // Ignore response if this effect has been cancelled
+        if (cancelled) return;
 
-        // Process the data for Chart.js
-        // Energy mode: use energy data; Power mode: use power data
-        // Series IDs now include summarisers (e.g., .avg, .last)
-        // Use path attribute for more reliable matching (path="source.solar" or path="solar")
-        const solarData = isEnergyMode
-          ? data.data.find(
-              (d: any) =>
-                (d.path === "source.solar" || d.path === "solar") &&
-                d.id.includes(".energy"),
-            )
-          : data.data.find(
-              (d: any) =>
-                (d.path === "source.solar" || d.path === "solar") &&
-                d.id.includes(".power."),
-            );
-        const loadData = isEnergyMode
-          ? data.data.find(
-              (d: any) => d.id.includes(".load.") && d.id.includes(".energy"),
-            )
-          : data.data.find(
-              (d: any) => d.id.includes(".load.") && d.id.includes(".power."),
-            );
-        const batteryWData = data.data.find(
-          (d: any) => d.id.includes(".battery.") && d.id.includes(".power."),
+        // Helper to find series by path and metric type
+        const findSeries = (
+          pathPattern: string | string[],
+          metricType: "power" | "energy" | "soc",
+          aggregation?: string,
+        ) => {
+          const paths = Array.isArray(pathPattern)
+            ? pathPattern
+            : [pathPattern];
+          return data.data.find((d: any) => {
+            // Match path (e.g., "source.solar", "bidi.battery")
+            const pathMatch =
+              d.path &&
+              paths.some((p: string) => {
+                // Support both exact match and prefix match for load variants (load, load.hvac, etc.)
+                return d.path === p || d.path.startsWith(p + ".");
+              });
+            if (!pathMatch) return false;
+
+            // Match metric type in the series ID (e.g., /power., /energy., /soc.)
+            const metricMatch = d.id.includes(`/${metricType}.`);
+            if (!metricMatch) return false;
+
+            // If aggregation specified, match it (e.g., .avg, .last, .min, .max)
+            if (aggregation) {
+              return d.id.endsWith(`.${aggregation}`);
+            }
+
+            return true;
+          });
+        };
+
+        // Extract series based on mode (energy vs power)
+        const solarData = findSeries(
+          ["source.solar", "solar"],
+          isEnergyMode ? "energy" : "power",
+          isEnergyMode ? "delta" : "avg",
         );
-        const batterySOCData = data.data.find(
-          (d: any) =>
-            d.id.includes(".battery.soc.") &&
-            d.id.includes(isEnergyMode ? ".avg" : ".last"),
+
+        const loadData = findSeries(
+          "load",
+          isEnergyMode ? "energy" : "power",
+          isEnergyMode ? "delta" : "avg",
+        );
+
+        const batteryWData = findSeries("bidi.battery", "power", "avg");
+
+        const batterySOCData = findSeries(
+          "bidi.battery",
+          "soc",
+          isEnergyMode ? "avg" : "last",
         );
 
         // For daily data, also get min/max SOC
         const batterySOCMinData = isEnergyMode
-          ? data.data.find((d: any) => d.id.includes(".battery.soc.min"))
+          ? findSeries("bidi.battery", "soc", "min")
           : null;
         const batterySOCMaxData = isEnergyMode
-          ? data.data.find((d: any) => d.id.includes(".battery.soc.max"))
+          ? findSeries("bidi.battery", "soc", "max")
           : null;
 
-        // Grid data (optional - use path attribute to identify)
-        const gridData = isEnergyMode
-          ? data.data.find(
-              (d: any) => d.path === "bidi.grid" && d.id.includes(".energy"),
-            )
-          : data.data.find(
-              (d: any) => d.path === "bidi.grid" && d.id.includes(".power."),
-            );
+        const gridData = findSeries(
+          "bidi.grid",
+          isEnergyMode ? "energy" : "power",
+          isEnergyMode ? "delta" : "avg",
+        );
 
         if (!solarData) {
           throw new Error("Missing solar data series");
@@ -609,12 +664,11 @@ export default function EnergyChart({
           mode: isEnergyMode ? "energy" : "power",
         });
         setLoading(false);
+        fetchInProgressRef.current = false; // Mark fetch as complete
       } catch (err: any) {
-        // Ignore abort errors
-        if (err.name === "AbortError") {
-          console.log("[EnergyChart] Fetch aborted");
-          return;
-        }
+        // Ignore errors if this effect has been cancelled
+        if (cancelled) return;
+
         console.error("Error fetching chart data:", err);
 
         // Check if it's a network/connection error
@@ -633,19 +687,37 @@ export default function EnergyChart({
           );
         }
         setLoading(false);
+        fetchInProgressRef.current = false; // Mark fetch as complete even on error
       }
     };
 
-    fetchData();
+    // Check if fetch is already in progress before starting
+    if (fetchInProgressRef.current) {
+      console.log("[EnergyChart] Skipping initial fetch - already in progress");
+    } else {
+      fetchInProgressRef.current = true;
+      fetchData();
+    }
+
     // Refresh every minute
-    const interval = setInterval(fetchData, 60000);
+    const interval = setInterval(() => {
+      if (fetchInProgressRef.current) {
+        console.log(
+          "[EnergyChart] Skipping interval fetch - already in progress",
+        );
+      } else {
+        fetchInProgressRef.current = true;
+        fetchData();
+      }
+    }, 60000);
 
     // Cleanup function
     return () => {
+      cancelled = true;
       clearInterval(interval);
-      abortController.abort(); // Cancel any pending requests
+      fetchInProgressRef.current = false; // Reset for next effect run
     };
-  }, [timeRange, systemId, vendorType]);
+  }, [timeRange, systemId]);
 
   // For energy mode, pad the SOC data to extend the fill to chart edges
   const paddedSOCData =

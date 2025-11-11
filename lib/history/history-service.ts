@@ -7,47 +7,19 @@ import { aggregateToInterval } from "./aggregation";
 import { MeasurementSeries } from "./types";
 
 /**
- * Series patterns that should be included when matchLegacy=true
- * These correspond to what the legacy ReadingsProvider returns
- */
-const LEGACY_SERIES_PATTERNS = {
-  "5m": [
-    /^source\.solar\.power\.avg$/,
-    /^load\.power\.avg$/,
-    /^bidi\.battery\.power\.avg$/,
-    /^bidi\.grid\.power\.avg$/,
-    /^bidi\.battery\.soc\.last$/,
-  ],
-  "30m": [
-    /^source\.solar\.power\.avg$/,
-    /^load\.power\.avg$/,
-    /^bidi\.battery\.power\.avg$/,
-    /^bidi\.grid\.power\.avg$/,
-    /^bidi\.battery\.soc\.last$/,
-  ],
-  "1d": [
-    /^source\.solar\.energy\.delta$/,
-    /^load\.energy\.delta$/,
-    /^bidi\.battery\.soc\.avg$/,
-    /^bidi\.battery\.soc\.min$/,
-    /^bidi\.battery\.soc\.max$/,
-  ],
-};
-
-/**
  * Service for fetching historical data using the new abstraction
  */
 export class HistoryService {
   /**
    * Fetch history data in OpenNEM format
-   * @param matchLegacy - If true, filters output to only include series that legacy provider would return
+   * @param seriesPatterns - Optional array of regex patterns to filter which series to fetch from database
    */
   static async getHistoryInOpenNEMFormat(
     system: SystemWithPolling,
     startTime: ZonedDateTime | CalendarDate,
     endTime: ZonedDateTime | CalendarDate,
     interval: "5m" | "30m" | "1d",
-    matchLegacy = false,
+    seriesPatterns?: string[],
   ): Promise<{ series: OpenNEMDataSeries[]; dataSource: string }> {
     // Get the point readings provider (now the only provider)
     const provider = HistoryProviderFactory.getProvider();
@@ -64,6 +36,7 @@ export class HistoryService {
           system,
           startDate,
           endDate,
+          seriesPatterns,
         );
         break;
       }
@@ -72,7 +45,12 @@ export class HistoryService {
         // 5-minute data
         const start = startTime as ZonedDateTime;
         const end = endTime as ZonedDateTime;
-        measurementSeries = await provider.fetch5MinuteData(system, start, end);
+        measurementSeries = await provider.fetch5MinuteData(
+          system,
+          start,
+          end,
+          seriesPatterns,
+        );
         break;
       }
 
@@ -80,7 +58,12 @@ export class HistoryService {
         // 30-minute data - fetch 5-minute and aggregate
         const start = startTime as ZonedDateTime;
         const end = endTime as ZonedDateTime;
-        const fiveMinData = await provider.fetch5MinuteData(system, start, end);
+        const fiveMinData = await provider.fetch5MinuteData(
+          system,
+          start,
+          end,
+          seriesPatterns,
+        );
         measurementSeries = aggregateToInterval(
           fiveMinData,
           30 * 60 * 1000,
@@ -92,16 +75,6 @@ export class HistoryService {
 
       default:
         throw new Error(`Unsupported interval: ${interval}`);
-    }
-
-    // Filter series if matchLegacy is enabled
-    if (matchLegacy) {
-      const patterns = LEGACY_SERIES_PATTERNS[interval];
-      measurementSeries = measurementSeries.filter((series) => {
-        // Check if the series metadata ID matches any legacy pattern
-        const seriesId = series.metadata.id;
-        return patterns.some((pattern) => pattern.test(seriesId));
-      });
     }
 
     // Extract field names dynamically from the returned data

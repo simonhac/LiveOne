@@ -18,6 +18,7 @@ import {
 } from "./types";
 import { PointManager } from "@/lib/point-manager";
 import { PointInfo } from "@/lib/point-info";
+import micromatch from "micromatch";
 
 /**
  * Apply transform to a numeric value based on the transform type
@@ -35,25 +36,33 @@ function applyTransform(
 }
 
 /**
- * Generate a point ID in the format:
- * - If type is set: use series ID {path}.{metricType}.{aggregation}
- *   where path = type.subtype.extension (omitting null parts)
+ * Generate a series path (pointPath/pointFlavour format) for a point:
+ * - If type is set: use {pointPath}/{pointFlavour}
+ *   where pointPath = type.subtype.extension
+ *   and pointFlavour = metricType.aggregation
  * - Otherwise if shortName is set: use shortName
- * - Otherwise: {originId}.{originSubId}.{metricType}.{aggregation} (omitting originSubId if null)
+ * - Otherwise: use point's database ID as pointPath
+ *
+ * Examples:
+ *   - source.solar/power.avg
+ *   - bidi.battery/energy.delta
+ *   - load.hvac/power.avg
+ *   - 123/power.avg (fallback using point ID)
  *
  * The aggregation type depends on metricType and interval:
  * - For daily (1d) intervals:
- *   - energy: use .delta (daily total)
- *   - soc: use .avg/.min/.max (daily statistics)
- *   - power: use .avg (average power)
+ *   - energy: use delta (daily total)
+ *   - soc: use avg/min/max (daily statistics)
+ *   - power: use avg (average power)
  * - For 5m/30m intervals:
- *   - power, energy: use .avg (average over the interval)
+ *   - power, energy: use avg (average over the interval)
  *   - soc: NOT INCLUDED (removed from 5m/30m)
- *   - default: use .avg
+ *   - default: use avg
  *
- * Note: The vendor prefix (liveone.{vendorType}.{vendorSiteId}) is added by OpenNEMConverter
+ * Note: The system prefix (systemIdentifier/) is added by OpenNEMConverter
+ * to create the full series ID: {systemIdentifier}/{pointPath}/{pointFlavour}
  */
-function generatePointId(
+function generateSeriesPath(
   point: PointInfo,
   interval?: "5m" | "30m" | "1d",
 ): string {
@@ -75,9 +84,11 @@ function generatePointId(
   }
 
   // If type and subtype are set, use series ID with path
-  const path = point.getPath();
-  if (path) {
-    return `${path}.${point.metricType}.${aggregationType}`;
+  const pointPath = point.getPath();
+  if (pointPath) {
+    // Format: {pointPath}/{pointFlavour}
+    // where pointFlavour = metricType.aggregation
+    return `${pointPath}/${point.metricType}.${aggregationType}`;
   }
 
   // If shortName is set, use it directly
@@ -85,14 +96,8 @@ function generatePointId(
     return point.shortName;
   }
 
-  // Otherwise, build from components
-  const parts = [point.originId];
-  if (point.originSubId) {
-    parts.push(point.originSubId);
-  }
-  parts.push(point.metricType);
-  parts.push(aggregationType);
-  return parts.join(".");
+  // Otherwise, use the point's database ID as pointPath
+  return `${point.id}/${point.metricType}.${aggregationType}`;
 }
 
 export class PointReadingsProvider implements HistoryDataProvider {
@@ -112,9 +117,9 @@ export class PointReadingsProvider implements HistoryDataProvider {
         return true;
       })
       .sort((a, b) => {
-        const aSeriesId = generatePointId(a, interval);
-        const bSeriesId = generatePointId(b, interval);
-        return aSeriesId.localeCompare(bSeriesId);
+        const aSeriesPath = generateSeriesPath(a, interval);
+        const bSeriesPath = generateSeriesPath(b, interval);
+        return aSeriesPath.localeCompare(bSeriesPath);
       });
   }
 
@@ -122,6 +127,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
     system: SystemWithPolling,
     startTime: ZonedDateTime,
     endTime: ZonedDateTime,
+    seriesPatterns?: string[],
   ): Promise<MeasurementSeries[]> {
     const startMs = toUnixTimestamp(startTime) * 1000;
     const endMs = toUnixTimestamp(endTime) * 1000;
@@ -132,7 +138,15 @@ export class PointReadingsProvider implements HistoryDataProvider {
 
     // Only include active points with type set, sorted by series ID
     // Excludes SOC for 5m intervals
-    const filteredPoints = this.filterAndSortPoints(allPoints, "5m");
+    let filteredPoints = this.filterAndSortPoints(allPoints, "5m");
+
+    // Apply series pattern filtering if provided (OR logic - match any pattern)
+    if (seriesPatterns && seriesPatterns.length > 0) {
+      filteredPoints = filteredPoints.filter((p) => {
+        const seriesPath = generateSeriesPath(p, "5m");
+        return micromatch.isMatch(seriesPath, seriesPatterns);
+      });
+    }
 
     if (filteredPoints.length === 0) {
       return [];
@@ -198,19 +212,19 @@ export class PointReadingsProvider implements HistoryDataProvider {
       }
 
       // Always include series with metadata, even if no data
-      const fieldId = generatePointId(pointMeta, "5m");
+      const seriesPath = generateSeriesPath(pointMeta, "5m");
 
-      // Get path using PointInfo method
-      const path = pointMeta.getPath();
+      // Get pointPath using PointInfo method
+      const pointPath = pointMeta.getPath();
 
       result.push({
-        field: fieldId,
+        field: seriesPath,
         metadata: {
-          id: fieldId,
+          id: seriesPath,
           label: pointMeta.name,
           type: pointMeta.metricType,
           unit: pointMeta.metricUnit,
-          path: path ?? undefined, // Convert null to undefined for optional field
+          path: pointPath ?? undefined, // Convert null to undefined for optional field
         },
         data,
       });
@@ -223,6 +237,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
     system: SystemWithPolling,
     startDate: CalendarDate,
     endDate: CalendarDate,
+    seriesPatterns?: string[],
   ): Promise<MeasurementSeries[]> {
     const startDateStr = startDate.toString(); // YYYY-MM-DD format
     const endDateStr = endDate.toString(); // YYYY-MM-DD format
@@ -233,7 +248,15 @@ export class PointReadingsProvider implements HistoryDataProvider {
 
     // Only include active points with type set, sorted by series ID
     // Includes SOC for daily intervals
-    const filteredPoints = this.filterAndSortPoints(allPoints, "1d");
+    let filteredPoints = this.filterAndSortPoints(allPoints, "1d");
+
+    // Apply series pattern filtering if provided (OR logic - match any pattern)
+    if (seriesPatterns && seriesPatterns.length > 0) {
+      filteredPoints = filteredPoints.filter((p) => {
+        const seriesPath = generateSeriesPath(p, "1d");
+        return micromatch.isMatch(seriesPath, seriesPatterns);
+      });
+    }
 
     if (filteredPoints.length === 0) {
       return [];
@@ -272,11 +295,11 @@ export class PointReadingsProvider implements HistoryDataProvider {
     for (const [pointId, pointMeta] of pointMap) {
       // Get aggregates for this point if they exist
       const pointAggregates = pointSeriesMap.get(pointId) || [];
-      const path = pointMeta.getPath();
+      const pointPath = pointMeta.getPath();
 
       // Helper to create a series
       const createSeries = (
-        fieldIdSuffix: string,
+        pointFlavourSuffix: string,
         labelSuffix: string,
         extractValue: (agg: (typeof pointAggregates)[0]) => number | null,
       ): void => {
@@ -291,19 +314,19 @@ export class PointReadingsProvider implements HistoryDataProvider {
           }
         }
 
-        const fieldId = path
-          ? `${path}.${fieldIdSuffix}`
-          : `${pointMeta.originId}.${fieldIdSuffix}`;
+        const seriesPath = pointPath
+          ? `${pointPath}/${pointFlavourSuffix}`
+          : `${pointMeta.id}/${pointFlavourSuffix}`;
         result.push({
-          field: fieldId,
+          field: seriesPath,
           metadata: {
-            id: fieldId,
+            id: seriesPath,
             label: labelSuffix
               ? `${pointMeta.name} ${labelSuffix}`
               : pointMeta.name,
             type: pointMeta.metricType,
             unit: pointMeta.metricUnit,
-            path: path ?? undefined,
+            path: pointPath ?? undefined,
           },
           data,
         });
@@ -339,15 +362,15 @@ export class PointReadingsProvider implements HistoryDataProvider {
           }
         }
 
-        const fieldId = generatePointId(pointMeta, "1d");
+        const seriesPath = generateSeriesPath(pointMeta, "1d");
         result.push({
-          field: fieldId,
+          field: seriesPath,
           metadata: {
-            id: fieldId,
+            id: seriesPath,
             label: pointMeta.name,
             type: pointMeta.metricType,
             unit: pointMeta.metricUnit,
-            path: path ?? undefined,
+            path: pointPath ?? undefined,
           },
           data,
         });

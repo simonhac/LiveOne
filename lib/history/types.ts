@@ -57,21 +57,25 @@ export interface HistoryDataProvider {
   /**
    * Fetch 5-minute interval data
    * Returns an array of MeasurementSeries, one per field
+   * @param seriesPatterns - Optional array of glob patterns to filter which series to fetch (OR logic)
    */
   fetch5MinuteData(
     system: SystemWithPolling,
     startTime: ZonedDateTime,
     endTime: ZonedDateTime,
+    seriesPatterns?: string[],
   ): Promise<MeasurementSeries[]>;
 
   /**
    * Fetch daily interval data
    * Returns an array of MeasurementSeries, one per field
+   * @param seriesPatterns - Optional array of glob patterns to filter which series to fetch (OR logic)
    */
   fetchDailyData(
     system: SystemWithPolling,
     startDate: CalendarDate,
     endDate: CalendarDate,
+    seriesPatterns?: string[],
   ): Promise<MeasurementSeries[]>;
 
   /**

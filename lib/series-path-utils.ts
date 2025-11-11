@@ -15,21 +15,48 @@ export {
 const systemsManager = SystemsManager.getInstance();
 
 /**
- * Utilities for working with series paths in the format:
- * liveone.{siteId}.{pointId}
+ * Utilities for working with series IDs in the format:
+ * {systemIdentifier}/{pointPath}/{pointFlavour}
  *
  * Examples:
- * - liveone.system.10.bidi.battery
- * - liveone.kinkora_complete.source.solar
- * - liveone.daylesford.load
+ * - system.10/bidi.battery/power.avg
+ * - kinkora_complete/source.solar/energy.delta
+ * - system.3/load.hvac/power.avg
  *
  * Components:
- * - network: Always "liveone"
- * - siteId: Identifies the system (either "system.{id}" or a shortname)
- * - pointId: Identifies the measurement/capability (e.g., "bidi.battery", "source.solar")
+ * - systemIdentifier: Identifies the system (either "system.{id}" or a shortname)
+ * - pointPath: type.subtype.extension (e.g., "bidi.battery", "source.solar")
+ * - pointFlavour: metricType.aggregation (e.g., "power.avg", "energy.delta")
+ *
+ * The "series path" (without system prefix) is: {pointPath}/{pointFlavour}
  *
  * Note: Pure parsing functions are re-exported from series-path-parser.ts above
  */
+
+/**
+ * Resolve a system identifier to a system
+ *
+ * @param systemIdentifier - Numeric system ID (e.g., "3" or "10")
+ * @returns System or null if not found
+ *
+ * TODO: Support username.shortname format (e.g., "simon.kinkora_complete") when we have
+ * a cheap username lookup mechanism. Currently would require adding a username column
+ * to the systems table or calling Clerk API which has rate limits and latency.
+ *
+ * @example
+ * await resolveSystemFromIdentifier("3")
+ * // Returns system with id=3
+ */
+export async function resolveSystemFromIdentifier(
+  systemIdentifier: string,
+): Promise<SystemWithPolling | null> {
+  // Only support numeric ID for now
+  if (/^\d+$/.test(systemIdentifier)) {
+    return systemsManager.getSystem(parseInt(systemIdentifier));
+  }
+
+  return null;
+}
 
 /**
  * Resolve a siteId to a system
@@ -65,26 +92,26 @@ export async function resolveSystemFromSiteId(
 }
 
 /**
- * Build a full series path from components
+ * Build a full series ID from components
  *
- * @param siteId - Site identifier (either "system.{id}" or a shortname)
- * @param pointId - Point identifier (e.g., "bidi.battery", "source.solar")
- * @param network - Network name (defaults to "liveone")
- * @returns Full series path
+ * @param systemIdentifier - System identifier (either "system.{id}" or a shortname)
+ * @param pointPath - Point path (e.g., "bidi.battery", "source.solar")
+ * @param pointFlavour - Metric type and aggregation (e.g., "power.avg", "energy.delta")
+ * @returns Full series ID in format {systemIdentifier}/{pointPath}/{pointFlavour}
  *
  * @example
- * buildSeriesPath("system.10", "bidi.battery")
- * // Returns: "liveone.system.10.bidi.battery"
+ * buildSeriesId("system.10", "bidi.battery", "power.avg")
+ * // Returns: "system.10/bidi.battery/power.avg"
  *
- * buildSeriesPath("kinkora_complete", "source.solar")
- * // Returns: "liveone.kinkora_complete.source.solar"
+ * buildSeriesId("kinkora_complete", "source.solar", "energy.delta")
+ * // Returns: "kinkora_complete/source.solar/energy.delta"
  */
-export function buildSeriesPath(
-  siteId: string,
-  pointId: string,
-  network: string = "liveone",
+export function buildSeriesId(
+  systemIdentifier: string,
+  pointPath: string,
+  pointFlavour: string,
 ): string {
-  return `${network}.${siteId}.${pointId}`;
+  return `${systemIdentifier}/${pointPath}/${pointFlavour}`;
 }
 
 /**
