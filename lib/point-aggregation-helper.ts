@@ -54,15 +54,20 @@ export async function getPointsLastValues5m(
  * - 1 query to fetch all readings for all points
  * - 1 batch upsert for all aggregates
  * - For points with transform='d': calculates delta from previous interval
+ * - For points with metricType='energy' and transform != 'd': sums values into delta
  *
  * @param systemId - The system ID
- * @param points - Array of pointInfo objects (with id and transform fields)
+ * @param points - Array of pointInfo objects (with id, transform, and metricType fields)
  * @param measurementTime - Unix timestamp in milliseconds of the readings
  * @param previousLastValues - Map of pointId -> last value from previous interval (for transform='d' delta calculation)
  */
 export async function updatePointAggregates5m(
   systemId: number,
-  points: Array<{ id: number; transform: string | null }>,
+  points: Array<{
+    id: number;
+    transform: string | null;
+    metricType: string | null;
+  }>,
   measurementTime: number, // Unix timestamp in milliseconds
   previousLastValues: Map<number, number> = new Map(),
 ): Promise<void> {
@@ -74,8 +79,9 @@ export async function updatePointAggregates5m(
     const intervalEndMs = Math.ceil(measurementTime / intervalMs) * intervalMs;
     const intervalStartMs = intervalEndMs - intervalMs;
 
-    // Build a map of pointId -> transform for quick lookup
+    // Build maps for quick lookup
     const pointTransforms = new Map(points.map((p) => [p.id, p.transform]));
+    const pointMetricTypes = new Map(points.map((p) => [p.id, p.metricType]));
 
     // QUERY 1: Fetch all readings for all points in this interval (single query!)
     // Use > intervalStart AND <= intervalEnd (exclusive start, inclusive end)
@@ -147,8 +153,9 @@ export async function updatePointAggregates5m(
         const values = validReadings.map((r) => r.value);
         const last = validReadings[validReadings.length - 1].value;
 
-        // Calculate delta for points with transform='d'
+        // Calculate delta based on point type
         const transform = pointTransforms.get(pointId);
+        const metricType = pointMetricTypes.get(pointId);
         let delta: number | null = null;
         let avg: number | null;
         let min: number | null;
@@ -171,6 +178,11 @@ export async function updatePointAggregates5m(
           avg = values.reduce((sum, v) => sum + v, 0) / values.length;
           min = Math.min(...values);
           max = Math.max(...values);
+
+          // For energy metrics, also sum values into delta
+          if (metricType === "energy") {
+            delta = values.reduce((sum, v) => sum + v, 0);
+          }
         }
 
         return {

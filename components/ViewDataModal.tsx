@@ -427,8 +427,9 @@ export default function ViewDataModal({
         const mwh = numValue / 1_000_000;
         return `${mwh.toFixed(3)}`;
       }
-      // For differentiated points in daily view, show as kWh with 1 decimal place
-      if (pointInfo?.transform === "d" && source === "daily") {
+      // For energy in daily view, show as kWh with 1 decimal place
+      // (both differentiated counters and interval energy deltas)
+      if (source === "daily") {
         const kwh = numValue / 1000;
         return `${kwh.toFixed(1)}`;
       }
@@ -463,8 +464,8 @@ export default function ViewDataModal({
       if (pointInfo?.transform === "d" && source === "raw") {
         return "MWh";
       }
-      // For differentiated points in daily view, show kWh
-      if (pointInfo?.transform === "d" && source === "daily") {
+      // For all energy in daily view, show kWh
+      if (source === "daily") {
         return "kWh";
       }
       return "Wh";

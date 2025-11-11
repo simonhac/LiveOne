@@ -73,4 +73,9 @@ export interface HistoryDataProvider {
     startDate: CalendarDate,
     endDate: CalendarDate,
   ): Promise<MeasurementSeries[]>;
+
+  /**
+   * Get the data source table name for a given interval
+   */
+  getDataSource(interval: "5m" | "30m" | "1d"): string;
 }

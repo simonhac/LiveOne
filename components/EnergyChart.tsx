@@ -122,34 +122,16 @@ export default function EnergyChart({
       hoverTimeoutRef.current = setTimeout(() => {
         if (activeElements && activeElements.length > 0) {
           const dataIndex = activeElements[0].index;
-          const solarValue =
-            chartData.mode === "energy"
-              ? chartData.solar[dataIndex]
-              : chartData.solar[dataIndex] !== null
-                ? chartData.solar[dataIndex] / 1000
-                : null; // Convert W to kW
-          const loadValue =
-            chartData.mode === "energy"
-              ? chartData.load[dataIndex]
-              : chartData.load[dataIndex] !== null
-                ? chartData.load[dataIndex] / 1000
-                : null; // Convert W to kW
+          const solarValue = chartData.solar[dataIndex]; // Already converted to kW/kWh by convertToKw()
+          const loadValue = chartData.load[dataIndex]; // Already converted to kW/kWh by convertToKw()
           const batteryPowerValue =
             chartData.batteryW && chartData.batteryW[dataIndex] !== undefined
-              ? chartData.mode === "energy"
-                ? chartData.batteryW[dataIndex]
-                : chartData.batteryW[dataIndex] !== null
-                  ? chartData.batteryW[dataIndex] / 1000
-                  : null
-              : null; // Convert W to kW
+              ? chartData.batteryW[dataIndex]
+              : null; // Already converted to kW by convertToKw()
           const gridValue =
             chartData.grid && chartData.grid[dataIndex] !== undefined
-              ? chartData.mode === "energy"
-                ? chartData.grid[dataIndex]
-                : chartData.grid[dataIndex] !== null
-                  ? chartData.grid[dataIndex] / 1000
-                  : null
-              : null; // Convert W to kW
+              ? chartData.grid[dataIndex]
+              : null; // Already converted to kW/kWh by convertToKw()
           const batteryValue = chartData.batterySOC[dataIndex];
           const timestamp = chartData.timestamps[dataIndex];
 
@@ -439,7 +421,7 @@ export default function EnergyChart({
         }
 
         const response = await fetch(
-          `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId.toString()}`,
+          `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId.toString()}&matchLegacy=true`,
           {
             credentials: "same-origin", // Include cookies
             signal: abortController.signal,
@@ -470,12 +452,17 @@ export default function EnergyChart({
         // Process the data for Chart.js
         // Energy mode: use energy data; Power mode: use power data
         // Series IDs now include summarisers (e.g., .avg, .last)
+        // Use path attribute for more reliable matching (path="source.solar" or path="solar")
         const solarData = isEnergyMode
           ? data.data.find(
-              (d: any) => d.id.includes(".solar.") && d.id.includes(".energy"),
+              (d: any) =>
+                (d.path === "source.solar" || d.path === "solar") &&
+                d.id.includes(".energy"),
             )
           : data.data.find(
-              (d: any) => d.id.includes(".solar.") && d.id.includes(".power."),
+              (d: any) =>
+                (d.path === "source.solar" || d.path === "solar") &&
+                d.id.includes(".power."),
             );
         const loadData = isEnergyMode
           ? data.data.find(
@@ -510,9 +497,10 @@ export default function EnergyChart({
               (d: any) => d.path === "bidi.grid" && d.id.includes(".power."),
             );
 
-        if (!solarData || !loadData || !batterySOCData) {
-          throw new Error("Missing data series");
+        if (!solarData) {
+          throw new Error("Missing solar data series");
         }
+        // Load and battery are optional (e.g., solar-only systems)
 
         // Parse the start time - the API returns timestamps like "2025-08-16T12:17:53+10:00"
         const startTimeString = solarData.history.start;
@@ -570,16 +558,39 @@ export default function EnergyChart({
           )
           .map(({ index }: { time: Date; index: number }) => index);
 
+        // Helper function to convert values based on units
+        const convertToKw = (
+          value: number | null,
+          units: string,
+        ): number | null => {
+          if (value === null) return null;
+          const unitsLower = units?.toLowerCase() || "";
+          // Convert W to kW or Wh to kWh
+          if (unitsLower === "w" || unitsLower === "wh") {
+            return value / 1000;
+          }
+          // Already in kW or kWh
+          return value;
+        };
+
         setChartData({
           timestamps: selectedIndices.map((i: number) => timestamps[i]),
-          solar: selectedIndices.map((i: number) => solarData.history.data[i]),
-          load: selectedIndices.map((i: number) => loadData.history.data[i]),
-          batteryW: selectedIndices.map(
-            (i: number) => batteryWData?.history.data[i],
+          solar: selectedIndices.map((i: number) =>
+            convertToKw(solarData.history.data[i], solarData.units),
           ),
-          batterySOC: selectedIndices.map(
-            (i: number) => batterySOCData.history.data[i],
-          ),
+          load: loadData
+            ? selectedIndices.map((i: number) =>
+                convertToKw(loadData.history.data[i], loadData.units),
+              )
+            : selectedIndices.map(() => null),
+          batteryW: batteryWData
+            ? selectedIndices.map((i: number) =>
+                convertToKw(batteryWData.history.data[i], batteryWData.units),
+              )
+            : selectedIndices.map(() => null),
+          batterySOC: batterySOCData
+            ? selectedIndices.map((i: number) => batterySOCData.history.data[i])
+            : selectedIndices.map(() => null),
           batterySOCMin: batterySOCMinData
             ? selectedIndices.map(
                 (i: number) => batterySOCMinData.history.data[i],
@@ -591,7 +602,9 @@ export default function EnergyChart({
               )
             : undefined,
           grid: gridData
-            ? selectedIndices.map((i: number) => gridData.history.data[i])
+            ? selectedIndices.map((i: number) =>
+                convertToKw(gridData.history.data[i], gridData.units),
+              )
             : undefined,
           mode: isEnergyMode ? "energy" : "power",
         });
@@ -794,7 +807,7 @@ export default function EnergyChart({
           datasets: [
             {
               label: "Solar",
-              data: chartData.solar.map((w) => (w === null ? null : w / 1000)), // Convert W to kW for power mode
+              data: chartData.solar, // Already converted to kW by convertToKw()
               borderColor: "rgb(250, 204, 21)", // yellow-400
               backgroundColor: "rgb(250, 204, 21)", // Solid color for legend
               yAxisID: "y",
@@ -805,7 +818,7 @@ export default function EnergyChart({
             },
             {
               label: "Load",
-              data: chartData.load.map((w) => (w === null ? null : w / 1000)), // Convert W to kW for power mode
+              data: chartData.load, // Already converted to kW by convertToKw()
               borderColor: "rgb(96, 165, 250)", // blue-400
               backgroundColor: "rgb(96, 165, 250)", // Solid color for legend
               yAxisID: "y",
@@ -819,9 +832,7 @@ export default function EnergyChart({
               ? [
                   {
                     label: "Battery",
-                    data: chartData.batteryW.map((w) =>
-                      w === null ? null : w / 1000,
-                    ), // Convert W to kW for power mode
+                    data: chartData.batteryW, // Already converted to kW by convertToKw()
                     borderColor: "rgb(251, 146, 60)", // orange-400
                     backgroundColor: "rgb(251, 146, 60)", // Solid color for legend
                     yAxisID: "y",
@@ -837,9 +848,7 @@ export default function EnergyChart({
               ? [
                   {
                     label: "Grid",
-                    data: chartData.grid.map((w) =>
-                      w === null ? null : w / 1000,
-                    ), // Convert W to kW for power mode
+                    data: chartData.grid, // Already converted to kW by convertToKw()
                     borderColor: "rgb(239, 68, 68)", // red-500
                     backgroundColor: "rgb(239, 68, 68)", // Solid color for legend
                     yAxisID: "y",

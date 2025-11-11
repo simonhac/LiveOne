@@ -1,14 +1,12 @@
 import { db } from "@/lib/db";
 import {
-  pointReadings,
   pointReadingsAgg5m,
   pointReadingsAgg1d,
 } from "@/lib/db/schema-monitoring-points";
-import { eq, and, gte, lte, inArray } from "drizzle-orm";
+import { eq, and, gte, lte } from "drizzle-orm";
 import {
   CalendarDate,
   ZonedDateTime,
-  fromDate,
   parseDate,
 } from "@internationalized/date";
 import { toUnixTimestamp, fromUnixTimestamp } from "@/lib/date-utils";
@@ -16,8 +14,6 @@ import { SystemWithPolling } from "@/lib/systems-manager";
 import {
   HistoryDataProvider,
   MeasurementSeries,
-  MeasurementPointMetadata,
-  MeasurementValue,
   TimeSeriesPoint,
 } from "./types";
 import { PointManager } from "@/lib/point-manager";
@@ -45,16 +41,38 @@ function applyTransform(
  * - Otherwise if shortName is set: use shortName
  * - Otherwise: {originId}.{originSubId}.{metricType}.{aggregation} (omitting originSubId if null)
  *
- * The aggregation type is determined by metricType:
- * - power, energy: use .avg (average over the interval)
- * - soc: use .last (state at end of interval)
- * - default: use .avg
+ * The aggregation type depends on metricType and interval:
+ * - For daily (1d) intervals:
+ *   - energy: use .delta (daily total)
+ *   - soc: use .avg/.min/.max (daily statistics)
+ *   - power: use .avg (average power)
+ * - For 5m/30m intervals:
+ *   - power, energy: use .avg (average over the interval)
+ *   - soc: NOT INCLUDED (removed from 5m/30m)
+ *   - default: use .avg
  *
  * Note: The vendor prefix (liveone.{vendorType}.{vendorSiteId}) is added by OpenNEMConverter
  */
-function generatePointId(point: PointInfo): string {
-  // Determine aggregation type based on metric type
-  const aggregationType = point.metricType === "soc" ? "last" : "avg";
+function generatePointId(
+  point: PointInfo,
+  interval?: "5m" | "30m" | "1d",
+): string {
+  // Determine aggregation type based on metric type and interval
+  let aggregationType: string;
+
+  if (interval === "1d") {
+    // Daily intervals use delta for energy, avg for power/other
+    aggregationType = point.metricType === "energy" ? "delta" : "avg";
+  } else {
+    // 5m/30m intervals use delta for energy, last for SOC, avg for power/other
+    if (point.metricType === "energy") {
+      aggregationType = "delta";
+    } else if (point.metricType === "soc") {
+      aggregationType = "last";
+    } else {
+      aggregationType = "avg";
+    }
+  }
 
   // If type and subtype are set, use series ID with path
   const path = point.getPath();
@@ -82,15 +100,20 @@ export class PointReadingsProvider implements HistoryDataProvider {
    * Helper method to filter and sort points by series ID
    * Filters to only include active points with type set
    */
-  private filterAndSortPoints(points: PointInfo[]): PointInfo[] {
+  private filterAndSortPoints(
+    points: PointInfo[],
+    interval: "5m" | "30m" | "1d",
+  ): PointInfo[] {
     return points
       .filter((p) => {
         // Must have type and be active
-        return p.type && p.active;
+        if (!p.type || !p.active) return false;
+
+        return true;
       })
       .sort((a, b) => {
-        const aSeriesId = generatePointId(a);
-        const bSeriesId = generatePointId(b);
+        const aSeriesId = generatePointId(a, interval);
+        const bSeriesId = generatePointId(b, interval);
         return aSeriesId.localeCompare(bSeriesId);
       });
   }
@@ -108,7 +131,8 @@ export class PointReadingsProvider implements HistoryDataProvider {
     const allPoints = await pointManager.getPointsForSystem(system.id);
 
     // Only include active points with type set, sorted by series ID
-    const filteredPoints = this.filterAndSortPoints(allPoints);
+    // Excludes SOC for 5m intervals
+    const filteredPoints = this.filterAndSortPoints(allPoints, "5m");
 
     if (filteredPoints.length === 0) {
       return [];
@@ -151,12 +175,13 @@ export class PointReadingsProvider implements HistoryDataProvider {
       const pointAggregates = pointSeriesMap.get(pointId) || [];
 
       for (const agg of pointAggregates) {
-        // Only include if we have valid aggregate data (check all aggregate fields)
+        // Only include if we have valid aggregate data (check all aggregate fields including delta)
         if (
           agg.avg !== null ||
           agg.min !== null ||
           agg.max !== null ||
-          agg.last !== null
+          agg.last !== null ||
+          agg.delta !== null
         ) {
           data.push({
             timestamp: fromUnixTimestamp(agg.intervalEnd / 1000, 600), // Use AEST timezone
@@ -165,6 +190,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
               min: applyTransform(agg.min, pointMeta.transform),
               max: applyTransform(agg.max, pointMeta.transform),
               last: applyTransform(agg.last, pointMeta.transform),
+              delta: applyTransform(agg.delta, pointMeta.transform),
               count: agg.sampleCount,
             },
           });
@@ -172,7 +198,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
       }
 
       // Always include series with metadata, even if no data
-      const fieldId = generatePointId(pointMeta);
+      const fieldId = generatePointId(pointMeta, "5m");
 
       // Get path using PointInfo method
       const path = pointMeta.getPath();
@@ -206,7 +232,8 @@ export class PointReadingsProvider implements HistoryDataProvider {
     const allPoints = await pointManager.getPointsForSystem(system.id);
 
     // Only include active points with type set, sorted by series ID
-    const filteredPoints = this.filterAndSortPoints(allPoints);
+    // Includes SOC for daily intervals
+    const filteredPoints = this.filterAndSortPoints(allPoints, "1d");
 
     if (filteredPoints.length === 0) {
       return [];
@@ -243,52 +270,96 @@ export class PointReadingsProvider implements HistoryDataProvider {
     const result: MeasurementSeries[] = [];
 
     for (const [pointId, pointMeta] of pointMap) {
-      const data: TimeSeriesPoint[] = [];
-
       // Get aggregates for this point if they exist
       const pointAggregates = pointSeriesMap.get(pointId) || [];
-
-      for (const agg of pointAggregates) {
-        // Only include if we have valid aggregate data
-        if (
-          agg.avg !== null ||
-          agg.min !== null ||
-          agg.max !== null ||
-          agg.delta !== null
-        ) {
-          data.push({
-            timestamp: parseDate(agg.day), // Convert YYYY-MM-DD string to CalendarDate
-            value: {
-              avg: applyTransform(agg.avg, pointMeta.transform),
-              min: applyTransform(agg.min, pointMeta.transform),
-              max: applyTransform(agg.max, pointMeta.transform),
-              last: applyTransform(agg.last, pointMeta.transform),
-              delta: applyTransform(agg.delta, pointMeta.transform),
-              count: agg.sampleCount,
-            },
-          });
-        }
-      }
-
-      // Always include series with metadata, even if no data
-      const fieldId = generatePointId(pointMeta);
-
-      // Get path using PointInfo method
       const path = pointMeta.getPath();
 
-      result.push({
-        field: fieldId,
-        metadata: {
-          id: fieldId,
-          label: pointMeta.name,
-          type: pointMeta.metricType,
-          unit: pointMeta.metricUnit,
-          path: path ?? undefined, // Convert null to undefined for optional field
-        },
-        data,
-      });
+      // Helper to create a series
+      const createSeries = (
+        fieldIdSuffix: string,
+        labelSuffix: string,
+        extractValue: (agg: (typeof pointAggregates)[0]) => number | null,
+      ): void => {
+        const data: TimeSeriesPoint[] = [];
+        for (const agg of pointAggregates) {
+          const value = extractValue(agg);
+          if (value !== null) {
+            data.push({
+              timestamp: parseDate(agg.day),
+              value: { avg: applyTransform(value, pointMeta.transform) },
+            });
+          }
+        }
+
+        const fieldId = path
+          ? `${path}.${fieldIdSuffix}`
+          : `${pointMeta.originId}.${fieldIdSuffix}`;
+        result.push({
+          field: fieldId,
+          metadata: {
+            id: fieldId,
+            label: labelSuffix
+              ? `${pointMeta.name} ${labelSuffix}`
+              : pointMeta.name,
+            type: pointMeta.metricType,
+            unit: pointMeta.metricUnit,
+            path: path ?? undefined,
+          },
+          data,
+        });
+      };
+
+      // For SOC metrics in daily intervals, create 3 separate series (avg, min, max)
+      if (pointMeta.metricType === "soc") {
+        createSeries("soc.avg", "(avg)", (agg) => agg.avg);
+        createSeries("soc.min", "(min)", (agg) => agg.min);
+        createSeries("soc.max", "(max)", (agg) => agg.max);
+      } else {
+        // For non-SOC metrics, create a single series with all aggregate fields
+        const data: TimeSeriesPoint[] = [];
+        for (const agg of pointAggregates) {
+          // Only include if we have valid aggregate data
+          if (
+            agg.avg !== null ||
+            agg.min !== null ||
+            agg.max !== null ||
+            agg.delta !== null
+          ) {
+            data.push({
+              timestamp: parseDate(agg.day),
+              value: {
+                avg: applyTransform(agg.avg, pointMeta.transform),
+                min: applyTransform(agg.min, pointMeta.transform),
+                max: applyTransform(agg.max, pointMeta.transform),
+                last: applyTransform(agg.last, pointMeta.transform),
+                delta: applyTransform(agg.delta, pointMeta.transform),
+                count: agg.sampleCount,
+              },
+            });
+          }
+        }
+
+        const fieldId = generatePointId(pointMeta, "1d");
+        result.push({
+          field: fieldId,
+          metadata: {
+            id: fieldId,
+            label: pointMeta.name,
+            type: pointMeta.metricType,
+            unit: pointMeta.metricUnit,
+            path: path ?? undefined,
+          },
+          data,
+        });
+      }
     }
 
     return result;
+  }
+
+  getDataSource(interval: "5m" | "30m" | "1d"): string {
+    return interval === "1d"
+      ? "point_readings_agg_1d"
+      : "point_readings_agg_5m";
   }
 }

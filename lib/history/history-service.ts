@@ -7,20 +7,55 @@ import { aggregateToInterval } from "./aggregation";
 import { MeasurementSeries } from "./types";
 
 /**
+ * Series patterns that should be included when matchLegacy=true
+ * These correspond to what the legacy ReadingsProvider returns
+ */
+const LEGACY_SERIES_PATTERNS = {
+  "5m": [
+    /^source\.solar\.power\.avg$/,
+    /^load\.power\.avg$/,
+    /^bidi\.battery\.power\.avg$/,
+    /^bidi\.grid\.power\.avg$/,
+    /^bidi\.battery\.soc\.last$/,
+  ],
+  "30m": [
+    /^source\.solar\.power\.avg$/,
+    /^load\.power\.avg$/,
+    /^bidi\.battery\.power\.avg$/,
+    /^bidi\.grid\.power\.avg$/,
+    /^bidi\.battery\.soc\.last$/,
+  ],
+  "1d": [
+    /^source\.solar\.energy\.delta$/,
+    /^load\.energy\.delta$/,
+    /^bidi\.battery\.soc\.avg$/,
+    /^bidi\.battery\.soc\.min$/,
+    /^bidi\.battery\.soc\.max$/,
+  ],
+};
+
+/**
  * Service for fetching historical data using the new abstraction
  */
 export class HistoryService {
   /**
    * Fetch history data in OpenNEM format
+   * @param forceToPointReadings - If true, forces use of PointReadingsProvider (for migration testing)
+   * @param matchLegacy - If true, filters output to only include series that legacy provider would return
    */
   static async getHistoryInOpenNEMFormat(
     system: SystemWithPolling,
     startTime: ZonedDateTime | CalendarDate,
     endTime: ZonedDateTime | CalendarDate,
     interval: "5m" | "30m" | "1d",
-  ): Promise<OpenNEMDataSeries[]> {
+    forceToPointReadings = false,
+    matchLegacy = false,
+  ): Promise<{ series: OpenNEMDataSeries[]; dataSource: string }> {
     // Get the appropriate provider for this system
-    const provider = HistoryProviderFactory.getProvider(system);
+    const provider = HistoryProviderFactory.getProvider(
+      system,
+      forceToPointReadings,
+    );
 
     let measurementSeries: MeasurementSeries[];
 
@@ -64,11 +99,21 @@ export class HistoryService {
         throw new Error(`Unsupported interval: ${interval}`);
     }
 
+    // Filter series if matchLegacy is enabled
+    if (matchLegacy) {
+      const patterns = LEGACY_SERIES_PATTERNS[interval];
+      measurementSeries = measurementSeries.filter((series) => {
+        // Check if the series metadata ID matches any legacy pattern
+        const seriesId = series.metadata.id;
+        return patterns.some((pattern) => pattern.test(seriesId));
+      });
+    }
+
     // Extract field names dynamically from the returned data
     const seriesFields = measurementSeries.map((s) => s.field);
 
     // Convert to OpenNEM format
-    return OpenNEMConverter.convertToOpenNEM(
+    const series = OpenNEMConverter.convertToOpenNEM(
       measurementSeries,
       seriesFields,
       interval,
@@ -76,5 +121,10 @@ export class HistoryService {
       startTime,
       endTime,
     );
+
+    // Get the data source from the provider
+    const dataSource = provider.getDataSource(interval);
+
+    return { series, dataSource };
   }
 }

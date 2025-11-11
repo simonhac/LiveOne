@@ -89,6 +89,9 @@ export class OpenNEMConverter {
         lastStr = formatTimeAEST(endInterval as ZonedDateTime);
       }
 
+      // Get metadata early to check for energy.delta series
+      const metadata = series.metadata;
+
       // Build complete data array with nulls for missing timestamps
       const fieldData: (number | null)[] = [];
       let dataIndex = 0;
@@ -108,7 +111,11 @@ export class OpenNEMConverter {
 
             if (dataDate.compare(currentDate) === 0) {
               // We have data for this date
-              fieldData.push(dataPoint.value.avg);
+              // For energy.delta series, use delta value; otherwise use avg
+              const value = metadata.id.endsWith(".energy.delta")
+                ? dataPoint.value.delta
+                : dataPoint.value.avg;
+              fieldData.push(value ?? null);
               dataIndex++;
             } else {
               // No data for this date
@@ -160,7 +167,11 @@ export class OpenNEMConverter {
 
             if (dataIntervalEnd === expectedIntervalEnd) {
               // We have data for this interval
-              fieldData.push(dataPoint.value.avg);
+              // For energy.delta series, use delta value; otherwise use avg
+              const value = metadata.id.endsWith(".energy.delta")
+                ? dataPoint.value.delta
+                : dataPoint.value.avg;
+              fieldData.push(value ?? null);
               dataIndex++;
             } else {
               // No data for this interval
@@ -173,8 +184,7 @@ export class OpenNEMConverter {
         }
       }
 
-      // Use metadata from the series (required, never defaults)
-      const metadata = series.metadata;
+      // Extract field details from metadata (already defined above)
       const fieldId = metadata.id;
       const type = metadata.type;
       const units = metadata.unit;

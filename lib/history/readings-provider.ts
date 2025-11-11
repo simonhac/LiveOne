@@ -91,13 +91,13 @@ export class ReadingsProvider implements HistoryDataProvider {
     }
     // Always include series with metadata, even if no data
     series.push({
-      field: "source.solar.total",
+      field: "source.solar",
       metadata: {
-        id: "source.solar.total.power.avg",
+        id: "source.solar.power.avg",
         label: "Solar (total)",
         type: "power",
         unit: "W",
-        path: "source.solar.total",
+        path: "source.solar",
       },
       data: solarData,
     });
@@ -187,16 +187,17 @@ export class ReadingsProvider implements HistoryDataProvider {
         socData.push({
           timestamp: fromUnixTimestamp(row.intervalEnd, 600),
           value: {
-            avg: row.batterySOCLast,
+            avg: null,
+            last: row.batterySOCLast,
           },
         });
       }
     }
     series.push({
-      field: "bidi.battery.soc",
+      field: "battery_soc",
       metadata: {
         id: "bidi.battery.soc.last",
-        label: "Battery SOC",
+        label: "Battery state of charge",
         type: "soc",
         unit: "%",
         path: "bidi.battery",
@@ -212,14 +213,15 @@ export class ReadingsProvider implements HistoryDataProvider {
   ): MeasurementSeries[] {
     const series: MeasurementSeries[] = [];
 
-    // Solar energy series
+    // Solar energy series (delta - daily total)
     const solarEnergyData: TimeSeriesPoint[] = [];
     for (const row of rows) {
       if (row.solarKwh !== null) {
         solarEnergyData.push({
           timestamp: parseDate(row.day),
           value: {
-            avg: row.solarKwh,
+            avg: null,
+            delta: row.solarKwh,
           },
         });
       }
@@ -228,24 +230,25 @@ export class ReadingsProvider implements HistoryDataProvider {
       series.push({
         field: "solar_energy",
         metadata: {
-          id: "solar.energy",
+          id: "source.solar.energy.delta",
           label: "Total solar energy generated",
           type: "energy",
           unit: "kWh",
-          path: "source.solar.total",
+          path: "source.solar",
         },
         data: solarEnergyData,
       });
     }
 
-    // Load energy series
+    // Load energy series (delta - daily total)
     const loadEnergyData: TimeSeriesPoint[] = [];
     for (const row of rows) {
       if (row.loadKwh !== null) {
         loadEnergyData.push({
           timestamp: parseDate(row.day),
           value: {
-            avg: row.loadKwh,
+            avg: null,
+            delta: row.loadKwh,
           },
         });
       }
@@ -254,7 +257,7 @@ export class ReadingsProvider implements HistoryDataProvider {
       series.push({
         field: "load_energy",
         metadata: {
-          id: "load.energy",
+          id: "load.energy.delta",
           label: "Total load energy consumed",
           type: "energy",
           unit: "kWh",
@@ -280,7 +283,7 @@ export class ReadingsProvider implements HistoryDataProvider {
       series.push({
         field: "battery_soc_avg",
         metadata: {
-          id: "battery.soc.avg",
+          id: "bidi.battery.soc.avg",
           label: "Average battery state of charge",
           type: "soc",
           unit: "%",
@@ -306,7 +309,7 @@ export class ReadingsProvider implements HistoryDataProvider {
       series.push({
         field: "battery_soc_min",
         metadata: {
-          id: "battery.soc.min",
+          id: "bidi.battery.soc.min",
           label: "Minimum battery state of charge",
           type: "soc",
           unit: "%",
@@ -332,7 +335,7 @@ export class ReadingsProvider implements HistoryDataProvider {
       series.push({
         field: "battery_soc_max",
         metadata: {
-          id: "battery.soc.max",
+          id: "bidi.battery.soc.max",
           label: "Maximum battery state of charge",
           type: "soc",
           unit: "%",
@@ -343,5 +346,9 @@ export class ReadingsProvider implements HistoryDataProvider {
     }
 
     return series;
+  }
+
+  getDataSource(interval: "5m" | "30m" | "1d"): string {
+    return interval === "1d" ? "readings_agg_1d" : "readings_agg_5m";
   }
 }

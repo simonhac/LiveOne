@@ -468,7 +468,7 @@ export default function PointReadingInspectorModal({
                         Last
                       </th>
                       <th
-                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "raw" || pointInfo.transform !== "d" ? "hidden" : ""}`}
+                        className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "raw" ? "hidden" : ""}`}
                       >
                         Delta
                       </th>
@@ -581,7 +581,7 @@ export default function PointReadingInspectorModal({
                                   &nbsp;
                                 </td>
                                 <td
-                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" || pointInfo.transform !== "d" ? "hidden" : ""}`}
+                                  className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
@@ -645,44 +645,89 @@ export default function PointReadingInspectorModal({
                                     {reading!.sessionLabel}
                                   </button>
                                 ) : (
-                                  "—"
+                                  <span className="text-gray-600">—</span>
                                 )}
                               </td>
                               {/* 5m columns */}
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-right font-mono ${source === "raw" ? "hidden" : ""}`}
                               >
-                                {formatColumnValue(reading!.avg, () =>
-                                  readings.map((r) => r.avg),
-                                )}
+                                <span
+                                  className={
+                                    reading!.avg === null ||
+                                    reading!.avg === undefined
+                                      ? "text-gray-600"
+                                      : "text-gray-300"
+                                  }
+                                >
+                                  {formatColumnValue(reading!.avg, () =>
+                                    readings.map((r) => r.avg),
+                                  )}
+                                </span>
                               </td>
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-right font-mono ${source === "raw" ? "hidden" : ""}`}
                               >
-                                {formatColumnValue(reading!.min, () =>
-                                  readings.map((r) => r.min),
-                                )}
+                                <span
+                                  className={
+                                    reading!.min === null ||
+                                    reading!.min === undefined
+                                      ? "text-gray-600"
+                                      : "text-gray-300"
+                                  }
+                                >
+                                  {formatColumnValue(reading!.min, () =>
+                                    readings.map((r) => r.min),
+                                  )}
+                                </span>
                               </td>
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-right font-mono ${source === "raw" ? "hidden" : ""}`}
                               >
-                                {formatColumnValue(reading!.max, () =>
-                                  readings.map((r) => r.max),
-                                )}
+                                <span
+                                  className={
+                                    reading!.max === null ||
+                                    reading!.max === undefined
+                                      ? "text-gray-600"
+                                      : "text-gray-300"
+                                  }
+                                >
+                                  {formatColumnValue(reading!.max, () =>
+                                    readings.map((r) => r.max),
+                                  )}
+                                </span>
                               </td>
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-right font-mono ${source === "raw" ? "hidden" : ""}`}
                               >
-                                {formatColumnValue(reading!.last, () =>
-                                  readings.map((r) => r.last),
-                                )}
+                                <span
+                                  className={
+                                    reading!.last === null ||
+                                    reading!.last === undefined
+                                      ? "text-gray-600"
+                                      : "text-gray-300"
+                                  }
+                                >
+                                  {formatColumnValue(reading!.last, () =>
+                                    readings.map((r) => r.last),
+                                  )}
+                                </span>
                               </td>
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source === "raw" || pointInfo.transform !== "d" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-right font-mono ${source === "raw" ? "hidden" : ""}`}
                               >
-                                {formatColumnValue(reading!.delta, () =>
-                                  readings.map((r) => r.delta),
-                                )}
+                                <span
+                                  className={
+                                    reading!.delta === null ||
+                                    reading!.delta === undefined
+                                      ? "text-gray-600"
+                                      : "text-gray-300"
+                                  }
+                                >
+                                  {formatColumnValue(reading!.delta, () =>
+                                    readings.map((r) => r.delta),
+                                  )}
+                                </span>
                               </td>
                               <td
                                 className={`py-1 px-2 text-xs text-gray-300 text-right ${source === "raw" ? "hidden" : ""}`}
@@ -696,12 +741,21 @@ export default function PointReadingInspectorModal({
                               </td>
                               {/* Raw columns */}
                               <td
-                                className={`py-1 px-2 text-xs text-gray-300 text-right font-mono ${source !== "raw" ? "hidden" : ""}`}
+                                className={`py-1 px-2 text-xs text-right font-mono ${source !== "raw" ? "hidden" : ""}`}
                               >
-                                {reading!.valueStr ||
-                                  formatColumnValue(reading!.value, () =>
-                                    readings.map((r) => r.value),
-                                  )}
+                                <span
+                                  className={
+                                    reading!.value === null ||
+                                    reading!.value === undefined
+                                      ? "text-gray-600"
+                                      : "text-gray-300"
+                                  }
+                                >
+                                  {reading!.valueStr ||
+                                    formatColumnValue(reading!.value, () =>
+                                      readings.map((r) => r.value),
+                                    )}
+                                </span>
                               </td>
                               <td
                                 className={`py-1 px-2 text-xs text-gray-300 ${source !== "raw" ? "hidden" : ""}`}

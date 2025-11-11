@@ -149,16 +149,16 @@ export async function GET(
       src: string,
     ) => {
       if (src === "daily") {
-        // For daily data: delta for energy (transform='d'), avg for everything else
-        if (transform === "d") return "delta";
+        // For daily data: delta for energy, avg for everything else
+        if (metricType === "energy") return "delta";
         return "avg";
       }
       // For 5m data:
-      // Points with transform='d' use delta column
-      if (transform === "d") return "delta";
+      // Energy points use delta (both cumulative counters and intervals)
+      if (metricType === "energy") return "delta";
       // Power points use average
       if (metricType === "power") return "avg";
-      // Everything else uses last
+      // Everything else (SOC, etc.) uses last
       return "last";
     };
 

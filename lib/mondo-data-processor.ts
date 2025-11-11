@@ -234,10 +234,25 @@ export async function fetchAndProcessMondoData(
         return; // Skip if series not found in data
       }
 
-      // Extract the data for selected indices and convert from W to kW
+      // Extract the data for selected indices and convert to kW or kWh based on units
+      // Check the units field to determine conversion factor
+      const units = dataSeries.units?.toLowerCase() || "";
+      let conversionFactor = 1;
+
+      if (units === "w" || units === "wh") {
+        // Convert W to kW or Wh to kWh
+        conversionFactor = 1000;
+      } else if (units === "kw" || units === "kwh") {
+        // Already in kW or kWh
+        conversionFactor = 1;
+      } else {
+        // Unknown units - assume W/Wh for backwards compatibility
+        conversionFactor = 1000;
+      }
+
       let seriesValues = selectedIndices.map((i: number) => {
         const val = dataSeries.history.data[i];
-        return val === null ? null : val / 1000; // Convert W to kW
+        return val === null ? null : val / conversionFactor;
       });
 
       // Apply any data transformation

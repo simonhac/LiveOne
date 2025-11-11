@@ -342,7 +342,9 @@ async function getSystemHistoryInOpenNEMFormat(
   startTime: ZonedDateTime | CalendarDate,
   endTime: ZonedDateTime | CalendarDate,
   interval: "5m" | "30m" | "1d",
-): Promise<{ series: OpenNEMDataSeries[]; debug?: any }> {
+  forceToPointReadings = false,
+  matchLegacy = false,
+): Promise<{ series: OpenNEMDataSeries[]; debug?: any; dataSource?: string }> {
   // Special handling for composite systems
   if (system.vendorType === "composite") {
     const systemsManager = SystemsManager.getInstance();
@@ -692,6 +694,8 @@ async function getSystemHistoryInOpenNEMFormat(
 
       return {
         series: allSeries,
+        dataSource:
+          interval === "1d" ? "point_readings_agg_1d" : "point_readings_agg_5m",
         debug: {
           pointsQueried: pointsWithMetadata.map((p) => ({
             pointRef: `${p.systemId}.${p.pointId}`,
@@ -708,13 +712,14 @@ async function getSystemHistoryInOpenNEMFormat(
   }
 
   // For all other systems, use the history service which extracts fields dynamically
-  const series = await HistoryService.getHistoryInOpenNEMFormat(
+  return await HistoryService.getHistoryInOpenNEMFormat(
     system,
     startTime,
     endTime,
     interval,
+    forceToPointReadings,
+    matchLegacy,
   );
-  return { series };
 }
 
 // ============================================================================
@@ -727,6 +732,7 @@ function buildResponse(
   endTime: ZonedDateTime | CalendarDate,
   interval: "5m" | "30m" | "1d",
   durationMs: number,
+  dataSource?: string,
   debug?: any,
 ): NextResponse {
   // Format date strings based on interval type
@@ -759,6 +765,11 @@ function buildResponse(
     durationMs,
     data: dataSeries,
   };
+
+  // Add dataSource if provided
+  if (dataSource) {
+    response.dataSource = dataSource;
+  }
 
   // Add debug info if provided
   if (debug) {
@@ -836,15 +847,31 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Step 6: Fetch data using new abstraction
-    const { series: dataSeries, debug } = await getSystemHistoryInOpenNEMFormat(
+    // Step 6: Parse legacy and matchLegacy flags (for migration testing)
+    // legacy=true respects vendor's dataStore property
+    // legacy=false (default) forces PointReadingsProvider
+    const legacyParam = searchParams.get("legacy");
+    const forceToPointReadings = legacyParam !== "true"; // Only respect vendor when legacy=true
+
+    // matchLegacy=true filters new provider output to only return series that legacy would return
+    const matchLegacyParam = searchParams.get("matchLegacy");
+    const matchLegacy = matchLegacyParam === "true";
+
+    // Step 7: Fetch data using new abstraction
+    const {
+      series: dataSeries,
+      dataSource,
+      debug,
+    } = await getSystemHistoryInOpenNEMFormat(
       system,
       timeRange.startTime!,
       timeRange.endTime!,
       basicParams.interval as "5m" | "30m" | "1d",
+      forceToPointReadings,
+      matchLegacy,
     );
 
-    // Step 7: Build and return response
+    // Step 8: Build and return response
     const durationMs = Date.now() - startTime;
     return buildResponse(
       dataSeries,
@@ -852,6 +879,7 @@ export async function GET(request: NextRequest) {
       timeRange.endTime!,
       basicParams.interval as "5m" | "30m" | "1d",
       durationMs,
+      dataSource,
       debug,
     );
   } catch (error) {

@@ -271,12 +271,13 @@ export async function insertPointReadingsBatch(
   // Aggregate the readings we just inserted
   const uniquePointIds = [...new Set(valuesToInsert.map((v) => v.pointId))];
 
-  // Build array of point objects with id and transform for aggregation
+  // Build array of point objects with id, transform, and metricType for aggregation
   const pointsForAggregation = uniquePointIds.map((id) => {
     const point = Object.values(pointMap).find((p) => p.id === id);
     return {
       id,
       transform: point?.transform || null,
+      metricType: point?.metricType || null,
     };
   });
 
@@ -307,8 +308,23 @@ export async function insertPointReadingsBatch(
 
 /**
  * Batch insert pre-aggregated 5-minute readings directly to point_readings_agg_5m
- * Use this when the vendor already provides 5-minute aggregated data (e.g., Enphase)
+ * Use this when the vendor already provides 5-minute aggregated data (e.g., Enphase, Fronius)
  * Bypasses the point_readings table to avoid redundant storage
+ *
+ * Value placement by metric type:
+ * 1a. Energy with transform='d' (cumulative counter, e.g., total kWh since install):
+ *     - last = value (counter value at interval end)
+ *     - avg/min/max/delta = null
+ *     - Delta will be calculated later from difference between intervals
+ *
+ * 1b. Energy without transform='d' (interval energy, e.g., kWh produced in 5 minutes):
+ *     - delta = value (total energy in this interval)
+ *     - avg/min/max/last = null
+ *     - This is summed directly into daily aggregates
+ *
+ * 2. Everything else (power, SOC, etc.):
+ *    - avg = min = max = last = value (single measurement per interval)
+ *    - delta = null
  */
 export async function insertPointReadingsDirectTo5m(
   systemId: number,
@@ -342,21 +358,31 @@ export async function insertPointReadingsDirectTo5m(
     );
 
     // For pre-aggregated data with a single value per interval:
-    // avg = min = max = last = sum = the value
-    // (sum = avg for interval energy from Enphase)
+    // - Energy metrics with transform='d': value goes into last (cumulative counter), avg/min/max/delta = null
+    // - Energy metrics with transform!='d': value goes into delta (total energy), avg/min/max/last = null
+    // - Other metrics: avg = min = max = last = value, delta = null
     // If value is null, this is an error reading
     const isError = value === null;
+    const isEnergyCounter =
+      point.metricType === "energy" && point.transform === "d";
+    const isEnergyDelta =
+      point.metricType === "energy" && point.transform !== "d";
 
     aggregatesToInsert.push({
       systemId,
       pointId: point.id,
       sessionId,
       intervalEnd: reading.intervalEndMs,
-      avg: isError ? null : value,
-      min: isError ? null : value,
-      max: isError ? null : value,
-      last: isError ? null : value,
-      delta: null, // No delta calculation for pre-aggregated data
+      avg: isError || isEnergyCounter || isEnergyDelta ? null : value,
+      min: isError || isEnergyCounter || isEnergyDelta ? null : value,
+      max: isError || isEnergyCounter || isEnergyDelta ? null : value,
+      last:
+        !isError && isEnergyCounter
+          ? value
+          : isError || isEnergyDelta
+            ? null
+            : value,
+      delta: !isError && isEnergyDelta ? value : null,
       sampleCount: isError ? 0 : 1,
       errorCount: isError ? 1 : 0,
     });
