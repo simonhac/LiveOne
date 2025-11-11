@@ -82,4 +82,10 @@ export interface HistoryDataProvider {
    * Get the data source table name for a given interval
    */
   getDataSource(interval: "5m" | "30m" | "1d"): string;
+
+  /**
+   * Get the SQL queries executed in the last fetch operation
+   * Used for debugging and transparency
+   */
+  getLastSqlQueries?(): string[];
 }

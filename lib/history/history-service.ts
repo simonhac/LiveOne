@@ -20,7 +20,11 @@ export class HistoryService {
     endTime: ZonedDateTime | CalendarDate,
     interval: "5m" | "30m" | "1d",
     seriesPatterns?: string[],
-  ): Promise<{ series: OpenNEMDataSeries[]; dataSource: string }> {
+  ): Promise<{
+    series: OpenNEMDataSeries[];
+    dataSource: string;
+    sqlQueries?: string[];
+  }> {
     // Get the point readings provider (now the only provider)
     const provider = HistoryProviderFactory.getProvider();
 
@@ -93,6 +97,9 @@ export class HistoryService {
     // Get the data source from the provider
     const dataSource = provider.getDataSource(interval);
 
-    return { series, dataSource };
+    // Get SQL queries from the provider (if available)
+    const sqlQueries = provider.getLastSqlQueries?.() ?? [];
+
+    return { series, dataSource, sqlQueries };
   }
 }

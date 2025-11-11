@@ -82,12 +82,20 @@ function generateSeriesPath(
 }
 
 export class PointReadingsProvider implements HistoryDataProvider {
+  // Track SQL queries for debugging/transparency
+  private lastSqlQueries: string[] = [];
+
+  getLastSqlQueries(): string[] {
+    return this.lastSqlQueries;
+  }
+
   async fetch5MinuteData(
     system: SystemWithPolling,
     startTime: ZonedDateTime,
     endTime: ZonedDateTime,
     seriesPatterns?: string[],
   ): Promise<MeasurementSeries[]> {
+    this.lastSqlQueries = []; // Reset query tracking
     const startMs = toUnixTimestamp(startTime) * 1000;
     const endMs = toUnixTimestamp(endTime) * 1000;
 
@@ -121,7 +129,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
 
     // Fetch aggregated point readings within the time range
     // Only query for the specific point IDs we need
-    const aggregates = await db
+    const query = db
       .select()
       .from(pointReadingsAgg5m)
       .where(
@@ -133,6 +141,12 @@ export class PointReadingsProvider implements HistoryDataProvider {
         ),
       )
       .orderBy(pointReadingsAgg5m.intervalEnd);
+
+    // Capture SQL before executing
+    const sqlObj = query.toSQL();
+    this.lastSqlQueries.push(sqlObj.sql);
+
+    const aggregates = await query;
 
     // Group aggregates by point
     const pointSeriesMap = new Map<number, typeof aggregates>();
@@ -205,6 +219,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
     endDate: CalendarDate,
     seriesPatterns?: string[],
   ): Promise<MeasurementSeries[]> {
+    this.lastSqlQueries = []; // Reset query tracking
     const startDateStr = startDate.toString(); // YYYY-MM-DD format
     const endDateStr = endDate.toString(); // YYYY-MM-DD format
 
@@ -248,7 +263,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
 
     // Fetch daily aggregated point readings within the date range
     // Only query for the specific point IDs we need
-    const aggregates = await db
+    const query = db
       .select()
       .from(pointReadingsAgg1d)
       .where(
@@ -260,6 +275,12 @@ export class PointReadingsProvider implements HistoryDataProvider {
         ),
       )
       .orderBy(pointReadingsAgg1d.day);
+
+    // Capture SQL before executing
+    const sqlObj = query.toSQL();
+    this.lastSqlQueries.push(sqlObj.sql);
+
+    const aggregates = await query;
 
     // Group aggregates by point
     const pointSeriesMap = new Map<number, typeof aggregates>();

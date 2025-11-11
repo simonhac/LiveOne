@@ -372,7 +372,12 @@ async function getSystemHistoryInOpenNEMFormat(
   endTime: ZonedDateTime | CalendarDate,
   interval: "5m" | "30m" | "1d",
   seriesPatterns?: string[],
-): Promise<{ series: OpenNEMDataSeries[]; debug?: any; dataSource?: string }> {
+): Promise<{
+  series: OpenNEMDataSeries[];
+  debug?: any;
+  dataSource?: string;
+  sqlQueries?: string[];
+}> {
   // Special handling for composite systems
   if (system.vendorType === "composite") {
     const systemsManager = SystemsManager.getInstance();
@@ -762,6 +767,7 @@ function buildResponse(
   dataSource?: string,
   debug?: any,
   seriesPatterns?: string[],
+  sqlQueries?: string[],
 ): NextResponse {
   // Format date strings based on interval type
   let requestStartStr: string;
@@ -807,6 +813,11 @@ function buildResponse(
   // Add series patterns if provided
   if (seriesPatterns && seriesPatterns.length > 0) {
     response.seriesPatterns = seriesPatterns;
+  }
+
+  // Add SQL queries if provided
+  if (sqlQueries && sqlQueries.length > 0) {
+    response.sqlQueries = sqlQueries;
   }
 
   const jsonStr = formatOpenNEMResponse(response);
@@ -899,6 +910,7 @@ export async function GET(request: NextRequest) {
       series: dataSeries,
       dataSource,
       debug,
+      sqlQueries,
     } = await getSystemHistoryInOpenNEMFormat(
       system,
       timeRange.startTime!,
@@ -918,6 +930,7 @@ export async function GET(request: NextRequest) {
       dataSource,
       debug,
       seriesPatterns.length > 0 ? seriesPatterns : undefined,
+      sqlQueries,
     );
   } catch (error) {
     console.error("Error fetching historical data:", error);

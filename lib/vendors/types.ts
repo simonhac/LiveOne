@@ -96,6 +96,7 @@ export interface PollingResult {
   vendorType?: string;
   sessionLabel?: string;
   lastPoll?: string | null;
+  durationMs?: number; // Elapsed time for the poll operation in milliseconds
 }
 
 /**

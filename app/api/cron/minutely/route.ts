@@ -83,6 +83,7 @@ export async function GET(request: NextRequest) {
 
     // Poll each system using the new vendor adapter architecture
     for (const system of activeSystems) {
+      const pollStartTime = Date.now(); // Track start time for this system poll
       subSequence++; // Increment for each system
       const sessionLabel = formatSessionId(sessionId, subSequence);
       // Get the vendor adapter first to check if it supports polling
@@ -96,6 +97,7 @@ export async function GET(request: NextRequest) {
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
           error: `Unknown vendor type: ${system.vendorType}`,
+          durationMs: Date.now() - pollStartTime,
           lastPoll: system.pollingStatus?.lastPollTime
             ? formatTimeAEST(
                 fromDate(
@@ -128,6 +130,7 @@ export async function GET(request: NextRequest) {
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
           reason: shouldPollCheck.reason,
+          durationMs: Date.now() - pollStartTime,
           lastPoll: system.pollingStatus?.lastPollTime
             ? formatTimeAEST(
                 fromDate(
@@ -171,6 +174,7 @@ export async function GET(request: NextRequest) {
             vendorType: system.vendorType,
             sessionLabel: sessionLabel || undefined,
             error: "No owner configured",
+            durationMs: Date.now() - pollStartTime,
             lastPoll: system.pollingStatus?.lastPollTime
               ? formatTimeAEST(
                   fromDate(
@@ -207,6 +211,7 @@ export async function GET(request: NextRequest) {
             vendorType: system.vendorType,
             sessionLabel: sessionLabel || undefined,
             error: "No credentials found",
+            durationMs: Date.now() - pollStartTime,
             lastPoll: system.pollingStatus?.lastPollTime
               ? formatTimeAEST(
                   fromDate(
@@ -344,6 +349,7 @@ export async function GET(request: NextRequest) {
               vendorType: system.vendorType,
               sessionLabel: sessionLabel || undefined,
               recordsProcessed: result.recordsProcessed,
+              durationMs: Date.now() - pollStartTime,
               ...(includeRaw && result.rawResponse
                 ? { rawResponse: result.rawResponse }
                 : {}),
@@ -385,6 +391,7 @@ export async function GET(request: NextRequest) {
               vendorType: system.vendorType,
               sessionLabel: sessionLabel || undefined,
               error: result.error,
+              durationMs: Date.now() - pollStartTime,
               lastPoll: system.pollingStatus?.lastPollTime
                 ? formatTimeAEST(
                     fromDate(
@@ -431,6 +438,7 @@ export async function GET(request: NextRequest) {
           vendorType: system.vendorType,
           sessionLabel: sessionLabel || undefined,
           error: error instanceof Error ? error.message : "Unknown error",
+          durationMs: Date.now() - pollStartTime,
           lastPoll: system.pollingStatus?.lastPollTime
             ? formatTimeAEST(
                 fromDate(
@@ -461,13 +469,13 @@ export async function GET(request: NextRequest) {
       return log;
     });
 
-    console.log(
-      `[Cron] Polling complete. success: ${successCount}, failed: ${failureCount}, skipped: ${skippedCount}`,
-      resultsForLogging,
-    );
-
     // Calculate total API call duration
     const durationMs = Date.now() - apiStartTime;
+
+    console.log(
+      `[Cron] Polling complete in ${durationMs} ms. success: ${successCount}, failed: ${failureCount}, skipped: ${skippedCount}`,
+      resultsForLogging,
+    );
 
     // Format timestamp using AEST
     const nowZoned = fromDate(new Date(), "Australia/Brisbane");
