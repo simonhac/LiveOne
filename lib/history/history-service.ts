@@ -40,7 +40,6 @@ const LEGACY_SERIES_PATTERNS = {
 export class HistoryService {
   /**
    * Fetch history data in OpenNEM format
-   * @param forceToPointReadings - If true, forces use of PointReadingsProvider (for migration testing)
    * @param matchLegacy - If true, filters output to only include series that legacy provider would return
    */
   static async getHistoryInOpenNEMFormat(
@@ -48,14 +47,10 @@ export class HistoryService {
     startTime: ZonedDateTime | CalendarDate,
     endTime: ZonedDateTime | CalendarDate,
     interval: "5m" | "30m" | "1d",
-    forceToPointReadings = false,
     matchLegacy = false,
   ): Promise<{ series: OpenNEMDataSeries[]; dataSource: string }> {
-    // Get the appropriate provider for this system
-    const provider = HistoryProviderFactory.getProvider(
-      system,
-      forceToPointReadings,
-    );
+    // Get the point readings provider (now the only provider)
+    const provider = HistoryProviderFactory.getProvider();
 
     let measurementSeries: MeasurementSeries[];
 

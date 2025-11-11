@@ -2,10 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { SystemsManager, SystemWithPolling } from "@/lib/systems-manager";
 import { OpenNEMDataSeries } from "@/types/opennem";
-import {
-  formatOpenNEMResponse,
-  formatDataArray,
-} from "@/lib/history/format-opennem";
+import { formatOpenNEMResponse } from "@/lib/history/format-opennem";
 import {
   formatTimeAEST,
   formatDateAEST,
@@ -342,7 +339,6 @@ async function getSystemHistoryInOpenNEMFormat(
   startTime: ZonedDateTime | CalendarDate,
   endTime: ZonedDateTime | CalendarDate,
   interval: "5m" | "30m" | "1d",
-  forceToPointReadings = false,
   matchLegacy = false,
 ): Promise<{ series: OpenNEMDataSeries[]; debug?: any; dataSource?: string }> {
   // Special handling for composite systems
@@ -717,7 +713,6 @@ async function getSystemHistoryInOpenNEMFormat(
     startTime,
     endTime,
     interval,
-    forceToPointReadings,
     matchLegacy,
   );
 }
@@ -847,17 +842,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Step 6: Parse legacy and matchLegacy flags (for migration testing)
-    // legacy=true respects vendor's dataStore property
-    // legacy=false (default) forces PointReadingsProvider
-    const legacyParam = searchParams.get("legacy");
-    const forceToPointReadings = legacyParam !== "true"; // Only respect vendor when legacy=true
-
-    // matchLegacy=true filters new provider output to only return series that legacy would return
+    // Step 6: Parse matchLegacy flag
+    // matchLegacy=true filters output to only return series that legacy provider would return
     const matchLegacyParam = searchParams.get("matchLegacy");
     const matchLegacy = matchLegacyParam === "true";
 
-    // Step 7: Fetch data using new abstraction
+    // Step 7: Fetch data using point readings provider
     const {
       series: dataSeries,
       dataSource,
@@ -867,7 +857,6 @@ export async function GET(request: NextRequest) {
       timeRange.startTime!,
       timeRange.endTime!,
       basicParams.interval as "5m" | "30m" | "1d",
-      forceToPointReadings,
       matchLegacy,
     );
 
