@@ -106,7 +106,7 @@ export class PointManager {
           column: "delta",
         });
       } else if (point.metricType === "soc") {
-        // SOC: avg, min, max - only available in 1d
+        // SOC: avg, min, max only in 1d
         for (const column of ["avg", "min", "max"] as const) {
           const id = `${systemIdentifier}/${pointPath}/soc.${column}`;
           seriesMap.set(id, {
@@ -119,6 +119,17 @@ export class PointManager {
             column,
           });
         }
+        // SOC: last available in both 5m and 1d
+        const id = `${systemIdentifier}/${pointPath}/soc.last`;
+        seriesMap.set(id, {
+          id,
+          intervals: ["5m", "1d"],
+          label: `${point.name} (last)`,
+          metricUnit: point.metricUnit,
+          systemId,
+          pointIndex: point.id,
+          column: "last",
+        });
       } else {
         // Power and other metrics: avg, min, max, last - available in both 5m and 1d
         for (const column of ["avg", "min", "max", "last"] as const) {

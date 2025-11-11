@@ -128,9 +128,22 @@ describe("GET /api/system/[systemIdentifier]/series", () => {
         expect(series.intervals).toContain("5m");
       });
 
-      // Should not include SOC series (which are only 1d)
-      const socSeries = data.series.filter((s: any) => s.id.includes("/soc."));
-      expect(socSeries.length).toBe(0);
+      // Should not include SOC avg/min/max (which are only 1d)
+      // But SOC.last is available in 5m
+      const socAvgMinMax = data.series.filter((s: any) =>
+        s.id.match(/\/soc\.(avg|min|max)$/),
+      );
+      expect(socAvgMinMax.length).toBe(0);
+
+      // SOC.last should be included
+      const socLast = data.series.filter((s: any) =>
+        s.id.includes("/soc.last"),
+      );
+      if (socLast.length > 0) {
+        socLast.forEach((series: any) => {
+          expect(series.intervals).toContain("5m");
+        });
+      }
     });
 
     it("should filter by interval=1d", async () => {
@@ -252,12 +265,22 @@ describe("GET /api/system/[systemIdentifier]/series", () => {
         expect(series.intervals).toContain("1d");
       });
 
-      // Should include SOC series (only in 1d)
+      // Should include all SOC series
       const socSeries = data.series.filter((s: any) => s.id.includes("/soc."));
       expect(socSeries.length).toBeGreaterThan(0);
+
+      // Verify avg/min/max are 1d-only, last is in both
+      socSeries.forEach((series: any) => {
+        if (series.column === "last") {
+          expect(series.intervals).toContain("5m");
+          expect(series.intervals).toContain("1d");
+        } else {
+          expect(series.intervals).toEqual(["1d"]);
+        }
+      });
     });
 
-    it("should return fewer results with interval=5m on battery (no SOC)", async () => {
+    it("should return fewer results with interval=5m on battery (no SOC avg/min/max)", async () => {
       const allBattery = await getSeriesEndpoint(testSystemIdentifier, {
         filter: "bidi.battery/*",
       });
@@ -271,11 +294,21 @@ describe("GET /api/system/[systemIdentifier]/series", () => {
         allBattery.data.series.length,
       );
 
-      // 5m should not include SOC
-      const socIn5m = battery5m.data.series.filter((s: any) =>
-        s.id.includes("/soc."),
+      // 5m should not include SOC avg/min/max (1d-only)
+      const socAvgMinMaxIn5m = battery5m.data.series.filter((s: any) =>
+        s.id.match(/\/soc\.(avg|min|max)$/),
       );
-      expect(socIn5m.length).toBe(0);
+      expect(socAvgMinMaxIn5m.length).toBe(0);
+
+      // But should include SOC.last (available in 5m)
+      const socLastIn5m = battery5m.data.series.filter((s: any) =>
+        s.id.includes("/soc.last"),
+      );
+      if (socLastIn5m.length > 0) {
+        socLastIn5m.forEach((series: any) => {
+          expect(series.intervals).toContain("5m");
+        });
+      }
     });
   });
 
@@ -377,11 +410,17 @@ describe("GET /api/system/[systemIdentifier]/series", () => {
 
       if (data.series.length > 0) {
         data.series.forEach((series: any) => {
-          // SOC only in 1d
-          expect(series.intervals).toEqual(["1d"]);
-          // SOC has avg, min, max
-          expect(["avg", "min", "max"]).toContain(series.column);
+          // SOC has avg, min, max, last
+          expect(["avg", "min", "max", "last"]).toContain(series.column);
           expect(series.metricUnit).toBe("%");
+
+          // avg, min, max only in 1d; last in both 5m and 1d
+          if (series.column === "last") {
+            expect(series.intervals).toContain("5m");
+            expect(series.intervals).toContain("1d");
+          } else {
+            expect(series.intervals).toEqual(["1d"]);
+          }
         });
       }
     });

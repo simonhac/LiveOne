@@ -41,13 +41,13 @@ Location: `components/EnergyChart.tsx`
 
 #### 5-Minute and 30-Minute Intervals (Power Mode)
 
-| Series ID Pattern        | Purpose                          | Field          |
-| ------------------------ | -------------------------------- | -------------- |
-| `source.solar.power.avg` | Solar generation power           | solarData      |
-| `load.power.avg`         | Total load power                 | loadData       |
-| `bidi.battery.power.avg` | Battery power (charge/discharge) | batteryWData   |
-| `bidi.battery.soc.last`  | Battery state of charge          | batterySOCData |
-| `bidi.grid.power.avg`    | Grid power (import/export)       | gridData       |
+| Series ID Pattern        | Purpose                          | Field          | Availability |
+| ------------------------ | -------------------------------- | -------------- | ------------ |
+| `source.solar.power.avg` | Solar generation power           | solarData      | 5m, 1d       |
+| `load.power.avg`         | Total load power                 | loadData       | 5m, 1d       |
+| `bidi.battery.power.avg` | Battery power (charge/discharge) | batteryWData   | 5m, 1d       |
+| `bidi.battery.soc.last`  | Battery state of charge (last)   | batterySOCData | 5m, 1d       |
+| `bidi.grid.power.avg`    | Grid power (import/export)       | gridData       | 5m, 1d       |
 
 **Example series IDs:**
 
@@ -61,13 +61,13 @@ liveone.system.3.bidi.grid.power.avg
 
 #### Daily Interval (Energy Mode)
 
-| Series ID Pattern           | Purpose                    | Field             |
-| --------------------------- | -------------------------- | ----------------- |
-| `source.solar.energy.delta` | Solar energy generated     | solarData         |
-| `load.energy.delta`         | Total load energy consumed | loadData          |
-| `bidi.battery.soc.avg`      | Average battery SOC        | batterySOCData    |
-| `bidi.battery.soc.min`      | Minimum battery SOC        | batterySOCMinData |
-| `bidi.battery.soc.max`      | Maximum battery SOC        | batterySOCMaxData |
+| Series ID Pattern           | Purpose                    | Field             | Availability |
+| --------------------------- | -------------------------- | ----------------- | ------------ |
+| `source.solar.energy.delta` | Solar energy generated     | solarData         | 5m, 1d       |
+| `load.energy.delta`         | Total load energy consumed | loadData          | 5m, 1d       |
+| `bidi.battery.soc.avg`      | Average battery SOC        | batterySOCData    | 1d only      |
+| `bidi.battery.soc.min`      | Minimum battery SOC        | batterySOCMinData | 1d only      |
+| `bidi.battery.soc.max`      | Maximum battery SOC        | batterySOCMaxData | 1d only      |
 
 **Example series IDs:**
 
@@ -113,13 +113,15 @@ Location: `components/MondoPowerChart.tsx`
 - `load.power.avg` ✅
 - `bidi.battery.power.avg` ✅
 - `bidi.grid.power.avg` ✅
-- `bidi.battery.soc.last` ✅
+- `bidi.battery.soc.last` ✅ (available in both 5m and 1d)
 
 **Rejects:**
 
 - `load.hvac.power.avg` ❌ (sub-meter)
 - `source.solar.energy.delta` ❌ (energy, not power)
-- `bidi.battery.soc.avg` ❌ (avg, not last)
+- `bidi.battery.soc.avg` ❌ (1d-only, not in 5m)
+- `bidi.battery.soc.min` ❌ (1d-only, not in 5m)
+- `bidi.battery.soc.max` ❌ (1d-only, not in 5m)
 
 #### For 1d Interval (Energy Mode)
 
@@ -131,9 +133,11 @@ Location: `components/MondoPowerChart.tsx`
 
 - `source.solar.energy.delta` ✅
 - `load.energy.delta` ✅
-- `bidi.battery.soc.avg` ✅
-- `bidi.battery.soc.min` ✅
-- `bidi.battery.soc.max` ✅
+- `bidi.battery.soc.avg` ✅ (1d-only)
+- `bidi.battery.soc.min` ✅ (1d-only)
+- `bidi.battery.soc.max` ✅ (1d-only)
+
+**Note:** `bidi.battery.soc.last` is also available in 1d, but the energy chart uses avg/min/max for the daily view to show SOC range throughout the day.
 
 ### MondoChart Patterns
 
@@ -273,6 +277,7 @@ Uses micromatch library for pattern matching:
 **File:** `components/MondoPowerChart.tsx`
 
 - [ ] Add series pattern constant (both modes use same query):
+
   ```typescript
   const MONDO_SERIES_PATTERN =
     "^load\\.|^source\\.solar\\.\\w+\\.power\\.|^bidi\\.(battery|grid)\\.power\\.";
@@ -280,6 +285,7 @@ Uses micromatch library for pattern matching:
 
   - Note: `\w+` matches any solar sub-component (local, remote, rooftop, etc.) but excludes the aggregated total
   - This pattern fetches all series needed for BOTH load and generation modes
+
 - [ ] Add `series` parameter to API URL (line 657):
   ```typescript
   &series=${encodeURIComponent(MONDO_SERIES_PATTERN)}
@@ -457,6 +463,7 @@ Uses micromatch library for pattern matching:
    - More concise for complex patterns
 
 2. **Multiple patterns** (easier for programmatic construction):
+
    ```
    series=^load\.&series=^source\.solar\.
    ```

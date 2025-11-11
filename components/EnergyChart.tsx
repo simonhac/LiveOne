@@ -412,9 +412,8 @@ export default function EnergyChart({
       seriesPatterns.push(
         "source.solar/energy.delta", // Solar energy
         "load*/energy.delta", // Load energy (includes load, load.hvac, etc.)
-        "bidi.battery/power.avg", // Battery power
-        "bidi.battery/soc.{avg,min,max}", // Battery SOC stats
         "bidi.grid/energy.delta", // Grid energy
+        "bidi.battery/soc.{avg,min,max}", // Battery SOC stats
       );
     } else {
       // 5m/30m power mode - request specific series we use
@@ -422,8 +421,8 @@ export default function EnergyChart({
         "source.solar/power.avg", // Solar power
         "load*/power.avg", // Load power (includes load, load.hvac, etc.)
         "bidi.battery/power.avg", // Battery power
-        "bidi.battery/soc.last", // Battery SOC
         "bidi.grid/power.avg", // Grid power
+        "bidi.battery/soc.last", // Battery SOC
       );
     }
 
@@ -485,72 +484,48 @@ export default function EnergyChart({
         // Ignore response if this effect has been cancelled
         if (cancelled) return;
 
-        // Helper to find series by path and metric type
-        const findSeries = (
-          pathPattern: string | string[],
-          metricType: "power" | "energy" | "soc",
-          aggregation?: string,
-        ) => {
-          const paths = Array.isArray(pathPattern)
-            ? pathPattern
-            : [pathPattern];
+        // Helper to find series by series path (e.g., "bidi.battery/power.avg")
+        const findSeries = (seriesPath: string) => {
           return data.data.find((d: any) => {
-            // Match path (e.g., "source.solar", "bidi.battery")
-            const pathMatch =
-              d.path &&
-              paths.some((p: string) => {
-                // Support both exact match and prefix match for load variants (load, load.hvac, etc.)
-                return d.path === p || d.path.startsWith(p + ".");
-              });
-            if (!pathMatch) return false;
-
-            // Match metric type in the series ID (e.g., /power., /energy., /soc.)
-            const metricMatch = d.id.includes(`/${metricType}.`);
-            if (!metricMatch) return false;
-
-            // If aggregation specified, match it (e.g., .avg, .last, .min, .max)
-            if (aggregation) {
-              return d.id.endsWith(`.${aggregation}`);
-            }
-
-            return true;
+            // Series ID format: {systemId}/{seriesPath}
+            // e.g., "daylesford/bidi.battery/power.avg"
+            // Match if ID ends with "/{seriesPath}"
+            return d.id.endsWith(`/${seriesPath}`);
           });
         };
 
         // Extract series based on mode (energy vs power)
-        const solarData = findSeries(
-          ["source.solar", "solar"],
-          isEnergyMode ? "energy" : "power",
-          isEnergyMode ? "delta" : "avg",
-        );
+        let solarData,
+          loadData,
+          batteryWData,
+          batterySOCData,
+          batterySOCMinData,
+          batterySOCMaxData,
+          gridData;
 
-        const loadData = findSeries(
-          "load",
-          isEnergyMode ? "energy" : "power",
-          isEnergyMode ? "delta" : "avg",
-        );
-
-        const batteryWData = findSeries("bidi.battery", "power", "avg");
-
-        const batterySOCData = findSeries(
-          "bidi.battery",
-          "soc",
-          isEnergyMode ? "avg" : "last",
-        );
-
-        // For daily data, also get min/max SOC
-        const batterySOCMinData = isEnergyMode
-          ? findSeries("bidi.battery", "soc", "min")
-          : null;
-        const batterySOCMaxData = isEnergyMode
-          ? findSeries("bidi.battery", "soc", "max")
-          : null;
-
-        const gridData = findSeries(
-          "bidi.grid",
-          isEnergyMode ? "energy" : "power",
-          isEnergyMode ? "delta" : "avg",
-        );
+        if (isEnergyMode) {
+          // Daily energy mode - use energy.delta and SOC stats
+          solarData =
+            findSeries("source.solar/energy.delta") ||
+            findSeries("solar/energy.delta");
+          loadData = findSeries("load/energy.delta");
+          batteryWData = null;
+          batterySOCData = findSeries("bidi.battery/soc.avg");
+          batterySOCMinData = findSeries("bidi.battery/soc.min");
+          batterySOCMaxData = findSeries("bidi.battery/soc.max");
+          gridData = findSeries("bidi.grid/energy.delta");
+        } else {
+          // 5m/30m power mode - use power.avg and SOC.last
+          solarData =
+            findSeries("source.solar/power.avg") ||
+            findSeries("solar/power.avg");
+          loadData = findSeries("load/power.avg");
+          batteryWData = findSeries("bidi.battery/power.avg");
+          batterySOCData = findSeries("bidi.battery/soc.last");
+          batterySOCMinData = null;
+          batterySOCMaxData = null;
+          gridData = findSeries("bidi.grid/power.avg");
+        }
 
         if (!solarData) {
           throw new Error("Missing solar data series");
