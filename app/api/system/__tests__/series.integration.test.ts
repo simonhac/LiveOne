@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, beforeAll } from "@jest/globals";
-import { PointManager } from "@/lib/point-manager";
+import { PointManager } from "@/lib/point/point-manager";
 import { SystemsManager } from "@/lib/systems-manager";
 
 const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3000";

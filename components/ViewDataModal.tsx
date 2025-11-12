@@ -17,7 +17,7 @@ import {
 import PointInfoModal from "./PointInfoModal";
 import SessionInfoModal from "./SessionInfoModal";
 import PointReadingInspectorModal from "./PointReadingInspectorModal";
-import { PointInfo } from "@/lib/point-info";
+import { PointInfo } from "@/lib/point/point-info";
 
 interface ViewDataModalProps {
   isOpen: boolean;

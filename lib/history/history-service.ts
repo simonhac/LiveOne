@@ -23,7 +23,7 @@ export class HistoryService {
   ): Promise<{
     series: OpenNEMDataSeries[];
     dataSource: string;
-    sqlQueries?: string[];
+    query?: string[];
   }> {
     // Get the point readings provider (now the only provider)
     const provider = HistoryProviderFactory.getProvider();
@@ -98,8 +98,8 @@ export class HistoryService {
     const dataSource = provider.getDataSource(interval);
 
     // Get SQL queries from the provider (if available)
-    const sqlQueries = provider.getLastSqlQueries?.() ?? [];
+    const query = provider.getLastQueries?.() ?? [];
 
-    return { series, dataSource, sqlQueries };
+    return { series, dataSource, query };
   }
 }

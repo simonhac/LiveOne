@@ -3,7 +3,7 @@ import { X } from "lucide-react";
 import SessionInfoModal from "./SessionInfoModal";
 import { formatDateTime, formatDate } from "@/lib/fe-date-format";
 import { encodeUrlOffset, encodeUrlDate } from "@/lib/url-date";
-import { PointInfo } from "@/lib/point-info";
+import { PointInfo } from "@/lib/point/point-info";
 import { formatTimeAEST, formatDateAEST } from "@/lib/date-utils";
 import {
   type ZonedDateTime,

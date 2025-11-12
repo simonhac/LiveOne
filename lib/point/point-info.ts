@@ -2,7 +2,7 @@
  * Point Info - Frontend-safe point information with helper methods
  */
 
-import { buildPointPath } from "@/lib/point-info-utils";
+import { buildPointPath } from "./point-info-utils";
 
 /**
  * Point information with helper methods
@@ -10,7 +10,7 @@ import { buildPointPath } from "@/lib/point-info-utils";
  */
 export class PointInfo {
   constructor(
-    public readonly id: number,
+    public readonly index: number,
     public readonly systemId: number,
     public readonly originId: string,
     public readonly originSubId: string | null,
@@ -35,7 +35,7 @@ export class PointInfo {
   }
 
   /**
-   * Get the point path in format type.subtype.extension (omitting null parts)
+   * Get the point identifier in format type.subtype.extension (omitting null parts)
    * Returns null if type is null
    *
    * Examples:
@@ -43,24 +43,34 @@ export class PointInfo {
    * - type="bidi", subtype="battery", extension="charge" → "bidi.battery.charge"
    * - type="load", subtype=null, extension=null → "load"
    */
-  getPath(): string | null {
+  getIdentifier(): string | null {
     return buildPointPath(this.type, this.subtype, this.extension);
   }
 
   /**
-   * Get the point identifier in format systemId.pointId
+   * Get the point index in format systemId.pointIndex
    *
-   * Example: "1.5" for system 1, point 5
+   * Example: "1.5" for system 1, point index 5
    */
-  getIdentifier(): string {
-    return `${this.systemId}.${this.id}`;
+  getIndex(): string {
+    return `${this.systemId}.${this.index}`;
+  }
+
+  /**
+   * Get the flavour identifier for a specific aggregation
+   * Format: metricType.aggregationField
+   *
+   * Example: "power.avg", "energy.delta", "soc.last"
+   */
+  getFlavourIdentifier(aggregationField: string): string {
+    return `${this.metricType}.${aggregationField}`;
   }
 
   /**
    * Create a PointInfo from a plain object (e.g., from database row or API response)
    */
   static from(data: {
-    id: number;
+    id: number; // Database field name is still 'id'
     systemId: number;
     originId: string;
     originSubId: string | null;
@@ -77,7 +87,7 @@ export class PointInfo {
     active: boolean;
   }): PointInfo {
     return new PointInfo(
-      data.id,
+      data.id, // Map database 'id' field to 'index' property
       data.systemId,
       data.originId,
       data.originSubId,

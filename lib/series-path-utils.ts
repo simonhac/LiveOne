@@ -1,16 +1,5 @@
 import { SystemsManager, SystemWithPolling } from "@/lib/systems-manager";
 
-// Re-export pure parsing functions from series-path-parser
-// These can be used in both client and server components
-export {
-  parseSeriesPath,
-  parseDeviceMetric,
-  parseDeviceId,
-  type ParsedSeriesPath,
-  type ParsedDeviceMetric,
-  type ParsedDeviceId,
-} from "./series-path-parser";
-
 // Load SystemsManager once at module level
 const systemsManager = SystemsManager.getInstance();
 
@@ -29,8 +18,6 @@ const systemsManager = SystemsManager.getInstance();
  * - pointFlavour: metricType.aggregation (e.g., "power.avg", "energy.delta")
  *
  * The "series path" (without system prefix) is: {pointPath}/{pointFlavour}
- *
- * Note: Pure parsing functions are re-exported from series-path-parser.ts above
  */
 
 /**
@@ -59,39 +46,6 @@ export async function resolveSystemFromIdentifier(
 }
 
 /**
- * Resolve a siteId to a system
- *
- * @param siteId - Site identifier (either "system.{id}" or a shortname)
- * @returns System or null if not found
- *
- * @example
- * await resolveSystemFromSiteId("system.10")
- * // Returns system with id=10
- *
- * await resolveSystemFromSiteId("kinkora_complete")
- * // Returns system with shortName="kinkora_complete"
- */
-export async function resolveSystemFromSiteId(
-  siteId: string,
-): Promise<SystemWithPolling | null> {
-  // Check if it's in "system.{id}" format
-  if (siteId.startsWith("system.")) {
-    const systemIdStr = siteId.split(".")[1];
-    const systemId = parseInt(systemIdStr);
-
-    if (isNaN(systemId)) {
-      return null;
-    }
-
-    return systemsManager.getSystem(systemId);
-  }
-
-  // It's a shortname - search all systems
-  const allSystems = await systemsManager.getAllSystems();
-  return allSystems.find((s) => s.shortName === siteId) || null;
-}
-
-/**
  * Build a full series ID from components
  *
  * @param systemIdentifier - System identifier (either "system.{id}" or a shortname)
@@ -115,49 +69,26 @@ export function buildSeriesId(
 }
 
 /**
- * Build a siteId from a system
+ * Get the site identifier for a system
  *
- * @param system - System to build siteId for
+ * @param system - System to get identifier for
  * @returns Site identifier (shortname if available, otherwise "system.{id}")
  *
  * @example
- * buildSiteIdFromSystem({ id: 10, shortName: "kinkora_complete", ... })
+ * getSiteIdentifier({ id: 10, shortName: "kinkora_complete", ... })
  * // Returns: "kinkora_complete"
  *
- * buildSiteIdFromSystem({ id: 10, shortName: null, ... })
+ * getSiteIdentifier({ id: 10, shortName: null, ... })
  * // Returns: "system.10"
  */
-export function buildSiteIdFromSystem(system: SystemWithPolling): string {
+export function getSiteIdentifier(system: SystemWithPolling): string {
   return system.shortName || `system.${system.id}`;
 }
 
 /**
- * Extract system ID from a siteId
- * Handles both "system.{id}" format and shortnames
- *
- * @param siteId - Site identifier
- * @param allSystems - Pre-loaded array of all systems
- * @returns System ID or null if not found
- *
- * @example
- * extractSystemIdFromSiteId("system.10", systems)
- * // Returns: 10
- *
- * extractSystemIdFromSiteId("kinkora_complete", systems)
- * // Returns: 11 (if that's the system with shortName="kinkora_complete")
+ * Build a siteId from a system
+ * @deprecated Use getSiteIdentifier() instead
  */
-export async function extractSystemIdFromSiteId(
-  siteId: string,
-  allSystems: SystemWithPolling[],
-): Promise<number | null> {
-  // Check if it's in "system.{id}" format
-  if (siteId.startsWith("system.")) {
-    const systemIdStr = siteId.split(".")[1];
-    const systemId = parseInt(systemIdStr);
-    return isNaN(systemId) ? null : systemId;
-  }
-
-  // It's a shortname - resolve to system ID
-  const system = await resolveSystemFromSiteId(siteId);
-  return system ? system.id : null;
+export function buildSiteIdFromSystem(system: SystemWithPolling): string {
+  return getSiteIdentifier(system);
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { PointManager } from "@/lib/point-manager";
+import { PointManager } from "@/lib/point/point-manager";
 import { resolveSystemFromIdentifier } from "@/lib/series-path-utils";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { splitBraceAware } from "@/lib/series-filter-utils";

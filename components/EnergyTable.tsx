@@ -174,7 +174,7 @@ export default function EnergyTable({
         <div className="space-y-1">
           {tableData.map((item) => {
             return (
-              <div key={item.label} className="flex items-center text-xs">
+              <div key={item.id} className="flex items-center text-xs">
                 <div
                   className="flex items-center gap-2 flex-1 cursor-pointer select-none touch-none"
                   onPointerDown={() => handlePointerDown(item.id)}

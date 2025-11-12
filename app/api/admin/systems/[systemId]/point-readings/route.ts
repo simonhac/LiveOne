@@ -5,7 +5,7 @@ import { pointInfo } from "@/lib/db/schema-monitoring-points";
 import { eq, sql } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
-import { PointInfo } from "@/lib/point-info";
+import { PointInfo } from "@/lib/point/point-info";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 
 /**

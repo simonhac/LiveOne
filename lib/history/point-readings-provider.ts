@@ -16,8 +16,8 @@ import {
   MeasurementSeries,
   TimeSeriesPoint,
 } from "./types";
-import { PointManager } from "@/lib/point-manager";
-import { PointInfo } from "@/lib/point-info";
+import { PointManager } from "@/lib/point/point-manager";
+import { PointInfo } from "@/lib/point/point-info";
 
 /**
  * Apply transform to a numeric value based on the transform type
@@ -66,10 +66,10 @@ function generateSeriesPath(
     }
   }
 
-  // If type and subtype are set, use series ID with path
-  const pointPath = point.getPath();
-  if (pointPath) {
-    return `${pointPath}/${point.metricType}.${aggregationType}`;
+  // If type and subtype are set, use series ID with identifier
+  const pointIdentifier = point.getIdentifier();
+  if (pointIdentifier) {
+    return `${pointIdentifier}/${point.metricType}.${aggregationType}`;
   }
 
   // If shortName is set, use it directly
@@ -77,16 +77,16 @@ function generateSeriesPath(
     return point.shortName;
   }
 
-  // Otherwise, use the point's database ID as pointPath
-  return `${point.id}/${point.metricType}.${aggregationType}`;
+  // Otherwise, use the point's database index as pointPath
+  return `${point.index}/${point.metricType}.${aggregationType}`;
 }
 
 export class PointReadingsProvider implements HistoryDataProvider {
   // Track SQL queries for debugging/transparency
-  private lastSqlQueries: string[] = [];
+  private lastQueries: string[] = [];
 
-  getLastSqlQueries(): string[] {
-    return this.lastSqlQueries;
+  getLastQueries(): string[] {
+    return this.lastQueries;
   }
 
   async fetch5MinuteData(
@@ -95,7 +95,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
     endTime: ZonedDateTime,
     seriesPatterns?: string[],
   ): Promise<MeasurementSeries[]> {
-    this.lastSqlQueries = []; // Reset query tracking
+    this.lastQueries = []; // Reset query tracking
     const startMs = toUnixTimestamp(startTime) * 1000;
     const endMs = toUnixTimestamp(endTime) * 1000;
 
@@ -116,7 +116,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
 
     // Fetch PointInfo for these points
     const allPoints = await pointManager.getPointsForSystem(system.id);
-    const allPointsMap = new Map(allPoints.map((p) => [p.id, p]));
+    const allPointsMap = new Map(allPoints.map((p) => [p.index, p]));
 
     // Build map of point IDs to their PointInfo objects (only for points we need)
     const pointMap = new Map<number, PointInfo>();
@@ -144,7 +144,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
 
     // Capture SQL before executing
     const sqlObj = query.toSQL();
-    this.lastSqlQueries.push(sqlObj.sql);
+    this.lastQueries.push(sqlObj.sql);
 
     const aggregates = await query;
 
@@ -195,7 +195,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
       const seriesPath = generateSeriesPath(pointMeta, "5m");
 
       // Get pointPath using PointInfo method
-      const pointPath = pointMeta.getPath();
+      const pointPath = pointMeta.getIdentifier();
 
       result.push({
         field: seriesPath,
@@ -219,7 +219,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
     endDate: CalendarDate,
     seriesPatterns?: string[],
   ): Promise<MeasurementSeries[]> {
-    this.lastSqlQueries = []; // Reset query tracking
+    this.lastQueries = []; // Reset query tracking
     const startDateStr = startDate.toString(); // YYYY-MM-DD format
     const endDateStr = endDate.toString(); // YYYY-MM-DD format
 
@@ -250,7 +250,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
 
     // Fetch PointInfo for these points
     const allPoints = await pointManager.getPointsForSystem(system.id);
-    const allPointsMap = new Map(allPoints.map((p) => [p.id, p]));
+    const allPointsMap = new Map(allPoints.map((p) => [p.index, p]));
 
     // Build map of point IDs to their PointInfo objects (only for points we need)
     const pointMap = new Map<number, PointInfo>();
@@ -278,7 +278,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
 
     // Capture SQL before executing
     const sqlObj = query.toSQL();
-    this.lastSqlQueries.push(sqlObj.sql);
+    this.lastQueries.push(sqlObj.sql);
 
     const aggregates = await query;
 
@@ -299,7 +299,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
     for (const [pointId, pointMeta] of pointMap) {
       // Get aggregates for this point if they exist
       const pointAggregates = pointSeriesMap.get(pointId) || [];
-      const pointPath = pointMeta.getPath();
+      const pointPath = pointMeta.getIdentifier();
 
       // Helper to create a series
       const createSeries = (
@@ -320,7 +320,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
 
         const seriesPath = pointPath
           ? `${pointPath}/${pointFlavourSuffix}`
-          : `${pointMeta.id}/${pointFlavourSuffix}`;
+          : `${pointMeta.index}/${pointFlavourSuffix}`;
         result.push({
           field: seriesPath,
           metadata: {

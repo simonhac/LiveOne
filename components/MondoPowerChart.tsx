@@ -654,7 +654,18 @@ export default function MondoPowerChart({
           duration = "30d";
         }
 
-        const apiUrl = `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId.toString()}`;
+        // Build series filter based on mode
+        let seriesFilter: string;
+        if (mode === "load") {
+          // Load mode: load.*, bidi.battery/power.*, bidi.grid/power.*
+          seriesFilter = "load*/power.*,bidi.battery/power.*,bidi.grid/power.*";
+        } else {
+          // Generation mode: source.solar/power.*, bidi.battery/power.*, bidi.grid/power.*
+          seriesFilter =
+            "source.solar*/power.*,bidi.battery/power.*,bidi.grid/power.*";
+        }
+
+        const apiUrl = `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId.toString()}&series=${encodeURIComponent(seriesFilter)}`;
 
         const response = await fetch(apiUrl, {
           credentials: "same-origin",

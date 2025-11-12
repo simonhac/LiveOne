@@ -87,5 +87,5 @@ export interface HistoryDataProvider {
    * Get the SQL queries executed in the last fetch operation
    * Used for debugging and transparency
    */
-  getLastSqlQueries?(): string[];
+  getLastQueries?(): string[];
 }

@@ -13,9 +13,14 @@ import {
   getTimeDifferenceMs,
 } from "@/lib/date-utils";
 import { CalendarDate, ZonedDateTime, now } from "@internationalized/date";
-import { HistoryService } from "@/lib/history/history-service";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { splitBraceAware } from "@/lib/series-filter-utils";
+import { HistoryDebugInfo, registerPoint } from "@/lib/history/history-debug";
+import { PointManager } from "@/lib/point/point-manager";
+import { getSiteIdentifier } from "@/lib/series-path-utils";
+
+// Initialize manager instances
+const pointManager = PointManager.getInstance();
 
 // ============================================================================
 // Helper Functions
@@ -152,6 +157,7 @@ async function checkSystemAccess(
 function parseBasicParams(searchParams: URLSearchParams): ValidationResult & {
   systemId?: number;
   interval?: string;
+  enableDebug?: boolean;
 } {
   const systemIdParam = searchParams.get("systemId");
   if (!systemIdParam) {
@@ -189,10 +195,15 @@ function parseBasicParams(searchParams: URLSearchParams): ValidationResult & {
     };
   }
 
+  // Debug defaults to true, can be disabled with debug=false
+  const debugParam = searchParams.get("debug");
+  const enableDebug = debugParam === null || debugParam === "true";
+
   return {
     isValid: true,
     systemId,
     interval,
+    enableDebug,
   };
 }
 
@@ -371,387 +382,323 @@ async function getSystemHistoryInOpenNEMFormat(
   startTime: ZonedDateTime | CalendarDate,
   endTime: ZonedDateTime | CalendarDate,
   interval: "5m" | "30m" | "1d",
-  seriesPatterns?: string[],
+  filterPatterns?: string[],
+  enableDebug?: boolean,
 ): Promise<{
   series: OpenNEMDataSeries[];
-  debug?: any;
+  debug?: HistoryDebugInfo;
   dataSource?: string;
   sqlQueries?: string[];
 }> {
-  // Special handling for composite systems
-  if (system.vendorType === "composite") {
-    const systemsManager = SystemsManager.getInstance();
+  // Get filtered FlavouredPoint[] from PointManager
+  // Note: PointManager only supports "5m" | "1d" intervals, so for "30m" we use "5m"
+  const intervalForFiltering = interval === "30m" ? "5m" : interval;
 
-    try {
-      const metadata = system.metadata as any;
+  const flavouredPoints = await pointManager.getFilteredSeriesForSystem(
+    system,
+    filterPatterns,
+    intervalForFiltering,
+  );
 
-      // If composite system has no configuration yet, return empty data
-      if (!metadata || metadata.version !== 2 || !metadata.mappings) {
-        console.log(
-          `[Composite History] System ${system.id} has no configuration yet or wrong version, returning empty data`,
-        );
-        return { series: [] };
+  if (flavouredPoints.length === 0) {
+    return { series: [] };
+  }
+
+  // Setup database query
+  const { rawClient } = await import("@/lib/db");
+  const aggTable =
+    interval === "1d" ? "point_readings_agg_1d" : "point_readings_agg_5m";
+  const startEpoch =
+    interval === "1d"
+      ? (startTime as CalendarDate).toDate("UTC").getTime()
+      : (startTime as ZonedDateTime).toDate().getTime();
+  const endEpoch =
+    interval === "1d"
+      ? (endTime as CalendarDate).toDate("UTC").getTime()
+      : (endTime as ZonedDateTime).toDate().getTime();
+
+  // Initialize debug if enabled
+  const debug: HistoryDebugInfo | undefined = enableDebug
+    ? {
+        source: aggTable,
+        query: [],
+        patterns: filterPatterns,
+        points: [],
       }
+    : undefined;
 
-      // Check if mappings is empty (all categories have empty arrays)
-      const hasAnyMappings = Object.values(metadata.mappings).some(
-        (pointRefs) => Array.isArray(pointRefs) && pointRefs.length > 0,
-      );
-      if (!hasAnyMappings) {
-        console.log(
-          `[Composite History] System ${system.id} has empty mappings, returning empty data`,
-        );
-        return { series: [] };
-      }
+  // Build single batched query for all points
+  // We'll query all rows for all points in one go using CTE with VALUES
+  // Deduplicate pairs since we select ALL aggregation fields for each point
+  const uniquePairsArray = Array.from(
+    new Set(
+      flavouredPoints.map((fp) => `${fp.point.systemId},${fp.point.index}`),
+    ),
+  ).map((pair) => pair.split(",").map(Number));
 
-      // Collect all point references (systemId.pointId format)
-      const pointRefsMap = new Map<string, string>(); // Maps "systemId.pointId" -> category
+  // Build parameterized query with placeholders
+  // LibSQL supports positional parameters with ?, so we'll build (?, ?), (?, ?)...
+  const pairsPlaceholders = uniquePairsArray.map(() => "(?, ?)").join(", ");
 
-      for (const [category, pointRefs] of Object.entries(metadata.mappings)) {
-        if (Array.isArray(pointRefs)) {
-          for (const pointRef of pointRefs as string[]) {
-            // pointRef format: "systemId.pointId" (e.g., "3.1", "2.5")
-            const [systemIdStr, pointIdStr] = pointRef.split(".");
-            const sourceSystemId = parseInt(systemIdStr);
-            const pointId = parseInt(pointIdStr);
+  // Flatten the pairs array for the args parameter
+  const pairArgs = uniquePairsArray.flat();
 
-            if (!isNaN(sourceSystemId) && !isNaN(pointId)) {
-              pointRefsMap.set(pointRef, category);
-            } else {
-              console.warn(
-                `[Composite History] Invalid point reference: ${pointRef}`,
-              );
-            }
-          }
+  // Get the aggregation field to query - we need to handle all aggregation fields used
+  // For simplicity in the batched query, we'll SELECT all common aggregation fields
+  // and filter/use them based on each FlavouredPoint's flavour.aggregationField
+  let queryTemplate: string;
+  let queryArgs: (number | string)[];
+  let allRows: Array<{
+    system_id: number;
+    point_id: number;
+    interval_end?: number;
+    day?: string;
+    avg?: number | null;
+    min?: number | null;
+    max?: number | null;
+    last?: number | null;
+    delta?: number | null;
+  }>;
+
+  if (interval === "1d") {
+    const startDate = (startTime as CalendarDate).toString();
+    const endDate = (endTime as CalendarDate).toString();
+
+    queryTemplate = `
+      WITH pairs(system_id, point_id) AS (
+        VALUES ${pairsPlaceholders}
+      )
+      SELECT
+        pra.system_id,
+        pra.point_id,
+        pra.day,
+        pra.avg,
+        pra.min,
+        pra.max,
+        pra.last,
+        pra.delta
+      FROM ${aggTable} AS pra
+      JOIN pairs p
+        ON p.system_id = pra.system_id
+       AND p.point_id = pra.point_id
+      WHERE pra.day >= ? AND pra.day <= ?
+      ORDER BY pra.system_id, pra.point_id, pra.day
+    `;
+
+    queryArgs = [...pairArgs, startDate, endDate];
+
+    allRows = (
+      await rawClient.execute({
+        sql: queryTemplate,
+        args: queryArgs,
+      })
+    ).rows as unknown as typeof allRows;
+  } else {
+    queryTemplate = `
+      WITH pairs(system_id, point_id) AS (
+        VALUES ${pairsPlaceholders}
+      )
+      SELECT
+        pra.system_id,
+        pra.point_id,
+        pra.interval_end,
+        pra.avg,
+        pra.min,
+        pra.max,
+        pra.last,
+        pra.delta
+      FROM ${aggTable} AS pra
+      JOIN pairs p
+        ON p.system_id = pra.system_id
+       AND p.point_id = pra.point_id
+      WHERE pra.interval_end >= ? AND pra.interval_end < ?
+      ORDER BY pra.system_id, pra.point_id, pra.interval_end
+    `;
+
+    queryArgs = [...pairArgs, startEpoch, endEpoch];
+
+    allRows = (
+      await rawClient.execute({
+        sql: queryTemplate,
+        args: queryArgs,
+      })
+    ).rows as unknown as typeof allRows;
+  }
+
+  if (debug) {
+    // Store query template and parameters separately for debugging
+    // Normalize whitespace: replace newlines and multiple spaces with single spaces
+    const normalizedTemplate = queryTemplate
+      .replace(/\n/g, " ")
+      .replace(/\s+/g, " ")
+      .replace(/"/g, "'")
+      .trim();
+
+    debug.query.push({
+      template: normalizedTemplate,
+      args: queryArgs,
+    } as any);
+  }
+
+  // Group rows by (system_id, point_id, aggregation_field)
+  const rowsByPointAndField = new Map<
+    string,
+    Array<{ interval_end: number; value: number | null }>
+  >();
+
+  for (const row of allRows) {
+    // Convert day to interval_end if needed
+    const intervalEnd =
+      row.interval_end ?? new Date(row.day! + "T00:00:00Z").getTime();
+
+    // Process each aggregation field that has a value
+    for (const field of ["avg", "min", "max", "last", "delta"] as const) {
+      if (row[field] !== undefined && row[field] !== null) {
+        const key = `${row.system_id}.${row.point_id}.${field}`;
+        if (!rowsByPointAndField.has(key)) {
+          rowsByPointAndField.set(key, []);
         }
-      }
-
-      // Query point_info to resolve all point references in one query
-      const { db } = await import("@/lib/db");
-      const { pointInfo } = await import("@/lib/db/schema-monitoring-points");
-      const { sql } = await import("drizzle-orm");
-
-      // Build WHERE clause to match all point references
-      const pointQueries = Array.from(pointRefsMap.keys()).map((pointRef) => {
-        const [systemIdStr, pointIdStr] = pointRef.split(".");
-        return {
-          systemId: parseInt(systemIdStr),
-          pointId: parseInt(pointIdStr),
-        };
-      });
-
-      // Fetch all points in one query
-      const conditions = pointQueries.map(
-        (p) => sql`(system_id = ${p.systemId} AND id = ${p.pointId})`,
-      );
-      const pointsData = await db
-        .select()
-        .from(pointInfo)
-        .where(sql`${sql.join(conditions, sql` OR `)}`);
-
-      // Build metadata for each point
-      const pointsWithMetadata: Array<{
-        systemId: number;
-        pointId: number;
-        category: string;
-        metricType: string;
-        displayName: string | null;
-        capabilityPath: string;
-        aggregationField: "avg" | "last";
-        transform: string | null;
-      }> = [];
-
-      for (const [pointRef, category] of pointRefsMap.entries()) {
-        const [systemIdStr, pointIdStr] = pointRef.split(".");
-        const systemId = parseInt(systemIdStr);
-        const pointId = parseInt(pointIdStr);
-
-        const point = pointsData.find(
-          (p) => p.systemId === systemId && p.id === pointId,
-        );
-
-        if (!point) {
-          console.warn(
-            `[Composite History] Point ${pointRef} not found in point_info`,
-          );
-          continue;
-        }
-
-        if (!point.type) {
-          console.warn(
-            `[Composite History] Point ${pointRef} has no type defined`,
-          );
-          continue;
-        }
-
-        // Build capability path from type.subtype.extension
-        const pathParts = [point.type, point.subtype, point.extension].filter(
-          Boolean,
-        );
-        const capabilityPath = pathParts.join(".");
-
-        // Determine which aggregation field to use based on metric_type
-        const aggregationField =
-          point.metricType === "power" ? ("avg" as const) : ("last" as const);
-
-        pointsWithMetadata.push({
-          systemId,
-          pointId,
-          category,
-          metricType: point.metricType,
-          displayName: point.displayName,
-          capabilityPath,
-          aggregationField,
-          transform: point.transform,
+        rowsByPointAndField.get(key)!.push({
+          interval_end: intervalEnd,
+          value: row[field]!,
         });
       }
-
-      console.log(
-        `[Composite History] Points to fetch:`,
-        JSON.stringify(
-          pointsWithMetadata.map((p) => ({
-            ref: `${p.systemId}.${p.pointId}`,
-            name: p.displayName,
-            path: p.capabilityPath,
-            metric: p.metricType,
-            field: p.aggregationField,
-          })),
-          null,
-          2,
-        ),
-      );
-
-      if (pointsWithMetadata.length === 0) {
-        console.warn(
-          `[Composite History] No valid points resolved from configuration`,
-        );
-        return { series: [] };
-      }
-
-      // Query the appropriate aggregation table based on interval
-      // Note: We only have 5m and 1d aggregation tables. For 30m, use 5m table.
-      const aggTable =
-        interval === "1d" ? "point_readings_agg_1d" : "point_readings_agg_5m"; // Use 5m table for both 5m and 30m intervals
-
-      // Calculate time range in Unix epoch milliseconds (point_readings_agg_* uses milliseconds)
-      const startEpoch =
-        interval === "1d"
-          ? (startTime as CalendarDate).toDate("UTC").getTime()
-          : (startTime as ZonedDateTime).toDate().getTime();
-
-      const endEpoch =
-        interval === "1d"
-          ? (endTime as CalendarDate).toDate("UTC").getTime()
-          : (endTime as ZonedDateTime).toDate().getTime();
-
-      // Fetch data for each point
-      const { buildSiteIdFromSystem } = await import("@/lib/series-path-utils");
-      const allSeries: OpenNEMDataSeries[] = [];
-
-      for (const point of pointsWithMetadata) {
-        const sourceSystem = await systemsManager.getSystem(point.systemId);
-        if (!sourceSystem) {
-          console.warn(
-            `[Composite History] System ${point.systemId} not found`,
-          );
-          continue;
-        }
-
-        // Query aggregation table
-        let rows: Array<{ interval_end: number; value: number | null }>;
-
-        if (interval === "1d") {
-          // Daily aggregation uses 'day' column (YYYY-MM-DD string), not interval_end
-          const startDate = (startTime as CalendarDate).toString();
-          const endDate = (endTime as CalendarDate).toString();
-
-          const dailyRows = (await db.all(sql`
-            SELECT day, ${sql.identifier(point.aggregationField)} as value
-            FROM ${sql.identifier(aggTable)}
-            WHERE system_id = ${point.systemId}
-              AND point_id = ${point.pointId}
-              AND day >= ${startDate}
-              AND day <= ${endDate}
-            ORDER BY day ASC
-          `)) as Array<{ day: string; value: number | null }>;
-
-          // Convert day strings to interval_end timestamps for consistent processing
-          rows = dailyRows.map((row) => ({
-            interval_end: new Date(row.day + "T00:00:00Z").getTime(),
-            value: row.value,
-          }));
-        } else {
-          // 5-minute and 30-minute aggregations use interval_end
-          rows = (await db.all(sql`
-            SELECT interval_end, ${sql.identifier(point.aggregationField)} as value
-            FROM ${sql.identifier(aggTable)}
-            WHERE system_id = ${point.systemId}
-              AND point_id = ${point.pointId}
-              AND interval_end >= ${startEpoch}
-              AND interval_end < ${endEpoch}
-            ORDER BY interval_end ASC
-          `)) as Array<{ interval_end: number; value: number | null }>;
-        }
-
-        // Apply transform to all values immediately after query
-        rows = rows.map((row) => ({
-          interval_end: row.interval_end,
-          value: applyTransform(row.value, point.transform),
-        }));
-
-        // If we're using 30m interval but querying 5m table, aggregate the data
-        if (interval === "30m" && aggTable === "point_readings_agg_5m") {
-          const aggregated: Array<{
-            interval_end: number;
-            value: number | null;
-          }> = [];
-          const intervalMs = 30 * 60 * 1000; // 30 minutes in ms
-
-          // Group rows by 30-minute buckets
-          const buckets = new Map<number, number[]>();
-
-          for (const row of rows) {
-            // Round down to nearest 30-minute boundary
-            const bucketEnd =
-              Math.floor(row.interval_end / intervalMs) * intervalMs +
-              intervalMs;
-
-            if (!buckets.has(bucketEnd)) {
-              buckets.set(bucketEnd, []);
-            }
-
-            if (row.value !== null) {
-              buckets.get(bucketEnd)!.push(row.value);
-            }
-          }
-
-          // Calculate average for each bucket
-          for (const [bucketEnd, values] of buckets.entries()) {
-            const avg =
-              values.length > 0
-                ? values.reduce((sum, v) => sum + v, 0) / values.length
-                : null;
-            aggregated.push({ interval_end: bucketEnd, value: avg });
-          }
-
-          // Sort by interval_end
-          aggregated.sort((a, b) => a.interval_end - b.interval_end);
-          rows = aggregated;
-        }
-
-        // Build series ID: liveone.{siteId}.{capabilityPath}.{metricType}.{aggregation}
-        const siteId = buildSiteIdFromSystem(sourceSystem);
-        const seriesId = `liveone.${siteId}.${point.capabilityPath}.${point.metricType}.${point.aggregationField}`;
-
-        // Format timestamps with system timezone
-        const { formatTime_fromJSDate } = await import("@/lib/date-utils");
-        const timezoneOffsetMin = system.timezoneOffsetMin ?? 600; // Default to Brisbane (+10:00)
-
-        // Calculate interval parameters for gap filling
-        const intervalMs =
-          interval === "5m"
-            ? 5 * 60 * 1000
-            : interval === "30m"
-              ? 30 * 60 * 1000
-              : 24 * 60 * 60 * 1000; // 1d
-
-        // Build complete data array with gap filling (like opennem-converter.ts does)
-        const fieldData: (number | null)[] = [];
-        let dataIndex = 0;
-
-        // Walk through all expected intervals
-        for (
-          let expectedIntervalEnd = startEpoch;
-          expectedIntervalEnd < endEpoch;
-          expectedIntervalEnd += intervalMs
-        ) {
-          // Check if we have data for this interval
-          if (dataIndex < rows.length) {
-            const dataPoint = rows[dataIndex];
-            const dataIntervalEnd = dataPoint.interval_end;
-
-            if (dataIntervalEnd === expectedIntervalEnd) {
-              // We have data for this interval - apply formatting (4 sig figs)
-              const value = dataPoint.value;
-              fieldData.push(
-                value === null ? null : parseFloat(value.toPrecision(4)),
-              );
-              dataIndex++;
-            } else {
-              // No data for this interval
-              fieldData.push(null);
-            }
-          } else {
-            // No more data points
-            fieldData.push(null);
-          }
-        }
-
-        // Use query range for start/end (all series should have same time range)
-        const startFormatted = formatTime_fromJSDate(
-          new Date(startEpoch),
-          timezoneOffsetMin,
-        );
-        const endFormatted = formatTime_fromJSDate(
-          new Date(endEpoch - intervalMs),
-          timezoneOffsetMin,
-        );
-
-        allSeries.push({
-          id: seriesId,
-          type: "power",
-          units: point.metricType === "power" ? "MW" : "",
-          path: point.capabilityPath, // Add point path (type.subtype.extension)
-          history: {
-            start: startFormatted,
-            last: endFormatted,
-            interval: interval,
-            data: fieldData,
-          },
-        });
-
-        if (rows.length > 0) {
-          console.log(
-            `[Composite History] Fetched ${rows.length} data points (${fieldData.length} with gap filling) for ${seriesId}`,
-          );
-        } else {
-          console.warn(
-            `[Composite History] No data found for point ${point.systemId}.${point.pointId} (${point.capabilityPath}) - returning ${fieldData.length} nulls`,
-          );
-        }
-      }
-
-      console.log(
-        `[Composite History] Total: ${allSeries.length} series with data`,
-      );
-
-      return {
-        series: allSeries,
-        dataSource:
-          interval === "1d" ? "point_readings_agg_1d" : "point_readings_agg_5m",
-        debug: {
-          pointsQueried: pointsWithMetadata.map((p) => ({
-            pointRef: `${p.systemId}.${p.pointId}`,
-            path: p.capabilityPath,
-            metric: p.metricType,
-            field: p.aggregationField,
-          })),
-        },
-      };
-    } catch (error) {
-      console.error("Error fetching composite data:", error);
-      throw error;
     }
   }
 
-  // For all other systems, use the history service which extracts fields dynamically
-  return await HistoryService.getHistoryInOpenNEMFormat(
-    system,
-    startTime,
-    endTime,
-    interval,
-    seriesPatterns,
-  );
+  // Build series for each FlavouredPoint
+  const { formatTime_fromJSDate } = await import("@/lib/date-utils");
+  const systemsManager = SystemsManager.getInstance();
+  const allSeries: OpenNEMDataSeries[] = [];
+
+  const intervalMs =
+    interval === "5m"
+      ? 5 * 60 * 1000
+      : interval === "30m"
+        ? 30 * 60 * 1000
+        : 24 * 60 * 60 * 1000;
+
+  for (const fp of flavouredPoints) {
+    const key = `${fp.point.systemId}.${fp.point.index}.${fp.flavour.aggregationField}`;
+    let rows = rowsByPointAndField.get(key) || [];
+
+    // Apply transform
+    rows = rows.map((row) => ({
+      interval_end: row.interval_end,
+      value: applyTransform(row.value, fp.point.transform),
+    }));
+
+    // Handle 30m aggregation if needed
+    if (interval === "30m" && aggTable === "point_readings_agg_5m") {
+      const aggregated: Array<{
+        interval_end: number;
+        value: number | null;
+      }> = [];
+      const buckets = new Map<number, number[]>();
+
+      for (const row of rows) {
+        const bucketEnd =
+          Math.floor(row.interval_end / intervalMs) * intervalMs + intervalMs;
+
+        if (!buckets.has(bucketEnd)) {
+          buckets.set(bucketEnd, []);
+        }
+
+        if (row.value !== null) {
+          buckets.get(bucketEnd)!.push(row.value);
+        }
+      }
+
+      for (const [bucketEnd, values] of buckets.entries()) {
+        const avg =
+          values.length > 0
+            ? values.reduce((sum, v) => sum + v, 0) / values.length
+            : null;
+        aggregated.push({ interval_end: bucketEnd, value: avg });
+      }
+
+      aggregated.sort((a, b) => a.interval_end - b.interval_end);
+      rows = aggregated;
+    }
+
+    // Get source system for series ID
+    const sourceSystem = await systemsManager.getSystem(fp.point.systemId);
+    if (!sourceSystem) continue;
+
+    // Build series ID using new format: {systemIdentifier}/{pointIdentifier}/{flavourIdentifier}
+    const systemIdentifier = getSiteIdentifier(sourceSystem);
+    const pointIdentifier = fp.point.getIdentifier(); // Returns "type.subtype.extension" (e.g., "source.solar")
+    if (!pointIdentifier) continue;
+    const flavourIdentifier = fp.flavour.getIdentifier(); // Returns "metricType.aggregationField"
+
+    const seriesId = `${systemIdentifier}/${pointIdentifier}/${flavourIdentifier}`;
+
+    // Build field data with gap filling
+    const fieldData: (number | null)[] = [];
+    let dataIndex = 0;
+
+    for (
+      let expectedIntervalEnd = startEpoch;
+      expectedIntervalEnd < endEpoch;
+      expectedIntervalEnd += intervalMs
+    ) {
+      if (dataIndex < rows.length) {
+        const dataPoint = rows[dataIndex];
+        const dataIntervalEnd = dataPoint.interval_end;
+
+        if (dataIntervalEnd === expectedIntervalEnd) {
+          const value = dataPoint.value;
+          fieldData.push(
+            value === null ? null : parseFloat(value.toPrecision(4)),
+          );
+          dataIndex++;
+        } else {
+          fieldData.push(null);
+        }
+      } else {
+        fieldData.push(null);
+      }
+    }
+
+    // Get point identifier for the series
+    const pointPath = fp.point.getIdentifier();
+    if (!pointPath) continue;
+
+    // Format timestamps
+    const timezoneOffsetMin = system.timezoneOffsetMin ?? 600;
+    const startFormatted = formatTime_fromJSDate(
+      new Date(startEpoch),
+      timezoneOffsetMin,
+    );
+    const endFormatted = formatTime_fromJSDate(
+      new Date(endEpoch - intervalMs),
+      timezoneOffsetMin,
+    );
+
+    allSeries.push({
+      id: seriesId,
+      type: "power",
+      units: fp.point.metricUnit === "W" ? "MW" : "",
+      path: pointPath,
+      history: {
+        start: startFormatted,
+        last: endFormatted,
+        interval: interval,
+        data: fieldData,
+      },
+    });
+
+    // Register point for debug tracking
+    if (debug) {
+      registerPoint(debug, fp);
+    }
+  }
+
+  return {
+    series: allSeries,
+    dataSource: aggTable,
+    debug,
+  };
 }
 
 // ============================================================================
@@ -810,12 +757,7 @@ function buildResponse(
     response.debug = debug;
   }
 
-  // Add series patterns if provided
-  if (seriesPatterns && seriesPatterns.length > 0) {
-    response.seriesPatterns = seriesPatterns;
-  }
-
-  // Add SQL queries if provided
+  // Add SQL queries if provided (legacy support)
   if (sqlQueries && sqlQueries.length > 0) {
     response.sqlQueries = sqlQueries;
   }
@@ -917,6 +859,7 @@ export async function GET(request: NextRequest) {
       timeRange.endTime!,
       basicParams.interval as "5m" | "30m" | "1d",
       seriesPatterns.length > 0 ? seriesPatterns : undefined,
+      basicParams.enableDebug,
     );
 
     // Step 8: Build and return response
