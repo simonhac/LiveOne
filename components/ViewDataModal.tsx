@@ -313,7 +313,7 @@ export default function ViewDataModal({
       return;
 
     setSelectedPointInfo({
-      pointDbId: pointInfo.id,
+      pointDbId: pointInfo.index,
       systemId: pointInfo.systemId,
       originId: pointInfo.originId,
       originSubId: pointInfo.originSubId,
@@ -603,13 +603,13 @@ export default function ViewDataModal({
         className={`py-1 ${isLastRow ? "pb-2" : ""} px-2 align-top bg-gray-900 ${
           !isSpecialColumn ? "text-right" : ""
         } ${
-          !isSpecialColumn && pointInfo?.id ? "cursor-pointer" : ""
+          !isSpecialColumn && pointInfo?.index ? "cursor-pointer" : ""
         } ${isLastSeriesIdColumn ? "border-r border-gray-700" : ""} ${
           !pointInfo?.active && !isSpecialColumn ? "opacity-50" : ""
         }`}
         onClick={() => handleColumnHeaderClick(headerKey, pointInfo)}
         title={
-          !isSpecialColumn && pointInfo?.id
+          !isSpecialColumn && pointInfo?.index
             ? "Click to edit point info"
             : undefined
         }

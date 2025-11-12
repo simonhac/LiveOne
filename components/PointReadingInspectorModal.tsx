@@ -298,7 +298,7 @@ export default function PointReadingInspectorModal({
   }
 
   // Get point path using PointInfo method
-  const pointPath = pointInfo.getPath();
+  const pointPath = pointInfo.getIdentifier();
 
   // Helper function to format a numeric column value
   // Dynamically checks if all values in the column are whole numbers

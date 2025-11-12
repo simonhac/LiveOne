@@ -218,7 +218,7 @@ export async function GET(
     // Step 5: Get filtered series for the system
     const pointManager = PointManager.getInstance();
     const series = await pointManager.getFilteredSeriesForSystem(
-      system.id,
+      system,
       filter,
       interval,
     );

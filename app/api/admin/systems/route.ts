@@ -7,13 +7,10 @@ import { formatTimeAEST, fromUnixTimestamp } from "@/lib/date-utils";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { fromDate } from "@internationalized/date";
 import { VendorRegistry } from "@/lib/vendors/registry";
-import {
-  parseSeriesPath,
-  resolveSystemFromSiteId,
-} from "@/lib/series-path-utils";
+import { SystemsManager } from "@/lib/systems-manager";
 
 /**
- * Extract all source systems referenced in composite metadata (version 1 format)
+ * Extract all source systems referenced in composite metadata (version 2 format)
  * Returns array of systems with ID and shortName
  */
 async function getCompositeSourceSystems(
@@ -21,25 +18,29 @@ async function getCompositeSourceSystems(
 ): Promise<Array<{ id: number; shortName: string | null }>> {
   if (!metadata || typeof metadata !== "object") return [];
 
-  // Only handle version 1 format with mappings
-  if (metadata.version !== 1 || !metadata.mappings) return [];
+  // Only handle version 2 format with mappings
+  if (metadata.version !== 2 || !metadata.mappings) return [];
 
   const systemsMap = new Map<
     number,
     { id: number; shortName: string | null }
   >();
 
+  const systemsManager = SystemsManager.getInstance();
+
   // Iterate through all categories in mappings
-  for (const [category, paths] of Object.entries(metadata.mappings)) {
-    if (Array.isArray(paths)) {
-      for (const fullPath of paths as string[]) {
-        // Parse the series path to get siteId
-        const parsed = parseSeriesPath(fullPath);
-        if (parsed) {
-          // Resolve siteId to system
-          const system = await resolveSystemFromSiteId(parsed.siteId);
-          if (system && !systemsMap.has(system.id)) {
-            systemsMap.set(system.id, {
+  for (const [category, pointRefs] of Object.entries(metadata.mappings)) {
+    if (Array.isArray(pointRefs)) {
+      for (const pointRef of pointRefs as string[]) {
+        // Version 2 format: point references are "systemId.pointId" (e.g., "1.5", "2.3")
+        const [systemIdStr] = pointRef.split(".");
+        const systemId = parseInt(systemIdStr);
+
+        if (!isNaN(systemId) && !systemsMap.has(systemId)) {
+          // Fetch the system
+          const system = await systemsManager.getSystem(systemId);
+          if (system) {
+            systemsMap.set(systemId, {
               id: system.id,
               shortName: system.shortName,
             });
