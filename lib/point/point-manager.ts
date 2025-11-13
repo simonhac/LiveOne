@@ -20,16 +20,32 @@ import micromatch from "micromatch";
  */
 export class PointManager {
   private static instance: PointManager;
+  private static lastLoadedAt: number = 0;
+  private static readonly CACHE_TTL_MS = 60 * 1000; // 1 minute TTL
   private seriesCache = new Map<number, FlavouredPoint[]>();
 
   private constructor() {}
 
   /**
    * Get the singleton instance
+   * Automatically refreshes cache if TTL has expired
    */
   static getInstance(): PointManager {
+    const now = Date.now();
+    const cacheAge = now - PointManager.lastLoadedAt;
+
+    // Clear and reload if cache is stale (older than TTL)
+    if (PointManager.instance && cacheAge > PointManager.CACHE_TTL_MS) {
+      console.log(
+        `[PointManager] Cache expired (age: ${Math.round(cacheAge / 1000)}s), clearing...`,
+      );
+      PointManager.instance = new PointManager();
+      PointManager.lastLoadedAt = now;
+    }
+
     if (!PointManager.instance) {
       PointManager.instance = new PointManager();
+      PointManager.lastLoadedAt = now;
     }
     return PointManager.instance;
   }

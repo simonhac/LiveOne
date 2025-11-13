@@ -27,6 +27,8 @@ export type SystemWithPolling = System & {
  */
 export class SystemsManager {
   private static instance: SystemsManager | null = null;
+  private static lastLoadedAt: number = 0;
+  private static readonly CACHE_TTL_MS = 60 * 1000; // 1 minute TTL
   private systemsMap: Map<number, SystemWithPolling> = new Map();
   private loadPromise: Promise<void>;
 
@@ -37,10 +39,24 @@ export class SystemsManager {
 
   /**
    * Get the singleton instance of SystemsManager
+   * Automatically refreshes cache if TTL has expired
    */
   static getInstance(): SystemsManager {
+    const now = Date.now();
+    const cacheAge = now - SystemsManager.lastLoadedAt;
+
+    // Clear and reload if cache is stale (older than TTL)
+    if (SystemsManager.instance && cacheAge > SystemsManager.CACHE_TTL_MS) {
+      console.log(
+        `[SystemsManager] Cache expired (age: ${Math.round(cacheAge / 1000)}s), reloading...`,
+      );
+      SystemsManager.instance = null;
+      SystemsManager.lastLoadedAt = 0;
+    }
+
     if (!SystemsManager.instance) {
       SystemsManager.instance = new SystemsManager();
+      SystemsManager.lastLoadedAt = now;
     }
     return SystemsManager.instance;
   }

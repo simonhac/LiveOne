@@ -253,12 +253,18 @@ export default function CompositeTab({
     setMenuButtonRef(null);
   };
 
-  const handleSelectPoint = (category: string, point: AvailablePoint) => {
+  const handleSelectPoint = (
+    category: string,
+    point: AvailablePoint,
+    keepMenuOpen: boolean = false,
+  ) => {
     setMappings((prev) => ({
       ...prev,
       [category]: [...(prev[category] || []), point.id],
     }));
-    handleCloseMenu();
+    if (!keepMenuOpen) {
+      handleCloseMenu();
+    }
   };
 
   const handleRemoveMapping = (category: string, index: number) => {
@@ -435,7 +441,14 @@ export default function CompositeTab({
                             key={idx}
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleSelectPoint(addingToCategory, point);
+                              // Keep menu open if shift, ctrl, or cmd key is pressed
+                              const keepMenuOpen =
+                                e.shiftKey || e.ctrlKey || e.metaKey;
+                              handleSelectPoint(
+                                addingToCategory,
+                                point,
+                                keepMenuOpen,
+                              );
                             }}
                             className="w-full text-left pl-6 pr-3 py-1.5 text-sm text-gray-300 hover:bg-gray-800 transition-colors border-b border-gray-800 last:border-b-0"
                           >
