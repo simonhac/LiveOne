@@ -23,6 +23,7 @@ import { format } from "date-fns";
 import "chartjs-adapter-date-fns";
 import annotationPlugin from "chartjs-plugin-annotation";
 import { CalendarX2 } from "lucide-react";
+import { CHART_COLORS, LOAD_LABELS, getLoadColor } from "@/lib/chart-colors";
 
 // Register Chart.js components
 ChartJS.register(
@@ -105,25 +106,7 @@ export function parsePath(
   };
 }
 
-// Color palettes for dynamic load discovery
-const LOAD_COLORS = [
-  "rgb(147, 51, 234)", // purple-600 (hvac)
-  "rgb(239, 68, 68)", // red-500 (ev)
-  "rgb(251, 146, 60)", // orange-400 (hws)
-  "rgb(59, 130, 246)", // blue-500 (pool)
-  "rgb(236, 72, 153)", // pink-500
-  "rgb(168, 85, 247)", // violet-500
-];
-
-// Friendly labels for known load types
-const LOAD_LABELS: Record<string, string> = {
-  hvac: "A/C",
-  ev: "EV Charger",
-  hws: "Hot Water",
-  pool: "Pool",
-  spa: "Spa",
-  oven: "Oven",
-};
+// Color constants are now imported from @/lib/chart-colors
 
 // Generate series configurations dynamically from available data
 export function generateSeriesConfig(
@@ -150,7 +133,9 @@ export function generateSeriesConfig(
         (loadType
           ? loadType.charAt(0).toUpperCase() + loadType.slice(1)
           : "Load");
-      const color = LOAD_COLORS[idx % LOAD_COLORS.length];
+
+      // Get color using centralized function
+      const color = getLoadColor(loadType, label, idx);
 
       configs.push({
         id: series.id,
@@ -160,11 +145,11 @@ export function generateSeriesConfig(
       });
     });
 
-    // Add rest of house placeholder (after loads)
+    // Add rest of house placeholder (after loads, at the bottom of the load stack)
     configs.push({
       id: "rest_of_house",
       label: "Rest of House",
-      color: "rgb(156, 163, 175)", // gray-400
+      color: CHART_COLORS.restOfHouse,
       order: loadSeries.length,
     });
 
@@ -181,7 +166,7 @@ export function generateSeriesConfig(
       configs.push({
         id: batterySeries.id,
         label: "Battery Charge",
-        color: "rgb(34, 211, 238)", // cyan-400
+        color: CHART_COLORS.battery.main,
         // No dataTransform needed - site-data-processor already splits and transforms
         order: loadSeries.length + 1,
       });
@@ -196,7 +181,7 @@ export function generateSeriesConfig(
       configs.push({
         id: gridSeries.id,
         label: "Grid Export",
-        color: "rgb(74, 222, 128)", // green-400
+        color: CHART_COLORS.grid.main,
         dataTransform: (val: number) => (val < 0 ? Math.abs(val) : 0),
         order: loadSeries.length + 2,
       });
@@ -221,7 +206,8 @@ export function generateSeriesConfig(
       const label = extension
         ? `Solar ${extension.charAt(0).toUpperCase() + extension.slice(1)}`
         : "Solar";
-      const color = idx === 0 ? "rgb(254, 240, 138)" : "rgb(245, 158, 11)"; // yellow-200 / amber-500
+      const color =
+        idx === 0 ? CHART_COLORS.solar.primary : CHART_COLORS.solar.secondary;
 
       configs.push({
         id: series.id,
@@ -244,7 +230,7 @@ export function generateSeriesConfig(
       configs.push({
         id: batterySeries.id,
         label: "Battery Discharge",
-        color: "rgb(96, 165, 250)", // blue-400
+        color: CHART_COLORS.battery.main,
         // No dataTransform needed - site-data-processor already splits and transforms
         order: solarSeries.length,
       });
@@ -259,7 +245,7 @@ export function generateSeriesConfig(
       configs.push({
         id: gridSeries.id,
         label: "Grid Import",
-        color: "rgb(248, 113, 113)", // red-400
+        color: CHART_COLORS.grid.main,
         dataTransform: (val: number) => (val > 0 ? val : 0),
         order: solarSeries.length + 1,
       });
@@ -734,7 +720,7 @@ export default function SitePowerChart({
               type: "line" as const,
               data: socMax.data,
               borderColor: "transparent",
-              backgroundColor: "rgba(74, 222, 128, 0.3)", // green-400 at 30%
+              backgroundColor: CHART_COLORS.battery.socRange,
               yAxisID: "y1",
               tension: 0.4, // Smooth curves for range
               borderWidth: 0,
@@ -770,8 +756,8 @@ export default function SitePowerChart({
                 label: "Battery SoC",
                 type: "line" as const,
                 data: socAvg.data,
-                borderColor: "rgb(74, 222, 128)", // green-400
-                backgroundColor: "rgb(74, 222, 128)", // Solid color for legend
+                borderColor: CHART_COLORS.battery.soc,
+                backgroundColor: CHART_COLORS.battery.soc,
                 yAxisID: "y1",
                 tension: 0,
                 borderWidth: 2,
@@ -785,7 +771,7 @@ export default function SitePowerChart({
             socDatasets.push({
               label: "Battery SoC",
               data: socLast.data,
-              borderColor: "rgb(74, 222, 128)", // green-400
+              borderColor: CHART_COLORS.battery.soc,
               backgroundColor: "transparent",
               yAxisID: "y1",
               fill: false,

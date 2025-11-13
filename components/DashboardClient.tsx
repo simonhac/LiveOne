@@ -1594,6 +1594,18 @@ export default function DashboardClient({
                                     height={680}
                                   />
                                 </div>
+                                {sitePeriod === "30D" && (
+                                  <div className="mt-4 px-2 sm:px-0">
+                                    <div className="text-xs text-amber-400/80 bg-amber-950/20 border border-amber-800/30 rounded-md p-3">
+                                      <span className="font-medium">Note:</span>{" "}
+                                      Battery and grid energy values in 30D view
+                                      are not yet accurate due to daily
+                                      averaging. Values will be corrected when
+                                      server-side energy flow calculation is
+                                      implemented.
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             ) : null;
                           })()}

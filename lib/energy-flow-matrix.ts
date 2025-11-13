@@ -48,9 +48,17 @@ export function calculateEnergyFlowMatrix(
 
   const { generation, load } = data;
 
+  // Filter out SoC series (only use power/energy series)
+  const generationPowerSeries = generation.series.filter(
+    (s) => !s.seriesType || s.seriesType === "power",
+  );
+  const loadPowerSeries = load.series.filter(
+    (s) => !s.seriesType || s.seriesType === "power",
+  );
+
   if (
-    generation.series.length === 0 ||
-    load.series.length === 0 ||
+    generationPowerSeries.length === 0 ||
+    loadPowerSeries.length === 0 ||
     generation.timestamps.length === 0
   ) {
     console.warn("Empty series or timestamps");
@@ -59,9 +67,9 @@ export function calculateEnergyFlowMatrix(
 
   // Aggregate solar series into a single "Solar" source
   const solarSeriesIndices: number[] = [];
-  const nonSolarSeries: typeof generation.series = [];
+  const nonSolarSeries: typeof generationPowerSeries = [];
 
-  generation.series.forEach((series, index) => {
+  generationPowerSeries.forEach((series, index) => {
     if (series.id.includes("source.solar")) {
       solarSeriesIndices.push(index);
     } else {
@@ -70,12 +78,12 @@ export function calculateEnergyFlowMatrix(
   });
 
   // Create aggregated solar data if we have multiple solar series
-  const aggregatedGeneration = [...generation.series];
+  const aggregatedGeneration = [...generationPowerSeries];
   let aggregatedSolarIndex = -1;
 
   if (solarSeriesIndices.length > 0) {
     // Get the first solar series as the base
-    const firstSolarSeries = generation.series[solarSeriesIndices[0]];
+    const firstSolarSeries = generationPowerSeries[solarSeriesIndices[0]];
 
     // Create aggregated solar series
     const aggregatedSolarData = firstSolarSeries.data.map((_, i) => {
@@ -83,7 +91,7 @@ export function calculateEnergyFlowMatrix(
       let hasNull = false;
 
       for (const solarIdx of solarSeriesIndices) {
-        const value = generation.series[solarIdx].data[i];
+        const value = generationPowerSeries[solarIdx].data[i];
         if (value === null) {
           hasNull = true;
           break;
@@ -114,14 +122,14 @@ export function calculateEnergyFlowMatrix(
     }
   }
 
-  // Extract source and load metadata
+  // Extract source and load metadata (using filtered power series only)
   const sources: EnergyFlowNode[] = aggregatedGeneration.map((s) => ({
     id: s.id,
     label: s.description,
     color: s.color,
   }));
 
-  const loads: EnergyFlowNode[] = load.series.map((s) => ({
+  const loads: EnergyFlowNode[] = loadPowerSeries.map((s) => ({
     id: s.id,
     label: s.description,
     color: s.color,
@@ -173,7 +181,7 @@ export function calculateEnergyFlowMatrix(
 
       // For each load, calculate energy and distribute proportionally
       for (let l = 0; l < loads.length; l++) {
-        const loadSeries = load.series[l];
+        const loadSeries = loadPowerSeries[l];
         const loadPower1 = loadSeries.data[i];
         const loadPower2 = loadSeries.data[i + 1];
 

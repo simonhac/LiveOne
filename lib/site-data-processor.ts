@@ -3,6 +3,7 @@ import {
   SeriesData,
   generateSeriesConfig,
 } from "@/components/SitePowerChart";
+import { getColorForPath } from "@/lib/chart-colors";
 
 export interface ProcessedSiteData {
   load: ChartData | null;
@@ -389,17 +390,6 @@ export async function fetchAndProcessSiteData(
           console.log(
             `[Site Processor] Found battery charge: ${config.label}, path="${path}"`,
           );
-          console.log(
-            `[Site Processor] Battery charge values (first 10):`,
-            seriesValues.slice(0, 10),
-          );
-          console.log(
-            `[Site Processor] Battery charge total:`,
-            seriesValues.reduce(
-              (sum: number | null, v: number | null) => (sum || 0) + (v || 0),
-              0,
-            ),
-          );
         } else if (path && type === "bidi" && subtype === "grid") {
           // Grid export (negative grid power) - capture the transformed values
           gridExportValues = seriesValues;
@@ -442,7 +432,7 @@ export async function fetchAndProcessSiteData(
           id: "rest_of_house",
           description: "Rest of House",
           data: restOfHouse,
-          color: "rgb(107, 114, 128)", // gray-500
+          color: getColorForPath("rest_of_house"),
         });
         console.log(
           `[Site Processor] Case 1: Added rest of house (master load - child loads)`,
@@ -482,7 +472,7 @@ export async function fetchAndProcessSiteData(
           id: "rest_of_house",
           description: "Rest of House",
           data: restOfHouse,
-          color: "rgb(107, 114, 128)", // gray-500
+          color: getColorForPath("rest_of_house"),
         });
         console.log(
           `[Site Processor] Case 3: Added rest of house (generation - battery charge - grid export - known loads)`,
@@ -541,7 +531,7 @@ export async function fetchAndProcessSiteData(
           id: soc.id,
           description: description,
           data: socValues,
-          color: "rgb(74, 222, 128)", // green-400
+          color: getColorForPath(path, description),
           seriesType: "soc",
         });
 

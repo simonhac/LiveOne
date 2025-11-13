@@ -29,10 +29,14 @@ export default function EnergyTable({
   const isPressedRef = useRef(false);
   const longPressHandledRef = useRef(false);
 
-  // Calculate energy values for all series
+  // Calculate energy values for power series only (not SoC)
   const energyValues = useMemo(() => {
     if (!chartData) return new Map<string, number | null>();
-    return calculateSeriesEnergy(chartData.series, chartData.timestamps);
+    // Only calculate energy for power/energy series, not SoC
+    const powerSeries = chartData.series.filter(
+      (s) => !s.seriesType || s.seriesType === "power",
+    );
+    return calculateSeriesEnergy(powerSeries, chartData.timestamps);
   }, [chartData]);
 
   if (!chartData || chartData.series.length === 0) {

@@ -16,23 +16,6 @@ interface EnergyFlowSankeyProps {
   height?: number;
 }
 
-// Color mapping for sources and loads
-const SOURCE_COLORS: Record<string, string> = {
-  solar: "#FDB813", // Yellow
-  battery: "#14B8A6", // Teal
-  grid: "#A855F7", // Purple
-};
-
-const LOAD_COLORS: Record<string, string> = {
-  battery: "#14B8A6", // Teal
-  grid: "#A855F7", // Purple
-  ev: "#60A5FA", // Blue
-  hvac: "#F472B6", // Pink
-  "heat pump": "#F97316", // Orange
-  house: "#EC4899", // Pink
-  pool: "#06B6D4", // Aqua/Cyan
-};
-
 interface SankeyNodeData {
   name: string;
   color: string;
@@ -59,28 +42,7 @@ function shortenLabel(label: string): string {
   return label;
 }
 
-// Helper function to get color for a node
-function getNodeColor(label: string, isSource: boolean): string {
-  const normalizedLabel = label.toLowerCase();
-
-  if (isSource) {
-    if (normalizedLabel.includes("solar")) return SOURCE_COLORS.solar;
-    if (normalizedLabel.includes("battery")) return SOURCE_COLORS.battery;
-    if (normalizedLabel.includes("grid")) return SOURCE_COLORS.grid;
-  } else {
-    if (normalizedLabel.includes("battery")) return LOAD_COLORS.battery;
-    if (normalizedLabel.includes("grid")) return LOAD_COLORS.grid;
-    if (normalizedLabel.includes("ev")) return LOAD_COLORS.ev;
-    if (normalizedLabel.includes("hvac")) return LOAD_COLORS.hvac;
-    if (normalizedLabel.includes("heat") || normalizedLabel.includes("pump"))
-      return LOAD_COLORS["heat pump"];
-    if (normalizedLabel.includes("house")) return LOAD_COLORS.house;
-    if (normalizedLabel.includes("pool")) return LOAD_COLORS.pool;
-  }
-
-  // Default colors
-  return isSource ? "#FDB813" : "#60A5FA";
-}
+// Colors now come from the matrix nodes (energy-flow-matrix.ts uses centralized colors)
 
 /**
  * Energy Flow Sankey Diagram
@@ -160,12 +122,12 @@ export default function EnergyFlowSankey({
       // Sources (left side)
       ...filteredSources.map((source) => ({
         name: shortenLabel(source.label),
-        color: getNodeColor(source.label, true),
+        color: source.color, // Use color from matrix (centralized colors)
       })),
       // Loads (right side)
       ...filteredLoads.map((load) => ({
         name: shortenLabel(load.label),
-        color: getNodeColor(load.label, false),
+        color: load.color, // Use color from matrix (centralized colors)
       })),
     ];
 
