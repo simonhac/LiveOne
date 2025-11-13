@@ -63,6 +63,7 @@ export interface SeriesData {
   description: string;
   data: (number | null)[];
   color: string;
+  seriesType?: "power" | "soc"; // Type of series: power/energy (stacked) or soc (overlay)
 }
 
 export interface ChartData {
@@ -584,9 +585,37 @@ export default function SitePowerChart({
             },
           },
         },
+        y1: {
+          type: "linear" as const,
+          display: true,
+          position: "right" as const,
+          min: 0,
+          max: 100,
+          grid: {
+            display: false, // Don't show grid for secondary axis
+          },
+          ticks: {
+            color: mode === "generation" ? "rgb(156, 163, 175)" : "transparent", // Transparent for load chart
+            font: {
+              size: 10,
+              family: "DM Sans, system-ui, sans-serif",
+            },
+            callback: function (value: any) {
+              return value + "%";
+            },
+          },
+        },
       },
     }),
-    [handleHover, windowStart, now, timeRange, hoveredTimestamp, isBarChart],
+    [
+      handleHover,
+      windowStart,
+      now,
+      timeRange,
+      hoveredTimestamp,
+      isBarChart,
+      mode,
+    ],
   );
 
   // Use external data when provided
@@ -643,38 +672,132 @@ export default function SitePowerChart({
     ? {}
     : {
         labels: chartData.timestamps,
-        datasets: chartData.series
-          .filter((series) => effectiveVisibleSeries.has(series.id)) // Filter by visibility
-          .map((series, idx) => {
-            const baseConfig = {
-              label: series.description, // Description already contains the display label
-              data: series.data, // Already in kW from earlier conversion
-              backgroundColor: series.color, // Use solid color
-              yAxisID: "y",
-              stack: "stack0", // Ensure all datasets stack together
-              order: idx,
-            };
+        datasets: (() => {
+          // Separate power/energy series from SoC series
+          const powerSeries = chartData.series.filter(
+            (s) => s.seriesType !== "soc",
+          );
+          const socSeries = chartData.series.filter(
+            (s) => s.seriesType === "soc",
+          );
 
-            if (isBarChart) {
-              // Bar chart configuration
-              return {
-                ...baseConfig,
-                borderColor: series.color,
-                borderWidth: 0,
+          // Create datasets for power/energy series (stacked)
+          const powerDatasets = powerSeries
+            .filter((series) => effectiveVisibleSeries.has(series.id))
+            .map((series, idx) => {
+              const baseConfig = {
+                label: series.description,
+                data: series.data,
+                backgroundColor: series.color,
+                yAxisID: "y",
+                stack: "stack0",
+                order: idx,
               };
-            } else {
-              // Line chart configuration
-              return {
-                ...baseConfig,
-                borderColor: series.color,
-                tension: 0, // Use straight lines instead of curved
+
+              if (isBarChart) {
+                return {
+                  ...baseConfig,
+                  borderColor: series.color,
+                  borderWidth: 0,
+                };
+              } else {
+                return {
+                  ...baseConfig,
+                  borderColor: series.color,
+                  tension: 0,
+                  borderWidth: 2,
+                  pointRadius: 0,
+                  pointHoverRadius: 0,
+                  fill: "stack",
+                };
+              }
+            });
+
+          // Create datasets for SoC series (non-stacked overlay)
+          const socDatasets: any[] = [];
+
+          // Find min, avg, max SoC series for daily data
+          const socMin = socSeries.find((s) => s.description.includes("(Min)"));
+          const socAvg = socSeries.find((s) => s.description.includes("(Avg)"));
+          const socMax = socSeries.find((s) => s.description.includes("(Max)"));
+          const socLast = socSeries.find(
+            (s) => !s.description.includes("(") && s.seriesType === "soc",
+          );
+
+          if (isBarChart && socMin && socMax) {
+            // Daily data: show min/max range as filled area
+            // Match EnergyChart pattern: max dataset fills DOWN to min dataset
+
+            // Add max as upper boundary (fill down to next dataset)
+            socDatasets.push({
+              label: "Battery SoC Range",
+              type: "line" as const,
+              data: socMax.data,
+              borderColor: "transparent",
+              backgroundColor: "rgba(74, 222, 128, 0.3)", // green-400 at 30%
+              yAxisID: "y1",
+              tension: 0.4, // Smooth curves for range
+              borderWidth: 0,
+              pointRadius: 0,
+              pointHoverRadius: 0,
+              pointHitRadius: 0,
+              fill: "+1", // Fill to next dataset (min)
+              showLine: true,
+              order: 10, // Higher number = drawn first (behind bars)
+            });
+
+            // Add min as lower boundary (no fill)
+            socDatasets.push({
+              label: "", // No label (hidden from legend)
+              type: "line" as const,
+              data: socMin.data,
+              borderColor: "transparent",
+              backgroundColor: "transparent",
+              yAxisID: "y1",
+              tension: 0.4, // Smooth curves for range
+              borderWidth: 0,
+              pointRadius: 0,
+              pointHoverRadius: 0,
+              pointHitRadius: 0,
+              fill: false,
+              showLine: true,
+              order: 10, // Higher number = drawn first (behind bars)
+            });
+
+            // Add average as a line on top
+            if (socAvg) {
+              socDatasets.push({
+                label: "Battery SoC",
+                type: "line" as const,
+                data: socAvg.data,
+                borderColor: "rgb(74, 222, 128)", // green-400
+                backgroundColor: "rgb(74, 222, 128)", // Solid color for legend
+                yAxisID: "y1",
+                tension: 0,
                 borderWidth: 2,
                 pointRadius: 0,
-                pointHoverRadius: 0, // No dots on hover either
-                fill: "stack", // Fill according to stack configuration
-              };
+                fill: false,
+                order: -1, // Negative = drawn last (on top)
+              });
             }
-          }),
+          } else if (socLast) {
+            // 5m/30m data: show single SoC line
+            socDatasets.push({
+              label: "Battery SoC",
+              data: socLast.data,
+              borderColor: "rgb(74, 222, 128)", // green-400
+              backgroundColor: "transparent",
+              yAxisID: "y1",
+              fill: false,
+              borderWidth: 2,
+              pointRadius: 0,
+              tension: 0,
+              order: -1,
+            });
+          }
+
+          return [...powerDatasets, ...socDatasets];
+        })(),
       };
 
   const formatHoverTimestamp = (

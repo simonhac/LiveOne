@@ -156,6 +156,23 @@ export async function fetchAndProcessSiteData(
     );
   }
 
+  // Extract battery SoC series (separate from power series)
+  // For 5m/30m: bidi.battery/soc.last
+  // For 1d: bidi.battery/soc.avg, bidi.battery/soc.min, bidi.battery/soc.max
+  const socSeries = data.data.filter((d: any) => {
+    const path = d.path || "";
+    return (
+      path === "bidi.battery/soc.last" ||
+      path === "bidi.battery/soc.avg" ||
+      path === "bidi.battery/soc.min" ||
+      path === "bidi.battery/soc.max"
+    );
+  });
+  console.log(
+    "[Site Processor] Found SoC series:",
+    socSeries.map((s: any) => s.path),
+  );
+
   // Create a map of available series by their full ID
   const seriesMap = new Map<string, any>();
   powerSeries.forEach((series: any) => {
@@ -494,6 +511,44 @@ export async function fetchAndProcessSiteData(
       console.log(
         `[Site Processor] Calculated total generation from ${seriesData.length} processed series`,
       );
+    }
+
+    // Add battery SoC series if available (only for generation mode)
+    if (mode === "generation") {
+      socSeries.forEach((soc: any) => {
+        const path = soc.path || "";
+
+        // Extract and filter SoC data to selected time range
+        const socValues = selectedIndices.map((i: number) => {
+          const val = soc.history.data[i];
+          return val === null ? null : val; // SoC is already in percentage (0-100)
+        });
+
+        // Determine description based on path
+        let description = "Battery SoC";
+
+        if (path === "bidi.battery/soc.last") {
+          description = "Battery SoC";
+        } else if (path === "bidi.battery/soc.avg") {
+          description = "Battery SoC (Avg)";
+        } else if (path === "bidi.battery/soc.min") {
+          description = "Battery SoC (Min)";
+        } else if (path === "bidi.battery/soc.max") {
+          description = "Battery SoC (Max)";
+        }
+
+        seriesData.push({
+          id: soc.id,
+          description: description,
+          data: socValues,
+          color: "rgb(74, 222, 128)", // green-400
+          seriesType: "soc",
+        });
+
+        console.log(
+          `[Site Processor] ${mode} mode - Added SoC series: ${description}`,
+        );
+      });
     }
 
     // Sort series by order from config

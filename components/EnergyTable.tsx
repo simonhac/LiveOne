@@ -48,8 +48,12 @@ export default function EnergyTable({
   // Use hovered index if available, otherwise use the latest
   const dataIndex = isHovering ? hoveredIndex : chartData.timestamps.length - 1;
 
-  // Build table data from series - maintain consistent order from chart
-  const tableData = chartData.series.map((series) => {
+  // Separate power/energy series from SoC series
+  const powerSeries = chartData.series.filter((s) => s.seriesType !== "soc");
+  const socSeries = chartData.series.filter((s) => s.seriesType === "soc");
+
+  // Build table data from power series only - maintain consistent order from chart
+  const tableData = powerSeries.map((series) => {
     const isVisible = !visibleSeries || visibleSeries.has(series.id);
     return {
       id: series.id,
@@ -61,6 +65,15 @@ export default function EnergyTable({
     };
   });
   // Keep the original order from the chart configuration - no sorting
+
+  // Extract SoC values for display
+  const socLast = socSeries.find((s) => !s.description.includes("("));
+  const socAvg = socSeries.find((s) => s.description.includes("(Avg)"));
+
+  // Show SoC value only when hovering
+  const socValue = isHovering
+    ? (socAvg?.data[dataIndex] ?? socLast?.data[dataIndex]) // Prefer avg (1d), fallback to last (5m/30m)
+    : null; // Show — when not hovering
 
   // Calculate totals (only include visible series)
   // Note: When a master load exists (path="load"), the total should equal the master load
@@ -230,6 +243,29 @@ export default function EnergyTable({
             </span>
           </div>
         </div>
+
+        {/* Battery SoC - show if SoC series exists */}
+        {socSeries.length > 0 && (
+          <div style={{ paddingTop: "20px" }}>
+            <div className="flex items-center text-xs">
+              <div className="flex items-center gap-2 flex-1">
+                <div
+                  className="w-3 h-3 rounded-sm flex-shrink-0"
+                  style={{ backgroundColor: "rgb(74, 222, 128)" }}
+                />
+                <span className="text-gray-300">Battery SoC</span>
+              </div>
+              <span className="text-gray-100 font-mono w-20 text-right">
+                {socValue !== null && socValue !== undefined
+                  ? `${socValue.toFixed(1)}%`
+                  : "—"}
+              </span>
+              <span className="text-gray-400 font-mono w-12 text-right">
+                {/* Always empty - SoC is not a percentage of total */}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
