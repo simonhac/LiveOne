@@ -261,7 +261,13 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[560px]">
+      <DialogContent
+        className="sm:max-w-[560px] max-h-[calc(100vh-100px)] flex flex-col"
+        style={{
+          maxHeight: "min(900px, calc(100vh - 100px))",
+          minHeight: "540px",
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Add System</DialogTitle>
           <DialogDescription>
@@ -269,10 +275,12 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 mt-4">
+        <div className="space-y-4 overflow-y-auto flex-1 min-h-0 px-6 py-2">
           {/* Vendor Selection */}
-          <div className="space-y-2">
-            <Label htmlFor="vendor">System Type</Label>
+          <div>
+            <Label htmlFor="vendor" className="block mb-[10px]">
+              System Type
+            </Label>
             <Select value={selectedVendor} onValueChange={handleVendorChange}>
               <SelectTrigger id="vendor">
                 <SelectValue placeholder="Select a system type" />
@@ -294,8 +302,11 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
           {isComposite && (
             <>
               {/* Composite System Name */}
-              <div className="space-y-2">
-                <Label htmlFor="compositeName">
+              <div>
+                <Label
+                  htmlFor="compositeName"
+                  className="block mt-[16px] mb-[10px]"
+                >
                   System Name
                   <span className="text-red-500 ml-1">*</span>
                 </Label>
@@ -326,10 +337,13 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
 
           {/* Dynamic Credential Fields */}
           {selectedVendorInfo && (
-            <div className="space-y-4">
+            <div className="space-y-5 mt-9">
               {selectedVendorInfo.credentialFields.map((field) => (
-                <div key={field.name} className="space-y-2">
-                  <Label htmlFor={field.name}>
+                <div key={field.name} className="mt-[10px]">
+                  <Label
+                    htmlFor={field.name}
+                    className="block mt-[16px] mb-[10px]"
+                  >
                     {field.label}
                     {field.required && (
                       <span className="text-red-500 ml-1">*</span>
@@ -346,7 +360,9 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
                     disabled={isTesting || isCreating}
                   />
                   {field.helpText && (
-                    <p className="text-xs text-gray-500">{field.helpText}</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {field.helpText}
+                    </p>
                   )}
                 </div>
               ))}
@@ -385,11 +401,12 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
           )}
         </div>
 
-        <div className="flex justify-end gap-2 mt-6">
+        <div className="flex justify-end gap-2 mt-6 flex-shrink-0 px-6 pt-4 border-t border-gray-700">
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
             disabled={isTesting || isCreating}
+            className="w-[140px]"
           >
             Cancel
           </Button>
@@ -400,7 +417,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
               disabled={
                 !compositeName.trim() || !isCompositeDirty || isCreating
               }
-              className="bg-green-600 hover:bg-green-700"
+              className="bg-green-600 hover:bg-green-700 w-[140px]"
             >
               {isCreating ? (
                 <>
@@ -415,6 +432,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
             <Button
               onClick={handleTestConnection}
               disabled={!canTestConnection() || isTesting || isCreating}
+              className="w-[140px]"
             >
               {isTesting ? (
                 <>
@@ -429,7 +447,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
             <Button
               onClick={handleCreateSystem}
               disabled={isCreating}
-              className="bg-green-600 hover:bg-green-700"
+              className="bg-green-600 hover:bg-green-700 w-[140px]"
             >
               {isCreating ? (
                 <>

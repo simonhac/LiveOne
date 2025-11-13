@@ -319,11 +319,41 @@ export default function CompositeTab({
     // Calculate position
     const rect = menuButtonRef.getBoundingClientRect();
     const menuWidth = 320;
-    const menuMaxHeight = 300;
+    const minMargin = 50; // Minimum margin from window edges
+    const gap = 4; // Gap between button and menu
 
-    // Position below the button, aligned to the right
+    // Calculate maximum available height based on window size
+    const spaceBelow = window.innerHeight - rect.bottom - minMargin;
+    const spaceAbove = rect.top - minMargin;
+
+    // Try to position below the button first
+    let positionAbove = false;
+    let menuMaxHeight: number;
+
+    if (spaceBelow >= 200) {
+      // Enough space below
+      menuMaxHeight = Math.min(spaceBelow - gap, 600); // Cap at 600px max
+      positionAbove = false;
+    } else if (spaceAbove >= 200) {
+      // Not enough space below, but enough above
+      menuMaxHeight = Math.min(spaceAbove - gap, 600);
+      positionAbove = true;
+    } else {
+      // Use whichever side has more space
+      if (spaceAbove > spaceBelow) {
+        menuMaxHeight = Math.max(spaceAbove - gap, 150);
+        positionAbove = true;
+      } else {
+        menuMaxHeight = Math.max(spaceBelow - gap, 150);
+        positionAbove = false;
+      }
+    }
+
+    // Position below or above the button, aligned to the right
     let left = rect.right - menuWidth;
-    let top = rect.bottom + 4;
+    let top = positionAbove
+      ? rect.top - menuMaxHeight - gap
+      : rect.bottom + gap;
 
     // Ensure menu doesn't go off left edge
     if (left < 8) {
@@ -333,16 +363,6 @@ export default function CompositeTab({
     // Ensure menu doesn't go off right edge
     if (left + menuWidth > window.innerWidth - 8) {
       left = window.innerWidth - menuWidth - 8;
-    }
-
-    // Ensure menu doesn't go off bottom edge
-    if (top + menuMaxHeight > window.innerHeight - 8) {
-      // Position above the button instead
-      top = rect.top - menuMaxHeight - 4;
-      // If still off screen, position at top of viewport
-      if (top < 8) {
-        top = 8;
-      }
     }
 
     return createPortal(
@@ -356,16 +376,23 @@ export default function CompositeTab({
 
         {/* Menu - must be above backdrop with pointer-events-auto */}
         <div
-          className="fixed z-[10003] bg-gray-900 border border-gray-700 rounded-lg shadow-xl overflow-hidden pointer-events-auto"
+          className="fixed z-[10003] bg-gray-900 border border-gray-700 rounded-lg shadow-xl pointer-events-auto"
           style={{
             left: `${left}px`,
             top: `${top}px`,
             width: `${menuWidth}px`,
-            maxHeight: `${menuMaxHeight}px`,
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="overflow-y-auto max-h-full">
+          <div
+            className="overflow-y-scroll"
+            style={{
+              maxHeight: `${menuMaxHeight}px`,
+              scrollbarWidth: "thin",
+              scrollbarColor: "#4B5563 #1F2937",
+            }}
+            onWheel={(e) => e.stopPropagation()}
+          >
             {availableForCategory.length === 0 ? (
               <div className="px-3 py-2 text-sm text-gray-500">
                 No available {addingToCategory} points from your systems

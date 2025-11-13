@@ -90,7 +90,14 @@ export default function CapabilitiesTab({
       );
       const data = await response.json();
 
-      if (data.headers) {
+      console.log("CapabilitiesTab fetchPoints response:", {
+        hasHeaders: !!data.headers,
+        isArray: Array.isArray(data.headers),
+        headersType: typeof data.headers,
+        data,
+      });
+
+      if (data.headers && Array.isArray(data.headers)) {
         // Convert headers to PointInfo objects, filtering out timestamp and sessionLabel columns
         const pointsData: PointInfo[] = data.headers
           .filter((h: any) => h.key !== "timestamp" && h.key !== "sessionLabel")
