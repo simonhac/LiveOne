@@ -36,6 +36,16 @@ export async function fetchAndProcessSiteData(
     durationMs = 30 * 24 * 60 * 60 * 1000;
   }
 
+  // Build series filter based on interval
+  // For 5m/30m: request power.avg for all series, plus battery SOC.last
+  // For 1d: request power.avg for all series, plus battery SOC min/avg/max
+  let seriesFilter: string;
+  if (requestInterval === "1d") {
+    seriesFilter = "*/power.avg,bidi.battery/soc.{min,avg,max}";
+  } else {
+    seriesFilter = "*/power.avg,bidi.battery/soc.last";
+  }
+
   // Build API URL - use absolute time if provided, otherwise use relative
   let apiUrl: string;
   if (startTime && endTime) {
@@ -50,10 +60,10 @@ export async function fetchAndProcessSiteData(
       end = endTime.split("T")[0];
     }
 
-    apiUrl = `/api/history?interval=${requestInterval}&startTime=${encodeURIComponent(start)}&endTime=${encodeURIComponent(end)}&systemId=${systemId}`;
+    apiUrl = `/api/history?interval=${requestInterval}&startTime=${encodeURIComponent(start)}&endTime=${encodeURIComponent(end)}&systemId=${systemId}&series=${seriesFilter}`;
   } else {
     // Current/live data - use relative time
-    apiUrl = `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId}`;
+    apiUrl = `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId}&series=${seriesFilter}`;
   }
 
   const response = await fetch(apiUrl, {
