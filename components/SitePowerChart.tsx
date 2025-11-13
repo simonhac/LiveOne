@@ -87,7 +87,14 @@ export function parsePath(
 ): { type: string; subtype: string; extension?: string } | null {
   if (!path) return null;
 
-  const parts = path.split(".");
+  // Path format is now: {pointIdentifier}/{flavour}
+  // e.g., "load.hws/power.avg" or "bidi.battery.charge/power.avg"
+  // We need to parse the pointIdentifier part (before the slash)
+  const slashIndex = path.indexOf("/");
+  const pointIdentifier =
+    slashIndex !== -1 ? path.substring(0, slashIndex) : path;
+
+  const parts = pointIdentifier.split(".");
   if (parts.length === 0) return null;
 
   return {
@@ -160,17 +167,21 @@ export function generateSeriesConfig(
       order: loadSeries.length,
     });
 
-    // Add battery charge (negative battery power)
+    // Add battery charge (already split by site-data-processor)
     const batterySeries = availableSeries.find((s) => {
       const parsed = parsePath(s.path);
-      return parsed?.type === "bidi" && parsed?.subtype === "battery";
+      return (
+        parsed?.type === "bidi" &&
+        parsed?.subtype === "battery" &&
+        parsed?.extension === "charge"
+      );
     });
     if (batterySeries) {
       configs.push({
         id: batterySeries.id,
         label: "Battery Charge",
         color: "rgb(34, 211, 238)", // cyan-400
-        dataTransform: (val: number) => (val < 0 ? Math.abs(val) : 0),
+        // No dataTransform needed - site-data-processor already splits and transforms
         order: loadSeries.length + 1,
       });
     }
@@ -219,17 +230,21 @@ export function generateSeriesConfig(
       });
     });
 
-    // Add battery discharge (positive battery power) - before grid import
+    // Add battery discharge (already split by site-data-processor)
     const batterySeries = availableSeries.find((s) => {
       const parsed = parsePath(s.path);
-      return parsed?.type === "bidi" && parsed?.subtype === "battery";
+      return (
+        parsed?.type === "bidi" &&
+        parsed?.subtype === "battery" &&
+        parsed?.extension === "discharge"
+      );
     });
     if (batterySeries) {
       configs.push({
         id: batterySeries.id,
         label: "Battery Discharge",
         color: "rgb(96, 165, 250)", // blue-400
-        dataTransform: (val: number) => (val > 0 ? val : 0),
+        // No dataTransform needed - site-data-processor already splits and transforms
         order: solarSeries.length,
       });
     }

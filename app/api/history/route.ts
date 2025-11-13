@@ -664,6 +664,9 @@ async function getSystemHistoryInOpenNEMFormat(
     const pointPath = fp.point.getIdentifier();
     if (!pointPath) continue;
 
+    // Create full path including flavour (e.g., "bidi.battery/power.avg")
+    const fullPath = `${pointPath}/${flavourIdentifier}`;
+
     // Format timestamps
     const timezoneOffsetMin = system.timezoneOffsetMin ?? 600;
     const startFormatted = formatTime_fromJSDate(
@@ -679,7 +682,7 @@ async function getSystemHistoryInOpenNEMFormat(
       id: seriesId,
       type: "power",
       units: fp.point.metricUnit,
-      path: pointPath,
+      path: fullPath,
       history: {
         start: startFormatted,
         last: endFormatted,

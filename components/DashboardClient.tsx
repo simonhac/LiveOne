@@ -1267,7 +1267,7 @@ export default function DashboardClient({
                       processedHistoryData.load ||
                       processedHistoryData.generation ||
                       system?.vendorType !== "composite") && (
-                      <div className="sm:bg-gray-800 sm:border sm:border-gray-700 sm:rounded overflow-hidden">
+                      <div className="overflow-hidden">
                         {/* Shared header with date/time and period switcher */}
                         <div className="px-2 sm:px-4 pt-2 sm:pt-4 pb-1 sm:pb-2">
                           <div className="flex justify-end items-center">
@@ -1584,7 +1584,7 @@ export default function DashboardClient({
                             });
                             return matrix ? (
                               <div className="sm:p-4">
-                                <h3 className="text-lg font-semibold text-white mb-4 px-2 sm:px-0">
+                                <h3 className="text-sm font-medium text-gray-300 mb-4 px-2 sm:px-0">
                                   Energy Flow
                                 </h3>
                                 <div className="flex justify-center">

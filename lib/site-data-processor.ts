@@ -88,7 +88,7 @@ export async function fetchAndProcessSiteData(
   }
 
   // Process the data once for both charts
-  const powerSeries = data.data.filter((d: any) => d.type === "power");
+  let powerSeries = data.data.filter((d: any) => d.type === "power");
 
   if (powerSeries.length === 0) {
     console.warn("No power series data available in response");
@@ -98,6 +98,62 @@ export async function fetchAndProcessSiteData(
       requestStart: data.requestStart,
       requestEnd: data.requestEnd,
     };
+  }
+
+  // Split battery power into charge and discharge series
+  // Find battery power series (bidi.battery/power.avg or bidi.battery/power.*)
+  const batteryPowerIndex = powerSeries.findIndex((s: any) => {
+    const isBatteryPower = s.path && s.path.startsWith("bidi.battery/power.");
+    return isBatteryPower;
+  });
+
+  if (batteryPowerIndex !== -1) {
+    const batterySeries = powerSeries[batteryPowerIndex];
+
+    // Create charge series (negative values -> positive)
+    const chargeData = batterySeries.history.data.map((v: number | null) =>
+      v !== null && v < 0 ? Math.abs(v) : 0,
+    );
+    const chargeSeries = {
+      ...batterySeries,
+      id: batterySeries.id.replace("/power.", "/power.charge."),
+      path: "bidi.battery.charge",
+      label: "Battery Charge",
+      history: {
+        ...batterySeries.history,
+        data: chargeData,
+      },
+    };
+
+    // Create discharge series (positive values)
+    const dischargeSeries = {
+      ...batterySeries,
+      id: batterySeries.id.replace("/power.", "/power.discharge."),
+      path: "bidi.battery.discharge",
+      label: "Battery Discharge",
+      history: {
+        ...batterySeries.history,
+        data: batterySeries.history.data.map((v: number | null) =>
+          v !== null && v > 0 ? v : 0,
+        ),
+      },
+    };
+
+    // Replace the original battery series with charge and discharge
+    powerSeries = [
+      ...powerSeries.slice(0, batteryPowerIndex),
+      chargeSeries,
+      dischargeSeries,
+      ...powerSeries.slice(batteryPowerIndex + 1),
+    ];
+
+    console.log(
+      "[Site Processor] Split battery into charge and discharge series",
+    );
+  } else {
+    console.log(
+      "[Site Processor] Battery series NOT found - charge/discharge will show as 0",
+    );
   }
 
   // Create a map of available series by their full ID
@@ -313,7 +369,20 @@ export async function fetchAndProcessSiteData(
         } else if (path && type === "bidi" && subtype === "battery") {
           // Battery charge (negative battery power) - capture the transformed values
           batteryChargeValues = seriesValues;
-          console.log(`[Site Processor] Found battery charge: ${config.label}`);
+          console.log(
+            `[Site Processor] Found battery charge: ${config.label}, path="${path}"`,
+          );
+          console.log(
+            `[Site Processor] Battery charge values (first 10):`,
+            seriesValues.slice(0, 10),
+          );
+          console.log(
+            `[Site Processor] Battery charge total:`,
+            seriesValues.reduce(
+              (sum: number | null, v: number | null) => (sum || 0) + (v || 0),
+              0,
+            ),
+          );
         } else if (path && type === "bidi" && subtype === "grid") {
           // Grid export (negative grid power) - capture the transformed values
           gridExportValues = seriesValues;
