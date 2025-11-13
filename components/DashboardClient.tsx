@@ -17,9 +17,9 @@ import { AddSystemDialog } from "@/components/AddSystemDialog";
 import SystemsMenu from "@/components/SystemsMenu";
 import ViewDataModal from "@/components/ViewDataModal";
 import SystemSettingsDialog from "@/components/SystemSettingsDialog";
-import MondoPowerChart, { type ChartData } from "@/components/MondoPowerChart";
+import SitePowerChart, { type ChartData } from "@/components/SitePowerChart";
 import EnergyTable from "@/components/EnergyTable";
-import { fetchAndProcessMondoData } from "@/lib/mondo-data-processor";
+import { fetchAndProcessSiteData } from "@/lib/site-data-processor";
 import EnergyFlowSankey from "@/components/EnergyFlowSankey";
 import { calculateEnergyFlowMatrix } from "@/lib/energy-flow-matrix";
 import PeriodSwitcher from "@/components/PeriodSwitcher";
@@ -230,7 +230,7 @@ export default function DashboardClient({
     return 24 * 60; // 1 day
   };
 
-  const [mondoPeriod, setMondoPeriod] = useState<"1D" | "7D" | "30D">(() => {
+  const [sitePeriod, setSitePeriod] = useState<"1D" | "7D" | "30D">(() => {
     // Initialize from URL params if present, otherwise default to "1D"
     const periodParam = searchParams.get("period");
     if (periodParam === "1D" || periodParam === "7D" || periodParam === "30D") {
@@ -494,12 +494,12 @@ export default function DashboardClient({
     let abortController = new AbortController();
     let timeoutId: NodeJS.Timeout | null = null;
 
-    const fetchMondoData = async () => {
+    const fetchSiteData = async () => {
       setHistoryLoading(true);
       try {
-        const processedData = await fetchAndProcessMondoData(
+        const processedData = await fetchAndProcessSiteData(
           systemId as string,
-          mondoPeriod,
+          sitePeriod,
           historyTimeRange.start,
           historyTimeRange.end,
         );
@@ -550,7 +550,7 @@ export default function DashboardClient({
 
       // Log scheduling details
       console.log(
-        `Scheduling mondo history fetch for ${targetTime.toLocaleTimeString()} (${Math.round(delay / 1000)} seconds from now)`,
+        `Scheduling site history fetch for ${targetTime.toLocaleTimeString()} (${Math.round(delay / 1000)} seconds from now)`,
       );
 
       // Schedule the fetch (but not if delay is negative or too far in future)
@@ -559,7 +559,7 @@ export default function DashboardClient({
           console.log(
             `Fetching Mondo data at ${new Date().toLocaleTimeString()} for system ${systemId}`,
           );
-          fetchMondoData();
+          fetchSiteData();
           // Schedule the next fetch after this one
           scheduleNextFetch();
         }, delay);
@@ -571,7 +571,7 @@ export default function DashboardClient({
         );
         timeoutId = setTimeout(
           () => {
-            fetchMondoData();
+            fetchSiteData();
             scheduleNextFetch();
           },
           5 * 60 * 1000,
@@ -580,7 +580,7 @@ export default function DashboardClient({
     };
 
     // Initial fetch
-    fetchMondoData();
+    fetchSiteData();
 
     // Only schedule subsequent fetches if we're not viewing historical data
     // (i.e., no start/end URL parameters)
@@ -598,7 +598,7 @@ export default function DashboardClient({
     systemId,
     system?.vendorType,
     system?.timezoneOffsetMin,
-    mondoPeriod,
+    sitePeriod,
     historyFetchTrigger,
     historyTimeRange.start,
     historyTimeRange.end,
@@ -610,7 +610,7 @@ export default function DashboardClient({
     const periodParam = searchParams.get("period");
     if (!periodParam) {
       const params = new URLSearchParams(searchParams.toString());
-      params.set("period", mondoPeriod);
+      params.set("period", sitePeriod);
       router.push(`?${params.toString()}`, { scroll: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -656,7 +656,7 @@ export default function DashboardClient({
       // Check if the new end would be past current time or very close to it
       // If we're within one interval of "now", revert to live mode
       const now = new Date();
-      const intervalMs = getPeriodIntervalMinutes(mondoPeriod) * 60 * 1000;
+      const intervalMs = getPeriodIntervalMinutes(sitePeriod) * 60 * 1000;
       if (newEnd.getTime() > now.getTime() - intervalMs) {
         // Revert to live mode - clear start/end/offset from URL
         setHistoryTimeRange({});
@@ -682,7 +682,7 @@ export default function DashboardClient({
       // Update URL with only start (period is already in URL, end can be calculated)
       const offsetMin = system.timezoneOffsetMin ?? 600;
       const params = new URLSearchParams(searchParams.toString());
-      const isDateOnly = mondoPeriod === "30D";
+      const isDateOnly = sitePeriod === "30D";
       params.set("start", encodeUrlDate(newStartISO, offsetMin, isDateOnly));
       params.delete("end"); // Remove end - it's redundant with start + period
       // Only include offset for time-based periods (1D, 7D)
@@ -693,7 +693,7 @@ export default function DashboardClient({
       }
       router.push(`?${params.toString()}`, { scroll: false });
     }
-  }, [historyTimeRange, system, mondoPeriod, searchParams, router]);
+  }, [historyTimeRange, system, sitePeriod, searchParams, router]);
 
   const handlePageOlder = useCallback(() => {
     if (!system) return;
@@ -707,7 +707,7 @@ export default function DashboardClient({
       currentEnd = new Date(historyTimeRange.end);
     } else {
       // In live mode - go back one period from now (rounded to interval boundary)
-      const intervalMinutes = getPeriodIntervalMinutes(mondoPeriod);
+      const intervalMinutes = getPeriodIntervalMinutes(sitePeriod);
 
       // Round current time down to nearest interval boundary
       const now = new Date();
@@ -717,7 +717,7 @@ export default function DashboardClient({
         Math.floor(minutes / intervalMinutes) * intervalMinutes;
       roundedNow.setMinutes(roundedMinutes, 0, 0); // Set seconds and ms to 0
 
-      const duration = getPeriodDuration(mondoPeriod);
+      const duration = getPeriodDuration(sitePeriod);
       currentEnd = roundedNow;
       currentStart = new Date(roundedNow.getTime() - duration);
     }
@@ -738,7 +738,7 @@ export default function DashboardClient({
     // Update URL with only start (period is already in URL, end can be calculated)
     const offsetMin = system.timezoneOffsetMin ?? 600;
     const params = new URLSearchParams(searchParams.toString());
-    const isDateOnly = mondoPeriod === "30D";
+    const isDateOnly = sitePeriod === "30D";
     params.set("start", encodeUrlDate(newStartISO, offsetMin, isDateOnly));
     params.delete("end"); // Remove end - it's redundant with start + period
     if (isDateOnly) {
@@ -751,7 +751,7 @@ export default function DashboardClient({
     system,
     isHistoricalMode,
     historyTimeRange,
-    mondoPeriod,
+    sitePeriod,
     searchParams,
     router,
   ]);
@@ -838,7 +838,7 @@ export default function DashboardClient({
     const handleTouchOutside = (e: TouchEvent) => {
       // Check if the touch target is outside both chart containers
       const target = e.target as HTMLElement;
-      const isInChart = target.closest(".mondo-power-chart-container");
+      const isInChart = target.closest(".site-power-chart-container");
 
       if (!isInChart) {
         setActiveChart(null);
@@ -1287,9 +1287,9 @@ export default function DashboardClient({
                                           hoveredIndex
                                         ] ||
                                         new Date(),
-                                      mondoPeriod === "1D"
+                                      sitePeriod === "1D"
                                         ? "h:mma"
-                                        : mondoPeriod === "7D"
+                                        : sitePeriod === "7D"
                                           ? "EEE, d MMM h:mma"
                                           : "EEE, d MMM",
                                     )
@@ -1325,7 +1325,7 @@ export default function DashboardClient({
                                               {formatDateTimeRange(
                                                 start,
                                                 end,
-                                                mondoPeriod !== "30D",
+                                                sitePeriod !== "30D",
                                               )}
                                             </span>
                                             <span className="sm:hidden">
@@ -1364,7 +1364,7 @@ export default function DashboardClient({
                                                 {formatDateTimeRange(
                                                   start,
                                                   end,
-                                                  mondoPeriod !== "30D",
+                                                  sitePeriod !== "30D",
                                                 )}
                                               </span>
                                               <span className="sm:hidden">
@@ -1380,9 +1380,9 @@ export default function DashboardClient({
                                           // Fallback to current time if not in historical mode
                                           const now = new Date();
                                           let windowHours: number;
-                                          if (mondoPeriod === "1D")
+                                          if (sitePeriod === "1D")
                                             windowHours = 24;
-                                          else if (mondoPeriod === "7D")
+                                          else if (sitePeriod === "7D")
                                             windowHours = 24 * 7;
                                           else windowHours = 24 * 30;
                                           const windowStart = new Date(
@@ -1403,7 +1403,7 @@ export default function DashboardClient({
                                                 {formatDateTimeRange(
                                                   start,
                                                   end,
-                                                  mondoPeriod !== "30D",
+                                                  sitePeriod !== "30D",
                                                 )}
                                               </span>
                                               <span className="sm:hidden">
@@ -1441,9 +1441,9 @@ export default function DashboardClient({
                                 </button>
                               </div>
                               <PeriodSwitcher
-                                value={mondoPeriod}
+                                value={sitePeriod}
                                 onChange={(newPeriod) => {
-                                  setMondoPeriod(newPeriod);
+                                  setSitePeriod(newPeriod);
                                   setHistoryTimeRange({}); // Reset to current when period changes
                                   setHistoryFetchTrigger((prev) => prev + 1); // Trigger data refetch
                                   const params = new URLSearchParams(
@@ -1466,14 +1466,14 @@ export default function DashboardClient({
                         <div className="px-2 sm:px-4 pt-1 sm:pt-2 pb-2 sm:pb-4">
                           <div className="flex flex-col md:flex-row md:gap-4">
                             <div className="flex-1 min-w-0">
-                              <MondoPowerChart
+                              <SitePowerChart
                                 systemId={parseInt(systemId as string)}
                                 mode="load"
                                 title="Loads"
                                 className="h-full min-h-[375px]"
-                                period={mondoPeriod}
+                                period={sitePeriod}
                                 onPeriodChange={(newPeriod) => {
-                                  setMondoPeriod(newPeriod);
+                                  setSitePeriod(newPeriod);
                                   setHistoryTimeRange({}); // Reset to current when period changes
                                   const params = new URLSearchParams(
                                     searchParams.toString(),
@@ -1521,14 +1521,14 @@ export default function DashboardClient({
                         <div className="p-2 sm:p-4">
                           <div className="flex flex-col md:flex-row md:gap-4">
                             <div className="flex-1 min-w-0">
-                              <MondoPowerChart
+                              <SitePowerChart
                                 systemId={parseInt(systemId as string)}
                                 mode="generation"
                                 title="Generation"
                                 className="h-full min-h-[375px]"
-                                period={mondoPeriod}
+                                period={sitePeriod}
                                 onPeriodChange={(newPeriod) => {
-                                  setMondoPeriod(newPeriod);
+                                  setSitePeriod(newPeriod);
                                   setHistoryTimeRange({}); // Reset to current when period changes
                                   const params = new URLSearchParams(
                                     searchParams.toString(),

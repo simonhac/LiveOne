@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef } from "react";
-import { SeriesData } from "./MondoPowerChart";
+import { SeriesData } from "./SitePowerChart";
 import { calculateSeriesEnergy } from "@/lib/energy-calculator";
 
 interface EnergyTableProps {

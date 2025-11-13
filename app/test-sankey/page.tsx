@@ -13,14 +13,14 @@ export default function TestSankeyPage() {
     // Fetch and process data for system 6, 1 day period
     (async () => {
       try {
-        const { fetchAndProcessMondoData } = await import(
-          "@/lib/mondo-data-processor"
+        const { fetchAndProcessSiteData } = await import(
+          "@/lib/site-data-processor"
         );
         const { calculateEnergyFlowMatrix } = await import(
           "@/lib/energy-flow-matrix"
         );
 
-        const processedData = await fetchAndProcessMondoData("6", "1D");
+        const processedData = await fetchAndProcessSiteData("6", "1D");
 
         if (!processedData.generation || !processedData.load) {
           throw new Error("No generation or load data available");

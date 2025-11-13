@@ -3,12 +3,12 @@ import {
   calculateEnergyFlowMatrix,
   EnergyFlowMatrix,
 } from "../energy-flow-matrix";
-import { ProcessedMondoData } from "../mondo-data-processor";
-import { ChartData } from "@/components/MondoPowerChart";
+import { ProcessedSiteData } from "../site-data-processor";
+import { ChartData } from "@/components/SitePowerChart";
 
 describe("calculateEnergyFlowMatrix", () => {
   it("should return null for missing generation or load data", () => {
-    const data: ProcessedMondoData = {
+    const data: ProcessedSiteData = {
       generation: null,
       load: null,
     };
@@ -18,7 +18,7 @@ describe("calculateEnergyFlowMatrix", () => {
   });
 
   it("should return null for empty series", () => {
-    const data: ProcessedMondoData = {
+    const data: ProcessedSiteData = {
       generation: {
         timestamps: [],
         series: [],
@@ -42,7 +42,7 @@ describe("calculateEnergyFlowMatrix", () => {
       new Date("2025-01-01T13:00:00Z"),
     ];
 
-    const data: ProcessedMondoData = {
+    const data: ProcessedSiteData = {
       generation: {
         timestamps,
         series: [
@@ -88,7 +88,7 @@ describe("calculateEnergyFlowMatrix", () => {
       new Date("2025-01-01T13:00:00Z"),
     ];
 
-    const data: ProcessedMondoData = {
+    const data: ProcessedSiteData = {
       generation: {
         timestamps,
         series: [
@@ -146,7 +146,7 @@ describe("calculateEnergyFlowMatrix", () => {
       new Date("2025-01-01T13:00:00Z"),
     ];
 
-    const data: ProcessedMondoData = {
+    const data: ProcessedSiteData = {
       generation: {
         timestamps,
         series: [
@@ -201,7 +201,7 @@ describe("calculateEnergyFlowMatrix", () => {
       new Date("2025-01-01T13:00:00Z"),
     ];
 
-    const data: ProcessedMondoData = {
+    const data: ProcessedSiteData = {
       generation: {
         timestamps,
         series: [
@@ -245,7 +245,7 @@ describe("calculateEnergyFlowMatrix", () => {
       new Date("2025-01-01T14:00:00Z"),
     ];
 
-    const data: ProcessedMondoData = {
+    const data: ProcessedSiteData = {
       generation: {
         timestamps,
         series: [
@@ -289,7 +289,7 @@ describe("calculateEnergyFlowMatrix", () => {
       new Date("2025-01-01T13:00:00Z"),
     ];
 
-    const data: ProcessedMondoData = {
+    const data: ProcessedSiteData = {
       generation: {
         timestamps,
         series: [
@@ -358,7 +358,7 @@ describe("calculateEnergyFlowMatrix", () => {
       new Date("2025-01-01T13:00:00Z"),
     ];
 
-    const data: ProcessedMondoData = {
+    const data: ProcessedSiteData = {
       generation: {
         timestamps,
         series: [

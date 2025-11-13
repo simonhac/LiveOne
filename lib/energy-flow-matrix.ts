@@ -1,4 +1,4 @@
-import { ProcessedMondoData } from "./mondo-data-processor";
+import { ProcessedSiteData } from "./site-data-processor";
 
 /**
  * Represents a source or load in the energy flow matrix
@@ -38,7 +38,7 @@ export interface EnergyFlowMatrix {
  * @returns Energy flow matrix with cumulative energy from each source to each load
  */
 export function calculateEnergyFlowMatrix(
-  data: ProcessedMondoData,
+  data: ProcessedSiteData,
 ): EnergyFlowMatrix | null {
   // Validate input
   if (!data.generation || !data.load) {

@@ -2,21 +2,21 @@ import {
   ChartData,
   SeriesData,
   generateSeriesConfig,
-} from "@/components/MondoPowerChart";
+} from "@/components/SitePowerChart";
 
-export interface ProcessedMondoData {
+export interface ProcessedSiteData {
   load: ChartData | null;
   generation: ChartData | null;
   requestStart?: string;
   requestEnd?: string;
 }
 
-export async function fetchAndProcessMondoData(
+export async function fetchAndProcessSiteData(
   systemId: string,
   period: "1D" | "7D" | "30D",
   startTime?: string,
   endTime?: string,
-): Promise<ProcessedMondoData> {
+): Promise<ProcessedSiteData> {
   // Map period to request parameters
   let requestInterval: string;
   let duration: string;
@@ -96,7 +96,7 @@ export async function fetchAndProcessMondoData(
     seriesMap.set(series.id, series);
   });
   console.log(
-    "[Mondo Processor] Available series IDs in data:",
+    "[Site Processor] Available series IDs in data:",
     Array.from(seriesMap.keys()),
   );
 
@@ -179,21 +179,21 @@ export async function fetchAndProcessMondoData(
     .map(({ index }: { time: Date; index: number }) => index);
 
   console.log(
-    `[Mondo Processor] Time window: ${windowStart.toISOString()} to ${windowEnd.toISOString()}`,
+    `[Site Processor] Time window: ${windowStart.toISOString()} to ${windowEnd.toISOString()}`,
   );
   console.log(
-    `[Mondo Processor] Total timestamps: ${timestamps.length}, Selected: ${selectedIndices.length}`,
+    `[Site Processor] Total timestamps: ${timestamps.length}, Selected: ${selectedIndices.length}`,
   );
   if (timestamps.length > 0) {
     console.log(
-      `[Mondo Processor] First timestamp: ${timestamps[0].toISOString()}, Last: ${timestamps[timestamps.length - 1].toISOString()}`,
+      `[Site Processor] First timestamp: ${timestamps[0].toISOString()}, Last: ${timestamps[timestamps.length - 1].toISOString()}`,
     );
   }
 
   const filteredTimestamps = selectedIndices.map((i: number) => timestamps[i]);
 
   // Process data for both load and generation modes
-  const processedData: ProcessedMondoData = {
+  const processedData: ProcessedSiteData = {
     load: null,
     generation: null,
   };
@@ -207,7 +207,7 @@ export async function fetchAndProcessMondoData(
     // Generate series configuration dynamically from available data
     const seriesConfig = generateSeriesConfig(powerSeries, mode);
     console.log(
-      `[Mondo Processor] ${mode} mode - Generated ${seriesConfig.length} series configs:`,
+      `[Site Processor] ${mode} mode - Generated ${seriesConfig.length} series configs:`,
       seriesConfig.map((c) => ({ id: c.id, label: c.label })),
     );
     const seriesData: SeriesData[] = [];
@@ -215,6 +215,8 @@ export async function fetchAndProcessMondoData(
     // For rest of house calculation
     let masterLoadValues: (number | null)[] | null = null; // Master load (path="load")
     let childLoadsSum: (number | null)[] | null = null; // Sum of child loads (path="load.xxx")
+    let batteryChargeValues: (number | null)[] | null = null; // Battery charge (negative battery power)
+    let gridExportValues: (number | null)[] | null = null; // Grid export (negative grid power)
 
     // Process each configured series
     seriesConfig.forEach((config) => {
@@ -228,7 +230,7 @@ export async function fetchAndProcessMondoData(
       const dataSeries = seriesMap.get(config.id);
       if (!dataSeries) {
         console.log(
-          `[Mondo Processor] ${mode} mode - Series not found in data:`,
+          `[Site Processor] ${mode} mode - Series not found in data:`,
           config.id,
         );
         return; // Skip if series not found in data
@@ -269,7 +271,7 @@ export async function fetchAndProcessMondoData(
         color: config.color,
       });
       console.log(
-        `[Mondo Processor] ${mode} mode - Added series ${config.label} with ${seriesValues.length} data points`,
+        `[Site Processor] ${mode} mode - Added series ${config.label} with ${seriesValues.length} data points`,
       );
 
       // Accumulate values for rest of house calculation (load mode)
@@ -283,7 +285,7 @@ export async function fetchAndProcessMondoData(
           if (subtype === undefined || subtype === "") {
             // Master load (path = "load" exactly)
             masterLoadValues = seriesValues;
-            console.log(`[Mondo Processor] Found master load: ${config.label}`);
+            console.log(`[Site Processor] Found master load: ${config.label}`);
           } else {
             // Child load (path = "load.xxx")
             if (childLoadsSum === null) {
@@ -296,8 +298,16 @@ export async function fetchAndProcessMondoData(
                 childLoadsSum![idx] = null;
               }
             });
-            console.log(`[Mondo Processor] Added child load: ${config.label}`);
+            console.log(`[Site Processor] Added child load: ${config.label}`);
           }
+        } else if (path && type === "bidi" && subtype === "battery") {
+          // Battery charge (negative battery power) - capture the transformed values
+          batteryChargeValues = seriesValues;
+          console.log(`[Site Processor] Found battery charge: ${config.label}`);
+        } else if (path && type === "bidi" && subtype === "grid") {
+          // Grid export (negative grid power) - capture the transformed values
+          gridExportValues = seriesValues;
+          console.log(`[Site Processor] Found grid export: ${config.label}`);
         } else if (!path) {
           // No path information - sum ALL loads for Case 3 calculation
           // (All series in load mode are loads by definition)
@@ -339,30 +349,35 @@ export async function fetchAndProcessMondoData(
           color: "rgb(107, 114, 128)", // gray-500
         });
         console.log(
-          `[Mondo Processor] Case 1: Added rest of house (master load - child loads)`,
+          `[Site Processor] Case 1: Added rest of house (master load - child loads)`,
         );
       }
       // Case 2: Master load exists WITHOUT child loads
       else if (masterLoadValues !== null && childLoadsSum === null) {
         console.log(
-          `[Mondo Processor] Case 2: Master load exists but no child loads - skipping rest of house`,
+          `[Site Processor] Case 2: Master load exists but no child loads - skipping rest of house`,
         );
       }
-      // Case 3: No master load, but we have child loads
-      else if (
-        masterLoadValues === null &&
-        childLoadsSum !== null &&
-        totalGenerationValues !== null
-      ) {
-        const children: (number | null)[] = childLoadsSum;
+      // Case 3: No master load, but we have generation data
+      // Calculate: Rest of House = Total Generation - Battery Charge - Grid Export - Known Child Loads
+      else if (masterLoadValues === null && totalGenerationValues !== null) {
         const generation: (number | null)[] = totalGenerationValues;
+        const children: (number | null)[] = childLoadsSum || [];
+        const batteryCharge: (number | null)[] = batteryChargeValues || [];
+        const gridExport: (number | null)[] = gridExportValues || [];
 
-        // Rest of House = Total Generation - Sum of Known Child Loads
+        // Rest of House = Total Generation - Battery Charge - Grid Export - Sum of Known Child Loads
         const restOfHouse: (number | null)[] = generation.map(
           (totalGen: number | null, idx: number) => {
-            const childSum = children[idx];
-            if (totalGen === null || childSum === null) return null;
-            const rest = totalGen - childSum;
+            if (totalGen === null) return null;
+
+            const childSum = children[idx] || 0;
+            const batteryChargeVal = batteryCharge[idx] || 0;
+            const gridExportVal = gridExport[idx] || 0;
+
+            // If any component is null, treat as 0 for the calculation
+            // (We still want to show rest of house even if some components are missing)
+            const rest = totalGen - batteryChargeVal - gridExportVal - childSum;
             return Math.max(0, rest); // Don't show negative values
           },
         );
@@ -374,11 +389,11 @@ export async function fetchAndProcessMondoData(
           color: "rgb(107, 114, 128)", // gray-500
         });
         console.log(
-          `[Mondo Processor] Case 3: Added rest of house (total generation - known loads)`,
+          `[Site Processor] Case 3: Added rest of house (generation - battery charge - grid export - known loads)`,
         );
       } else {
         console.log(
-          `[Mondo Processor] Cannot calculate rest of house - insufficient data`,
+          `[Site Processor] Cannot calculate rest of house - insufficient data`,
         );
       }
     }
@@ -398,7 +413,7 @@ export async function fetchAndProcessMondoData(
         });
       });
       console.log(
-        `[Mondo Processor] Calculated total generation from ${seriesData.length} processed series`,
+        `[Site Processor] Calculated total generation from ${seriesData.length} processed series`,
       );
     }
 

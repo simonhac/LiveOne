@@ -1,10 +1,10 @@
 # Load Calculations
 
-This document describes how load calculations work in the mondo data processor, particularly the "Rest of House" calculation.
+This document describes how load calculations work in the site data processor, particularly the "Rest of House" calculation.
 
 ## Overview
 
-The mondo data processor (`lib/mondo-data-processor.ts`) processes power data from various sources (generation, loads, battery) and prepares it for visualization in charts. One important calculated metric is "Rest of House" which represents unmeasured load.
+The site data processor (`lib/site-data-processor.ts`) processes power data from various sources (generation, loads, battery) and prepares it for visualization in charts. One important calculated metric is "Rest of House" which represents unmeasured load.
 
 ## Rest of House Calculation
 
@@ -43,31 +43,33 @@ Rest of House = Master Load - Sum(Child Loads)
 
 ---
 
-#### Case 3: No Master Load, WITH Child Loads
+#### Case 3: No Master Load, WITH Generation Data
 
-**Condition**: System has NO master load point but HAS individual load measurements (path="load.xxx") AND generation data
+**Condition**: System has NO master load point but HAS generation data (and optionally individual load measurements)
 
 **Calculation**:
 
 ```
-Rest of House = Total Generation - Sum(Known Loads)
+Rest of House = Total Generation - Battery Charge - Grid Export - Sum(Known Circuit Loads)
 ```
 
 **Example**:
 
-- Solar Generation: 6 kW
-- Heat Pump (load.heat_pump): 3 kW
-- EV Charger (load.ev_charger): 1 kW
-- Rest of House: 6 - (3 + 1) = 2 kW
+- Solar Generation: 8.9 kW
+- Battery Charge: 8.2 kW
+- Grid Export: 0.1 kW
+- Known Circuit Loads: 0 kW (no circuit monitors)
+- Rest of House: 8.9 - 8.2 - 0.1 - 0 = 0.6 kW
 
-**Use Case**: Systems without whole-house monitoring but with generation metering and selected circuit monitors. The difference between what's being generated and what's measured on individual circuits represents unmeasured load.
+**Use Case**: Systems without whole-house monitoring but with generation metering and optionally selected circuit monitors. The calculation determines unmeasured load by accounting for where the generation is going (battery, grid, measured loads, and the remainder).
 
 **Implementation Notes**:
 
-- Total Generation is calculated by summing ALL series in generation mode (including battery discharge and grid import)
-- Known Loads is calculated by summing ALL series in load mode (including battery charge and grid export)
-- If path information is missing, all series in load mode are treated as loads to be summed
-- Battery and grid are handled correctly through their bidirectional transformations in the series configuration
+- Total Generation is calculated by summing ALL series in generation mode (solar, battery discharge, grid import)
+- Battery Charge and Grid Export are tracked separately from their raw bidi series (negative values transformed to positive)
+- Known Circuit Loads only includes series with path="load.xxx"
+- If any component (battery charge, grid export, or known loads) is missing, it's treated as 0
+- This ensures the energy balance: Generation = Battery Charge + Grid Export + Measured Loads + Rest of House
 
 ---
 
@@ -75,7 +77,7 @@ Rest of House = Total Generation - Sum(Known Loads)
 
 ### Code Location
 
-The calculation is performed in `lib/mondo-data-processor.ts`:
+The calculation is performed in `lib/site-data-processor.ts`:
 
 1. **Lines 204-205**: Process generation mode BEFORE load mode (required for Case 3)
 2. **Lines 368-384**: Calculate total generation from all processed generation series

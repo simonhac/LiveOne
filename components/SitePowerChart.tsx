@@ -22,8 +22,6 @@ import { Line, Bar } from "react-chartjs-2";
 import { format } from "date-fns";
 import "chartjs-adapter-date-fns";
 import annotationPlugin from "chartjs-plugin-annotation";
-import { formatDateTime } from "@/lib/fe-date-format";
-import { fromUnixTimestamp } from "@/lib/date-utils";
 import { CalendarX2 } from "lucide-react";
 
 // Register Chart.js components
@@ -41,7 +39,7 @@ ChartJS.register(
   annotationPlugin,
 );
 
-interface MondoPowerChartProps {
+interface SitePowerChartProps {
   className?: string;
   systemId: number;
   mode: "load" | "generation";
@@ -255,7 +253,7 @@ export function generateSeriesConfig(
   return configs;
 }
 
-export default function MondoPowerChart({
+export default function SitePowerChart({
   className = "",
   systemId,
   mode,
@@ -271,13 +269,12 @@ export default function MondoPowerChart({
   onVisibilityChange,
   data: externalData,
   isLoading: externalIsLoading,
-}: MondoPowerChartProps) {
+}: SitePowerChartProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [chartData, setChartData] = useState<ChartData | null>(null);
   const [loading, setLoading] = useState(true);
   const [showSpinner, setShowSpinner] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [serverError, setServerError] = useState<{
     type: "connection" | "server" | null;
     details?: string;
@@ -627,353 +624,6 @@ export default function MondoPowerChart({
     }
   }, [chartData, onDataChange]);
 
-  useEffect(() => {
-    // Skip fetching if we're using external data
-    if (externalData !== undefined) return;
-
-    // Capture current visibility state at the start of the effect
-    const currentVisibleSeries = externalVisibleSeries ?? internalVisibleSeries;
-
-    let abortController = new AbortController();
-
-    const fetchData = async () => {
-      abortController = new AbortController();
-
-      try {
-        let requestInterval: string;
-        let duration: string;
-
-        if (timeRange === "1D") {
-          requestInterval = "5m";
-          duration = "24h";
-        } else if (timeRange === "7D") {
-          requestInterval = "30m";
-          duration = "168h";
-        } else {
-          requestInterval = "1d";
-          duration = "30d";
-        }
-
-        // Build series filter based on mode
-        let seriesFilter: string;
-        if (mode === "load") {
-          // Load mode: load.*, bidi.battery/power.*, bidi.grid/power.*
-          seriesFilter = "load*/power.*,bidi.battery/power.*,bidi.grid/power.*";
-        } else {
-          // Generation mode: source.solar/power.*, bidi.battery/power.*, bidi.grid/power.*
-          seriesFilter =
-            "source.solar*/power.*,bidi.battery/power.*,bidi.grid/power.*";
-        }
-
-        const apiUrl = `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId.toString()}&series=${encodeURIComponent(seriesFilter)}`;
-
-        const response = await fetch(apiUrl, {
-          credentials: "same-origin",
-          signal: abortController.signal,
-        });
-
-        if (!response.ok) {
-          const contentType = response.headers.get("content-type");
-          if (contentType && !contentType.includes("application/json")) {
-            throw new Error("Session expired - please refresh the page");
-          }
-          if (response.status === 401) {
-            throw new Error("Not authenticated - please log in");
-          }
-          throw new Error(`Failed to fetch data: ${response.status}`);
-        }
-
-        const data = await response.json();
-
-        const isEnergyMode = requestInterval === "1d";
-
-        // Filter to only power series
-        const powerSeries = data.data.filter((d: any) => d.type === "power");
-
-        // Generate series configuration dynamically from available data
-        const seriesConfig = generateSeriesConfig(powerSeries, mode);
-
-        // Initialize visible series if not set yet
-        if (currentVisibleSeries.size === 0) {
-          const newVisibleSeries = new Set(seriesConfig.map((s) => s.id));
-          setInternalVisibleSeries(newVisibleSeries);
-          if (onVisibilityChange) {
-            onVisibilityChange(newVisibleSeries);
-          }
-        }
-
-        // Create a map of available series by their full ID
-        const seriesMap = new Map<string, any>();
-        powerSeries.forEach((series: any) => {
-          seriesMap.set(series.id, series);
-        });
-
-        // Get first available series to extract timestamps
-        const firstSeries = powerSeries[0];
-        if (!firstSeries) {
-          throw new Error("No data series available");
-        }
-        const startTimeString = firstSeries.history.start;
-        const startTime = new Date(startTimeString);
-        const interval = firstSeries.history.interval;
-
-        let intervalMs: number;
-        if (interval === "1d") {
-          intervalMs = 24 * 60 * 60000;
-        } else if (interval === "30m") {
-          intervalMs = 30 * 60000;
-        } else if (interval === "5m") {
-          intervalMs = 5 * 60000;
-        } else if (interval === "1m") {
-          intervalMs = 60000;
-        } else {
-          throw new Error(`Unsupported interval: ${interval}`);
-        }
-
-        const timestamps = firstSeries.history.data.map(
-          (_: any, index: number) =>
-            new Date(startTime.getTime() + index * intervalMs),
-        );
-
-        // Filter to selected time range
-        const currentTime = new Date();
-        let windowHours: number;
-        if (timeRange === "1D") {
-          windowHours = 24;
-        } else if (timeRange === "7D") {
-          windowHours = 24 * 7;
-        } else {
-          windowHours = 24 * 30;
-        }
-        const windowStart = new Date(
-          currentTime.getTime() - windowHours * 60 * 60 * 1000,
-        );
-
-        const selectedIndices = timestamps
-          .map((t: Date, i: number) => ({ time: t, index: i }))
-          .filter(
-            ({ time }: { time: Date; index: number }) =>
-              time >= windowStart && time <= currentTime,
-          )
-          .map(({ index }: { time: Date; index: number }) => index);
-
-        // Build series data based on configuration
-        const seriesData: SeriesData[] = [];
-
-        // For rest of house calculation, we'll need to accumulate values
-        let measuredLoadsSum: (number | null)[] | null = null;
-        let batteryChargeValues: (number | null)[] | null = null;
-        let gridExportValues: (number | null)[] | null = null;
-        let totalGenerationValues: (number | null)[] | null = null;
-
-        // Process each configured series
-        seriesConfig.forEach((config) => {
-          // Special handling for calculated series
-          if (config.id === "rest_of_house" && mode === "load") {
-            // We'll calculate this after processing all other series
-            return;
-          }
-
-          // Find the matching series in our data
-          const dataSeries = seriesMap.get(config.id);
-          if (!dataSeries) return; // Skip if series not found in data
-
-          // Extract the data for selected indices and convert from W to kW
-          let seriesValues = selectedIndices.map((i: number) => {
-            const val = dataSeries.history.data[i];
-            return val === null ? null : val / 1000; // Convert W to kW
-          });
-
-          // Apply any data transformation (e.g., for battery/grid positive/negative split)
-          if (config.dataTransform) {
-            seriesValues = seriesValues.map((val: number | null) =>
-              val === null ? null : config.dataTransform!(val),
-            );
-          }
-
-          // Accumulate values for rest of house calculation (load mode)
-          if (mode === "load") {
-            const series = seriesMap.get(config.id);
-            const parsed = parsePath(series?.path);
-            if (parsed?.type === "load") {
-              // Accumulate measured loads
-              if (!measuredLoadsSum) {
-                measuredLoadsSum = seriesValues.slice();
-              } else {
-                seriesValues.forEach((val: number | null, idx: number) => {
-                  if (measuredLoadsSum![idx] === null || val === null) {
-                    measuredLoadsSum![idx] = null;
-                  } else {
-                    measuredLoadsSum![idx] =
-                      (measuredLoadsSum![idx] ?? 0) + (val ?? 0);
-                  }
-                });
-              }
-            } else if (
-              parsed?.type === "bidi" &&
-              parsed?.subtype === "battery" &&
-              config.label === "Battery Charge"
-            ) {
-              batteryChargeValues = seriesValues;
-            } else if (
-              parsed?.type === "bidi" &&
-              parsed?.subtype === "grid" &&
-              config.label === "Grid Export"
-            ) {
-              gridExportValues = seriesValues;
-            }
-          }
-
-          seriesData.push({
-            id: config.id,
-            description: config.label,
-            data: seriesValues,
-            color: config.color,
-          });
-        });
-
-        // Calculate rest of house for load mode
-        if (mode === "load") {
-          // Find solar, grid, and battery series using the new structure
-          const solarSeriesList = Array.from(seriesMap.values()).filter((s) => {
-            const parsed = parsePath(s.path);
-            return parsed?.type === "source" && parsed?.subtype === "solar";
-          });
-
-          const gridSeries = Array.from(seriesMap.values()).find((s) => {
-            const parsed = parsePath(s.path);
-            return parsed?.type === "bidi" && parsed?.subtype === "grid";
-          });
-
-          const battSeries = Array.from(seriesMap.values()).find((s) => {
-            const parsed = parsePath(s.path);
-            return parsed?.type === "bidi" && parsed?.subtype === "battery";
-          });
-
-          if (solarSeriesList.length > 0 || gridSeries || battSeries) {
-            totalGenerationValues = selectedIndices.map((i: number) => {
-              // Sum all solar arrays
-              let totalSolar = 0;
-              let hasNullSolar = false;
-              for (const solarSeries of solarSeriesList) {
-                const solarRaw = solarSeries.history.data[i];
-                if (solarRaw === null) {
-                  hasNullSolar = true;
-                  break;
-                }
-                totalSolar += solarRaw / 1000; // Convert W to kW
-              }
-
-              const gridValRaw = gridSeries ? gridSeries.history.data[i] : 0;
-              const battValRaw = battSeries ? battSeries.history.data[i] : 0;
-
-              // If any critical value is null, we can't calculate total
-              if (hasNullSolar || gridValRaw === null || battValRaw === null) {
-                return null;
-              }
-
-              // Convert from W to kW
-              const gridVal = gridValRaw / 1000;
-              const battVal = battValRaw / 1000;
-
-              const gridImport = Math.max(0, gridVal);
-              const battDischarge = Math.max(0, battVal);
-              return totalSolar + gridImport + battDischarge;
-            });
-
-            // Calculate rest of house: Total Generation - (Measured Loads + Battery Charge + Grid Export)
-            const restOfHouseValues = selectedIndices.map(
-              (_: number, idx: number) => {
-                const totalGen = totalGenerationValues![idx];
-                const measuredLoads = measuredLoadsSum?.[idx];
-                const battCharge = batteryChargeValues?.[idx];
-                const gridExp = gridExportValues?.[idx];
-
-                // If any component is null, we can't calculate rest of house
-                if (
-                  totalGen === null ||
-                  measuredLoads === null ||
-                  battCharge === null ||
-                  gridExp === null
-                ) {
-                  return null;
-                }
-
-                const restOfHouse =
-                  totalGen -
-                  ((measuredLoads ?? 0) + (battCharge ?? 0) + (gridExp ?? 0));
-                // Only show positive values (negative would indicate measurement error)
-                return Math.max(0, restOfHouse);
-              },
-            );
-
-            // Add rest of house to series data
-            const restOfHouseConfig = seriesConfig.find(
-              (c) => c.id === "rest_of_house",
-            );
-            if (restOfHouseConfig) {
-              seriesData.push({
-                id: "rest_of_house",
-                description: restOfHouseConfig.label,
-                data: restOfHouseValues,
-                color: restOfHouseConfig.color,
-              });
-            }
-          }
-        }
-
-        // Sort by order property
-        seriesData.sort((a, b) => {
-          const aConfig = seriesConfig.find((c) => c.id === a.id);
-          const bConfig = seriesConfig.find((c) => c.id === b.id);
-          return (aConfig?.order ?? 999) - (bConfig?.order ?? 999);
-        });
-
-        if (seriesData.length === 0) {
-          throw new Error("No data series available for the selected mode");
-        }
-
-        setChartData({
-          timestamps: selectedIndices.map((i: number) => timestamps[i]),
-          series: seriesData,
-          mode: isEnergyMode ? "energy" : "power",
-        });
-        setLoading(false);
-      } catch (err: any) {
-        if (err.name === "AbortError") {
-          return;
-        }
-        console.error("Error fetching chart data:", err);
-
-        if (err instanceof TypeError && err.message === "Failed to fetch") {
-          setServerError({ type: "connection" });
-          setError("Unable to connect to server");
-        } else {
-          setError(
-            err instanceof Error ? err.message : "Failed to load chart data",
-          );
-        }
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-    const interval = setInterval(fetchData, 60000);
-
-    return () => {
-      clearInterval(interval);
-      abortController.abort();
-    };
-  }, [
-    timeRange,
-    systemId,
-    mode,
-    externalData,
-    externalVisibleSeries,
-    internalVisibleSeries,
-    onVisibilityChange,
-  ]);
-
   const data: any = !chartData
     ? {}
     : {
@@ -1059,14 +709,12 @@ export default function MondoPowerChart({
       return <div className="flex-1 min-h-0" />;
     }
 
-    if (error || !chartData) {
+    if (!chartData) {
       return (
         <div className="flex-1 flex items-center justify-center min-h-0">
           <div className="flex flex-col items-center gap-3">
             <CalendarX2 className="w-12 h-12 text-gray-500" />
-            <p className="text-sm text-gray-300">
-              {error ? "Unable to load data" : "No data available"}
-            </p>
+            <p className="text-sm text-gray-300">No data available</p>
           </div>
         </div>
       );
@@ -1088,7 +736,7 @@ export default function MondoPowerChart({
 
   return (
     <div
-      className={`flex flex-col mondo-power-chart-container ${className}`}
+      className={`flex flex-col site-power-chart-container ${className}`}
       onMouseLeave={handleMouseLeave}
     >
       <div className="flex justify-between items-center mb-2 md:mb-3 px-1 md:px-0">
