@@ -678,7 +678,7 @@ async function getSystemHistoryInOpenNEMFormat(
     allSeries.push({
       id: seriesId,
       type: "power",
-      units: fp.point.metricUnit === "W" ? "MW" : "",
+      units: fp.point.metricUnit,
       path: pointPath,
       history: {
         start: startFormatted,
