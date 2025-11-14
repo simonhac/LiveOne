@@ -54,14 +54,17 @@ The application uses a shared Upstash Redis instance for both development and pr
 **Structure:**
 
 ```typescript
-[100, 101, 102]; // Array of composite system IDs
+{
+  subscribers: [100, 101, 102], // Array of composite system IDs
+  lastUpdatedMs: 1731627600000  // Unix timestamp in milliseconds when registry was last updated
+}
 ```
 
 **Example:**
 
 - Key: `subscriptions:system:6`
-- Value: `[100, 101]`
-- Meaning: Systems 100 and 101 are composite systems that use points from system 6
+- Value: `{ subscribers: [100, 101], lastUpdatedMs: 1731627600000 }`
+- Meaning: Systems 100 and 101 are composite systems that use points from system 6, registry last updated at timestamp
 
 **Usage:**
 
@@ -82,13 +85,16 @@ The application uses a shared Upstash Redis instance for both development and pr
 **Structure:**
 
 ```typescript
-"user_31xcrIbiSrjjTIKlXShEPilRow7"; // Clerk user ID
+{
+  clerkId: "user_31xcrIbiSrjjTIKlXShEPilRow7", // Clerk user ID
+  lastUpdatedMs: 1731627600000  // Unix timestamp in milliseconds when cache was last updated
+}
 ```
 
 **Example:**
 
 - Key: `username:simon`
-- Value: `"user_31xcrIbiSrjjTIKlXShEPilRow7"`
+- Value: `{ clerkId: "user_31xcrIbiSrjjTIKlXShEPilRow7", lastUpdatedMs: 1731627600000 }`
 
 **Usage:**
 
@@ -278,9 +284,18 @@ Returns:
 ```json
 {
   "subscriptions": {
-    "6": [100, 101],
-    "5": [100],
-    "7": [101]
+    "6": {
+      "subscribers": [100, 101],
+      "lastUpdated": "2025-11-14T23:45:00+10:00"
+    },
+    "5": {
+      "subscribers": [100],
+      "lastUpdated": "2025-11-14T23:45:00+10:00"
+    },
+    "7": {
+      "subscribers": [101],
+      "lastUpdated": "2025-11-14T23:45:00+10:00"
+    }
   }
 }
 ```

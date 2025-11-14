@@ -1,9 +1,14 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getUserIdByUsername } from "@/lib/user-cache";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const username = "simon";
-  const iterations = 50;
+
+  // Get count from query parameter, default to 10
+  const searchParams = request.nextUrl.searchParams;
+  const count = parseInt(searchParams.get("count") || "10", 10);
+  const iterations = Math.max(1, Math.min(count, 1000)); // Clamp between 1 and 1000
+
   const times: number[] = [];
 
   // Run lookups

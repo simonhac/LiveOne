@@ -21,6 +21,14 @@ export interface LatestPointValue {
 export type LatestPointValues = Record<string, LatestPointValue>;
 
 /**
+ * Subscription registry entry
+ */
+export interface SubscriptionRegistryEntry {
+  subscribers: number[]; // Array of composite system IDs
+  lastUpdatedMs: number; // Unix timestamp in milliseconds when registry was last updated
+}
+
+/**
  * Get the KV key for a system's latest point values
  */
 function getLatestValuesKey(systemId: number): string {
@@ -101,9 +109,9 @@ export async function getLatestPointValues(
  */
 async function getSubscribers(sourceSystemId: number): Promise<number[]> {
   const key = getSubscriptionsKey(sourceSystemId);
-  const subscribers = await kv.get<number[]>(key);
+  const entry = await kv.get<SubscriptionRegistryEntry>(key);
 
-  return subscribers || [];
+  return entry?.subscribers || [];
 }
 
 /**
@@ -159,12 +167,17 @@ export async function buildSubscriptionRegistry(): Promise<void> {
     }
   }
 
-  // Write subscriptions to KV
+  // Write subscriptions to KV with timestamp
   const updates: Promise<any>[] = [];
+  const now = Date.now();
+
   for (const [sourceId, compositeIds] of subscriptions.entries()) {
     const key = getSubscriptionsKey(sourceId);
-    const value = Array.from(compositeIds);
-    updates.push(kv.set(key, value));
+    const entry: SubscriptionRegistryEntry = {
+      subscribers: Array.from(compositeIds),
+      lastUpdatedMs: now,
+    };
+    updates.push(kv.set(key, entry));
   }
 
   await Promise.all(updates);

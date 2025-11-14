@@ -6,6 +6,14 @@ import { kv, kvKey } from "./kv";
 import { clerkClient } from "@clerk/nextjs/server";
 
 /**
+ * Username cache entry
+ */
+export interface UsernameCacheEntry {
+  clerkId: string; // Clerk user ID
+  lastUpdatedMs: number; // Unix timestamp in milliseconds when cache was last updated
+}
+
+/**
  * Get Clerk user ID by username
  * Checks cache first, falls back to Clerk API if not found
  *
@@ -16,9 +24,11 @@ export async function getUserIdByUsername(
   username: string,
 ): Promise<string | null> {
   // Try cache first (fast path)
-  const cached = await kv.get<string>(kvKey(`username:${username}`));
+  const cached = await kv.get<UsernameCacheEntry>(
+    kvKey(`username:${username}`),
+  );
   if (cached) {
-    return cached;
+    return cached.clerkId;
   }
 
   // Cache miss - query Clerk API
@@ -54,7 +64,11 @@ export async function cacheUsernameMapping(
   username: string,
   clerkId: string,
 ): Promise<void> {
-  await kv.set(kvKey(`username:${username}`), clerkId);
+  const entry: UsernameCacheEntry = {
+    clerkId,
+    lastUpdatedMs: Date.now(),
+  };
+  await kv.set(kvKey(`username:${username}`), entry);
 }
 
 /**
