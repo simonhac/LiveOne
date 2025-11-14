@@ -8,11 +8,12 @@ import { pointInfo as pointInfoTable } from "@/lib/db/schema-monitoring-points";
 import { eq, sql } from "drizzle-orm";
 import { PointInfo } from "@/lib/point/point-info";
 import {
-  FlavouredPoint,
-  createFlavouredPoint,
+  SeriesInfo,
+  createSeriesInfos,
   getSeriesPath,
-} from "@/lib/point/flavoured-point";
-import { SystemsManager, SystemWithPolling } from "@/lib/systems-manager";
+} from "@/lib/point/series-info";
+import { SystemIdentifier, PointReference } from "@/lib/identifiers";
+import { SystemWithPolling } from "@/lib/systems-manager";
 import micromatch from "micromatch";
 
 /**
@@ -22,7 +23,7 @@ export class PointManager {
   private static instance: PointManager;
   private static lastLoadedAt: number = 0;
   private static readonly CACHE_TTL_MS = 60 * 1000; // 1 minute TTL
-  private seriesCache = new Map<number, FlavouredPoint[]>();
+  private seriesCache = new Map<number, SeriesInfo[]>();
 
   private constructor() {}
 
@@ -76,123 +77,77 @@ export class PointManager {
   }
 
   /**
-   * Get all supported flavoured points for a non-composite system
+   * Get all series for a system (includes all active points, even without type hierarchy)
    * Results are cached per system
+   * Works for both composite and non-composite systems
+   *
+   * @param system - The system (composite or non-composite)
    */
-  private async getSupportedFlavouredPointsForSystem(
-    systemId: number,
-  ): Promise<FlavouredPoint[]> {
+  private async getAllSeriesForSystem(
+    system: SystemWithPolling,
+  ): Promise<SeriesInfo[]> {
     // Check cache first
-    const cached = this.seriesCache.get(systemId);
+    const cached = this.seriesCache.get(system.id);
     if (cached) {
       return cached;
     }
 
-    // Get all points for this system
-    const allPoints = await this.getPointsForSystem(systemId);
+    // Get all points for this system (handles both composite and non-composite)
+    const allPoints = await this.getPointsForSystemInternal(system);
+    const systemIdentifier = SystemIdentifier.fromId(system.id);
 
-    const flavouredPoints: FlavouredPoint[] = [];
+    const seriesInfos: SeriesInfo[] = [];
 
     for (const point of allPoints) {
-      // Skip inactive points or points without type
-      if (!point.active || !point.type) continue;
+      // Only skip inactive points
+      if (!point.active) continue;
 
-      const pointIdentifier = point.getIdentifier();
-      if (!pointIdentifier) continue;
-
-      // Build FlavouredPoint for each supported aggregation based on metric type
+      // Determine aggregation fields based on metric type
+      let aggregationFields: string[];
       if (point.metricType === "energy") {
         // Energy: only delta
-        flavouredPoints.push(createFlavouredPoint(point, "energy", "delta"));
+        aggregationFields = ["delta"];
       } else if (point.metricType === "soc") {
         // SOC: last for 5m, avg/min/max/last for 1d
-        flavouredPoints.push(createFlavouredPoint(point, "soc", "last"));
-        flavouredPoints.push(createFlavouredPoint(point, "soc", "avg"));
-        flavouredPoints.push(createFlavouredPoint(point, "soc", "min"));
-        flavouredPoints.push(createFlavouredPoint(point, "soc", "max"));
+        aggregationFields = ["last", "avg", "min", "max"];
       } else {
         // Power and other: avg/min/max/last
-        flavouredPoints.push(
-          createFlavouredPoint(point, point.metricType, "avg"),
-        );
-        flavouredPoints.push(
-          createFlavouredPoint(point, point.metricType, "min"),
-        );
-        flavouredPoints.push(
-          createFlavouredPoint(point, point.metricType, "max"),
-        );
-        flavouredPoints.push(
-          createFlavouredPoint(point, point.metricType, "last"),
-        );
+        aggregationFields = ["avg", "min", "max", "last"];
       }
+
+      // Create SeriesInfo for each aggregation
+      seriesInfos.push(
+        ...createSeriesInfos(systemIdentifier, point, aggregationFields),
+      );
     }
 
     // Cache the result
-    this.seriesCache.set(systemId, flavouredPoints);
+    this.seriesCache.set(system.id, seriesInfos);
 
-    return flavouredPoints;
+    return seriesInfos;
   }
 
   /**
-   * Get filtered flavoured points for a non-composite system or composite system
-   *
-   * For non-composite systems: Uses cache and filters by pattern/interval
-   * For composite systems: Resolves point refs from metadata.mappings
-   *
-   * @param system - The system (composite or non-composite)
-   * @param filter - Optional array of glob patterns to match against series paths (without system prefix)
-   * @param interval - Interval to filter by ("5m" or "1d")
-   * @returns Filtered flavoured points matching the criteria
+   * Get points for a system - handles both composite and non-composite systems
+   * For composite: resolves point references from metadata.mappings
+   * For non-composite: gets points directly for the system
    */
-  async getFilteredSeriesForSystem(
+  private async getPointsForSystemInternal(
     system: SystemWithPolling,
-    filter?: string[],
-    interval?: "5m" | "1d",
-  ): Promise<FlavouredPoint[]> {
-    let flavouredPoints: FlavouredPoint[];
-
+  ): Promise<PointInfo[]> {
     if (system.vendorType === "composite") {
-      // Composite system: extract point refs from metadata.mappings
-      flavouredPoints = await this.getFlavouredPointsForCompositeSystem(
-        system,
-        interval,
-      );
+      return this.getPointsForCompositeSystem(system);
     } else {
-      // Non-composite system: use cached series
-      flavouredPoints = await this.getSupportedFlavouredPointsForSystem(
-        system.id,
-      );
-
-      // Filter by interval if provided
-      if (interval) {
-        flavouredPoints = flavouredPoints.filter((fp) =>
-          this.supportsInterval(fp, interval),
-        );
-      }
+      return this.getPointsForSystem(system.id);
     }
-
-    // Filter by patterns if provided
-    if (filter && filter.length > 0) {
-      flavouredPoints = flavouredPoints.filter((fp) => {
-        const seriesPath = getSeriesPath(fp);
-        if (!seriesPath) return false;
-
-        // getSeriesPath() returns "pointPath/flavourIdentifier" (e.g., "source.solar/power.avg")
-        // which is already the series path without system identifier, so match directly
-        return micromatch.isMatch(seriesPath, filter);
-      });
-    }
-
-    return flavouredPoints;
   }
 
   /**
-   * Get flavoured points for a composite system by resolving metadata.mappings
+   * Get points for a composite system by resolving metadata.mappings
    */
-  private async getFlavouredPointsForCompositeSystem(
+  private async getPointsForCompositeSystem(
     system: SystemWithPolling,
-    interval?: "5m" | "1d",
-  ): Promise<FlavouredPoint[]> {
+  ): Promise<PointInfo[]> {
     const metadata = system.metadata as any;
 
     // Validate metadata structure
@@ -200,31 +155,24 @@ export class PointManager {
       return [];
     }
 
-    // Check if mappings is empty
-    const hasAnyMappings = Object.values(metadata.mappings).some(
-      (pointRefs) => Array.isArray(pointRefs) && pointRefs.length > 0,
-    );
-    if (!hasAnyMappings) {
-      return [];
-    }
-
     // Collect all point references (systemId.pointId format)
-    const pointRefs: string[] = [];
+    const pointRefStrs: string[] = [];
     for (const [, refs] of Object.entries(metadata.mappings)) {
       if (Array.isArray(refs)) {
-        pointRefs.push(...(refs as string[]));
+        pointRefStrs.push(...(refs as string[]));
       }
     }
 
-    // Parse and validate point references
-    const validPointRefs: Array<{ systemId: number; pointId: number }> = [];
-    for (const ref of pointRefs) {
-      const [systemIdStr, pointIdStr] = ref.split(".");
-      const sourceSystemId = parseInt(systemIdStr);
-      const pointId = parseInt(pointIdStr);
+    if (pointRefStrs.length === 0) {
+      return [];
+    }
 
-      if (!isNaN(sourceSystemId) && !isNaN(pointId)) {
-        validPointRefs.push({ systemId: sourceSystemId, pointId });
+    // Parse and validate point references using PointReference
+    const validPointRefs: PointReference[] = [];
+    for (const refStr of pointRefStrs) {
+      const pointRef = PointReference.parse(refStr);
+      if (pointRef) {
+        validPointRefs.push(pointRef);
       }
     }
 
@@ -234,82 +182,90 @@ export class PointManager {
 
     // Fetch all points in one query
     const conditions = validPointRefs.map(
-      (p) => sql`(system_id = ${p.systemId} AND id = ${p.pointId})`,
+      (ref) => sql`(system_id = ${ref.systemId} AND id = ${ref.pointId})`,
     );
     const pointsData = await db
       .select()
       .from(pointInfoTable)
       .where(sql`${sql.join(conditions, sql` OR `)}`);
 
-    // Build FlavouredPoint for each point
-    const flavouredPoints: FlavouredPoint[] = [];
-    const systemsManager = SystemsManager.getInstance();
-
-    for (const pointData of pointsData) {
-      const point = PointInfo.from(pointData);
-
-      // Skip inactive points or points without type
-      if (!point.active || !point.type) continue;
-
-      const pointIdentifier = point.getIdentifier();
-      if (!pointIdentifier) continue;
-
-      // Determine aggregation field based on metric type and interval
-      let aggregationFields: string[];
-      if (point.metricType === "energy") {
-        aggregationFields = ["delta"];
-      } else if (point.metricType === "soc") {
-        if (!interval || interval === "5m") {
-          aggregationFields = ["last"];
-        } else {
-          aggregationFields = ["avg", "min", "max", "last"];
-        }
-      } else {
-        // Power and other
-        if (!interval) {
-          aggregationFields = ["avg", "min", "max", "last"];
-        } else if (interval === "5m") {
-          aggregationFields = ["avg"];
-        } else {
-          aggregationFields = ["avg", "min", "max"];
-        }
-      }
-
-      for (const aggField of aggregationFields) {
-        flavouredPoints.push(
-          createFlavouredPoint(point, point.metricType, aggField),
-        );
-      }
-    }
-
-    return flavouredPoints;
+    return pointsData.map((row) => PointInfo.from(row));
   }
 
   /**
-   * Check if a flavoured point supports a given interval
+   * Get series for a system (works for both composite and non-composite systems)
+   *
+   * Uses cache and applies filtering by pattern/interval/typedOnly
+   *
+   * @param system - The system (composite or non-composite)
+   * @param filter - Optional array of glob patterns to match against series paths (without system prefix)
+   * @param interval - Optional interval to filter by ("5m" or "1d")
+   * @param typedOnly - If true, only includes points with type hierarchy (excludes fallback paths). Default: false
+   * @returns Series matching the criteria
    */
-  private supportsInterval(fp: FlavouredPoint, interval: "5m" | "1d"): boolean {
-    const { metricType } = fp.point;
-    const { aggregationField } = fp.flavour;
+  async getSeriesForSystem(
+    system: SystemWithPolling,
+    filter?: string[],
+    interval?: "5m" | "1d",
+    typedOnly: boolean = false,
+  ): Promise<SeriesInfo[]> {
+    // Get all series for this system (uses cache)
+    let seriesInfos = await this.getAllSeriesForSystem(system);
 
-    if (metricType === "energy") {
-      // Energy delta available in both 5m and 1d
-      return aggregationField === "delta";
-    } else if (metricType === "soc") {
-      // SOC: last in 5m, avg/min/max/last in 1d
-      if (interval === "5m") {
-        return aggregationField === "last";
-      } else {
-        return ["avg", "min", "max", "last"].includes(aggregationField);
-      }
-    } else {
-      // Power and other: avg in 5m, avg/min/max in 1d
-      if (interval === "5m") {
-        return aggregationField === "avg";
-      } else {
-        return ["avg", "min", "max"].includes(aggregationField);
-      }
+    // Filter by interval if provided
+    if (interval) {
+      seriesInfos = seriesInfos.filter((series) =>
+        series.intervals.includes(interval),
+      );
     }
+
+    // Filter by typedOnly if requested
+    if (typedOnly) {
+      seriesInfos = seriesInfos.filter((series) => series.point.type !== null);
+    }
+
+    // Filter by patterns if provided
+    if (filter && filter.length > 0) {
+      seriesInfos = seriesInfos.filter((series) => {
+        const seriesPath = getSeriesPath(series);
+
+        // getSeriesPath() returns SeriesPath object, convert to string
+        // Format: "systemId/pointPath.aggregationField" (e.g., "1/source.solar/power.avg")
+        const pathStr = seriesPath.toString();
+
+        // Remove system identifier prefix to match against point path patterns
+        // Pattern format: "source.solar/power.avg" (without system prefix)
+        const pathWithoutSystem = pathStr.substring(pathStr.indexOf("/") + 1);
+
+        return micromatch.isMatch(pathWithoutSystem, filter);
+      });
+    }
+
+    return seriesInfos;
+  }
+
+  /**
+   * Get all active points for a system
+   * This is a convenience method for APIs that need point information without series details
+   *
+   * @param systemId - The system ID
+   * @param typedOnly - If true, only includes points with type hierarchy. Default: false
+   * @returns Array of unique PointInfo objects
+   */
+  async getActivePointsForSystem(
+    systemId: number,
+    typedOnly: boolean = false,
+  ): Promise<PointInfo[]> {
+    // We need the system object to use getAllSeriesForSystem
+    // For now, we'll use the old getPointsForSystem method directly
+    const allPoints = await this.getPointsForSystem(systemId);
+
+    // Filter active and optionally by typedOnly
+    return allPoints.filter((point) => {
+      if (!point.active) return false;
+      if (typedOnly && point.type === null) return false;
+      return true;
+    });
   }
 
   /**

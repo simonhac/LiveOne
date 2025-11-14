@@ -24,6 +24,8 @@ import "chartjs-adapter-date-fns";
 import annotationPlugin from "chartjs-plugin-annotation";
 import { CalendarX2 } from "lucide-react";
 import { CHART_COLORS, LOAD_LABELS, getLoadColor } from "@/lib/chart-colors";
+import { PointPath } from "@/lib/identifiers";
+import micromatch from "micromatch";
 
 // Register Chart.js components
 ChartJS.register(
@@ -82,28 +84,28 @@ interface SeriesConfig {
   order?: number;
 }
 
-// Parse path from format: type.subtype.extension (or type.subtype or just type)
-// Returns: { type, subtype, extension } extracted from path, or null if not parseable
-export function parsePath(
-  path: string | null | undefined,
-): { type: string; subtype: string; extension?: string } | null {
+// Parse path using PointPath typed object
+// Returns the parsed PointPath or null if not parseable
+export function parsePath(path: string | null | undefined): PointPath | null {
   if (!path) return null;
+  return PointPath.parse(path) || null;
+}
 
-  // Path format is now: {pointIdentifier}/{flavour}
-  // e.g., "load.hws/power.avg" or "bidi.battery.charge/power.avg"
-  // We need to parse the pointIdentifier part (before the slash)
-  const slashIndex = path.indexOf("/");
-  const pointIdentifier =
-    slashIndex !== -1 ? path.substring(0, slashIndex) : path;
+// Filter series by point identifier pattern (glob-style)
+// Pattern format: "bidi.battery.charge/power" or "source.solar*/power"
+function filterByPointId(
+  series: Array<{ id: string; label?: string; path?: string }>,
+  pattern: string,
+): typeof series {
+  return series.filter((s) => s.path && micromatch.isMatch(s.path, pattern));
+}
 
-  const parts = pointIdentifier.split(".");
-  if (parts.length === 0) return null;
-
-  return {
-    type: parts[0],
-    subtype: parts[1] || "",
-    extension: parts[2],
-  };
+// Find first series matching point identifier pattern
+function findByPointId(
+  series: Array<{ id: string; label?: string; path?: string }>,
+  pattern: string,
+) {
+  return series.find((s) => s.path && micromatch.isMatch(s.path, pattern));
 }
 
 // Color constants are now imported from @/lib/chart-colors
@@ -123,8 +125,8 @@ export function generateSeriesConfig(
 
     // Create config for each load
     loadSeries.forEach((series, idx) => {
-      const { subtype, extension } = series.parsed!;
-      const loadType = extension || subtype;
+      const pointPath = series.parsed!;
+      const loadType = pointPath.extension || pointPath.subtype || "";
       // Use label from API if available, otherwise fallback to lookup table or capitalized load type
       // If loadType is empty (just "load" with no subtype), use "Load" as default
       const label =
@@ -154,14 +156,10 @@ export function generateSeriesConfig(
     });
 
     // Add battery charge (already split by site-data-processor)
-    const batterySeries = availableSeries.find((s) => {
-      const parsed = parsePath(s.path);
-      return (
-        parsed?.type === "bidi" &&
-        parsed?.subtype === "battery" &&
-        parsed?.extension === "charge"
-      );
-    });
+    const batterySeries = findByPointId(
+      availableSeries,
+      "bidi.battery.charge/power",
+    );
     if (batterySeries) {
       configs.push({
         id: batterySeries.id,
@@ -173,10 +171,7 @@ export function generateSeriesConfig(
     }
 
     // Add grid export (negative grid power)
-    const gridSeries = availableSeries.find((s) => {
-      const parsed = parsePath(s.path);
-      return parsed?.type === "bidi" && parsed?.subtype === "grid";
-    });
+    const gridSeries = findByPointId(availableSeries, "bidi.grid/power*");
     if (gridSeries) {
       configs.push({
         id: gridSeries.id,
@@ -188,12 +183,9 @@ export function generateSeriesConfig(
     }
   } else {
     // generation mode
-    // Find solar series
-    const solarSeries = availableSeries
+    // Find solar series (matches source.solar, source.solar.local, source.solar.remote, etc.)
+    const solarSeries = filterByPointId(availableSeries, "source.solar*/power*")
       .map((s) => ({ ...s, parsed: parsePath(s.path) }))
-      .filter(
-        (s) => s.parsed?.type === "source" && s.parsed?.subtype === "solar",
-      )
       .sort((a, b) => {
         // Sort by extension: local first, then remote
         const aExt = a.parsed?.extension || "";
@@ -218,14 +210,10 @@ export function generateSeriesConfig(
     });
 
     // Add battery discharge (already split by site-data-processor)
-    const batterySeries = availableSeries.find((s) => {
-      const parsed = parsePath(s.path);
-      return (
-        parsed?.type === "bidi" &&
-        parsed?.subtype === "battery" &&
-        parsed?.extension === "discharge"
-      );
-    });
+    const batterySeries = findByPointId(
+      availableSeries,
+      "bidi.battery.discharge/power",
+    );
     if (batterySeries) {
       configs.push({
         id: batterySeries.id,
@@ -237,10 +225,7 @@ export function generateSeriesConfig(
     }
 
     // Add grid import (positive grid power) - after battery
-    const gridSeries = availableSeries.find((s) => {
-      const parsed = parsePath(s.path);
-      return parsed?.type === "bidi" && parsed?.subtype === "grid";
-    });
+    const gridSeries = findByPointId(availableSeries, "bidi.grid/power*");
     if (gridSeries) {
       configs.push({
         id: gridSeries.id,

@@ -217,11 +217,27 @@ export async function GET(
 
     // Step 5: Get filtered series for the system
     const pointManager = PointManager.getInstance();
-    const series = await pointManager.getFilteredSeriesForSystem(
+    const seriesInfos = await pointManager.getSeriesForSystem(
       system,
       filter,
       interval,
     );
+
+    // Transform SeriesInfo[] to response format
+    // (keeping same response structure for backward compatibility)
+    const series = seriesInfos.map((seriesInfo) => {
+      const seriesPath = `${seriesInfo.systemIdentifier.toString()}/${seriesInfo.point.getPath().toString()}.${seriesInfo.aggregationField}`;
+
+      return {
+        id: seriesPath,
+        intervals: seriesInfo.intervals,
+        label: seriesInfo.point.name,
+        metricUnit: seriesInfo.point.metricUnit,
+        systemId: seriesInfo.point.systemId,
+        pointIndex: seriesInfo.point.index,
+        column: seriesInfo.aggregationField,
+      };
+    });
 
     return NextResponse.json({ series });
   } catch (error) {

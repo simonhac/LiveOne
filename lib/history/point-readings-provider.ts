@@ -101,7 +101,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
 
     // Use PointManager to get filtered series (handles both pattern filtering and interval filtering)
     const pointManager = PointManager.getInstance();
-    const filteredSeries = await pointManager.getFilteredSeriesForSystem(
+    const filteredSeries = await pointManager.getSeriesForSystem(
       system,
       seriesPatterns,
       "5m",
@@ -112,7 +112,9 @@ export class PointReadingsProvider implements HistoryDataProvider {
     }
 
     // Get unique point IDs from the filtered series
-    const pointIds = [...new Set(filteredSeries.map((s) => s.point.index))];
+    const pointIds = [
+      ...new Set(filteredSeries.map((series) => series.point.index)),
+    ];
 
     // Fetch PointInfo for these points
     const allPoints = await pointManager.getPointsForSystem(system.id);
@@ -225,7 +227,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
 
     // Use PointManager to get filtered series (handles both pattern filtering and interval filtering)
     const pointManager = PointManager.getInstance();
-    const filteredSeries = await pointManager.getFilteredSeriesForSystem(
+    const filteredSeries = await pointManager.getSeriesForSystem(
       system,
       seriesPatterns,
       "1d",
@@ -236,7 +238,9 @@ export class PointReadingsProvider implements HistoryDataProvider {
     }
 
     // Get unique point IDs from the filtered series
-    const pointIds = [...new Set(filteredSeries.map((s) => s.point.index))];
+    const pointIds = [
+      ...new Set(filteredSeries.map((series) => series.point.index)),
+    ];
 
     // Build a map of which specific (pointId, column) combinations were requested
     // This ensures we only create series for the requested aggregations
@@ -245,9 +249,7 @@ export class PointReadingsProvider implements HistoryDataProvider {
       if (!requestedColumns.has(series.point.index)) {
         requestedColumns.set(series.point.index, new Set());
       }
-      requestedColumns
-        .get(series.point.index)!
-        .add(series.flavour.aggregationField);
+      requestedColumns.get(series.point.index)!.add(series.aggregationField);
     }
 
     // Fetch PointInfo for these points

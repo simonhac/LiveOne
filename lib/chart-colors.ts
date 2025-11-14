@@ -3,6 +3,8 @@
  * Ensures consistent colors across SitePowerChart, EnergyChart, Sankey, and other visualizations
  */
 
+import { PointPath } from "@/lib/identifiers";
+
 // Fixed colors for specific series types
 export const CHART_COLORS = {
   // Energy sources
@@ -105,15 +107,16 @@ export function getColorForPath(path: string, label?: string): string {
     return CHART_COLORS.restOfHouse;
   }
 
-  // Parse the path
-  const slashIndex = path.indexOf("/");
-  const pointIdentifier =
-    slashIndex !== -1 ? path.substring(0, slashIndex) : path;
-  const parts = pointIdentifier.split(".");
+  // Parse the path using PointPath utility
+  const pointPath = PointPath.parse(path);
+  if (!pointPath) {
+    // If parsing fails, return default color
+    return "rgb(156, 163, 175)"; // gray-400
+  }
 
-  const type = parts[0];
-  const subtype = parts[1] || "";
-  const extension = parts[2];
+  const type = pointPath.type;
+  const subtype = pointPath.subtype || "";
+  const extension = pointPath.extension;
 
   // Solar
   if (type === "source" && subtype === "solar") {

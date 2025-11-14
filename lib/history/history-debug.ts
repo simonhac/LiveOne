@@ -1,5 +1,5 @@
 import micromatch from "micromatch";
-import { FlavouredPoint, getSeriesPath } from "@/lib/point/flavoured-point";
+import { SeriesInfo, getSeriesPath } from "@/lib/point/series-info";
 
 /**
  * Query debug information - can be a simple string or parameterized query
@@ -16,49 +16,42 @@ export interface HistoryDebugInfo {
   source?: string; // Data source table name (e.g., "point_readings_agg_5m")
   query: (string | QueryDebugInfo)[]; // SQL queries executed (string for legacy, QueryDebugInfo for parameterized)
   patterns?: string[]; // Series patterns used to filter points
-  points: Array<{
-    identifier: string; // e.g. "source.solar"
-    flavour: string; // e.g. "power.avg"
-    matched?: string; // The first pattern that matched this point
+  series: Array<{
+    id: string; // Full series ID (e.g. "1/source.solar/power.avg")
+    matched?: string; // The first pattern that matched this series
   }>;
 }
 
 /**
- * Register a point in the debug info and determine which pattern it matched
+ * Register a series in the debug info and determine which pattern it matched
  * @param debug - Debug info object (modified in place)
- * @param flavouredPoint - FlavouredPoint containing point and its flavour
+ * @param seriesInfo - SeriesInfo containing point and its aggregation field
  */
-export function registerPoint(
+export function registerSeries(
   debug: HistoryDebugInfo,
-  flavouredPoint: FlavouredPoint,
+  seriesInfo: SeriesInfo,
 ): void {
-  // Build identifier (pointIdentifier, e.g., "source.solar") and flavour
-  const identifier = flavouredPoint.point.getIdentifier();
-  if (!identifier) return; // Skip if point has no identifier
-
-  const flavour = flavouredPoint.point.getFlavourIdentifier(
-    flavouredPoint.flavour.aggregationField,
-  );
+  // Get the full series path
+  const seriesPath = getSeriesPath(seriesInfo);
+  const seriesId = seriesPath.toString();
 
   // Determine which pattern matched (if patterns were provided)
   let matchedPattern: string | undefined;
   if (debug.patterns && debug.patterns.length > 0) {
-    // Get the series path for pattern matching
-    const seriesPath = getSeriesPath(flavouredPoint);
-    if (seriesPath) {
-      // Find first matching pattern
-      for (const pattern of debug.patterns) {
-        if (micromatch.isMatch(seriesPath, pattern)) {
-          matchedPattern = pattern;
-          break;
-        }
+    // Remove system identifier prefix to match against point path patterns
+    const pathWithoutSystem = seriesId.substring(seriesId.indexOf("/") + 1);
+
+    // Find first matching pattern
+    for (const pattern of debug.patterns) {
+      if (micromatch.isMatch(pathWithoutSystem, pattern)) {
+        matchedPattern = pattern;
+        break;
       }
     }
   }
 
-  debug.points.push({
-    identifier,
-    flavour,
+  debug.series.push({
+    id: seriesId,
     matched: matchedPattern,
   });
 }

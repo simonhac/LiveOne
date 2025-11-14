@@ -11,13 +11,14 @@ import {
   parseRelativeTime,
   getDateDifferenceMs,
   getTimeDifferenceMs,
+  formatTime_fromJSDate,
 } from "@/lib/date-utils";
 import { CalendarDate, ZonedDateTime, now } from "@internationalized/date";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { splitBraceAware } from "@/lib/series-filter-utils";
-import { HistoryDebugInfo, registerPoint } from "@/lib/history/history-debug";
+import { HistoryDebugInfo, registerSeries } from "@/lib/history/history-debug";
 import { PointManager } from "@/lib/point/point-manager";
-import { getSiteIdentifier } from "@/lib/series-path-utils";
+import { getSeriesPath } from "@/lib/point/series-info";
 
 // Initialize manager instances
 const pointManager = PointManager.getInstance();
@@ -390,17 +391,17 @@ async function getSystemHistoryInOpenNEMFormat(
   dataSource?: string;
   sqlQueries?: string[];
 }> {
-  // Get filtered FlavouredPoint[] from PointManager
+  // Get filtered SeriesInfo[] from PointManager
   // Note: PointManager only supports "5m" | "1d" intervals, so for "30m" we use "5m"
   const intervalForFiltering = interval === "30m" ? "5m" : interval;
 
-  const flavouredPoints = await pointManager.getFilteredSeriesForSystem(
+  const seriesInfos = await pointManager.getSeriesForSystem(
     system,
     filterPatterns,
     intervalForFiltering,
   );
 
-  if (flavouredPoints.length === 0) {
+  if (seriesInfos.length === 0) {
     return { series: [] };
   }
 
@@ -423,7 +424,7 @@ async function getSystemHistoryInOpenNEMFormat(
         source: aggTable,
         query: [],
         patterns: filterPatterns,
-        points: [],
+        series: [],
       }
     : undefined;
 
@@ -432,9 +433,11 @@ async function getSystemHistoryInOpenNEMFormat(
   // Deduplicate pairs since we select ALL aggregation fields for each point
   const uniquePairsArray = Array.from(
     new Set(
-      flavouredPoints.map((fp) => `${fp.point.systemId},${fp.point.index}`),
+      seriesInfos.map(
+        (series) => `${series.point.systemId},${series.point.index}`,
+      ),
     ),
-  ).map((pair) => pair.split(",").map(Number));
+  ).map((pair: string) => pair.split(",").map(Number));
 
   // Build parameterized query with placeholders
   // LibSQL supports positional parameters with ?, so we'll build (?, ?), (?, ?)...
@@ -445,7 +448,7 @@ async function getSystemHistoryInOpenNEMFormat(
 
   // Get the aggregation field to query - we need to handle all aggregation fields used
   // For simplicity in the batched query, we'll SELECT all common aggregation fields
-  // and filter/use them based on each FlavouredPoint's flavour.aggregationField
+  // and filter/use them based on each SeriesInfo's aggregationField
   let queryTemplate: string;
   let queryArgs: (number | string)[];
   let allRows: Array<{
@@ -566,7 +569,7 @@ async function getSystemHistoryInOpenNEMFormat(
     }
   }
 
-  // Build series for each FlavouredPoint
+  // Build series for each SeriesInfo
   const { formatTime_fromJSDate } = await import("@/lib/date-utils");
   const systemsManager = SystemsManager.getInstance();
   const allSeries: OpenNEMDataSeries[] = [];
@@ -578,14 +581,14 @@ async function getSystemHistoryInOpenNEMFormat(
         ? 30 * 60 * 1000
         : 24 * 60 * 60 * 1000;
 
-  for (const fp of flavouredPoints) {
-    const key = `${fp.point.systemId}.${fp.point.index}.${fp.flavour.aggregationField}`;
+  for (const series of seriesInfos) {
+    const key = `${series.point.systemId}.${series.point.index}.${series.aggregationField}`;
     let rows = rowsByPointAndField.get(key) || [];
 
     // Apply transform
     rows = rows.map((row) => ({
       interval_end: row.interval_end,
-      value: applyTransform(row.value, fp.point.transform),
+      value: applyTransform(row.value, series.point.transform),
     }));
 
     // Handle 30m aggregation if needed
@@ -622,16 +625,12 @@ async function getSystemHistoryInOpenNEMFormat(
     }
 
     // Get source system for series ID
-    const sourceSystem = await systemsManager.getSystem(fp.point.systemId);
+    const sourceSystem = await systemsManager.getSystem(series.point.systemId);
     if (!sourceSystem) continue;
 
-    // Build series ID using new format: {systemIdentifier}/{pointIdentifier}/{flavourIdentifier}
-    const systemIdentifier = getSiteIdentifier(sourceSystem);
-    const pointIdentifier = fp.point.getIdentifier(); // Returns "type.subtype.extension" (e.g., "source.solar")
-    if (!pointIdentifier) continue;
-    const flavourIdentifier = fp.flavour.getIdentifier(); // Returns "metricType.aggregationField"
-
-    const seriesId = `${systemIdentifier}/${pointIdentifier}/${flavourIdentifier}`;
+    // Build series ID using SeriesPath
+    const seriesPath = getSeriesPath(series);
+    const seriesId = seriesPath.toString();
 
     // Build field data with gap filling
     const fieldData: (number | null)[] = [];
@@ -660,12 +659,9 @@ async function getSystemHistoryInOpenNEMFormat(
       }
     }
 
-    // Get point identifier for the series
-    const pointPath = fp.point.getIdentifier();
-    if (!pointPath) continue;
-
-    // Create full path including flavour (e.g., "bidi.battery/power.avg")
-    const fullPath = `${pointPath}/${flavourIdentifier}`;
+    // Build path for the series (e.g., "bidi.battery/power.avg")
+    const pointPath = series.point.getPath();
+    const fullPath = `${pointPath.toString()}.${series.aggregationField}`;
 
     // Format timestamps
     const timezoneOffsetMin = system.timezoneOffsetMin ?? 600;
@@ -681,7 +677,7 @@ async function getSystemHistoryInOpenNEMFormat(
     allSeries.push({
       id: seriesId,
       type: "power",
-      units: fp.point.metricUnit,
+      units: series.point.metricUnit,
       path: fullPath,
       history: {
         start: startFormatted,
@@ -691,9 +687,9 @@ async function getSystemHistoryInOpenNEMFormat(
       },
     });
 
-    // Register point for debug tracking
+    // Register series for debug tracking
     if (debug) {
-      registerPoint(debug, fp);
+      registerSeries(debug, series);
     }
   }
 

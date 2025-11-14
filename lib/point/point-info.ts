@@ -2,7 +2,7 @@
  * Point Info - Frontend-safe point information with helper methods
  */
 
-import { buildPointPath } from "./point-info-utils";
+import { PointPath, PointReference } from "@/lib/identifiers";
 
 /**
  * Point information with helper methods
@@ -35,35 +35,65 @@ export class PointInfo {
   }
 
   /**
-   * Get the point identifier in format type.subtype.extension (omitting null parts)
-   * Returns null if type is null
+   * Get the PointPath for this point
+   * Returns a PointPath object that includes the metric type
+   *
+   * For points with type: "type.subtype.extension/metricType"
+   * For points without type: "{pointIndex}/metricType" (fallback)
    *
    * Examples:
-   * - type="source", subtype="solar", extension=null → "source.solar"
-   * - type="bidi", subtype="battery", extension="charge" → "bidi.battery.charge"
-   * - type="load", subtype=null, extension=null → "load"
+   * - type="source", subtype="solar", metricType="power" → PointPath("source.solar/power")
+   * - type="bidi", subtype="battery", extension="charge", metricType="power" → PointPath("bidi.battery.charge/power")
+   * - type="load", metricType="power" → PointPath("load/power")
+   * - type=null, index=4, metricType="power" → PointPath("4/power")
    */
-  getIdentifier(): string | null {
-    return buildPointPath(this.type, this.subtype, this.extension);
+  getPath(): PointPath {
+    if (this.type) {
+      return PointPath.fromComponents(
+        this.type,
+        this.subtype,
+        this.extension,
+        this.metricType,
+      );
+    } else {
+      // Fallback for points without type
+      return PointPath.createFallback(this.index, this.metricType);
+    }
   }
 
   /**
-   * Get the point index in format systemId.pointIndex
+   * Get the PointReference for this point (composite database key)
+   * Format: "systemId.pointIndex"
    *
-   * Example: "1.5" for system 1, point index 5
+   * Example: PointReference(1, 5) for system 1, point index 5
+   */
+  getReference(): PointReference {
+    return PointReference.fromIds(this.systemId, this.index);
+  }
+
+  /**
+   * @deprecated Use getPath().toString() instead
+   * Get the point identifier in format type.subtype.extension (omitting null parts)
+   * Returns null if type is null
+   */
+  getIdentifier(): string | null {
+    if (!this.type) return null;
+    let path = this.type;
+    if (this.subtype) {
+      path += `.${this.subtype}`;
+      if (this.extension) {
+        path += `.${this.extension}`;
+      }
+    }
+    return path;
+  }
+
+  /**
+   * @deprecated Use getReference().toString() instead
+   * Get the point index in format systemId.pointIndex
    */
   getIndex(): string {
     return `${this.systemId}.${this.index}`;
-  }
-
-  /**
-   * Get the flavour identifier for a specific aggregation
-   * Format: metricType.aggregationField
-   *
-   * Example: "power.avg", "energy.delta", "soc.last"
-   */
-  getFlavourIdentifier(aggregationField: string): string {
-    return `${this.metricType}.${aggregationField}`;
   }
 
   /**
