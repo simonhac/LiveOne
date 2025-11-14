@@ -9,6 +9,8 @@ import {
   updatePointAggregates5m,
   getPointsLastValues5m,
 } from "./point-aggregation-helper";
+import { updateLatestPointValue } from "./kv-cache-manager";
+import { PointManager } from "./point/point-manager";
 
 export interface PointInfoMap {
   [key: string]: typeof pointInfo.$inferSelect;
@@ -266,6 +268,32 @@ export async function insertPointReadingsBatch(
           dataQuality: val.dataQuality,
         },
       });
+  }
+
+  // Update KV cache with latest values
+  // Skip if KV is not configured (will log warning from kv.ts)
+  try {
+    const pointManager = PointManager.getInstance();
+    const points = await pointManager.getPointsForSystem(systemId);
+
+    const cacheUpdates = valuesToInsert.map((val) => {
+      const point = points.find((p) => p.index === val.pointId);
+      if (point && val.value !== null) {
+        const pointPath = point.getPath().toString();
+        return updateLatestPointValue(
+          systemId,
+          pointPath,
+          val.value,
+          val.measurementTime,
+          point.metricUnit,
+        );
+      }
+      return Promise.resolve();
+    });
+    await Promise.all(cacheUpdates);
+  } catch (error) {
+    console.error("Failed to update KV cache:", error);
+    // Don't throw - cache update failures shouldn't break reading insertion
   }
 
   // Aggregate the readings we just inserted

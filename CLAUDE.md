@@ -30,9 +30,46 @@ To check TypeScript compilation:
 ### Environment Variables
 
 ```bash
+# Database
 TURSO_DATABASE_URL=libsql://liveone-tokyo-simonhac.aws-ap-northeast-1.turso.io
 TURSO_AUTH_TOKEN=<your-token>  # Generate with: ~/.turso/turso db tokens create liveone-tokyo
+
+# Vercel KV (for latest point values cache)
+KV_REST_API_URL=<your-kv-url>
+KV_REST_API_TOKEN=<your-kv-token>
 ```
+
+#### Setting up Vercel KV
+
+The application uses Vercel KV to cache the latest point values for fast retrieval. Follow these steps to set up:
+
+1. **Create KV databases in Vercel dashboard**:
+   - Development: `liveone-kv-dev`
+   - Production: `liveone-kv-prod`
+
+2. **Get credentials from Vercel dashboard**:
+   - Go to your project → Storage → Your KV database
+   - Copy `KV_REST_API_URL` and `KV_REST_API_TOKEN`
+
+3. **Add to `.env.local` (development)**:
+
+   ```bash
+   KV_REST_API_URL=https://your-kv-instance.kv.vercel-storage.com
+   KV_REST_API_TOKEN=your-token-here
+   ```
+
+4. **Add to Vercel project settings (production)**:
+   - Go to project settings → Environment Variables
+   - Add both `KV_REST_API_URL` and `KV_REST_API_TOKEN`
+
+5. **Build subscription registry** (one-time setup):
+   ```bash
+   # After first deployment, call this to build the composite system subscription registry:
+   curl -X POST https://your-app.vercel.app/api/admin/kv/build-registry \
+     -H "Authorization: Bearer <your-token>"
+   ```
+
+**Note**: The KV cache will gracefully degrade if not configured (warnings in logs but no errors).
 
 ### Git Best Practices
 
