@@ -219,7 +219,7 @@ export async function PATCH(
           const pathParts = [point.type, point.subtype, point.extension].filter(
             Boolean,
           );
-          const key = `${point.systemId}.${point.id}`;
+          const key = `${point.systemId}.${point.index}`;
           pointPaths.set(key, pathParts.join("."));
         }
       }

@@ -64,6 +64,7 @@ describe("kv-cache-manager", () => {
 
       await updateLatestPointValue(
         10,
+        1, // point ID
         "source.solar.local/power",
         5234.5,
         1731627600000,
@@ -89,6 +90,7 @@ describe("kv-cache-manager", () => {
 
       await updateLatestPointValue(
         10,
+        1, // point ID
         "source.solar.local/power",
         5234.5,
         1731627600000,
@@ -107,11 +109,15 @@ describe("kv-cache-manager", () => {
     it("should update composite system caches when subscribers exist", async () => {
       const { kv } = await import("../kv");
 
-      // Mock getSubscribers to return composite systems 100 and 101
-      (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce([100, 101]);
+      // Mock getPointSubscribers to return composite point references
+      (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce([
+        "100.0",
+        "101.0",
+      ]);
 
       await updateLatestPointValue(
         10,
+        1, // point ID
         "source.solar.local/power",
         5234.5,
         1731627600000,

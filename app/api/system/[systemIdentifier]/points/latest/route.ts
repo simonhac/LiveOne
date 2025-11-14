@@ -5,16 +5,21 @@ import { resolveSystemFromIdentifier } from "@/lib/series-path-utils";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { getLatestPointValues } from "@/lib/kv-cache-manager";
 import { unixToFormattedAEST } from "@/lib/date-utils";
+import { kv, kvKey } from "@/lib/kv";
 
 /**
  * GET /api/system/{systemIdentifier}/points/latest
  *
  * Returns the latest values for all points in a system from the KV cache
  *
+ * Query Parameters:
+ * - action=clear: Clear the latest values cache for this system (admin only)
+ *
  * @param systemIdentifier - System identifier (numeric ID like "3" or user.shortname like "simon.kinkora")
  *
  * Example:
  * GET /api/system/3/points/latest
+ * GET /api/system/3/points/latest?action=clear
  *
  * Returns:
  * {
@@ -33,6 +38,13 @@ import { unixToFormattedAEST } from "@/lib/date-utils";
  *       "metricUnit": "W"
  *     }
  *   }
+ * }
+ *
+ * With action=clear:
+ * {
+ *   "systemId": 3,
+ *   "message": "Cache cleared successfully",
+ *   "action": "clear"
  * }
  */
 export async function GET(
@@ -108,7 +120,31 @@ export async function GET(
       );
     }
 
-    // Step 5: Get latest values from KV cache
+    // Step 5: Check for action parameter
+    const searchParams = request.nextUrl.searchParams;
+    const action = searchParams.get("action");
+
+    if (action === "clear") {
+      // Only admins can clear cache
+      if (!isAdmin) {
+        return NextResponse.json(
+          { error: "Admin access required to clear cache" },
+          { status: 403 },
+        );
+      }
+
+      // Clear the cache for this system
+      const cacheKey = kvKey(`latest:system:${systemId}`);
+      await kv.del(cacheKey);
+
+      return NextResponse.json({
+        systemId,
+        message: "Cache cleared successfully",
+        action: "clear",
+      });
+    }
+
+    // Step 6: Get latest values from KV cache
     const latestValues = await getLatestPointValues(systemId);
 
     // Step 6: Format timestamps to AEST

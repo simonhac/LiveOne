@@ -97,7 +97,7 @@ export async function GET(
       .select()
       .from(pointInfo)
       .where(eq(pointInfo.systemId, systemId))
-      .orderBy(pointInfo.id);
+      .orderBy(pointInfo.index);
     dbElapsedMs += Date.now() - pointsStartTime;
 
     if (points.length === 0) {
@@ -190,7 +190,7 @@ export async function GET(
 
       // Create PointInfo with modified extension for 5m aggregates
       const pointInfo = new PointInfo(
-        p.id,
+        p.index,
         systemId,
         p.originId,
         p.originSubId,
@@ -207,7 +207,7 @@ export async function GET(
         p.active,
       );
 
-      headers[`point_${p.id}`] = pointInfo;
+      headers[`point_${p.index}`] = pointInfo;
     });
 
     // Build dynamic SQL for pivot query based on data source
@@ -218,7 +218,7 @@ export async function GET(
       const pivotColumns = points
         .map((p) => {
           const aggCol = getAggColumn(p.metricType, p.transform, source);
-          return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.id} THEN pr.${aggCol} END) as point_${p.id}`;
+          return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.index} THEN pr.${aggCol} END) as point_${p.index}`;
         })
         .join(",\n  ");
 
@@ -258,7 +258,7 @@ export async function GET(
       const pivotColumns = points
         .map((p) => {
           const aggCol = getAggColumn(p.metricType, p.transform, source);
-          return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.id} THEN pr.${aggCol} END) as point_${p.id}`;
+          return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.index} THEN pr.${aggCol} END) as point_${p.index}`;
         })
         .join(",\n  ");
 
@@ -300,7 +300,7 @@ export async function GET(
         .map((p) => {
           // For text fields, use valueStr; for others, use value
           const column = p.metricUnit === "text" ? "pr.value_str" : "pr.value";
-          return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.id} THEN ${column} END) as point_${p.id}`;
+          return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.index} THEN ${column} END) as point_${p.index}`;
         })
         .join(",\n  ");
 
@@ -398,20 +398,20 @@ export async function GET(
 
       // Add point values in sorted order
       sortedPoints.forEach((p) => {
-        const value = row[`point_${p.id}`];
+        const value = row[`point_${p.index}`];
         // For text fields, keep as string; for others, convert to number and apply transform
         if (value !== null) {
           if (p.metricUnit === "text") {
-            transformed[`point_${p.id}`] = String(value);
+            transformed[`point_${p.index}`] = String(value);
           } else {
             const numValue = Number(value);
-            transformed[`point_${p.id}`] = applyTransform(
+            transformed[`point_${p.index}`] = applyTransform(
               numValue,
               p.transform,
             );
           }
         } else {
-          transformed[`point_${p.id}`] = null;
+          transformed[`point_${p.index}`] = null;
         }
       });
 

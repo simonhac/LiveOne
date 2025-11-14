@@ -100,7 +100,7 @@ export class PointInfo {
    * Create a PointInfo from a plain object (e.g., from database row or API response)
    */
   static from(data: {
-    id: number; // Database field name is still 'id'
+    index: number; // Database field name is 'id', exposed as 'index' in TypeScript
     systemId: number;
     originId: string;
     originSubId: string | null;
@@ -117,7 +117,7 @@ export class PointInfo {
     active: boolean;
   }): PointInfo {
     return new PointInfo(
-      data.id, // Map database 'id' field to 'index' property
+      data.index, // Database 'id' column exposed as 'index' property
       data.systemId,
       data.originId,
       data.originSubId,

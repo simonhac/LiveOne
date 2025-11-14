@@ -374,7 +374,7 @@ async function migrateBatch(
 
       values.push({
         system_id: reading.system_id,
-        point_id: pointInfo.id,
+        point_id: pointInfo.index,
         measurement_time: measurementTime,
         received_time: receivedTime,
         value,

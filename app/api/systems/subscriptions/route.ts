@@ -11,24 +11,29 @@ import { unixToFormattedAEST } from "@/lib/date-utils";
 /**
  * GET /api/systems/subscriptions
  *
- * Returns all subscription mappings showing which source systems are watched by composite systems
+ * Returns all subscription mappings showing which source points are watched by composite points
  *
  * Query Parameters:
- * - build=true: Force rebuild of subscription registry before returning results
+ * - action=build: Force rebuild of subscription registry before returning results
  *
  * Returns:
  * {
  *   "subscriptions": {
  *     "1": {
- *       "subscribers": [2, 3, 5],
+ *       "pointSubscribers": {
+ *         "1": ["5.0", "7.0"],
+ *         "2": ["5.1"]
+ *       },
  *       "lastUpdated": "2025-11-14T23:45:00+10:00"
  *     },
  *     "2": {
- *       "subscribers": [5, 6],
+ *       "pointSubscribers": {
+ *         "3": ["7.1", "7.2"]
+ *       },
  *       "lastUpdated": "2025-11-14T23:45:00+10:00"
  *     }
  *   },
- *   "note": "Use ?build=true to force rebuild the registry from database"
+ *   "note": "Use ?action=build to force rebuild the registry from database"
  * }
  *
  * Requires admin access
@@ -64,10 +69,12 @@ export async function GET(request: NextRequest) {
 
     // Step 3: Check if rebuild is requested
     const searchParams = request.nextUrl.searchParams;
-    const shouldBuild = searchParams.get("build") === "true";
+    const action = searchParams.get("action");
 
-    if (shouldBuild) {
-      console.log("Building subscription registry (requested via ?build=true)");
+    if (action === "build") {
+      console.log(
+        "Building subscription registry (requested via ?action=build)",
+      );
       await buildSubscriptionRegistry();
     }
 
@@ -79,7 +86,7 @@ export async function GET(request: NextRequest) {
     // Step 5: Fetch all subscription lists with timestamps
     const subscriptions: Record<
       string,
-      { subscribers: number[]; lastUpdated: string }
+      { pointSubscribers: Record<string, string[]>; lastUpdated: string }
     > = {};
 
     for (const key of keys) {
@@ -91,9 +98,9 @@ export async function GET(request: NextRequest) {
 
       const entry = await kv.get<SubscriptionRegistryEntry>(key);
 
-      if (entry && entry.subscribers && entry.subscribers.length > 0) {
+      if (entry && entry.pointSubscribers) {
         subscriptions[systemId] = {
-          subscribers: entry.subscribers,
+          pointSubscribers: entry.pointSubscribers,
           lastUpdated: unixToFormattedAEST(entry.lastUpdatedMs, true),
         };
       }
@@ -101,7 +108,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       subscriptions,
-      note: "Use ?build=true to force rebuild the registry from database",
+      note: "Use ?action=build to force rebuild the registry from database",
     });
   } catch (error) {
     console.error("Error fetching subscription registry:", error);

@@ -47,32 +47,48 @@ The application uses a shared Upstash Redis instance for both development and pr
 
 **Pattern:** `subscriptions:system:{systemId}`
 
-**Type:** JSON array
+**Type:** JSON object
 
-**Description:** Maps source system IDs to composite system IDs that subscribe to their point updates. When a source system's point is updated, all subscriber composite systems receive the same update.
+**Description:** Maps source points to composite points that subscribe to them. Enables efficient point-to-point updates where only subscribed points are cached.
 
 **Structure:**
 
 ```typescript
 {
-  subscribers: [100, 101, 102], // Array of composite system IDs
+  pointSubscribers: {
+    "1": ["100.0", "101.0"],  // Source point 1 subscribed by composite 100 point 0, composite 101 point 0
+    "2": ["100.1"],            // Source point 2 subscribed by composite 100 point 1
+    "3": ["100.2", "102.0"]    // Source point 3 subscribed by composite 100 point 2, composite 102 point 0
+  },
   lastUpdatedMs: 1731627600000  // Unix timestamp in milliseconds when registry was last updated
 }
 ```
 
+**Format Details:**
+
+- Key: Source point ID (string, e.g., "1", "2", "3")
+- Value: Array of composite point references in format "systemId.pointIndex"
+- Example: "100.0" means composite system ID 100, point index 0
+
 **Example:**
 
 - Key: `subscriptions:system:6`
-- Value: `{ subscribers: [100, 101], lastUpdatedMs: 1731627600000 }`
-- Meaning: Systems 100 and 101 are composite systems that use points from system 6, registry last updated at timestamp
+- Value: `{ pointSubscribers: { "1": ["100.0", "101.2"], "2": ["100.1"] }, lastUpdatedMs: 1731627600000 }`
+- Meaning:
+  - Source system 6, point 1 is subscribed to by composite system 100 point 0 and composite system 101 point 2
+  - Source system 6, point 2 is subscribed to by composite system 100 point 1
+  - Registry last updated at timestamp
 
 **Usage:**
 
 - Written by: `buildSubscriptionRegistry()` in `lib/kv-cache-manager.ts`
-- Read by: `getSubscribers()` in `lib/kv-cache-manager.ts` (called by `updateLatestPointValue()`)
-- API endpoint: `GET /api/systems/subscriptions` (admin only)
+- Read by: `getPointSubscribers()` in `lib/kv-cache-manager.ts` (called by `updateLatestPointValue()`)
+- API endpoint: `GET /api/systems/subscriptions` (admin only, aggregates to system-level for compatibility)
 
 **TTL:** None (rebuilt when composite system metadata changes)
+
+**Optimization:**
+This point-to-point mapping ensures that when a source point is updated, only the composite systems that actually subscribe to that specific point receive the update. This is more efficient than broadcasting all points to all composite systems.
 
 ### Username Cache
 

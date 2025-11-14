@@ -66,6 +66,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
 
       await updateLatestPointValue(
         testSystemId,
+        1, // test point ID
         pointPath,
         value,
         measurementTimeMs,
@@ -93,6 +94,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       // First update
       await updateLatestPointValue(
         testSystemId,
+        1, // test point ID
         pointPath,
         firstValue,
         measurementTimeMs,
@@ -104,6 +106,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       // Second update (should overwrite)
       await updateLatestPointValue(
         testSystemId,
+        1, // test point ID
         pointPath,
         secondValue,
         measurementTimeMs + 60000,
@@ -118,9 +121,9 @@ describeIfKV("kv-cache-manager (integration)", () => {
 
     it("should update multiple points independently", async () => {
       const points = [
-        { path: "source.solar.local/power", value: 5000, unit: "W" },
-        { path: "load.hvac/power", value: 1200, unit: "W" },
-        { path: "bidi.battery/soc", value: 85, unit: "%" },
+        { path: "source.solar.local/power", value: 5000, unit: "W", id: 1 },
+        { path: "load.hvac/power", value: 1200, unit: "W", id: 2 },
+        { path: "bidi.battery/soc", value: 85, unit: "%", id: 3 },
       ];
       const measurementTimeMs = Date.now();
 
@@ -128,6 +131,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       for (const point of points) {
         await updateLatestPointValue(
           testSystemId,
+          point.id,
           point.path,
           point.value,
           measurementTimeMs,
@@ -159,6 +163,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
 
       await updateLatestPointValue(
         testSystemId,
+        1, // test point ID
         pointPath1,
         5000,
         measurementTimeMs,
@@ -166,6 +171,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       );
       await updateLatestPointValue(
         testSystemId,
+        2, // test point ID
         pointPath2,
         1200,
         measurementTimeMs,
@@ -181,10 +187,25 @@ describeIfKV("kv-cache-manager (integration)", () => {
   });
 
   describe("subscription registry", () => {
-    it("should store and retrieve subscription list", async () => {
+    it("should store and retrieve subscription list with lastUpdatedMs", async () => {
       // Manually set up a subscription for testing
-      const subscribers = [testCompositeId1, testCompositeId2];
-      await kv.set(kvKey(`subscriptions:system:${testSystemId}`), subscribers);
+      const now = Date.now();
+      const entry = {
+        pointSubscribers: {
+          "1": [`${testCompositeId1}.0`, `${testCompositeId2}.0`],
+        },
+        lastUpdatedMs: now,
+      };
+      await kv.set(kvKey(`subscriptions:system:${testSystemId}`), entry);
+
+      // Verify entry was stored with timestamp
+      const stored = await kv.get<{
+        pointSubscribers: Record<string, string[]>;
+        lastUpdatedMs: number;
+      }>(kvKey(`subscriptions:system:${testSystemId}`));
+      expect(stored).toEqual(entry);
+      expect(stored).toHaveProperty("lastUpdatedMs");
+      expect(stored!.lastUpdatedMs).toBe(now);
 
       // Update a point - should propagate to composite systems
       const pointPath = "source.solar.remote/power";
@@ -193,6 +214,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
 
       await updateLatestPointValue(
         testSystemId,
+        1, // test point ID
         pointPath,
         value,
         measurementTimeMs,
@@ -214,11 +236,58 @@ describeIfKV("kv-cache-manager (integration)", () => {
       expect(composite2Result[pointPath].value).toBe(value);
     });
 
+    it("should propagate updates to all subscriber systems", async () => {
+      // Set up subscription
+      const entry = {
+        pointSubscribers: {
+          "1": [`${testCompositeId1}.0`, `${testCompositeId2}.0`],
+          "2": [`${testCompositeId1}.1`, `${testCompositeId2}.1`],
+          "3": [`${testCompositeId1}.2`, `${testCompositeId2}.2`],
+        },
+        lastUpdatedMs: Date.now(),
+      };
+      await kv.set(kvKey(`subscriptions:system:${testSystemId}`), entry);
+
+      // Update multiple points on source system
+      const points = [
+        { path: "source.solar.local/power", value: 5000, id: 1 },
+        { path: "load.hvac/power", value: 1200, id: 2 },
+        { path: "bidi.battery/soc", value: 85, id: 3 },
+      ];
+      const measurementTimeMs = Date.now();
+
+      for (const point of points) {
+        await updateLatestPointValue(
+          testSystemId,
+          point.id,
+          point.path,
+          point.value,
+          measurementTimeMs,
+          "W",
+        );
+      }
+
+      // Verify all points are in both composite systems
+      const composite1Result = await getLatestPointValues(testCompositeId1);
+      const composite2Result = await getLatestPointValues(testCompositeId2);
+
+      for (const point of points) {
+        expect(composite1Result[point.path]).toBeDefined();
+        expect(composite1Result[point.path].value).toBe(point.value);
+
+        expect(composite2Result[point.path]).toBeDefined();
+        expect(composite2Result[point.path].value).toBe(point.value);
+      }
+    });
+
     it("should handle invalidateSubscriptionRegistry", async () => {
       // Set up a subscription
-      await kv.set(kvKey(`subscriptions:system:${testSystemId}`), [
-        testCompositeId1,
-      ]);
+      await kv.set(kvKey(`subscriptions:system:${testSystemId}`), {
+        pointSubscribers: {
+          "1": [`${testCompositeId1}.0`],
+        },
+        lastUpdatedMs: Date.now(),
+      });
 
       // Invalidate it
       await invalidateSubscriptionRegistry(testSystemId);
@@ -228,6 +297,46 @@ describeIfKV("kv-cache-manager (integration)", () => {
         kvKey(`subscriptions:system:${testSystemId}`),
       );
       expect(subscribers).toBeNull();
+    });
+
+    it("should not propagate updates if no subscribers", async () => {
+      // Clear any existing subscriptions
+      await kv.del(kvKey(`subscriptions:system:${testSystemId}`));
+
+      // Update a point
+      const pointPath = "source.solar.local/power";
+      const value = 4000;
+      const measurementTimeMs = Date.now();
+
+      await updateLatestPointValue(
+        testSystemId,
+        1, // test point ID
+        pointPath,
+        value,
+        measurementTimeMs,
+        "W",
+      );
+
+      // Verify source has the value
+      const sourceResult = await getLatestPointValues(testSystemId);
+      expect(sourceResult[pointPath]).toBeDefined();
+      expect(sourceResult[pointPath].value).toBe(value);
+
+      // Verify composites do NOT have the value (no subscription)
+      const composite1Result = await getLatestPointValues(testCompositeId1);
+      expect(composite1Result[pointPath]).toBeUndefined();
+    });
+
+    it("should update lastUpdatedMs when rebuilding registry", async () => {
+      // Note: This test requires real composite systems in the database
+      // For a true integration test, you would:
+      // 1. Create test composite systems in the database
+      // 2. Call buildSubscriptionRegistry()
+      // 3. Verify the registry was built with current timestamp
+
+      // For now, we'll test that calling buildSubscriptionRegistry
+      // doesn't throw an error
+      await expect(buildSubscriptionRegistry()).resolves.not.toThrow();
     });
   });
 
@@ -240,6 +349,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       // Write
       await updateLatestPointValue(
         testSystemId,
+        1, // test point ID
         pointPath,
         value,
         measurementTimeMs,

@@ -1113,7 +1113,7 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
 
   const devPointInfo = await ctx.db
     .select({
-      id: pointInfo.id,
+      id: pointInfo.index,
       systemId: pointInfo.systemId,
       originId: pointInfo.originId,
       originSubId: pointInfo.originSubId,
@@ -1301,7 +1301,7 @@ async function syncPointDailyAggregations(ctx: SyncContext) {
 
   const devPointInfo = await ctx.db
     .select({
-      id: pointInfo.id,
+      id: pointInfo.index,
       systemId: pointInfo.systemId,
       originId: pointInfo.originId,
       originSubId: pointInfo.originSubId,
@@ -1573,7 +1573,7 @@ async function syncPointReadings(ctx: SyncContext) {
 
   const devPointInfo = await ctx.db
     .select({
-      id: pointInfo.id,
+      id: pointInfo.index,
       systemId: pointInfo.systemId,
       originId: pointInfo.originId,
       originSubId: pointInfo.originSubId,

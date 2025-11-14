@@ -15,11 +15,11 @@ import { systems } from "./schema";
 export const pointInfo = sqliteTable(
   "point_info",
   {
-    // Composite primary key (systemId, id)
+    // Composite primary key (systemId, index)
     systemId: integer("system_id")
       .notNull()
       .references(() => systems.id, { onDelete: "cascade" }),
-    id: integer("id").notNull(), // Sequential per system, not auto-increment
+    index: integer("id").notNull(), // Sequential per system, not auto-increment (database column "id", TS property "index")
 
     // Identification (original IDs from vendor system)
     originId: text("origin_id").notNull(), // eg. "5ecacac2-3cc3-447a-b3b5-423e333031e6"
@@ -48,7 +48,7 @@ export const pointInfo = sqliteTable(
     created: integer("created"), // Creation timestamp (Unix milliseconds)
   },
   (table) => ({
-    pk: primaryKey({ columns: [table.systemId, table.id] }),
+    pk: primaryKey({ columns: [table.systemId, table.index] }),
     // Unique constraint on origin point (system + origin_id + origin_sub_id)
     systemPointUnique: uniqueIndex("pi_system_point_unique").on(
       table.systemId,
@@ -110,7 +110,7 @@ export const pointReadings = sqliteTable(
     // Composite foreign key to point_info
     pointInfoFk: foreignKey({
       columns: [table.systemId, table.pointId],
-      foreignColumns: [pointInfo.systemId, pointInfo.id],
+      foreignColumns: [pointInfo.systemId, pointInfo.index],
     }).onDelete("cascade"),
   }),
 );
@@ -159,7 +159,7 @@ export const pointReadingsAgg5m = sqliteTable(
     // Composite foreign key to point_info
     pointInfoFk: foreignKey({
       columns: [table.systemId, table.pointId],
-      foreignColumns: [pointInfo.systemId, pointInfo.id],
+      foreignColumns: [pointInfo.systemId, pointInfo.index],
     }).onDelete("cascade"),
   }),
 );
@@ -202,7 +202,7 @@ export const pointReadingsAgg1d = sqliteTable(
     // Composite foreign key to point_info
     pointInfoFk: foreignKey({
       columns: [table.systemId, table.pointId],
-      foreignColumns: [pointInfo.systemId, pointInfo.id],
+      foreignColumns: [pointInfo.systemId, pointInfo.index],
     }).onDelete("cascade"),
   }),
 );

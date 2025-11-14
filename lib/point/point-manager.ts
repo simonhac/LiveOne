@@ -72,7 +72,7 @@ export class PointManager {
       .from(pointInfoTable)
       .where(eq(pointInfoTable.systemId, systemId));
 
-    const point = rows.find((row) => row.id === pointId);
+    const point = rows.find((row) => row.index === pointId);
     return point ? PointInfo.from(point) : null;
   }
 
@@ -306,7 +306,7 @@ export class PointManager {
     await db
       .update(pointInfoTable)
       .set(updates)
-      .where(eq(pointInfoTable.id, pointIndex));
+      .where(eq(pointInfoTable.index, pointIndex));
 
     // Invalidate cache for this system
     this.invalidateSeriesCache(systemId);
@@ -335,7 +335,7 @@ export class PointManager {
   }): Promise<void> {
     await db.insert(pointInfoTable).values({
       systemId: pointData.systemId,
-      id: pointData.index,
+      index: pointData.index,
       originId: pointData.originId,
       originSubId: pointData.originSubId ?? null,
       defaultName: pointData.defaultName,

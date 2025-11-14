@@ -74,23 +74,23 @@ export async function ensurePointInfo(
     `[PointsManager] Creating point_info for ${metadata.defaultName}${metadata.originSubId ? "." + metadata.originSubId : ""} (${metadata.metricType})`,
   );
 
-  // Get the next available id for this system
+  // Get the next available index for this system
   const existingPoints = await db
     .select()
     .from(pointInfo)
     .where(eq(pointInfo.systemId, systemId));
-  const maxId =
+  const maxIndex =
     existingPoints.length > 0
-      ? Math.max(...existingPoints.map((p) => p.id))
+      ? Math.max(...existingPoints.map((p) => p.index))
       : 0;
-  const nextId = maxId + 1;
+  const nextIndex = maxIndex + 1;
 
   // Create new point_info entry
   const [newPoint] = await db
     .insert(pointInfo)
     .values({
       systemId,
-      id: nextId,
+      index: nextIndex,
       originId: metadata.originId,
       originSubId: metadata.originSubId || null,
       defaultName: metadata.defaultName,
@@ -238,7 +238,7 @@ export async function insertPointReadingsBatch(
 
     valuesToInsert.push({
       systemId,
-      pointId: point.id,
+      pointId: point.index,
       sessionId: reading.sessionId || null,
       measurementTime: reading.measurementTime,
       receivedTime: reading.receivedTime,
@@ -282,6 +282,7 @@ export async function insertPointReadingsBatch(
         const pointPath = point.getPath().toString();
         return updateLatestPointValue(
           systemId,
+          val.pointId, // Pass point index for subscription lookup
           pointPath,
           val.value,
           val.measurementTime,
@@ -299,11 +300,11 @@ export async function insertPointReadingsBatch(
   // Aggregate the readings we just inserted
   const uniquePointIds = [...new Set(valuesToInsert.map((v) => v.pointId))];
 
-  // Build array of point objects with id, transform, and metricType for aggregation
-  const pointsForAggregation = uniquePointIds.map((id) => {
-    const point = Object.values(pointMap).find((p) => p.id === id);
+  // Build array of point objects with index, transform, and metricType for aggregation
+  const pointsForAggregation = uniquePointIds.map((pointId) => {
+    const point = Object.values(pointMap).find((p) => p.index === pointId);
     return {
-      id,
+      id: pointId,
       transform: point?.transform || null,
       metricType: point?.metricType || null,
     };
@@ -398,7 +399,7 @@ export async function insertPointReadingsDirectTo5m(
 
     aggregatesToInsert.push({
       systemId,
-      pointId: point.id,
+      pointId: point.index,
       sessionId,
       intervalEnd: reading.intervalEndMs,
       avg: isError || isEnergyCounter || isEnergyDelta ? null : value,

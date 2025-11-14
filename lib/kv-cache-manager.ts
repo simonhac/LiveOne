@@ -1,6 +1,7 @@
 import { kv, kvKey } from "./kv";
 import { db } from "./db";
 import { systems as systemsTable } from "./db/schema";
+import { pointInfo as pointInfoTable } from "./db/schema-monitoring-points";
 import { eq } from "drizzle-orm";
 import { PointReference } from "./identifiers";
 
@@ -21,10 +22,19 @@ export interface LatestPointValue {
 export type LatestPointValues = Record<string, LatestPointValue>;
 
 /**
- * Subscription registry entry
+ * Subscription registry entry - maps source point to composite points that subscribe to it
  */
 export interface SubscriptionRegistryEntry {
-  subscribers: number[]; // Array of composite system IDs
+  /**
+   * Map of source point ID to array of composite point references that subscribe to it
+   * Key: pointId (e.g., "1" for point with id=1)
+   * Value: array of composite point references (format: "systemId.pointIndex")
+   *
+   * Example: { "1": ["100.0", "101.2"], "2": ["100.1"] }
+   * Means: source point 1 is subscribed to by composite system 100 point 0 and composite system 101 point 2
+   *        source point 2 is subscribed to by composite system 100 point 1
+   */
+  pointSubscribers: Record<string, string[]>;
   lastUpdatedMs: number; // Unix timestamp in milliseconds when registry was last updated
 }
 
@@ -44,9 +54,10 @@ function getSubscriptionsKey(systemId: number): string {
 
 /**
  * Update the latest value for a point in a system's cache
- * Also updates all composite systems that subscribe to this point
+ * Also updates all composite systems that subscribe to this specific point
  *
  * @param systemId - Source system ID
+ * @param pointId - Source point ID (database id/index)
  * @param pointPath - Point path string (e.g., "source.solar.local/power")
  * @param value - Latest value
  * @param measurementTimeMs - Unix timestamp in milliseconds when value was measured
@@ -54,6 +65,7 @@ function getSubscriptionsKey(systemId: number): string {
  */
 export async function updateLatestPointValue(
   systemId: number,
+  pointId: number,
   pointPath: string,
   value: number,
   measurementTimeMs: number,
@@ -72,15 +84,34 @@ export async function updateLatestPointValue(
   const key = getLatestValuesKey(systemId);
   await kv.hset(key, { [pointPath]: pointValue });
 
-  // Look up composite systems that subscribe to this system
-  const subscribers = await getSubscribers(systemId);
+  // Look up composite points that subscribe to this specific source point
+  const compositePointRefs = await getPointSubscribers(systemId, pointId);
 
-  // Update each composite system's cache
-  if (subscribers && subscribers.length > 0) {
-    const updates = subscribers.map((compositeId) => {
-      const compositeKey = getLatestValuesKey(compositeId);
-      return kv.hset(compositeKey, { [pointPath]: pointValue });
-    });
+  // Update each composite system's cache (only for subscribed points)
+  if (compositePointRefs && compositePointRefs.length > 0) {
+    // Group by composite system ID for efficient batching
+    const updatesBySystem = new Map<number, Record<string, LatestPointValue>>();
+
+    for (const compositePointRef of compositePointRefs) {
+      // Parse composite point reference (e.g., "100.0" → systemId=100, pointIndex=0)
+      const [compositeSystemIdStr] = compositePointRef.split(".");
+      const compositeSystemId = parseInt(compositeSystemIdStr);
+
+      if (!updatesBySystem.has(compositeSystemId)) {
+        updatesBySystem.set(compositeSystemId, {});
+      }
+
+      // Add this point's value to the batch for this composite system
+      updatesBySystem.get(compositeSystemId)![pointPath] = pointValue;
+    }
+
+    // Execute batched updates per composite system
+    const updates = Array.from(updatesBySystem.entries()).map(
+      ([compositeSystemId, pointValues]) => {
+        const compositeKey = getLatestValuesKey(compositeSystemId);
+        return kv.hset(compositeKey, pointValues);
+      },
+    );
 
     await Promise.all(updates);
   }
@@ -102,21 +133,29 @@ export async function getLatestPointValues(
 }
 
 /**
- * Get the list of composite systems that subscribe to a source system
+ * Get point-specific subscribers for a source system point
  *
  * @param sourceSystemId - Source system ID
- * @returns Array of composite system IDs
+ * @param sourcePointId - Source point ID
+ * @returns Array of composite point references (format: "systemId.pointIndex")
  */
-async function getSubscribers(sourceSystemId: number): Promise<number[]> {
+async function getPointSubscribers(
+  sourceSystemId: number,
+  sourcePointId: number,
+): Promise<string[]> {
   const key = getSubscriptionsKey(sourceSystemId);
   const entry = await kv.get<SubscriptionRegistryEntry>(key);
 
-  return entry?.subscribers || [];
+  if (!entry?.pointSubscribers) {
+    return [];
+  }
+
+  return entry.pointSubscribers[sourcePointId.toString()] || [];
 }
 
 /**
  * Build the subscription registry for all composite systems
- * This creates a reverse mapping: source system → composite systems that use it
+ * This creates a reverse mapping: source point → composite points that subscribe to it
  *
  * Should be called:
  * - On application startup
@@ -124,14 +163,15 @@ async function getSubscribers(sourceSystemId: number): Promise<number[]> {
  * - Periodically (e.g., daily) as a safety net
  */
 export async function buildSubscriptionRegistry(): Promise<void> {
-  // Query all composite systems
+  // Query all composite systems with their points
   const compositeSystems = await db
     .select()
     .from(systemsTable)
     .where(eq(systemsTable.vendorType, "composite"));
 
-  // Build reverse mapping: sourceSystemId → [compositeIds]
-  const subscriptions = new Map<number, Set<number>>();
+  // Build reverse mapping: sourceSystemId → { pointId → [compositePointRefs] }
+  // Example: { 6: { "1": ["100.0", "101.2"], "2": ["100.1"] } }
+  const subscriptions = new Map<number, Map<string, Set<string>>>();
 
   for (const composite of compositeSystems) {
     const metadata = composite.metadata as any;
@@ -141,29 +181,46 @@ export async function buildSubscriptionRegistry(): Promise<void> {
       continue;
     }
 
-    // Extract all point references from mappings
-    const pointRefs: string[] = [];
-    for (const refs of Object.values(metadata.mappings)) {
-      if (Array.isArray(refs)) {
-        pointRefs.push(...(refs as string[]));
-      }
-    }
+    // Get all points for this composite system to map array index to point info
+    const compositePoints = await db
+      .select()
+      .from(pointInfoTable)
+      .where(eq(pointInfoTable.systemId, composite.id))
+      .orderBy(pointInfoTable.index);
 
-    // Parse point references to get source system IDs
-    const sourceSystemIds = new Set<number>();
-    for (const refStr of pointRefs) {
-      const pointRef = PointReference.parse(refStr);
-      if (pointRef) {
-        sourceSystemIds.add(pointRef.systemId);
-      }
-    }
+    // Build map: sourcePointRef → compositePointIndex
+    // For each category in mappings (solar, battery, etc.)
+    let compositePointIndex = 0;
+    for (const [, sourcePointRefs] of Object.entries(metadata.mappings)) {
+      if (!Array.isArray(sourcePointRefs)) continue;
 
-    // Add this composite to each source system's subscriber list
-    for (const sourceId of sourceSystemIds) {
-      if (!subscriptions.has(sourceId)) {
-        subscriptions.set(sourceId, new Set());
+      for (const sourcePointRefStr of sourcePointRefs as string[]) {
+        // Parse source point reference (e.g., "6.1" → systemId=6, pointId=1)
+        const sourcePointRef = PointReference.parse(sourcePointRefStr);
+        if (!sourcePointRef) {
+          console.warn(`Invalid point reference: ${sourcePointRefStr}`);
+          continue;
+        }
+
+        const sourceSystemId = sourcePointRef.systemId;
+        const sourcePointId = sourcePointRef.pointId.toString();
+
+        // Composite point reference (e.g., "100.0" for composite system 100, point index 0)
+        const compositePointRef = `${composite.id}.${compositePointIndex}`;
+
+        // Add to subscriptions map
+        if (!subscriptions.has(sourceSystemId)) {
+          subscriptions.set(sourceSystemId, new Map());
+        }
+        const sourceSystemMap = subscriptions.get(sourceSystemId)!;
+
+        if (!sourceSystemMap.has(sourcePointId)) {
+          sourceSystemMap.set(sourcePointId, new Set());
+        }
+        sourceSystemMap.get(sourcePointId)!.add(compositePointRef);
+
+        compositePointIndex++;
       }
-      subscriptions.get(sourceId)!.add(composite.id);
     }
   }
 
@@ -171,10 +228,17 @@ export async function buildSubscriptionRegistry(): Promise<void> {
   const updates: Promise<any>[] = [];
   const now = Date.now();
 
-  for (const [sourceId, compositeIds] of subscriptions.entries()) {
-    const key = getSubscriptionsKey(sourceId);
+  for (const [sourceSystemId, pointMap] of subscriptions.entries()) {
+    const key = getSubscriptionsKey(sourceSystemId);
+
+    // Convert Map<string, Set<string>> to Record<string, string[]>
+    const pointSubscribers: Record<string, string[]> = {};
+    for (const [pointId, compositeRefs] of pointMap.entries()) {
+      pointSubscribers[pointId] = Array.from(compositeRefs);
+    }
+
     const entry: SubscriptionRegistryEntry = {
-      subscribers: Array.from(compositeIds),
+      pointSubscribers,
       lastUpdatedMs: now,
     };
     updates.push(kv.set(key, entry));

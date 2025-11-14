@@ -90,7 +90,7 @@ export async function GET(
       }
 
       // Build the point ID in format "systemId.pointId"
-      const id = `${point.systemId}.${point.id}`;
+      const id = `${point.systemId}.${point.index}`;
 
       availablePoints.push({
         id,

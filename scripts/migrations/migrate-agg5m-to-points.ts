@@ -461,7 +461,7 @@ async function migrateAggBatch(
 
       values.push({
         system_id: agg.system_id,
-        point_id: pointInfo.id,
+        point_id: pointInfo.index,
         interval_end: intervalEndMs,
         avg,
         min,
