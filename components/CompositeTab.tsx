@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Plus, X, Sun, Home, Battery, Zap } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useUser } from "@clerk/nextjs";
+import { PointPath } from "@/lib/identifiers";
 
 interface CompositeMapping {
   [key: string]: string[]; // Allow any category keys
@@ -274,9 +275,24 @@ export default function CompositeTab({
     }));
   };
 
-  // Helper to check if a path matches a pattern
+  // Helper to check if a path matches a pattern using PointPath
   const matchesPattern = (path: string, pattern: string): boolean => {
-    return path === pattern || path.startsWith(pattern + ".");
+    const pointPath = PointPath.parse(path);
+    if (!pointPath) return false;
+
+    // Parse the pattern to get type and subtype
+    const parts = pattern.split(".");
+    const type = parts[0];
+    const subtype = parts.length > 1 ? parts[1] : null;
+
+    // Match type
+    if (pointPath.type !== type) return false;
+
+    // If pattern has subtype, match it (but ignore extension)
+    if (subtype && pointPath.subtype !== subtype) return false;
+
+    // If pattern only has type, any subtype matches
+    return true;
   };
 
   // Filter available points for selection

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { X, Shield } from "lucide-react";
-import CapabilitiesTab from "./CapabilitiesTab";
+import PointsTab from "./PointsTab";
 import CompositeTab from "./CompositeTab";
 import AdminTab from "./AdminTab";
 
@@ -45,7 +45,7 @@ export default function SystemSettingsDialog({
   const [shortNameError, setShortNameError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "general" | "capabilities" | "composite" | "admin"
+    "general" | "points" | "composite" | "admin"
   >("general");
   const compositeSaveRef = useRef<(() => Promise<any>) | null>(null);
   const adminSaveRef = useRef<(() => Promise<any>) | null>(null);
@@ -311,14 +311,14 @@ export default function SystemSettingsDialog({
               </button>
               {system.vendorType !== "composite" && (
                 <button
-                  onClick={() => setActiveTab("capabilities")}
+                  onClick={() => setActiveTab("points")}
                   className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
-                    activeTab === "capabilities"
+                    activeTab === "points"
                       ? "text-white border-blue-500 bg-gray-700/50"
                       : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
                   }`}
                 >
-                  Capabilities
+                  Points
                 </button>
               )}
               {system.vendorType === "composite" && (
@@ -408,13 +408,10 @@ export default function SystemSettingsDialog({
               </div>
             </div>
 
-            {/* Capabilities Tab Content - Only for non-composite systems */}
+            {/* Points Tab Content - Only for non-composite systems */}
             {system.vendorType !== "composite" && (
-              <div className={activeTab === "capabilities" ? "" : "hidden"}>
-                <CapabilitiesTab
-                  systemId={system.systemId}
-                  shouldLoad={isOpen}
-                />
+              <div className={activeTab === "points" ? "" : "hidden"}>
+                <PointsTab systemId={system.systemId} shouldLoad={isOpen} />
               </div>
             )}
 

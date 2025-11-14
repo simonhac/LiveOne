@@ -1,17 +1,13 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Sun, Battery, Zap, Home, Activity } from "lucide-react";
+import { PointPath } from "@/lib/identifiers";
+import micromatch from "micromatch";
 
-interface PointInfo {
-  id: number; // point ID within system
-  systemId: number;
-  displayName: string;
-  subsystem: string | null;
-  type: string | null; // series ID type component (e.g., "source", "load", "bidi")
-  subtype: string | null;
-  extension: string | null;
-  metricType: string; // metric type (e.g., "power", "energy", "soc")
+interface ParsedPoint {
+  pointPath: PointPath;
+  name: string;
+  metricType: string;
   metricUnit: string;
-  active: boolean;
 }
 
 const SUBSYSTEM_CONFIG = {
@@ -59,16 +55,16 @@ const SUBSYSTEM_CONFIG = {
   },
 } as const;
 
-interface CapabilitiesTabProps {
+interface PointsTabProps {
   systemId: number;
   shouldLoad?: boolean;
 }
 
-export default function CapabilitiesTab({
+export default function PointsTab({
   systemId,
   shouldLoad = false,
-}: CapabilitiesTabProps) {
-  const [points, setPoints] = useState<PointInfo[]>([]);
+}: PointsTabProps) {
+  const [points, setPoints] = useState<ParsedPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasLoaded, setHasLoaded] = useState(false);
   const fetchingRef = useRef(false);
@@ -85,36 +81,25 @@ export default function CapabilitiesTab({
   const fetchPoints = useCallback(async () => {
     fetchingRef.current = true;
     try {
-      const response = await fetch(
-        `/api/admin/systems/${systemId}/point-readings?limit=1`,
-      );
+      const response = await fetch(`/api/system/${systemId}/points`);
       const data = await response.json();
 
-      console.log("CapabilitiesTab fetchPoints response:", {
-        hasHeaders: !!data.headers,
-        isArray: Array.isArray(data.headers),
-        headersType: typeof data.headers,
-        data,
-      });
+      if (data.points && Array.isArray(data.points)) {
+        // Parse paths at serialization boundary
+        const parsedPoints: ParsedPoint[] = data.points
+          .map((p: any) => {
+            const pointPath = PointPath.parse(p.path);
+            if (!pointPath) return null;
+            return {
+              pointPath,
+              name: p.name,
+              metricType: p.metricType,
+              metricUnit: p.metricUnit,
+            };
+          })
+          .filter((p: ParsedPoint | null): p is ParsedPoint => p !== null);
 
-      if (data.headers && Array.isArray(data.headers)) {
-        // Convert headers to PointInfo objects, filtering out timestamp and sessionLabel columns
-        const pointsData: PointInfo[] = data.headers
-          .filter((h: any) => h.key !== "timestamp" && h.key !== "sessionLabel")
-          .map((h: any) => ({
-            id: h.pointDbId,
-            systemId: h.systemId,
-            displayName: h.label,
-            subsystem: h.subsystem,
-            type: h.pointType || null,
-            subtype: h.subtype || null,
-            extension: h.extension || null,
-            metricType: h.type,
-            metricUnit: h.unit,
-            active: h.active,
-          }));
-
-        setPoints(pointsData);
+        setPoints(parsedPoints);
         setHasLoaded(true);
       }
     } catch (error) {
@@ -131,84 +116,78 @@ export default function CapabilitiesTab({
     }
   }, [systemId, shouldLoad, hasLoaded, fetchPoints]);
 
+  // Filter points by pattern
+  const filterPoints = useCallback(
+    (pattern: string) =>
+      points.filter((p) =>
+        micromatch.isMatch(p.pointPath.getPointIdentifier(), pattern),
+      ),
+    [points],
+  );
+
   // Group points by subsystem
   const pointsBySubsystem = useMemo(() => {
-    const grouped: Record<
-      string,
-      Array<{ displayName: string; path: string; metricTypes: string[] }>
-    > = {
-      solar: [],
-      battery: [],
-      grid: [],
-      load: [],
-      inverter: [],
-      other: [],
+    const solarPoints = filterPoints("source.solar*");
+    const batteryPoints = filterPoints("bidi.battery*");
+    const gridPoints = filterPoints("bidi.grid*");
+    const loadPoints = filterPoints("load*");
+    const inverterPoints = filterPoints("inverter*");
+
+    // Collect points that didn't match any subsystem
+    const categorizedIdentifiers = new Set<string>();
+    [
+      ...solarPoints,
+      ...batteryPoints,
+      ...gridPoints,
+      ...loadPoints,
+      ...inverterPoints,
+    ].forEach((p) =>
+      categorizedIdentifiers.add(p.pointPath.getPointIdentifier()),
+    );
+
+    const otherPoints = points.filter(
+      (p) => !categorizedIdentifiers.has(p.pointPath.getPointIdentifier()),
+    );
+
+    // Group each subsystem's points by identifier to show all metric types together
+    const groupByIdentifier = (points: ParsedPoint[]) => {
+      const grouped = new Map<
+        string,
+        { name: string; identifier: string; metricTypes: string[] }
+      >();
+
+      points.forEach((point) => {
+        const identifier = point.pointPath.getPointIdentifier();
+        if (!grouped.has(identifier)) {
+          grouped.set(identifier, {
+            name: point.name,
+            identifier,
+            metricTypes: [],
+          });
+        }
+        grouped.get(identifier)!.metricTypes.push(point.metricType);
+      });
+
+      return Array.from(grouped.values()).map((item) => ({
+        ...item,
+        metricTypes: [...new Set(item.metricTypes)].sort(),
+      }));
     };
 
-    // Build a map of (displayName, path) -> metricTypes
-    const pointGroups = new Map<string, Set<string>>();
-
-    points.forEach((point) => {
-      // Only include points that have a type
-      if (!point.type) return;
-
-      const parts = [point.type, point.subtype, point.extension].filter(
-        (part): part is string => Boolean(part),
-      );
-      const path = parts.join(".");
-
-      if (!path) return;
-
-      const key = `${point.displayName}|||${path}`;
-      if (!pointGroups.has(key)) {
-        pointGroups.set(key, new Set());
-      }
-      pointGroups.get(key)!.add(point.metricType);
-    });
-
-    // Now group by subsystem
-    points.forEach((point) => {
-      if (!point.type) return;
-
-      const subsystem = point.subsystem || "other";
-      const parts = [point.type, point.subtype, point.extension].filter(
-        (part): part is string => Boolean(part),
-      );
-      const path = parts.join(".");
-
-      if (!path) return;
-
-      const key = `${point.displayName}|||${path}`;
-      const metricTypes = Array.from(pointGroups.get(key) || []).sort();
-
-      const targetArray = grouped[subsystem] || grouped.other;
-      // Only add if not already present
-      if (
-        !targetArray.some(
-          (item) =>
-            item.displayName === point.displayName && item.path === path,
-        )
-      ) {
-        targetArray.push({
-          displayName: point.displayName,
-          path,
-          metricTypes,
-        });
-      }
-    });
-
-    // Sort by display name within each subsystem
-    Object.keys(grouped).forEach((key) => {
-      grouped[key].sort((a, b) => a.displayName.localeCompare(b.displayName));
-    });
-
-    return grouped;
-  }, [points]);
+    return {
+      solar: groupByIdentifier(solarPoints),
+      battery: groupByIdentifier(batteryPoints),
+      grid: groupByIdentifier(gridPoints),
+      load: groupByIdentifier(loadPoints),
+      inverter: groupByIdentifier(inverterPoints),
+      other: groupByIdentifier(otherPoints),
+    };
+  }, [filterPoints, points]);
 
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
-        <div className="text-gray-400">Loading capabilities...</div>
+        <div className="text-gray-400">Loading points...</div>
       </div>
     );
   }
@@ -216,9 +195,7 @@ export default function CapabilitiesTab({
   if (points.length === 0) {
     return (
       <div className="flex items-center justify-center py-8">
-        <div className="text-gray-400">
-          No capabilities found for this system.
-        </div>
+        <div className="text-gray-400">No points found for this system.</div>
       </div>
     );
   }
@@ -226,15 +203,15 @@ export default function CapabilitiesTab({
   return (
     <div className="space-y-[15px]">
       <p className="text-sm text-gray-400">
-        System capabilities organized by subsystem. Points can be activated or
+        System points organized by subsystem. Points can be activated or
         deactivated via the View Data modal.
       </p>
 
       {(
         Object.keys(SUBSYSTEM_CONFIG) as Array<keyof typeof SUBSYSTEM_CONFIG>
       ).map((subsystem) => {
-        const subsystemPaths = pointsBySubsystem[subsystem];
-        if (!subsystemPaths || subsystemPaths.length === 0) {
+        const subsystemPoints = pointsBySubsystem[subsystem];
+        if (!subsystemPoints || subsystemPoints.length === 0) {
           return null; // Skip empty subsystems
         }
 
@@ -258,11 +235,11 @@ export default function CapabilitiesTab({
             {/* Content - Points */}
             <div className="flex-1 min-w-0">
               <div className="space-y-1">
-                {subsystemPaths.map((item, idx) => (
+                {subsystemPoints.map((item, idx) => (
                   <div key={idx} className="text-sm text-gray-300">
-                    <span className="font-semibold">{item.displayName}</span>
+                    <span className="font-semibold">{item.name}</span>
                     <span className="text-gray-400 ml-2 font-sans">
-                      {item.path}
+                      {item.identifier}
                     </span>
                     {item.metricTypes.length > 0 && (
                       <span className="text-gray-500 ml-2 font-sans">

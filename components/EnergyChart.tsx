@@ -23,6 +23,7 @@ import { Line, Bar } from "react-chartjs-2";
 import { format } from "date-fns";
 import "chartjs-adapter-date-fns";
 import annotationPlugin from "chartjs-plugin-annotation";
+import micromatch from "micromatch";
 
 // Register Chart.js components
 ChartJS.register(
@@ -484,13 +485,17 @@ export default function EnergyChart({
         // Ignore response if this effect has been cancelled
         if (cancelled) return;
 
-        // Helper to find series by series path (e.g., "bidi.battery/power.avg")
-        const findSeries = (seriesPath: string) => {
+        // Helper to find series by pattern (glob-style)
+        // Pattern format: "bidi.battery/power.avg" or "source.solar*/power.avg"
+        const findSeries = (pattern: string) => {
           return data.data.find((d: any) => {
-            // Series ID format: {systemId}/{seriesPath}
-            // e.g., "daylesford/bidi.battery/power.avg"
-            // Match if ID ends with "/{seriesPath}"
-            return d.id.endsWith(`/${seriesPath}`);
+            // Series ID format: {systemId}/{pointPath/metric.aggregation}
+            // e.g., "10000/bidi.battery/power.avg" or "daylesford/source.solar.local/power.avg"
+            // Extract the series path part (everything after systemId/)
+            const slashIndex = d.id.indexOf("/");
+            if (slashIndex === -1) return false;
+            const seriesPath = d.id.substring(slashIndex + 1);
+            return micromatch.isMatch(seriesPath, pattern);
           });
         };
 
@@ -505,9 +510,10 @@ export default function EnergyChart({
 
         if (isEnergyMode) {
           // Daily energy mode - use energy.delta and SOC stats
+          // Use wildcards to match any solar extension (local, remote, etc.)
           solarData =
-            findSeries("source.solar/energy.delta") ||
-            findSeries("solar/energy.delta");
+            findSeries("source.solar*/energy.delta") ||
+            findSeries("solar*/energy.delta");
           loadData = findSeries("load/energy.delta");
           batteryWData = null;
           batterySOCData = findSeries("bidi.battery/soc.avg");
@@ -516,9 +522,10 @@ export default function EnergyChart({
           gridData = findSeries("bidi.grid/energy.delta");
         } else {
           // 5m/30m power mode - use power.avg and SOC.last
+          // Use wildcards to match any solar extension (local, remote, etc.)
           solarData =
-            findSeries("source.solar/power.avg") ||
-            findSeries("solar/power.avg");
+            findSeries("source.solar*/power.avg") ||
+            findSeries("solar*/power.avg");
           loadData = findSeries("load/power.avg");
           batteryWData = findSeries("bidi.battery/power.avg");
           batterySOCData = findSeries("bidi.battery/soc.last");
