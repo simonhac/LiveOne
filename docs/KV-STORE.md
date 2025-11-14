@@ -226,13 +226,16 @@ redis-cli --pattern "test:*" | xargs redis-cli DEL
 
 **Function:** `buildSubscriptionRegistry()` in `lib/kv-cache-manager.ts`
 
-**When to rebuild:**
+**Automatic rebuild triggers:**
 
-- After creating a new composite system
-- After updating composite system metadata (point mappings)
-- After deleting a composite system
+- When composite system metadata is updated via `PATCH /api/admin/systems/{systemId}/composite-config`
+- The registry rebuilds automatically after successful metadata update
 
-**Note:** Currently no automatic rebuild on metadata changes - requires manual trigger
+**Manual rebuild options:**
+
+- Call `buildSubscriptionRegistry()` programmatically
+- Use API endpoint: `GET /api/systems/subscriptions?build=true`
+- Run script: `npx tsx scripts/build-subscription-registry.ts`
 
 ### Username Cache
 
@@ -423,8 +426,8 @@ Track cache performance:
 
 ### 6. Composite System Auto-Rebuild
 
-Automatically rebuild subscription registry when composite metadata changes:
+~~Automatically rebuild subscription registry when composite metadata changes~~ **✓ Implemented**
 
-- Listen for system updates
-- Detect composite system changes
-- Trigger `buildSubscriptionRegistry()`
+- ✓ Automatically rebuilds when composite system metadata is updated via API
+- ✓ Implemented in `PATCH /api/admin/systems/{systemId}/composite-config`
+- ✓ Non-blocking - logs errors but doesn't fail the metadata update

@@ -5,6 +5,7 @@ import { systems } from "@/lib/db/schema";
 import { pointInfo } from "@/lib/db/schema-monitoring-points";
 import { eq } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
+import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
 
 export async function GET(
   request: NextRequest,
@@ -289,6 +290,18 @@ export async function PATCH(
 
     if (result.length === 0) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
+    }
+
+    // Rebuild subscription registry to reflect the updated composite system mappings
+    console.log(
+      `Rebuilding subscription registry after composite system ${systemId} metadata update`,
+    );
+    try {
+      await buildSubscriptionRegistry();
+      console.log("Subscription registry rebuilt successfully");
+    } catch (error) {
+      // Log but don't fail the request - the metadata update was successful
+      console.error("Failed to rebuild subscription registry:", error);
     }
 
     return NextResponse.json({
