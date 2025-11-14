@@ -1,4 +1,4 @@
-import { kv } from "./kv";
+import { kv, kvKey } from "./kv";
 import { db } from "./db";
 import { systems as systemsTable } from "./db/schema";
 import { eq } from "drizzle-orm";
@@ -24,14 +24,14 @@ export type LatestPointValues = Record<string, LatestPointValue>;
  * Get the KV key for a system's latest point values
  */
 function getLatestValuesKey(systemId: number): string {
-  return `latest:system:${systemId}`;
+  return kvKey(`latest:system:${systemId}`);
 }
 
 /**
  * Get the KV key for a system's subscription registry
  */
 function getSubscriptionsKey(systemId: number): string {
-  return `subscriptions:system:${systemId}`;
+  return kvKey(`subscriptions:system:${systemId}`);
 }
 
 /**

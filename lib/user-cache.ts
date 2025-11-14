@@ -2,7 +2,7 @@
  * User cache for fast username → Clerk ID lookups
  */
 
-import { kv } from "./kv";
+import { kv, kvKey } from "./kv";
 import { clerkClient } from "@clerk/nextjs/server";
 
 /**
@@ -16,7 +16,7 @@ export async function getUserIdByUsername(
   username: string,
 ): Promise<string | null> {
   // Try cache first (fast path)
-  const cached = await kv.get<string>(`username:${username}`);
+  const cached = await kv.get<string>(kvKey(`username:${username}`));
   if (cached) {
     return cached;
   }
@@ -54,7 +54,7 @@ export async function cacheUsernameMapping(
   username: string,
   clerkId: string,
 ): Promise<void> {
-  await kv.set(`username:${username}`, clerkId);
+  await kv.set(kvKey(`username:${username}`), clerkId);
 }
 
 /**
@@ -64,7 +64,7 @@ export async function cacheUsernameMapping(
  * @param username - Old username to invalidate
  */
 export async function invalidateUsernameCache(username: string): Promise<void> {
-  await kv.del(`username:${username}`);
+  await kv.del(kvKey(`username:${username}`));
 }
 
 /**

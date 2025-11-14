@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { isUserAdmin } from "@/lib/auth-utils";
-import { kv } from "@/lib/kv";
+import { kv, kvKey } from "@/lib/kv";
 
 /**
  * GET /api/systems/subscriptions
@@ -48,15 +48,19 @@ export async function GET(request: NextRequest) {
     }
 
     // Step 3: Scan KV for all subscription keys
-    // Pattern: subscriptions:system:*
-    const keys = await kv.keys("subscriptions:system:*");
+    // Pattern: {namespace}:subscriptions:system:*
+    const pattern = kvKey("subscriptions:system:*");
+    const keys = await kv.keys(pattern);
 
     // Step 4: Fetch all subscription lists
     const subscriptions: Record<string, number[]> = {};
 
     for (const key of keys) {
-      // Extract system ID from key (e.g., "subscriptions:system:6" -> "6")
-      const systemId = key.replace("subscriptions:system:", "");
+      // Extract system ID from key (e.g., "dev:subscriptions:system:6" -> "6")
+      // Remove the namespace prefix first
+      const namespace = process.env.KV_NAMESPACE || "dev";
+      const withoutNamespace = key.replace(`${namespace}:`, "");
+      const systemId = withoutNamespace.replace("subscriptions:system:", "");
 
       const subscribers = await kv.get<number[]>(key);
 

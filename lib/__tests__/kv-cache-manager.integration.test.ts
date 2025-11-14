@@ -7,6 +7,7 @@
  * Prerequisites:
  * 1. Create Vercel KV database in dashboard
  * 2. Add KV_REST_API_URL and KV_REST_API_TOKEN to .env.local
+ * 3. Tests automatically use 'test' namespace to avoid polluting dev/prod
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
@@ -16,7 +17,10 @@ import {
   buildSubscriptionRegistry,
   invalidateSubscriptionRegistry,
 } from "../kv-cache-manager";
-import { kv } from "../kv";
+import { kv, kvKey } from "../kv";
+
+// Override KV_NAMESPACE to 'test' for integration tests
+process.env.KV_NAMESPACE = "test";
 
 // Skip these tests if KV is not configured
 const isKVConfigured = !!(
@@ -35,10 +39,10 @@ describeIfKV("kv-cache-manager (integration)", () => {
   async function cleanup() {
     try {
       await Promise.all([
-        kv.del(`latest:system:${testSystemId}`),
-        kv.del(`latest:system:${testCompositeId1}`),
-        kv.del(`latest:system:${testCompositeId2}`),
-        kv.del(`subscriptions:system:${testSystemId}`),
+        kv.del(kvKey(`latest:system:${testSystemId}`)),
+        kv.del(kvKey(`latest:system:${testCompositeId1}`)),
+        kv.del(kvKey(`latest:system:${testCompositeId2}`)),
+        kv.del(kvKey(`subscriptions:system:${testSystemId}`)),
       ]);
     } catch (error) {
       console.error("Cleanup error:", error);
@@ -180,7 +184,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
     it("should store and retrieve subscription list", async () => {
       // Manually set up a subscription for testing
       const subscribers = [testCompositeId1, testCompositeId2];
-      await kv.set(`subscriptions:system:${testSystemId}`, subscribers);
+      await kv.set(kvKey(`subscriptions:system:${testSystemId}`), subscribers);
 
       // Update a point - should propagate to composite systems
       const pointPath = "source.solar.remote/power";
@@ -212,13 +216,17 @@ describeIfKV("kv-cache-manager (integration)", () => {
 
     it("should handle invalidateSubscriptionRegistry", async () => {
       // Set up a subscription
-      await kv.set(`subscriptions:system:${testSystemId}`, [testCompositeId1]);
+      await kv.set(kvKey(`subscriptions:system:${testSystemId}`), [
+        testCompositeId1,
+      ]);
 
       // Invalidate it
       await invalidateSubscriptionRegistry(testSystemId);
 
       // Verify it was deleted
-      const subscribers = await kv.get(`subscriptions:system:${testSystemId}`);
+      const subscribers = await kv.get(
+        kvKey(`subscriptions:system:${testSystemId}`),
+      );
       expect(subscribers).toBeNull();
     });
   });

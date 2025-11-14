@@ -22,3 +22,20 @@ export const kv = createClient({
   url: process.env.KV_REST_API_URL!,
   token: process.env.KV_REST_API_TOKEN!,
 });
+
+/**
+ * Generate a namespaced KV key
+ *
+ * Adds environment prefix to prevent dev/prod/test key collisions
+ *
+ * @param pattern - Key pattern (e.g., "latest:system:123")
+ * @returns Namespaced key (e.g., "dev:latest:system:123")
+ *
+ * @example
+ * kvKey("latest:system:123") // "dev:latest:system:123" in development
+ * kvKey("username:simon")    // "prod:username:simon" in production
+ */
+export function kvKey(pattern: string): string {
+  const namespace = process.env.KV_NAMESPACE || "dev";
+  return `${namespace}:${pattern}`;
+}
