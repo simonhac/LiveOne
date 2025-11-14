@@ -2,9 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { kv } from "@/lib/kv";
-import { db } from "@/lib/db";
-import { systems } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
 
 /**
  * GET /api/systems/subscriptions
@@ -50,51 +47,21 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Step 3: Get all composite systems to know which systems might have subscriptions
-    const compositeSystems = await db
-      .select()
-      .from(systems)
-      .where(eq(systems.vendorType, "composite"));
+    // Step 3: Scan KV for all subscription keys
+    // Pattern: subscriptions:system:*
+    const keys = await kv.keys("subscriptions:system:*");
 
-    // Step 4: Collect all unique source system IDs from composite metadata
-    const sourceSystemIds = new Set<number>();
-
-    for (const system of compositeSystems) {
-      if (
-        !system.metadata ||
-        typeof system.metadata !== "object" ||
-        !("version" in system.metadata) ||
-        system.metadata.version !== 2
-      ) {
-        continue;
-      }
-
-      const metadata = system.metadata as {
-        version: number;
-        mappings: Record<string, string[]>;
-      };
-
-      // Extract system IDs from point references (e.g., "6.17" -> system 6)
-      for (const pointRefs of Object.values(metadata.mappings)) {
-        for (const ref of pointRefs) {
-          const systemId = parseInt(ref.split(".")[0]);
-          if (!isNaN(systemId)) {
-            sourceSystemIds.add(systemId);
-          }
-        }
-      }
-    }
-
-    // Step 5: Query KV cache for subscription lists for each source system
+    // Step 4: Fetch all subscription lists
     const subscriptions: Record<string, number[]> = {};
 
-    for (const systemId of sourceSystemIds) {
-      const subscribers = await kv.get<number[]>(
-        `subscriptions:system:${systemId}`,
-      );
+    for (const key of keys) {
+      // Extract system ID from key (e.g., "subscriptions:system:6" -> "6")
+      const systemId = key.replace("subscriptions:system:", "");
+
+      const subscribers = await kv.get<number[]>(key);
 
       if (subscribers && subscribers.length > 0) {
-        subscriptions[systemId.toString()] = subscribers;
+        subscriptions[systemId] = subscribers;
       }
     }
 
