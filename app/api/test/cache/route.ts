@@ -1,6 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserIdByUsername } from "@/lib/user-cache";
 
+/**
+ * GET /api/test/cache
+ *
+ * Tests username cache performance by performing multiple lookups
+ *
+ * Query Parameters:
+ * - count: Number of cache lookups to perform (default: 10, max: 1000)
+ *
+ * Returns statistics about lookup times in milliseconds:
+ * {
+ *   "count": 10,
+ *   "first": 4936,    // First lookup (usually slower - cache miss or cold start)
+ *   "min": 385,       // Fastest lookup
+ *   "max": 4936,      // Slowest lookup
+ *   "median": 446,    // Median lookup time
+ *   "avg": 946.4,     // Average lookup time
+ *   "note": "Use ?count=N to specify number of lookups (default 10, max 1000)"
+ * }
+ */
 export async function GET(request: NextRequest) {
   const username = "simon";
 
@@ -34,5 +53,6 @@ export async function GET(request: NextRequest) {
     max,
     median,
     avg: Math.round(avg * 10) / 10,
+    note: "Use ?count=N to specify number of lookups (default 10, max 1000)",
   });
 }
