@@ -298,7 +298,7 @@ export default function SystemPowerCards({
             }
             extra={
               showBreakdown ? (
-                <div className="text-xs space-y-1 text-gray-400">
+                <div className="text-xs text-gray-400 space-y-0.5">
                   {solarLocal !== null && (
                     <div>Local: {formatPower(solarLocal)}</div>
                   )}
