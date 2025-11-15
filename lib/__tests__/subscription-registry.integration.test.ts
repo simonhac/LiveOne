@@ -22,9 +22,6 @@ import { systems as systemsTable } from "../db/schema";
 import { pointInfo as pointInfoTable } from "../db/schema-monitoring-points";
 import { eq } from "drizzle-orm";
 
-// Override KV_NAMESPACE to 'test' for integration tests
-process.env.KV_NAMESPACE = "test";
-
 // Skip these tests if KV is not configured
 const isKVConfigured = !!(
   process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
@@ -159,7 +156,7 @@ describeIfKV("Subscription Registry (integration)", () => {
 
       expect(registry).toBeDefined();
       expect(registry).toHaveProperty("pointSubscribers");
-      expect(registry).toHaveProperty("lastUpdatedMs");
+      expect(registry).toHaveProperty("lastUpdatedTimeMs");
 
       const pointSubscribers = (registry as any).pointSubscribers;
 

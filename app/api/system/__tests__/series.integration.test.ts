@@ -345,8 +345,8 @@ describe("GET /api/system/[systemIdentifier]/series", () => {
 
       expect(status).toBe(400);
       expect(data.error).toBe("Unmatched opening brace");
-      // Pattern is split by comma, so it validates "source.{solar"
-      expect(data.invalidPattern).toBe("source.{solar");
+      // Pattern is not split by comma because it's inside braces
+      expect(data.invalidPattern).toBe("source.{solar,grid");
     });
 
     it("should reject filter with unmatched closing brace", async () => {

@@ -82,18 +82,16 @@ export function getSupportedIntervals(
     }
     return [];
   } else {
-    // Power and other: avg/last in both, min/max only in 1d
+    // Power and other: all aggregations available in both 5m and 1d
     if (
-      aggregationField === AggregationField.AVG ||
-      aggregationField === AggregationField.LAST
+      [
+        AggregationField.AVG,
+        AggregationField.MIN,
+        AggregationField.MAX,
+        AggregationField.LAST,
+      ].includes(aggregationField as AggregationField)
     ) {
       return ["5m", "1d"];
-    } else if (
-      [AggregationField.MIN, AggregationField.MAX].includes(
-        aggregationField as AggregationField,
-      )
-    ) {
-      return ["1d"];
     }
     return [];
   }

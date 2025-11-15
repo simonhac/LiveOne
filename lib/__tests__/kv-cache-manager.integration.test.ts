@@ -19,9 +19,6 @@ import {
 } from "../kv-cache-manager";
 import { kv, kvKey } from "../kv";
 
-// Override KV_NAMESPACE to 'test' for integration tests
-process.env.KV_NAMESPACE = "test";
-
 // Skip these tests if KV is not configured
 const isKVConfigured = !!(
   process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
@@ -194,18 +191,18 @@ describeIfKV("kv-cache-manager (integration)", () => {
         pointSubscribers: {
           "1": [`${testCompositeId1}.0`, `${testCompositeId2}.0`],
         },
-        lastUpdatedMs: now,
+        lastUpdatedTimeMs: now,
       };
       await kv.set(kvKey(`subscriptions:system:${testSystemId}`), entry);
 
       // Verify entry was stored with timestamp
       const stored = await kv.get<{
         pointSubscribers: Record<string, string[]>;
-        lastUpdatedMs: number;
+        lastUpdatedTimeMs: number;
       }>(kvKey(`subscriptions:system:${testSystemId}`));
       expect(stored).toEqual(entry);
-      expect(stored).toHaveProperty("lastUpdatedMs");
-      expect(stored!.lastUpdatedMs).toBe(now);
+      expect(stored).toHaveProperty("lastUpdatedTimeMs");
+      expect(stored!.lastUpdatedTimeMs).toBe(now);
 
       // Update a point - should propagate to composite systems
       const pointPath = "source.solar.remote/power";
@@ -234,7 +231,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       const composite2Result = await getLatestPointValues(testCompositeId2);
       expect(composite2Result[pointPath]).toBeDefined();
       expect(composite2Result[pointPath].value).toBe(value);
-    });
+    }, 20000);
 
     it("should propagate updates to all subscriber systems", async () => {
       // Set up subscription
@@ -244,7 +241,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
           "2": [`${testCompositeId1}.1`, `${testCompositeId2}.1`],
           "3": [`${testCompositeId1}.2`, `${testCompositeId2}.2`],
         },
-        lastUpdatedMs: Date.now(),
+        lastUpdatedTimeMs: Date.now(),
       };
       await kv.set(kvKey(`subscriptions:system:${testSystemId}`), entry);
 
@@ -278,7 +275,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         expect(composite2Result[point.path]).toBeDefined();
         expect(composite2Result[point.path].value).toBe(point.value);
       }
-    });
+    }, 20000);
 
     it("should handle invalidateSubscriptionRegistry", async () => {
       // Set up a subscription
@@ -286,7 +283,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         pointSubscribers: {
           "1": [`${testCompositeId1}.0`],
         },
-        lastUpdatedMs: Date.now(),
+        lastUpdatedTimeMs: Date.now(),
       });
 
       // Invalidate it
@@ -300,8 +297,10 @@ describeIfKV("kv-cache-manager (integration)", () => {
     });
 
     it("should not propagate updates if no subscribers", async () => {
-      // Clear any existing subscriptions
+      // Clear any existing subscriptions AND composite caches
       await kv.del(kvKey(`subscriptions:system:${testSystemId}`));
+      await kv.del(kvKey(`latest:system:${testCompositeId1}`));
+      await kv.del(kvKey(`latest:system:${testCompositeId2}`));
 
       // Update a point
       const pointPath = "source.solar.local/power";

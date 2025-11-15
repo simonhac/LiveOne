@@ -16,6 +16,7 @@ jest.mock("../kv", () => ({
     set: jest.fn<() => Promise<string>>().mockResolvedValue("OK"),
     del: jest.fn<() => Promise<number>>().mockResolvedValue(1),
   },
+  kvKey: jest.fn((pattern: string) => `test:${pattern}`),
 }));
 
 // Mock the database
@@ -23,7 +24,9 @@ jest.mock("../db", () => ({
   db: {
     select: jest.fn(() => ({
       from: jest.fn(() => ({
-        where: jest.fn(() => Promise.resolve([])),
+        where: jest.fn(() => ({
+          orderBy: jest.fn(() => Promise.resolve([])),
+        })),
       })),
     })),
   },
@@ -39,6 +42,7 @@ jest.mock("../db/schema", () => ({
 // Mock drizzle-orm
 jest.mock("drizzle-orm", () => ({
   eq: jest.fn(),
+  sql: jest.fn(() => "mock_sql"),
 }));
 
 // Mock identifiers
@@ -73,7 +77,7 @@ describe("kv-cache-manager", () => {
 
       // Should update the source system's cache
       expect(kv.hset).toHaveBeenCalledWith(
-        "latest:system:10",
+        "test:latest:system:10",
         expect.objectContaining({
           "source.solar.local/power": expect.objectContaining({
             value: 5234.5,
@@ -109,11 +113,13 @@ describe("kv-cache-manager", () => {
     it("should update composite system caches when subscribers exist", async () => {
       const { kv } = await import("../kv");
 
-      // Mock getPointSubscribers to return composite point references
-      (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce([
-        "100.0",
-        "101.0",
-      ]);
+      // Mock getPointSubscribers to return subscription registry with point-to-point mappings
+      (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
+        pointSubscribers: {
+          "1": ["100.0", "101.0"], // Point 1 subscribed by composite systems 100 and 101
+        },
+        lastUpdatedTimeMs: Date.now(),
+      });
 
       await updateLatestPointValue(
         10,
@@ -129,17 +135,17 @@ describe("kv-cache-manager", () => {
 
       // Check source system update
       expect(kv.hset).toHaveBeenCalledWith(
-        "latest:system:10",
+        "test:latest:system:10",
         expect.any(Object),
       );
 
       // Check composite system updates
       expect(kv.hset).toHaveBeenCalledWith(
-        "latest:system:100",
+        "test:latest:system:100",
         expect.any(Object),
       );
       expect(kv.hset).toHaveBeenCalledWith(
-        "latest:system:101",
+        "test:latest:system:101",
         expect.any(Object),
       );
     });
@@ -170,7 +176,7 @@ describe("kv-cache-manager", () => {
 
       const result = await getLatestPointValues(10);
 
-      expect(kv.hgetall).toHaveBeenCalledWith("latest:system:10");
+      expect(kv.hgetall).toHaveBeenCalledWith("test:latest:system:10");
       expect(result).toEqual(mockValues);
     });
 
@@ -226,11 +232,26 @@ describe("kv-cache-manager", () => {
 
       // Should create subscription entries for systems 5, 6, and 7
       expect(kv.set).toHaveBeenCalledWith(
-        "subscriptions:system:6",
-        expect.arrayContaining([100, 101]), // Both composites use system 6
+        "test:subscriptions:system:6",
+        expect.objectContaining({
+          pointSubscribers: expect.any(Object),
+          lastUpdatedTimeMs: expect.any(Number),
+        }),
       );
-      expect(kv.set).toHaveBeenCalledWith("subscriptions:system:5", [100]);
-      expect(kv.set).toHaveBeenCalledWith("subscriptions:system:7", [101]);
+      expect(kv.set).toHaveBeenCalledWith(
+        "test:subscriptions:system:5",
+        expect.objectContaining({
+          pointSubscribers: expect.any(Object),
+          lastUpdatedTimeMs: expect.any(Number),
+        }),
+      );
+      expect(kv.set).toHaveBeenCalledWith(
+        "test:subscriptions:system:7",
+        expect.objectContaining({
+          pointSubscribers: expect.any(Object),
+          lastUpdatedTimeMs: expect.any(Number),
+        }),
+      );
     });
 
     it("should skip composite systems with invalid metadata", async () => {
@@ -273,7 +294,13 @@ describe("kv-cache-manager", () => {
 
       // Should only create subscription for system 102 (valid metadata)
       expect(kv.set).toHaveBeenCalledTimes(1);
-      expect(kv.set).toHaveBeenCalledWith("subscriptions:system:6", [102]);
+      expect(kv.set).toHaveBeenCalledWith(
+        "test:subscriptions:system:6",
+        expect.objectContaining({
+          pointSubscribers: expect.any(Object),
+          lastUpdatedTimeMs: expect.any(Number),
+        }),
+      );
     });
   });
 });

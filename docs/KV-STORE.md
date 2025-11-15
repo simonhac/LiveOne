@@ -132,16 +132,20 @@ This point-to-point mapping ensures that when a source point is updated, only th
 
 **All environments share the same Upstash Redis instance with namespace prefixes for isolation.**
 
-Environment variable: `KV_NAMESPACE` (values: `dev`, `prod`, `test`)
+Environment detection is automatic based on runtime environment variables:
+
+- **Production:** `VERCEL_ENV === "production"` → `prod:` namespace
+- **Test:** `NODE_ENV === "test"` → `test:` namespace
+- **Development:** Everything else → `dev:` namespace
 
 All keys are automatically prefixed by environment:
 
 ```typescript
-// Development (KV_NAMESPACE=dev)
+// Development (auto-detected)
 `dev:latest:system:{systemId}``dev:subscriptions:system:{systemId}``dev:username:{username}`
-// Production (KV_NAMESPACE=prod)
+// Production (auto-detected via VERCEL_ENV)
 `prod:latest:system:{systemId}``prod:subscriptions:system:{systemId}``prod:username:{username}`
-// Test (KV_NAMESPACE=test)
+// Test (auto-detected via NODE_ENV)
 `test:latest:system:{systemId}``test:subscriptions:system:{systemId}``test:username:{username}`;
 ```
 
@@ -152,17 +156,40 @@ All KV operations use the `kvKey()` helper function from `lib/kv.ts`:
 ```typescript
 import { kvKey } from "@/lib/kv";
 
-// Automatic namespace prefixing
+// Automatic namespace prefixing based on environment
 const key = kvKey("latest:system:123");
 // Returns: "dev:latest:system:123" in development
 // Returns: "prod:latest:system:123" in production
+// Returns: "test:latest:system:123" in tests
 ```
 
-**Environment Configuration:**
+**Environment Detection:**
 
-- `.env.local` (development): `KV_NAMESPACE=dev`
-- Vercel production: `KV_NAMESPACE=prod` (set in dashboard)
-- Integration tests: `KV_NAMESPACE=test` (set programmatically)
+Environment is automatically detected using `getEnvironment()` from `lib/env.ts`:
+
+```typescript
+import { getEnvironment, isDevelopment, isProduction, isTest } from "@/lib/env";
+
+// Get current environment
+const env = getEnvironment(); // "prod" | "dev" | "test"
+
+// Or use convenience functions
+if (isDevelopment()) {
+  /* ... */
+}
+if (isProduction()) {
+  /* ... */
+}
+if (isTest()) {
+  /* ... */
+}
+```
+
+**No environment variables required** - the environment is detected automatically based on:
+
+- `VERCEL_ENV === "production"` for production
+- `NODE_ENV === "test"` for tests (set automatically by Jest)
+- Everything else defaults to development
 
 **Benefits:**
 

@@ -1,15 +1,18 @@
 import { createClient } from "@vercel/kv";
+import { getEnvironment } from "./env";
 
 /**
  * Vercel KV client for caching latest point values
  *
  * Setup:
- * 1. Create KV databases in Vercel dashboard:
- *    - liveone-kv-dev (for development)
- *    - liveone-kv-prod (for production)
+ * 1. Create KV database in Vercel dashboard (shared across all environments)
  * 2. Add environment variables:
  *    - KV_REST_API_URL
  *    - KV_REST_API_TOKEN
+ *
+ * Namespacing:
+ * - Keys are automatically namespaced by environment (prod/dev/test)
+ * - This prevents data collisions when using the same KV instance
  */
 
 if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
@@ -26,7 +29,8 @@ export const kv = createClient({
 /**
  * Generate a namespaced KV key
  *
- * Adds environment prefix to prevent dev/prod/test key collisions
+ * Automatically adds environment prefix (prod/dev/test) to prevent key collisions
+ * in the shared KV store.
  *
  * @param pattern - Key pattern (e.g., "latest:system:123")
  * @returns Namespaced key (e.g., "dev:latest:system:123")
@@ -36,6 +40,6 @@ export const kv = createClient({
  * kvKey("username:simon")    // "prod:username:simon" in production
  */
 export function kvKey(pattern: string): string {
-  const namespace = process.env.KV_NAMESPACE || "dev";
+  const namespace = getEnvironment();
   return `${namespace}:${pattern}`;
 }

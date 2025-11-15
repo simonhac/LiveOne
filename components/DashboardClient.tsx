@@ -380,8 +380,16 @@ export default function DashboardClient({
       if (result.latest) {
         setData(result);
 
-        // Parse timestamp (now in AEST format)
-        const dataTimestamp = new Date(result.latest.timestamp);
+        // Find most recent measurement time from all points
+        const timestamps = Object.values(result.latest as LatestPointValues)
+          .map((point) => point?.measurementTime)
+          .filter((time): time is Date => time instanceof Date);
+
+        const dataTimestamp =
+          timestamps.length > 0
+            ? new Date(Math.max(...timestamps.map((t) => t.getTime())))
+            : new Date();
+
         setLastUpdate(dataTimestamp);
 
         // Calculate seconds since update
@@ -1696,6 +1704,12 @@ export default function DashboardClient({
                           staleThresholdSeconds={getStaleThreshold(
                             data.vendorType,
                           )}
+                          measurementTime={
+                            getMeasurementTime(
+                              data.latest,
+                              "source.solar/power",
+                            ) || undefined
+                          }
                           extra={
                             showBreakdown ? (
                               <div className="text-xs space-y-1 text-gray-400">
@@ -1722,6 +1736,10 @@ export default function DashboardClient({
                           staleThresholdSeconds={getStaleThreshold(
                             data.vendorType,
                           )}
+                          measurementTime={
+                            getMeasurementTime(data.latest, "load/power") ||
+                            undefined
+                          }
                         />
                         {(() => {
                           const batterySoc = getPointValue(
@@ -1766,6 +1784,12 @@ export default function DashboardClient({
                               staleThresholdSeconds={getStaleThreshold(
                                 data.vendorType,
                               )}
+                              measurementTime={
+                                getMeasurementTime(
+                                  data.latest,
+                                  "bidi.battery/power",
+                                ) || undefined
+                              }
                               extraInfo={
                                 batteryPower !== 0
                                   ? `${batteryPower < 0 ? "Charging" : "Discharging"} ${formatPower(Math.abs(batteryPower))}`
@@ -1810,6 +1834,12 @@ export default function DashboardClient({
                                 staleThresholdSeconds={getStaleThreshold(
                                   data.vendorType,
                                 )}
+                                measurementTime={
+                                  getMeasurementTime(
+                                    data.latest,
+                                    "bidi.grid/power",
+                                  ) || undefined
+                                }
                                 extraInfo={
                                   gridPower > 0
                                     ? "Importing"

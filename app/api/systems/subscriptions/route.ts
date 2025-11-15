@@ -7,6 +7,7 @@ import {
   buildSubscriptionRegistry,
 } from "@/lib/kv-cache-manager";
 import { jsonResponse } from "@/lib/json";
+import { isDevelopment, getEnvironment } from "@/lib/env";
 
 /**
  * GET /api/systems/subscriptions
@@ -44,10 +45,7 @@ export async function GET(request: NextRequest) {
     let userId: string;
     let isAdmin = false;
 
-    if (
-      process.env.NODE_ENV === "development" &&
-      request.headers.get("x-claude") === "true"
-    ) {
+    if (isDevelopment() && request.headers.get("x-claude") === "true") {
       userId = "claude-dev";
       isAdmin = true;
     } else {
@@ -92,7 +90,7 @@ export async function GET(request: NextRequest) {
     for (const key of keys) {
       // Extract system ID from key (e.g., "dev:subscriptions:system:6" -> "6")
       // Remove the namespace prefix first
-      const namespace = process.env.KV_NAMESPACE || "dev";
+      const namespace = getEnvironment();
       const withoutNamespace = key.replace(`${namespace}:`, "");
       const systemId = withoutNamespace.replace("subscriptions:system:", "");
 
