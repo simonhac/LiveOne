@@ -19,6 +19,7 @@ import { isDevelopment, getEnvironment } from "@/lib/env";
  *
  * Returns:
  * {
+ *   "namespace": "dev",
  *   "subscriptions": {
  *     "1": {
  *       "pointSubscribers": {
@@ -106,6 +107,7 @@ export async function GET(request: NextRequest) {
 
     // Return with automatic date formatting (lastUpdatedTimeMs -> lastUpdatedTime with ISO8601 format)
     return jsonResponse({
+      namespace: getEnvironment(),
       subscriptions,
       note: "Use ?action=build to force rebuild the registry from database",
     });

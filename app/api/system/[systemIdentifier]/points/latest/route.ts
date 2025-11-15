@@ -6,6 +6,7 @@ import { isUserAdmin } from "@/lib/auth-utils";
 import { getLatestPointValues } from "@/lib/kv-cache-manager";
 import { kv, kvKey } from "@/lib/kv";
 import { jsonResponse } from "@/lib/json";
+import { getEnvironment } from "@/lib/env";
 
 /**
  * GET /api/system/{systemIdentifier}/points/latest
@@ -14,16 +15,20 @@ import { jsonResponse } from "@/lib/json";
  *
  * Query Parameters:
  * - action=clear: Clear the latest values cache for this system (admin only)
+ * - action=clear-all: Clear all latest value caches for all systems (admin only)
  *
  * @param systemIdentifier - System identifier (numeric ID like "3" or user.shortname like "simon.kinkora")
  *
  * Example:
  * GET /api/system/3/points/latest
  * GET /api/system/3/points/latest?action=clear
+ * GET /api/system/3/points/latest?action=clear-all
  *
  * Returns:
  * {
  *   "systemId": 3,
+ *   "namespace": "dev",
+ *   "count": 2,
  *   "points": {
  *     "source.solar.local/power": {
  *       "value": 5234.5,
@@ -37,14 +42,24 @@ import { jsonResponse } from "@/lib/json";
  *       "receivedTime": "2025-11-14T23:45:05+10:00",
  *       "metricUnit": "W"
  *     }
- *   }
+ *   },
+ *   "note": "Use ?action=clear to clear cache for this system, or ?action=clear-all to clear all systems (admin only)"
  * }
  *
  * With action=clear:
  * {
  *   "systemId": 3,
  *   "message": "Cache cleared successfully",
- *   "action": "clear"
+ *   "action": "clear",
+ *   "namespace": "dev"
+ * }
+ *
+ * With action=clear-all:
+ * {
+ *   "message": "All latest value caches cleared successfully",
+ *   "action": "clear-all",
+ *   "namespace": "dev",
+ *   "keysCleared": 5
  * }
  */
 export async function GET(
@@ -141,18 +156,51 @@ export async function GET(
         systemId,
         message: "Cache cleared successfully",
         action: "clear",
+        namespace: getEnvironment(),
+      });
+    }
+
+    if (action === "clear-all") {
+      // Only admins can clear cache
+      if (!isAdmin) {
+        return NextResponse.json(
+          { error: "Admin access required to clear cache" },
+          { status: 403 },
+        );
+      }
+
+      // Clear all latest value entries across all systems
+      const pattern = kvKey("latest:system:*");
+      const keys = await kv.keys(pattern);
+
+      // Delete all keys
+      for (const key of keys) {
+        await kv.del(key);
+      }
+
+      return NextResponse.json({
+        message: "All latest value caches cleared successfully",
+        action: "clear-all",
+        namespace: getEnvironment(),
+        keysCleared: keys.length,
       });
     }
 
     // Step 6: Get latest values from KV cache
     const latestValues = await getLatestPointValues(systemId);
 
+    // Count the number of points
+    const pointCount = Object.keys(latestValues).length;
+
     // Return with automatic date formatting and field renaming
     // (measurementTimeMs -> measurementTime, receivedTimeMs -> receivedTime)
     return jsonResponse(
       {
         systemId,
+        namespace: getEnvironment(),
+        count: pointCount,
         points: latestValues,
+        note: "Use ?action=clear to clear cache for this system, or ?action=clear-all to clear all systems (admin only)",
       },
       system.timezoneOffsetMin,
     );
