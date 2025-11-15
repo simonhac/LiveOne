@@ -445,4 +445,40 @@ export async function insertPointReadingsDirectTo5m(
       `[PointsManager] Inserted ${aggregatesToInsert.length} pre-aggregated 5m readings directly to point_readings_agg_5m`,
     );
   }
+
+  // Update KV cache with latest values
+  // Skip if KV is not configured (will log warning from kv.ts)
+  try {
+    const pointManager = PointManager.getInstance();
+    const points = await pointManager.getPointsForSystem(systemId);
+
+    const cacheUpdates = aggregatesToInsert.map((agg) => {
+      const point = points.find((p) => p.index === agg.pointId);
+      if (point) {
+        // Determine which value to cache (prioritize last, then avg, then delta)
+        const valueToCache = agg.last ?? agg.avg ?? agg.delta;
+
+        if (valueToCache !== null && valueToCache !== undefined) {
+          const pointPath = point.getPath().toString();
+          return updateLatestPointValue(
+            systemId,
+            agg.pointId, // Pass point index for subscription lookup
+            pointPath,
+            valueToCache,
+            agg.intervalEnd,
+            point.metricUnit,
+          );
+        }
+      }
+      return null;
+    });
+
+    await Promise.all(cacheUpdates.filter((p) => p !== null));
+    console.log(
+      `[PointsManager] Updated KV cache for ${cacheUpdates.filter((p) => p !== null).length} points`,
+    );
+  } catch (error) {
+    console.error("Failed to update KV cache:", error);
+    // Don't throw - cache update failures shouldn't break reading insertion
+  }
 }

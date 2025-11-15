@@ -176,19 +176,7 @@ export async function GET(
     headers.sessionLabel = null; // Special column, no point info
 
     sortedPoints.forEach((p) => {
-      // For agg data, append the summary type to the extension field
-      const aggColumn =
-        source === "5m" || source === "daily"
-          ? getAggColumn(p.metricType, p.transform, source)
-          : null;
-      const extension =
-        (source === "5m" || source === "daily") && aggColumn
-          ? p.extension
-            ? `${p.extension}.${aggColumn}`
-            : aggColumn
-          : p.extension;
-
-      // Create PointInfo with modified extension for 5m aggregates
+      // Create PointInfo with actual extension (not modified with aggColumn)
       const pointInfo = new PointInfo(
         p.index,
         systemId,
@@ -200,7 +188,7 @@ export async function GET(
         p.subsystem,
         p.type,
         p.subtype,
-        extension,
+        p.extension, // Keep actual extension, don't append aggColumn
         p.metricType,
         p.metricUnit,
         p.transform,

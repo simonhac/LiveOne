@@ -448,6 +448,12 @@ export default function ViewDataModal({
       // Format timestamp using the same formatter as the timestamp column
       // Convert milliseconds to Date object first
       return formatDateTime(new Date(numValue)).display;
+    } else if (
+      pointInfo?.metricUnit === "cents" ||
+      pointInfo?.metricUnit === "cents_kWh"
+    ) {
+      // Format monetary values with 1 decimal place
+      return `${numValue.toFixed(1)}`;
     } else {
       // Default formatting
       return `${numValue.toFixed(0)}`;
@@ -975,7 +981,13 @@ export default function ViewDataModal({
                           }}
                         >
                           {key === "time" ? (
-                            <span className="text-xs font-mono text-gray-300 whitespace-nowrap">
+                            <span
+                              className={`text-xs font-mono whitespace-nowrap ${
+                                new Date(row[key]) > new Date()
+                                  ? "text-yellow-400"
+                                  : "text-gray-300"
+                              }`}
+                            >
                               {(() => {
                                 // Parse ISO8601 string to Date for formatting
                                 const date = new Date(row[key]);
@@ -983,7 +995,19 @@ export default function ViewDataModal({
                               })()}
                             </span>
                           ) : key === "date" ? (
-                            <span className="text-xs font-mono text-gray-300 whitespace-nowrap">
+                            <span
+                              className={`text-xs font-mono whitespace-nowrap ${(() => {
+                                const calendarDate = parseDateISO(row[key]);
+                                const jsDate = new Date(
+                                  calendarDate.year,
+                                  calendarDate.month - 1,
+                                  calendarDate.day,
+                                );
+                                return jsDate > new Date()
+                                  ? "text-yellow-400"
+                                  : "text-gray-300";
+                              })()}`}
+                            >
                               {(() => {
                                 const calendarDate = parseDateISO(row[key]);
                                 // Convert CalendarDate to JS Date for formatting
