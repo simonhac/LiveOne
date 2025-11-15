@@ -25,6 +25,8 @@ import { calculateEnergyFlowMatrix } from "@/lib/energy-flow-matrix";
 import PeriodSwitcher from "@/components/PeriodSwitcher";
 import { formatDateTime, formatDateTimeRange } from "@/lib/fe-date-format";
 import { fromUnixTimestamp, getNextMinuteBoundary } from "@/lib/date-utils";
+import type { LatestPointValues } from "@/lib/types/api";
+import { parseJsonWithDates } from "@/lib/json";
 import {
   encodeUrlDate,
   decodeUrlDate,
@@ -60,43 +62,7 @@ interface SystemInfo {
 
 interface DashboardData {
   timezoneOffsetMin?: number;
-  latest: {
-    timestamp: string;
-    power: {
-      solarW: number;
-      solarLocalW: number | null;
-      solarRemoteW: number | null;
-      loadW: number;
-      batteryW: number;
-      gridW: number;
-    };
-    soc: {
-      battery: number;
-    };
-    energy: {
-      today: {
-        solarKwh: number | null;
-        loadKwh: number | null;
-        batteryInKwh: number | null;
-        batteryOutKwh: number | null;
-        gridInKwh: number | null;
-        gridOutKwh: number | null;
-      };
-      total: {
-        solarKwh: number | null;
-        loadKwh: number | null;
-        batteryInKwh: number | null;
-        batteryOutKwh: number | null;
-        gridInKwh: number | null;
-        gridOutKwh: number | null;
-      };
-    };
-    system: {
-      faultCode: number | null;
-      faultTimestamp: number | null;
-      generatorStatus: number | null;
-    };
-  };
+  latest: LatestPointValues;
   historical: {
     yesterday: {
       date: string;
@@ -216,6 +182,27 @@ export default function DashboardClient({
   }>({ type: null });
   const [showSessionTimeout, setShowSessionTimeout] = useState(false);
   const [showViewDataModal, setShowViewDataModal] = useState(false);
+
+  // Helper function to safely get a point value
+  const getPointValue = (
+    latest: LatestPointValues | null,
+    pointPath: string,
+  ): number | null => {
+    if (!latest) return null;
+    const point = latest[pointPath];
+    return point ? point.value : null;
+  };
+
+  // Helper function to get measurement time for staleness calculation
+  const getMeasurementTime = (
+    latest: LatestPointValues | null,
+    pointPath: string,
+  ): Date | null => {
+    if (!latest) return null;
+    const point = latest[pointPath];
+    return point ? point.measurementTime : null;
+  };
+
   // Helper function to get period duration in milliseconds
   const getPeriodDuration = (period: "1D" | "7D" | "30D"): number => {
     if (period === "1D") return 24 * 60 * 60 * 1000;
@@ -386,7 +373,8 @@ export default function DashboardClient({
         throw new Error(`Failed to fetch data: ${response.status}`);
       }
 
-      const result = await response.json();
+      // Parse JSON with automatic date deserialization
+      const result = await parseJsonWithDates(response);
 
       // Check if we have latest data (system info is always present)
       if (result.latest) {
@@ -980,9 +968,9 @@ export default function DashboardClient({
   // Determine the appropriate unit for an energy value
 
   // Automatically determine if grid information should be shown
+  // TODO: Update to use energy counter points when available
   const showGrid = data?.latest
-    ? (data.latest.energy.total.gridInKwh || 0) > 0 ||
-      (data.latest.energy.total.gridOutKwh || 0) > 0
+    ? getPointValue(data.latest, "bidi.grid/power") !== null
     : false;
 
   // Get display name for the system (prefer local state which updates immediately)
@@ -1205,8 +1193,18 @@ export default function DashboardClient({
             (data.vendorType === "mondo" ||
               data.vendorType === "composite"))) && (
           <div className="space-y-6">
-            {/* Fault Warning */}
-            {data.latest?.system.faultCode &&
+            {/* Fault Warning
+                TEMPORARILY DISABLED - Needs composite points implementation
+
+                Previously displayed fault codes from data.latest.system.faultCode
+                and timestamps from data.latest.system.faultTimestamp.
+
+                To restore: Add fault code and timestamp as composite points, then update this section to:
+                - Check getPointValue(data.latest, "system.fault/code")
+                - Use getPointValue(data.latest, "system.fault/timestamp") for timing
+                - Parse the measurementTime from the point value
+            */}
+            {/* {data.latest?.system.faultCode &&
               data.latest.system.faultCode !== 0 &&
               data.latest.system.faultTimestamp &&
               data.latest.system.faultTimestamp > 0 && (
@@ -1224,7 +1222,7 @@ export default function DashboardClient({
                     }
                   </div>
                 </div>
-              )}
+              )} */}
 
             {/* Show warning for unconfigured composite systems */}
             {system?.vendorType === "composite" &&
@@ -1650,136 +1648,209 @@ export default function DashboardClient({
                 </div>
 
                 {/* Power Cards - 1/3 width on desktop, horizontal on mobile - Only for systems with latest data */}
-                {data.latest && (
-                  <div className="grid grid-cols-3 gap-2 lg:grid-cols-1 lg:gap-4 px-1">
-                    <PowerCard
-                      title="Solar"
-                      value={formatPower(data.latest.power.solarW)}
-                      icon={<Sun className="w-6 h-6" />}
-                      iconColor="text-yellow-400"
-                      bgColor="bg-yellow-900/20"
-                      borderColor="border-yellow-700"
-                      secondsSinceUpdate={secondsSinceUpdate}
-                      staleThresholdSeconds={getStaleThreshold(data.vendorType)}
-                      extra={
-                        data.latest.power.solarRemoteW !== null ||
-                        data.latest.power.solarLocalW !== null ? (
-                          <div className="text-xs space-y-1 text-gray-400">
-                            {data.latest.power.solarLocalW !== null && (
-                              <div>
-                                Local:{" "}
-                                {formatPower(data.latest.power.solarLocalW)}
+                {data.latest &&
+                  (() => {
+                    // Solar card logic: handle different solar point configurations
+                    const solarTotal = getPointValue(
+                      data.latest,
+                      "source.solar/power",
+                    );
+                    const solarLocal = getPointValue(
+                      data.latest,
+                      "source.solar.local/power",
+                    );
+                    const solarRemote = getPointValue(
+                      data.latest,
+                      "source.solar.remote/power",
+                    );
+
+                    const hasBothChildren =
+                      solarLocal !== null && solarRemote !== null;
+                    const hasTotal = solarTotal !== null;
+
+                    // Determine solar value to display
+                    let solarValue: number;
+                    if (hasTotal) {
+                      solarValue = solarTotal;
+                    } else if (hasBothChildren) {
+                      solarValue = solarLocal + solarRemote;
+                    } else {
+                      solarValue = 0;
+                    }
+
+                    // Show breakdown if we have total and both children, or if we calculated total from children
+                    const showBreakdown =
+                      (hasTotal && hasBothChildren) ||
+                      (!hasTotal && hasBothChildren);
+
+                    return (
+                      <div className="grid grid-cols-3 gap-2 lg:grid-cols-1 lg:gap-4 px-1">
+                        <PowerCard
+                          title="Solar"
+                          value={formatPower(solarValue)}
+                          icon={<Sun className="w-6 h-6" />}
+                          iconColor="text-yellow-400"
+                          bgColor="bg-yellow-900/20"
+                          borderColor="border-yellow-700"
+                          secondsSinceUpdate={secondsSinceUpdate}
+                          staleThresholdSeconds={getStaleThreshold(
+                            data.vendorType,
+                          )}
+                          extra={
+                            showBreakdown ? (
+                              <div className="text-xs space-y-1 text-gray-400">
+                                {solarLocal !== null && (
+                                  <div>Local: {formatPower(solarLocal)}</div>
+                                )}
+                                {solarRemote !== null && (
+                                  <div>Remote: {formatPower(solarRemote)}</div>
+                                )}
                               </div>
-                            )}
-                            {data.latest.power.solarRemoteW !== null && (
-                              <div>
-                                Remote:{" "}
-                                {formatPower(data.latest.power.solarRemoteW)}
-                              </div>
-                            )}
-                          </div>
-                        ) : undefined
-                      }
-                    />
-                    <PowerCard
-                      title="Load"
-                      value={formatPower(data.latest.power.loadW)}
-                      icon={<Home className="w-6 h-6" />}
-                      iconColor="text-blue-400"
-                      bgColor="bg-blue-900/20"
-                      borderColor="border-blue-700"
-                      secondsSinceUpdate={secondsSinceUpdate}
-                      staleThresholdSeconds={getStaleThreshold(data.vendorType)}
-                    />
-                    <PowerCard
-                      title="Battery"
-                      value={
-                        data.latest.soc.battery !== null
-                          ? `${data.latest.soc.battery.toFixed(1)}%`
-                          : "—"
-                      }
-                      icon={<Battery className="w-6 h-6" />}
-                      iconColor={
-                        data.latest.power.batteryW < 0
-                          ? "text-green-400"
-                          : data.latest.power.batteryW > 0
-                            ? "text-orange-400"
-                            : "text-gray-400"
-                      }
-                      bgColor={
-                        data.latest.power.batteryW < 0
-                          ? "bg-green-900/20"
-                          : data.latest.power.batteryW > 0
-                            ? "bg-orange-900/20"
-                            : "bg-gray-900/20"
-                      }
-                      borderColor={
-                        data.latest.power.batteryW < 0
-                          ? "border-green-700"
-                          : data.latest.power.batteryW > 0
-                            ? "border-orange-700"
-                            : "border-gray-700"
-                      }
-                      secondsSinceUpdate={secondsSinceUpdate}
-                      staleThresholdSeconds={getStaleThreshold(data.vendorType)}
-                      extraInfo={
-                        data.latest.power.batteryW !== 0
-                          ? `${data.latest.power.batteryW < 0 ? "Charging" : "Discharging"} ${formatPower(Math.abs(data.latest.power.batteryW))}`
-                          : "Idle"
-                      }
-                    />
-                    {showGrid && (
-                      <PowerCard
-                        title="Grid"
-                        value={formatPower(data.latest.power.gridW)}
-                        icon={<Zap className="w-6 h-6" />}
-                        iconColor={
-                          data.latest.power.gridW > 0
-                            ? "text-red-400"
-                            : data.latest.power.gridW < 0
-                              ? "text-green-400"
-                              : "text-gray-400"
-                        }
-                        bgColor={
-                          data.latest.power.gridW > 0
-                            ? "bg-red-900/20"
-                            : data.latest.power.gridW < 0
-                              ? "bg-green-900/20"
-                              : "bg-gray-900/20"
-                        }
-                        borderColor={
-                          data.latest.power.gridW > 0
-                            ? "border-red-700"
-                            : data.latest.power.gridW < 0
-                              ? "border-green-700"
-                              : "border-gray-700"
-                        }
-                        secondsSinceUpdate={secondsSinceUpdate}
-                        staleThresholdSeconds={getStaleThreshold(
-                          data.vendorType,
-                        )}
-                        extraInfo={
-                          data.latest.power.gridW > 0
-                            ? "Importing"
-                            : data.latest.power.gridW < 0
-                              ? "Exporting"
-                              : "Neutral"
-                        }
-                      />
-                    )}
-                  </div>
-                )}
+                            ) : undefined
+                          }
+                        />
+                        <PowerCard
+                          title="Load"
+                          value={formatPower(
+                            getPointValue(data.latest, "load/power") || 0,
+                          )}
+                          icon={<Home className="w-6 h-6" />}
+                          iconColor="text-blue-400"
+                          bgColor="bg-blue-900/20"
+                          borderColor="border-blue-700"
+                          secondsSinceUpdate={secondsSinceUpdate}
+                          staleThresholdSeconds={getStaleThreshold(
+                            data.vendorType,
+                          )}
+                        />
+                        {(() => {
+                          const batterySoc = getPointValue(
+                            data.latest,
+                            "bidi.battery/soc",
+                          );
+                          const batteryPower =
+                            getPointValue(data.latest, "bidi.battery/power") ||
+                            0;
+
+                          return (
+                            <PowerCard
+                              title="Battery"
+                              value={
+                                batterySoc !== null
+                                  ? `${batterySoc.toFixed(1)}%`
+                                  : "—"
+                              }
+                              icon={<Battery className="w-6 h-6" />}
+                              iconColor={
+                                batteryPower < 0
+                                  ? "text-green-400"
+                                  : batteryPower > 0
+                                    ? "text-orange-400"
+                                    : "text-gray-400"
+                              }
+                              bgColor={
+                                batteryPower < 0
+                                  ? "bg-green-900/20"
+                                  : batteryPower > 0
+                                    ? "bg-orange-900/20"
+                                    : "bg-gray-900/20"
+                              }
+                              borderColor={
+                                batteryPower < 0
+                                  ? "border-green-700"
+                                  : batteryPower > 0
+                                    ? "border-orange-700"
+                                    : "border-gray-700"
+                              }
+                              secondsSinceUpdate={secondsSinceUpdate}
+                              staleThresholdSeconds={getStaleThreshold(
+                                data.vendorType,
+                              )}
+                              extraInfo={
+                                batteryPower !== 0
+                                  ? `${batteryPower < 0 ? "Charging" : "Discharging"} ${formatPower(Math.abs(batteryPower))}`
+                                  : "Idle"
+                              }
+                            />
+                          );
+                        })()}
+                        {showGrid &&
+                          (() => {
+                            const gridPower =
+                              getPointValue(data.latest, "bidi.grid/power") ||
+                              0;
+
+                            return (
+                              <PowerCard
+                                title="Grid"
+                                value={formatPower(gridPower)}
+                                icon={<Zap className="w-6 h-6" />}
+                                iconColor={
+                                  gridPower > 0
+                                    ? "text-red-400"
+                                    : gridPower < 0
+                                      ? "text-green-400"
+                                      : "text-gray-400"
+                                }
+                                bgColor={
+                                  gridPower > 0
+                                    ? "bg-red-900/20"
+                                    : gridPower < 0
+                                      ? "bg-green-900/20"
+                                      : "bg-gray-900/20"
+                                }
+                                borderColor={
+                                  gridPower > 0
+                                    ? "border-red-700"
+                                    : gridPower < 0
+                                      ? "border-green-700"
+                                      : "border-gray-700"
+                                }
+                                secondsSinceUpdate={secondsSinceUpdate}
+                                staleThresholdSeconds={getStaleThreshold(
+                                  data.vendorType,
+                                )}
+                                extraInfo={
+                                  gridPower > 0
+                                    ? "Importing"
+                                    : gridPower < 0
+                                      ? "Exporting"
+                                      : "Neutral"
+                                }
+                              />
+                            );
+                          })()}
+                      </div>
+                    );
+                  })()}
               </div>
             )}
 
-            {/* Energy Panel - Only show for admin or non-removed systems */}
-            {(isAdmin || system?.status !== "removed") && data.latest && (
+            {/* Energy Panel - Only show for admin or non-removed systems
+                TEMPORARILY DISABLED - Needs composite points implementation
+
+                Previously displayed energy data from data.latest.energy with structure:
+                {
+                  today: { solarKwh, loadKwh, batteryInKwh, batteryOutKwh, gridInKwh, gridOutKwh },
+                  total: { solarKwh, loadKwh, batteryInKwh, batteryOutKwh, gridInKwh, gridOutKwh }
+                }
+
+                To restore: Add energy counter points to composite system, then:
+                1. Create energy object from points like:
+                   - getPointValue(data.latest, "source.solar/energy_today")
+                   - getPointValue(data.latest, "load/energy_today")
+                   - getPointValue(data.latest, "bidi.battery/energy_in_today")
+                   - getPointValue(data.latest, "bidi.battery/energy_out_today")
+                   - etc.
+                2. Pass constructed energy object to EnergyPanel
+            */}
+            {/* {(isAdmin || system?.status !== "removed") && data.latest && (
               <EnergyPanel
                 energy={data.latest.energy}
                 historical={data.historical}
                 showGrid={showGrid}
               />
-            )}
+            )} */}
           </div>
         )}
       </main>

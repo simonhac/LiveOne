@@ -6,7 +6,7 @@ import {
   SubscriptionRegistryEntry,
   buildSubscriptionRegistry,
 } from "@/lib/kv-cache-manager";
-import { unixToFormattedAEST } from "@/lib/date-utils";
+import { jsonResponse } from "@/lib/json";
 
 /**
  * GET /api/systems/subscriptions
@@ -24,13 +24,13 @@ import { unixToFormattedAEST } from "@/lib/date-utils";
  *         "1": ["5.0", "7.0"],
  *         "2": ["5.1"]
  *       },
- *       "lastUpdated": "2025-11-14T23:45:00+10:00"
+ *       "lastUpdatedTimeMs": 1731627423000
  *     },
  *     "2": {
  *       "pointSubscribers": {
  *         "3": ["7.1", "7.2"]
  *       },
- *       "lastUpdated": "2025-11-14T23:45:00+10:00"
+ *       "lastUpdatedTimeMs": 1731627423000
  *     }
  *   },
  *   "note": "Use ?action=build to force rebuild the registry from database"
@@ -86,7 +86,7 @@ export async function GET(request: NextRequest) {
     // Step 5: Fetch all subscription lists with timestamps
     const subscriptions: Record<
       string,
-      { pointSubscribers: Record<string, string[]>; lastUpdated: string }
+      { pointSubscribers: Record<string, string[]>; lastUpdatedTimeMs: number }
     > = {};
 
     for (const key of keys) {
@@ -101,12 +101,13 @@ export async function GET(request: NextRequest) {
       if (entry && entry.pointSubscribers) {
         subscriptions[systemId] = {
           pointSubscribers: entry.pointSubscribers,
-          lastUpdated: unixToFormattedAEST(entry.lastUpdatedMs, true),
+          lastUpdatedTimeMs: entry.lastUpdatedTimeMs,
         };
       }
     }
 
-    return NextResponse.json({
+    // Return with automatic date formatting (lastUpdatedTimeMs -> lastUpdatedTime with ISO8601 format)
+    return jsonResponse({
       subscriptions,
       note: "Use ?action=build to force rebuild the registry from database",
     });

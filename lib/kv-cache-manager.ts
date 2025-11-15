@@ -35,7 +35,7 @@ export interface SubscriptionRegistryEntry {
    *        source point 2 is subscribed to by composite system 100 point 1
    */
   pointSubscribers: Record<string, string[]>;
-  lastUpdatedMs: number; // Unix timestamp in milliseconds when registry was last updated
+  lastUpdatedTimeMs: number; // Unix timestamp in milliseconds when registry was last updated
 }
 
 /**
@@ -239,7 +239,7 @@ export async function buildSubscriptionRegistry(): Promise<void> {
 
     const entry: SubscriptionRegistryEntry = {
       pointSubscribers,
-      lastUpdatedMs: now,
+      lastUpdatedTimeMs: now,
     };
     updates.push(kv.set(key, entry));
   }

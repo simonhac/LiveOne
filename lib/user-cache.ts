@@ -10,7 +10,7 @@ import { clerkClient } from "@clerk/nextjs/server";
  */
 export interface UsernameCacheEntry {
   clerkId: string; // Clerk user ID
-  lastUpdatedMs: number; // Unix timestamp in milliseconds when cache was last updated
+  lastUpdatedTimeMs: number; // Unix timestamp in milliseconds when cache was last updated
 }
 
 /**
@@ -66,7 +66,7 @@ export async function cacheUsernameMapping(
 ): Promise<void> {
   const entry: UsernameCacheEntry = {
     clerkId,
-    lastUpdatedMs: Date.now(),
+    lastUpdatedTimeMs: Date.now(),
   };
   await kv.set(kvKey(`username:${username}`), entry);
 }

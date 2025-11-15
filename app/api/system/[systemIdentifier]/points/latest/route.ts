@@ -4,8 +4,8 @@ import { SystemIdentifier } from "@/lib/identifiers";
 import { resolveSystemFromIdentifier } from "@/lib/series-path-utils";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { getLatestPointValues } from "@/lib/kv-cache-manager";
-import { unixToFormattedAEST } from "@/lib/date-utils";
 import { kv, kvKey } from "@/lib/kv";
+import { jsonResponse } from "@/lib/json";
 
 /**
  * GET /api/system/{systemIdentifier}/points/latest
@@ -147,33 +147,15 @@ export async function GET(
     // Step 6: Get latest values from KV cache
     const latestValues = await getLatestPointValues(systemId);
 
-    // Step 6: Format timestamps to AEST
-    const formattedPoints: Record<
-      string,
+    // Return with automatic date formatting and field renaming
+    // (measurementTimeMs -> measurementTime, receivedTimeMs -> receivedTime)
+    return jsonResponse(
       {
-        value: number;
-        measurementTime: string;
-        receivedTime: string;
-        metricUnit: string;
-      }
-    > = {};
-
-    for (const [pointPath, pointValue] of Object.entries(latestValues)) {
-      formattedPoints[pointPath] = {
-        value: pointValue.value,
-        measurementTime: unixToFormattedAEST(
-          pointValue.measurementTimeMs,
-          true,
-        ),
-        receivedTime: unixToFormattedAEST(pointValue.receivedTimeMs, true),
-        metricUnit: pointValue.metricUnit,
-      };
-    }
-
-    return NextResponse.json({
-      systemId,
-      points: formattedPoints,
-    });
+        systemId,
+        points: latestValues,
+      },
+      system.timezoneOffsetMin,
+    );
   } catch (error) {
     console.error("Error fetching latest point values:", error);
     return NextResponse.json(
