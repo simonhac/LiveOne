@@ -1,4 +1,5 @@
 import React, { useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Clock } from "lucide-react";
 
 interface PowerCardProps {
@@ -36,17 +37,54 @@ export default function PowerCard({
   const handleClockMouseEnter = () => {
     if (clockIconRef.current) {
       const rect = clockIconRef.current.getBoundingClientRect();
-      setTooltipPosition({
-        x: rect.left,
-        y: rect.bottom + 8,
-      });
+      const viewportWidth = window.innerWidth;
+
+      // Position tooltip, ensuring it doesn't go offscreen
+      let x = rect.left;
+      let y = rect.bottom + 8;
+
+      // Rough estimate: tooltip is about 200px wide
+      if (x + 200 > viewportWidth) {
+        x = viewportWidth - 210; // 200px width + 10px margin
+      }
+
+      setTooltipPosition({ x, y });
     }
     setIsTooltipVisible(true);
   };
 
+  // Format tooltip date: show time first, omit date if today
+  const formatTooltipDate = (date: Date): string => {
+    const now = new Date();
+    const isToday =
+      date.getDate() === now.getDate() &&
+      date.getMonth() === now.getMonth() &&
+      date.getFullYear() === now.getFullYear();
+
+    const timeStr = date.toLocaleString("en-AU", {
+      timeZone: "Australia/Sydney",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+
+    if (isToday) {
+      return timeStr;
+    }
+
+    const dateStr = date.toLocaleString("en-AU", {
+      timeZone: "Australia/Sydney",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+
+    return `${timeStr}, ${dateStr}`;
+  };
+
   return (
     <div
-      className={`${bgColor} border ${borderColor} rounded-lg p-4 relative overflow-hidden ${isStale ? "opacity-75" : ""}`}
+      className={`${bgColor} border ${borderColor} rounded-lg p-2 md:p-4 relative overflow-hidden ${isStale ? "opacity-75" : ""}`}
     >
       {isStale && (
         <div
@@ -58,47 +96,57 @@ export default function PowerCard({
         />
       )}
       <div className="relative z-10">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-1.5">
-            <span className="text-gray-400 text-sm">{title}</span>
+        {/* Mobile: horizontal layout (icon left of title), Desktop: vertical (icon right) */}
+        <div className="flex items-start md:items-center md:justify-between mb-1 md:mb-2 gap-1.5">
+          {/* Icon on left for mobile */}
+          <div
+            className={`${iconColor} md:hidden flex-shrink-0 [&>svg]:w-4 [&>svg]:h-4`}
+          >
+            {icon}
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-1 min-w-0">
+            <span className="text-gray-400 text-xs md:text-sm truncate">
+              {title}
+            </span>
             {isStale && measurementTime && (
               <>
                 <div
                   ref={clockIconRef}
                   onMouseEnter={handleClockMouseEnter}
                   onMouseLeave={() => setIsTooltipVisible(false)}
-                  className="text-gray-500 cursor-help"
+                  className="text-gray-500 cursor-help flex-shrink-0"
                 >
-                  <Clock size={14} />
+                  <Clock size={12} className="md:w-[14px] md:h-[14px]" />
                 </div>
-                {isTooltipVisible && (
-                  <div
-                    className="fixed z-[100] bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-lg text-xs text-gray-300 whitespace-nowrap"
-                    style={{
-                      left: `${tooltipPosition.x}px`,
-                      top: `${tooltipPosition.y}px`,
-                    }}
-                  >
-                    Last update:{" "}
-                    {measurementTime.toLocaleString("en-AU", {
-                      timeZone: "Australia/Sydney",
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                      hour12: true,
-                    })}
-                  </div>
-                )}
+                {isTooltipVisible &&
+                  typeof document !== "undefined" &&
+                  createPortal(
+                    <div
+                      className="fixed z-[9999] bg-black border border-gray-700 rounded-lg px-3 py-2 shadow-xl text-xs text-white whitespace-nowrap pointer-events-none"
+                      style={{
+                        left: `${tooltipPosition.x}px`,
+                        top: `${tooltipPosition.y}px`,
+                      }}
+                    >
+                      Last update: {formatTooltipDate(measurementTime)}
+                    </div>,
+                    document.body,
+                  )}
               </>
             )}
           </div>
-          <div className={iconColor}>{icon}</div>
+
+          {/* Icon on right for desktop */}
+          <div className={`${iconColor} hidden md:block flex-shrink-0`}>
+            {icon}
+          </div>
         </div>
-        <p className="text-2xl font-bold text-white">{value}</p>
-        {extraInfo && <p className="text-xs text-gray-500 mt-1">{extraInfo}</p>}
-        {extra && <div className="mt-2">{extra}</div>}
+        <p className="text-xl md:text-2xl font-bold text-white">{value}</p>
+        {extraInfo && (
+          <p className="text-xs text-gray-500 mt-0.5 md:mt-1">{extraInfo}</p>
+        )}
+        {extra && <div className="mt-1 md:mt-2">{extra}</div>}
       </div>
     </div>
   );

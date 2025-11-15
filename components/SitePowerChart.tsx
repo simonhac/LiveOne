@@ -849,7 +849,7 @@ export default function SitePowerChart({
       onMouseLeave={handleMouseLeave}
     >
       <div className="flex justify-between items-center mb-2 md:mb-3 px-1 md:px-0">
-        <h3 className="text-sm font-medium text-gray-300">{title}</h3>
+        <h3 className="text-base font-semibold text-gray-300">{title}</h3>
         <div className="flex items-center gap-2">
           {showPeriodSwitcher && (
             <PeriodSwitcher

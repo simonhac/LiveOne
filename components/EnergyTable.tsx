@@ -250,7 +250,7 @@ export default function EnergyTable({
 
         {/* Battery SoC - show if SoC series exists */}
         {socSeries.length > 0 && (
-          <div style={{ paddingTop: "20px" }}>
+          <div style={{ paddingTop: "20px", paddingBottom: "20px" }}>
             <div className="flex items-center text-xs">
               <div className="flex items-center gap-2 flex-1">
                 <div
