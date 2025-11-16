@@ -47,7 +47,7 @@ export default function ViewDataModal({
   const [initialLoad, setInitialLoad] = useState(true);
   const fetchingRef = useRef(false);
   const [selectedPointInfo, setSelectedPointInfo] = useState<{
-    pointDbId: number;
+    pointIndex: number;
     systemId: number;
     originId: string;
     originSubId: string | null;
@@ -55,7 +55,7 @@ export default function ViewDataModal({
     type: string | null;
     subtype: string | null;
     extension: string | null;
-    defaultName: string;
+    originName: string;
     displayName: string | null;
     shortName: string | null;
     active: boolean;
@@ -313,7 +313,7 @@ export default function ViewDataModal({
       return;
 
     setSelectedPointInfo({
-      pointDbId: pointInfo.index,
+      pointIndex: pointInfo.index,
       systemId: pointInfo.systemId,
       originId: pointInfo.originId,
       originSubId: pointInfo.originSubId,
@@ -321,7 +321,7 @@ export default function ViewDataModal({
       type: pointInfo.type,
       subtype: pointInfo.subtype,
       extension: pointInfo.extension,
-      defaultName: pointInfo.defaultName,
+      originName: pointInfo.defaultName,
       displayName: pointInfo.displayName,
       shortName: pointInfo.shortName,
       active: pointInfo.active,
@@ -368,7 +368,7 @@ export default function ViewDataModal({
   };
 
   const handleUpdatePointInfo = async (
-    pointDbId: number,
+    pointIndex: number,
     updates: {
       type?: string | null;
       subtype?: string | null;
@@ -381,7 +381,7 @@ export default function ViewDataModal({
   ) => {
     try {
       // Use composite key format: systemId.pointId
-      const compositeKey = `${systemId}.${pointDbId}`;
+      const compositeKey = `${systemId}.${pointIndex}`;
       const response = await fetch(`/api/admin/point/${compositeKey}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },

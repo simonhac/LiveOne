@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 interface PointInfo {
-  pointDbId: number;
+  pointIndex: number;
   systemId: number;
   originId: string;
   originSubId: string | null;
@@ -13,7 +13,7 @@ interface PointInfo {
   type: string | null;
   subtype: string | null;
   extension: string | null;
-  defaultName: string;
+  originName: string;
   displayName: string | null;
   shortName: string | null;
   active: boolean;
@@ -32,7 +32,7 @@ interface PointInfoModalProps {
   onClose: () => void;
   pointInfo: PointInfo | null;
   onUpdate: (
-    pointDbId: number,
+    pointIndex: number,
     updates: {
       type?: string | null;
       subtype?: string | null;
@@ -173,7 +173,7 @@ export default function PointInfoModal({
       if (isTransformDirty)
         updates.transform = editedTransform === "n" ? null : editedTransform;
 
-      await onUpdate(pointInfo.pointDbId, updates);
+      await onUpdate(pointInfo.pointIndex, updates);
 
       // Reset dirty flags
       setIsTypeDirty(false);
@@ -226,7 +226,10 @@ export default function PointInfoModal({
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4">
             <h2 className="text-lg font-medium text-gray-100">
-              Point Information
+              Point Information{" "}
+              <span className="text-gray-500">
+                ID: {pointInfo.systemId}.{pointInfo.pointIndex}
+              </span>
             </h2>
             <button
               onClick={onClose}
@@ -244,62 +247,37 @@ export default function PointInfoModal({
                 Original Metadata
               </div>
 
+              {pointInfo.systemShortName && (
+                <div className="flex items-center gap-3">
+                  <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
+                    System:
+                  </label>
+                  <div className="text-gray-300 font-mono text-sm flex-1">
+                    {pointInfo.ownerUsername}.{pointInfo.systemShortName}
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  System:
+                  Vendor/ID:
                 </label>
-                <div className="px-2 font-mono text-sm flex-1 whitespace-nowrap">
-                  <span className="text-gray-300">
-                    {pointInfo.vendorType || "N/A"}/
-                    {pointInfo.vendorSiteId || "N/A"}
-                  </span>
+                <div className="text-gray-300 font-mono text-sm flex-1">
+                  {pointInfo.vendorType || "N/A"}/
+                  {pointInfo.vendorSiteId || "N/A"}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
+                  Source:
+                </label>
+                <div className="text-gray-300 font-mono text-sm flex-1">
+                  {pointInfo.originId}
+                  {pointInfo.originSubId && `.${pointInfo.originSubId}`}{" "}
                   <span className="text-gray-400">
-                    {" "}
-                    ({pointInfo.ownerUsername}/
-                    {pointInfo.systemShortName || pointInfo.systemId})
+                    ({pointInfo.originName})
                   </span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Point:
-                </label>
-                <div className="px-2 font-mono text-sm flex-1">
-                  <span className="text-gray-300 whitespace-nowrap">
-                    {pointInfo.originId}
-                  </span>
-                  <span className="text-gray-400 whitespace-nowrap">
-                    {" "}
-                    ({pointInfo.defaultName})
-                  </span>
-                  <span className="text-gray-500 whitespace-nowrap">
-                    {" "}
-                    ID: {pointInfo.systemId}.{pointInfo.pointDbId}
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Sub-Point:
-                </label>
-                <div className="px-2 text-gray-400 font-mono text-sm flex-1 flex items-center gap-2">
-                  <span>{pointInfo.originSubId || "N/A"}</span>
-                  {pointInfo.derived && (
-                    <span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 text-xs rounded-md border border-purple-500/30">
-                      DERIVED
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Subsystem:
-                </label>
-                <div className="px-2 text-gray-400 text-sm flex-1">
-                  {pointInfo.subsystem || "N/A"}
                 </div>
               </div>
 
@@ -307,9 +285,18 @@ export default function PointInfoModal({
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
                   Type and unit:
                 </label>
-                <div className="px-2 text-gray-400 text-sm flex-1">
+                <div className="text-gray-300 text-sm flex-1">
                   {pointInfo.metricType}
                   {pointInfo.metricUnit && ` (${pointInfo.metricUnit})`}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
+                  Subsystem:
+                </label>
+                <div className="text-gray-300 text-sm flex-1">
+                  {pointInfo.subsystem || "N/A"}
                 </div>
               </div>
             </div>
@@ -365,7 +352,7 @@ export default function PointInfoModal({
                   type="text"
                   value={editedDisplayName}
                   onChange={(e) => handleDisplayNameChange(e.target.value)}
-                  placeholder={pointInfo.defaultName}
+                  placeholder={pointInfo.originName}
                   className="flex-1 px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                   disabled={isSaving}
                 />
@@ -403,57 +390,73 @@ export default function PointInfoModal({
             </div>
 
             {/* Taxonomy - Classification fields */}
-            <div className="border border-gray-600 rounded-md p-3 bg-gray-800/30 space-y-3">
-              <div className="text-xs font-medium text-gray-400 mb-1">
+            <div className="border border-gray-600 rounded-md p-3 bg-gray-800/30">
+              <div className="text-xs font-medium text-gray-400 mb-2">
                 Taxonomy
               </div>
 
-              {/* Editable: Type (dropdown) */}
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Type:
-                </label>
-                <select
-                  value={editedType}
-                  onChange={(e) => handleTypeChange(e.target.value)}
-                  className="px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                  disabled={isSaving}
-                >
-                  <option value="">-- Select Type --</option>
-                  <option value="source">source</option>
-                  <option value="load">load</option>
-                  <option value="bidi">bidi</option>
-                </select>
-              </div>
-
-              {/* Editable: Subtype (free text) */}
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Subtype:
-                </label>
-                <input
-                  type="text"
-                  value={editedSubtype}
-                  onChange={(e) => handleSubtypeChange(e.target.value)}
-                  placeholder="e.g., pool, ev, solar1"
-                  className="flex-1 px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                  disabled={isSaving}
-                />
-              </div>
-
-              {/* Editable: Extension (free text) */}
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Extension:
-                </label>
-                <input
-                  type="text"
-                  value={editedExtension}
-                  onChange={(e) => handleExtensionChange(e.target.value)}
-                  placeholder="e.g. local, remote, hws, ev, hvac"
-                  className="flex-1 px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                  disabled={isSaving}
-                />
+              {/* 3x2 Table: Labels in first row, fields in second row */}
+              {/* Indented to align with field values above (w-32 label + gap-3) */}
+              <div className="flex gap-3">
+                <div className="w-32 flex-shrink-0"></div>
+                <div className="flex-1">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="text-sm font-medium text-gray-300 text-left pb-2 pr-2">
+                          Type
+                        </th>
+                        <th className="text-sm font-medium text-gray-300 text-left pb-2 px-2">
+                          Subtype
+                        </th>
+                        <th className="text-sm font-medium text-gray-300 text-left pb-2 pl-2">
+                          Extension
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className="pr-2">
+                          <select
+                            value={editedType}
+                            onChange={(e) => handleTypeChange(e.target.value)}
+                            className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                            disabled={isSaving}
+                          >
+                            <option value="">-- Select --</option>
+                            <option value="source">source</option>
+                            <option value="load">load</option>
+                            <option value="bidi">bidi</option>
+                          </select>
+                        </td>
+                        <td className="px-2">
+                          <input
+                            type="text"
+                            value={editedSubtype}
+                            onChange={(e) =>
+                              handleSubtypeChange(e.target.value)
+                            }
+                            placeholder="e.g., pool, ev"
+                            className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                            disabled={isSaving}
+                          />
+                        </td>
+                        <td className="pl-2">
+                          <input
+                            type="text"
+                            value={editedExtension}
+                            onChange={(e) =>
+                              handleExtensionChange(e.target.value)
+                            }
+                            placeholder="e.g., local, hws"
+                            className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                            disabled={isSaving}
+                          />
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
