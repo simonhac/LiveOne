@@ -484,6 +484,9 @@ export default function ViewDataModal({
     ) {
       // Show just "time" for time columns
       return "time";
+    } else if (pointInfo?.metricUnit === "cents_kWh") {
+      // Format cents per kWh with cent symbol
+      return "¢/kWh";
     } else if (pointInfo?.metricUnit) {
       return pointInfo.metricUnit;
     }
@@ -1036,7 +1039,13 @@ export default function ViewDataModal({
                             )
                           ) : (
                             <span
-                              className={`font-mono text-xs hover:underline ${getSubsystemColor(pointInfo?.subsystem || null)}`}
+                              className={`font-mono text-xs hover:underline ${
+                                row[key] === 0
+                                  ? "text-gray-400"
+                                  : getSubsystemColor(
+                                      pointInfo?.subsystem || null,
+                                    )
+                              }`}
                             >
                               {formatValue(row[key], pointInfo)}
                             </span>

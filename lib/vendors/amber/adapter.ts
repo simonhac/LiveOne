@@ -8,7 +8,12 @@ import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { LatestReadingData } from "@/lib/types/readings";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
 import { insertPointReadingsDirectTo5m } from "@/lib/monitoring-points-manager";
-import { createChannelPoints, getChannelMetadata } from "./point-metadata";
+import {
+  createChannelPoints,
+  getChannelMetadata,
+  createRenewablesPoint,
+  createSpotPricePoint,
+} from "./point-metadata";
 import type {
   AmberCredentials,
   AmberSite,
@@ -220,6 +225,25 @@ export class AmberAdapter extends BaseVendorAdapter {
       // Parse endTime to milliseconds (endTime is ISO 8601 UTC string)
       const intervalEndMs = new Date(endTime).getTime();
 
+      // Extract grid market data from first record (same across all channels)
+      const firstRecord = records[0];
+      const quality = firstRecord.quality;
+
+      // Add system-level grid market data points (once per timestamp)
+      readingsToInsert.push({
+        pointMetadata: createRenewablesPoint(),
+        rawValue: firstRecord.renewables, // percentage
+        intervalEndMs,
+        dataQuality: quality,
+      });
+
+      readingsToInsert.push({
+        pointMetadata: createSpotPricePoint(),
+        rawValue: firstRecord.spotPerKwh, // cents/kWh
+        intervalEndMs,
+        dataQuality: quality,
+      });
+
       // Process each channel's data
       for (const record of records) {
         // Find matching channel metadata
@@ -238,14 +262,14 @@ export class AmberAdapter extends BaseVendorAdapter {
         const points = createChannelPoints(channel);
 
         // Each record has its own quality flag - use it for all three points from this record
-        const quality = record.quality;
+        const recordQuality = record.quality;
 
         // Energy point
         readingsToInsert.push({
           pointMetadata: points[0], // energy
           rawValue: record.kwh * 1000, // kWh → Wh
           intervalEndMs,
-          dataQuality: quality,
+          dataQuality: recordQuality,
         });
 
         // Cost/Revenue point
@@ -253,7 +277,7 @@ export class AmberAdapter extends BaseVendorAdapter {
           pointMetadata: points[1], // cost or revenue
           rawValue: Math.abs(record.cost), // cents (negative for export becomes positive revenue)
           intervalEndMs,
-          dataQuality: quality,
+          dataQuality: recordQuality,
         });
 
         // Price point
@@ -261,7 +285,7 @@ export class AmberAdapter extends BaseVendorAdapter {
           pointMetadata: points[2], // price
           rawValue: Math.abs(record.perKwh), // c/kWh (negative for export becomes positive)
           intervalEndMs,
-          dataQuality: quality,
+          dataQuality: recordQuality,
         });
       }
     }

@@ -14,31 +14,14 @@ import type { AmberChannelMetadata } from "./types";
 export function createEnergyPoint(
   channel: AmberChannelMetadata,
 ): PointMetadata {
-  const isExport = channel.pointType === "grid.export";
-  const isControlled = channel.pointType === "grid.controlled";
-
-  // Determine extension based on channel type
-  let extension: string | null;
-  if (isExport) {
-    extension = "export";
-  } else if (isControlled) {
-    extension = "controlled";
-  } else {
-    extension = "import";
-  }
-
   return {
     originId: channel.channelId,
-    originSubId: "energy",
-    defaultName: isExport
-      ? "Grid export energy"
-      : isControlled
-        ? "Controlled load energy"
-        : "Grid import energy",
+    originSubId: `${channel.extension}_kwh`,
+    defaultName: channel.defaultName,
     subsystem: "grid",
     type: "bidi", // All Amber points are bidirectional grid
     subtype: "grid",
-    extension,
+    extension: channel.extension,
     metricType: "energy",
     metricUnit: "Wh",
     transform: null, // Interval values, not cumulative
@@ -50,31 +33,14 @@ export function createEnergyPoint(
  * Using unified "value" metric type for all monetary values
  */
 export function createCostPoint(channel: AmberChannelMetadata): PointMetadata {
-  const isExport = channel.pointType === "grid.export";
-  const isControlled = channel.pointType === "grid.controlled";
-
-  // Determine extension based on channel type
-  let extension: string | null;
-  if (isExport) {
-    extension = "export";
-  } else if (isControlled) {
-    extension = "controlled";
-  } else {
-    extension = "import";
-  }
-
   return {
     originId: channel.channelId,
-    originSubId: isExport ? "revenue" : "cost",
-    defaultName: isExport
-      ? "Grid export revenue"
-      : isControlled
-        ? "Controlled load cost"
-        : "Grid import cost",
+    originSubId: `${channel.extension}_cost`,
+    defaultName: channel.defaultName,
     subsystem: "grid",
     type: "bidi", // All Amber points are bidirectional grid
     subtype: "grid",
-    extension,
+    extension: channel.extension,
     metricType: "value", // Unified metric type for monetary values
     metricUnit: "cents",
     transform: null,
@@ -86,31 +52,14 @@ export function createCostPoint(channel: AmberChannelMetadata): PointMetadata {
  * Using "rate" metric type for pricing
  */
 export function createPricePoint(channel: AmberChannelMetadata): PointMetadata {
-  const isExport = channel.pointType === "grid.export";
-  const isControlled = channel.pointType === "grid.controlled";
-
-  // Determine extension based on channel type
-  let extension: string | null;
-  if (isExport) {
-    extension = "export";
-  } else if (isControlled) {
-    extension = "controlled";
-  } else {
-    extension = "import";
-  }
-
   return {
     originId: channel.channelId,
-    originSubId: "price",
-    defaultName: isExport
-      ? "Grid export price"
-      : isControlled
-        ? "Controlled load price"
-        : "Grid import price",
+    originSubId: `${channel.extension}_perKwh`,
+    defaultName: channel.defaultName,
     subsystem: "grid",
     type: "bidi", // All Amber points are bidirectional grid
     subtype: "grid",
-    extension,
+    extension: channel.extension,
     metricType: "rate", // Using "rate" for pricing
     metricUnit: "cents_kWh",
     transform: null,
@@ -125,16 +74,24 @@ export function getChannelMetadata(
   channelType: "general" | "feedIn" | "controlledLoad",
 ): AmberChannelMetadata {
   let pointType: "grid.import" | "grid.export" | "grid.controlled";
+  let extension: string;
+  let defaultName: string;
 
   switch (channelType) {
     case "general":
       pointType = "grid.import";
+      extension = "import";
+      defaultName = "Grid import";
       break;
     case "feedIn":
       pointType = "grid.export";
+      extension = "export";
+      defaultName = "Grid export";
       break;
     case "controlledLoad":
       pointType = "grid.controlled";
+      extension = "controlled";
+      defaultName = "Controlled load";
       break;
   }
 
@@ -142,6 +99,46 @@ export function getChannelMetadata(
     channelId,
     channelType,
     pointType,
+    extension,
+    defaultName,
+  };
+}
+
+/**
+ * Create renewables percentage point (system-level, not channel-specific)
+ * Represents the grid-wide renewable energy percentage
+ */
+export function createRenewablesPoint(): PointMetadata {
+  return {
+    originId: "grid",
+    originSubId: "renewables",
+    defaultName: "Grid renewables",
+    subsystem: "grid",
+    type: "bidi",
+    subtype: "grid",
+    extension: "renewables",
+    metricType: "proportion",
+    metricUnit: "%",
+    transform: null,
+  };
+}
+
+/**
+ * Create wholesale spot price point (system-level, not channel-specific)
+ * Represents the NEM wholesale spot price
+ */
+export function createSpotPricePoint(): PointMetadata {
+  return {
+    originId: "grid",
+    originSubId: "spotPerKwh",
+    defaultName: "Grid spot price",
+    subsystem: "grid",
+    type: "bidi",
+    subtype: "grid",
+    extension: "spot",
+    metricType: "rate",
+    metricUnit: "cents_kWh",
+    transform: null,
   };
 }
 
