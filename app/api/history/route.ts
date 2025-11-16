@@ -461,6 +461,7 @@ async function getSystemHistoryInOpenNEMFormat(
     max?: number | null;
     last?: number | null;
     delta?: number | null;
+    data_quality?: string | null;
   }>;
 
   if (interval === "1d") {
@@ -479,7 +480,8 @@ async function getSystemHistoryInOpenNEMFormat(
         pra.min,
         pra.max,
         pra.last,
-        pra.delta
+        pra.delta,
+        pra.data_quality
       FROM ${aggTable} AS pra
       JOIN pairs p
         ON p.system_id = pra.system_id
@@ -509,7 +511,8 @@ async function getSystemHistoryInOpenNEMFormat(
         pra.min,
         pra.max,
         pra.last,
-        pra.delta
+        pra.delta,
+        pra.data_quality
       FROM ${aggTable} AS pra
       JOIN pairs p
         ON p.system_id = pra.system_id
@@ -546,7 +549,7 @@ async function getSystemHistoryInOpenNEMFormat(
   // Group rows by (system_id, point_id, aggregation_field)
   const rowsByPointAndField = new Map<
     string,
-    Array<{ interval_end: number; value: number | null }>
+    Array<{ interval_end: number; value: number | string | null }>
   >();
 
   for (const row of allRows) {
@@ -555,15 +558,25 @@ async function getSystemHistoryInOpenNEMFormat(
       row.interval_end ?? new Date(row.day! + "T00:00:00Z").getTime();
 
     // Process each aggregation field that has a value
-    for (const field of ["avg", "min", "max", "last", "delta"] as const) {
-      if (row[field] !== undefined && row[field] !== null) {
+    for (const field of [
+      "avg",
+      "min",
+      "max",
+      "last",
+      "delta",
+      "quality",
+    ] as const) {
+      // Map field name to database column (quality -> data_quality)
+      const dbField = field === "quality" ? "data_quality" : field;
+
+      if (row[dbField] !== undefined && row[dbField] !== null) {
         const key = `${row.system_id}.${row.point_id}.${field}`;
         if (!rowsByPointAndField.has(key)) {
           rowsByPointAndField.set(key, []);
         }
         rowsByPointAndField.get(key)!.push({
           interval_end: intervalEnd,
-          value: row[field]!,
+          value: row[dbField]!,
         });
       }
     }
@@ -585,14 +598,23 @@ async function getSystemHistoryInOpenNEMFormat(
     const key = `${series.point.systemId}.${series.point.index}.${series.aggregationField}`;
     let rows = rowsByPointAndField.get(key) || [];
 
-    // Apply transform
-    rows = rows.map((row) => ({
-      interval_end: row.interval_end,
-      value: applyTransform(row.value, series.point.transform),
-    }));
+    // Apply transform (skip for quality which is a string)
+    if (series.aggregationField !== "quality") {
+      rows = rows.map((row) => ({
+        interval_end: row.interval_end,
+        value: applyTransform(
+          row.value as number | null,
+          series.point.transform,
+        ),
+      }));
+    }
 
-    // Handle 30m aggregation if needed
-    if (interval === "30m" && aggTable === "point_readings_agg_5m") {
+    // Handle 30m aggregation if needed (skip for quality which is a string)
+    if (
+      interval === "30m" &&
+      aggTable === "point_readings_agg_5m" &&
+      series.aggregationField !== "quality"
+    ) {
       const aggregated: Array<{
         interval_end: number;
         value: number | null;
@@ -608,7 +630,7 @@ async function getSystemHistoryInOpenNEMFormat(
         }
 
         if (row.value !== null) {
-          buckets.get(bucketEnd)!.push(row.value);
+          buckets.get(bucketEnd)!.push(row.value as number);
         }
       }
 
@@ -633,7 +655,7 @@ async function getSystemHistoryInOpenNEMFormat(
     const seriesId = seriesPath.toString();
 
     // Build field data with gap filling
-    const fieldData: (number | null)[] = [];
+    const fieldData: (number | string | null)[] = [];
     let dataIndex = 0;
 
     for (
@@ -647,9 +669,14 @@ async function getSystemHistoryInOpenNEMFormat(
 
         if (dataIntervalEnd === expectedIntervalEnd) {
           const value = dataPoint.value;
-          fieldData.push(
-            value === null ? null : parseFloat(value.toPrecision(4)),
-          );
+          // For quality (string), push as-is; for numbers, apply precision
+          if (typeof value === "string") {
+            fieldData.push(value);
+          } else {
+            fieldData.push(
+              value === null ? null : parseFloat(value.toPrecision(4)),
+            );
+          }
           dataIndex++;
         } else {
           fieldData.push(null);

@@ -105,14 +105,14 @@ export class PointManager {
       // Determine aggregation fields based on metric type
       let aggregationFields: string[];
       if (point.metricType === "energy") {
-        // Energy: only delta
-        aggregationFields = ["delta"];
+        // Energy: only delta (+ quality for data source tracking)
+        aggregationFields = ["delta", "quality"];
       } else if (point.metricType === "soc") {
-        // SOC: last for 5m, avg/min/max/last for 1d
-        aggregationFields = ["last", "avg", "min", "max"];
+        // SOC: last for 5m, avg/min/max/last for 1d (+ quality)
+        aggregationFields = ["last", "avg", "min", "max", "quality"];
       } else {
-        // Power and other: avg/min/max/last
-        aggregationFields = ["avg", "min", "max", "last"];
+        // Power and other: avg/min/max/last (+ quality)
+        aggregationFields = ["avg", "min", "max", "last", "quality"];
       }
 
       // Create SeriesInfo for each aggregation

@@ -64,6 +64,11 @@ export function getSupportedIntervals(
   metricType: string,
   aggregationField: string,
 ): ("5m" | "1d")[] {
+  // Quality is available for all metric types in 5m only (not yet in 1d)
+  if (aggregationField === AggregationField.QUALITY) {
+    return ["5m"];
+  }
+
   if (metricType === MetricType.ENERGY) {
     // Energy delta available in both 5m and 1d
     return aggregationField === AggregationField.DELTA ? ["5m", "1d"] : [];

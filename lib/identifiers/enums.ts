@@ -68,6 +68,7 @@ export enum AggregationField {
   LAST = "last",
   DELTA = "delta",
   SUM = "sum",
+  QUALITY = "quality",
 }
 
 /**

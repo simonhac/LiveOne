@@ -1251,7 +1251,10 @@ export default function DashboardClient({
 
             {/* Amber Electric Dashboard - Show only Amber card */}
             {data?.vendorType === "amber" && systemId && (
-              <AmberCard systemId={parseInt(systemId)} />
+              <AmberCard
+                systemId={parseInt(systemId)}
+                timezoneOffsetMin={data?.timezoneOffsetMin ?? 600}
+              />
             )}
 
             {/* Main Dashboard Grid - Only show for admin or non-removed systems and non-Amber systems */}

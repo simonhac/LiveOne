@@ -389,6 +389,14 @@ export class AmberAdapter extends BaseVendorAdapter {
         intervalEndMs,
         dataQuality: "actual",
       });
+
+      // Store renewables proportion
+      readingsToInsert.push({
+        pointMetadata: createRenewablesPoint(),
+        rawValue: record.renewables, // percentage (0-1)
+        intervalEndMs,
+        dataQuality: "actual",
+      });
     }
 
     // Process forecast intervals (future predictions)
@@ -415,6 +423,14 @@ export class AmberAdapter extends BaseVendorAdapter {
       readingsToInsert.push({
         pointMetadata: pricePoint,
         rawValue: record.perKwh, // c/kWh (keep sign - important for feed-in credits)
+        intervalEndMs,
+        dataQuality: "forecast",
+      });
+
+      // Store renewables proportion
+      readingsToInsert.push({
+        pointMetadata: createRenewablesPoint(),
+        rawValue: record.renewables, // percentage (0-1)
         intervalEndMs,
         dataQuality: "forecast",
       });
