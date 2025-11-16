@@ -330,7 +330,7 @@ export class AmberAdapter extends BaseVendorAdapter {
     const siteId = system.vendorSiteId || (await this.getSiteId(credentials));
     const site = await this.getSite(credentials);
 
-    console.log("[Amber] Fetching price forecasts");
+    console.log("[Amber] Fetching price data (actual + forecasts)");
 
     // Fetch price data (includes historical + current + forecast)
     const priceData: AmberPriceRecord[] = await this.fetchWithAuth(
@@ -343,15 +343,18 @@ export class AmberAdapter extends BaseVendorAdapter {
       return 0;
     }
 
-    // Filter to only forecast intervals (future data)
-    const forecasts = priceData.filter(
+    // Separate actual and forecast intervals
+    const actualIntervals = priceData.filter(
+      (record) =>
+        record.type === "ActualInterval" || record.type === "CurrentInterval",
+    );
+    const forecastIntervals = priceData.filter(
       (record) => record.type === "ForecastInterval",
     );
 
-    if (forecasts.length === 0) {
-      console.log("[Amber] No forecast intervals in price data");
-      return 0;
-    }
+    console.log(
+      `[Amber] Price data: ${actualIntervals.length} actual, ${forecastIntervals.length} forecast`,
+    );
 
     // Get channel metadata
     const channels = this.getChannelMetadataList(site);
@@ -359,7 +362,37 @@ export class AmberAdapter extends BaseVendorAdapter {
     // Convert to point readings
     const readingsToInsert = [];
 
-    for (const record of forecasts) {
+    // Process actual intervals (recent actual prices)
+    for (const record of actualIntervals) {
+      // Find matching channel metadata
+      const channel = channels.find(
+        (c) => c.channelType === record.channelType,
+      );
+
+      if (!channel) {
+        console.warn(
+          `[Amber] Unknown channel type in actual: ${record.channelType}`,
+        );
+        continue;
+      }
+
+      // Parse endTime to milliseconds (endTime is ISO 8601 UTC string)
+      const intervalEndMs = new Date(record.endTime).getTime();
+
+      // Create price point for this actual price
+      const points = createChannelPoints(channel);
+      const pricePoint = points[2]; // price is the third point
+
+      readingsToInsert.push({
+        pointMetadata: pricePoint,
+        rawValue: record.perKwh, // c/kWh (keep sign - important for feed-in credits)
+        intervalEndMs,
+        dataQuality: "actual",
+      });
+    }
+
+    // Process forecast intervals (future predictions)
+    for (const record of forecastIntervals) {
       // Find matching channel metadata
       const channel = channels.find(
         (c) => c.channelType === record.channelType,
@@ -381,16 +414,18 @@ export class AmberAdapter extends BaseVendorAdapter {
 
       readingsToInsert.push({
         pointMetadata: pricePoint,
-        rawValue: Math.abs(record.perKwh), // c/kWh
+        rawValue: record.perKwh, // c/kWh (keep sign - important for feed-in credits)
         intervalEndMs,
         dataQuality: "forecast",
       });
     }
 
-    // Insert forecast prices directly to 5m aggregates
+    // Insert all price data directly to 5m aggregates
     await insertPointReadingsDirectTo5m(system.id, sessionId, readingsToInsert);
 
-    console.log(`[Amber] Inserted ${readingsToInsert.length} price forecasts`);
+    console.log(
+      `[Amber] Inserted ${actualIntervals.length} actual + ${forecastIntervals.length} forecast price records`,
+    );
 
     return readingsToInsert.length;
   }

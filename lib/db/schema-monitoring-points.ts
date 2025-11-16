@@ -140,6 +140,7 @@ export const pointReadingsAgg5m = sqliteTable(
     // Sampling metadata
     sampleCount: integer("sample_count").notNull(),
     errorCount: integer("error_count").notNull(),
+    dataQuality: text("data_quality"), // 'good', 'forecast', 'actual', 'billable', etc.
     createdAt: integer("created_at")
       .notNull()
       .default(sql`(unixepoch() * 1000)`),

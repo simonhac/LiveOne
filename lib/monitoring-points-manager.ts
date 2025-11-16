@@ -363,6 +363,7 @@ export async function insertPointReadingsDirectTo5m(
     rawValue: any; // Raw value from vendor (will be converted based on metadata)
     intervalEndMs: number; // 5-minute interval end time in milliseconds
     error?: string | null;
+    dataQuality?: string | null; // 'good', 'forecast', 'actual', 'billable', etc.
   }>,
 ): Promise<void> {
   if (readings.length === 0) return;
@@ -416,6 +417,7 @@ export async function insertPointReadingsDirectTo5m(
       valueStr: valueStr,
       sampleCount: isError ? 0 : 1,
       errorCount: isError ? 1 : 0,
+      dataQuality: reading.dataQuality ?? null,
     });
   }
 
@@ -440,6 +442,7 @@ export async function insertPointReadingsDirectTo5m(
           valueStr: sql`excluded.value_str`,
           sampleCount: sql`excluded.sample_count`,
           errorCount: sql`excluded.error_count`,
+          dataQuality: sql`excluded.data_quality`,
           updatedAt: sql`(unixepoch() * 1000)`,
         },
       });

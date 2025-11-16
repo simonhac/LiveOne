@@ -127,8 +127,10 @@ export default function PointReadingInspectorModal({
         const encodedOffset = encodeUrlOffset(system.timezoneOffsetMin);
         // Use "date" parameter for daily data, "time" for raw/5m
         const timeParam = source === "daily" ? "date" : "time";
+        // Use numeric format: systemId.pointId
+        const pointIdentifier = `${pointInfo.systemId}.${pointInfo.index}`;
         const response = await fetch(
-          `/api/admin/point/${pointInfo.getIdentifier()}/readings?${timeParam}=${encodedTime}&offset=${encodedOffset}&source=${source}`,
+          `/api/admin/point/${pointIdentifier}/readings?${timeParam}=${encodedTime}&offset=${encodedOffset}&source=${source}`,
         );
 
         if (!response.ok) {
@@ -297,7 +299,7 @@ export default function PointReadingInspectorModal({
     }
   }
 
-  // Get point path using PointInfo method
+  // Get point identifier (type.subtype.extension format)
   const pointPath = pointInfo.getIdentifier();
 
   // Helper function to format a numeric column value
@@ -332,7 +334,8 @@ export default function PointReadingInspectorModal({
           <h2 className="text-lg font-semibold text-white">
             Point Readings for {system.name} {pointInfo.name}{" "}
             <span className="text-gray-500">
-              ID: {pointInfo.getIdentifier()}
+              ID: {pointInfo.systemId}.{pointInfo.index}
+              {pointPath && ` (${pointPath})`}
             </span>
           </h2>
           <div className="flex items-center gap-3">
@@ -482,6 +485,11 @@ export default function PointReadingInspectorModal({
                       >
                         Errors
                       </th>
+                      <th
+                        className={`px-2 py-2 text-left text-xs font-medium text-gray-400 border-b border-gray-700 ${source === "raw" || source === "daily" ? "hidden" : ""}`}
+                      >
+                        Quality
+                      </th>
                       {/* Raw columns */}
                       <th
                         className={`px-2 py-2 text-right text-xs font-medium text-gray-400 border-b border-gray-700 ${source !== "raw" ? "hidden" : ""}`}
@@ -592,6 +600,11 @@ export default function PointReadingInspectorModal({
                                 </td>
                                 <td
                                   className={`py-1 px-2 text-xs text-gray-300 text-right ${source === "raw" ? "hidden" : ""}`}
+                                >
+                                  &nbsp;
+                                </td>
+                                <td
+                                  className={`py-1 px-2 text-xs text-gray-300 ${source === "raw" || source === "daily" ? "hidden" : ""}`}
                                 >
                                   &nbsp;
                                 </td>
@@ -738,6 +751,27 @@ export default function PointReadingInspectorModal({
                                 className={`py-1 px-2 text-xs text-gray-300 text-right ${source === "raw" ? "hidden" : ""}`}
                               >
                                 {reading!.errorCount ?? "—"}
+                              </td>
+                              <td
+                                className={`py-1 px-2 text-xs ${source === "raw" || source === "daily" ? "hidden" : ""}`}
+                              >
+                                {reading!.dataQuality ? (
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                                      reading!.dataQuality === "forecast"
+                                        ? "bg-blue-500/20 text-blue-400"
+                                        : reading!.dataQuality === "actual"
+                                          ? "bg-green-500/20 text-green-400"
+                                          : reading!.dataQuality === "billable"
+                                            ? "bg-purple-500/20 text-purple-400"
+                                            : "bg-gray-500/20 text-gray-400"
+                                    }`}
+                                  >
+                                    {reading!.dataQuality}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-600">—</span>
+                                )}
                               </td>
                               {/* Raw columns */}
                               <td

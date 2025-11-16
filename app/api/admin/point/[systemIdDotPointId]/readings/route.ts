@@ -30,11 +30,11 @@ export async function GET(
     const { systemIdDotPointId } = await params;
     const { searchParams } = new URL(request.url);
 
-    // Parse systemId.pointId from path param
+    // Parse systemId.pointId from path param (e.g., "1586.1")
     const parts = systemIdDotPointId.split(".");
     if (parts.length !== 2) {
       return NextResponse.json(
-        { error: "Invalid systemId.pointId format" },
+        { error: "Invalid format. Expected systemId.pointId (e.g., 1586.1)" },
         { status: 400 },
       );
     }
@@ -169,44 +169,58 @@ export async function GET(
       }
     } else if (source === "5m") {
       // timestamp is guaranteed to be non-null for 5m data
-      const oneHour = 60 * 60 * 1000;
-      const startTime = timestamp! - oneHour;
-      const endTime = timestamp! + oneHour;
-
-      // Query 5-minute aggregated data with session labels
+      // Use window functions to get records centered around target
+      // Get 10 before + target + 10 after = 21 records max, then trim to 11
       const query = `
-        SELECT
-          pr.system_id as systemId,
-          pr.point_id as pointId,
-          pr.session_id as sessionId,
-          pr.interval_end as intervalEnd,
-          pr.avg,
-          pr.min,
-          pr.max,
-          pr.last,
-          pr.delta,
-          pr.sample_count as sampleCount,
-          pr.error_count as errorCount,
-          s.session_label as sessionLabel
-        FROM point_readings_agg_5m pr
-        LEFT JOIN sessions s ON pr.session_id = s.id
-        WHERE pr.system_id = ${systemId}
-          AND pr.point_id = ${pointId}
-          AND pr.interval_end >= ${startTime}
-          AND pr.interval_end <= ${endTime}
-        ORDER BY pr.interval_end ASC
+        WITH all_rows AS (
+          SELECT
+            interval_end,
+            ROW_NUMBER() OVER (ORDER BY interval_end ASC) as row_num
+          FROM point_readings_agg_5m
+          WHERE system_id = ${systemId}
+            AND point_id = ${pointId}
+        ),
+        target_position AS (
+          SELECT row_num as target_row
+          FROM all_rows
+          WHERE interval_end = ${timestamp}
+        ),
+        ranked AS (
+          SELECT
+            pr.system_id as systemId,
+            pr.point_id as pointId,
+            pr.session_id as sessionId,
+            pr.interval_end as intervalEnd,
+            pr.avg,
+            pr.min,
+            pr.max,
+            pr.last,
+            pr.delta,
+            pr.sample_count as sampleCount,
+            pr.error_count as errorCount,
+            pr.data_quality as dataQuality,
+            s.session_label as sessionLabel,
+            ROW_NUMBER() OVER (ORDER BY pr.interval_end ASC) as row_num
+          FROM point_readings_agg_5m pr
+          LEFT JOIN sessions s ON pr.session_id = s.id
+          WHERE pr.system_id = ${systemId}
+            AND pr.point_id = ${pointId}
+        )
+        SELECT ranked.* FROM ranked, target_position
+        WHERE ranked.row_num BETWEEN (target_position.target_row - 10) AND (target_position.target_row + 10)
+        ORDER BY intervalEnd ASC
       `;
 
       const allReadings = await db.all(sql.raw(query));
 
-      // Find target index
+      // Find target index in results
       const targetIndex = allReadings.findIndex(
         (r: any) => r.intervalEnd === timestamp,
       );
 
       if (targetIndex === -1) {
-        // Target not found, return all readings
-        readings = allReadings;
+        // Target not found, return empty
+        readings = [];
       } else {
         // Calculate ideal range: 5 before, target, 5 after
         let startIndex = Math.max(0, targetIndex - 5);
