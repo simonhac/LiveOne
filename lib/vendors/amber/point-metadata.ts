@@ -143,6 +143,44 @@ export function createSpotPricePoint(): PointMetadata {
 }
 
 /**
+ * Create tariff period point (import channel only)
+ * Records current tariff period with abbreviated values
+ */
+export function createTariffPeriodPoint(): PointMetadata {
+  return {
+    originId: "grid",
+    originSubId: "tariffPeriod",
+    defaultName: "Tariff period",
+    subsystem: "grid",
+    type: "bidi",
+    subtype: "grid",
+    extension: "tariff",
+    metricType: "code",
+    metricUnit: "text",
+    transform: null,
+  };
+}
+
+/**
+ * Abbreviate tariff period values
+ * peak → pk, offPeak → op, shoulder → sh, solarSponge → ss
+ */
+export function abbreviateTariffPeriod(
+  period: string | undefined,
+): string | null {
+  if (!period) return null;
+
+  const abbreviations: Record<string, string> = {
+    peak: "pk",
+    offPeak: "op",
+    shoulder: "sh",
+    solarSponge: "ss",
+  };
+
+  return abbreviations[period] || period;
+}
+
+/**
  * Create all three points (energy, cost, price) for a channel
  */
 export function createChannelPoints(

@@ -245,6 +245,10 @@ export async function GET(
       // Query 5-minute aggregated data
       const pivotColumns = points
         .map((p) => {
+          // For text fields, use value_str; for numeric fields, use the appropriate aggregate column
+          if (p.metricUnit === "text") {
+            return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.index} THEN pr.value_str END) as point_${p.index}`;
+          }
           const aggCol = getAggColumn(p.metricType, p.transform, source);
           return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.index} THEN pr.${aggCol} END) as point_${p.index}`;
         })

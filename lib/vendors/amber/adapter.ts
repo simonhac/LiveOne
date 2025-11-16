@@ -13,6 +13,8 @@ import {
   getChannelMetadata,
   createRenewablesPoint,
   createSpotPricePoint,
+  createTariffPeriodPoint,
+  abbreviateTariffPeriod,
 } from "./point-metadata";
 import type {
   AmberCredentials,
@@ -243,6 +245,22 @@ export class AmberAdapter extends BaseVendorAdapter {
         intervalEndMs,
         dataQuality: quality,
       });
+
+      // Add tariff period from general (import) channel
+      // Note: tariffInformation only exists on general channel, not feedIn
+      const generalRecord = records.find((r) => r.channelType === "general");
+      if (generalRecord?.tariffInformation?.period) {
+        const abbreviatedPeriod = abbreviateTariffPeriod(
+          generalRecord.tariffInformation.period,
+        );
+        if (abbreviatedPeriod) {
+          readingsToInsert.push({
+            pointMetadata: createTariffPeriodPoint(),
+            rawValue: abbreviatedPeriod, // "pk", "op", "sh", or "ss"
+            intervalEndMs,
+          });
+        }
+      }
 
       // Process each channel's data
       for (const record of records) {

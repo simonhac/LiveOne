@@ -135,6 +135,7 @@ export const pointReadingsAgg5m = sqliteTable(
     max: real("max"),
     last: real("last"),
     delta: real("delta"), // For differentiated values (points with transform='d')
+    valueStr: text("value_str"), // For text values (e.g., tariff periods, fault codes)
 
     // Sampling metadata
     sampleCount: integer("sample_count").notNull(),

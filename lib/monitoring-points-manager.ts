@@ -389,9 +389,10 @@ export async function insertPointReadingsDirectTo5m(
     // For pre-aggregated data with a single value per interval:
     // - Energy metrics with transform='d': value goes into last (cumulative counter), avg/min/max/delta = null
     // - Energy metrics with transform!='d': value goes into delta (total energy), avg/min/max/last = null
+    // - Text metrics: valueStr is stored, all numeric fields are null
     // - Other metrics: avg = min = max = last = value, delta = null
-    // If value is null, this is an error reading
-    const isError = value === null;
+    // If both value and valueStr are null, this is an error reading
+    const isError = value === null && valueStr === null;
     const isEnergyCounter =
       point.metricType === "energy" && point.transform === "d";
     const isEnergyDelta =
@@ -412,6 +413,7 @@ export async function insertPointReadingsDirectTo5m(
             ? null
             : value,
       delta: !isError && isEnergyDelta ? value : null,
+      valueStr: valueStr,
       sampleCount: isError ? 0 : 1,
       errorCount: isError ? 1 : 0,
     });
@@ -435,6 +437,7 @@ export async function insertPointReadingsDirectTo5m(
           max: sql`excluded.max`,
           last: sql`excluded.last`,
           delta: sql`excluded.delta`,
+          valueStr: sql`excluded.value_str`,
           sampleCount: sql`excluded.sample_count`,
           errorCount: sql`excluded.error_count`,
           updatedAt: sql`(unixepoch() * 1000)`,
