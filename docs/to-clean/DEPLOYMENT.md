@@ -3,6 +3,7 @@
 ## Pre-Deployment Checklist
 
 ### 1. Database Schema Verification
+
 **CRITICAL**: Before deploying schema changes, verify ALL tables exist in production:
 
 ```bash
@@ -13,11 +14,14 @@ diff dev-schema.sql prod-schema.sql
 ```
 
 ### 2. Migration Scripts
+
 For every schema change, create TWO scripts:
+
 - `migrate-{feature}.sql` - Forward migration
 - `rollback-{feature}.sql` - Rollback script
 
 Include in migration scripts:
+
 - [ ] Schema changes (CREATE TABLE, ALTER TABLE)
 - [ ] Data migrations (INSERT, UPDATE)
 - [ ] Index creation
@@ -25,6 +29,7 @@ Include in migration scripts:
 - [ ] Verification queries
 
 ### 3. Test Migration on Backup
+
 ```bash
 # Create fresh backup
 ~/.turso/turso db shell liveone-tokyo ".dump" > backup-$(date +%Y%m%d-%H%M%S).sql
@@ -37,12 +42,15 @@ sqlite3 test.db "SELECT name FROM sqlite_master WHERE type='table'"
 ```
 
 ### 4. Environment Variables
+
 Verify all required environment variables are set in Vercel:
+
 ```bash
 vercel env ls production
 ```
 
 Required variables:
+
 - `TURSO_DATABASE_URL`
 - `TURSO_AUTH_TOKEN`
 - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
@@ -54,6 +62,7 @@ Required variables:
 ## Deployment Process
 
 ### Step 1: Pre-flight Checks
+
 ```bash
 # 1. Run type checking
 npm run type-check
@@ -69,6 +78,7 @@ npm run build
 ```
 
 ### Step 2: Deploy Code
+
 ```bash
 # Deploy to Vercel
 git push origin main
@@ -79,6 +89,7 @@ vercel logs <deployment-url>
 ```
 
 ### Step 3: Run Migrations
+
 ```bash
 # Execute migrations in order
 ~/.turso/turso db shell liveone-tokyo < scripts/migrate-1-{feature}.sql
@@ -89,6 +100,7 @@ vercel logs <deployment-url>
 ```
 
 ### Step 4: Post-Deployment Verification
+
 ```bash
 # Check health status first
 curl https://liveone.vercel.app/api/health | jq '.'
@@ -108,6 +120,7 @@ curl -I https://liveone.vercel.app/dashboard
 ## Rollback Procedure
 
 If issues occur:
+
 ```bash
 # 1. Rollback database
 ~/.turso/turso db shell liveone-tokyo < scripts/rollback-{feature}.sql
@@ -123,22 +136,28 @@ git push origin main
 ## Common Issues
 
 ### Missing Tables in Production
+
 **Symptom**: `SQLite error: no such table: {table_name}`
-**Solution**: 
+**Solution**:
+
 1. Check if table exists: `~/.turso/turso db shell liveone-tokyo ".tables"`
 2. Run missing migration scripts
 3. Verify foreign key relationships
 
 ### Incorrect User IDs
+
 **Symptom**: Authentication failures, 404 errors
 **Solution**:
+
 1. Verify Clerk user IDs match between dev and prod
 2. Update user_systems and systems tables with correct IDs
 3. Never hardcode user IDs in migration scripts - use environment variables or config
 
 ### Schema Mismatch
+
 **Symptom**: Type errors, missing columns
 **Solution**:
+
 1. Compare schemas between dev and prod
 2. Create incremental migration scripts
 3. Test on backup before applying to production
