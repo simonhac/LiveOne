@@ -1,455 +1,161 @@
-# LiveOne Authentication & Security Architecture
+# LiveOne Authentication & Security
 
-## Authentication Strategy
+## Overview
+
+LiveOne uses [Clerk](https://clerk.dev) for authentication, providing enterprise-grade security with minimal implementation overhead. Vendor credentials are stored securely in Clerk's private metadata, never in the database.
+
+## Authentication Architecture
 
 ### Core Technology: Clerk
 
-We'll use Clerk for authentication, providing a complete auth solution with beautiful UI components, user management, and built-in security features.
+Clerk handles all authentication, session management, and user storage. We optimize performance using session claims to avoid API calls for permission checks.
+
+**Key Benefits:**
+
+- Zero auth code to maintain
+- Pre-built UI components
+- SOC 2 Type II certified
+- Free up to 10,000 MAU
+- Multi-factor authentication built-in
+- User impersonation for support
+
+### Implementation
 
 ```typescript
 // app/layout.tsx
-import { ClerkProvider } from '@clerk/nextjs'
+import { ClerkProvider } from '@clerk/nextjs';
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <ClerkProvider>
       <html lang="en">
         <body>{children}</body>
       </html>
     </ClerkProvider>
-  )
+  );
 }
 ```
 
 ```typescript
 // middleware.ts
-import { authMiddleware } from "@clerk/nextjs";
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-export default authMiddleware({
-  publicRoutes: ["/", "/api/webhooks/clerk"],
-  ignoredRoutes: ["/api/cron/poll-devices"],
+const isPublicRoute = createRouteMatcher([
+  "/",
+  "/sign-in(.*)",
+  "/sign-up(.*)",
+  "/api/health",
+  "/api/push/fronius", // FroniusPusher webhook
+]);
+
+const isCronRoute = createRouteMatcher(["/api/cron/(.*)"]);
+
+export default clerkMiddleware(async (auth, req) => {
+  // Allow public routes
+  if (isPublicRoute(req)) return;
+
+  // Cron routes require Bearer token (not Clerk auth)
+  if (isCronRoute(req)) return;
+
+  // Protect all other routes
+  await auth.protect();
 });
 
 export const config = {
-  matcher: ["/((?!.+\\.[\\w]+$|_next).*)", "/", "/(api|trpc)(.*)"]
+  matcher: [
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/(api|trpc)(.*)",
+  ],
 };
 ```
 
-```typescript
-// app/sign-in/[[...sign-in]]/page.tsx
-import { SignIn } from "@clerk/nextjs";
+## User Metadata & Permissions
 
-export default function Page() {
-  return <SignIn />;
-}
-```
+### Public vs Private Metadata
+
+- **Public Metadata**: Visible in JWT tokens and frontend (roles, limits, non-sensitive data)
+- **Private Metadata**: Server-side only (vendor credentials, API keys, sensitive data)
 
 ```typescript
-// app/sign-up/[[...sign-up]]/page.tsx
-import { SignUp } from "@clerk/nextjs";
-
-export default function Page() {
-  return <SignUp />;
-}
-```
-
-### User Metadata & Permissions
-
-#### Public vs Private Metadata
-
-- **Public Metadata**: Visible in JWT tokens and frontend. Use for non-sensitive data like roles, limits.
-- **Private Metadata**: Server-side only. Use for sensitive data like API credentials, billing info.
-
-```typescript
-// Store system ownership and permissions in Clerk user metadata
-import { currentUser } from '@clerk/nextjs';
-
-// Get current user with metadata
-const user = await currentUser();
-const isPlatformAdmin = user?.publicMetadata?.isPlatformAdmin || false;
-const credentials = user?.privateMetadata?.vendorCredentials; // Keep sensitive data private
+import { clerkClient } from "@clerk/nextjs/server";
 
 // Update user metadata (admin only)
-import { clerkClient } from '@clerk/nextjs';
-
-await clerkClient.users.updateUserMetadata(userId, {
+const client = await clerkClient();
+await client.users.updateUserMetadata(userId, {
   publicMetadata: {
-    isPlatformAdmin: true,  // Admin flag in public for session claims
-    systemLimit: 10,
-    role: 'premium'
+    isPlatformAdmin: true, // Session claim for instant access checks
   },
   privateMetadata: {
-    // Vendor credentials stay private for security
-    selectLiveCredentials: encryptedCreds,
-    enphaseCredentials: encryptedCreds,
-    stripeCustomerId: 'cus_xxx'
-  }
+    // Vendor credentials stored encrypted
+    selectronic: {
+      username: "user@example.com",
+      password: "encrypted_password",
+      siteId: "1586",
+    },
+    enphase: {
+      accessToken: "encrypted_token",
+      refreshToken: "encrypted_token",
+      expiresAt: 1234567890,
+    },
+    fronius: {
+      deviceId: "device_uuid",
+      apiKey: "encrypted_key",
+    },
+  },
 });
 ```
 
-#### Session Claims for Performance
+### Session Claims for Performance
 
-To avoid API calls for permission checks, configure session claims in Clerk Dashboard:
+Configure session claims in Clerk Dashboard to eliminate API calls for permission checks.
 
-1. **Navigate to**: Sessions → Customize session token
-2. **Add custom claims**:
+**Setup (Clerk Dashboard):**
+
+1. Navigate to: **Sessions → Customize session token**
+2. Add custom claim:
+
 ```json
 {
   "isPlatformAdmin": "{{user.public_metadata.isPlatformAdmin}}"
 }
 ```
 
-3. **Use in code** (0ms latency vs 100-150ms API call):
-```typescript
-import { auth } from '@clerk/nextjs';
+**Usage in code:**
 
-export async function isUserAdmin() {
-  const { sessionClaims } = await auth();
-  
-  // Check session claims first (instant, no network call)
-  if (sessionClaims && 'isPlatformAdmin' in sessionClaims) {
-    return sessionClaims.isPlatformAdmin === true;
+```typescript
+import { auth } from "@clerk/nextjs/server";
+
+export async function GET(request: Request) {
+  const { userId, sessionClaims } = await auth();
+
+  if (!userId) {
+    return new Response("Unauthorized", { status: 401 });
   }
-  
-  // Fall back to API call if claims not configured
-  const client = await clerkClient();
-  const user = await client.users.getUser(userId);
-  return user.publicMetadata?.isPlatformAdmin === true;
+
+  // Check custom claims (0ms - data in JWT token)
+  const isAdmin = sessionClaims?.isPlatformAdmin === true;
+
+  if (!isAdmin) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  // Process request...
 }
 ```
 
-## Secrets Management Architecture
+**Performance:**
 
-### 1. Environment Variables (Development & Production)
+- Before optimization: ~150ms per admin check (API call to Clerk)
+- After optimization: ~0ms per admin check (JWT claim)
+- Token refresh: Every 60 seconds (automatic)
+
+## Environment Variables
 
 ```bash
 # .env.local (development)
 # .env.production (Vercel)
 
-# Core Secrets
-NEXTAUTH_SECRET=           # 32+ char random string for session encryption
-NEXTAUTH_URL=              # https://liveone.app
-
-# Database
-POSTGRES_PRISMA_URL=       # Connection with pooling
-POSTGRES_URL_NON_POOLING=  # Direct connection
-
-# Encryption Keys
-ENCRYPTION_KEY=            # AES-256 key for device credentials
-ENCRYPTION_IV=             # Initialization vector
-
-# MQTT
-MQTT_BROKER_URL=           # mqtts://broker.hivemq.cloud:8883
-MQTT_USERNAME=             # Service account username
-MQTT_PASSWORD=             # Service account password
-
-# Email (optional)
-SMTP_HOST=
-SMTP_PORT=
-SMTP_USER=
-SMTP_PASSWORD=
-```
-
-### 2. Device Credentials Encryption
-
-```typescript
-// lib/crypto.ts
-import crypto from 'crypto'
-
-const algorithm = 'aes-256-gcm'
-const key = Buffer.from(process.env.ENCRYPTION_KEY!, 'hex')
-
-export function encryptCredentials(credentials: object): string {
-  const iv = crypto.randomBytes(16)
-  const cipher = crypto.createCipheriv(algorithm, key, iv)
-  
-  const text = JSON.stringify(credentials)
-  let encrypted = cipher.update(text, 'utf8', 'hex')
-  encrypted += cipher.final('hex')
-  
-  const authTag = cipher.getAuthTag()
-  
-  return JSON.stringify({
-    iv: iv.toString('hex'),
-    authTag: authTag.toString('hex'),
-    encrypted
-  })
-}
-
-export function decryptCredentials(encryptedData: string): object {
-  const { iv, authTag, encrypted } = JSON.parse(encryptedData)
-  
-  const decipher = crypto.createDecipheriv(
-    algorithm, 
-    key, 
-    Buffer.from(iv, 'hex')
-  )
-  decipher.setAuthTag(Buffer.from(authTag, 'hex'))
-  
-  let decrypted = decipher.update(encrypted, 'hex', 'utf8')
-  decrypted += decipher.final('utf8')
-  
-  return JSON.parse(decrypted)
-}
-```
-
-### 3. API Key Management
-
-```typescript
-// For MQTT/API access outside the web app
-interface ApiKey {
-  id: string
-  userId: string
-  name: string
-  keyHash: string  // Hashed version
-  prefix: string   // First 8 chars for identification
-  scopes: string[] // Permissions
-  lastUsed: Date
-  expiresAt: Date
-}
-
-// Generate API key
-function generateApiKey(): { key: string, hash: string, prefix: string } {
-  const key = `liveone_${crypto.randomBytes(32).toString('base64url')}`
-  const hash = crypto.createHash('sha256').update(key).digest('hex')
-  const prefix = key.substring(0, 15) // liveone_xxx...
-  
-  return { key, hash, prefix }
-}
-```
-
-### 4. Session Security with Clerk
-
-```typescript
-// Using Clerk's built-in session management with optimized claims
-import { auth } from '@clerk/nextjs';
-
-export async function GET(request: Request) {
-  const { userId, sessionClaims } = await auth();
-  
-  if (!userId) {
-    return new Response('Unauthorized', { status: 401 });
-  }
-  
-  // Check custom claims (0ms - data is in JWT token)
-  const isAdmin = sessionClaims?.isPlatformAdmin === true;
-  if (!isAdmin) {
-    return new Response('Forbidden', { status: 403 });
-  }
-  
-  // Process request...
-}
-
-// Client-side hooks
-import { useAuth, useUser } from '@clerk/nextjs';
-
-function Dashboard() {
-  const { isLoaded, userId, sessionId } = useAuth();
-  const { user } = useUser();
-  
-  if (!isLoaded || !userId) {
-    return <div>Loading...</div>;
-  }
-  
-  return <div>Welcome {user?.firstName}!</div>;
-}
-```
-
-## Why We're Using Clerk
-
-### ✅ Advantages of Clerk
-
-1. **Rapid Development**
-   - 2-hour setup vs 1-2 weeks
-   - Pre-built UI components
-   - User management dashboard included
-   - Zero auth code to maintain
-
-2. **Free Tier**
-   - Up to 10,000 monthly active users free
-   - Perfect for starting with <5 users
-   - All features included (unlike Auth0)
-   - No credit card required
-
-3. **Beautiful UI Out-of-Box**
-   - Professional sign-in/sign-up components
-   - Customizable to match brand
-   - Multi-factor auth UI included
-   - User profile management built-in
-
-4. **Security Handled**
-   - SOC 2 Type II certified
-   - Automatic security updates
-   - Bot protection included
-   - Session management handled
-
-5. **Developer Experience**
-   - Excellent documentation
-   - TypeScript support
-   - React hooks for easy integration
-   - Webhooks for user events
-
-6. **Built-in Features**
-   - Social logins (Google, GitHub, etc.)
-   - Magic links
-   - Multi-factor authentication
-   - Device management
-   - User impersonation for support
-
-### ⚠️ Trade-offs with Clerk
-
-1. **Costs at Scale**
-   - Free up to 10,000 MAU
-   - $25/month for 10,001-25,000 MAU
-   - Can get expensive with growth
-
-2. **Vendor Lock-in**
-   - User data in Clerk's database
-   - Migration requires user password resets
-   - Custom auth flows limited
-
-3. **Less Control**
-   - Can't modify auth logic directly
-   - Limited custom session logic
-   - Dependent on Clerk's uptime
-
-## Performance Optimization
-
-### Edge Runtime Compatibility
-
-Our authentication is optimized for Vercel Edge Runtime:
-
-1. **Middleware runs on Edge**: No cold starts, instant auth checks
-2. **Session claims eliminate API calls**: Admin status embedded in JWT
-3. **Avoid duplicate auth() calls**: Pass userId between functions
-
-```typescript
-// ❌ Bad: Multiple auth() calls
-export async function handler() {
-  const { userId } = await auth();
-  if (!userId) return unauthorized();
-  
-  const isAdmin = await isUserAdmin(); // This calls auth() again!
-}
-
-// ✅ Good: Single auth() call
-export async function handler() {
-  const { userId, sessionClaims } = await auth();
-  if (!userId) return unauthorized();
-  
-  const isAdmin = sessionClaims?.isPlatformAdmin === true;
-}
-```
-
-### Performance Metrics
-
-- **Before optimization**: ~300ms per admin check (network call to Clerk API)
-- **After optimization**: ~0ms per admin check (data in JWT token)
-- **Session token refresh**: Every 60 seconds (automatic)
-- **Token size impact**: <100 bytes for isPlatformAdmin claim
-
-## Security Best Practices
-
-### Clerk Security Configuration
-```typescript
-// Configure in Clerk Dashboard
-// Dashboard -> User & Authentication -> Email, Phone, Username
-
-// Password requirements (set in Clerk Dashboard):
-- Minimum 8 characters
-- Require uppercase letter
-- Require lowercase letter  
-- Require number
-- Require special character
-- Enable leak detection
-
-// Session settings:
-- Session timeout: 7 days
-- Inactivity timeout: 30 minutes
-- Multi-session: Enabled
-```
-
-### Rate Limiting
-```typescript
-// lib/rate-limit.ts
-import { LRUCache } from 'lru-cache'
-
-const tokenCache = new LRUCache<string, number>({
-  max: 500,
-  ttl: 1000 * 60 * 15, // 15 minutes
-})
-
-export async function rateLimit(request: Request) {
-  const ip = request.headers.get('x-forwarded-for') ?? 'anonymous'
-  const tokenCount = tokenCache.get(ip) ?? 0
-  
-  if (tokenCount > 10) {
-    throw new Error('Rate limit exceeded')
-  }
-  
-  tokenCache.set(ip, tokenCount + 1)
-}
-```
-
-### Audit Logging
-```typescript
-// Log all authentication events
-interface AuditLog {
-  userId?: string
-  action: 'login' | 'logout' | 'register' | 'password_reset' | 'device_access'
-  ipAddress: string
-  userAgent: string
-  success: boolean
-  metadata?: object
-  timestamp: Date
-}
-
-async function logAuditEvent(event: AuditLog) {
-  await prisma.auditLog.create({ data: event })
-}
-```
-
-## Implementation Status
-
-### ✅ Completed: Clerk Setup
-- [x] Create Clerk account and application
-- [x] Install @clerk/nextjs package
-- [x] Add ClerkProvider to app layout
-- [x] Configure environment variables
-- [x] Set up authentication middleware with Edge Runtime optimization
-- [x] Add sign-in and sign-up pages
-- [x] Configure redirect URLs
-
-### ✅ Completed: User Management
-- [x] Set up user metadata schema (public vs private)
-- [x] Configure session claims for isPlatformAdmin
-- [x] Implement role-based access via session claims
-- [x] Optimize auth checks to eliminate API calls
-- [x] Store vendor credentials securely in private metadata
-
-### Phase 3: Device Credentials (Day 2-3)
-- [ ] Implement device credential encryption (still needed)
-- [ ] Create secure storage in database
-- [ ] Build API for device management
-- [ ] Link devices to Clerk user IDs
-- [ ] Add device ownership validation
-
-### Phase 4: Integration (Day 3-4)
-- [ ] Create API key system for MQTT
-- [ ] Implement audit logging
-- [ ] Set up user impersonation for support
-- [ ] Configure social login providers
-- [ ] Enable MFA for users
-
-## Clerk Integration with LiveOne
-
-### Environment Variables
-```bash
-# .env.local
+# Clerk Authentication
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_xxx
 CLERK_SECRET_KEY=sk_test_xxx
 
@@ -457,51 +163,299 @@ CLERK_SECRET_KEY=sk_test_xxx
 NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
 NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
 NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/dashboard
-NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/dashboard/welcome
+NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/setup
 
-# Webhooks
-CLERK_WEBHOOK_SECRET=whsec_xxx
+# Database
+TURSO_DATABASE_URL=libsql://your-db.turso.io
+TURSO_AUTH_TOKEN=your-auth-token
+
+# Vercel KV Cache (optional)
+KV_REST_API_URL=https://your-kv.kv.vercel-storage.com
+KV_REST_API_TOKEN=your-token
+
+# Cron Job Protection
+CRON_SECRET=your-random-secret
+
+# Admin Users (comma-separated Clerk user IDs)
+ADMIN_USER_IDS=user_xxx,user_yyy
 ```
 
-### Storing Device Data with Clerk Users
+## System Ownership Model
+
+### Database Schema
+
+Systems are linked to Clerk users via the `systems` table:
 
 ```typescript
-// Link devices to Clerk users in our database
-interface Device {
-  id: string;
-  clerkUserId: string;  // From Clerk auth
-  name: string;
-  serialNumber: string;
-  encryptedCredentials: string;
-  settings: JsonValue;
-  lastSeen: Date;
+// lib/db/schema.ts
+export const systems = sqliteTable("systems", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ownerClerkUserId: text("owner_clerk_user_id"), // Clerk user ID
+  vendorType: text("vendor_type").notNull(), // 'selectronic', 'enphase', etc.
+  displayName: text("display_name").notNull(),
+  // ... other fields
+});
+
+export const userSystems = sqliteTable("user_systems", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  clerkUserId: text("clerk_user_id").notNull(), // Viewer access
+  systemId: integer("system_id").notNull(),
+  role: text("role").notNull().default("viewer"), // 'owner', 'viewer'
+});
+```
+
+### Access Control
+
+```typescript
+import { auth } from "@clerk/nextjs/server";
+import { db } from "@/lib/db";
+import { systems, userSystems } from "@/lib/db/schema";
+import { eq, or } from "drizzle-orm";
+
+// Get systems user has access to
+export async function getUserSystems(userId: string) {
+  const ownedSystems = await db
+    .select()
+    .from(systems)
+    .where(eq(systems.ownerClerkUserId, userId));
+
+  const sharedSystems = await db
+    .select({ system: systems })
+    .from(userSystems)
+    .innerJoin(systems, eq(userSystems.systemId, systems.id))
+    .where(eq(userSystems.clerkUserId, userId));
+
+  return [...ownedSystems, ...sharedSystems.map((s) => s.system)];
 }
 
-// API route to get user's devices
-import { auth } from '@clerk/nextjs';
+// Check if user can access system
+export async function canAccessSystem(userId: string, systemId: number) {
+  const system = await db
+    .select()
+    .from(systems)
+    .where(eq(systems.id, systemId))
+    .limit(1);
 
-export async function GET() {
-  const { userId } = auth();
-  
-  if (!userId) {
-    return new Response('Unauthorized', { status: 401 });
-  }
-  
-  const devices = await prisma.device.findMany({
-    where: { clerkUserId: userId }
-  });
-  
-  return Response.json(devices);
+  if (!system.length) return false;
+
+  // Owner check
+  if (system[0].ownerClerkUserId === userId) return true;
+
+  // Shared access check
+  const access = await db
+    .select()
+    .from(userSystems)
+    .where(eq(userSystems.systemId, systemId))
+    .where(eq(userSystems.clerkUserId, userId))
+    .limit(1);
+
+  return access.length > 0;
 }
 ```
 
-### Migration Strategy
+## Client-Side Auth
 
-When ready to scale beyond Clerk's free tier:
+```typescript
+'use client';
 
-1. **Export user data** via Clerk API
-2. **Set up NextAuth.js** with same user IDs
-3. **Migrate user sessions** gradually
-4. **Keep device data** in your database (no migration needed)
+import { useAuth, useUser } from '@clerk/nextjs';
 
-The key is keeping device ownership in YOUR database, linked by Clerk user ID. This makes future migration much easier.
+export function DashboardHeader() {
+  const { isLoaded, userId } = useAuth();
+  const { user } = useUser();
+
+  if (!isLoaded) {
+    return <div>Loading...</div>;
+  }
+
+  if (!userId) {
+    return <div>Please sign in</div>;
+  }
+
+  return (
+    <div>
+      <h1>Welcome {user?.firstName}!</h1>
+      <p>{user?.emailAddresses[0]?.emailAddress}</p>
+    </div>
+  );
+}
+```
+
+## Security Best Practices
+
+### Clerk Dashboard Configuration
+
+**Password Requirements:**
+
+- Minimum 8 characters
+- Require uppercase letter
+- Require lowercase letter
+- Require number
+- Require special character
+- Enable leak detection
+
+**Session Settings:**
+
+- Session timeout: 7 days
+- Inactivity timeout: 30 minutes
+- Multi-session: Enabled
+
+### Cron Job Protection
+
+```typescript
+// app/api/cron/minutely/route.ts
+import { headers } from "next/headers";
+import { isUserAdmin } from "@/lib/auth-utils";
+
+export async function POST(request: Request) {
+  const headersList = await headers();
+  const authHeader = headersList.get("authorization");
+
+  // Check Bearer token OR admin user
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.substring(7);
+    if (token !== process.env.CRON_SECRET) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+  } else {
+    // Allow admin users to trigger manually
+    const isAdmin = await isUserAdmin();
+    if (!isAdmin) {
+      return new Response("Forbidden", { status: 403 });
+    }
+  }
+
+  // Execute cron job...
+}
+```
+
+### Vendor Credentials Security
+
+**Storage:** Credentials are stored in Clerk's private metadata, which:
+
+- Is never exposed to the frontend
+- Is encrypted at rest by Clerk
+- Requires server-side API calls to access
+- Is isolated per user (no cross-user access)
+
+**Access Pattern:**
+
+```typescript
+import { clerkClient } from "@clerk/nextjs/server";
+
+// Only access credentials server-side
+async function getVendorCredentials(userId: string, vendor: string) {
+  const client = await clerkClient();
+  const user = await client.users.getUser(userId);
+
+  // Private metadata is only accessible server-side
+  const credentials = user.privateMetadata?.[vendor];
+
+  if (!credentials) {
+    throw new Error(`No credentials found for ${vendor}`);
+  }
+
+  return credentials;
+}
+```
+
+## Performance Optimization
+
+### Edge Runtime Compatibility
+
+All auth middleware runs on Vercel Edge Runtime for instant auth checks globally.
+
+### Avoid Multiple auth() Calls
+
+```typescript
+// ❌ Bad: Multiple auth() calls
+export async function handler() {
+  const { userId } = await auth();
+  if (!userId) return unauthorized();
+
+  const isAdmin = await isUserAdmin(); // Calls auth() again!
+}
+
+// ✅ Good: Single auth() call, pass data
+export async function handler() {
+  const { userId, sessionClaims } = await auth();
+  if (!userId) return unauthorized();
+
+  const isAdmin = sessionClaims?.isPlatformAdmin === true;
+}
+```
+
+## Admin Access
+
+### Environment-Based Admin List
+
+```typescript
+// lib/auth-utils.ts
+import { auth, clerkClient } from "@clerk/nextjs/server";
+
+export async function isUserAdmin(): Promise<boolean> {
+  const { userId, sessionClaims } = await auth();
+
+  if (!userId) return false;
+
+  // Check session claims first (instant)
+  if (sessionClaims?.isPlatformAdmin === true) {
+    return true;
+  }
+
+  // Fallback: Check environment variable
+  const adminUserIds = process.env.ADMIN_USER_IDS?.split(",") || [];
+  if (adminUserIds.includes(userId)) {
+    return true;
+  }
+
+  // Fallback: Check Clerk metadata
+  const client = await clerkClient();
+  const user = await client.users.getUser(userId);
+  return user.publicMetadata?.isPlatformAdmin === true;
+}
+```
+
+### Admin Routes
+
+```typescript
+// app/admin/page.tsx
+import { redirect } from 'next/navigation';
+import { isUserAdmin } from '@/lib/auth-utils';
+
+export default async function AdminPage() {
+  const isAdmin = await isUserAdmin();
+
+  if (!isAdmin) {
+    redirect('/dashboard');
+  }
+
+  return <AdminDashboard />;
+}
+```
+
+## Implementation Checklist
+
+### ✅ Completed
+
+- [x] Clerk account and application setup
+- [x] Install @clerk/nextjs package
+- [x] ClerkProvider in app layout
+- [x] Environment variables configured
+- [x] Authentication middleware with Edge Runtime
+- [x] Sign-in and sign-up pages
+- [x] Redirect URLs configured
+- [x] User metadata schema (public vs private)
+- [x] Session claims for isPlatformAdmin
+- [x] Role-based access via session claims
+- [x] Vendor credentials in private metadata
+- [x] System ownership model
+- [x] Multi-user access control
+
+### Future Enhancements
+
+- [ ] Social login providers (Google, GitHub)
+- [ ] User impersonation for support
+- [ ] Audit logging for auth events
+- [ ] API key system for external access
+- [ ] Webhook handling for user events
