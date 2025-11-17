@@ -110,7 +110,7 @@ export async function GET(
       .map((s) => ({
         id: s.id,
         displayName: s.displayName,
-        shortName: s.shortName,
+        alias: s.alias,
       }));
 
     return NextResponse.json({

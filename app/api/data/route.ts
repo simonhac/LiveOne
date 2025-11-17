@@ -146,7 +146,6 @@ export async function GET(request: Request) {
       batterySize: system.batterySize,
       location: system.location,
       metadata: system.metadata,
-      created: system.created,
       createdAt: system.createdAt,
       updatedAt: system.updatedAt,
       supportsPolling: VendorRegistry.supportsPolling(system.vendorType),

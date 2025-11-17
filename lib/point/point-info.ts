@@ -14,7 +14,7 @@ export class PointInfo {
     public readonly systemId: number,
     public readonly originId: string,
     public readonly originSubId: string | null,
-    public readonly shortName: string | null,
+    public readonly alias: string | null,
     public readonly defaultName: string,
     public readonly displayName: string | null,
     public readonly subsystem: string | null,
@@ -104,7 +104,7 @@ export class PointInfo {
     systemId: number;
     originId: string;
     originSubId: string | null;
-    shortName: string | null;
+    alias: string | null;
     defaultName: string;
     displayName: string | null;
     subsystem: string | null;
@@ -121,7 +121,7 @@ export class PointInfo {
       data.systemId,
       data.originId,
       data.originSubId,
-      data.shortName,
+      data.alias,
       data.defaultName,
       data.displayName,
       data.subsystem,

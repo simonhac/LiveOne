@@ -75,14 +75,14 @@ export function buildSeriesId(
  * @returns Site identifier (shortname if available, otherwise "system.{id}")
  *
  * @example
- * getSiteIdentifier({ id: 10, shortName: "kinkora_complete", ... })
+ * getSiteIdentifier({ id: 10, alias: "kinkora_complete", ... })
  * // Returns: "kinkora_complete"
  *
- * getSiteIdentifier({ id: 10, shortName: null, ... })
+ * getSiteIdentifier({ id: 10, alias: null, ... })
  * // Returns: "system.10"
  */
 export function getSiteIdentifier(system: SystemWithPolling): string {
-  return system.shortName || `system.${system.id}`;
+  return system.alias || `system.${system.id}`;
 }
 
 /**

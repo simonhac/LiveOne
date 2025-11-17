@@ -18,7 +18,7 @@ export const systems = sqliteTable(
     vendorSiteId: text("vendor_site_id").notNull(), // Vendor's site/system identifier
     status: text("status").notNull().default("active"), // 'active', 'disabled', or 'removed'
     displayName: text("display_name").notNull(),
-    alias: text("short_name"), // Optional alias (letters, digits, underscore only) - used in history API IDs and as URL-friendly identifier
+    alias: text("alias"), // Optional alias (letters, digits, underscore only) - used in history API IDs and as URL-friendly identifier
     model: text("model"),
     serial: text("serial"),
     ratings: text("ratings"),
@@ -26,9 +26,9 @@ export const systems = sqliteTable(
     batterySize: text("battery_size"),
     location: text("location", { mode: "json" }), // JSON object for address, city/state/country, or lat/lon
     metadata: text("metadata", { mode: "json" }), // JSON object for vendor-specific config (e.g., composite system sources)
-    timezoneOffsetMin: integer("timezone_offset_min").notNull().default(600), // Standard timezone offset in minutes (e.g., 600 for AEST/UTC+10, DST calculated separately)
-    displayTimezone: text("display_timezone"), // IANA timezone string for display (e.g., 'Australia/Melbourne') - observes DST
-    created: integer("created").notNull().default(0), // Creation timestamp (Unix milliseconds)
+    timezoneOffsetMin: integer("timezone_offset_min").notNull(), // Standard timezone offset in minutes (e.g., 600 for AEST/UTC+10, DST calculated separately) - set by code at creation
+    displayTimezone: text("display_timezone").notNull(), // IANA timezone string for display (e.g., 'Australia/Melbourne') - observes DST
+    isDefault: integer("is_default").notNull().default(0).$type<0 | 1>(), // User's default system (0 or 1) - enforced by partial unique index
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
       .default(sql`(unixepoch())`),
@@ -40,11 +40,15 @@ export const systems = sqliteTable(
     // Note: vendor_site_unique index removed to allow multiple systems with same vendorSiteId (e.g., for removed/inactive systems)
     ownerClerkUserIdx: index("owner_clerk_user_idx").on(table.ownerClerkUserId),
     statusIdx: index("systems_status_idx").on(table.status),
-    // Unique constraint for alias (short_name column) per user (only when not null)
-    aliasUnique: uniqueIndex("short_name_unique").on(
+    // Unique constraint for alias per user (only when not null)
+    aliasUnique: uniqueIndex("alias_unique").on(
       table.ownerClerkUserId,
       table.alias,
     ),
+    // Partial unique index: only one default system per owner
+    isDefaultUnique: uniqueIndex("is_default_unique")
+      .on(table.ownerClerkUserId)
+      .where(sql`${table.isDefault} = 1`),
   }),
 );
 

@@ -57,7 +57,7 @@ export default function ViewDataModal({
     extension: string | null;
     originName: string;
     displayName: string | null;
-    shortName: string | null;
+    alias: string | null;
     active: boolean;
     transform: string | null;
     metricType: string;
@@ -323,7 +323,7 @@ export default function ViewDataModal({
       extension: pointInfo.extension,
       originName: pointInfo.defaultName,
       displayName: pointInfo.displayName,
-      shortName: pointInfo.shortName,
+      alias: pointInfo.alias,
       active: pointInfo.active,
       transform: pointInfo.transform,
       metricType: pointInfo.metricType,
@@ -374,7 +374,7 @@ export default function ViewDataModal({
       subtype?: string | null;
       extension?: string | null;
       displayName?: string | null;
-      shortName?: string | null;
+      alias?: string | null;
       active: boolean;
       transform?: string | null;
     },
@@ -879,13 +879,13 @@ export default function ViewDataModal({
                         <span className="text-gray-300">Alias</span>
                       ) : key === "sessionLabel" ? (
                         <div></div>
-                      ) : pointInfo?.shortName ? (
+                      ) : pointInfo?.alias ? (
                         <span
                           className={`text-xs ${getSubsystemColor(pointInfo?.subsystem || null)} ${
                             !pointInfo?.active ? "line-through" : ""
                           }`}
                         >
-                          {pointInfo.shortName}
+                          {pointInfo.alias}
                         </span>
                       ) : (
                         <div></div>

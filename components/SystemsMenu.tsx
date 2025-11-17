@@ -7,7 +7,7 @@ interface AvailableSystem {
   displayName: string;
   vendorSiteId: string;
   ownerClerkUserId?: string | null;
-  shortName?: string | null;
+  alias?: string | null;
   ownerUsername?: string | null;
 }
 
@@ -85,8 +85,8 @@ export default function SystemsMenu({
 
     // Prefer username/shortname path if available, otherwise use system ID
     const basePath =
-      system.ownerUsername && system.shortName
-        ? `/dashboard/${system.ownerUsername}/${system.shortName}`
+      system.ownerUsername && system.alias
+        ? `/dashboard/${system.ownerUsername}/${system.alias}`
         : `/dashboard/${system.id}`;
     const href = queryString ? `${basePath}?${queryString}` : basePath;
 

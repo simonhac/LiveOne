@@ -639,6 +639,10 @@ async function syncSystems(ctx: SyncContext) {
       updated++;
     } else {
       // System doesn't exist - insert it
+      // NOTE: Using direct db.insert() instead of SystemsManager.createSystem() because:
+      // 1. This is dev-only database sync that preserves exact IDs from production
+      // 2. SystemsManager would trigger cache invalidation and ID auto-generation
+      // 3. We need to copy exact system state including metadata and timestamps
       const result = await ctx.db
         .insert(systems)
         .values({

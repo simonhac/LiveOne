@@ -299,7 +299,7 @@ export class PointManager {
       extension: string | null;
       metricType: string;
       metricUnit: string;
-      shortName: string | null;
+      alias: string | null;
       transform: string | null;
     }>,
   ): Promise<void> {
@@ -329,7 +329,7 @@ export class PointManager {
     extension: string | null;
     metricType: string;
     metricUnit: string;
-    shortName: string | null;
+    alias: string | null;
     active: boolean;
     transform: string | null;
   }): Promise<void> {
@@ -346,7 +346,7 @@ export class PointManager {
       extension: pointData.extension,
       metricType: pointData.metricType,
       metricUnit: pointData.metricUnit,
-      shortName: pointData.shortName,
+      alias: pointData.alias,
       active: pointData.active,
       transform: pointData.transform,
     });

@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { systems, userSystems } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import { SystemsManager } from "@/lib/systems-manager";
 
 export async function POST(request: Request) {
   try {
@@ -83,18 +84,16 @@ export async function POST(request: Request) {
       });
     } else {
       // Create a new system entry
-      const [newSystem] = await db
-        .insert(systems)
-        .values({
-          ownerClerkUserId: userId, // Set the creator as the owner who will hold credentials
-          vendorType: "selectronic",
-          vendorSiteId: systemNumber,
-          displayName: `System ${systemNumber}`,
-          timezoneOffsetMin: 600, // Default to AEST (10 hours * 60)
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .returning();
+      const systemsManager = SystemsManager.getInstance();
+      const newSystem = await systemsManager.createSystem({
+        ownerClerkUserId: userId, // Set the creator as the owner who will hold credentials
+        vendorType: "selectronic",
+        vendorSiteId: systemNumber,
+        status: "active",
+        displayName: `System ${systemNumber}`,
+        timezoneOffsetMin: 600, // Default to AEST (10 hours * 60)
+        displayTimezone: "Australia/Melbourne",
+      });
 
       // Add the user as owner of this new system
       await db.insert(userSystems).values({

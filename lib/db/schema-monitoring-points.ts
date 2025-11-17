@@ -34,7 +34,7 @@ export const pointInfo = sqliteTable(
     subtype: text("subtype"), // eg. "pool", "ev", "solar1" - user settable free text
     extension: text("extension"), // eg. additional qualifier - user settable free text
     displayName: text("display_name").notNull(), // user settable, will generally be the same as pointName
-    shortName: text("short_name"), // Optional short name (letters, digits, underscore only) - used in history API IDs
+    alias: text("short_name"), // Optional short name (letters, digits, underscore only) - used in history API IDs
 
     // Type and unit
     metricType: text("metric_type").notNull(), // eg. 'power', 'energy', 'soc'
@@ -61,7 +61,7 @@ export const pointInfo = sqliteTable(
     // Unique constraint for short_name within a system (only when short_name is not null)
     systemShortNameUnique: uniqueIndex("pi_system_short_name_unique").on(
       table.systemId,
-      table.shortName,
+      table.alias,
     ),
   }),
 );

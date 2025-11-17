@@ -72,9 +72,9 @@ function generateSeriesPath(
     return `${pointIdentifier}/${point.metricType}.${aggregationType}`;
   }
 
-  // If shortName is set, use it directly
-  if (point.shortName) {
-    return point.shortName;
+  // If alias is set, use it directly
+  if (point.alias) {
+    return point.alias;
   }
 
   // Otherwise, use the point's database index as pointPath

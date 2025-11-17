@@ -15,7 +15,7 @@ interface PointInfo {
   extension: string | null;
   originName: string;
   displayName: string | null;
-  shortName: string | null;
+  alias: string | null;
   active: boolean;
   transform: string | null;
   metricType: string;
@@ -38,7 +38,7 @@ interface PointInfoModalProps {
       subtype?: string | null;
       extension?: string | null;
       displayName?: string | null;
-      shortName?: string | null;
+      alias?: string | null;
       active: boolean;
       transform?: string | null;
     },
@@ -60,7 +60,7 @@ export default function PointInfoModal({
     pointInfo?.displayName || "",
   );
   const [editedShortName, setEditedShortName] = useState(
-    pointInfo?.shortName || "",
+    pointInfo?.alias || "",
   );
   const [editedActive, setEditedActive] = useState(!!pointInfo?.active);
   const [editedTransform, setEditedTransform] = useState(
@@ -73,7 +73,7 @@ export default function PointInfoModal({
   const [isShortNameDirty, setIsShortNameDirty] = useState(false);
   const [isActiveDirty, setIsActiveDirty] = useState(false);
   const [isTransformDirty, setIsTransformDirty] = useState(false);
-  const [shortNameError, setShortNameError] = useState<string | null>(null);
+  const [aliasError, setShortNameError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -81,7 +81,7 @@ export default function PointInfoModal({
     setEditedSubtype(pointInfo?.subtype || "");
     setEditedExtension(pointInfo?.extension || "");
     setEditedDisplayName(pointInfo?.displayName || "");
-    setEditedShortName(pointInfo?.shortName || "");
+    setEditedShortName(pointInfo?.alias || "");
     setEditedActive(!!pointInfo?.active);
     setEditedTransform(pointInfo?.transform || "n");
     setIsTypeDirty(false);
@@ -136,7 +136,7 @@ export default function PointInfoModal({
 
   const handleShortNameChange = (value: string) => {
     setEditedShortName(value);
-    setIsShortNameDirty(value !== (pointInfo?.shortName || ""));
+    setIsShortNameDirty(value !== (pointInfo?.alias || ""));
     setShortNameError(validateShortName(value));
   };
 
@@ -160,7 +160,7 @@ export default function PointInfoModal({
     isTransformDirty;
 
   const handleSave = async () => {
-    if (!pointInfo || shortNameError) return;
+    if (!pointInfo || aliasError) return;
 
     setIsSaving(true);
     try {
@@ -169,7 +169,7 @@ export default function PointInfoModal({
       if (isSubtypeDirty) updates.subtype = editedSubtype || null;
       if (isExtensionDirty) updates.extension = editedExtension || null;
       if (isDisplayNameDirty) updates.displayName = editedDisplayName || null;
-      if (isShortNameDirty) updates.shortName = editedShortName || null;
+      if (isShortNameDirty) updates.alias = editedShortName || null;
       if (isTransformDirty)
         updates.transform = editedTransform === "n" ? null : editedTransform;
 
@@ -206,7 +206,7 @@ export default function PointInfoModal({
 
   // Handle Enter key to save
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && hasChanges && !isSaving && !shortNameError) {
+    if (e.key === "Enter" && hasChanges && !isSaving && !aliasError) {
       e.preventDefault();
       handleSave();
     }
@@ -371,7 +371,7 @@ export default function PointInfoModal({
                       onChange={(e) => handleShortNameChange(e.target.value)}
                       placeholder="e.g., batt_main, solar_east"
                       className={`w-full px-3 py-2 bg-gray-900 border ${
-                        shortNameError ? "border-red-500" : "border-gray-700"
+                        aliasError ? "border-red-500" : "border-gray-700"
                       } rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm font-mono`}
                       disabled={isSaving}
                     />
@@ -381,9 +381,9 @@ export default function PointInfoModal({
                   Optional. Only letters, digits, and underscores. Must be
                   unique within this system.
                 </p>
-                {shortNameError && (
+                {aliasError && (
                   <p className="text-xs text-red-400 mt-1 ml-[8.5rem]">
-                    {shortNameError}
+                    {aliasError}
                   </p>
                 )}
               </div>
@@ -472,7 +472,7 @@ export default function PointInfoModal({
             </button>
             <button
               onClick={handleSave}
-              disabled={!hasChanges || isSaving || !!shortNameError}
+              disabled={!hasChanges || isSaving || !!aliasError}
               className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-w-24"
             >
               {isSaving ? "Saving..." : "Save"}

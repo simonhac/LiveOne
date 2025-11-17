@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
       ownerClerkUserId: finalOwnerUserId,
       status: "active",
       displayName: "Test System",
-      shortName: null,
+      alias: null,
       model: null,
       serial: null,
       ratings: null,
@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
       location: null,
       metadata: null,
       timezoneOffsetMin: 600, // Default to AEST, adapter can override
-      created: Date.now(), // Unix milliseconds
+      displayTimezone: null, // No display timezone for test system
       createdAt: new Date(),
       updatedAt: new Date(),
       pollingStatus: null, // No polling status for test

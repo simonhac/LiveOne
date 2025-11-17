@@ -737,6 +737,7 @@ function buildResponse(
   endTime: ZonedDateTime | CalendarDate,
   interval: "5m" | "30m" | "1d",
   durationMs: number,
+  displayTimezone?: string | null,
   dataSource?: string,
   debug?: any,
   seriesPatterns?: string[],
@@ -772,6 +773,11 @@ function buildResponse(
     durationMs,
     data: dataSeries,
   };
+
+  // Add displayTimezone if provided
+  if (displayTimezone) {
+    response.displayTimezone = displayTimezone;
+  }
 
   // Add dataSource if provided
   if (dataSource) {
@@ -896,6 +902,7 @@ export async function GET(request: NextRequest) {
       timeRange.endTime!,
       basicParams.interval as "5m" | "30m" | "1d",
       durationMs,
+      system.displayTimezone,
       dataSource,
       debug,
       seriesPatterns.length > 0 ? seriesPatterns : undefined,

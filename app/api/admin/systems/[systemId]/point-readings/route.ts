@@ -106,7 +106,7 @@ export async function GET(
         data: [],
         metadata: {
           systemId,
-          systemShortName: system.shortName || null,
+          systemShortName: system.alias || null,
           ownerUsername: username,
           timezoneOffsetMin: system.timezoneOffsetMin,
           pointCount: 0,
@@ -182,7 +182,7 @@ export async function GET(
         systemId,
         p.originId,
         p.originSubId,
-        p.shortName,
+        p.alias,
         p.defaultName,
         p.displayName,
         p.subsystem,
@@ -492,7 +492,7 @@ export async function GET(
       data,
       metadata: {
         systemId,
-        systemShortName: system.shortName || null,
+        systemShortName: system.alias || null,
         ownerUsername: username,
         timezoneOffsetMin: system.timezoneOffsetMin,
         pointCount: points.length,

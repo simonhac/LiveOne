@@ -35,11 +35,11 @@ export default async function DashboardPage({ params }: PageProps) {
       // Numeric ID - look up and redirect to new format if it has a shortname
       system = await systemsManager.getSystem(parseInt(segment));
 
-      if (system?.shortName && system.ownerClerkUserId) {
+      if (system?.alias && system.ownerClerkUserId) {
         const clerk = await clerkClient();
         const owner = await clerk.users.getUser(system.ownerClerkUserId);
         if (owner.username) {
-          redirect(`/dashboard/${owner.username}/${system.shortName}`);
+          redirect(`/dashboard/${owner.username}/${system.alias}`);
         }
       }
 

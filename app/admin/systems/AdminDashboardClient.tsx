@@ -288,43 +288,9 @@ export default function AdminDashboardClient() {
     }
   };
 
-  const updateSystem = async (
-    systemId: number,
-    updates: { displayName?: string; shortName?: string | null },
-  ) => {
-    try {
-      const response = await fetch(`/api/admin/systems/${systemId}/settings`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(updates),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to update system");
-      }
-
-      const result = await response.json();
-
-      // Update the system in the local state
-      setSystems((prev) =>
-        prev.map((s) => (s.systemId === systemId ? { ...s, ...updates } : s)),
-      );
-
-      // Update the settings dialog state if it's the same system
-      setSettingsDialog((prev) =>
-        prev.system?.systemId === systemId
-          ? { ...prev, system: { ...prev.system, ...updates } }
-          : prev,
-      );
-
-      return result;
-    } catch (err) {
-      console.error("Error updating system:", err);
-      throw err; // Re-throw to be handled by the dialog
-    }
+  const updateSystem = async () => {
+    // Refetch systems after update
+    await fetchSystems();
   };
 
   // Use ref to store interval ID so we can access it in cleanup
@@ -728,18 +694,10 @@ export default function AdminDashboardClient() {
       <SystemSettingsDialog
         isOpen={settingsModal.isOpen}
         onClose={() => setSettingsDialog({ isOpen: false, system: null })}
-        system={
-          settingsModal.system
-            ? {
-                systemId: settingsModal.system.systemId,
-                displayName: settingsModal.system.displayName,
-                shortName: settingsModal.system.shortName,
-                vendorType: settingsModal.system.vendor.type,
-                metadata: settingsModal.system.metadata,
-                ownerClerkUserId: settingsModal.system.owner.clerkId,
-              }
-            : null
-        }
+        systemId={settingsModal.system?.systemId ?? null}
+        vendorType={settingsModal.system?.vendor.type}
+        metadata={settingsModal.system?.metadata}
+        ownerClerkUserId={settingsModal.system?.owner.clerkId}
         isAdmin={true}
         onUpdate={updateSystem}
       />

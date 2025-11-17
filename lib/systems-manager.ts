@@ -1,6 +1,6 @@
 import { db, dbUtils, isProduction } from "@/lib/db";
 import { systems, userSystems, pollingStatus } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { clerkClient } from "@clerk/nextjs/server";
@@ -131,13 +131,13 @@ export class SystemsManager {
    */
   async getSystemByUserNameShortName(
     username: string,
-    shortName: string,
+    alias: string,
   ): Promise<SystemWithPolling | null> {
     await this.loadPromise;
 
     // Find all systems with matching shortname
     const matchingSystems = Array.from(this.systemsMap.values()).filter(
-      (system) => system.shortName === shortName,
+      (system) => system.alias === alias,
     );
 
     if (matchingSystems.length === 0) {
@@ -267,7 +267,7 @@ export class SystemsManager {
         vendorType: s.vendorType,
         status: s.status,
         ownerClerkUserId: s.ownerClerkUserId,
-        shortName: s.shortName,
+        alias: s.alias,
       }));
   }
 
@@ -282,7 +282,7 @@ export class SystemsManager {
     vendorSiteId: string;
     status?: string;
     displayName: string;
-    shortName?: string | null;
+    alias?: string | null;
     model?: string | null;
     serial?: string | null;
     ratings?: string | null;
@@ -291,6 +291,8 @@ export class SystemsManager {
     location?: any;
     metadata?: any;
     timezoneOffsetMin?: number;
+    displayTimezone?: string;
+    isDefault?: boolean;
   }): Promise<System> {
     await this.loadPromise;
 
@@ -298,6 +300,19 @@ export class SystemsManager {
     const systemId = !isProduction
       ? await dbUtils.getNextDevSystemId()
       : undefined;
+
+    // If this should be the default system, unset existing default for this owner
+    if (systemData.isDefault) {
+      await db
+        .update(systems)
+        .set({ isDefault: 0 })
+        .where(
+          and(
+            eq(systems.ownerClerkUserId, systemData.ownerClerkUserId),
+            eq(systems.isDefault, 1),
+          ),
+        );
+    }
 
     // Create the system in the database
     const [newSystem] = await db
@@ -309,7 +324,7 @@ export class SystemsManager {
         vendorSiteId: systemData.vendorSiteId,
         status: systemData.status || "active",
         displayName: systemData.displayName,
-        shortName: systemData.shortName,
+        alias: systemData.alias,
         model: systemData.model,
         serial: systemData.serial,
         ratings: systemData.ratings,
@@ -318,6 +333,8 @@ export class SystemsManager {
         location: systemData.location,
         metadata: systemData.metadata,
         timezoneOffsetMin: systemData.timezoneOffsetMin ?? 600, // Default to AEST
+        displayTimezone: systemData.displayTimezone ?? "Australia/Melbourne", // Default timezone
+        isDefault: systemData.isDefault ? 1 : 0,
         createdAt: new Date(),
         updatedAt: new Date(),
       })

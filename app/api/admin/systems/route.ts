@@ -11,20 +11,17 @@ import { SystemsManager } from "@/lib/systems-manager";
 
 /**
  * Extract all source systems referenced in composite metadata (version 2 format)
- * Returns array of systems with ID and shortName
+ * Returns array of systems with ID and alias
  */
 async function getCompositeSourceSystems(
   metadata: any,
-): Promise<Array<{ id: number; shortName: string | null }>> {
+): Promise<Array<{ id: number; alias: string | null }>> {
   if (!metadata || typeof metadata !== "object") return [];
 
   // Only handle version 2 format with mappings
   if (metadata.version !== 2 || !metadata.mappings) return [];
 
-  const systemsMap = new Map<
-    number,
-    { id: number; shortName: string | null }
-  >();
+  const systemsMap = new Map<number, { id: number; alias: string | null }>();
 
   const systemsManager = SystemsManager.getInstance();
 
@@ -42,7 +39,7 @@ async function getCompositeSourceSystems(
           if (system) {
             systemsMap.set(systemId, {
               id: system.id,
-              shortName: system.shortName,
+              alias: system.alias,
             });
           }
         }
@@ -156,7 +153,7 @@ export async function GET(request: NextRequest) {
           lastName: userInfo?.lastName || null,
         },
         displayName: system.displayName, // Non-null from database
-        shortName: system.shortName, // Optional short name for history API IDs
+        alias: system.alias, // Optional short name for history API IDs
         vendor: {
           type: system.vendorType,
           siteId: system.vendorSiteId, // Vendor's identifier
