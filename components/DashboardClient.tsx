@@ -178,7 +178,6 @@ export default function DashboardClient({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-  const [secondsSinceUpdate, setSecondsSinceUpdate] = useState<number>(0);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [isAdmin, setIsAdmin] = useState(isAdminProp);
   const [currentDisplayName, setCurrentDisplayName] = useState(
@@ -203,23 +202,10 @@ export default function DashboardClient({
   const [showViewDataModal, setShowViewDataModal] = useState(false);
 
   // Helper function to safely get a point value
-  const getPointValue = (
-    latest: LatestPointValues | null,
-    pointPath: string,
-  ): number | null => {
+  // Helper function to get a point (contains value and measurementTime)
+  const getPoint = (latest: LatestPointValues | null, pointPath: string) => {
     if (!latest) return null;
-    const point = latest[pointPath];
-    return point ? point.value : null;
-  };
-
-  // Helper function to get measurement time for staleness calculation
-  const getMeasurementTime = (
-    latest: LatestPointValues | null,
-    pointPath: string,
-  ): Date | null => {
-    if (!latest) return null;
-    const point = latest[pointPath];
-    return point ? point.measurementTime : null;
+    return latest[pointPath] || null;
   };
 
   // Helper function to get period duration in milliseconds
@@ -411,12 +397,6 @@ export default function DashboardClient({
 
         setLastUpdate(dataTimestamp);
 
-        // Calculate seconds since update
-        const secondsAgo = Math.floor(
-          (Date.now() - dataTimestamp.getTime()) / 1000,
-        );
-        setSecondsSinceUpdate(secondsAgo);
-
         setSystemInfo(result.systemInfo || null);
         setError("");
         setLoading(false);
@@ -488,20 +468,18 @@ export default function DashboardClient({
   }, [fetchData]);
 
   // Update seconds since last update and trigger refresh at 70 seconds
+  // Trigger refresh 70 seconds after last update
   useEffect(() => {
     if (!lastUpdate) return;
 
-    const interval = setInterval(() => {
-      const seconds = Math.floor((Date.now() - lastUpdate.getTime()) / 1000);
-      setSecondsSinceUpdate(seconds);
+    const msUntil70s = 70000 - (Date.now() - lastUpdate.getTime());
+    if (msUntil70s <= 0) return; // Already past 70 seconds
 
-      // Trigger refresh when reaching 70 seconds
-      if (seconds === 70) {
-        fetchData();
-      }
-    }, 1000);
+    const timeout = setTimeout(() => {
+      fetchData();
+    }, msUntil70s);
 
-    return () => clearInterval(interval);
+    return () => clearTimeout(timeout);
   }, [lastUpdate, fetchData]);
 
   // Fetch and process Mondo/Composite history data when needed
@@ -995,7 +973,7 @@ export default function DashboardClient({
   // Automatically determine if grid information should be shown
   // TODO: Update to use energy counter points when available
   const showGrid = data?.latest
-    ? getPointValue(data.latest, "bidi.grid/power") !== null
+    ? getPoint(data.latest, "bidi.grid/power") !== null
     : false;
 
   // Get display name for the system (prefer local state which updates immediately)
@@ -1015,7 +993,7 @@ export default function DashboardClient({
           {/* Mobile Layout */}
           <MobileMenu
             displayName={systemDisplayName}
-            secondsSinceUpdate={!lastUpdate ? 0 : secondsSinceUpdate}
+            lastUpdate={lastUpdate}
             onLogout={handleLogout}
             systemInfo={systemInfo}
             availableSystems={availableSystems}
@@ -1070,9 +1048,7 @@ export default function DashboardClient({
               )}
             </div>
             <div className="flex items-center gap-4">
-              <LastUpdateTime
-                secondsSinceUpdate={!lastUpdate ? 0 : secondsSinceUpdate}
-              />
+              <LastUpdateTime lastUpdate={lastUpdate} />
               {systemInfo && (
                 <SystemInfoTooltip
                   systemInfo={systemInfo}
@@ -1316,7 +1292,6 @@ export default function DashboardClient({
                             <SystemPowerCards
                               latest={data.latest}
                               vendorType={data.system.vendorType}
-                              secondsSinceUpdate={secondsSinceUpdate}
                               getStaleThreshold={getStaleThreshold}
                               showGrid={showGrid}
                             />
@@ -1734,18 +1709,22 @@ export default function DashboardClient({
                     data?.system.vendorType !== "mondo" &&
                     (() => {
                       // Solar card logic: handle different solar point configurations
-                      const solarTotal = getPointValue(
+                      const solarTotalPoint = getPoint(
                         data.latest,
                         "source.solar/power",
                       );
-                      const solarLocal = getPointValue(
+                      const solarLocalPoint = getPoint(
                         data.latest,
                         "source.solar.local/power",
                       );
-                      const solarRemote = getPointValue(
+                      const solarRemotePoint = getPoint(
                         data.latest,
                         "source.solar.remote/power",
                       );
+
+                      const solarTotal = solarTotalPoint?.value ?? null;
+                      const solarLocal = solarLocalPoint?.value ?? null;
+                      const solarRemote = solarRemotePoint?.value ?? null;
 
                       const hasBothChildren =
                         solarLocal !== null && solarRemote !== null;
@@ -1775,15 +1754,11 @@ export default function DashboardClient({
                             iconColor="text-yellow-400"
                             bgColor="bg-yellow-900/20"
                             borderColor="border-yellow-700"
-                            secondsSinceUpdate={secondsSinceUpdate}
                             staleThresholdSeconds={getStaleThreshold(
                               data.system.vendorType,
                             )}
                             measurementTime={
-                              getMeasurementTime(
-                                data.latest,
-                                "source.solar/power",
-                              ) || undefined
+                              solarTotalPoint?.measurementTime ?? undefined
                             }
                             extra={
                               showBreakdown ? (
@@ -1800,34 +1775,46 @@ export default function DashboardClient({
                               ) : undefined
                             }
                           />
-                          <PowerCard
-                            title="Load"
-                            value={formatPower(
-                              getPointValue(data.latest, "load/power") || 0,
-                            )}
-                            icon={<Home className="w-6 h-6" />}
-                            iconColor="text-blue-400"
-                            bgColor="bg-blue-900/20"
-                            borderColor="border-blue-700"
-                            secondsSinceUpdate={secondsSinceUpdate}
-                            staleThresholdSeconds={getStaleThreshold(
-                              data.system.vendorType,
-                            )}
-                            measurementTime={
-                              getMeasurementTime(data.latest, "load/power") ||
-                              undefined
-                            }
-                          />
                           {(() => {
-                            const batterySoc = getPointValue(
+                            const loadPowerPoint = getPoint(
+                              data.latest,
+                              "load/power",
+                            );
+                            const loadPower = loadPowerPoint?.value ?? null;
+
+                            return (
+                              <PowerCard
+                                title="Load"
+                                value={
+                                  loadPower !== null
+                                    ? formatPower(loadPower)
+                                    : "—"
+                                }
+                                icon={<Home className="w-6 h-6" />}
+                                iconColor="text-blue-400"
+                                bgColor="bg-blue-900/20"
+                                borderColor="border-blue-700"
+                                staleThresholdSeconds={getStaleThreshold(
+                                  data.system.vendorType,
+                                )}
+                                measurementTime={
+                                  loadPowerPoint?.measurementTime ?? undefined
+                                }
+                              />
+                            );
+                          })()}
+                          {(() => {
+                            const batterySocPoint = getPoint(
                               data.latest,
                               "bidi.battery/soc",
                             );
+                            const batteryPowerPoint = getPoint(
+                              data.latest,
+                              "bidi.battery/power",
+                            );
+                            const batterySoc = batterySocPoint?.value ?? null;
                             const batteryPower =
-                              getPointValue(
-                                data.latest,
-                                "bidi.battery/power",
-                              ) || 0;
+                              batteryPowerPoint?.value ?? null;
 
                             return (
                               <PowerCard
@@ -1839,92 +1826,107 @@ export default function DashboardClient({
                                 }
                                 icon={<Battery className="w-6 h-6" />}
                                 iconColor={
-                                  batteryPower < 0
-                                    ? "text-green-400"
-                                    : batteryPower > 0
-                                      ? "text-orange-400"
-                                      : "text-gray-400"
+                                  batteryPower === null
+                                    ? "text-gray-400"
+                                    : batteryPower < 0
+                                      ? "text-green-400"
+                                      : batteryPower > 0
+                                        ? "text-orange-400"
+                                        : "text-gray-400"
                                 }
                                 bgColor={
-                                  batteryPower < 0
-                                    ? "bg-green-900/20"
-                                    : batteryPower > 0
-                                      ? "bg-orange-900/20"
-                                      : "bg-gray-900/20"
+                                  batteryPower === null
+                                    ? "bg-gray-900/20"
+                                    : batteryPower < 0
+                                      ? "bg-green-900/20"
+                                      : batteryPower > 0
+                                        ? "bg-orange-900/20"
+                                        : "bg-gray-900/20"
                                 }
                                 borderColor={
-                                  batteryPower < 0
-                                    ? "border-green-700"
-                                    : batteryPower > 0
-                                      ? "border-orange-700"
-                                      : "border-gray-700"
+                                  batteryPower === null
+                                    ? "border-gray-700"
+                                    : batteryPower < 0
+                                      ? "border-green-700"
+                                      : batteryPower > 0
+                                        ? "border-orange-700"
+                                        : "border-gray-700"
                                 }
-                                secondsSinceUpdate={secondsSinceUpdate}
                                 staleThresholdSeconds={getStaleThreshold(
                                   data.system.vendorType,
                                 )}
                                 measurementTime={
-                                  getMeasurementTime(
-                                    data.latest,
-                                    "bidi.battery/power",
-                                  ) || undefined
+                                  batteryPowerPoint?.measurementTime ??
+                                  undefined
                                 }
                                 extraInfo={
-                                  batteryPower !== 0
-                                    ? `${batteryPower < 0 ? "Charging" : "Discharging"} ${formatPower(Math.abs(batteryPower))}`
-                                    : "Idle"
+                                  batteryPower === null
+                                    ? "—"
+                                    : batteryPower !== 0
+                                      ? `${batteryPower < 0 ? "Charging" : "Discharging"} ${formatPower(Math.abs(batteryPower))}`
+                                      : "Idle"
                                 }
                               />
                             );
                           })()}
                           {showGrid &&
                             (() => {
-                              const gridPower =
-                                getPointValue(data.latest, "bidi.grid/power") ||
-                                0;
+                              const gridPowerPoint = getPoint(
+                                data.latest,
+                                "bidi.grid/power",
+                              );
+                              const gridPower = gridPowerPoint?.value ?? null;
 
                               return (
                                 <PowerCard
                                   title="Grid"
-                                  value={formatPower(gridPower)}
+                                  value={
+                                    gridPower !== null
+                                      ? formatPower(gridPower)
+                                      : "—"
+                                  }
                                   icon={<Zap className="w-6 h-6" />}
                                   iconColor={
-                                    gridPower > 0
-                                      ? "text-red-400"
-                                      : gridPower < 0
-                                        ? "text-green-400"
-                                        : "text-gray-400"
+                                    gridPower === null
+                                      ? "text-gray-400"
+                                      : gridPower > 0
+                                        ? "text-red-400"
+                                        : gridPower < 0
+                                          ? "text-green-400"
+                                          : "text-gray-400"
                                   }
                                   bgColor={
-                                    gridPower > 0
-                                      ? "bg-red-900/20"
-                                      : gridPower < 0
-                                        ? "bg-green-900/20"
-                                        : "bg-gray-900/20"
+                                    gridPower === null
+                                      ? "bg-gray-900/20"
+                                      : gridPower > 0
+                                        ? "bg-red-900/20"
+                                        : gridPower < 0
+                                          ? "bg-green-900/20"
+                                          : "bg-gray-900/20"
                                   }
                                   borderColor={
-                                    gridPower > 0
-                                      ? "border-red-700"
-                                      : gridPower < 0
-                                        ? "border-green-700"
-                                        : "border-gray-700"
+                                    gridPower === null
+                                      ? "border-gray-700"
+                                      : gridPower > 0
+                                        ? "border-red-700"
+                                        : gridPower < 0
+                                          ? "border-green-700"
+                                          : "border-gray-700"
                                   }
-                                  secondsSinceUpdate={secondsSinceUpdate}
                                   staleThresholdSeconds={getStaleThreshold(
                                     data.system.vendorType,
                                   )}
                                   measurementTime={
-                                    getMeasurementTime(
-                                      data.latest,
-                                      "bidi.grid/power",
-                                    ) || undefined
+                                    gridPowerPoint?.measurementTime ?? undefined
                                   }
                                   extraInfo={
-                                    gridPower > 0
-                                      ? "Importing"
-                                      : gridPower < 0
-                                        ? "Exporting"
-                                        : "Neutral"
+                                    gridPower === null
+                                      ? "—"
+                                      : gridPower > 0
+                                        ? "Importing"
+                                        : gridPower < 0
+                                          ? "Exporting"
+                                          : "Neutral"
                                   }
                                 />
                               );

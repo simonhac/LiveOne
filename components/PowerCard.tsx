@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Clock } from "lucide-react";
 
@@ -9,7 +9,6 @@ interface PowerCardProps {
   iconColor: string;
   bgColor: string;
   borderColor: string;
-  secondsSinceUpdate?: number;
   staleThresholdSeconds: number;
   measurementTime?: Date;
   extraInfo?: string;
@@ -23,16 +22,41 @@ export default function PowerCard({
   iconColor,
   bgColor,
   borderColor,
-  secondsSinceUpdate = 0,
   staleThresholdSeconds,
   measurementTime,
   extraInfo,
   extra,
 }: PowerCardProps) {
-  const isStale = secondsSinceUpdate > staleThresholdSeconds;
+  const [isStale, setIsStale] = useState(false);
   const [isTooltipVisible, setIsTooltipVisible] = useState(false);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const clockIconRef = useRef<HTMLDivElement>(null);
+
+  // Re-evaluate staleness every second, but only re-render if staleness changes
+  useEffect(() => {
+    const checkStaleness = () => {
+      const secondsSinceUpdate = measurementTime
+        ? Math.floor((Date.now() - measurementTime.getTime()) / 1000)
+        : Infinity;
+      const nowStale = secondsSinceUpdate > staleThresholdSeconds;
+
+      // Only update state if staleness actually changed
+      setIsStale((prevStale) => {
+        if (prevStale !== nowStale) {
+          return nowStale;
+        }
+        return prevStale;
+      });
+    };
+
+    // Check immediately
+    checkStaleness();
+
+    // Then check every second
+    const interval = setInterval(checkStaleness, 1000);
+
+    return () => clearInterval(interval);
+  }, [measurementTime, staleThresholdSeconds]);
 
   const handleClockMouseEnter = () => {
     if (clockIconRef.current) {

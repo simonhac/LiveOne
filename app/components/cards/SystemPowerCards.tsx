@@ -10,7 +10,6 @@ import { Sun, Home, Battery, Zap } from "lucide-react";
 interface SystemPowerCardsProps {
   latest: LatestPointValues;
   vendorType: string;
-  secondsSinceUpdate: number;
   getStaleThreshold: (vendorType: string) => number;
   showGrid: boolean;
 }
@@ -184,7 +183,6 @@ function calculateAllLoads(latest: LatestPointValues): LoadPoint[] {
 export default function SystemPowerCards({
   latest,
   vendorType,
-  secondsSinceUpdate,
   getStaleThreshold,
   showGrid,
 }: SystemPowerCardsProps) {
@@ -288,7 +286,6 @@ export default function SystemPowerCards({
             iconColor="text-yellow-400"
             bgColor="bg-yellow-900/20"
             borderColor="border-yellow-700"
-            secondsSinceUpdate={secondsSinceUpdate}
             staleThresholdSeconds={getStaleThreshold(vendorType)}
             measurementTime={
               getMeasurementTime("source.solar/power") ||
@@ -320,7 +317,6 @@ export default function SystemPowerCards({
             iconColor="text-blue-400"
             bgColor="bg-blue-900/20"
             borderColor="border-blue-700"
-            secondsSinceUpdate={secondsSinceUpdate}
             staleThresholdSeconds={getStaleThreshold(vendorType)}
             measurementTime={getMeasurementTime("load/power") || undefined}
             extra={
@@ -364,7 +360,6 @@ export default function SystemPowerCards({
                   ? "border-orange-700"
                   : "border-gray-700"
             }
-            secondsSinceUpdate={secondsSinceUpdate}
             staleThresholdSeconds={getStaleThreshold(vendorType)}
             measurementTime={
               getMeasurementTime("bidi.battery/soc") || undefined
@@ -404,7 +399,6 @@ export default function SystemPowerCards({
                   ? "border-green-700"
                   : "border-gray-700"
             }
-            secondsSinceUpdate={secondsSinceUpdate}
             staleThresholdSeconds={getStaleThreshold(vendorType)}
             measurementTime={getMeasurementTime("bidi.grid/power") || undefined}
             extraInfo={

@@ -40,7 +40,7 @@ interface AvailableSystem {
 
 interface MobileMenuProps {
   displayName: string | null;
-  secondsSinceUpdate: number;
+  lastUpdate: Date | null;
   onLogout: () => void;
   systemInfo?: SystemInfo | null;
   availableSystems?: AvailableSystem[];
@@ -59,7 +59,7 @@ interface MobileMenuProps {
 
 export default function MobileMenu({
   displayName,
-  secondsSinceUpdate,
+  lastUpdate,
   onLogout,
   systemInfo,
   availableSystems = [],
@@ -161,7 +161,7 @@ export default function MobileMenu({
           <div className="flex items-center gap-2">
             {/* Connection Status and Time */}
             <LastUpdateTime
-              secondsSinceUpdate={secondsSinceUpdate}
+              lastUpdate={lastUpdate}
               showIcon={true}
               className="text-xs"
             />
