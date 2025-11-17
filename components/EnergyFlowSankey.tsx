@@ -211,6 +211,46 @@ export default function EnergyFlowSankey({
       links: links.map((d) => ({ ...d })) as any,
     });
 
+    // Align the top and bottom of both columns by adjusting gaps on the shorter side
+    const sourceNodes = graph.nodes.slice(0, sourceCount);
+    const loadNodes = graph.nodes.slice(sourceCount);
+
+    if (sourceNodes.length > 0 && loadNodes.length > 0) {
+      // Calculate total height of each side (from first node top to last node bottom)
+      const sourceHeight =
+        (sourceNodes[sourceNodes.length - 1] as any).y1 -
+        (sourceNodes[0] as any).y0;
+      const loadHeight =
+        (loadNodes[loadNodes.length - 1] as any).y1 - (loadNodes[0] as any).y0;
+
+      // Find which side is shorter and calculate the height difference
+      const heightDiff = Math.abs(sourceHeight - loadHeight);
+
+      // Only adjust if there's a meaningful difference (> 0.1px)
+      if (heightDiff > 0.1) {
+        const isShorterSide = sourceHeight < loadHeight;
+        const shorterSide = isShorterSide ? sourceNodes : loadNodes;
+        const numGaps = shorterSide.length - 1;
+
+        // Distribute the height difference evenly among the gaps
+        if (numGaps > 0) {
+          const additionalGapPerSpace = heightDiff / numGaps;
+
+          // Adjust y positions for nodes on the shorter side
+          // Start from index 1 (second node) since first node stays at top
+          for (let i = 1; i < shorterSide.length; i++) {
+            const node = shorterSide[i] as any;
+            const shift = i * additionalGapPerSpace;
+            const nodeHeight = node.y1 - node.y0;
+
+            // Shift the node down by cumulative gap increase
+            node.y0 += shift;
+            node.y1 = node.y0 + nodeHeight; // Preserve node height
+          }
+        }
+      }
+    }
+
     // Create SVG container
     const svgElement = svg as any;
 
