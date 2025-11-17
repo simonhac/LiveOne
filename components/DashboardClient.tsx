@@ -51,6 +51,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
+  RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -80,7 +81,6 @@ interface DashboardData {
     batterySize: string | null;
     location: any;
     metadata: any;
-    created: number;
     createdAt: Date;
     updatedAt: Date;
     supportsPolling: boolean;
@@ -1026,6 +1026,8 @@ export default function DashboardClient({
             userId={userId}
             onAddSystem={() => setShowAddSystemDialog(true)}
             onSystemSettings={() => setShowSystemSettingsDialog(true)}
+            onViewData={() => setShowViewDataModal(true)}
+            onPollNow={() => setShowTestConnection(true)}
           />
 
           {/* Desktop Layout */}
@@ -1110,8 +1112,21 @@ export default function DashboardClient({
                             className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
                           >
                             <Database className="w-4 h-4" />
-                            View Data
+                            View Data…
                           </button>
+                          {/* Poll Now - Only show for admin users and vendors that support polling */}
+                          {data?.system.supportsPolling && (
+                            <button
+                              onClick={() => {
+                                setShowTestConnection(true);
+                                setShowSettingsDropdown(false);
+                              }}
+                              className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
+                            >
+                              <RefreshCw className="w-4 h-4" />
+                              Poll Now…
+                            </button>
+                          )}
                           <div className="border-t border-gray-700 my-1"></div>
                         </>
                       )}
@@ -1126,7 +1141,7 @@ export default function DashboardClient({
                           className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
                         >
                           <FlaskConical className="w-4 h-4" />
-                          Test Connection
+                          Test Connection…
                         </button>
                       )}
 
@@ -1151,7 +1166,7 @@ export default function DashboardClient({
                         className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
                       >
                         <SettingsIcon className="w-4 h-4" />
-                        System Settings
+                        System Settings…
                       </button>
                     </div>
                   )}

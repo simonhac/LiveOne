@@ -12,6 +12,8 @@ import {
   FlaskConical,
   Plus,
   Shield,
+  Database,
+  RefreshCw,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -32,7 +34,7 @@ interface AvailableSystem {
   displayName: string;
   vendorSiteId: string;
   ownerClerkUserId?: string | null;
-  shortName?: string | null;
+  alias?: string | null;
   ownerUsername?: string | null;
 }
 
@@ -51,6 +53,8 @@ interface MobileMenuProps {
   userId?: string;
   onAddSystem?: () => void;
   onSystemSettings?: () => void;
+  onViewData?: () => void;
+  onPollNow?: () => void;
 }
 
 export default function MobileMenu({
@@ -68,6 +72,8 @@ export default function MobileMenu({
   userId,
   onAddSystem,
   onSystemSettings,
+  onViewData,
+  onPollNow,
 }: MobileMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isSystemDropdownOpen, setIsSystemDropdownOpen] = useState(false);
@@ -102,8 +108,8 @@ export default function MobileMenu({
 
     // Prefer username/shortname path if available, otherwise use system ID
     const path =
-      system?.ownerUsername && system?.shortName
-        ? `/dashboard/${system.ownerUsername}/${system.shortName}`
+      system?.ownerUsername && system?.alias
+        ? `/dashboard/${system.ownerUsername}/${system.alias}`
         : `/dashboard/${systemId}`;
 
     router.push(path);
@@ -234,6 +240,34 @@ export default function MobileMenu({
                   <p className="text-white font-medium text-sm">Settings</p>
                 </div>
 
+                {/* View Data - Only show for admin users and non-composite systems */}
+                {onViewData && isAdmin && vendorType !== "composite" && (
+                  <button
+                    onClick={() => {
+                      setIsOpen(false);
+                      onViewData();
+                    }}
+                    className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
+                  >
+                    <Database className="w-4 h-4" />
+                    View Data…
+                  </button>
+                )}
+
+                {/* Poll Now - Only show for admin users and vendors that support polling */}
+                {onPollNow && isAdmin && supportsPolling && (
+                  <button
+                    onClick={() => {
+                      setIsOpen(false);
+                      onPollNow();
+                    }}
+                    className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    Poll Now…
+                  </button>
+                )}
+
                 {/* Test Connection - Only show for vendors that support polling and for admin or non-removed systems */}
                 {onTestConnection &&
                   supportsPolling &&
@@ -246,7 +280,7 @@ export default function MobileMenu({
                       className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
                     >
                       <FlaskConical className="w-4 h-4" />
-                      Test Connection
+                      Test Connection…
                     </button>
                   )}
 
@@ -274,7 +308,7 @@ export default function MobileMenu({
                     className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
                   >
                     <Settings className="w-4 h-4" />
-                    System Settings
+                    System Settings…
                   </button>
                 )}
               </div>
