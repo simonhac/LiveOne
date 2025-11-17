@@ -169,18 +169,22 @@ export async function PATCH(
     }
 
     // Validate displayTimezone if provided
-    if (displayTimezone !== undefined && displayTimezone !== null) {
-      if (typeof displayTimezone !== "string") {
+    if (displayTimezone !== undefined) {
+      if (displayTimezone === null || typeof displayTimezone !== "string") {
         return NextResponse.json(
-          { error: "Display timezone must be a string" },
+          { error: "Display timezone must be a string (cannot be null)" },
           { status: 400 },
         );
       }
 
-      if (
-        displayTimezone.trim().length > 0 &&
-        !isValidTimezone(displayTimezone)
-      ) {
+      if (displayTimezone.trim().length === 0) {
+        return NextResponse.json(
+          { error: "Display timezone cannot be empty" },
+          { status: 400 },
+        );
+      }
+
+      if (!isValidTimezone(displayTimezone)) {
         return NextResponse.json(
           { error: "Invalid timezone. Must be a valid IANA timezone string" },
           { status: 400 },
@@ -192,7 +196,7 @@ export async function PATCH(
     const updates: {
       displayName?: string;
       alias?: string | null;
-      displayTimezone?: string | null;
+      displayTimezone?: string;
       updatedAt: Date;
     } = {
       updatedAt: new Date(),
@@ -208,10 +212,9 @@ export async function PATCH(
     }
 
     if (displayTimezone !== undefined) {
-      updates.displayTimezone =
-        displayTimezone === null || displayTimezone.trim().length === 0
-          ? null
-          : displayTimezone.trim();
+      // displayTimezone is NOT NULL in schema, so we only set it if it's valid
+      // Validation above ensures it's a non-empty string at this point
+      updates.displayTimezone = displayTimezone.trim();
     }
 
     // Check if alias is already taken by another system
