@@ -79,10 +79,10 @@ Rest of House = Total Generation - Battery Charge - Grid Export - Sum(Known Circ
 
 The calculation is performed in `lib/site-data-processor.ts`:
 
-1. **Lines 204-205**: Process generation mode BEFORE load mode (required for Case 3)
-2. **Lines 368-384**: Calculate total generation from all processed generation series
-3. **Lines 257-297**: Accumulate load values (handling both path-based and path-less data)
-4. **Lines 300-366**: Calculate Rest of House based on the three cases above
+1. **`calculateRestOfHouse()` function**: Contains the core logic for all three calculation cases
+2. **Generation processing**: Total generation is calculated from all processed generation series (required for Case 3)
+3. **Load accumulation**: Tracks both master load and child load values (handling both path-based and path-less data)
+4. **Mode processing order**: Generation mode is processed BEFORE load mode to ensure total generation is available for Case 3
 
 ### Data Paths
 
@@ -104,9 +104,9 @@ All calculations handle null values properly:
 
 The processor logs which case was used:
 
-- `"Case 1: Added rest of house (master load - child loads)"`
-- `"Case 2: Master load exists but no child loads - skipping rest of house"`
-- `"Case 3: Added rest of house (total generation - known loads)"`
+- `"Case 1: Added rest of house (master - children)"`
+- `"Case 2: Master load exists, no children - skipping rest of house"`
+- `"Case 3: Added rest of house (generation - battery - grid - children)"`
 - `"Cannot calculate rest of house - insufficient data"` (if none of the cases apply)
 
 ## Energy vs Power Mode
