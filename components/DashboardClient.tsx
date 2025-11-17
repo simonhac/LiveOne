@@ -882,7 +882,32 @@ export default function DashboardClient({
     router.push("/sign-in");
   };
 
-  const handleUpdateSystemSettings = async () => {
+  const handleUpdateSystemSettings = async (updates?: {
+    displayName?: string;
+    alias?: string | null;
+  }) => {
+    // Update local state immediately for instant UI feedback
+    if (updates?.displayName) {
+      setCurrentDisplayName(updates.displayName);
+    }
+    if (updates && "alias" in updates) {
+      setCurrentAlias(updates.alias);
+
+      // If alias changed, update the URL
+      const currentSystem = availableSystems.find(
+        (s) => s.id === parseInt(systemId as string),
+      );
+      const username = currentSystem?.ownerUsername;
+
+      if (username && updates.alias) {
+        // Build new URL preserving query parameters
+        const params = new URLSearchParams(searchParams.toString());
+        const queryString = params.toString();
+        const newPath = `/dashboard/${username}/${updates.alias}${queryString ? `?${queryString}` : ""}`;
+        router.replace(newPath);
+      }
+    }
+
     // Refetch data to get latest system settings
     await fetchData();
   };

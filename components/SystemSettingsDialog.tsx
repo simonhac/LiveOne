@@ -17,7 +17,10 @@ interface SystemSettingsDialogProps {
   metadata?: any;
   ownerClerkUserId?: string;
   isAdmin?: boolean;
-  onUpdate?: () => Promise<void>;
+  onUpdate?: (updates?: {
+    displayName?: string;
+    alias?: string | null;
+  }) => Promise<void>;
 }
 
 export default function SystemSettingsDialog({
@@ -35,15 +38,15 @@ export default function SystemSettingsDialog({
   const [displayName, setDisplayName] = useState("");
   const [alias, setAlias] = useState("");
   const [displayTimezone, setDisplayTimezone] = useState("");
-  const [editedName, setEditedName] = useState("");
-  const [editedShortName, setEditedShortName] = useState("");
+  const [editedDisplayName, setEditedDisplayName] = useState("");
+  const [editedAlias, setEditedAlias] = useState("");
   const [editedTimezone, setEditedTimezone] = useState("");
-  const [isNameDirty, setIsNameDirty] = useState(false);
-  const [isShortNameDirty, setIsShortNameDirty] = useState(false);
+  const [isDisplayNameDirty, setIsDisplayNameDirty] = useState(false);
+  const [isAliasDirty, setIsAliasDirty] = useState(false);
   const [isTimezoneDirty, setIsTimezoneDirty] = useState(false);
   const [isCompositeDirty, setIsCompositeDirty] = useState(false);
   const [isAdminDirty, setIsAdminDirty] = useState(false);
-  const [aliasError, setShortNameError] = useState<string | null>(null);
+  const [aliasError, setAliasError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<
     "general" | "points" | "composite" | "admin"
@@ -85,17 +88,17 @@ export default function SystemSettingsDialog({
           setDisplayTimezone(fetchedTimezone || "");
 
           // Initialize edited values
-          setEditedName(fetchedName || "");
-          setEditedShortName(fetchedAlias || "");
+          setEditedDisplayName(fetchedName || "");
+          setEditedAlias(fetchedAlias || "");
           setEditedTimezone(fetchedTimezone || "");
 
           // Reset dirty flags
-          setIsNameDirty(false);
-          setIsShortNameDirty(false);
+          setIsDisplayNameDirty(false);
+          setIsAliasDirty(false);
           setIsTimezoneDirty(false);
           setIsCompositeDirty(false);
           setIsAdminDirty(false);
-          setShortNameError(null);
+          setAliasError(null);
         }
       } catch (error) {
         console.error("Error fetching system settings:", error);
@@ -107,7 +110,7 @@ export default function SystemSettingsDialog({
     fetchSettings();
   }, [isOpen, systemId]);
 
-  const validateShortName = (value: string): string | null => {
+  const validateAlias = (value: string): string | null => {
     if (!value) return null; // Empty is valid (optional field)
     if (!/^[a-zA-Z0-9_]+$/.test(value)) {
       return "Only letters, digits, and underscores are allowed";
@@ -118,15 +121,15 @@ export default function SystemSettingsDialog({
     return null;
   };
 
-  const handleNameChange = (value: string) => {
-    setEditedName(value);
-    setIsNameDirty(value !== displayName);
+  const handleDisplayNameChange = (value: string) => {
+    setEditedDisplayName(value);
+    setIsDisplayNameDirty(value !== displayName);
   };
 
-  const handleShortNameChange = (value: string) => {
-    setEditedShortName(value);
-    setIsShortNameDirty(value !== alias);
-    setShortNameError(validateShortName(value));
+  const handleAliasChange = (value: string) => {
+    setEditedAlias(value);
+    setIsAliasDirty(value !== alias);
+    setAliasError(validateAlias(value));
   };
 
   const handleTimezoneChange = (value: string) => {
@@ -135,12 +138,13 @@ export default function SystemSettingsDialog({
   };
 
   const hasChanges =
-    isNameDirty ||
-    isShortNameDirty ||
+    isDisplayNameDirty ||
+    isAliasDirty ||
     isTimezoneDirty ||
     isCompositeDirty ||
     isAdminDirty;
-  const hasGeneralChanges = isNameDirty || isShortNameDirty || isTimezoneDirty;
+  const hasGeneralChanges =
+    isDisplayNameDirty || isAliasDirty || isTimezoneDirty;
 
   const handleSave = useCallback(async () => {
     if (!hasChanges || !systemId || aliasError) return;
@@ -148,15 +152,15 @@ export default function SystemSettingsDialog({
     setIsSaving(true);
     try {
       // Save regular settings (displayName, alias, displayTimezone)
-      if (isNameDirty || isShortNameDirty || isTimezoneDirty) {
+      if (isDisplayNameDirty || isAliasDirty || isTimezoneDirty) {
         const settings: {
           displayName?: string;
           alias?: string | null;
           displayTimezone?: string | null;
         } = {};
 
-        if (isNameDirty) settings.displayName = editedName;
-        if (isShortNameDirty) settings.alias = editedShortName || null;
+        if (isDisplayNameDirty) settings.displayName = editedDisplayName;
+        if (isAliasDirty) settings.alias = editedAlias || null;
         if (isTimezoneDirty) settings.displayTimezone = editedTimezone || null;
 
         console.log("Settings to save:", settings);
@@ -229,9 +233,14 @@ export default function SystemSettingsDialog({
         }
       }
 
+      // Prepare updates to pass to dashboard (before resetting dirty flags)
+      const updates: { displayName?: string; alias?: string | null } = {};
+      if (isDisplayNameDirty) updates.displayName = editedDisplayName;
+      if (isAliasDirty) updates.alias = editedAlias || null;
+
       // Reset dirty flags
-      setIsNameDirty(false);
-      setIsShortNameDirty(false);
+      setIsDisplayNameDirty(false);
+      setIsAliasDirty(false);
       setIsTimezoneDirty(false);
       setIsCompositeDirty(false);
       setIsAdminDirty(false);
@@ -239,15 +248,15 @@ export default function SystemSettingsDialog({
       // Close modal
       onClose();
 
-      // Call onUpdate to trigger dashboard data refresh
+      // Call onUpdate to trigger dashboard data refresh and pass updated values for instant UI update
       if (onUpdate) {
-        await onUpdate();
+        await onUpdate(updates);
       }
     } catch (error) {
       console.error("Failed to update system settings:", error);
       // Check if it's a uniqueness error
       if (error instanceof Error && error.message.includes("already in use")) {
-        setShortNameError(`Short name "${editedShortName}" is already in use`);
+        setAliasError(`Alias "${editedAlias}" is already in use`);
       }
     } finally {
       setIsSaving(false);
@@ -256,11 +265,11 @@ export default function SystemSettingsDialog({
     hasChanges,
     systemId,
     aliasError,
-    isNameDirty,
-    isShortNameDirty,
+    isDisplayNameDirty,
+    isAliasDirty,
     isTimezoneDirty,
-    editedName,
-    editedShortName,
+    editedDisplayName,
+    editedAlias,
     editedTimezone,
     onUpdate,
     isCompositeDirty,
@@ -269,13 +278,13 @@ export default function SystemSettingsDialog({
   ]);
 
   const handleCancel = useCallback(() => {
-    setEditedName(displayName);
-    setEditedShortName(alias);
+    setEditedDisplayName(displayName);
+    setEditedAlias(alias);
     setEditedTimezone(displayTimezone);
-    setIsNameDirty(false);
-    setIsShortNameDirty(false);
+    setIsDisplayNameDirty(false);
+    setIsAliasDirty(false);
     setIsTimezoneDirty(false);
-    setShortNameError(null);
+    setAliasError(null);
     onClose();
   }, [displayName, alias, displayTimezone, onClose]);
 
@@ -415,15 +424,15 @@ export default function SystemSettingsDialog({
                     </label>
                     <input
                       type="text"
-                      value={editedName}
-                      onChange={(e) => handleNameChange(e.target.value)}
+                      value={editedDisplayName}
+                      onChange={(e) => handleDisplayNameChange(e.target.value)}
                       onBlur={(e) => {
                         const withoutTrailingSpaces = e.target.value.replace(
                           /\s+$/,
                           "",
                         );
                         if (withoutTrailingSpaces !== e.target.value) {
-                          handleNameChange(withoutTrailingSpaces);
+                          handleDisplayNameChange(withoutTrailingSpaces);
                         }
                       }}
                       className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -444,8 +453,8 @@ export default function SystemSettingsDialog({
                     </p>
                     <input
                       type="text"
-                      value={editedShortName}
-                      onChange={(e) => handleShortNameChange(e.target.value)}
+                      value={editedAlias}
+                      onChange={(e) => handleAliasChange(e.target.value)}
                       placeholder="e.g., racv_kinkora"
                       className={`w-full px-3 py-2 bg-gray-900 border ${
                         aliasError ? "border-red-500" : "border-gray-700"
