@@ -232,6 +232,9 @@ export default function EnergyFlowSankey({
         const shorterSide = isShorterSide ? sourceNodes : loadNodes;
         const numGaps = shorterSide.length - 1;
 
+        // Track how much each node was shifted (for updating links later)
+        const nodeShifts = new Map<any, number>();
+
         // Distribute the height difference evenly among the gaps
         if (numGaps > 0) {
           const additionalGapPerSpace = heightDiff / numGaps;
@@ -246,7 +249,25 @@ export default function EnergyFlowSankey({
             // Shift the node down by cumulative gap increase
             node.y0 += shift;
             node.y1 = node.y0 + nodeHeight; // Preserve node height
+
+            // Record the shift amount for this node
+            nodeShifts.set(node, shift);
           }
+
+          // Update link coordinates to match shifted nodes
+          graph.links.forEach((link: any) => {
+            // If source node was shifted, adjust link's y0
+            const sourceShift = nodeShifts.get(link.source);
+            if (sourceShift !== undefined) {
+              link.y0 += sourceShift;
+            }
+
+            // If target node was shifted, adjust link's y1
+            const targetShift = nodeShifts.get(link.target);
+            if (targetShift !== undefined) {
+              link.y1 += targetShift;
+            }
+          });
         }
       }
     }
