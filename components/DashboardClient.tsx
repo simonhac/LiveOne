@@ -12,6 +12,7 @@ import AmberCard from "@/components/AmberCard";
 import PowerCard from "@/components/PowerCard";
 import ConnectionNotification from "@/components/ConnectionNotification";
 import TestConnectionModal from "@/components/TestConnectionModal";
+import PollNowModal from "@/components/PollNowModal";
 import ServerErrorModal from "@/components/ServerErrorModal";
 import SessionTimeoutModal from "@/components/SessionTimeoutModal";
 import { AddSystemDialog } from "@/components/AddSystemDialog";
@@ -190,6 +191,7 @@ export default function DashboardClient({
   const [showSystemDropdown, setShowSystemDropdown] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [showTestConnection, setShowTestConnection] = useState(false);
+  const [showPollNow, setShowPollNow] = useState(false);
   const [showAddSystemDialog, setShowAddSystemDialog] = useState(false);
   const [showSystemSettingsDialog, setShowSystemSettingsDialog] =
     useState(false);
@@ -1027,7 +1029,7 @@ export default function DashboardClient({
             onAddSystem={() => setShowAddSystemDialog(true)}
             onSystemSettings={() => setShowSystemSettingsDialog(true)}
             onViewData={() => setShowViewDataModal(true)}
-            onPollNow={() => setShowTestConnection(true)}
+            onPollNow={() => setShowPollNow(true)}
           />
 
           {/* Desktop Layout */}
@@ -1102,6 +1104,17 @@ export default function DashboardClient({
                   {showSettingsDropdown && (
                     <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
                       {/* View Data - Only show for admin users and non-composite systems */}
+                      {(() => {
+                        console.log(
+                          "Settings dropdown - isAdmin:",
+                          isAdmin,
+                          "vendorType:",
+                          system?.vendorType,
+                          "supportsPolling:",
+                          data?.system.supportsPolling,
+                        );
+                        return null;
+                      })()}
                       {isAdmin && system?.vendorType !== "composite" && (
                         <>
                           <button
@@ -1118,7 +1131,7 @@ export default function DashboardClient({
                           {data?.system.supportsPolling && (
                             <button
                               onClick={() => {
-                                setShowTestConnection(true);
+                                setShowPollNow(true);
                                 setShowSettingsDropdown(false);
                               }}
                               className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
@@ -1969,6 +1982,16 @@ export default function DashboardClient({
           displayName={data?.system.displayName || systemDisplayName}
           vendorType={data?.system.vendorType}
           onClose={() => setShowTestConnection(false)}
+        />
+      )}
+
+      {/* Poll Now Modal */}
+      {showPollNow && systemId && (
+        <PollNowModal
+          systemId={parseInt(systemId)}
+          displayName={data?.system.displayName || systemDisplayName}
+          vendorType={data?.system.vendorType}
+          onClose={() => setShowPollNow(false)}
         />
       )}
 
