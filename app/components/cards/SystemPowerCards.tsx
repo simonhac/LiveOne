@@ -127,8 +127,10 @@ function calculateAllLoads(latest: LatestPointValues): LoadPoint[] {
     });
   } else if (masterLoad === null && childLoads.length > 0) {
     // Case 3: Child loads WITHOUT master load
-    // Synthesize total load from sources: generation + grid import + battery discharge
-    // Note: Positive grid = importing, negative battery = discharging (both add to load)
+    // Synthesize total load from energy balance: Solar + Battery + Grid = Load
+    // Sign conventions for bidirectional points:
+    // - Battery: positive = discharging (source), negative = charging (sink)
+    // - Grid: positive = importing (source), negative = exporting (sink)
 
     // Get generation (try source.solar/power first, fallback to sum of local+remote)
     let generation = getPointValue("source.solar/power");
@@ -141,12 +143,11 @@ function calculateAllLoads(latest: LatestPointValues): LoadPoint[] {
     const batteryPower = getPointValue("bidi.battery/power");
     const gridPower = getPointValue("bidi.grid/power");
 
-    // Total load = generation + grid (if importing) - battery (if discharging, i.e., negative)
-    // When grid is positive, we're importing (adds to load)
-    // When battery is negative, we're discharging (adds to load)
+    // With signed bidirectional values, load is simply the sum of sources
+    // Example: Solar=0W, Battery=+677W (discharge), Grid=-7W (export) → Load=670W
     const synthesizedMaster = Math.max(
       0,
-      generation + Math.max(0, gridPower) - Math.min(0, batteryPower),
+      generation + batteryPower + gridPower,
     );
 
     allLoads.push({
@@ -242,8 +243,27 @@ export default function SystemPowerCards({
   // Get display loads (all except master) for showing top 2
   const displayLoads = allLoads.filter((load) => load.path !== "load/power");
 
-  // Sort display loads by value descending and take top 2
-  const top2Loads = displayLoads.sort((a, b) => b.value - a.value).slice(0, 2);
+  // Sort display loads by value descending, filter out < 100W, and take top 2
+  const top2Loads = displayLoads
+    .filter((load) => load.value >= 100) // Only show loads >= 0.1kW
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 2);
+
+  // Get the most recent measurement time across all load points
+  // For composite systems, child loads may have different timestamps
+  const loadMeasurementTime = React.useMemo(() => {
+    let maxTime: Date | null = null;
+
+    // Check all load points (including master and children)
+    for (const load of allLoads) {
+      const time = getMeasurementTime(load.path);
+      if (time && (!maxTime || time > maxTime)) {
+        maxTime = time;
+      }
+    }
+
+    return maxTime;
+  }, [allLoads, latest]);
 
   // Battery
   const batterySoc = getPointValue("bidi.battery/soc");
@@ -318,7 +338,7 @@ export default function SystemPowerCards({
             bgColor="bg-blue-900/20"
             borderColor="border-blue-700"
             staleThresholdSeconds={getStaleThreshold(vendorType)}
-            measurementTime={getMeasurementTime("load/power") || undefined}
+            measurementTime={loadMeasurementTime || undefined}
             extra={
               top2Loads.length > 0 ? (
                 <div className="text-xs text-gray-400 space-y-0.5">
