@@ -82,7 +82,6 @@ export interface GroupedUsageReading {
 export interface AmberChannelMetadata {
   channelId: string; // e.g., "E1", "B1", "CL1"
   channelType: "general" | "feedIn" | "controlledLoad";
-  pointType: "grid.import" | "grid.export" | "grid.controlled";
   extension: string; // "import", "export", or "controlled"
   defaultName: string; // "Grid import", "Grid export", or "Controlled load"
 }

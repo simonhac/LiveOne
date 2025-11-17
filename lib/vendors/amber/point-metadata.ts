@@ -9,60 +9,33 @@ import type { PointMetadata } from "@/lib/monitoring-points-manager";
 import type { AmberChannelMetadata } from "./types";
 
 /**
- * Create energy point for a channel
+ * Create a channel point with specified metric type
+ * Simplified - uses originId (E1/B1) to differentiate import/export
  */
-export function createEnergyPoint(
+function createChannelPoint(
   channel: AmberChannelMetadata,
+  metricType: "energy" | "value" | "rate",
 ): PointMetadata {
+  // Map metric type to originSubId and metricUnit
+  const metricConfig = {
+    energy: { subId: "kwh", unit: "Wh" },
+    value: { subId: "cost", unit: "cents" },
+    rate: { subId: "perKwh", unit: "cents_kWh" },
+  };
+
+  const config = metricConfig[metricType];
+
   return {
     originId: channel.channelId,
-    originSubId: `${channel.extension}_kwh`,
+    originSubId: config.subId, // No prefix - differentiated by originId
     defaultName: channel.defaultName,
     subsystem: "grid",
     type: "bidi", // All Amber points are bidirectional grid
     subtype: "grid",
     extension: channel.extension,
-    metricType: "energy",
-    metricUnit: "Wh",
+    metricType,
+    metricUnit: config.unit,
     transform: null, // Interval values, not cumulative
-  };
-}
-
-/**
- * Create cost/revenue point for a channel
- * Using unified "value" metric type for all monetary values
- */
-export function createCostPoint(channel: AmberChannelMetadata): PointMetadata {
-  return {
-    originId: channel.channelId,
-    originSubId: `${channel.extension}_cost`,
-    defaultName: channel.defaultName,
-    subsystem: "grid",
-    type: "bidi", // All Amber points are bidirectional grid
-    subtype: "grid",
-    extension: channel.extension,
-    metricType: "value", // Unified metric type for monetary values
-    metricUnit: "cents",
-    transform: null,
-  };
-}
-
-/**
- * Create price point for a channel
- * Using "rate" metric type for pricing
- */
-export function createPricePoint(channel: AmberChannelMetadata): PointMetadata {
-  return {
-    originId: channel.channelId,
-    originSubId: `${channel.extension}_perKwh`,
-    defaultName: channel.defaultName,
-    subsystem: "grid",
-    type: "bidi", // All Amber points are bidirectional grid
-    subtype: "grid",
-    extension: channel.extension,
-    metricType: "rate", // Using "rate" for pricing
-    metricUnit: "cents_kWh",
-    transform: null,
   };
 }
 
@@ -73,34 +46,19 @@ export function getChannelMetadata(
   channelId: string,
   channelType: "general" | "feedIn" | "controlledLoad",
 ): AmberChannelMetadata {
-  let pointType: "grid.import" | "grid.export" | "grid.controlled";
-  let extension: string;
-  let defaultName: string;
+  const channelConfig = {
+    general: { extension: "import", defaultName: "Grid import" },
+    feedIn: { extension: "export", defaultName: "Grid export" },
+    controlledLoad: { extension: "controlled", defaultName: "Controlled load" },
+  };
 
-  switch (channelType) {
-    case "general":
-      pointType = "grid.import";
-      extension = "import";
-      defaultName = "Grid import";
-      break;
-    case "feedIn":
-      pointType = "grid.export";
-      extension = "export";
-      defaultName = "Grid export";
-      break;
-    case "controlledLoad":
-      pointType = "grid.controlled";
-      extension = "controlled";
-      defaultName = "Controlled load";
-      break;
-  }
+  const config = channelConfig[channelType];
 
   return {
     channelId,
     channelType,
-    pointType,
-    extension,
-    defaultName,
+    extension: config.extension,
+    defaultName: config.defaultName,
   };
 }
 
@@ -187,8 +145,8 @@ export function createChannelPoints(
   channel: AmberChannelMetadata,
 ): PointMetadata[] {
   return [
-    createEnergyPoint(channel),
-    createCostPoint(channel),
-    createPricePoint(channel),
+    createChannelPoint(channel, "energy"),
+    createChannelPoint(channel, "value"),
+    createChannelPoint(channel, "rate"),
   ];
 }
