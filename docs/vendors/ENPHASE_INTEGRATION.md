@@ -7,6 +7,7 @@ This document outlines the complete workflow for integrating Enphase solar syste
 ## Implementation Status
 
 ✅ **Completed Features:**
+
 - OAuth 2.0 authorization flow
 - Token exchange and secure storage in Clerk
 - Mock Enphase client for development/testing
@@ -16,16 +17,19 @@ This document outlines the complete workflow for integrating Enphase solar syste
 - Production environment configuration
 
 🚧 **In Progress:**
+
 - Real-time data polling from Enphase API
 - Token refresh implementation
 - API rate limit management
 
 📋 **Planned:**
+
 - Sunrise/sunset based polling optimization
 
 ## Current Application Credentials
 
 We have an existing Enphase application registered:
+
 - **App Name**: LiveOne
 - **API Key**: `{ENPHASE_API_KEY}` (stored in environment variables)
 - **Client ID**: `{ENPHASE_CLIENT_ID}` (stored in environment variables)
@@ -36,6 +40,7 @@ We have an existing Enphase application registered:
 ## Library Decision
 
 After evaluating available options, we will **implement our own OAuth2 client** because:
+
 - No official Enphase JavaScript SDK exists for API v4
 - The only Node.js library (enlighten-api-node) is from 2015 and uses the deprecated v2 API
 - Generic OAuth2 libraries like `client-oauth2` can handle the OAuth flow
@@ -52,6 +57,7 @@ After evaluating available options, we will **implement our own OAuth2 client** 
 ### Step 2: OAuth Authorization
 
 1. **Generate Authorization URL**:
+
    ```
    https://api.enphaseenergy.com/oauth/authorize
    ?response_type=code
@@ -75,10 +81,11 @@ After evaluating available options, we will **implement our own OAuth2 client** 
 ### Step 3: Token Exchange
 
 1. **Exchange Authorization Code for Tokens**:
+
    ```bash
    POST https://api.enphaseenergy.com/oauth/token
    Content-Type: application/x-www-form-urlencoded
-   
+
    grant_type=authorization_code
    &code={authorization_code}
    &redirect_uri={same_redirect_uri}
@@ -92,7 +99,7 @@ After evaluating available options, we will **implement our own OAuth2 client** 
      "access_token": "unique_access_token",
      "token_type": "bearer",
      "refresh_token": "unique_refresh_token",
-     "expires_in": 86400,  // 1 day
+     "expires_in": 86400, // 1 day
      "scope": "read write",
      "enl_uid": "user_id",
      "enl_cid": "company_id",
@@ -106,6 +113,7 @@ After evaluating available options, we will **implement our own OAuth2 client** 
 ### Step 4: Fetch System Information
 
 1. **Get User's Systems**:
+
    ```bash
    GET https://api.enphaseenergy.com/api/v4/systems
    Authorization: Bearer {access_token}
@@ -190,7 +198,7 @@ grant_type=refresh_token
 {
   // Enphase Response              // LiveOne Field
   "production_power": 2500,        // solar_w
-  "consumption_power": 1200,        // load_w  
+  "consumption_power": 1200,        // load_w
   "storage_power": -1300,          // battery_w (negative = charging)
   "grid_power": 0,                 // grid_w
   "storage_energy_charged": 16200, // battery_in_kwh_total
@@ -204,6 +212,7 @@ grant_type=refresh_token
 ## No Database Schema Changes Required
 
 Using existing infrastructure:
+
 - **Clerk Private Metadata**: Store OAuth tokens
 - **Systems Table**: Use existing fields
   - `vendor_type = 'enphase'`
@@ -224,6 +233,7 @@ ENPHASE_REDIRECT_URI=https://liveone.vercel.app/api/auth/enphase/callback
 ## Implementation Plan
 
 ### Phase 1: OAuth Flow & Token Management
+
 1. **Create Enphase Service** (`lib/enphase-client.ts`)
    - OAuth URL generation with state parameter
    - Token exchange implementation
@@ -246,12 +256,14 @@ ENPHASE_REDIRECT_URI=https://liveone.vercel.app/api/auth/enphase/callback
 
 With only 1000 API calls per month, we need a smart polling strategy:
 
-**Problem**: 
+**Problem**:
+
 - 1000 calls ÷ 31 days ≈ 32 calls/day maximum
 - Polling every 5 minutes would require 288 calls/day (impossible)
 - Need to balance data freshness with API limits
 
 **Solution - Daylight-Only Polling**:
+
 1. **Poll every 30 minutes during daylight hours only**
    - Summer (~15 hours): ~30 polls/day
    - Winter (~10 hours): ~20 polls/day
@@ -259,17 +271,20 @@ With only 1000 API calls per month, we need a smart polling strategy:
    - Leaves headroom for token refreshes and other API calls
 
 2. **Implementation**:
+
    ```typescript
    // Calculate sunrise/sunset for system location
    const { sunrise, sunset } = calculateSunTimes(latitude, longitude);
-   
+
    // Round to nearest 30-minute boundary
    const pollStart = roundDown30(sunrise);
    const pollEnd = roundUp30(sunset);
-   
+
    // Only poll if current time is within daylight window
-   const shouldPoll = currentTime >= pollStart && currentTime <= pollEnd 
-                      && currentTime.getMinutes() % 30 === 0;
+   const shouldPoll =
+     currentTime >= pollStart &&
+     currentTime <= pollEnd &&
+     currentTime.getMinutes() % 30 === 0;
    ```
 
 3. **Alternative for Higher Resolution**:
@@ -278,6 +293,7 @@ With only 1000 API calls per month, we need a smart polling strategy:
    - Or 15-minute polling 24/7
 
 #### Polling Implementation
+
 1. **Modified Cron Strategy**
    - Run cron every 30 minutes (not every minute)
    - Check daylight hours for each system's location
@@ -296,6 +312,7 @@ With only 1000 API calls per month, we need a smart polling strategy:
    - System offline → skip and log
 
 ### Phase 3: UI Integration
+
 1. **Settings Page**
    - Add "Connect Enphase System" button
    - Show connection status
@@ -324,17 +341,19 @@ interface EnphaseApiUsage {
 async function checkApiLimit(systemId: number): Promise<boolean> {
   const currentMonth = new Date().toISOString().slice(0, 7);
   const usage = await getApiUsage(systemId, currentMonth);
-  
-  if (usage.api_calls >= 950) { // Leave buffer
+
+  if (usage.api_calls >= 950) {
+    // Leave buffer
     console.warn(`Approaching API limit for system ${systemId}`);
     return false;
   }
-  
+
   return true;
 }
 ```
 
 ### Phase 5: Future Enhancements
+
 1. **Upgrade to Kilowatt plan** (10,000 requests/month)
    - Enable 5-minute polling during daylight
    - Or 15-minute polling 24/7
@@ -379,22 +398,22 @@ async function checkApiLimit(systemId: number): Promise<boolean> {
 
 ```typescript
 // lib/enphase-client.ts
-import { clerkClient } from '@clerk/nextjs/server';
+import { clerkClient } from "@clerk/nextjs/server";
 
 export class EnphaseClient {
   private apiKey = process.env.ENPHASE_API_KEY!;
   private clientId = process.env.ENPHASE_CLIENT_ID!;
   private clientSecret = process.env.ENPHASE_CLIENT_SECRET!;
   private redirectUri = process.env.ENPHASE_REDIRECT_URI!;
-  private baseUrl = 'https://api.enphaseenergy.com';
+  private baseUrl = "https://api.enphaseenergy.com";
 
   // Generate OAuth authorization URL
   getAuthorizationUrl(state: string): string {
     const params = new URLSearchParams({
-      response_type: 'code',
+      response_type: "code",
       client_id: this.clientId,
       redirect_uri: this.redirectUri,
-      state
+      state,
     });
     return `${this.baseUrl}/oauth/authorize?${params}`;
   }
@@ -402,15 +421,15 @@ export class EnphaseClient {
   // Exchange authorization code for tokens
   async exchangeCodeForTokens(code: string): Promise<TokenResponse> {
     const response = await fetch(`${this.baseUrl}/oauth/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        grant_type: 'authorization_code',
+        grant_type: "authorization_code",
         code,
         redirect_uri: this.redirectUri,
         client_id: this.clientId,
-        client_secret: this.clientSecret
-      })
+        client_secret: this.clientSecret,
+      }),
     });
     return response.json();
   }
@@ -418,34 +437,37 @@ export class EnphaseClient {
   // Refresh access token
   async refreshToken(refreshToken: string): Promise<TokenResponse> {
     const response = await fetch(`${this.baseUrl}/oauth/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        grant_type: 'refresh_token',
+        grant_type: "refresh_token",
         refresh_token: refreshToken,
         client_id: this.clientId,
-        client_secret: this.clientSecret
-      })
+        client_secret: this.clientSecret,
+      }),
     });
     return response.json();
   }
 
   // Fetch latest telemetry data
-  async getLatestTelemetry(systemId: string, accessToken: string): Promise<TelemetryData> {
+  async getLatestTelemetry(
+    systemId: string,
+    accessToken: string,
+  ): Promise<TelemetryData> {
     const response = await fetch(
       `${this.baseUrl}/api/v4/systems/${systemId}/latest_telemetry`,
       {
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'key': this.apiKey
-        }
-      }
+          Authorization: `Bearer ${accessToken}`,
+          key: this.apiKey,
+        },
+      },
     );
-    
+
     if (response.status === 401) {
-      throw new Error('TOKEN_EXPIRED');
+      throw new Error("TOKEN_EXPIRED");
     }
-    
+
     return response.json();
   }
 
@@ -456,10 +478,10 @@ export class EnphaseClient {
         enphaseCredentials: {
           access_token: tokens.access_token,
           refresh_token: tokens.refresh_token,
-          expires_at: Date.now() + (tokens.expires_in * 1000),
-          enphase_system_id: systemId
-        }
-      }
+          expires_at: Date.now() + tokens.expires_in * 1000,
+          enphase_system_id: systemId,
+        },
+      },
     });
   }
 }

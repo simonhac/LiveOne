@@ -1,22 +1,26 @@
 # Fronius Push API Specification
 
 ## Endpoint
+
 **URL**: `https://liveone.vercel.app/api/push/fronius`  
 **Method**: `POST`  
 **Content-Type**: `application/json`
 
 ## Authentication
+
 Include these fields in every request body:
+
 - `siteId` (string, required): Your unique Fronius site identifier
 - `apiKey` (string, required): Your API key (any non-empty string for now)
 
 ## Request Body Structure
 
 ### Required Fields
+
 ```json
 {
   "siteId": "your-site-id",
-  "apiKey": "your-api-key", 
+  "apiKey": "your-api-key",
   "timestamp": "2025-01-21T06:00:00.000Z",
   "sequence": "unique-sequence-id"
 }
@@ -26,46 +30,50 @@ Include these fields in every request body:
 - `sequence` (string, required): Unique sequence identifier for this reading (helps track and debug data flow)
 
 ### Optional Power Fields (Watts)
+
 All power values should be integers representing instantaneous power in Watts. Positive values indicate flow in the expected direction, negative values indicate reverse flow.
 
 ```json
 {
-  "solarW": 2500,           // Total solar generation (optional if you provide local+remote)
-  "solarLocalW": 1500,      // Solar measured at shunt/CT (local measurement)
-  "solarRemoteW": 1000,     // Solar from string/remote inverters
-  "loadW": 1800,            // Total load consumption
-  "batteryW": -700,         // Battery power (positive=charging, negative=discharging)
-  "gridW": 150              // Grid power (positive=import, negative=export)
+  "solarW": 2500, // Total solar generation (optional if you provide local+remote)
+  "solarLocalW": 1500, // Solar measured at shunt/CT (local measurement)
+  "solarRemoteW": 1000, // Solar from string/remote inverters
+  "loadW": 1800, // Total load consumption
+  "batteryW": -700, // Battery power (positive=charging, negative=discharging)
+  "gridW": 150 // Grid power (positive=import, negative=export)
 }
 ```
 
 ### Optional Battery State
+
 ```json
 {
-  "batterySOC": 85.5        // Battery state of charge (0-100%)
+  "batterySOC": 85.5 // Battery state of charge (0-100%)
 }
 ```
 
 ### Optional System Status
+
 ```json
 {
-  "faultCode": "E102",      // Fault code as string (or null if no fault)
-  "faultTimestamp": "2025-01-21T06:00:00.000Z",  // ISO8601 timestamp when fault occurred (or null)
-  "generatorStatus": 1      // Generator status code (or null if no generator)
+  "faultCode": "E102", // Fault code as string (or null if no fault)
+  "faultTimestamp": "2025-01-21T06:00:00.000Z", // ISO8601 timestamp when fault occurred (or null)
+  "generatorStatus": 1 // Generator status code (or null if no generator)
 }
 ```
 
 ### Optional Energy Interval Fields (Wh)
+
 Energy accumulated during this reporting interval in Watt-hours (integers):
 
 ```json
 {
-  "solarWhInterval": 125,         // Solar energy generated this interval
-  "loadWhInterval": 90,            // Load energy consumed this interval
-  "batteryInWhInterval": 35,       // Energy charged to battery this interval
-  "batteryOutWhInterval": 0,       // Energy discharged from battery this interval
-  "gridInWhInterval": 0,           // Energy imported from grid this interval
-  "gridOutWhInterval": 10          // Energy exported to grid this interval
+  "solarWhInterval": 125, // Solar energy generated this interval
+  "loadWhInterval": 90, // Load energy consumed this interval
+  "batteryInWhInterval": 35, // Energy charged to battery this interval
+  "batteryOutWhInterval": 0, // Energy discharged from battery this interval
+  "gridInWhInterval": 0, // Energy imported from grid this interval
+  "gridOutWhInterval": 10 // Energy exported to grid this interval
 }
 ```
 
@@ -99,6 +107,7 @@ Energy accumulated during this reporting interval in Watt-hours (integers):
 ## Response Formats
 
 ### Success (200 OK)
+
 ```json
 {
   "success": true,
@@ -112,6 +121,7 @@ Energy accumulated during this reporting interval in Watt-hours (integers):
 ### Error Responses
 
 #### Missing Required Fields (400 Bad Request)
+
 ```json
 {
   "error": "Missing siteId or apiKey"
@@ -119,6 +129,7 @@ Energy accumulated during this reporting interval in Watt-hours (integers):
 ```
 
 #### Invalid API Key (401 Unauthorized)
+
 ```json
 {
   "error": "Invalid API key"
@@ -126,6 +137,7 @@ Energy accumulated during this reporting interval in Watt-hours (integers):
 ```
 
 #### System Not Found (404 Not Found)
+
 ```json
 {
   "error": "System not found"
@@ -133,6 +145,7 @@ Energy accumulated during this reporting interval in Watt-hours (integers):
 ```
 
 #### Duplicate Timestamp (409 Conflict)
+
 ```json
 {
   "success": false,
@@ -142,6 +155,7 @@ Energy accumulated during this reporting interval in Watt-hours (integers):
 ```
 
 #### Internal Server Error (500)
+
 ```json
 {
   "success": false,
@@ -155,7 +169,7 @@ Energy accumulated during this reporting interval in Watt-hours (integers):
 
 2. **Timestamp**: Always use UTC time in ISO 8601 format
 
-3. **Null vs Zero**: 
+3. **Null vs Zero**:
    - Use `null` for missing/unavailable data
    - Use `0` for actual zero values
    - This distinction is important for proper data analysis

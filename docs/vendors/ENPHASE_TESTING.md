@@ -32,6 +32,7 @@ ENPHASE_REDIRECT_URI=http://localhost:3000/api/auth/enphase/callback
 ### 1. Testing System Registration (OAuth Flow)
 
 1. **Start the development server:**
+
    ```bash
    npm run dev
    ```
@@ -56,6 +57,7 @@ ENPHASE_REDIRECT_URI=http://localhost:3000/api/auth/enphase/callback
 ### 2. Testing Data Collection
 
 1. **Trigger Manual Poll:**
+
    ```bash
    # Call the cron endpoint directly
    curl http://localhost:3000/api/cron/minutely
@@ -71,9 +73,9 @@ ENPHASE_REDIRECT_URI=http://localhost:3000/api/auth/enphase/callback
 3. **Verify Data Storage:**
    ```sql
    -- Check latest readings
-   SELECT * FROM readings 
+   SELECT * FROM readings
    WHERE system_id IN (SELECT id FROM systems WHERE vendor_type = 'enphase')
-   ORDER BY inverter_time DESC 
+   ORDER BY inverter_time DESC
    LIMIT 5;
    ```
 
@@ -135,6 +137,7 @@ The mock generates realistic data based on time of day:
 ### Mock Systems
 
 Default mock system:
+
 - System ID: `mock_system_001`
 - Name: `Mock Solar System`
 - Location: Melbourne, Australia
@@ -143,6 +146,7 @@ Default mock system:
 ### Mock API Responses
 
 All mock responses include:
+
 - Realistic delays (100ms)
 - Proper error handling
 - Consistent data structures
@@ -180,16 +184,16 @@ ENPHASE: Not on 30-minute boundary, skipping poll
 SELECT * FROM systems WHERE vendor_type = 'enphase';
 
 -- Check polling status
-SELECT * FROM polling_status 
+SELECT * FROM polling_status
 WHERE system_id IN (SELECT id FROM systems WHERE vendor_type = 'enphase');
 
 -- Check readings
-SELECT 
+SELECT
   datetime(inverter_time, 'unixepoch') as time,
   solar_w, load_w, battery_w, battery_soc
-FROM readings 
+FROM readings
 WHERE system_id IN (SELECT id FROM systems WHERE vendor_type = 'enphase')
-ORDER BY inverter_time DESC 
+ORDER BY inverter_time DESC
 LIMIT 10;
 ```
 
@@ -229,6 +233,7 @@ LIMIT 10;
 ## Switching to Production
 
 1. **Set Real Credentials:**
+
    ```bash
    ENPHASE_API_KEY=your_real_api_key
    ENPHASE_CLIENT_ID=your_real_client_id
@@ -237,6 +242,7 @@ LIMIT 10;
    ```
 
 2. **Disable Mock Mode:**
+
    ```bash
    # Remove or set to false
    ENPHASE_USE_MOCK=false
