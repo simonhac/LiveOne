@@ -63,13 +63,14 @@ LiveOne is a **multi-vendor solar monitoring platform** that aggregates data fro
   - **Development**: Local SQLite (`dev.db`)
 - **ORM**: Drizzle ORM with type-safe query builder
 - **Authentication**: Clerk (user management, JWT tokens)
-- **Caching**: Vercel KV (Redis-compatible)
+- **Caching**: Upstash Redis (Tokyo region)
 - **Cron Jobs**: Vercel Cron (1-minute polling intervals)
 
 ### Infrastructure
 
 - **Hosting**: Vercel (serverless functions, edge network)
 - **Database**: Turso (distributed SQLite with edge replication)
+- **Cache**: Upstash Redis (Tokyo region)
 - **CDN**: Vercel Edge Network
 - **Region**: Primary in Tokyo (AWS ap-northeast-1)
 - **Git**: GitHub with automatic deployments
@@ -100,8 +101,8 @@ LiveOne is a **multi-vendor solar monitoring platform** that aggregates data fro
 │         │                      │                     │           │
 │         │                      ▼                     │           │
 │         │              ┌──────────────┐             │           │
-│         └─────────────▶│  Vercel KV   │◀────────────┘           │
-│                        │   (Cache)    │                         │
+│         └─────────────▶│   Upstash    │◀────────────┘           │
+│                        │    Redis     │                         │
 │                        └──────────────┘                         │
 │                                                                   │
 │  ┌───────────────────────────────────────────────────────────┐  │
@@ -180,21 +181,21 @@ Turso provides a distributed SQLite database with:
 
 See [Data Model](#data-model) for schema details.
 
-#### 4. Caching Layer (Vercel KV)
+#### 4. Caching Layer (Upstash Redis)
 
 **Purpose**: Store latest point values for instant dashboard loads
 
-The KV cache stores:
+The Redis cache stores:
 
-- Latest readings per system (keyed by `system:{id}:latest`)
-- Session states for OAuth flows
-- Temporary data for multi-step operations
+- Latest readings per system (keyed by `latest:system:{id}`)
+- Subscription registry (composite system mappings)
+- Username cache for fast Clerk lookups
 
 **TTL Strategy**:
 
-- Latest readings: 2 minutes (refreshed on poll)
-- OAuth states: 10 minutes
-- Temporary data: 5 minutes
+- Latest readings: None (persist indefinitely, updated on poll)
+- Subscription registry: None (rebuilt when metadata changes)
+- Username cache: None (manually invalidated)
 
 #### 5. Vendor Integration Layer
 
@@ -1189,49 +1190,54 @@ function selectAggregationLevel(timeRange: string): "raw" | "5m" | "daily" {
 
 ## Caching Strategy
 
-### Vercel KV (Redis)
+### Upstash Redis
 
-LiveOne uses Vercel KV for caching latest readings and session state.
+LiveOne uses Upstash Redis for caching latest readings and subscription mappings.
 
 **Configuration**:
 
 ```typescript
-import { kv } from "@vercel/kv";
+import { kv, kvKey } from "@/lib/kv";
 
-// Set latest reading for system
-await kv.set(`system:${systemId}:latest`, readings, { ex: 120 }); // 2min TTL
+// Set latest reading for system (using hash for multiple points)
+await kv.hset(kvKey(`latest:system:${systemId}`), {
+  [pointPath]: pointValue,
+});
 
-// Get latest reading
-const latest = await kv.get(`system:${systemId}:latest`);
+// Get all latest readings for system
+const latest = await kv.hgetall(kvKey(`latest:system:${systemId}`));
 ```
 
 ### Cache Keys
 
-| Key Pattern           | Data                   | TTL    | Usage                  |
-| --------------------- | ---------------------- | ------ | ---------------------- |
-| `system:{id}:latest`  | Latest point readings  | 2 min  | Dashboard instant load |
-| `oauth:state:{state}` | OAuth flow state       | 10 min | Enphase auth callback  |
-| `session:temp:{id}`   | Temporary session data | 5 min  | Multi-step operations  |
+All keys are automatically namespaced by environment (`prod:`, `dev:`, `test:`) using the `kvKey()` helper.
+
+| Key Pattern                 | Data                         | TTL  | Usage                    |
+| --------------------------- | ---------------------------- | ---- | ------------------------ |
+| `latest:system:{id}`        | Latest point readings (hash) | None | Dashboard instant load   |
+| `subscriptions:system:{id}` | Point subscription registry  | None | Composite system updates |
+| `username:{username}`       | Clerk user ID mapping        | None | Fast username lookups    |
 
 ### Cache Invalidation
 
 **On Poll**:
 
-- Update `system:{id}:latest` with new readings
-- TTL ensures stale data expires if polling stops
+- Update `latest:system:{id}` with new point values
+- Update composite systems that subscribe to changed points
 
-**On System Update**:
+**On Metadata Update**:
 
-- Clear `system:{id}:latest` when system settings change
-- Triggers fresh fetch on next dashboard load
+- Rebuild subscription registry when composite config changes
+- Automatically triggered by API endpoint
 
-**On System Deletion**:
+**On Username Change**:
 
-- Delete all keys matching `system:{id}:*`
+- Invalidate old username cache entry
+- Cache new username mapping
 
 ### Fallback Strategy
 
-If KV is unavailable:
+If Redis is unavailable:
 
 1. Log warning
 2. Query database directly
@@ -1240,10 +1246,10 @@ If KV is unavailable:
 ```typescript
 async function getLatestReadings(systemId: number) {
   try {
-    const cached = await kv.get(`system:${systemId}:latest`);
+    const cached = await kv.hgetall(kvKey(`latest:system:${systemId}`));
     if (cached) return cached;
   } catch (error) {
-    console.warn("[KV] Cache unavailable, falling back to DB");
+    console.warn("[Redis] Cache unavailable, falling back to DB");
   }
 
   // Fallback: query database
@@ -1515,10 +1521,9 @@ ENCRYPTION_KEY=<32-byte-hex-key>
 # Cron
 CRON_SECRET=<random-secret>
 
-# Cache
-KV_URL=<vercel-kv-url>
-KV_REST_API_URL=<vercel-kv-api-url>
-KV_REST_API_TOKEN=<vercel-kv-token>
+# Upstash Redis
+KV_REST_API_URL=<upstash-redis-url>
+KV_REST_API_TOKEN=<upstash-token>
 ```
 
 **Optional**:
@@ -1808,7 +1813,7 @@ To scale beyond 600 systems:
 
 #### Caching Optimization
 
-**Current**: Vercel KV stores latest readings only
+**Current**: Upstash Redis stores latest readings only
 
 **Future Enhancements**:
 
