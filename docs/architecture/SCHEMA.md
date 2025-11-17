@@ -587,8 +587,8 @@ Currently, no automatic retention policies are implemented:
 
 ### Systems Table
 
-- `timezone_offset_min`: Standard timezone offset in minutes (e.g., 600 for AEST/UTC+10)
-- `display_timezone`: IANA timezone string (e.g., 'Australia/Melbourne') - observes DST
+- `timezone_offset_min`: Standard timezone offset in minutes for polling and calculations (e.g., 600 for AEST/UTC+10) - does NOT observe DST
+- `display_timezone`: IANA timezone string for user display (e.g., 'Australia/Melbourne') - observes DST
 
 ### Daily Aggregation
 
@@ -602,12 +602,13 @@ Uses the system's `timezone_offset_min` to determine day boundaries:
 
 ## Data Precision
 
-| Data Type     | Precision                              | Storage    |
-| ------------- | -------------------------------------- | ---------- |
-| Power values  | Integer                                | Watts      |
-| Energy values | 3 decimal places                       | kWh or Wh  |
-| Battery SOC   | 1 decimal place                        | Percentage |
-| Timestamps    | Millisecond (points) / Second (legacy) | Unix epoch |
+| Data Type             | Precision                              | Storage    | Notes                   |
+| --------------------- | -------------------------------------- | ---------- | ----------------------- |
+| Power values (legacy) | Integer                                | Watts      | readings tables only    |
+| Power values (points) | REAL (floating point)                  | Watts      | point_readings tables   |
+| Energy values         | 3 decimal places                       | kWh or Wh  | Both legacy and points  |
+| Battery SOC           | 1 decimal place                        | Percentage | Both legacy and points  |
+| Timestamps            | Millisecond (points) / Second (legacy) | Unix epoch | Points use ms precision |
 
 ---
 

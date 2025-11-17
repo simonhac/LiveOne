@@ -1,88 +1,129 @@
 # LiveOne — Universal Solar Monitoring Platform
 
-A modern, multi-user solar monitoring platform that bridges inverter systems to a unified dashboard. Currently supports Selectronic SP PRO and Enphase IQ inverters with an extensible architecture for additional brands.
+A modern, multi-user solar monitoring platform with flexible point-based monitoring architecture. Supports multiple inverter brands, energy retailers, and composite virtual systems through an extensible design.
 
 ## 🌟 Key Features
 
 ### Multi-User & Multi-System Architecture
+
 - 👥 **Unlimited users** - Each user can monitor their own systems
 - 🏠 **Multiple systems per user** - Monitor multiple sites from one account
 - 🔐 **Secure authentication** - Enterprise-grade auth via Clerk
 - 🎯 **Role-based access** - Owner and viewer roles
-- 🔗 **Extensible design** - Ready for additional inverters
+- 🆔 **System aliases** - URL-friendly identifiers for easy sharing
+
+### Point-Based Monitoring
+
+- 📊 **Flexible metrics** - Track any metric from any device (power, energy, SOC, temperature, etc.)
+- 🔧 **Vendor-independent** - Unified monitoring interface across all systems
+- 🏷️ **Custom labeling** - User-configurable point names, types, and groupings
+- 📈 **Multi-device support** - Monitor complex systems with multiple inverters, meters, and sensors
+- 🔄 **Composite systems** - Aggregate data from multiple physical systems into virtual systems
 
 ### Real-Time Monitoring
+
 - ⚡ **Live power flow** - Solar, battery, load, and grid visualization
 - 📊 **Interactive charts** - 5-minute, 30-minute, and daily resolutions
-- 📈 **Historical data** - Automatic aggregation
+- 📈 **Historical data** - Automatic aggregation with time-series optimization
 - 🔄 **Auto-refresh** - Updates when data becomes stale
 - ⚠️ **Fault detection** - Real-time alerts and status indicators
 
 ### Professional Dashboard
+
 - 📱 **Fully responsive** - Optimized for mobile, tablet, and desktop
 - 🎨 **Modern UI** - Clean design with dark theme
 - 📊 **Energy statistics** - Today, yesterday, and all-time summaries
 - 🔀 **Power/Energy toggle** - Switch between kW and kWh views
+- 🎯 **Point filtering** - View by subsystem, type, or custom groupings
 
 ### Admin Capabilities
-- 🛠️ **System management** - Monitor all systems
-- 👤 **User administration** - View access
-- 📊 **Storage analytics** - Database metrics
+
+- 🛠️ **System management** - Monitor all systems across all users
+- 👤 **User administration** - View user access and system ownership
+- 📊 **Storage analytics** - Database metrics and health monitoring
 - 🔧 **Test connections** - Validate inverter service credentials
+- 🔍 **Debug tools** - Session tracking and data quality monitoring
 
 ## 🔌 Supported Systems
 
-- **Selectronic SP PRO** - Via Select.Live API (real-time data)
-- **Enphase IQ** - Via OAuth 2.0 integration (15-minute data)
+LiveOne supports multiple data sources through a flexible point-based monitoring architecture:
+
+| System Type            | Integration Method                                                      | Update Frequency          | Status     |
+| ---------------------- | ----------------------------------------------------------------------- | ------------------------- | ---------- |
+| **Selectronic SP PRO** | Select.Live API                                                         | Real-time (1-min polling) | Production |
+| **Enphase IQ**         | OAuth 2.0 API                                                           | 15-minute intervals       | Production |
+| **Fronius**            | [FroniusPusher](https://github.com/simonhac/FroniusPusher) (push-based) | Real-time push            | Production |
+| **Mondo Power**        | Direct API                                                              | Real-time                 | Production |
+| **Amber Electric**     | Retailer API                                                            | 30-minute intervals       | Production |
+| **Composite Systems**  | Virtual aggregation                                                     | Derived from sources      | Production |
+
+**Composite Systems** allow you to create virtual systems that aggregate data from multiple physical systems. For example:
+
+- Combine multiple Enphase systems at different locations
+- Merge solar generation from different inverter brands
+- Create property-wide energy views from multiple sub-systems
 
 ## 🏗️ Architecture
 
 ### Tech Stack
+
 - **Frontend**: Next.js 15 (App Router), TypeScript, Tailwind CSS
 - **Backend**: Vercel Serverless Functions, Node.js
 - **Database**: Turso (Distributed SQLite), Drizzle ORM
+- **Cache**: Vercel KV (Redis) for real-time point values
 - **Authentication**: Clerk (Multi-user support)
 - **Hosting**: Vercel (Global CDN)
 - **Charts**: Chart.js with interactive features
 - **Data Collection**: Vercel Cron jobs (1-minute intervals)
 
 ### Extensible Design
+
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│  Select.Live │     │   Enphase    │     │   Others    │
-│     API      │     │  OAuth 2.0   │     │   (Future)  │
-└──────┬───────┘     └──────┬───────┘     └──────┬──────┘
-       │                     │                     │
-       └─────────────────────┼─────────────────────┘
-                             │
-                    ┌────────▼────────┐
-                    │  Vendor Adapter  │
-                    │    Interface     │
-                    └────────┬─────────┘
-                             │
-                    ┌────────▼────────┐
-                    │   LiveOne Core   │
-                    │   (Next.js App)  │
-                    └────────┬─────────┘
-                             │
-                    ┌────────▼────────┐
-                    │  Turso Database  │
-                    │  (Global SQLite)  │
-                    └──────────────────┘
+┌─────────────┐  ┌──────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│ Selectronic │  │   Enphase    │  │   Fronius   │  │    Mondo    │  │    Amber    │
+│ Select.Live │  │  OAuth 2.0   │  │FroniusPusher│  │  Direct API │  │ Retailer API│
+│   (poll)    │  │   (poll)     │  │   (push)    │  │   (poll)    │  │   (poll)    │
+└──────┬──────┘  └──────┬───────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘
+       │                │                 │                │                │
+       └────────────────┼─────────────────┼────────────────┼────────────────┘
+                        │                 │                │
+               ┌────────▼─────────────────▼────────────────▼────────┐
+               │         Point-Based Monitoring Layer               │
+               │  (Vendor-independent flexible metric storage)      │
+               └────────┬───────────────────────────────────────────┘
+                        │
+               ┌────────▼─────────────────────────────────────┐
+               │       Composite System Aggregation           │
+               │  (Virtual systems from multiple sources)     │
+               └────────┬─────────────────────────────────────┘
+                        │
+               ┌────────▼─────────────────────────────────────┐
+               │          LiveOne Core (Next.js App)          │
+               └────────┬─────────────────────────────────────┘
+                        │
+         ┌──────────────┴──────────────┐
+         │                             │
+┌────────▼────────┐          ┌─────────▼─────────┐
+│ Turso Database  │          │   Vercel KV       │
+│ (Time-series)   │          │ (Latest values)   │
+└─────────────────┘          └───────────────────┘
 ```
 
 ## 📦 Installation
 
 ### Prerequisites
+
 - Node.js 18+ and npm
 - Clerk account (free tier works)
 - Turso database account (free tier available)
+- Vercel KV for caching (optional but recommended)
 - Vercel account for deployment (free tier works)
-- Inverter with cloud monitoring access
+- Access credentials for your inverter/energy system
 
 ### Local Development
 
 1. **Clone the repository**
+
 ```bash
 git clone https://github.com/simonhac/liveone.git
 cd liveone
@@ -90,11 +131,13 @@ npm install
 ```
 
 2. **Set up environment variables**
+
 ```bash
 cp .env.example .env.local
 ```
 
 Edit `.env.local`:
+
 ```env
 # Clerk Authentication (Required)
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
@@ -111,16 +154,22 @@ TURSO_AUTH_TOKEN=your-auth-token
 # Optional: Keep empty in development
 DATABASE_URL=file:./dev.db
 
+# Vercel KV Cache (Optional but recommended)
+KV_REST_API_URL=https://your-kv-instance.kv.vercel-storage.com
+KV_REST_API_TOKEN=your-token-here
+
 # Admin Users (comma-separated Clerk user IDs)
 ADMIN_USER_IDS=user_xxx,user_yyy
 ```
 
 3. **Initialize the database**
+
 ```bash
 npm run db:push
 ```
 
 4. **Start development server**
+
 ```bash
 npm run dev
 ```
@@ -132,18 +181,31 @@ Visit [http://localhost:3000](http://localhost:3000)
 ### Deploy to Vercel
 
 1. **Push to GitHub**
+
 ```bash
 git push origin main
 ```
 
 2. **Import to Vercel**
+
 - Go to [vercel.com](https://vercel.com)
 - Import your GitHub repository
 - Configure environment variables (same as `.env.local`)
 
-3. **Set up Cron Jobs**
+3. **Set up Vercel KV** (recommended)
+
+- Create KV database in Vercel dashboard
+- Copy `KV_REST_API_URL` and `KV_REST_API_TOKEN` to environment variables
+- After first deployment, build the subscription registry:
+  ```bash
+  curl -X POST https://your-app.vercel.app/api/admin/kv/build-registry \
+    -H "Authorization: Bearer <your-token>"
+  ```
+
+4. **Set up Cron Jobs**
 
 Add to `vercel.json`:
+
 ```json
 {
   "crons": [
@@ -159,7 +221,8 @@ Add to `vercel.json`:
 }
 ```
 
-4. **Configure Cron Secret**
+5. **Configure Cron Secret**
+
 ```bash
 vercel env add CRON_SECRET production
 # Generate a secure random string
@@ -169,107 +232,146 @@ vercel env add CRON_SECRET production
 
 ### For System Owners
 
-(Not yet implemented)
+After signing up, users are guided through a setup wizard to configure their first system:
 
+1. **Choose system type** - Select your inverter brand or energy retailer
+2. **Enter credentials** - Provide API access credentials (stored securely in Clerk)
+3. **Configure system** - Set timezone, name, and optional alias
+4. **Point discovery** - System automatically discovers available monitoring points
+5. **Customize points** - Configure point names, types, and grouping (optional)
+
+Additional systems can be added from the dashboard settings.
 
 ### For Administrators
 
 Admins have access to:
+
 - `/admin` - System overview dashboard
 - `/admin/users` - User management
 - `/admin/storage` - Database statistics
+- `/admin/kv` - Cache management tools
 - Test any system connection
 - View all system data
-
 
 ## 🔧 Development
 
 ### Project Structure
+
 ```
 liveone/
 ├── app/                    # Next.js app router pages
-│   ├── api/               # API routes
+│   ├── api/               # API routes (see docs/architecture/API.md)
 │   ├── admin/             # Admin pages
 │   └── dashboard/         # User dashboards
 ├── components/            # React components
 ├── lib/                   # Core libraries
-│   ├── db/               # Database schema & client
-│   ├── auth-utils.ts    # Authentication helpers
+│   ├── db/               # Database schema & client (see docs/architecture/SCHEMA.md)
+│   ├── auth-utils.ts     # Authentication helpers
 │   └── energy-formatting.ts # Unit formatting
 ├── docs/                  # Documentation
+│   ├── architecture/     # Architecture documentation
+│   │   ├── SCHEMA.md     # Database schema reference
+│   │   └── API.md        # API endpoint documentation
+│   └── POINTS.md         # Point system guide
 └── scripts/              # Utility scripts
 ```
 
+### Documentation
+
+- **[docs/architecture/SCHEMA.md](docs/architecture/SCHEMA.md)** - Complete database schema reference with all tables and fields
+- **[docs/architecture/API.md](docs/architecture/API.md)** - API endpoint documentation with parameters and examples
+- **[docs/POINTS.md](docs/POINTS.md)** - Comprehensive guide to the point-based monitoring system
+
 ### Key Commands
+
 ```bash
 npm run dev          # Start development server
 npm run build        # Build for production
 npm run lint         # Run ESLint
 npm run type-check   # TypeScript checking
-npm test            # Run tests
-npm run db:push     # Update database schema
-npm run db:studio   # Open database GUI
+npm test             # Run unit tests
+npm run test:all     # Run all tests (unit + integration)
+npm run db:push      # Update database schema
+npm run db:studio    # Open Drizzle Studio for database exploration
 ```
 
 ### Utility Tools
 
-The `/tools` directory contains maintenance utilities:
+The project includes maintenance utilities in `/tools` and `/scripts`:
 
-- **`sync-prod-to-dev.js`** - Sync production data to development database
+- **`scripts/utils/backup-prod-db.sh`** - Backup production database
+
+  ```bash
+  ./scripts/utils/backup-prod-db.sh
+  ```
+
+- **`tools/sync-prod-to-dev.js`** - Sync production data to development
+
   ```bash
   node tools/sync-prod-to-dev.js
   ```
-  Copies recent data from production Turso database to local development database for testing.
 
-- **`read-vercel-build-log.ts`** - Fetch and display Vercel build logs
+- **`tools/read-vercel-build-log.ts`** - Fetch Vercel build logs
+
   ```bash
   npx tsx tools/read-vercel-build-log.ts
   ```
-  Retrieves the latest build logs from Vercel deployments for debugging build issues.
 
-Note: The `/scripts` directory is gitignored and can be used for temporary scripts and experiments.
+- **`scripts/utils/get-test-token.ts`** - Generate test session token
+  ```bash
+  npx tsx scripts/utils/get-test-token.ts
+  ```
 
-### Adding New Inverter Support
+### Adding New Vendor Support
 
-1. Create adapter in `lib/adapters/`:
-```typescript
-export interface InverterAdapter {
-  authenticate(): Promise<boolean>
-  fetchCurrent(): Promise<InverterData>
-  fetchHistory(start: Date, end: Date): Promise<InverterData[]>
-}
-```
+The point-based architecture makes adding new vendors straightforward:
 
-2. Implement vendor-specific client
-3. Register in the polling service
-4. Update UI components if needed
+1. **Create vendor client** in `lib/vendor-clients/`:
+
+   ```typescript
+   export class NewVendorClient {
+     async authenticate(): Promise<boolean> { ... }
+     async fetchCurrentData(): Promise<VendorDataPoint[]> { ... }
+   }
+   ```
+
+2. **Register vendor adapter** - Map vendor data to points
+3. **Add to polling service** - Register in cron job
+4. **Update UI** - Add vendor option to setup wizard
+
+No database schema changes required - all metrics are stored as generic points.
 
 ## 📈 Performance
 
-- **Response times**: < 100ms for cached data
-- **Data freshness**: 1-minute polling intervals
-- **Storage efficiency**: ~180 KB/day per system
-- **Global CDN**: Vercel edge network
-- **Database**: Turso with edge replicas
+- **Response times**: < 100ms for cached point values, < 1s for historical queries
+- **Data freshness**: 1-minute polling for real-time systems, vendor-dependent for others
+- **Storage efficiency**: ~50-200 KB/day per system (depends on point count)
+- **Global CDN**: Vercel edge network with automatic caching
+- **Database**: Turso with edge replicas for low-latency global access
+- **Cache**: Vercel KV (Redis) for sub-10ms latest value retrieval
 
 ## 🔒 Security
 
-- **Authentication**: Enterprise-grade via Clerk
-- **Credential storage**: Encrypted in Clerk metadata
-- **API protection**: Bearer tokens for cron jobs
-- **Data isolation**: Users only see their systems
+- **Authentication**: Enterprise-grade via Clerk with multi-factor support
+- **Credential storage**: Encrypted in Clerk user metadata (never in database)
+- **API protection**: Bearer tokens for cron jobs, session-based for users
+- **Data isolation**: Users only see their own systems (admins can view all)
 - **HTTPS only**: Enforced in production
+- **Rate limiting**: Built into Vercel infrastructure
 
 ## 🤝 Contributing
 
 We welcome contributions! Areas of interest:
 
-- Additional inverter support (Fronius, SolarEdge, Enphase)
-- MQTT broker integration
-- Home Assistant addon
-- Mobile app (React Native)
-- Energy optimization algorithms
-- Machine learning predictions
+- **Additional vendor integrations** - SolarEdge, Huawei, GoodWe, etc.
+- **Enhanced composite systems** - More aggregation functions and transformations
+- **MQTT broker integration** - Real-time push updates from local inverters
+- **Home Assistant addon** - Bidirectional integration
+- **Mobile app** - React Native with offline support
+- **Energy optimization** - Smart load scheduling algorithms
+- **Machine learning** - Solar forecasting and anomaly detection
+- **Export formats** - CSV, Excel, PDF reports
+- **Webhook notifications** - Alert integrations (Slack, Discord, etc.)
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
@@ -280,6 +382,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## 🙏 Acknowledgments
 
 Built with:
+
 - [Next.js](https://nextjs.org/) — React framework
 - [Vercel](https://vercel.com/) — Hosting platform
 - [Turso](https://turso.tech/) — Edge database
@@ -288,3 +391,20 @@ Built with:
 - [Chart.js](https://www.chartjs.org/) — Charts
 - [Drizzle ORM](https://orm.drizzle.team/) — Database ORM
 - [Claude](https://claude.ai) — Development and documentation
+
+---
+
+## 📝 Notes
+
+### Deprecated Database Tables
+
+The project includes a set of older time-series tables (`readings`, `readings_agg_5m`, `readings_agg_1d`) that were used before the point-based monitoring architecture was implemented. These tables are still present for backward compatibility with early Selectronic installations but are considered deprecated.
+
+**Why deprecated?** The original schema was designed specifically for Selectronic inverters with a fixed set of metrics (solar_w, battery_w, load_w, etc.). This rigid structure made it difficult to:
+
+- Support vendors with different metric sets (e.g., Enphase microinverters)
+- Add new metrics without schema changes
+- Track multiple devices in a single system
+- Create composite virtual systems
+
+The current point-based architecture (`point_info`, `point_readings`, `point_readings_agg_*`) solves these limitations by treating all metrics as generic "points" with flexible metadata. New systems should use the point-based tables exclusively.
