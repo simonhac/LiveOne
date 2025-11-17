@@ -18,7 +18,7 @@ export const systems = sqliteTable(
     vendorSiteId: text("vendor_site_id").notNull(), // Vendor's site/system identifier
     status: text("status").notNull().default("active"), // 'active', 'disabled', or 'removed'
     displayName: text("display_name").notNull(),
-    shortName: text("short_name"), // Optional short name (letters, digits, underscore only) - used in history API IDs
+    alias: text("short_name"), // Optional alias (letters, digits, underscore only) - used in history API IDs and as URL-friendly identifier
     model: text("model"),
     serial: text("serial"),
     ratings: text("ratings"),
@@ -27,6 +27,7 @@ export const systems = sqliteTable(
     location: text("location", { mode: "json" }), // JSON object for address, city/state/country, or lat/lon
     metadata: text("metadata", { mode: "json" }), // JSON object for vendor-specific config (e.g., composite system sources)
     timezoneOffsetMin: integer("timezone_offset_min").notNull().default(600), // Standard timezone offset in minutes (e.g., 600 for AEST/UTC+10, DST calculated separately)
+    displayTimezone: text("display_timezone"), // IANA timezone string for display (e.g., 'Australia/Melbourne') - observes DST
     created: integer("created").notNull().default(0), // Creation timestamp (Unix milliseconds)
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
@@ -39,10 +40,10 @@ export const systems = sqliteTable(
     // Note: vendor_site_unique index removed to allow multiple systems with same vendorSiteId (e.g., for removed/inactive systems)
     ownerClerkUserIdx: index("owner_clerk_user_idx").on(table.ownerClerkUserId),
     statusIdx: index("systems_status_idx").on(table.status),
-    // Unique constraint for short_name per user (only when short_name is not null)
-    shortNameUnique: uniqueIndex("short_name_unique").on(
+    // Unique constraint for alias (short_name column) per user (only when not null)
+    aliasUnique: uniqueIndex("short_name_unique").on(
       table.ownerClerkUserId,
-      table.shortName,
+      table.alias,
     ),
   }),
 );

@@ -128,22 +128,29 @@ export async function GET(request: Request) {
       )
       .limit(1);
 
-    // Build the common metadata structure
-    const metadata = {
+    // Build the system object with full SystemWithPolling data
+    const systemData = {
+      id: system.id,
       vendorType: system.vendorType,
       vendorSiteId: system.vendorSiteId,
       displayName: system.displayName,
+      alias: system.alias,
+      displayTimezone: system.displayTimezone,
       ownerClerkUserId: system.ownerClerkUserId,
-      supportsPolling: VendorRegistry.supportsPolling(system.vendorType),
       timezoneOffsetMin: system.timezoneOffsetMin,
-      systemInfo: {
-        model: system.model,
-        serial: system.serial,
-        ratings: system.ratings,
-        solarSize: system.solarSize,
-        batterySize: system.batterySize,
-      },
-      polling: status
+      status: system.status,
+      model: system.model,
+      serial: system.serial,
+      ratings: system.ratings,
+      solarSize: system.solarSize,
+      batterySize: system.batterySize,
+      location: system.location,
+      metadata: system.metadata,
+      created: system.created,
+      createdAt: system.createdAt,
+      updatedAt: system.updatedAt,
+      supportsPolling: VendorRegistry.supportsPolling(system.vendorType),
+      pollingStatus: status
         ? {
             lastPollTime: status?.lastPollTime
               ? formatTime_fromJSDate(
@@ -235,9 +242,9 @@ export async function GET(request: Request) {
     // (measurementTimeMs -> measurementTime, receivedTimeMs -> receivedTime)
     return jsonResponse(
       {
+        system: systemData,
         latest: latest,
         historical: historical,
-        ...metadata,
       },
       system.timezoneOffsetMin,
     );

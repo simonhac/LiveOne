@@ -6,6 +6,7 @@ import { systems } from "@/lib/db/schema";
 import { eq, and, ne } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
+import { isValidTimezone } from "@/lib/timezones";
 
 export async function GET(
   request: NextRequest,
@@ -44,7 +45,8 @@ export async function GET(
       success: true,
       settings: {
         displayName: system.displayName,
-        shortName: system.shortName,
+        alias: system.alias,
+        displayTimezone: system.displayTimezone,
       },
     });
   } catch (error) {
@@ -90,17 +92,22 @@ export async function PATCH(
 
     // Get the updates from request body
     const body = await request.json();
-    const { displayName, shortName } = body;
+    const { displayName, alias, displayTimezone } = body;
 
     // Log the settings update request
     console.log("Settings update:", {
       systemId,
       displayName,
-      shortName,
+      alias,
+      displayTimezone,
     });
 
     // Validate that at least one field is being updated
-    if (displayName === undefined && shortName === undefined) {
+    if (
+      displayName === undefined &&
+      alias === undefined &&
+      displayTimezone === undefined
+    ) {
       return NextResponse.json(
         { error: "At least one field must be provided" },
         { status: 400 },
@@ -131,9 +138,9 @@ export async function PATCH(
       }
     }
 
-    // Validate shortName if provided
-    if (shortName !== undefined && shortName !== null) {
-      if (typeof shortName !== "string") {
+    // Validate alias if provided
+    if (alias !== undefined && alias !== null) {
+      if (typeof alias !== "string") {
         return NextResponse.json(
           { error: "Short name must be a string" },
           { status: 400 },
@@ -141,8 +148,8 @@ export async function PATCH(
       }
 
       // Empty string is treated as null (removing the short name)
-      if (shortName.trim().length > 0) {
-        if (!/^[a-zA-Z0-9_]+$/.test(shortName)) {
+      if (alias.trim().length > 0) {
+        if (!/^[a-zA-Z0-9_]+$/.test(alias)) {
           return NextResponse.json(
             {
               error:
@@ -152,7 +159,7 @@ export async function PATCH(
           );
         }
 
-        if (shortName.length > 200) {
+        if (alias.length > 200) {
           return NextResponse.json(
             { error: "Short name is too long (max 200 characters)" },
             { status: 400 },
@@ -161,10 +168,31 @@ export async function PATCH(
       }
     }
 
+    // Validate displayTimezone if provided
+    if (displayTimezone !== undefined && displayTimezone !== null) {
+      if (typeof displayTimezone !== "string") {
+        return NextResponse.json(
+          { error: "Display timezone must be a string" },
+          { status: 400 },
+        );
+      }
+
+      if (
+        displayTimezone.trim().length > 0 &&
+        !isValidTimezone(displayTimezone)
+      ) {
+        return NextResponse.json(
+          { error: "Invalid timezone. Must be a valid IANA timezone string" },
+          { status: 400 },
+        );
+      }
+    }
+
     // Build the update object
     const updates: {
       displayName?: string;
-      shortName?: string | null;
+      alias?: string | null;
+      displayTimezone?: string | null;
       updatedAt: Date;
     } = {
       updatedAt: new Date(),
@@ -174,30 +202,30 @@ export async function PATCH(
       updates.displayName = displayName.trim();
     }
 
-    if (shortName !== undefined) {
-      updates.shortName =
-        shortName === null || shortName.trim().length === 0
-          ? null
-          : shortName.trim();
+    if (alias !== undefined) {
+      updates.alias =
+        alias === null || alias.trim().length === 0 ? null : alias.trim();
     }
 
-    // Check if shortName is already taken by another system
-    if (updates.shortName) {
+    if (displayTimezone !== undefined) {
+      updates.displayTimezone =
+        displayTimezone === null || displayTimezone.trim().length === 0
+          ? null
+          : displayTimezone.trim();
+    }
+
+    // Check if alias is already taken by another system
+    if (updates.alias) {
       const existing = await db
         .select()
         .from(systems)
-        .where(
-          and(
-            eq(systems.shortName, updates.shortName),
-            ne(systems.id, systemId),
-          ),
-        )
+        .where(and(eq(systems.alias, updates.alias), ne(systems.id, systemId)))
         .limit(1);
 
       if (existing.length > 0) {
         return NextResponse.json(
           {
-            error: `Short name "${updates.shortName}" is already in use by ${existing[0].displayName}`,
+            error: `Short name "${updates.alias}" is already in use by ${existing[0].displayName}`,
           },
           { status: 409 },
         );
@@ -227,13 +255,14 @@ export async function PATCH(
       system: {
         id: result[0].id,
         displayName: result[0].displayName,
-        shortName: result[0].shortName,
+        alias: result[0].alias,
+        displayTimezone: result[0].displayTimezone,
       },
     });
   } catch (error) {
     console.error("Error updating system:", error);
 
-    // Check for unique constraint violation on shortName
+    // Check for unique constraint violation on alias
     if (
       error instanceof Error &&
       error.message.includes("UNIQUE constraint failed")

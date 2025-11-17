@@ -63,7 +63,38 @@ interface SystemInfo {
 }
 
 interface DashboardData {
-  timezoneOffsetMin?: number;
+  system: {
+    id: number;
+    vendorType: string;
+    vendorSiteId: string;
+    displayName: string;
+    alias: string | null;
+    displayTimezone: string | null;
+    ownerClerkUserId: string;
+    timezoneOffsetMin: number;
+    status: string;
+    model: string | null;
+    serial: string | null;
+    ratings: string | null;
+    solarSize: string | null;
+    batterySize: string | null;
+    location: any;
+    metadata: any;
+    created: number;
+    createdAt: Date;
+    updatedAt: Date;
+    supportsPolling: boolean;
+    pollingStatus: {
+      lastPollTime: string | null;
+      lastSuccessTime: string | null;
+      lastErrorTime: string | null;
+      lastError: string | null;
+      consecutiveErrors: number;
+      totalPolls: number;
+      successfulPolls: number;
+      isActive: boolean;
+    } | null;
+  };
   latest: LatestPointValues;
   historical: {
     yesterday: {
@@ -102,23 +133,6 @@ interface DashboardData {
       };
     } | null;
   };
-  polling: {
-    lastPollTime: string | null;
-    lastSuccessTime: string | null;
-    lastErrorTime: string | null;
-    lastError: string | null;
-    consecutiveErrors: number;
-    totalPolls: number;
-    successfulPolls: number;
-    isActive: boolean;
-  };
-  systemInfo: SystemInfo;
-  systemNumber?: string;
-  displayName?: string;
-  vendorType?: string;
-  vendorSiteId?: string;
-  ownerClerkUserId?: string;
-  supportsPolling?: boolean;
 }
 
 interface AvailableSystem {
@@ -126,7 +140,7 @@ interface AvailableSystem {
   displayName: string;
   vendorSiteId: string;
   ownerClerkUserId?: string | null;
-  shortName?: string | null;
+  alias?: string | null;
   ownerUsername?: string | null;
 }
 
@@ -169,8 +183,9 @@ export default function DashboardClient({
   const [currentDisplayName, setCurrentDisplayName] = useState(
     system?.displayName || "",
   );
-  const [currentShortName, setCurrentShortName] = useState(
-    system?.shortName || null,
+  const [currentAlias, setCurrentAlias] = useState(system?.alias || null);
+  const [currentDisplayTimezone, setCurrentDisplayTimezone] = useState(
+    system?.displayTimezone || null,
   );
   const [showSystemDropdown, setShowSystemDropdown] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
@@ -446,10 +461,16 @@ export default function DashboardClient({
 
   // Sync local state with data when loaded (unless user has manually updated)
   useEffect(() => {
-    if (data?.displayName && !currentDisplayName) {
-      setCurrentDisplayName(data.displayName);
+    if (data?.system?.displayName && !currentDisplayName) {
+      setCurrentDisplayName(data.system.displayName);
     }
-  }, [data?.displayName, currentDisplayName]);
+  }, [data?.system?.displayName, currentDisplayName]);
+
+  useEffect(() => {
+    if (data?.system?.displayTimezone && !currentDisplayTimezone) {
+      setCurrentDisplayTimezone(data.system.displayTimezone);
+    }
+  }, [data?.system?.displayTimezone, currentDisplayTimezone]);
 
   useEffect(() => {
     // Initial fetch
@@ -881,17 +902,9 @@ export default function DashboardClient({
     router.push("/sign-in");
   };
 
-  const handleUpdateSystemSettings = async (
-    systemId: number,
-    updates: { displayName?: string; shortName?: string | null },
-  ) => {
-    // Update local state immediately (API call was already made by modal)
-    if (updates.displayName !== undefined) {
-      setCurrentDisplayName(updates.displayName);
-    }
-    if (updates.shortName !== undefined) {
-      setCurrentShortName(updates.shortName);
-    }
+  const handleUpdateSystemSettings = async () => {
+    // Refetch data to get latest system settings
+    await fetchData();
   };
 
   // Handle series visibility toggle with special logic
@@ -986,10 +999,8 @@ export default function DashboardClient({
   // Get display name for the system (prefer local state which updates immediately)
   const systemDisplayName =
     currentDisplayName ||
-    data?.displayName ||
-    (systemId
-      ? `System ${data?.systemNumber || systemId}`
-      : "LiveOne Dashboard");
+    data?.system.displayName ||
+    (systemId ? `System ${systemId}` : "LiveOne Dashboard");
 
   return (
     <div className="min-h-screen bg-gray-900">
@@ -1008,8 +1019,8 @@ export default function DashboardClient({
             availableSystems={availableSystems}
             currentSystemId={systemId as string}
             onTestConnection={() => setShowTestConnection(true)}
-            vendorType={data?.vendorType}
-            supportsPolling={data?.supportsPolling}
+            vendorType={data?.system.vendorType}
+            supportsPolling={data?.system.supportsPolling}
             isAdmin={isAdmin}
             systemStatus={system?.status}
             userId={userId}
@@ -1061,7 +1072,7 @@ export default function DashboardClient({
               {systemInfo && (
                 <SystemInfoTooltip
                   systemInfo={systemInfo}
-                  systemNumber={data?.systemNumber || ""}
+                  systemNumber={data?.system.vendorSiteId || ""}
                 />
               )}
               {isAdmin && (
@@ -1106,7 +1117,7 @@ export default function DashboardClient({
                       )}
 
                       {/* Test Connection - Only show for vendors that support polling */}
-                      {data?.supportsPolling && (
+                      {data?.system.supportsPolling && (
                         <button
                           onClick={() => {
                             setShowTestConnection(true);
@@ -1176,8 +1187,8 @@ export default function DashboardClient({
 
         {error &&
           (error === "POINT_READINGS_NO_CHARTS" &&
-          data?.vendorType !== "mondo" &&
-          data?.vendorType !== "composite" ? (
+          data?.system.vendorType !== "mondo" &&
+          data?.system.vendorType !== "composite" ? (
             <div className="bg-blue-900/50 border border-blue-700 text-blue-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
               <AlertTriangle className="w-5 h-5" />
               <span>
@@ -1200,9 +1211,9 @@ export default function DashboardClient({
 
         {(data?.latest ||
           (data &&
-            (data.vendorType === "mondo" ||
-              data.vendorType === "composite" ||
-              data.vendorType === "amber"))) && (
+            (data.system.vendorType === "mondo" ||
+              data.system.vendorType === "composite" ||
+              data.system.vendorType === "amber"))) && (
           <div className="space-y-6">
             {/* Fault Warning
                 TEMPORARILY DISABLED - Needs composite points implementation
@@ -1250,20 +1261,21 @@ export default function DashboardClient({
               )}
 
             {/* Amber Electric Dashboard - Show only Amber card */}
-            {data?.vendorType === "amber" && systemId && (
+            {data?.system.vendorType === "amber" && systemId && (
               <AmberCard
                 systemId={parseInt(systemId)}
-                timezoneOffsetMin={data?.timezoneOffsetMin ?? 600}
+                timezoneOffsetMin={data?.system.timezoneOffsetMin ?? 600}
+                displayTimezone={data?.system.displayTimezone}
               />
             )}
 
             {/* Main Dashboard Grid - Only show for admin or non-removed systems and non-Amber systems */}
             {(isAdmin || system?.status !== "removed") &&
-              data?.vendorType !== "amber" && (
+              data?.system.vendorType !== "amber" && (
                 <div
                   className={
-                    data?.vendorType === "mondo" ||
-                    data?.vendorType === "composite"
+                    data?.system.vendorType === "mondo" ||
+                    data?.system.vendorType === "composite"
                       ? ""
                       : "grid grid-cols-1 lg:grid-cols-3 gap-4"
                   }
@@ -1271,22 +1283,22 @@ export default function DashboardClient({
                   {/* Charts - Full width for mondo/composite, 2/3 width for others */}
                   <div
                     className={
-                      data?.vendorType === "mondo" ||
-                      data?.vendorType === "composite"
+                      data?.system.vendorType === "mondo" ||
+                      data?.system.vendorType === "composite"
                         ? ""
                         : "lg:col-span-2"
                     }
                   >
-                    {data?.vendorType === "mondo" ||
-                    data?.vendorType === "composite" ? (
+                    {data?.system.vendorType === "mondo" ||
+                    data?.system.vendorType === "composite" ? (
                       <>
                         {/* Power Cards - Composite and Mondo systems, horizontal grid at top */}
-                        {(data?.vendorType === "composite" ||
-                          data?.vendorType === "mondo") &&
+                        {(data?.system.vendorType === "composite" ||
+                          data?.system.vendorType === "mondo") &&
                           data.latest && (
                             <SystemPowerCards
                               latest={data.latest}
-                              vendorType={data.vendorType}
+                              vendorType={data.system.vendorType}
                               secondsSinceUpdate={secondsSinceUpdate}
                               getStaleThreshold={getStaleThreshold}
                               showGrid={showGrid}
@@ -1335,7 +1347,7 @@ export default function DashboardClient({
                                             generationChartData;
                                           // Get timezone offset from API data or system prop
                                           const timezoneOffset =
-                                            data?.timezoneOffsetMin ??
+                                            data?.system.timezoneOffsetMin ??
                                             system?.timezoneOffsetMin;
                                           if (!timezoneOffset) {
                                             return "Loading..."; // No timezone data yet
@@ -1662,7 +1674,7 @@ export default function DashboardClient({
                       // For other systems, show the regular energy chart
                       <EnergyChart
                         systemId={parseInt(systemId as string)}
-                        vendorType={data?.vendorType}
+                        vendorType={data?.system.vendorType}
                         className="h-full min-h-[400px]"
                         maxPowerHint={(() => {
                           // Parse solar size (format: "9 kW")
@@ -1701,8 +1713,8 @@ export default function DashboardClient({
 
                   {/* Power Cards - 1/3 width on desktop, horizontal on mobile - Only for systems with latest data (excluding composite/mondo which use top section) */}
                   {data.latest &&
-                    data?.vendorType !== "composite" &&
-                    data?.vendorType !== "mondo" &&
+                    data?.system.vendorType !== "composite" &&
+                    data?.system.vendorType !== "mondo" &&
                     (() => {
                       // Solar card logic: handle different solar point configurations
                       const solarTotal = getPointValue(
@@ -1748,7 +1760,7 @@ export default function DashboardClient({
                             borderColor="border-yellow-700"
                             secondsSinceUpdate={secondsSinceUpdate}
                             staleThresholdSeconds={getStaleThreshold(
-                              data.vendorType,
+                              data.system.vendorType,
                             )}
                             measurementTime={
                               getMeasurementTime(
@@ -1782,7 +1794,7 @@ export default function DashboardClient({
                             borderColor="border-blue-700"
                             secondsSinceUpdate={secondsSinceUpdate}
                             staleThresholdSeconds={getStaleThreshold(
-                              data.vendorType,
+                              data.system.vendorType,
                             )}
                             measurementTime={
                               getMeasurementTime(data.latest, "load/power") ||
@@ -1832,7 +1844,7 @@ export default function DashboardClient({
                                 }
                                 secondsSinceUpdate={secondsSinceUpdate}
                                 staleThresholdSeconds={getStaleThreshold(
-                                  data.vendorType,
+                                  data.system.vendorType,
                                 )}
                                 measurementTime={
                                   getMeasurementTime(
@@ -1882,7 +1894,7 @@ export default function DashboardClient({
                                   }
                                   secondsSinceUpdate={secondsSinceUpdate}
                                   staleThresholdSeconds={getStaleThreshold(
-                                    data.vendorType,
+                                    data.system.vendorType,
                                   )}
                                   measurementTime={
                                     getMeasurementTime(
@@ -1939,8 +1951,8 @@ export default function DashboardClient({
       {showTestConnection && systemId && (
         <TestConnectionModal
           systemId={parseInt(systemId)}
-          displayName={data?.displayName || systemDisplayName}
-          vendorType={data?.vendorType}
+          displayName={data?.system.displayName || systemDisplayName}
+          vendorType={data?.system.vendorType}
           onClose={() => setShowTestConnection(false)}
         />
       )}
@@ -1972,32 +1984,28 @@ export default function DashboardClient({
           isOpen={showViewDataModal}
           onClose={() => setShowViewDataModal(false)}
           systemId={parseInt(systemId)}
-          systemName={data?.displayName || currentDisplayName || "System"}
-          vendorType={data?.vendorType || system.vendorType}
-          vendorSiteId={data?.vendorSiteId || system.vendorSiteId || ""}
+          systemName={
+            data?.system.displayName || currentDisplayName || "System"
+          }
+          vendorType={data?.system.vendorType || system.vendorType}
+          vendorSiteId={data?.system.vendorSiteId || system.vendorSiteId || ""}
           timezoneOffsetMin={
-            data?.timezoneOffsetMin ?? system.timezoneOffsetMin ?? 600
+            data?.system.timezoneOffsetMin ?? system.timezoneOffsetMin ?? 600
           }
         />
       )}
 
       {/* System Settings Dialog */}
-      {system && (
-        <SystemSettingsDialog
-          isOpen={showSystemSettingsDialog}
-          onClose={() => setShowSystemSettingsDialog(false)}
-          system={{
-            systemId: system.id,
-            displayName: currentDisplayName,
-            shortName: currentShortName,
-            vendorType: system.vendorType,
-            metadata: system.metadata,
-            ownerClerkUserId: system.ownerClerkUserId,
-          }}
-          isAdmin={isAdmin}
-          onUpdate={handleUpdateSystemSettings}
-        />
-      )}
+      <SystemSettingsDialog
+        isOpen={showSystemSettingsDialog}
+        onClose={() => setShowSystemSettingsDialog(false)}
+        systemId={system?.id ?? null}
+        vendorType={system?.vendorType}
+        metadata={system?.metadata}
+        ownerClerkUserId={system?.ownerClerkUserId}
+        isAdmin={isAdmin}
+        onUpdate={handleUpdateSystemSettings}
+      />
     </div>
   );
 } // Test comment

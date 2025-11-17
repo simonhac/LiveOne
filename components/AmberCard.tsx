@@ -6,11 +6,12 @@ import {
   getPriceLevel,
   PriceLevel,
 } from "./AmberPriceIndicator";
-import { format } from "date-fns";
+import { formatInTimezone } from "@/lib/date-utils";
 
 interface AmberCardProps {
   systemId: number;
   timezoneOffsetMin: number;
+  displayTimezone?: string | null;
 }
 
 interface TimeSlot {
@@ -27,6 +28,7 @@ interface TimeSlot {
 export default function AmberCard({
   systemId,
   timezoneOffsetMin,
+  displayTimezone,
 }: AmberCardProps) {
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
   const [loading, setLoading] = useState(true);
@@ -137,7 +139,7 @@ export default function AmberCard({
     }
 
     fetchData();
-  }, [systemId]);
+  }, [systemId, displayTimezone]);
 
   if (loading) {
     return (
@@ -184,13 +186,13 @@ export default function AmberCard({
                 const periodStart = new Date(
                   slot.time.getTime() - 30 * 60 * 1000,
                 );
-                const localTime = new Date(
-                  periodStart.getTime() + timezoneOffsetMin * 60 * 1000,
-                );
 
-                // Check if this is midnight in system's local time
-                // Note: localTime has timezone offset baked in, so use format to extract hour
-                const timeStr = format(localTime, "HH:mm");
+                // Check if this is midnight in display timezone
+                const timeStr = formatInTimezone(
+                  periodStart,
+                  displayTimezone!,
+                  "HH:mm",
+                );
                 const isMidnight = timeStr === "00:00";
 
                 return (
@@ -210,7 +212,11 @@ export default function AmberCard({
                           lineHeight: "16px",
                         }}
                       >
-                        {format(localTime, "d MMM")}
+                        {formatInTimezone(
+                          periodStart,
+                          displayTimezone!,
+                          "d MMM",
+                        )}
                       </div>
                     )}
                   </td>
@@ -232,11 +238,6 @@ export default function AmberCard({
                 // Subtract 30 minutes to show period start instead of period end
                 const periodStart = new Date(
                   slot.time.getTime() - 30 * 60 * 1000,
-                );
-
-                // Convert to system's local time
-                const localTime = new Date(
-                  periodStart.getTime() + timezoneOffsetMin * 60 * 1000,
                 );
 
                 return (
@@ -268,7 +269,11 @@ export default function AmberCard({
                           lineHeight: "16px",
                         }}
                       >
-                        {format(localTime, "HH:mm")}
+                        {formatInTimezone(
+                          periodStart,
+                          displayTimezone!,
+                          "HH:mm",
+                        )}
                       </div>
 
                       {/* Price Indicator */}

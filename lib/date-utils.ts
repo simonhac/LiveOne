@@ -611,3 +611,40 @@ export function getNextMinuteBoundary(
 
   return fromDate(next, timezone);
 }
+
+/**
+ * Format a Date in a specific IANA timezone
+ * @param date - JavaScript Date object
+ * @param displayTimezone - IANA timezone string (e.g., "Australia/Melbourne", "Europe/London")
+ * @param formatStr - Format string: "HH:mm" or "d MMM"
+ * @returns Formatted string in the display timezone
+ */
+export function formatInTimezone(
+  date: Date,
+  displayTimezone: string,
+  formatStr: string,
+): string {
+  const zoned = fromDate(date, displayTimezone);
+
+  if (formatStr === "HH:mm") {
+    return `${String(zoned.hour).padStart(2, "0")}:${String(zoned.minute).padStart(2, "0")}`;
+  } else if (formatStr === "d MMM") {
+    const months = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
+    return `${zoned.day} ${months[zoned.month - 1]}`;
+  }
+
+  throw new Error(`Unsupported format string: ${formatStr}`);
+}

@@ -7,42 +7,43 @@ import { X, Shield } from "lucide-react";
 import PointsTab from "./PointsTab";
 import CompositeTab from "./CompositeTab";
 import AdminTab from "./AdminTab";
+import { TIMEZONE_GROUPS } from "@/lib/timezones";
 
 interface SystemSettingsDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  system: {
-    systemId: number;
-    displayName: string;
-    shortName: string | null;
-    vendorType: string;
-    metadata?: any;
-    ownerClerkUserId?: string;
-  } | null;
+  systemId: number | null;
+  vendorType?: string;
+  metadata?: any;
+  ownerClerkUserId?: string;
   isAdmin?: boolean;
-  onUpdate?: (
-    systemId: number,
-    updates: { displayName?: string; shortName?: string | null },
-  ) => Promise<void>;
+  onUpdate?: () => Promise<void>;
 }
 
 export default function SystemSettingsDialog({
   isOpen,
   onClose,
-  system,
+  systemId,
+  vendorType,
+  metadata,
+  ownerClerkUserId,
   isAdmin = false,
   onUpdate,
 }: SystemSettingsDialogProps) {
   const router = useRouter();
-  const [editedName, setEditedName] = useState(system?.displayName || "");
-  const [editedShortName, setEditedShortName] = useState(
-    system?.shortName || "",
-  );
+  const [isLoading, setIsLoading] = useState(false);
+  const [displayName, setDisplayName] = useState("");
+  const [alias, setAlias] = useState("");
+  const [displayTimezone, setDisplayTimezone] = useState("");
+  const [editedName, setEditedName] = useState("");
+  const [editedShortName, setEditedShortName] = useState("");
+  const [editedTimezone, setEditedTimezone] = useState("");
   const [isNameDirty, setIsNameDirty] = useState(false);
   const [isShortNameDirty, setIsShortNameDirty] = useState(false);
+  const [isTimezoneDirty, setIsTimezoneDirty] = useState(false);
   const [isCompositeDirty, setIsCompositeDirty] = useState(false);
   const [isAdminDirty, setIsAdminDirty] = useState(false);
-  const [shortNameError, setShortNameError] = useState<string | null>(null);
+  const [aliasError, setShortNameError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<
     "general" | "points" | "composite" | "admin"
@@ -50,22 +51,61 @@ export default function SystemSettingsDialog({
   const compositeSaveRef = useRef<(() => Promise<any>) | null>(null);
   const adminSaveRef = useRef<(() => Promise<any>) | null>(null);
 
-  // Reset form when modal opens or system ID changes (but not when system data updates)
+  // Fetch settings when modal opens
   useEffect(() => {
-    if (isOpen) {
-      // Initialize form with current system data
-      setEditedName(system?.displayName || "");
-      setEditedShortName(system?.shortName || "");
-      setIsNameDirty(false);
-      setIsShortNameDirty(false);
-      setIsCompositeDirty(false);
-      setIsAdminDirty(false);
-      setShortNameError(null);
-    } else {
+    if (!isOpen || !systemId) {
       // Reset tab to general when modal closes (prevents flash on next open)
-      setActiveTab("general");
+      if (!isOpen) {
+        setActiveTab("general");
+      }
+      return;
     }
-  }, [isOpen, system?.systemId, system?.displayName, system?.shortName]);
+
+    const fetchSettings = async () => {
+      setIsLoading(true);
+      try {
+        const response = await fetch(`/api/admin/systems/${systemId}/settings`);
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch system settings");
+        }
+
+        const data = await response.json();
+
+        if (data.success && data.settings) {
+          const {
+            displayName: fetchedName,
+            alias: fetchedAlias,
+            displayTimezone: fetchedTimezone,
+          } = data.settings;
+
+          // Store original values
+          setDisplayName(fetchedName || "");
+          setAlias(fetchedAlias || "");
+          setDisplayTimezone(fetchedTimezone || "");
+
+          // Initialize edited values
+          setEditedName(fetchedName || "");
+          setEditedShortName(fetchedAlias || "");
+          setEditedTimezone(fetchedTimezone || "");
+
+          // Reset dirty flags
+          setIsNameDirty(false);
+          setIsShortNameDirty(false);
+          setIsTimezoneDirty(false);
+          setIsCompositeDirty(false);
+          setIsAdminDirty(false);
+          setShortNameError(null);
+        }
+      } catch (error) {
+        console.error("Error fetching system settings:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchSettings();
+  }, [isOpen, systemId]);
 
   const validateShortName = (value: string): string | null => {
     if (!value) return null; // Empty is valid (optional field)
@@ -80,38 +120,49 @@ export default function SystemSettingsDialog({
 
   const handleNameChange = (value: string) => {
     setEditedName(value);
-    setIsNameDirty(value !== system?.displayName);
+    setIsNameDirty(value !== displayName);
   };
 
   const handleShortNameChange = (value: string) => {
     setEditedShortName(value);
-    setIsShortNameDirty(value !== (system?.shortName || ""));
+    setIsShortNameDirty(value !== alias);
     setShortNameError(validateShortName(value));
   };
 
+  const handleTimezoneChange = (value: string) => {
+    setEditedTimezone(value);
+    setIsTimezoneDirty(value !== displayTimezone);
+  };
+
   const hasChanges =
-    isNameDirty || isShortNameDirty || isCompositeDirty || isAdminDirty;
-  const hasGeneralChanges = isNameDirty || isShortNameDirty;
+    isNameDirty ||
+    isShortNameDirty ||
+    isTimezoneDirty ||
+    isCompositeDirty ||
+    isAdminDirty;
+  const hasGeneralChanges = isNameDirty || isShortNameDirty || isTimezoneDirty;
 
   const handleSave = useCallback(async () => {
-    if (!hasChanges || !system || shortNameError) return;
+    if (!hasChanges || !systemId || aliasError) return;
 
     setIsSaving(true);
     try {
-      // Save regular settings (displayName, shortName)
-      if (isNameDirty || isShortNameDirty) {
+      // Save regular settings (displayName, alias, displayTimezone)
+      if (isNameDirty || isShortNameDirty || isTimezoneDirty) {
         const settings: {
           displayName?: string;
-          shortName?: string | null;
+          alias?: string | null;
+          displayTimezone?: string | null;
         } = {};
 
         if (isNameDirty) settings.displayName = editedName;
-        if (isShortNameDirty) settings.shortName = editedShortName || null;
+        if (isShortNameDirty) settings.alias = editedShortName || null;
+        if (isTimezoneDirty) settings.displayTimezone = editedTimezone || null;
 
         console.log("Settings to save:", settings);
 
         const response = await fetch(
-          `/api/admin/systems/${system.systemId}/settings`,
+          `/api/admin/systems/${systemId}/settings`,
           {
             method: "PATCH",
             headers: {
@@ -126,15 +177,6 @@ export default function SystemSettingsDialog({
         if (!response.ok) {
           throw new Error(data.error || "Failed to update system settings");
         }
-
-        // Call onUpdate to update parent component's local state
-        if (onUpdate && (isNameDirty || isShortNameDirty)) {
-          const updates: { displayName?: string; shortName?: string | null } =
-            {};
-          if (isNameDirty) updates.displayName = editedName;
-          if (isShortNameDirty) updates.shortName = editedShortName || null;
-          await onUpdate(system.systemId, updates);
-        }
       }
 
       // Save composite configuration separately
@@ -144,7 +186,7 @@ export default function SystemSettingsDialog({
         console.log("Composite mappings to save:", compositeMappings);
 
         const response = await fetch(
-          `/api/admin/systems/${system.systemId}/composite-config`,
+          `/api/admin/systems/${systemId}/composite-config`,
           {
             method: "PATCH",
             headers: {
@@ -170,7 +212,7 @@ export default function SystemSettingsDialog({
         console.log("Admin data to save:", adminData);
 
         const response = await fetch(
-          `/api/admin/systems/${system.systemId}/admin-settings`,
+          `/api/admin/systems/${systemId}/admin-settings`,
           {
             method: "PATCH",
             headers: {
@@ -190,14 +232,17 @@ export default function SystemSettingsDialog({
       // Reset dirty flags
       setIsNameDirty(false);
       setIsShortNameDirty(false);
+      setIsTimezoneDirty(false);
       setIsCompositeDirty(false);
       setIsAdminDirty(false);
 
-      // Close modal first to show the updated state immediately
+      // Close modal
       onClose();
 
-      // Refresh the page to show updated data
-      router.refresh();
+      // Call onUpdate to trigger dashboard data refresh
+      if (onUpdate) {
+        await onUpdate();
+      }
     } catch (error) {
       console.error("Failed to update system settings:", error);
       // Check if it's a uniqueness error
@@ -209,27 +254,30 @@ export default function SystemSettingsDialog({
     }
   }, [
     hasChanges,
-    system,
-    shortNameError,
+    systemId,
+    aliasError,
     isNameDirty,
     isShortNameDirty,
+    isTimezoneDirty,
     editedName,
     editedShortName,
+    editedTimezone,
     onUpdate,
     isCompositeDirty,
     isAdminDirty,
     onClose,
-    router,
   ]);
 
   const handleCancel = useCallback(() => {
-    setEditedName(system?.displayName || "");
-    setEditedShortName(system?.shortName || "");
+    setEditedName(displayName);
+    setEditedShortName(alias);
+    setEditedTimezone(displayTimezone);
     setIsNameDirty(false);
     setIsShortNameDirty(false);
+    setIsTimezoneDirty(false);
     setShortNameError(null);
     onClose();
-  }, [system?.displayName, system?.shortName, onClose]);
+  }, [displayName, alias, displayTimezone, onClose]);
 
   // Prevent body scroll when modal is open
   useEffect(() => {
@@ -255,12 +303,7 @@ export default function SystemSettingsDialog({
       if (e.key === "Escape") {
         e.preventDefault();
         handleCancel();
-      } else if (
-        e.key === "Enter" &&
-        hasChanges &&
-        !isSaving &&
-        !shortNameError
-      ) {
+      } else if (e.key === "Enter" && hasChanges && !isSaving && !aliasError) {
         e.preventDefault();
         handleSave();
       }
@@ -268,9 +311,9 @@ export default function SystemSettingsDialog({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, hasChanges, isSaving, shortNameError, handleCancel, handleSave]);
+  }, [isOpen, hasChanges, isSaving, aliasError, handleCancel, handleSave]);
 
-  if (!isOpen || !system || typeof document === "undefined") return null;
+  if (!isOpen || !systemId || typeof document === "undefined") return null;
 
   return createPortal(
     <>
@@ -283,7 +326,7 @@ export default function SystemSettingsDialog({
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
             <h2 className="text-lg font-medium text-gray-100">
-              {system.displayName} Settings
+              {isLoading ? "Loading..." : `${displayName} Settings`}
             </h2>
             <button
               onClick={onClose}
@@ -309,7 +352,7 @@ export default function SystemSettingsDialog({
                   <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
                 )}
               </button>
-              {system.vendorType !== "composite" && (
+              {vendorType !== "composite" && (
                 <button
                   onClick={() => setActiveTab("points")}
                   className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
@@ -321,7 +364,7 @@ export default function SystemSettingsDialog({
                   Points
                 </button>
               )}
-              {system.vendorType === "composite" && (
+              {vendorType === "composite" && (
                 <button
                   onClick={() => setActiveTab("composite")}
                   className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
@@ -357,91 +400,129 @@ export default function SystemSettingsDialog({
 
           {/* Content */}
           <div className="px-6 py-4 space-y-4 min-h-[500px] max-h-[500px] overflow-y-auto">
-            {/* General Tab Content */}
-            <div className={activeTab === "general" ? "" : "hidden"}>
-              {/* Name field */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Display Name
-                </label>
-                <input
-                  type="text"
-                  value={editedName}
-                  onChange={(e) => handleNameChange(e.target.value)}
-                  onBlur={(e) => {
-                    const withoutTrailingSpaces = e.target.value.replace(
-                      /\s+$/,
-                      "",
-                    );
-                    if (withoutTrailingSpaces !== e.target.value) {
-                      handleNameChange(withoutTrailingSpaces);
-                    }
-                  }}
-                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={isSaving}
-                />
+            {isLoading ? (
+              <div className="flex items-center justify-center h-full">
+                <div className="text-gray-400">Loading settings...</div>
               </div>
+            ) : (
+              <>
+                {/* General Tab Content */}
+                <div className={activeTab === "general" ? "" : "hidden"}>
+                  {/* Name field */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Display Name
+                    </label>
+                    <input
+                      type="text"
+                      value={editedName}
+                      onChange={(e) => handleNameChange(e.target.value)}
+                      onBlur={(e) => {
+                        const withoutTrailingSpaces = e.target.value.replace(
+                          /\s+$/,
+                          "",
+                        );
+                        if (withoutTrailingSpaces !== e.target.value) {
+                          handleNameChange(withoutTrailingSpaces);
+                        }
+                      }}
+                      className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      disabled={isSaving}
+                    />
+                  </div>
 
-              {/* Short Name field */}
-              <div className="mt-4">
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Short Name (optional)
-                </label>
-                <p className="text-xs text-gray-400 mb-2">
-                  Used as an alias in URLs and series names. Only letters,
-                  digits, and underscores and must contain at least one
-                  non-numeric character. Must be unique across all systems.
-                </p>
-                <input
-                  type="text"
-                  value={editedShortName}
-                  onChange={(e) => handleShortNameChange(e.target.value)}
-                  placeholder="e.g., racv_kinkora"
-                  className={`w-full px-3 py-2 bg-gray-900 border ${
-                    shortNameError ? "border-red-500" : "border-gray-700"
-                  } rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
-                  disabled={isSaving}
-                />
-                {shortNameError && (
-                  <p className="text-xs text-red-400 mt-1">{shortNameError}</p>
+                  {/* Short Name field */}
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Alias (optional)
+                    </label>
+                    <p className="text-xs text-gray-400 mb-2">
+                      Used as an alias in URLs. Aliases must be unique across
+                      all of the owner&apos;s systems, and contain only letters,
+                      digits, and underscores and at least one non-numeric
+                      character.
+                    </p>
+                    <input
+                      type="text"
+                      value={editedShortName}
+                      onChange={(e) => handleShortNameChange(e.target.value)}
+                      placeholder="e.g., racv_kinkora"
+                      className={`w-full px-3 py-2 bg-gray-900 border ${
+                        aliasError ? "border-red-500" : "border-gray-700"
+                      } rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
+                      disabled={isSaving}
+                    />
+                    {aliasError && (
+                      <p className="text-xs text-red-400 mt-1">{aliasError}</p>
+                    )}
+                  </div>
+
+                  {/* Display Timezone field */}
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Display Timezone
+                    </label>
+                    <p className="text-xs text-gray-400 mb-2">
+                      Timezone used for all date/time displayed to users.
+                    </p>
+                    <select
+                      value={editedTimezone || ""}
+                      onChange={(e) => handleTimezoneChange(e.target.value)}
+                      className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      disabled={isSaving}
+                    >
+                      {!editedTimezone && (
+                        <option value="">Select a timezone...</option>
+                      )}
+                      {TIMEZONE_GROUPS.map((group) => (
+                        <optgroup key={group.region} label={group.region}>
+                          {group.timezones.map((tz) => (
+                            <option key={tz.value} value={tz.value}>
+                              {tz.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Points Tab Content - Only for non-composite systems */}
+                {vendorType !== "composite" && (
+                  <div className={activeTab === "points" ? "" : "hidden"}>
+                    <PointsTab systemId={systemId} shouldLoad={isOpen} />
+                  </div>
                 )}
-              </div>
-            </div>
 
-            {/* Points Tab Content - Only for non-composite systems */}
-            {system.vendorType !== "composite" && (
-              <div className={activeTab === "points" ? "" : "hidden"}>
-                <PointsTab systemId={system.systemId} shouldLoad={isOpen} />
-              </div>
-            )}
+                {/* Composite Tab Content */}
+                {vendorType === "composite" && (
+                  <div className={activeTab === "composite" ? "" : "hidden"}>
+                    <CompositeTab
+                      systemId={systemId}
+                      shouldLoad={isOpen}
+                      onDirtyChange={setIsCompositeDirty}
+                      onSaveFunctionReady={(fn) => {
+                        compositeSaveRef.current = fn;
+                      }}
+                      ownerUserId={ownerClerkUserId}
+                    />
+                  </div>
+                )}
 
-            {/* Composite Tab Content */}
-            {system.vendorType === "composite" && (
-              <div className={activeTab === "composite" ? "" : "hidden"}>
-                <CompositeTab
-                  systemId={system.systemId}
-                  shouldLoad={isOpen}
-                  onDirtyChange={setIsCompositeDirty}
-                  onSaveFunctionReady={(fn) => {
-                    compositeSaveRef.current = fn;
-                  }}
-                  ownerUserId={system.ownerClerkUserId}
-                />
-              </div>
-            )}
-
-            {/* Admin Tab Content */}
-            {isAdmin && (
-              <div className={activeTab === "admin" ? "" : "hidden"}>
-                <AdminTab
-                  systemId={system.systemId}
-                  shouldLoad={isOpen}
-                  onDirtyChange={setIsAdminDirty}
-                  onSaveFunctionReady={(fn) => {
-                    adminSaveRef.current = fn;
-                  }}
-                />
-              </div>
+                {/* Admin Tab Content */}
+                {isAdmin && (
+                  <div className={activeTab === "admin" ? "" : "hidden"}>
+                    <AdminTab
+                      systemId={systemId}
+                      shouldLoad={isOpen}
+                      onDirtyChange={setIsAdminDirty}
+                      onSaveFunctionReady={(fn) => {
+                        adminSaveRef.current = fn;
+                      }}
+                    />
+                  </div>
+                )}
+              </>
             )}
           </div>
 
@@ -456,7 +537,7 @@ export default function SystemSettingsDialog({
             </button>
             <button
               onClick={handleSave}
-              disabled={!hasChanges || isSaving || !!shortNameError}
+              disabled={!hasChanges || isSaving || !!aliasError}
               className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-w-[100px]"
             >
               {isSaving ? "Saving..." : "Save"}
