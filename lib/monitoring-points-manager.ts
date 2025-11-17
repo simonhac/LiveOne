@@ -287,6 +287,7 @@ export async function insertPointReadingsBatch(
           val.value,
           val.measurementTime,
           point.metricUnit,
+          point.name, // displayName if set, otherwise defaultName
         );
       }
       return Promise.resolve();
@@ -473,6 +474,7 @@ export async function insertPointReadingsDirectTo5m(
             valueToCache,
             agg.intervalEnd,
             point.metricUnit,
+            point.name, // displayName if set, otherwise defaultName
           );
         }
       }

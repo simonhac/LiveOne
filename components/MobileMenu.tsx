@@ -240,28 +240,42 @@ export default function MobileMenu({
                   <p className="text-white font-medium text-sm">Settings</p>
                 </div>
 
-                {/* View Data - Only show for admin users and non-composite systems */}
-                {onViewData && isAdmin && vendorType !== "composite" && (
+                {/* View Data - Show for admin users, disabled for composite systems */}
+                {onViewData && isAdmin && (
                   <button
                     onClick={() => {
-                      setIsOpen(false);
-                      onViewData();
+                      if (vendorType !== "composite") {
+                        setIsOpen(false);
+                        onViewData();
+                      }
                     }}
-                    className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
+                    disabled={vendorType === "composite"}
+                    className={`w-full p-3 rounded text-left text-sm flex items-center gap-2 ${
+                      vendorType !== "composite"
+                        ? "bg-gray-700/50 hover:bg-gray-700 text-white transition-colors cursor-pointer"
+                        : "bg-gray-800/50 text-gray-500 cursor-not-allowed opacity-70"
+                    }`}
                   >
                     <Database className="w-4 h-4" />
                     View Data…
                   </button>
                 )}
 
-                {/* Poll Now - Only show for admin users and vendors that support polling */}
-                {onPollNow && isAdmin && supportsPolling && (
+                {/* Poll Now - Show for admin users, disabled for systems that don't support polling */}
+                {onPollNow && isAdmin && (
                   <button
                     onClick={() => {
-                      setIsOpen(false);
-                      onPollNow();
+                      if (supportsPolling) {
+                        setIsOpen(false);
+                        onPollNow();
+                      }
                     }}
-                    className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
+                    disabled={!supportsPolling}
+                    className={`w-full p-3 rounded text-left text-sm flex items-center gap-2 ${
+                      supportsPolling
+                        ? "bg-gray-700/50 hover:bg-gray-700 text-white transition-colors cursor-pointer"
+                        : "bg-gray-800/50 text-gray-500 cursor-not-allowed opacity-70"
+                    }`}
                   >
                     <RefreshCw className="w-4 h-4" />
                     Poll Now…

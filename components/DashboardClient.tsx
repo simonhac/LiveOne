@@ -1104,32 +1104,44 @@ export default function DashboardClient({
 
                   {showSettingsDropdown && (
                     <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
-                      {/* View Data - Only show for admin users and non-composite systems */}
-                      {isAdmin && system?.vendorType !== "composite" && (
+                      {/* View Data - Show for admin users, disabled for composite systems */}
+                      {isAdmin && (
                         <>
                           <button
                             onClick={() => {
-                              setShowViewDataModal(true);
-                              setShowSettingsDropdown(false);
+                              if (data?.system.vendorType !== "composite") {
+                                setShowViewDataModal(true);
+                                setShowSettingsDropdown(false);
+                              }
                             }}
-                            className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
+                            disabled={data?.system.vendorType === "composite"}
+                            className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 ${
+                              data?.system.vendorType !== "composite"
+                                ? "text-gray-300 hover:bg-gray-700 hover:text-white transition-colors cursor-pointer"
+                                : "text-gray-500 cursor-not-allowed opacity-70"
+                            }`}
                           >
                             <Database className="w-4 h-4" />
                             View Data…
                           </button>
-                          {/* Poll Now - Only show for admin users and vendors that support polling */}
-                          {data?.system.supportsPolling && (
-                            <button
-                              onClick={() => {
+                          {/* Poll Now - Always show, disabled for systems that don't support polling */}
+                          <button
+                            onClick={() => {
+                              if (data?.system.supportsPolling) {
                                 setShowPollNow(true);
                                 setShowSettingsDropdown(false);
-                              }}
-                              className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
-                            >
-                              <RefreshCw className="w-4 h-4" />
-                              Poll Now…
-                            </button>
-                          )}
+                              }
+                            }}
+                            disabled={!data?.system.supportsPolling}
+                            className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 ${
+                              data?.system.supportsPolling
+                                ? "text-gray-300 hover:bg-gray-700 hover:text-white transition-colors cursor-pointer"
+                                : "text-gray-500 cursor-not-allowed opacity-70"
+                            }`}
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                            Poll Now…
+                          </button>
                           <div className="border-t border-gray-700 my-1"></div>
                         </>
                       )}

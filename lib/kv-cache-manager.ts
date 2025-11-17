@@ -13,6 +13,7 @@ export interface LatestPointValue {
   measurementTimeMs: number; // Unix timestamp in milliseconds
   receivedTimeMs: number; // Unix timestamp in milliseconds
   metricUnit: string; // Unit of measurement (e.g., "W", "kWh", "%")
+  displayName: string; // Display name from point_info
 }
 
 /**
@@ -62,6 +63,7 @@ function getSubscriptionsKey(systemId: number): string {
  * @param value - Latest value
  * @param measurementTimeMs - Unix timestamp in milliseconds when value was measured
  * @param metricUnit - Unit of measurement (e.g., "W", "kWh", "%")
+ * @param displayName - Display name from point_info
  */
 export async function updateLatestPointValue(
   systemId: number,
@@ -70,6 +72,7 @@ export async function updateLatestPointValue(
   value: number,
   measurementTimeMs: number,
   metricUnit: string,
+  displayName: string,
 ): Promise<void> {
   const receivedTimeMs = Date.now();
 
@@ -78,6 +81,7 @@ export async function updateLatestPointValue(
     measurementTimeMs,
     receivedTimeMs,
     metricUnit,
+    displayName,
   };
 
   // Update source system's cache

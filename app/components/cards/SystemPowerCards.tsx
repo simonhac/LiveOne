@@ -4,7 +4,7 @@ import React from "react";
 import PowerCard from "@/components/PowerCard";
 import { parsePath } from "@/components/SitePowerChart";
 import { LOAD_LABELS } from "@/lib/chart-colors";
-import type { LatestPointValues } from "@/lib/types/api";
+import type { LatestPointValues, LatestPointValue } from "@/lib/types/api";
 import { Sun, Home, Battery, Zap } from "lucide-react";
 
 interface SystemPowerCardsProps {
@@ -21,29 +21,168 @@ interface LoadPoint {
 }
 
 /**
+ * Synthesize rest of house load point from master minus child loads
+ * Creates a LatestPointValue with timestamp = max of master + all child loads
+ */
+function synthesizeRestOfHouse(
+  latest: LatestPointValues,
+): LatestPointValue | null {
+  // Get master load
+  const masterLoad = latest["load/power"];
+  if (!masterLoad) {
+    return null;
+  }
+
+  // Find all child loads (paths like "load.hvac/power", "load.pool/power")
+  const childLoads: {
+    value: number;
+    measurementTime: Date;
+    receivedTime: Date;
+  }[] = [];
+  for (const [path, point] of Object.entries(latest)) {
+    if (
+      path.startsWith("load.") &&
+      path.endsWith("/power") &&
+      point.value !== null
+    ) {
+      childLoads.push({
+        value: point.value,
+        measurementTime: point.measurementTime,
+        receivedTime: point.receivedTime,
+      });
+    }
+  }
+
+  // Only calculate rest of house if we have child loads
+  if (childLoads.length === 0) {
+    return null;
+  }
+
+  // Calculate rest of house value
+  const childSum = childLoads.reduce((sum, load) => sum + load.value, 0);
+  const restOfHouseValue = Math.max(0, masterLoad.value - childSum);
+
+  // Only create rest of house if > 0
+  if (restOfHouseValue <= 0) {
+    return null;
+  }
+
+  // Find most recent measurementTime from master and all child loads
+  const maxMeasurementTime = childLoads.reduce(
+    (max, child) => (child.measurementTime > max ? child.measurementTime : max),
+    masterLoad.measurementTime,
+  );
+
+  // Find most recent receivedTime from master and all child loads
+  const maxReceivedTime = childLoads.reduce(
+    (max, child) => (child.receivedTime > max ? child.receivedTime : max),
+    masterLoad.receivedTime,
+  );
+
+  return {
+    value: restOfHouseValue,
+    measurementTime: maxMeasurementTime,
+    receivedTime: maxReceivedTime,
+    metricUnit: "W",
+    displayName: "Other",
+  };
+}
+
+/**
+ * Synthesize master load point from energy balance if it doesn't exist
+ * Creates a LatestPointValue with proper timestamp from source points
+ */
+function synthesizeMasterLoad(
+  latest: LatestPointValues,
+): LatestPointValue | null {
+  // Only synthesize if master load doesn't already exist
+  if (latest["load/power"]) {
+    return null;
+  }
+
+  // Helper to get point value
+  const getValue = (path: string): number => {
+    const point = latest[path];
+    return point?.value ?? 0;
+  };
+
+  // Helper to get measurement time
+  const getTime = (path: string): Date | null => {
+    const point = latest[path];
+    return point?.measurementTime ?? null;
+  };
+
+  // Get generation (try source.solar/power first, fallback to sum of local+remote)
+  let generation = getValue("source.solar/power");
+  if (generation === 0) {
+    generation =
+      getValue("source.solar.local/power") +
+      getValue("source.solar.remote/power");
+  }
+
+  const batteryPower = getValue("bidi.battery/power");
+  const gridPower = getValue("bidi.grid/power");
+
+  // Only synthesize if we have at least one source of data
+  if (generation === 0 && batteryPower === 0 && gridPower === 0) {
+    return null;
+  }
+
+  // Calculate synthesized load: Solar + Battery + Grid = Load
+  // Sign conventions: Battery positive = discharge, Grid positive = import
+  const synthesizedValue = Math.max(0, generation + batteryPower + gridPower);
+
+  // Find most recent timestamp from all source points
+  const sourcePaths = [
+    "source.solar/power",
+    "source.solar.local/power",
+    "source.solar.remote/power",
+    "bidi.battery/power",
+    "bidi.grid/power",
+  ];
+
+  let maxTime: Date | null = null;
+  for (const path of sourcePaths) {
+    const time = getTime(path);
+    if (time && (!maxTime || time > maxTime)) {
+      maxTime = time;
+    }
+  }
+
+  // If no timestamp found, use current time
+  if (!maxTime) {
+    maxTime = new Date();
+  }
+
+  return {
+    value: synthesizedValue,
+    measurementTime: maxTime,
+    receivedTime: new Date(),
+    metricUnit: "W",
+    displayName: "Load",
+  };
+}
+
+/**
  * Calculate all load values including master, children, and rest-of-house
  *
  * Returns array of LoadPoints with standardized paths (format: type/power).
  * Master load has path "load/power", child loads keep original paths like "load.hvac/power",
  * and rest of house has path "load.OTHER/power".
  *
- * Three calculation cases (matching site data processor logic):
+ * Note: Expects master load to exist in latest (either real or synthesized).
+ * Call synthesizeMasterLoad() first if needed.
+ *
+ * Two calculation cases:
  *
  * Case 1: Master load WITH child loads
- * Uses actual master value from "load/power" point. Children come from "load.subtype/power" points.
+ * Uses master value from "load/power" point. Children come from "load.subtype/power" points.
  * Rest of House equals master minus sum of children. Total Load for display is the master value.
  * Returns array with master, all children, and restOfHouse (if greater than 0).
  *
  * Case 2: Master load WITHOUT child loads
- * Uses actual master value from "load/power" point. No children exist, so no rest-of-house calculation.
+ * Uses master value from "load/power" point. No children exist, so no rest-of-house calculation.
  * Total Load is the master value. Returns array with just the master.
- *
- * Case 3: Child loads WITHOUT master load (sources-based calculation)
- * Synthesizes total load from energy sources: generation plus grid import plus battery discharge.
- * Grid positive means importing (adds to load), battery negative means discharging (adds to load).
- * Formula: totalLoad = generation + max(0, grid) - min(0, battery)
- * Children come from "load.subtype/power" points. Rest of House equals synthesized total minus
- * sum of children. Returns array with synthesized total, all children, and restOfHouse (if greater than 0).
  */
 function calculateAllLoads(latest: LatestPointValues): LoadPoint[] {
   let masterLoad: number | null = null;
@@ -125,50 +264,6 @@ function calculateAllLoads(latest: LatestPointValues): LoadPoint[] {
       value: masterLoad,
       label: "Total Load",
     });
-  } else if (masterLoad === null && childLoads.length > 0) {
-    // Case 3: Child loads WITHOUT master load
-    // Synthesize total load from energy balance: Solar + Battery + Grid = Load
-    // Sign conventions for bidirectional points:
-    // - Battery: positive = discharging (source), negative = charging (sink)
-    // - Grid: positive = importing (source), negative = exporting (sink)
-
-    // Get generation (try source.solar/power first, fallback to sum of local+remote)
-    let generation = getPointValue("source.solar/power");
-    if (generation === 0) {
-      generation =
-        getPointValue("source.solar.local/power") +
-        getPointValue("source.solar.remote/power");
-    }
-
-    const batteryPower = getPointValue("bidi.battery/power");
-    const gridPower = getPointValue("bidi.grid/power");
-
-    // With signed bidirectional values, load is simply the sum of sources
-    // Example: Solar=0W, Battery=+677W (discharge), Grid=-7W (export) → Load=670W
-    const synthesizedMaster = Math.max(
-      0,
-      generation + batteryPower + gridPower,
-    );
-
-    allLoads.push({
-      path: "load/power",
-      value: synthesizedMaster,
-      label: "Total Load",
-    });
-
-    allLoads.push(...childLoads);
-
-    // Calculate rest-of-house from synthesized master
-    const childLoadsSum = childLoads.reduce((sum, load) => sum + load.value, 0);
-    const restOfHouse = Math.max(0, synthesizedMaster - childLoadsSum);
-
-    if (restOfHouse > 0) {
-      allLoads.push({
-        path: "load.OTHER/power",
-        value: restOfHouse,
-        label: "Rest of House",
-      });
-    }
   }
 
   // Log the result
@@ -204,6 +299,32 @@ export default function SystemPowerCards({
     return point ? point.measurementTime : null;
   };
 
+  // Synthesize master load and rest of house if needed
+  // This creates LatestPointValue objects with proper timestamps
+  const enrichedLatest = React.useMemo(() => {
+    let enriched = { ...latest };
+
+    // First synthesize master load if needed
+    const synthesizedLoad = synthesizeMasterLoad(enriched);
+    if (synthesizedLoad) {
+      enriched = {
+        ...enriched,
+        "load/power": synthesizedLoad,
+      };
+    }
+
+    // Then synthesize rest of house if applicable
+    const synthesizedRestOfHouse = synthesizeRestOfHouse(enriched);
+    if (synthesizedRestOfHouse) {
+      enriched = {
+        ...enriched,
+        "load.OTHER/power": synthesizedRestOfHouse,
+      };
+    }
+
+    return enriched;
+  }, [latest]);
+
   // Solar card logic: handle different solar point configurations
   const solarTotal = getPointValue("source.solar/power");
   const solarLocal = getPointValue("source.solar.local/power");
@@ -228,11 +349,11 @@ export default function SystemPowerCards({
   const showBreakdown =
     (hasTotal && hasBothChildren) || (!hasTotal && hasBothChildren);
 
-  // Calculate all loads using the extracted function (memoized to avoid recalculating on every render)
-  // Use JSON.stringify for stable dependency since `latest` object reference changes on every data fetch
-  const latestJson = JSON.stringify(latest);
+  // Calculate all loads using enriched latest (with synthesized load if needed)
+  // Use JSON.stringify for stable dependency since object reference changes on every data fetch
+  const latestJson = JSON.stringify(enrichedLatest);
   const allLoads = React.useMemo(
-    () => calculateAllLoads(latest),
+    () => calculateAllLoads(enrichedLatest),
     [latestJson], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
@@ -251,6 +372,7 @@ export default function SystemPowerCards({
 
   // Get the most recent measurement time across all load points
   // For composite systems, child loads may have different timestamps
+  // For synthesized loads (Case 3/4), also check source point timestamps
   const loadMeasurementTime = React.useMemo(() => {
     let maxTime: Date | null = null;
 
@@ -259,6 +381,25 @@ export default function SystemPowerCards({
       const time = getMeasurementTime(load.path);
       if (time && (!maxTime || time > maxTime)) {
         maxTime = time;
+      }
+    }
+
+    // If load was synthesized (no actual "load/power" point exists),
+    // also check timestamps from source points used in calculation
+    if (!latest["load/power"]) {
+      const sourcePaths = [
+        "source.solar/power",
+        "source.solar.local/power",
+        "source.solar.remote/power",
+        "bidi.battery/power",
+        "bidi.grid/power",
+      ];
+
+      for (const path of sourcePaths) {
+        const time = getMeasurementTime(path);
+        if (time && (!maxTime || time > maxTime)) {
+          maxTime = time;
+        }
       }
     }
 

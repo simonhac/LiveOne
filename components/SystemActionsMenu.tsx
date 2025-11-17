@@ -128,18 +128,22 @@ export default function SystemActionsMenu({
               opacity: isPositioned ? 1 : 0,
             }}
           >
-            {/* View Data - Available for all systems except composite */}
-            {onViewData && vendorType !== "composite" && (
+            {/* View Data - Available for all systems, disabled for composite */}
+            {onViewData && (
               <button
-                onClick={() => handleMenuClick(onViewData)}
-                className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+                onClick={() =>
+                  vendorType !== "composite" && handleMenuClick(onViewData)
+                }
+                disabled={vendorType === "composite"}
+                className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 ${
+                  vendorType !== "composite"
+                    ? "text-gray-300 hover:bg-gray-700 hover:text-white cursor-pointer"
+                    : "text-gray-500 cursor-not-allowed opacity-70"
+                }`}
               >
                 <Database className="w-4 h-4" />
                 View Data…
               </button>
-            )}
-            {onViewData && vendorType !== "composite" && (
-              <div className="border-t border-gray-700 my-1"></div>
             )}
             {/* Test Connection - Only show for vendors that support polling */}
             {supportsPolling && (
@@ -151,11 +155,16 @@ export default function SystemActionsMenu({
                 Test Connection
               </button>
             )}
-            {/* Poll Now - Only show for vendors that support polling */}
-            {supportsPolling && onPollNow && (
+            {/* Poll Now - Always show if available, disabled for systems that don't support polling */}
+            {onPollNow && (
               <button
-                onClick={() => handleMenuClick(onPollNow)}
-                className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+                onClick={() => supportsPolling && handleMenuClick(onPollNow)}
+                disabled={!supportsPolling}
+                className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 ${
+                  supportsPolling
+                    ? "text-gray-300 hover:bg-gray-700 hover:text-white cursor-pointer"
+                    : "text-gray-500 cursor-not-allowed opacity-70"
+                }`}
               >
                 <RefreshCw className="w-4 h-4" />
                 Poll Now…

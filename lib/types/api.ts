@@ -18,6 +18,7 @@ export interface LatestPointValue {
   measurementTime: Date; // Auto-deserialized from ISO8601 string by JSON revivor
   receivedTime: Date; // Auto-deserialized from ISO8601 string by JSON revivor
   metricUnit: string; // Unit of measurement (e.g., "W", "kWh", "%")
+  displayName: string; // Display name from point_info
 }
 
 /**
