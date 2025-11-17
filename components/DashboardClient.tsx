@@ -1104,17 +1104,6 @@ export default function DashboardClient({
                   {showSettingsDropdown && (
                     <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
                       {/* View Data - Only show for admin users and non-composite systems */}
-                      {(() => {
-                        console.log(
-                          "Settings dropdown - isAdmin:",
-                          isAdmin,
-                          "vendorType:",
-                          system?.vendorType,
-                          "supportsPolling:",
-                          data?.system.supportsPolling,
-                        );
-                        return null;
-                      })()}
                       {isAdmin && system?.vendorType !== "composite" && (
                         <>
                           <button
