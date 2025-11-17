@@ -293,7 +293,7 @@ export class AmberAdapter extends BaseVendorAdapter {
         // Cost/Revenue point
         readingsToInsert.push({
           pointMetadata: points[1], // cost or revenue
-          rawValue: Math.abs(record.cost), // cents (negative for export becomes positive revenue)
+          rawValue: record.cost, // cents (keep sign: negative for export = revenue credit)
           intervalEndMs,
           dataQuality: recordQuality,
         });
@@ -301,7 +301,7 @@ export class AmberAdapter extends BaseVendorAdapter {
         // Price point
         readingsToInsert.push({
           pointMetadata: points[2], // price
-          rawValue: Math.abs(record.perKwh), // c/kWh (negative for export becomes positive)
+          rawValue: record.perKwh, // c/kWh (keep sign: negative for export = feed-in credit rate)
           intervalEndMs,
           dataQuality: recordQuality,
         });
