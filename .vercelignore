@@ -1,0 +1,49 @@
+# Database files
+dev.db
+dev.db-shm
+dev.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Database backups
+db-backups/
+
+# Development files
+.next/
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment files
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Test files
+coverage/
+.nyc_output/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Scripts and utilities that don't need to be deployed
+scripts/temp/
+
+# Documentation that doesn't need deployment
+docs/
+*.md
+!README.md
