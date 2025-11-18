@@ -84,30 +84,30 @@ function getQualityPrecedence(quality: string | null): number {
 }
 
 /**
- * Check if remote quality is superior to local
- * Takes into account both quality precedence and measurement time
+ * Check if new record is superior to existing record
+ * Takes into account quality precedence and raw value
  */
-function isRemoteQualitySuperior(
-  localQuality: string | null,
-  remoteQuality: string | null,
-  localMeasurementTime?: Milliseconds,
-  remoteMeasurementTime?: Milliseconds,
+function isNewRecordSuperior(
+  existingRecord: PointReading | undefined,
+  newRecord: PointReading | undefined,
 ): boolean {
-  const localPrecedence = getQualityPrecedence(localQuality);
-  const remotePrecedence = getQualityPrecedence(remoteQuality);
+  // If no existing record, new is superior (if it exists)
+  if (!existingRecord) return !!newRecord;
 
-  if (remotePrecedence > localPrecedence) return true;
-  if (remotePrecedence < localPrecedence) return false;
+  // If no new record, existing is superior
+  if (!newRecord) return false;
 
-  // Same quality - check measurement time if available
-  if (
-    localMeasurementTime !== undefined &&
-    remoteMeasurementTime !== undefined
-  ) {
-    return remoteMeasurementTime > localMeasurementTime;
-  }
+  // Both exist - compare quality
+  const existingPrecedence = getQualityPrecedence(
+    existingRecord.dataQuality ?? null,
+  );
+  const newPrecedence = getQualityPrecedence(newRecord.dataQuality ?? null);
 
-  return false;
+  if (newPrecedence > existingPrecedence) return true;
+  if (newPrecedence < existingPrecedence) return false;
+
+  // Same quality - new is superior ONLY if raw value is different
+  return existingRecord.rawValue !== newRecord.rawValue;
 }
 
 /**
@@ -646,105 +646,117 @@ async function loadRemoteUsage(
 }
 
 /**
- * Stage 1c: Compare Local vs Remote
+ * Generic comparison function for comparing existing and new records
+ * Builds overviews character by character using isNewRecordSuperior
+ */
+function compareRecords(
+  existingResult: StageResult,
+  newResult: StageResult,
+  day: CalendarDate,
+  pointKeys: string[],
+): {
+  comparisonOverviewsByPoint: Map<string, string>;
+  numSuperiorRecords: number;
+  completeness: Completeness;
+  characterisation: CharacterisationRange[] | undefined;
+} {
+  const expectedIntervals = generate48IntervalsAEST(day);
+  const comparisonOverviewsByPoint = new Map<string, string>();
+
+  // Compare each point
+  for (const pointKey of pointKeys) {
+    const comparisonOverview: string[] = [];
+
+    // Compare each interval
+    for (const intervalMs of expectedIntervals) {
+      const timeKey = formatIntervalKey(intervalMs);
+
+      // Get existing and new records for this interval and point
+      const existingIntervalRecords = existingResult.records?.get(timeKey);
+      const newIntervalRecords = newResult.records?.get(timeKey);
+
+      const existingRecord = existingIntervalRecords?.get(pointKey);
+      const newRecord = newIntervalRecords?.get(pointKey);
+
+      // Use isNewRecordSuperior to determine which is better
+      if (isNewRecordSuperior(existingRecord, newRecord)) {
+        // New is superior - use uppercase
+        const quality = newRecord?.dataQuality ?? null;
+        comparisonOverview.push(abbreviateQuality(quality).toUpperCase());
+      } else {
+        // Existing is same or better - use lowercase
+        const quality = existingRecord?.dataQuality ?? null;
+        comparisonOverview.push(abbreviateQuality(quality));
+      }
+    }
+
+    comparisonOverviewsByPoint.set(pointKey, comparisonOverview.join(""));
+  }
+
+  // Determine completeness from first overview
+  const firstOverview =
+    comparisonOverviewsByPoint.values().next().value ?? "".padEnd(48, ".");
+  const completeness = determineCompleteness(firstOverview);
+
+  // Build characterisation - only include superior records (uppercase letters)
+  const superiorOverviewsByPoint = new Map<string, string>();
+  for (const [pointKey, overview] of comparisonOverviewsByPoint.entries()) {
+    const superiorOnly = overview
+      .split("")
+      .map((char) => (char === char.toUpperCase() && char !== "." ? char : "."))
+      .join("");
+    superiorOverviewsByPoint.set(pointKey, superiorOnly);
+  }
+
+  const characterisation = buildCharacterisationFromOverviews(
+    superiorOverviewsByPoint,
+    day,
+  );
+
+  // Count superior records
+  let numSuperiorRecords = 0;
+  for (const overview of comparisonOverviewsByPoint.values()) {
+    numSuperiorRecords += (overview.match(/[A-Z]/g) || []).length;
+  }
+
+  return {
+    comparisonOverviewsByPoint,
+    numSuperiorRecords,
+    completeness,
+    characterisation,
+  };
+}
+
+/**
+ * Stage 3: Compare Local vs Remote Usage
  * Compares local and remote data, identifies superior remote data
  */
 async function compareUsage(
-  localResult: StageResult,
-  remoteResult: StageResult,
+  existingResult: StageResult,
+  newResult: StageResult,
   day: CalendarDate,
   stageName: string,
 ): Promise<StageResult> {
   // Should not reach here if either failed
-  if (localResult.error || remoteResult.error) {
+  if (existingResult.error || newResult.error) {
     throw new Error(
-      `Cannot compare with errors: local=${localResult.error}, remote=${remoteResult.error}`,
+      `Cannot compare with errors: existing=${existingResult.error}, new=${newResult.error}`,
     );
   }
 
   try {
-    const comparisonOverviewsByPoint = new Map<string, string>();
-    const superiorRecords = new Map<string, Map<string, PointReading>>();
-
-    // IMPORTANT: Only compare points that exist in local (Stage 1)
+    // Only compare points that exist in existing (Stage 1)
     // Stage 2 may have different points (e.g., no grid.* points)
-    const localPointKeys = Array.from(
-      localResult.overviewsByPoint.keys(),
+    const existingPointKeys = Array.from(
+      existingResult.overviewsByPoint.keys(),
     ).sort();
 
-    // Compare each point's overview
-    for (const pointKey of localPointKeys) {
-      const localOverview =
-        localResult.overviewsByPoint.get(pointKey) || "".padEnd(48, ".");
-      const remoteOverview =
-        remoteResult.overviewsByPoint.get(pointKey) || "".padEnd(48, ".");
-
-      const comparisonOverview: string[] = [];
-
-      // Compare each interval
-      for (let i = 0; i < 48; i++) {
-        const localChar = localOverview[i];
-        const remoteChar = remoteOverview[i];
-
-        // Compare quality precedence directly using the abbreviated characters
-        const localPrecedence = getQualityPrecedence(expandQuality(localChar));
-        const remotePrecedence = getQualityPrecedence(
-          expandQuality(remoteChar),
-        );
-
-        if (remotePrecedence > localPrecedence) {
-          // Remote is superior - uppercase the letter
-          comparisonOverview.push(remoteChar.toUpperCase());
-        } else {
-          // Local is same or better - keep local letter (lowercase)
-          comparisonOverview.push(localChar);
-        }
-      }
-
-      comparisonOverviewsByPoint.set(pointKey, comparisonOverview.join(""));
-    }
-
-    // Determine completeness from first overview
-    const firstOverview =
-      comparisonOverviewsByPoint.values().next().value ?? "".padEnd(48, ".");
-    const completeness = determineCompleteness(firstOverview);
-
-    // Build characterisation - only include superior records (uppercase letters)
-    // Create a filtered overview map with only superior intervals
-    const superiorOverviewsByPoint = new Map<string, string>();
-    for (const [pointKey, overview] of comparisonOverviewsByPoint.entries()) {
-      // Filter to only uppercase letters (superior remote) and dots for the rest
-      const superiorOnly = overview
-        .split("")
-        .map((char) =>
-          char === char.toUpperCase() && char !== "." ? char : ".",
-        )
-        .join("");
-      superiorOverviewsByPoint.set(pointKey, superiorOnly);
-    }
-
-    const characterisation = buildCharacterisationFromOverviews(
-      superiorOverviewsByPoint,
-      day,
-    );
-
-    // Count superior records (for now, just count intervals with uppercase letters)
-    let numSuperiorRecords = 0;
-    for (const overview of comparisonOverviewsByPoint.values()) {
-      // Count uppercase letters (superior remote data)
-      numSuperiorRecords += (overview.match(/[A-Z]/g) || []).length;
-    }
-
-    // Data integrity check: verify numRecords matches uppercase count in overviews
-    let uppercaseCount = 0;
-    for (const overview of comparisonOverviewsByPoint.values()) {
-      uppercaseCount += (overview.match(/[A-Z]/g) || []).length;
-    }
-    if (numSuperiorRecords !== uppercaseCount) {
-      throw new Error(
-        `Data integrity error in stage 3: numRecords (${numSuperiorRecords}) does not match uppercase count (${uppercaseCount})`,
-      );
-    }
+    const {
+      comparisonOverviewsByPoint,
+      numSuperiorRecords,
+      completeness,
+      characterisation,
+    } = compareRecords(existingResult, newResult, day, existingPointKeys);
 
     return {
       stage: stageName,
@@ -752,7 +764,6 @@ async function compareUsage(
       overviewsByPoint: comparisonOverviewsByPoint,
       numRecords: numSuperiorRecords,
       characterisation,
-      records: superiorRecords.size > 0 ? superiorRecords : undefined,
     };
   } catch (error) {
     return {
@@ -1210,106 +1221,29 @@ function createPricePointMetadata(
  * Compares local price data with remote price data
  */
 async function comparePrices(
-  localResult: StageResult,
-  remotePricesResult: StageResult,
+  existingResult: StageResult,
+  newPricesResult: StageResult,
   day: CalendarDate,
   stageName: string,
 ): Promise<StageResult> {
-  if (localResult.error || remotePricesResult.error) {
+  if (existingResult.error || newPricesResult.error) {
     throw new Error(
-      `Cannot compare with errors: local=${localResult.error}, remote=${remotePricesResult.error}`,
+      `Cannot compare with errors: existing=${existingResult.error}, new=${newPricesResult.error}`,
     );
   }
 
   try {
-    const comparisonOverviewsByPoint = new Map<string, string>();
-
-    // Get all remote price point keys
-    const remotePriceKeys = Array.from(
-      remotePricesResult.overviewsByPoint.keys(),
+    // Get all new price point keys
+    const newPriceKeys = Array.from(
+      newPricesResult.overviewsByPoint.keys(),
     ).sort();
 
-    // For each remote price point, check if we have corresponding local data
-    for (const pointKey of remotePriceKeys) {
-      const remoteOverview =
-        remotePricesResult.overviewsByPoint.get(pointKey) || "".padEnd(48, ".");
-
-      // Try to find corresponding local point
-      // Remote keys are like "general.perKwh", local keys are like "E1.perKwh"
-      // We need to map channel types to channel IDs
-      const [channelType, metric] = pointKey.split(".");
-
-      // Find matching local points (e.g., E1.perKwh for general)
-      const matchingLocalKeys = Array.from(
-        localResult.overviewsByPoint.keys(),
-      ).filter((key) => {
-        const [localChannelId] = key.split(".");
-        // Map E1 -> general, B1 -> feedIn, CL1 -> controlledLoad
-        // This is a simplified mapping - real implementation may need channel metadata
-        return key.endsWith(`.${metric}`);
-      });
-
-      // If we have local data, compare; otherwise just use remote
-      if (matchingLocalKeys.length > 0) {
-        const localKey = matchingLocalKeys[0];
-        const localOverview =
-          localResult.overviewsByPoint.get(localKey) || "".padEnd(48, ".");
-
-        const comparisonOverview: string[] = [];
-
-        // Compare each interval
-        for (let i = 0; i < 48; i++) {
-          const localChar = localOverview[i];
-          const remoteChar = remoteOverview[i];
-
-          const localPrecedence = getQualityPrecedence(
-            expandQuality(localChar),
-          );
-          const remotePrecedence = getQualityPrecedence(
-            expandQuality(remoteChar),
-          );
-
-          if (remotePrecedence > localPrecedence) {
-            comparisonOverview.push(remoteChar.toUpperCase());
-          } else {
-            comparisonOverview.push(localChar);
-          }
-        }
-
-        comparisonOverviewsByPoint.set(pointKey, comparisonOverview.join(""));
-      } else {
-        // No local data for this remote point - all remote is superior
-        comparisonOverviewsByPoint.set(pointKey, remoteOverview.toUpperCase());
-      }
-    }
-
-    // Determine completeness
-    const firstOverview =
-      comparisonOverviewsByPoint.values().next().value ?? "".padEnd(48, ".");
-    const completeness = determineCompleteness(firstOverview);
-
-    // Build characterisation - only superior records
-    const superiorOverviewsByPoint = new Map<string, string>();
-    for (const [pointKey, overview] of comparisonOverviewsByPoint.entries()) {
-      const superiorOnly = overview
-        .split("")
-        .map((char) =>
-          char === char.toUpperCase() && char !== "." ? char : ".",
-        )
-        .join("");
-      superiorOverviewsByPoint.set(pointKey, superiorOnly);
-    }
-
-    const characterisation = buildCharacterisationFromOverviews(
-      superiorOverviewsByPoint,
-      day,
-    );
-
-    // Count superior records
-    let numSuperiorRecords = 0;
-    for (const overview of comparisonOverviewsByPoint.values()) {
-      numSuperiorRecords += (overview.match(/[A-Z]/g) || []).length;
-    }
+    const {
+      comparisonOverviewsByPoint,
+      numSuperiorRecords,
+      completeness,
+      characterisation,
+    } = compareRecords(existingResult, newPricesResult, day, newPriceKeys);
 
     return {
       stage: stageName,
