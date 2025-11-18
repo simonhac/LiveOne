@@ -85,3 +85,57 @@ export interface AmberChannelMetadata {
   extension: string; // "import", "export", or "controlled"
   defaultName: string; // "Grid import", "Grid export", or "Controlled load"
 }
+
+/**
+ * Sync audit types for methodical data validation and comparison
+ */
+
+// Branded type for millisecond timestamps
+export type Milliseconds = number & { readonly __brand: "Milliseconds" };
+
+// Completeness states for data quality overview
+export type Completeness = "all-billable" | "none" | "mixed";
+
+// Result from a single sync stage
+export interface StageResult {
+  stage: string; // e.g., "stage 1: load local usage"
+  completeness: Completeness;
+  overviewsByPoint: Map<string, string>; // Map of point origin ID to overview (48 chars each)
+  numRecords: number; // Count of non-null records (required for all stages)
+  characterisation?: CharacterisationRange[];
+  records?: Map<string, Map<string, PointReading>>;
+  error?: string;
+  request?: string; // Debug info about the API request made
+}
+
+// Quality range grouping for mixed completeness
+export interface CharacterisationRange {
+  rangeStartTimeMs: Milliseconds;
+  rangeEndTimeMs: Milliseconds;
+  quality: string | null;
+  pointOriginIds: string[]; // e.g., ["E1.kwh", "B1.cost"] - varies by site
+}
+
+// Point reading structure for sync records
+export interface PointReading {
+  pointMetadata: import("@/lib/vendors/base-vendor-adapter").PointMetadata;
+  rawValue: any;
+  measurementTimeMs: Milliseconds;
+  receivedTimeMs: Milliseconds;
+  dataQuality?: string;
+  sessionId: number;
+  error?: string | null;
+}
+
+// Complete sync audit result
+export interface SyncAudit {
+  systemId: number;
+  day: import("@internationalized/date").CalendarDate;
+  stages: StageResult[];
+  summary: {
+    totalStages: number;
+    durationMs: Milliseconds;
+    error?: string;
+    exception?: Error;
+  };
+}
