@@ -251,7 +251,10 @@ export class PointReadingGroup {
 
       for (const pointKey of pointKeys) {
         const reading = pointMap.get(pointKey);
-        qualities.add(reading?.dataQuality ?? null);
+        const quality = reading?.dataQuality ?? null;
+        // Abbreviate quality for characterisation
+        const abbreviated = quality ? abbreviateQuality(quality) : null;
+        qualities.add(abbreviated);
         if (reading) {
           pointsAtInterval.push(pointKey);
         }
@@ -271,7 +274,7 @@ export class PointReadingGroup {
         const rangeStartTimeMs: Milliseconds =
           i === 0
             ? ((this.intervalEndTimes[0] - 30 * 60 * 1000) as Milliseconds)
-            : currentRange.rangeEndTimeMs;
+            : currentRange!.rangeEndTimeMs;
 
         currentRange = {
           rangeStartTimeMs,
