@@ -5,7 +5,11 @@
  * Phase 1: Read-only audit operations for data validation and comparison.
  */
 
-import { CalendarDate } from "@internationalized/date";
+import {
+  CalendarDate,
+  toCalendarDateTime,
+  toZoned,
+} from "@internationalized/date";
 import type {
   AmberCredentials,
   AmberUsageRecord,
@@ -19,6 +23,7 @@ import type {
 } from "./types";
 import type { PointMetadata } from "@/lib/vendors/base-vendor-adapter";
 import { formatDateAEST } from "@/lib/date-utils";
+import { PointReadingGroup } from "./point-reading-group";
 
 /**
  * Quality precedence for comparison
@@ -54,25 +59,6 @@ class StageTracker {
 function abbreviateQuality(quality: string | null): string {
   if (quality === null) return ".";
   return quality.charAt(0).toLowerCase();
-}
-
-/**
- * Expand abbreviated quality back to full quality string
- * Reverse of abbreviateQuality
- */
-function expandQuality(abbreviation: string): string | null {
-  if (abbreviation === ".") return null;
-
-  const lower = abbreviation.toLowerCase();
-
-  // Map first letter back to full quality
-  if (lower === "b") return "billable";
-  if (lower === "a") return "actual";
-  if (lower === "e") return "estimated";
-  if (lower === "f") return "forecast";
-
-  // Unknown quality
-  return null;
 }
 
 /**
@@ -128,28 +114,20 @@ function determineCompleteness(overview: string): Completeness {
 }
 
 /**
- * Generate 48 half-hour interval timestamps for a day in AEST
+ * Generate 48 half-hour interval timestamps for a day in AEST (UTC+10)
  * Returns timestamps from 00:30 AEST to 00:00 AEST (next day)
+ * Note: Uses fixed UTC+10 offset, NOT Australia/Sydney which observes DST
  */
 function generate48IntervalsAEST(day: CalendarDate): Milliseconds[] {
   const intervals: Milliseconds[] = [];
 
-  const year = day.year;
-  const month = day.month;
-  const dayOfMonth = day.day;
-
-  // Create midnight UTC for the day, then add AEST offset
-  // AEST is UTC+10, so midnight AEST = midnight UTC + 10 hours
-  // But we want the UTC timestamp that corresponds to midnight AEST
-  // So: midnight AEST in UTC = midnight - 10 hours
-  const midnightUTC =
-    Date.UTC(year, month - 1, dayOfMonth, 0, 0, 0, 0) - 10 * 60 * 60 * 1000;
+  // Convert CalendarDate to ZonedDateTime at midnight in +10:00 timezone (AEST)
+  let current = toZoned(toCalendarDateTime(day), "+10:00");
 
   // Generate 48 intervals starting at 00:30 AEST
   for (let i = 0; i < 48; i++) {
-    const intervalMinutes = 30 + i * 30; // 30, 60, 90, ..., 1440
-    const intervalMs = midnightUTC + intervalMinutes * 60 * 1000;
-    intervals.push(intervalMs as Milliseconds);
+    current = current.add({ minutes: 30 });
+    intervals.push(current.toDate().getTime() as Milliseconds);
   }
 
   return intervals;
@@ -213,99 +191,6 @@ function buildCharacterisation(
 }
 
 /**
- * Build characterisation from overviews map
- * Analyzes all point overviews to determine quality ranges
- */
-function buildCharacterisationFromOverviews(
-  overviewsByPoint: Map<string, string>,
-  day: CalendarDate,
-): CharacterisationRange[] | undefined {
-  const expectedIntervals = generate48IntervalsAEST(day);
-
-  // Build intervals by analyzing each time slot across all points
-  const intervals = expectedIntervals.map((timeMs, index) => {
-    // Get the quality character for this interval from all points
-    const qualitiesAtInterval = new Map<string | null, string[]>();
-
-    for (const [pointKey, overview] of overviewsByPoint.entries()) {
-      const qualityChar = overview[index];
-      const quality = expandQuality(qualityChar); // Can be null for "."
-
-      // Include all points, even those with null quality
-      if (!qualitiesAtInterval.has(quality)) {
-        qualitiesAtInterval.set(quality, []);
-      }
-      qualitiesAtInterval.get(quality)!.push(pointKey);
-    }
-
-    // Use the most common quality (prefer non-null over null)
-    let dominantQuality: string | null = null;
-    let dominantPoints: string[] = [];
-
-    // First, try to find a non-null quality
-    for (const [quality, points] of qualitiesAtInterval.entries()) {
-      if (quality !== null && points.length > dominantPoints.length) {
-        dominantQuality = quality;
-        dominantPoints = points;
-      }
-    }
-
-    // If no non-null quality found, use null quality points
-    if (dominantQuality === null && qualitiesAtInterval.has(null)) {
-      dominantQuality = null;
-      dominantPoints = qualitiesAtInterval.get(null)!;
-    }
-
-    return {
-      timeMs,
-      quality: dominantQuality,
-      pointOriginIds: dominantPoints.sort(),
-    };
-  });
-
-  // Check if we have any non-null quality
-  const hasData = intervals.some((i) => i.quality !== null);
-  if (!hasData) return undefined;
-
-  return buildCharacterisation(intervals);
-}
-
-/**
- * Count non-null records in the records map
- */
-function countNonNullRecords(
-  records: Map<string, Map<string, PointReading>> | undefined,
-): number {
-  if (!records) return 0;
-
-  let count = 0;
-  for (const intervalRecords of records.values()) {
-    count += intervalRecords.size;
-  }
-  return count;
-}
-
-/**
- * Format interval time as key for records map
- */
-function formatIntervalKey(
-  intervalMs: Milliseconds,
-  timezoneOffsetMin: number = 600,
-): string {
-  const date = new Date(intervalMs);
-  // Add timezone offset to get AEST
-  const aestDate = new Date(date.getTime() + timezoneOffsetMin * 60 * 1000);
-
-  const year = aestDate.getUTCFullYear();
-  const month = String(aestDate.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(aestDate.getUTCDate()).padStart(2, "0");
-  const hours = String(aestDate.getUTCHours()).padStart(2, "0");
-  const minutes = String(aestDate.getUTCMinutes()).padStart(2, "0");
-
-  return `${year}-${month}-${day} ${hours}:${minutes}`;
-}
-
-/**
  * Build characterisation from local database readings
  */
 function buildCharacterisationFromLocal(
@@ -343,70 +228,53 @@ function buildCharacterisationFromLocal(
 }
 
 /**
- * Build records map from local database readings
+ * Build PointReadingGroup from local database readings
  */
 function buildRecordsMapFromLocal(
   readings: any[],
   allPoints: any[],
-  expectedIntervals: Milliseconds[],
-): Map<string, Map<string, PointReading>> {
-  const recordsMap = new Map<string, Map<string, PointReading>>();
+  day: CalendarDate,
+): PointReadingGroup {
+  const group = new PointReadingGroup(day);
 
-  for (const intervalMs of expectedIntervals) {
-    const intervalReadings = readings.filter(
-      (r) => r.intervalEnd === intervalMs,
-    );
+  for (const reading of readings) {
+    const point = allPoints.find((p) => p.index === reading.pointId);
+    if (!point) continue;
 
-    if (intervalReadings.length === 0) continue;
-
-    const timeKey = formatIntervalKey(intervalMs);
-    const intervalRecords = new Map<string, PointReading>();
-
-    for (const reading of intervalReadings) {
-      const point = allPoints.find((p) => p.index === reading.pointId);
-      if (!point) continue;
-
-      const pointKey = point.originSubId
-        ? `${point.originId}.${point.originSubId}`
-        : point.originId;
-
-      // Determine the value based on metric type
-      let rawValue: any = null;
-      if (point.metricType === "energy") {
-        rawValue = reading.delta;
-      } else if (point.metricType === "code") {
-        rawValue = reading.valueStr;
-      } else {
-        rawValue = reading.avg ?? reading.last;
-      }
-
-      intervalRecords.set(pointKey, {
-        pointMetadata: {
-          originId: point.originId,
-          originSubId: point.originSubId,
-          defaultName: point.defaultName || point.displayName,
-          subsystem: point.subsystem,
-          type: point.type,
-          subtype: point.subtype,
-          extension: point.extension,
-          metricType: point.metricType,
-          metricUnit: point.metricUnit,
-          transform: point.transform,
-        },
-        rawValue,
-        measurementTimeMs: intervalMs,
-        receivedTimeMs: (reading.createdAt || Date.now()) as Milliseconds,
-        dataQuality: reading.dataQuality,
-        sessionId: reading.sessionId || 0,
-      });
+    // Determine the value based on metric type
+    let rawValue: any = null;
+    if (point.metricType === "energy") {
+      rawValue = reading.delta;
+    } else if (point.metricType === "code") {
+      rawValue = reading.valueStr;
+    } else {
+      rawValue = reading.avg ?? reading.last;
     }
 
-    if (intervalRecords.size > 0) {
-      recordsMap.set(timeKey, intervalRecords);
-    }
+    const pointReading: PointReading = {
+      pointMetadata: {
+        originId: point.originId,
+        originSubId: point.originSubId,
+        defaultName: point.defaultName || point.displayName,
+        subsystem: point.subsystem,
+        type: point.type,
+        subtype: point.subtype,
+        extension: point.extension,
+        metricType: point.metricType,
+        metricUnit: point.metricUnit,
+        transform: point.transform,
+      },
+      rawValue,
+      measurementTimeMs: reading.intervalEnd as Milliseconds,
+      receivedTimeMs: (reading.createdAt || Date.now()) as Milliseconds,
+      dataQuality: reading.dataQuality,
+      sessionId: reading.sessionId || 0,
+    };
+
+    group.add(pointReading);
   }
 
-  return recordsMap;
+  return group;
 }
 
 /**
@@ -453,7 +321,7 @@ async function loadLocalUsage(
       return {
         stage: stageName,
         completeness: "none",
-        overviewsByPoint: new Map(),
+        overviews: new Map(),
         numRecords: 0,
         error: "No points found for system",
       };
@@ -476,91 +344,26 @@ async function loadLocalUsage(
       )
       .orderBy(pointReadingsAgg5m.intervalEnd);
 
-    // 4. Build overview for each point series
-    const overviewsByPoint = new Map<string, string>();
+    // 4. Build PointReadingGroup from database readings
+    const group = buildRecordsMapFromLocal(readings, allPoints, day);
 
-    for (const point of allPoints) {
-      const pointKey = point.originSubId
-        ? `${point.originId}.${point.originSubId}`
-        : point.originId;
-
-      // Get readings for this specific point
-      const pointReadings = readings.filter((r) => r.pointId === point.index);
-
-      // Build map of intervalEnd -> reading for quick lookup
-      const readingMap = new Map(pointReadings.map((r) => [r.intervalEnd, r]));
-
-      // Build overview string for this point
-      const overview = expectedIntervals
-        .map((intervalMs) => {
-          const reading = readingMap.get(intervalMs);
-          return abbreviateQuality(reading?.dataQuality ?? null);
-        })
-        .join("");
-
-      overviewsByPoint.set(pointKey, overview);
-    }
-
-    // 5. Verify all series have same completeness (only for points with data)
-    if (overviewsByPoint.size > 0) {
-      // Filter to only points that have at least some data (not all dots)
-      const nonEmptyOverviews = Array.from(overviewsByPoint.entries()).filter(
-        ([_, overview]) => overview.replace(/\./g, "").length > 0,
-      );
-
-      if (nonEmptyOverviews.length > 0) {
-        const completenessValues = nonEmptyOverviews.map(([_, overview]) =>
-          determineCompleteness(overview),
-        );
-
-        const firstCompleteness = completenessValues[0];
-        if (!completenessValues.every((c) => c === firstCompleteness)) {
-          const uniqueValues = [...new Set(completenessValues)].join(", ");
-          throw new Error(
-            `Completeness mismatch across series with data: ${uniqueValues}`,
-          );
-        }
-      }
-    }
-
-    // Use first non-empty overview to determine overall completeness
-    const nonEmptyOverviews = Array.from(overviewsByPoint.values()).filter(
-      (overview) => overview.replace(/\./g, "").length > 0,
-    );
-    const firstOverview =
-      nonEmptyOverviews.length > 0 ? nonEmptyOverviews[0] : "".padEnd(48, ".");
-
-    const completeness = determineCompleteness(firstOverview);
-
-    // 6. Build characterisation from overviews
-    const characterisation = buildCharacterisationFromOverviews(
-      overviewsByPoint,
-      day,
-    );
-
-    // 7. Build records map
-    const records = buildRecordsMapFromLocal(
-      readings,
-      allPoints,
-      expectedIntervals,
-    );
-
-    // Count non-null records
-    const numRecords = countNonNullRecords(records);
+    // 5. Get all views from group
+    const { overviews, completeness, characterisation, numRecords } =
+      group.getInfo();
 
     return {
       stage: stageName,
       completeness,
-      overviewsByPoint,
+      overviews,
       numRecords,
       characterisation,
-      records,
+      records: group.getRecords(),
     };
   } catch (error) {
     return {
       stage: stageName,
       completeness: "none",
-      overviewsByPoint: new Map(),
+      overviews: new Map(),
       numRecords: 0,
       error: error instanceof Error ? error.message : String(error),
     };
@@ -586,59 +389,27 @@ async function loadRemoteUsage(
     // Group by timestamp
     const recordsByTime = groupRecordsByTime(usageRecords);
 
-    // Build overview for each series
-    const overviewsByPoint = buildOverviewsFromRecords(recordsByTime);
+    // Build PointReadingGroup from Amber data
+    const group = buildRecordsMapFromAmber(recordsByTime, day);
 
-    // Verify all series have same completeness
-    const completenessValues = Array.from(overviewsByPoint.values()).map((o) =>
-      determineCompleteness(o),
-    );
-
-    if (completenessValues.length > 0) {
-      const firstCompleteness = completenessValues[0];
-      if (!completenessValues.every((c) => c === firstCompleteness)) {
-        throw new Error(
-          `Completeness mismatch across series: ${[...new Set(completenessValues)].join(", ")}`,
-        );
-      }
-    }
-
-    // Use first overview to determine overall completeness
-    const firstOverview =
-      overviewsByPoint.size > 0
-        ? (overviewsByPoint.values().next().value ?? "".padEnd(48, "."))
-        : "".padEnd(48, ".");
-    const completeness = determineCompleteness(firstOverview);
-
-    // Generate expected intervals for characterisation
-    const expectedIntervals = generate48IntervalsAEST(day);
-
-    // Build characterisation from overviews
-    const characterisation = buildCharacterisationFromOverviews(
-      overviewsByPoint,
-      day,
-    );
-
-    // Build records map
-    const records = buildRecordsMapFromAmber(recordsByTime, expectedIntervals);
-
-    // Count non-null records
-    const numRecords = countNonNullRecords(records);
+    // Get all views from group
+    const { overviews, completeness, characterisation, numRecords } =
+      group.getInfo();
 
     return {
       stage: stageName,
       completeness,
-      overviewsByPoint,
+      overviews,
       numRecords,
       characterisation,
-      records,
+      records: group.getRecords(),
       request,
     };
   } catch (error) {
     return {
       stage: stageName,
       completeness: "none",
-      overviewsByPoint: new Map(),
+      overviews: new Map(),
       numRecords: 0,
       error: error instanceof Error ? error.message : String(error),
     };
@@ -647,7 +418,11 @@ async function loadRemoteUsage(
 
 /**
  * Generic comparison function for comparing existing and new records
- * Builds overviews character by character using isNewRecordSuperior
+ *
+ * Strategy:
+ * 1. Iterate through intervals and points, building superior PointReadingGroup
+ * 2. Build comparison overview character-by-character (uppercase = superior)
+ * 3. Use PointReadingGroup methods to derive views from superior records
  */
 function compareRecords(
   existingResult: StageResult,
@@ -659,71 +434,70 @@ function compareRecords(
   numSuperiorRecords: number;
   completeness: Completeness;
   characterisation: CharacterisationRange[] | undefined;
+  records: Map<string, Map<string, PointReading>>;
 } {
-  const expectedIntervals = generate48IntervalsAEST(day);
-  const comparisonOverviewsByPoint = new Map<string, string>();
+  // Create PointReadingGroup for superior records
+  const superiorGroup = new PointReadingGroup(day);
 
-  // Compare each point
+  // Initialize comparison overview arrays for each point
+  const comparisonOverviewBuilders = new Map<string, string[]>();
   for (const pointKey of pointKeys) {
-    const comparisonOverview: string[] = [];
-
-    // Compare each interval
-    for (const intervalMs of expectedIntervals) {
-      const timeKey = formatIntervalKey(intervalMs);
-
-      // Get existing and new records for this interval and point
-      const existingIntervalRecords = existingResult.records?.get(timeKey);
-      const newIntervalRecords = newResult.records?.get(timeKey);
-
-      const existingRecord = existingIntervalRecords?.get(pointKey);
-      const newRecord = newIntervalRecords?.get(pointKey);
-
-      // Use isNewRecordSuperior to determine which is better
-      if (isNewRecordSuperior(existingRecord, newRecord)) {
-        // New is superior - use uppercase
-        const quality = newRecord?.dataQuality ?? null;
-        comparisonOverview.push(abbreviateQuality(quality).toUpperCase());
-      } else {
-        // Existing is same or better - use lowercase
-        const quality = existingRecord?.dataQuality ?? null;
-        comparisonOverview.push(abbreviateQuality(quality));
-      }
-    }
-
-    comparisonOverviewsByPoint.set(pointKey, comparisonOverview.join(""));
+    comparisonOverviewBuilders.set(pointKey, []);
   }
 
-  // Determine completeness from first overview
+  // Iterate through each point's entries and compare
+  for (const pointKey of pointKeys) {
+    const existingRecords = existingResult.records || new Map();
+    const newRecords = newResult.records || new Map();
+
+    for (const [intervalMs] of superiorGroup.getPointRecords(pointKey)) {
+      const timeKey = String(intervalMs);
+
+      const existingRecord = existingRecords.get(timeKey)?.get(pointKey);
+      const newRecord = newRecords.get(timeKey)?.get(pointKey);
+
+      const isSuperior = isNewRecordSuperior(existingRecord, newRecord);
+
+      if (isSuperior && newRecord) {
+        // New record is superior - add to superior group
+        superiorGroup.add(newRecord);
+
+        // Add uppercase to comparison overview
+        const quality = newRecord.dataQuality ?? null;
+        comparisonOverviewBuilders
+          .get(pointKey)!
+          .push(abbreviateQuality(quality).toUpperCase());
+      } else {
+        // Existing is same or better - add lowercase to comparison overview
+        const quality = existingRecord?.dataQuality ?? null;
+        comparisonOverviewBuilders
+          .get(pointKey)!
+          .push(abbreviateQuality(quality));
+      }
+    }
+  }
+
+  // Build comparison overview strings
+  const comparisonOverviewsByPoint = new Map<string, string>();
+  for (const [pointKey, builder] of comparisonOverviewBuilders.entries()) {
+    comparisonOverviewsByPoint.set(pointKey, builder.join(""));
+  }
+
+  // Determine completeness from comparison overview
   const firstOverview =
     comparisonOverviewsByPoint.values().next().value ?? "".padEnd(48, ".");
   const completeness = determineCompleteness(firstOverview);
 
-  // Build characterisation - only include superior records (uppercase letters)
-  const superiorOverviewsByPoint = new Map<string, string>();
-  for (const [pointKey, overview] of comparisonOverviewsByPoint.entries()) {
-    const superiorOnly = overview
-      .split("")
-      .map((char) => (char === char.toUpperCase() && char !== "." ? char : "."))
-      .join("");
-    superiorOverviewsByPoint.set(pointKey, superiorOnly);
-  }
-
-  const characterisation = buildCharacterisationFromOverviews(
-    superiorOverviewsByPoint,
-    day,
-  );
-
-  // Count superior records
-  let numSuperiorRecords = 0;
-  for (const overview of comparisonOverviewsByPoint.values()) {
-    numSuperiorRecords += (overview.match(/[A-Z]/g) || []).length;
-  }
+  // Get characterisation from superior group
+  const characterisation = superiorGroup.getCharacterisation();
+  const numSuperiorRecords = superiorGroup.getCount();
 
   return {
     comparisonOverviewsByPoint,
     numSuperiorRecords,
     completeness,
     characterisation,
+    records: superiorGroup.getRecords(),
   };
 }
 
@@ -745,31 +519,36 @@ async function compareUsage(
   }
 
   try {
-    // Only compare points that exist in existing (Stage 1)
-    // Stage 2 may have different points (e.g., no grid.* points)
-    const existingPointKeys = Array.from(
-      existingResult.overviewsByPoint.keys(),
-    ).sort();
+    // Determine which points to compare
+    // If local has points, use those (remote may have different/fewer points)
+    // If local is empty, use remote points instead
+    const localPointKeys = Array.from(existingResult.overviews.keys());
+    const remotePointKeys = Array.from(newResult.overviews.keys());
+    const pointKeys =
+      localPointKeys.length > 0 ? localPointKeys : remotePointKeys;
+    const sortedPointKeys = pointKeys.sort();
 
     const {
       comparisonOverviewsByPoint,
       numSuperiorRecords,
       completeness,
       characterisation,
-    } = compareRecords(existingResult, newResult, day, existingPointKeys);
+      records,
+    } = compareRecords(existingResult, newResult, day, sortedPointKeys);
 
     return {
       stage: stageName,
       completeness,
-      overviewsByPoint: comparisonOverviewsByPoint,
+      overviews: comparisonOverviewsByPoint,
       numRecords: numSuperiorRecords,
       characterisation,
+      records,
     };
   } catch (error) {
     return {
       stage: stageName,
       completeness: "none",
-      overviewsByPoint: new Map(),
+      overviews: new Map(),
       numRecords: 0,
       error: error instanceof Error ? error.message : String(error),
     };
@@ -890,27 +669,21 @@ function buildCharacterisationFromRecords(
 }
 
 /**
- * Build records map from Amber usage data
+ * Build PointReadingGroup from Amber usage data
  */
 function buildRecordsMapFromAmber(
   recordsByTime: Map<Milliseconds, AmberUsageRecord[]>,
-  expectedIntervals: Milliseconds[],
-): Map<string, Map<string, PointReading>> {
-  const recordsMap = new Map<string, Map<string, PointReading>>();
+  day: CalendarDate,
+): PointReadingGroup {
+  const group = new PointReadingGroup(day);
 
-  for (const intervalMs of expectedIntervals) {
-    const records = recordsByTime.get(intervalMs);
-    if (!records || records.length === 0) continue;
-
-    const timeKey = formatIntervalKey(intervalMs);
-    const intervalRecords = new Map<string, PointReading>();
-
+  for (const [intervalMs, records] of recordsByTime.entries()) {
     for (const record of records) {
       // Create point readings for each metric
       const channelId = record.channelIdentifier;
 
       // Energy reading
-      intervalRecords.set(`${channelId}.kwh`, {
+      group.add({
         pointMetadata: createAmberPointMetadata(
           channelId,
           record.channelType,
@@ -924,7 +697,7 @@ function buildRecordsMapFromAmber(
       });
 
       // Cost reading
-      intervalRecords.set(`${channelId}.cost`, {
+      group.add({
         pointMetadata: createAmberPointMetadata(
           channelId,
           record.channelType,
@@ -938,7 +711,7 @@ function buildRecordsMapFromAmber(
       });
 
       // Price reading
-      intervalRecords.set(`${channelId}.perKwh`, {
+      group.add({
         pointMetadata: createAmberPointMetadata(
           channelId,
           record.channelType,
@@ -951,11 +724,9 @@ function buildRecordsMapFromAmber(
         sessionId: 0,
       });
     }
-
-    recordsMap.set(timeKey, intervalRecords);
   }
 
-  return recordsMap;
+  return group;
 }
 
 /**
@@ -1043,139 +814,77 @@ async function loadRemotePrices(
     // Fetch from Amber API
     const priceRecords = await fetchAmberPrices(credentials, day);
 
-    // Group by timestamp and channel
-    const recordsByTime = new Map<Milliseconds, AmberPriceRecord[]>();
+    // Build PointReadingGroup from price data
+    const group = new PointReadingGroup(day);
+
     for (const record of priceRecords) {
-      const timeMs = new Date(record.endTime).getTime() as Milliseconds;
-      const existing = recordsByTime.get(timeMs) || [];
-      existing.push(record);
-      recordsByTime.set(timeMs, existing);
+      // Use nemTime (AEST/UTC+10) instead of endTime (UTC) to match our interval times
+      const intervalMs = new Date(record.nemTime).getTime() as Milliseconds;
+      const channelType = record.channelType;
+
+      // Map channelType to channelId to match usage data keys
+      const channelId =
+        channelType === "general"
+          ? "E1"
+          : channelType === "feedIn"
+            ? "B1"
+            : channelType; // fallback for "controlledLoad" if present
+
+      // Infer quality from type
+      let quality: string | null = null;
+      if (record.type === "ActualInterval") quality = "actual";
+      else if (record.type === "CurrentInterval") quality = "actual";
+      else if (record.type === "ForecastInterval") quality = "forecast";
+
+      // perKwh reading (per-channel: E1.perKwh or B1.perKwh)
+      group.add({
+        pointMetadata: createAmberPointMetadata(channelId, channelType, "rate"),
+        rawValue: record.perKwh,
+        measurementTimeMs: intervalMs,
+        receivedTimeMs: Date.now() as Milliseconds,
+        dataQuality: quality,
+        sessionId: 0,
+      });
+
+      // spotPerKwh reading (grid-level: grid.spotPerKwh)
+      group.add({
+        pointMetadata: createGridPointMetadata("spotPerKwh"),
+        rawValue: record.spotPerKwh,
+        measurementTimeMs: intervalMs,
+        receivedTimeMs: Date.now() as Milliseconds,
+        dataQuality: quality,
+        sessionId: 0,
+      });
+
+      // renewables reading (grid-level: grid.renewables)
+      group.add({
+        pointMetadata: createGridPointMetadata("renewables"),
+        rawValue: record.renewables,
+        measurementTimeMs: intervalMs,
+        receivedTimeMs: Date.now() as Milliseconds,
+        dataQuality: quality,
+        sessionId: 0,
+      });
     }
 
-    // Build overview for each series (perKwh, spotPerKwh, renewables for each channel)
-    const overviewsByPoint = new Map<string, string>();
-    const seriesKeys = new Set<string>();
-
-    // Identify all series from the records
-    for (const records of recordsByTime.values()) {
-      for (const record of records) {
-        seriesKeys.add(`${record.channelType}.perKwh`);
-        seriesKeys.add(`${record.channelType}.spotPerKwh`);
-        seriesKeys.add(`${record.channelType}.renewables`);
-      }
-    }
-
-    // Generate expected intervals
-    const expectedIntervals = generate48IntervalsAEST(day);
-
-    // Build overview for each series
-    for (const seriesKey of seriesKeys) {
-      const [channelType, metric] = seriesKey.split(".");
-      const overview = expectedIntervals
-        .map((timeMs) => {
-          const records = recordsByTime.get(timeMs) || [];
-          const record = records.find((r) => r.channelType === channelType);
-
-          // Price records don't have a quality field, so we infer it from the type
-          // ActualInterval = "actual", ForecastInterval = "forecast"
-          let quality: string | null = null;
-          if (record) {
-            if (record.type === "ActualInterval") quality = "actual";
-            else if (record.type === "CurrentInterval") quality = "actual";
-            else if (record.type === "ForecastInterval") quality = "forecast";
-          }
-
-          return abbreviateQuality(quality);
-        })
-        .join("");
-
-      overviewsByPoint.set(seriesKey, overview);
-    }
-
-    // Determine completeness from first overview
-    const firstOverview =
-      overviewsByPoint.size > 0
-        ? (overviewsByPoint.values().next().value ?? "".padEnd(48, "."))
-        : "".padEnd(48, ".");
-    const completeness = determineCompleteness(firstOverview);
-
-    // Build characterisation
-    const characterisation = buildCharacterisationFromOverviews(
-      overviewsByPoint,
-      day,
-    );
-
-    // Build records map
-    const records = new Map<string, Map<string, PointReading>>();
-    for (const intervalMs of expectedIntervals) {
-      const priceRecords = recordsByTime.get(intervalMs);
-      if (!priceRecords || priceRecords.length === 0) continue;
-
-      const timeKey = formatIntervalKey(intervalMs);
-      const intervalRecords = new Map<string, PointReading>();
-
-      for (const record of priceRecords) {
-        const channelType = record.channelType;
-
-        // Infer quality from type
-        let quality: string | null = null;
-        if (record.type === "ActualInterval") quality = "actual";
-        else if (record.type === "CurrentInterval") quality = "actual";
-        else if (record.type === "ForecastInterval") quality = "forecast";
-
-        // perKwh reading
-        intervalRecords.set(`${channelType}.perKwh`, {
-          pointMetadata: createPricePointMetadata(channelType, "rate"),
-          rawValue: record.perKwh,
-          measurementTimeMs: intervalMs,
-          receivedTimeMs: Date.now() as Milliseconds,
-          dataQuality: quality,
-          sessionId: 0,
-        });
-
-        // spotPerKwh reading
-        intervalRecords.set(`${channelType}.spotPerKwh`, {
-          pointMetadata: createPricePointMetadata(channelType, "rate"),
-          rawValue: record.spotPerKwh,
-          measurementTimeMs: intervalMs,
-          receivedTimeMs: Date.now() as Milliseconds,
-          dataQuality: quality,
-          sessionId: 0,
-        });
-
-        // renewables reading
-        intervalRecords.set(`${channelType}.renewables`, {
-          pointMetadata: createPricePointMetadata(channelType, "percentage"),
-          rawValue: record.renewables,
-          measurementTimeMs: intervalMs,
-          receivedTimeMs: Date.now() as Milliseconds,
-          dataQuality: quality,
-          sessionId: 0,
-        });
-      }
-
-      if (intervalRecords.size > 0) {
-        records.set(timeKey, intervalRecords);
-      }
-    }
-
-    // Count non-null records
-    const numRecords = countNonNullRecords(records);
+    // Get all views from group
+    const { overviews, completeness, characterisation, numRecords } =
+      group.getInfo();
 
     return {
       stage: stageName,
       completeness,
-      overviewsByPoint,
+      overviews,
       numRecords,
       characterisation,
-      records,
+      records: group.getRecords(),
       request,
     };
   } catch (error) {
     return {
       stage: stageName,
       completeness: "none",
-      overviewsByPoint: new Map(),
+      overviews: new Map(),
       numRecords: 0,
       error: error instanceof Error ? error.message : String(error),
     };
@@ -1183,34 +892,40 @@ async function loadRemotePrices(
 }
 
 /**
- * Create point metadata for price points
+ * Create point metadata for grid-level points (spotPerKwh, renewables, tariffPeriod)
  */
-function createPricePointMetadata(
-  channelType: string,
-  metricType: "rate" | "percentage",
+function createGridPointMetadata(
+  subId: "spotPerKwh" | "renewables" | "tariffPeriod",
 ): PointMetadata {
   const metricConfig = {
-    rate: { subId: "rate", unit: "cents_kWh" },
-    percentage: { subId: "pct", unit: "percent" },
+    spotPerKwh: {
+      defaultName: "Grid spot price",
+      metricType: "rate" as const,
+      unit: "cents_kWh",
+    },
+    renewables: {
+      defaultName: "Grid renewables",
+      metricType: "value" as const,
+      unit: "percent",
+    },
+    tariffPeriod: {
+      defaultName: "Tariff period",
+      metricType: "code" as const,
+      unit: "text",
+    },
   };
 
-  const config = metricConfig[metricType];
-  const extension =
-    channelType === "general"
-      ? "import"
-      : channelType === "feedIn"
-        ? "export"
-        : "controlled";
+  const config = metricConfig[subId];
 
   return {
-    originId: channelType,
-    originSubId: config.subId,
-    defaultName: `${channelType} ${metricType}`,
+    originId: "grid",
+    originSubId: subId,
+    defaultName: config.defaultName,
     subsystem: "grid",
     type: "bidi",
     subtype: "grid",
-    extension,
-    metricType: metricType === "rate" ? "rate" : "value",
+    extension: "import", // Grid-level, default to import
+    metricType: config.metricType,
     metricUnit: config.unit,
     transform: null,
   };
@@ -1234,29 +949,29 @@ async function comparePrices(
 
   try {
     // Get all new price point keys
-    const newPriceKeys = Array.from(
-      newPricesResult.overviewsByPoint.keys(),
-    ).sort();
+    const newPriceKeys = Array.from(newPricesResult.overviews.keys()).sort();
 
     const {
       comparisonOverviewsByPoint,
       numSuperiorRecords,
       completeness,
       characterisation,
+      records,
     } = compareRecords(existingResult, newPricesResult, day, newPriceKeys);
 
     return {
       stage: stageName,
       completeness,
-      overviewsByPoint: comparisonOverviewsByPoint,
+      overviews: comparisonOverviewsByPoint,
       numRecords: numSuperiorRecords,
       characterisation,
+      records,
     };
   } catch (error) {
     return {
       stage: stageName,
       completeness: "none",
-      overviewsByPoint: new Map(),
+      overviews: new Map(),
       numRecords: 0,
       error: error instanceof Error ? error.message : String(error),
     };
@@ -1264,19 +979,18 @@ async function comparePrices(
 }
 
 /**
- * Main Entry Point
+ * Main Entry Points
  */
 
 /**
- * Sync Amber data for a specific day
- * Phase 1: Read-only audit operations
+ * Update Usage: Syncs usage data only
  *
- * @param systemId System ID to sync
- * @param day Calendar date to sync (AEST)
- * @param credentials Amber API credentials
- * @returns Complete sync audit with all stages
+ * Early termination logic:
+ * - Stage 1: If local is all-billable, we're done
+ * - Stage 2: If both local and remote are empty, we're done
+ * - Stage 3: Compare and identify superior records
  */
-export async function syncAmberDay(
+export async function updateUsage(
   systemId: number,
   day: CalendarDate,
   credentials: AmberCredentials,
@@ -1289,62 +1003,164 @@ export async function syncAmberDay(
   let exception: Error | undefined;
 
   try {
-    // Stage 1: Load local data
-    const localUsageResult = await loadLocalUsage(
+    // STAGE 1: Load local data
+    const localResult = await loadLocalUsage(
       systemId,
       day,
       tracker.nextStage("load local data"),
     );
-    stages.push(localUsageResult);
+    stages.push(localResult);
 
-    if (localUsageResult.error) {
-      error = `Stage 1 failed: ${localUsageResult.error}`;
+    if (localResult.error) {
+      error = `Stage 1 failed: ${localResult.error}`;
+    } else if (localResult.completeness === "all-billable") {
+      // EARLY EXIT: Local already has complete billable data
+      localResult.discovery = "local is already up to date";
     } else {
-      // Stage 2: Load remote usage
-      const remoteUsageResult = await loadRemoteUsage(
+      // STAGE 2: Load remote usage
+      const remoteResult = await loadRemoteUsage(
         credentials,
         day,
         tracker.nextStage("load remote usage"),
       );
-      stages.push(remoteUsageResult);
+      stages.push(remoteResult);
 
-      if (remoteUsageResult.error) {
-        error = `Stage 2 failed: ${remoteUsageResult.error}`;
+      if (remoteResult.error) {
+        error = `Stage 2 failed: ${remoteResult.error}`;
+      } else if (remoteResult.completeness === "none") {
+        // EARLY EXIT: Both local and remote are empty
+        remoteResult.discovery = "local and remote both empty";
       } else {
-        // Stage 3: Compare usage
-        const compareUsageResult = await compareUsage(
-          localUsageResult,
-          remoteUsageResult,
+        // Set discovery based on what we found
+        if (remoteResult.completeness === "all-billable") {
+          remoteResult.discovery = "remote has full day of data";
+        } else if (remoteResult.completeness === "mixed") {
+          remoteResult.discovery =
+            "local empty, remote has partial day of data (unexpected!)";
+        }
+
+        // STAGE 3: Compare usage
+        const compareResult = await compareUsage(
+          localResult,
+          remoteResult,
           day,
           tracker.nextStage("compare local vs remote usage"),
         );
-        stages.push(compareUsageResult);
+        stages.push(compareResult);
 
-        if (compareUsageResult.error) {
-          error = `Stage 3 failed: ${compareUsageResult.error}`;
+        if (compareResult.error) {
+          error = `Stage 3 failed: ${compareResult.error}`;
         } else {
-          // Stage 4: Load remote prices
-          const remotePricesResult = await loadRemotePrices(
-            credentials,
-            day,
-            tracker.nextStage("load remote prices"),
-          );
-          stages.push(remotePricesResult);
-
-          if (remotePricesResult.error) {
-            error = `Stage 4 failed: ${remotePricesResult.error}`;
+          // Verify completeness is not "none"
+          if (compareResult.completeness === "none") {
+            error =
+              "Stage 3 unexpected: completeness is none (should be impossible)";
           } else {
-            // Stage 5: Compare prices
-            const comparePricesResult = await comparePrices(
-              localUsageResult,
-              remotePricesResult,
-              day,
-              tracker.nextStage("compare local vs remote prices"),
-            );
-            stages.push(comparePricesResult);
+            compareResult.discovery = `found ${compareResult.numRecords} superior remote records to update/insert`;
+          }
+        }
+      }
+    }
+  } catch (ex) {
+    exception = ex instanceof Error ? ex : new Error(String(ex));
+    error = exception.message;
+  }
 
-            if (comparePricesResult.error) {
-              error = `Stage 5 failed: ${comparePricesResult.error}`;
+  const result: SyncAudit = {
+    systemId,
+    day,
+    stages,
+    summary: {
+      totalStages: stages.length,
+      durationMs: (Date.now() - startTime) as Milliseconds,
+    },
+  };
+
+  if (error !== undefined) result.summary.error = error;
+  if (exception !== undefined) result.summary.exception = exception;
+
+  return result;
+}
+
+/**
+ * Update Forecasts: Syncs price/forecast data only
+ *
+ * Early termination logic:
+ * - Stage 1: If local has all-billable price data, we're done
+ * - Stage 2: If remote has no price data, we're done
+ * - Stage 3: Compare and identify superior price records
+ */
+export async function updateForecasts(
+  systemId: number,
+  day: CalendarDate,
+  credentials: AmberCredentials,
+): Promise<SyncAudit> {
+  const tracker = new StageTracker();
+  const stages: StageResult[] = [];
+  const startTime = Date.now();
+
+  let error: string | undefined;
+  let exception: Error | undefined;
+
+  try {
+    // STAGE 1: Load local data
+    const localResult = await loadLocalUsage(
+      systemId,
+      day,
+      tracker.nextStage("load local data"),
+    );
+    stages.push(localResult);
+
+    if (localResult.error) {
+      error = `Stage 1 failed: ${localResult.error}`;
+    } else {
+      // Check if local has price points (E1.perKwh, B1.perKwh, grid.spotPerKwh, grid.renewables)
+      const hasPricePoints = Array.from(localResult.overviews.keys()).some(
+        (key) => key === "grid.spotPerKwh" || key === "grid.renewables",
+      );
+
+      if (localResult.completeness === "all-billable" && hasPricePoints) {
+        // EARLY EXIT: Local already has complete forecast data
+        localResult.discovery = "local forecasts already up to date";
+      } else {
+        // STAGE 2: Load remote prices
+        const pricesResult = await loadRemotePrices(
+          credentials,
+          day,
+          tracker.nextStage("load remote prices"),
+        );
+        stages.push(pricesResult);
+
+        if (pricesResult.error) {
+          error = `Stage 2 failed: ${pricesResult.error}`;
+        } else if (pricesResult.completeness === "none") {
+          // EARLY EXIT: No price data available
+          pricesResult.discovery = "no price data available yet";
+        } else {
+          // Set discovery based on what we found
+          if (pricesResult.completeness === "mixed") {
+            pricesResult.discovery = "remote has price forecasts available";
+          } else if (pricesResult.completeness === "all-billable") {
+            pricesResult.discovery = "remote has all actual prices";
+          }
+
+          // STAGE 3: Compare prices
+          const compareResult = await comparePrices(
+            localResult,
+            pricesResult,
+            day,
+            tracker.nextStage("compare local vs remote prices"),
+          );
+          stages.push(compareResult);
+
+          if (compareResult.error) {
+            error = `Stage 3 failed: ${compareResult.error}`;
+          } else {
+            if (compareResult.completeness === "none") {
+              error =
+                "Stage 3 unexpected: completeness is none (should be impossible)";
+            } else {
+              compareResult.discovery = `found ${compareResult.numRecords} superior remote price records to update/insert`;
             }
           }
         }
