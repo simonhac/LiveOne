@@ -258,6 +258,7 @@ export class AmberAdapter extends BaseVendorAdapter {
             pointMetadata: createTariffPeriodPoint(),
             rawValue: abbreviatedPeriod, // "pk", "op", "sh", or "ss"
             intervalEndMs,
+            dataQuality: quality,
           });
         }
       }

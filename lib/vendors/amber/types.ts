@@ -100,12 +100,13 @@ export type Completeness = "all-billable" | "none" | "mixed";
 export interface StageResult {
   stage: string; // e.g., "stage 1: load local usage"
   completeness: Completeness;
-  overviewsByPoint: Map<string, string>; // Map of point origin ID to overview (48 chars each)
+  overviews: Map<string, string>; // Map of point origin ID to overview (48 chars each)
   numRecords: number; // Count of non-null records (required for all stages)
   characterisation?: CharacterisationRange[];
   records?: Map<string, Map<string, PointReading>>;
   error?: string;
   request?: string; // Debug info about the API request made
+  discovery?: string; // Optional text description of what was discovered/learned
 }
 
 // Quality range grouping for mixed completeness
