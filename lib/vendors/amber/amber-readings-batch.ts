@@ -320,6 +320,58 @@ export class AmberReadingsBatch {
   }
 
   /**
+   * Generate canonical display table (4 rows: time, E1.perKwh, renewables, quality)
+   * Returns array of formatted strings with 6-char columns for monospaced display
+   */
+  getCanonicalDisplay(): string[] {
+    if (this.intervalEndTimes.length === 0) {
+      return [];
+    }
+
+    // Build table rows
+    const timeRow: string[] = [];
+    const e1PerKwhRow: string[] = [];
+    const renewablesRow: string[] = [];
+    const qualityRow: string[] = [];
+
+    for (const intervalEndTimeMs of this.intervalEndTimes) {
+      const pointMap = this.records.get(String(intervalEndTimeMs));
+      if (!pointMap) continue;
+
+      // Format time as HH:MM AEST
+      const timeAEST = new Date(intervalEndTimeMs + 10 * 60 * 60 * 1000);
+      const timeStr = `${String(timeAEST.getUTCHours()).padStart(2, "0")}:${String(timeAEST.getUTCMinutes()).padStart(2, "0")}`;
+      timeRow.push(timeStr);
+
+      // Get E1.perKwh value
+      const e1PerKwh = pointMap.get("E1.perKwh");
+      if (e1PerKwh && e1PerKwh.rawValue !== null) {
+        e1PerKwhRow.push(`${Math.round(e1PerKwh.rawValue)}¢`);
+        qualityRow.push(e1PerKwh.dataQuality || ".");
+      } else {
+        e1PerKwhRow.push("-");
+        qualityRow.push(".");
+      }
+
+      // Get grid.renewables value
+      const renewables = pointMap.get("grid.renewables");
+      if (renewables && renewables.rawValue !== null) {
+        renewablesRow.push(`${Math.round(renewables.rawValue)}%`);
+      } else {
+        renewablesRow.push("-");
+      }
+    }
+
+    // Format rows with proper spacing (6 chars per column, right-aligned)
+    return [
+      timeRow.map((s) => s.padStart(6)).join(""),
+      e1PerKwhRow.map((s) => s.padStart(6)).join(""),
+      renewablesRow.map((s) => s.padStart(6)).join(""),
+      qualityRow.map((s) => s.padStart(6)).join(""),
+    ];
+  }
+
+  /**
    * Get all views in one call - convenience method for stages
    */
   getInfo(): {
@@ -327,12 +379,14 @@ export class AmberReadingsBatch {
     completeness: Completeness;
     characterisation: CharacterisationRange[] | undefined;
     numRecords: number;
+    canonical: string[];
   } {
     return {
       overviews: this.getOverviews(),
       completeness: this.getCompleteness(),
       characterisation: this.getCharacterisation(),
       numRecords: this.getCount(),
+      canonical: this.getCanonicalDisplay(),
     };
   }
 }

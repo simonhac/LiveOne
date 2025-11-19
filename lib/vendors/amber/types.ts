@@ -96,13 +96,19 @@ export type Milliseconds = number & { readonly __brand: "Milliseconds" };
 // Completeness states for data quality overview
 export type Completeness = "all-billable" | "none" | "mixed";
 
+// Batch info - summary views of a day's readings
+export interface BatchInfo {
+  completeness: Completeness;
+  overviews: Map<string, string>; // Map of point origin ID to overview (48 chars each)
+  numRecords: number; // Count of non-null records
+  characterisation?: CharacterisationRange[];
+  canonical: string[]; // Formatted table display (one line per row, monospaced)
+}
+
 // Result from a single sync stage
 export interface StageResult {
   stage: string; // e.g., "stage 1: load local usage"
-  completeness: Completeness;
-  overviews: Map<string, string>; // Map of point origin ID to overview (48 chars each)
-  numRecords: number; // Count of non-null records (required for all stages)
-  characterisation?: CharacterisationRange[];
+  info: BatchInfo; // Summary views of the batch
   records?: Map<string, Map<string, PointReading>>;
   error?: string;
   request?: string; // Debug info about the API request made

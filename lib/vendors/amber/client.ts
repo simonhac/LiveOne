@@ -20,6 +20,7 @@ import type {
   Completeness,
   CharacterisationRange,
   PointReading,
+  BatchInfo,
 } from "./types";
 import type { PointMetadata } from "@/lib/vendors/base-vendor-adapter";
 import { formatDateAEST } from "@/lib/date-utils";
@@ -185,10 +186,10 @@ function buildRecordsMapFromLocal(
  */
 
 /**
- * Stage 1a: Load Local Usage
+ * Stage 1a: Load Local Records
  * Fetches all point readings from the database for the specified day
  */
-async function loadLocalUsage(
+async function loadLocalRecords(
   systemId: number,
   day: CalendarDate,
   stageName: string,
@@ -223,9 +224,12 @@ async function loadLocalUsage(
     if (allPoints.length === 0) {
       return {
         stage: stageName,
-        completeness: "none",
-        overviews: new Map(),
-        numRecords: 0,
+        info: {
+          completeness: "none",
+          overviews: new Map(),
+          numRecords: 0,
+          canonical: [],
+        },
         error: "No points found for system",
       };
     }
@@ -251,23 +255,22 @@ async function loadLocalUsage(
     const group = buildRecordsMapFromLocal(readings, allPoints, day);
 
     // 5. Get all views from group
-    const { overviews, completeness, characterisation, numRecords } =
-      group.getInfo();
+    const info = group.getInfo();
 
     return {
       stage: stageName,
-      completeness,
-      overviews,
-      numRecords,
-      characterisation,
+      info,
       records: group.getRecords(),
     };
   } catch (error) {
     return {
       stage: stageName,
-      completeness: "none",
-      overviews: new Map(),
-      numRecords: 0,
+      info: {
+        completeness: "none",
+        overviews: new Map(),
+        numRecords: 0,
+        canonical: [],
+      },
       error: error instanceof Error ? error.message : String(error),
     };
   }
@@ -296,24 +299,23 @@ async function loadRemoteUsage(
     const group = buildRecordsMapFromAmber(recordsByTime, day);
 
     // Get all views from group
-    const { overviews, completeness, characterisation, numRecords } =
-      group.getInfo();
+    const info = group.getInfo();
 
     return {
       stage: stageName,
-      completeness,
-      overviews,
-      numRecords,
-      characterisation,
+      info,
       records: group.getRecords(),
       request,
     };
   } catch (error) {
     return {
       stage: stageName,
-      completeness: "none",
-      overviews: new Map(),
-      numRecords: 0,
+      info: {
+        completeness: "none",
+        overviews: new Map(),
+        numRecords: 0,
+        canonical: [],
+      },
       error: error instanceof Error ? error.message : String(error),
     };
   }
@@ -332,11 +334,8 @@ function compareRecords(
   newResult: StageResult,
   day: CalendarDate,
   pointKeys: string[],
-): {
+): BatchInfo & {
   comparisonOverviewsByPoint: Map<string, string>;
-  numSuperiorRecords: number;
-  completeness: Completeness;
-  characterisation: CharacterisationRange[] | undefined;
   records: Map<string, Map<string, PointReading>>;
 } {
   // Create AmberReadingsBatch for superior records
@@ -387,15 +386,18 @@ function compareRecords(
     comparisonOverviewsByPoint.values().next().value ?? "".padEnd(48, ".");
   const completeness = determineCompleteness(firstOverview);
 
-  // Get characterisation from superior group
+  // Get characterisation and canonical from superior group
   const characterisation = superiorGroup.getCharacterisation();
-  const numSuperiorRecords = superiorGroup.getCount();
+  const canonical = superiorGroup.getCanonicalDisplay();
+  const numRecords = superiorGroup.getCount();
 
   return {
-    comparisonOverviewsByPoint,
-    numSuperiorRecords,
     completeness,
+    overviews: comparisonOverviewsByPoint,
+    numRecords,
     characterisation,
+    canonical,
+    comparisonOverviewsByPoint,
     records: superiorGroup.getRecords(),
   };
 }
@@ -424,35 +426,37 @@ function createComparisonStage(
 
   try {
     const pointKeys = useNewPoints
-      ? Array.from(newResult.overviews.keys()).sort()
+      ? Array.from(newResult.info.overviews.keys()).sort()
       : (() => {
-          const local = Array.from(existingResult.overviews.keys());
-          const remote = Array.from(newResult.overviews.keys());
+          const local = Array.from(existingResult.info.overviews.keys());
+          const remote = Array.from(newResult.info.overviews.keys());
           return (local.length > 0 ? local : remote).sort();
         })();
 
-    const {
-      comparisonOverviewsByPoint,
-      numSuperiorRecords,
-      completeness,
-      characterisation,
-      records,
-    } = compareRecords(existingResult, newResult, day, pointKeys);
+    const { comparisonOverviewsByPoint, records, ...info } = compareRecords(
+      existingResult,
+      newResult,
+      day,
+      pointKeys,
+    );
 
     return {
       stage: stageName,
-      completeness,
-      overviews: comparisonOverviewsByPoint,
-      numRecords: numSuperiorRecords,
-      characterisation,
+      info: {
+        ...info,
+        overviews: comparisonOverviewsByPoint,
+      },
       records,
     };
   } catch (error) {
     return {
       stage: stageName,
-      completeness: "none",
-      overviews: new Map(),
-      numRecords: 0,
+      info: {
+        completeness: "none",
+        overviews: new Map(),
+        numRecords: 0,
+        canonical: [],
+      },
       error: error instanceof Error ? error.message : String(error),
     };
   }
@@ -676,24 +680,23 @@ async function loadRemotePrices(
     }
 
     // Get all views from group
-    const { overviews, completeness, characterisation, numRecords } =
-      group.getInfo();
+    const info = group.getInfo();
 
     return {
       stage: stageName,
-      completeness,
-      overviews,
-      numRecords,
-      characterisation,
+      info,
       records: group.getRecords(),
       request,
     };
   } catch (error) {
     return {
       stage: stageName,
-      completeness: "none",
-      overviews: new Map(),
-      numRecords: 0,
+      info: {
+        completeness: "none",
+        overviews: new Map(),
+        numRecords: 0,
+        canonical: [],
+      },
       error: error instanceof Error ? error.message : String(error),
     };
   }
@@ -725,7 +728,7 @@ export async function updateUsage(
 
   try {
     // STAGE 1: Load local data
-    const localResult = await loadLocalUsage(
+    const localResult = await loadLocalRecords(
       systemId,
       day,
       tracker.nextStage("load local data"),
@@ -734,7 +737,7 @@ export async function updateUsage(
 
     if (localResult.error) {
       error = `Stage 1 failed: ${localResult.error}`;
-    } else if (localResult.completeness === "all-billable") {
+    } else if (localResult.info.completeness === "all-billable") {
       // EARLY EXIT: Local already has complete billable data
       localResult.discovery = "local is already up to date";
     } else {
@@ -748,14 +751,14 @@ export async function updateUsage(
 
       if (remoteResult.error) {
         error = `Stage 2 failed: ${remoteResult.error}`;
-      } else if (remoteResult.completeness === "none") {
+      } else if (remoteResult.info.completeness === "none") {
         // EARLY EXIT: Both local and remote are empty
         remoteResult.discovery = "local and remote both empty";
       } else {
         // Set discovery based on what we found
-        if (remoteResult.completeness === "all-billable") {
+        if (remoteResult.info.completeness === "all-billable") {
           remoteResult.discovery = "remote has full day of data";
-        } else if (remoteResult.completeness === "mixed") {
+        } else if (remoteResult.info.completeness === "mixed") {
           remoteResult.discovery =
             "local empty, remote has partial day of data (unexpected!)";
         }
@@ -773,11 +776,11 @@ export async function updateUsage(
           error = `Stage 3 failed: ${compareResult.error}`;
         } else {
           // Verify completeness is not "none"
-          if (compareResult.completeness === "none") {
+          if (compareResult.info.completeness === "none") {
             error =
               "Stage 3 unexpected: completeness is none (should be impossible)";
           } else {
-            compareResult.discovery = `found ${compareResult.numRecords} superior remote records to update/insert`;
+            compareResult.discovery = `found ${compareResult.info.numRecords} superior remote records to update/insert`;
           }
         }
       }
@@ -825,7 +828,7 @@ export async function updateForecasts(
 
   try {
     // STAGE 1: Load local data
-    const localResult = await loadLocalUsage(
+    const localResult = await loadLocalRecords(
       systemId,
       day,
       tracker.nextStage("load local data"),
@@ -836,11 +839,11 @@ export async function updateForecasts(
       error = `Stage 1 failed: ${localResult.error}`;
     } else {
       // Check if local has price points (E1.perKwh, B1.perKwh, grid.spotPerKwh, grid.renewables)
-      const hasPricePoints = Array.from(localResult.overviews.keys()).some(
+      const hasPricePoints = Array.from(localResult.info.overviews.keys()).some(
         (key) => key === "grid.spotPerKwh" || key === "grid.renewables",
       );
 
-      if (localResult.completeness === "all-billable" && hasPricePoints) {
+      if (localResult.info.completeness === "all-billable" && hasPricePoints) {
         // EARLY EXIT: Local already has complete forecast data
         localResult.discovery = "local forecasts already up to date";
       } else {
@@ -854,14 +857,14 @@ export async function updateForecasts(
 
         if (pricesResult.error) {
           error = `Stage 2 failed: ${pricesResult.error}`;
-        } else if (pricesResult.completeness === "none") {
+        } else if (pricesResult.info.completeness === "none") {
           // EARLY EXIT: No price data available
           pricesResult.discovery = "no price data available yet";
         } else {
           // Set discovery based on what we found
-          if (pricesResult.completeness === "mixed") {
+          if (pricesResult.info.completeness === "mixed") {
             pricesResult.discovery = "remote has price forecasts available";
-          } else if (pricesResult.completeness === "all-billable") {
+          } else if (pricesResult.info.completeness === "all-billable") {
             pricesResult.discovery = "remote has all actual prices";
           }
 
@@ -878,11 +881,11 @@ export async function updateForecasts(
           if (compareResult.error) {
             error = `Stage 3 failed: ${compareResult.error}`;
           } else {
-            if (compareResult.completeness === "none") {
+            if (compareResult.info.completeness === "none") {
               error =
                 "Stage 3 unexpected: completeness is none (should be impossible)";
             } else {
-              compareResult.discovery = `found ${compareResult.numRecords} superior remote price records to update/insert`;
+              compareResult.discovery = `found ${compareResult.info.numRecords} superior remote price records to update/insert`;
             }
           }
         }

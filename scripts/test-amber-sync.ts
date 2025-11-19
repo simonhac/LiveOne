@@ -106,13 +106,15 @@ async function testSync() {
       if (stage.discovery) {
         console.log(`Discovery: ${stage.discovery}`);
       }
-      console.log(`Completeness: ${stage.completeness}`);
-      console.log(`Num Records: ${stage.numRecords}`);
+      console.log(`Completeness: ${stage.info.completeness}`);
+      console.log(`Num Records: ${stage.info.numRecords}`);
 
       // Display overviews sorted by point key
-      if (stage.overviews.size > 0) {
-        console.log(`\nOverviews by point (${stage.overviews.size} series):`);
-        const sortedPoints = Array.from(stage.overviews.entries()).sort(
+      if (stage.info.overviews.size > 0) {
+        console.log(
+          `\nOverviews by point (${stage.info.overviews.size} series):`,
+        );
+        const sortedPoints = Array.from(stage.info.overviews.entries()).sort(
           (a, b) => a[0].localeCompare(b[0]),
         );
         for (const [pointKey, overview] of sortedPoints) {
@@ -122,11 +124,11 @@ async function testSync() {
         console.log("\nNo overviews available");
       }
 
-      if (stage.characterisation) {
+      if (stage.info.characterisation) {
         console.log(
-          `\nCharacterisation (${stage.characterisation.length} ranges):`,
+          `\nCharacterisation (${stage.info.characterisation.length} ranges):`,
         );
-        for (const range of stage.characterisation) {
+        for (const range of stage.info.characterisation) {
           // Convert to AEST (UTC+10) and format as HH:MM
           const startAEST = new Date(
             range.rangeStartTimeMs + 10 * 60 * 60 * 1000,
@@ -141,6 +143,14 @@ async function testSync() {
         }
       } else if (stage.records && stage.records.size > 0) {
         console.log(`\nRecords: ${stage.records.size} time intervals`);
+      }
+
+      // Display canonical table if available
+      if (stage.info.canonical && stage.info.canonical.length > 0) {
+        console.log("\nCanonical Display:");
+        for (const line of stage.info.canonical) {
+          console.log(line);
+        }
       }
 
       if (stage.error) {
@@ -175,15 +185,17 @@ async function testSync() {
         stage: stage.stage,
         request: stage.request,
         discovery: stage.discovery,
-        completeness: stage.completeness,
-        overviews: Object.fromEntries(stage.overviews),
-        numRecords: stage.numRecords,
-        characterisation: stage.characterisation?.map((range) => ({
-          rangeStartTimeMs: range.rangeStartTimeMs,
-          rangeEndTimeMs: range.rangeEndTimeMs,
-          quality: range.quality,
-          pointOriginIds: range.pointOriginIds,
-        })),
+        info: {
+          completeness: stage.info.completeness,
+          overviews: Object.fromEntries(stage.info.overviews),
+          numRecords: stage.info.numRecords,
+          characterisation: stage.info.characterisation?.map((range) => ({
+            rangeStartTimeMs: range.rangeStartTimeMs,
+            rangeEndTimeMs: range.rangeEndTimeMs,
+            quality: range.quality,
+            pointOriginIds: range.pointOriginIds,
+          })),
+        },
         error: stage.error,
       })),
       summary: audit.summary,
