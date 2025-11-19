@@ -2,6 +2,8 @@
  * Amber Electric API types
  */
 
+import type { CalendarDate } from "@internationalized/date";
+
 export interface AmberCredentials {
   apiKey: string;
   siteId?: string; // Optional: auto-discover if not provided
@@ -96,10 +98,10 @@ export type Milliseconds = number & { readonly __brand: "Milliseconds" };
 // Completeness states for data quality overview
 export type Completeness = "all-billable" | "none" | "mixed";
 
-// Batch info - summary views of a day's readings
+// Batch info - summary views of a time period's readings
 export interface BatchInfo {
   completeness: Completeness;
-  overviews: Map<string, string>; // Map of point origin ID to overview (48 chars each)
+  overviews: Map<string, string>; // Map of point origin ID to overview (48 × numberOfDays chars each)
   numRecords: number; // Count of non-null records
   characterisation?: CharacterisationRange[];
   canonical: string[]; // Formatted table display (one line per row, monospaced)
@@ -138,7 +140,8 @@ export interface PointReading {
 // Complete sync audit result
 export interface SyncAudit {
   systemId: number;
-  day: import("@internationalized/date").CalendarDate;
+  firstDay: CalendarDate;
+  numberOfDays: number;
   stages: StageResult[];
   summary: {
     totalStages: number;

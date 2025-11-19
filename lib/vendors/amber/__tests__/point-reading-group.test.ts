@@ -12,7 +12,7 @@ describe("AmberReadingsBatch", () => {
     it("should include intervals where only some points have data", () => {
       // Test day: 2025-11-19
       const day = new CalendarDate(2025, 11, 19);
-      const group = new AmberReadingsBatch(day);
+      const group = new AmberReadingsBatch(day, 1);
 
       // Add readings that simulate the actual bug scenario:
       // - grid.spotPerKwh has superior data for first 13 intervals (00:00-06:30)
@@ -113,7 +113,7 @@ describe("AmberReadingsBatch", () => {
     it("should throw an exception when adding readings outside the day boundaries", () => {
       // Test day: 2025-11-19
       const day = new CalendarDate(2025, 11, 19);
-      const group = new AmberReadingsBatch(day);
+      const group = new AmberReadingsBatch(day, 1);
 
       // AEST is UTC+10, so 2025-11-19 00:00 AEST = 1763474400000ms
       const dayStartMs = 1763474400000;
@@ -133,7 +133,7 @@ describe("AmberReadingsBatch", () => {
             dataCategory: "Price",
           },
         });
-      }).toThrow(/outside day boundaries/);
+      }).toThrow(/outside range boundaries/);
 
       // Try to add a reading AFTER the day ends (e.g., 00:30 on next day)
       const afterDayMs = (dayEndMs + 30 * 60 * 1000) as Milliseconds;
@@ -149,7 +149,7 @@ describe("AmberReadingsBatch", () => {
             dataCategory: "Price",
           },
         });
-      }).toThrow(/outside day boundaries/);
+      }).toThrow(/outside range boundaries/);
 
       // A reading exactly at the day end (last interval end time) should work
       const lastIntervalMs = dayEndMs as Milliseconds;
@@ -166,6 +166,214 @@ describe("AmberReadingsBatch", () => {
           },
         });
       }).not.toThrow();
+    });
+  });
+
+  describe("multi-day support", () => {
+    it("should support 3-day ranges with 144 intervals", () => {
+      // Test 3 days starting 2025-11-19
+      const firstDay = new CalendarDate(2025, 11, 19);
+      const numberOfDays = 3;
+      const group = new AmberReadingsBatch(firstDay, numberOfDays);
+
+      // AEST is UTC+10, so 2025-11-19 00:00 AEST = 1763474400000ms
+      const dayStartMs = 1763474400000;
+
+      // Add readings for all 144 intervals (48 × 3)
+      for (let i = 0; i < 144; i++) {
+        const measurementTimeMs = (dayStartMs +
+          (i + 1) * 30 * 60 * 1000) as Milliseconds;
+        group.add({
+          measurementTimeMs,
+          rawValue: 0.25 + i * 0.01,
+          dataQuality: "Billable",
+          pointMetadata: {
+            originId: "grid",
+            originSubId: "spotPerKwh",
+            defaultName: "Grid spot price",
+            subsystem: "grid",
+            type: "bidi",
+            subtype: "grid",
+            extension: "spot",
+            metricType: "rate",
+            metricUnit: "cents_kWh",
+            transform: null,
+          },
+          receivedTimeMs: Date.now() as Milliseconds,
+          sessionId: 0,
+        });
+      }
+
+      // Verify overview length is 144 chars
+      const overview = group.getOverview("grid.spotPerKwh");
+      expect(overview.length).toBe(144);
+      expect(overview).toBe("b".repeat(144)); // All billable quality
+
+      // Verify count
+      expect(group.getCount()).toBe(144);
+
+      // Verify completeness
+      expect(group.getCompleteness()).toBe("all-billable");
+    });
+
+    it("should correctly validate boundaries for multi-day ranges", () => {
+      const firstDay = new CalendarDate(2025, 11, 19);
+      const numberOfDays = 3;
+      const group = new AmberReadingsBatch(firstDay, numberOfDays);
+
+      const dayStartMs = 1763474400000;
+      const rangeEndMs = dayStartMs + 144 * 30 * 60 * 1000; // 3 days worth
+
+      // Reading before range should fail
+      const beforeRangeMs = (dayStartMs - 30 * 60 * 1000) as Milliseconds;
+      expect(() => {
+        group.add({
+          measurementTimeMs: beforeRangeMs,
+          rawValue: 0.25,
+          dataQuality: "Actual",
+          pointMetadata: {
+            originId: "grid",
+            originSubId: "spotPerKwh",
+            defaultName: "Grid spot price",
+            subsystem: "grid",
+            type: "bidi",
+            subtype: "grid",
+            extension: "spot",
+            metricType: "rate",
+            metricUnit: "cents_kWh",
+            transform: null,
+          },
+          receivedTimeMs: Date.now() as Milliseconds,
+          sessionId: 0,
+        });
+      }).toThrow(/outside range boundaries/);
+
+      // Reading after range should fail
+      const afterRangeMs = (rangeEndMs + 30 * 60 * 1000) as Milliseconds;
+      expect(() => {
+        group.add({
+          measurementTimeMs: afterRangeMs,
+          rawValue: 0.25,
+          dataQuality: "Actual",
+          pointMetadata: {
+            originId: "grid",
+            originSubId: "spotPerKwh",
+            defaultName: "Grid spot price",
+            subsystem: "grid",
+            type: "bidi",
+            subtype: "grid",
+            extension: "spot",
+            metricType: "rate",
+            metricUnit: "cents_kWh",
+            transform: null,
+          },
+          receivedTimeMs: Date.now() as Milliseconds,
+          sessionId: 0,
+        });
+      }).toThrow(/outside range boundaries/);
+
+      // Reading exactly at range end should work
+      const lastIntervalMs = rangeEndMs as Milliseconds;
+      expect(() => {
+        group.add({
+          measurementTimeMs: lastIntervalMs,
+          rawValue: 0.25,
+          dataQuality: "Actual",
+          pointMetadata: {
+            originId: "grid",
+            originSubId: "spotPerKwh",
+            defaultName: "Grid spot price",
+            subsystem: "grid",
+            type: "bidi",
+            subtype: "grid",
+            extension: "spot",
+            metricType: "rate",
+            metricUnit: "cents_kWh",
+            transform: null,
+          },
+          receivedTimeMs: Date.now() as Milliseconds,
+          sessionId: 0,
+        });
+      }).not.toThrow();
+    });
+
+    it("should generate correct characterisation for multi-day mixed quality", () => {
+      const firstDay = new CalendarDate(2025, 11, 19);
+      const numberOfDays = 2;
+      const group = new AmberReadingsBatch(firstDay, numberOfDays);
+
+      const dayStartMs = 1763474400000;
+
+      // Day 1: All actual quality
+      for (let i = 0; i < 48; i++) {
+        const measurementTimeMs = (dayStartMs +
+          (i + 1) * 30 * 60 * 1000) as Milliseconds;
+        group.add({
+          measurementTimeMs,
+          rawValue: 0.25,
+          dataQuality: "Actual",
+          pointMetadata: {
+            originId: "grid",
+            originSubId: "spotPerKwh",
+            defaultName: "Grid spot price",
+            subsystem: "grid",
+            type: "bidi",
+            subtype: "grid",
+            extension: "spot",
+            metricType: "rate",
+            metricUnit: "cents_kWh",
+            transform: null,
+          },
+          receivedTimeMs: Date.now() as Milliseconds,
+          sessionId: 0,
+        });
+      }
+
+      // Day 2: All forecast quality
+      for (let i = 48; i < 96; i++) {
+        const measurementTimeMs = (dayStartMs +
+          (i + 1) * 30 * 60 * 1000) as Milliseconds;
+        group.add({
+          measurementTimeMs,
+          rawValue: 0.3,
+          dataQuality: "Forecast",
+          pointMetadata: {
+            originId: "grid",
+            originSubId: "spotPerKwh",
+            defaultName: "Grid spot price",
+            subsystem: "grid",
+            type: "bidi",
+            subtype: "grid",
+            extension: "spot",
+            metricType: "rate",
+            metricUnit: "cents_kWh",
+            transform: null,
+          },
+          receivedTimeMs: Date.now() as Milliseconds,
+          sessionId: 0,
+        });
+      }
+
+      // Verify overview shows both qualities
+      const overview = group.getOverview("grid.spotPerKwh");
+      expect(overview.length).toBe(96);
+      expect(overview).toBe("a".repeat(48) + "f".repeat(48));
+
+      // Verify mixed completeness
+      expect(group.getCompleteness()).toBe("mixed");
+
+      // Verify characterisation has 2 ranges
+      const characterisation = group.getCharacterisation();
+      expect(characterisation).toBeDefined();
+      expect(characterisation!.length).toBe(2);
+
+      // First range: actual (48 periods)
+      expect(characterisation![0].quality).toBe("a");
+      expect(characterisation![0].numPeriods).toBe(48);
+
+      // Second range: forecast (48 periods)
+      expect(characterisation![1].quality).toBe("f");
+      expect(characterisation![1].numPeriods).toBe(48);
     });
   });
 });

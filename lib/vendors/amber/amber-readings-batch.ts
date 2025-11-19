@@ -13,17 +13,24 @@ import type {
 } from "./types";
 
 /**
- * Generates all 48 half-hour interval end times for a given day (AEST = UTC+10)
+ * Generates all half-hour interval end times for a given date range (AEST = UTC+10)
  * Note: Amber uses fixed UTC+10 (AEST), NOT Australia/Sydney timezone which observes DST
+ * @param firstDay - Starting day of the range
+ * @param numberOfDays - Number of days to generate (default: 1)
+ * @returns Array of interval end times (48 × numberOfDays intervals)
  */
-function generateIntervalEndTimes(day: CalendarDate): Milliseconds[] {
+function generateIntervalEndTimes(
+  firstDay: CalendarDate,
+  numberOfDays: number = 1,
+): Milliseconds[] {
   const intervals: Milliseconds[] = [];
 
   // Convert CalendarDate to ZonedDateTime at midnight in +10:00 timezone (AEST)
-  let current = toZoned(toCalendarDateTime(day), "+10:00");
+  let current = toZoned(toCalendarDateTime(firstDay), "+10:00");
 
-  // Generate 48 intervals starting at 00:30 AEST
-  for (let i = 0; i < 48; i++) {
+  // Generate 48 × numberOfDays intervals starting at 00:30 AEST on firstDay
+  const totalIntervals = 48 * numberOfDays;
+  for (let i = 0; i < totalIntervals; i++) {
     current = current.add({ minutes: 30 });
     intervals.push(current.toDate().getTime() as Milliseconds);
   }
@@ -41,12 +48,14 @@ export function abbreviateQuality(quality: string | null | undefined): string {
 
 export class AmberReadingsBatch {
   private records: Map<string, Map<string, PointReading>>;
-  private day: CalendarDate;
+  private firstDay: CalendarDate;
+  private numberOfDays: number;
   private intervalEndTimes: Milliseconds[];
 
-  constructor(day: CalendarDate) {
-    this.day = day;
-    this.intervalEndTimes = generateIntervalEndTimes(day);
+  constructor(firstDay: CalendarDate, numberOfDays: number = 1) {
+    this.firstDay = firstDay;
+    this.numberOfDays = numberOfDays;
+    this.intervalEndTimes = generateIntervalEndTimes(firstDay, numberOfDays);
     this.records = new Map();
 
     // Prepopulate map with all time keys
@@ -57,17 +66,17 @@ export class AmberReadingsBatch {
 
   /**
    * Add a point reading to the group
-   * Throws exception if reading is outside the day's boundaries
+   * Throws exception if reading is outside the date range boundaries
    */
   add(reading: PointReading): void {
-    // Validate reading is within day boundaries
-    const dayStart = (this.intervalEndTimes[0] -
+    // Validate reading is within date range boundaries
+    const rangeStart = (this.intervalEndTimes[0] -
       30 * 60 * 1000) as Milliseconds;
-    const dayEnd = this.intervalEndTimes[47];
+    const rangeEnd = this.intervalEndTimes[this.intervalEndTimes.length - 1];
 
     if (
-      reading.measurementTimeMs < dayStart ||
-      reading.measurementTimeMs > dayEnd
+      reading.measurementTimeMs < rangeStart ||
+      reading.measurementTimeMs > rangeEnd
     ) {
       const pointKey = reading.pointMetadata.originSubId
         ? `${reading.pointMetadata.originId}.${reading.pointMetadata.originSubId}`
@@ -76,9 +85,9 @@ export class AmberReadingsBatch {
       throw new Error(
         `Cannot add reading for ${pointKey} with timestamp ${reading.measurementTimeMs} ` +
           `(${new Date(reading.measurementTimeMs).toISOString()}) - ` +
-          `outside day boundaries [${dayStart}, ${dayEnd}] ` +
-          `(${new Date(dayStart).toISOString()} to ${new Date(dayEnd).toISOString()})` +
-          ` for day ${this.day.toString()}`,
+          `outside range boundaries [${rangeStart}, ${rangeEnd}] ` +
+          `(${new Date(rangeStart).toISOString()} to ${new Date(rangeEnd).toISOString()})` +
+          ` for ${this.numberOfDays} day(s) starting ${this.firstDay.toString()}`,
       );
     }
 
@@ -160,7 +169,7 @@ export class AmberReadingsBatch {
   }
 
   /**
-   * Generate overview string for a specific point (48 chars)
+   * Generate overview string for a specific point (48 × numberOfDays chars)
    * Quality is already normalized to single lowercase letter when added
    */
   getOverview(pointKey: string): string {

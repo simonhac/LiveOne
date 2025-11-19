@@ -96,34 +96,47 @@ function isNewRecordSuperior(
 
 /**
  * Determine completeness from overview string
- * Throws error if overview length is not exactly 48
+ * @param overview - Overview string (48 × numberOfDays chars)
+ * @param expectedLength - Expected overview length (48 × numberOfDays)
  */
-function determineCompleteness(overview: string): Completeness {
-  if (overview.length !== 48) {
-    throw new Error(`Invalid overview length: ${overview.length}, expected 48`);
+function determineCompleteness(
+  overview: string,
+  expectedLength: number,
+): Completeness {
+  if (overview.length !== expectedLength) {
+    throw new Error(
+      `Invalid overview length: ${overview.length}, expected ${expectedLength}`,
+    );
   }
 
   const nonNull = overview.replace(/\./g, "").length;
   const billable = overview.replace(/[^b]/g, "").length;
 
-  if (billable === 48) return "all-billable";
+  if (billable === expectedLength) return "all-billable";
   if (nonNull === 0) return "none";
   return "mixed";
 }
 
 /**
- * Generate 48 half-hour interval timestamps for a day in AEST (UTC+10)
- * Returns timestamps from 00:30 AEST to 00:00 AEST (next day)
+ * Generate half-hour interval timestamps for a date range in AEST (UTC+10)
+ * Returns timestamps from 00:30 AEST on firstDay to 00:00 AEST on (firstDay + numberOfDays)
  * Note: Uses fixed UTC+10 offset, NOT Australia/Sydney which observes DST
+ * @param firstDay - Starting day
+ * @param numberOfDays - Number of days (default: 1)
+ * @returns Array of interval end timestamps (48 × numberOfDays intervals)
  */
-function generate48IntervalsAEST(day: CalendarDate): Milliseconds[] {
+function generateIntervalsAEST(
+  firstDay: CalendarDate,
+  numberOfDays: number = 1,
+): Milliseconds[] {
   const intervals: Milliseconds[] = [];
 
   // Convert CalendarDate to ZonedDateTime at midnight in +10:00 timezone (AEST)
-  let current = toZoned(toCalendarDateTime(day), "+10:00");
+  let current = toZoned(toCalendarDateTime(firstDay), "+10:00");
 
-  // Generate 48 intervals starting at 00:30 AEST
-  for (let i = 0; i < 48; i++) {
+  // Generate 48 × numberOfDays intervals starting at 00:30 AEST
+  const totalIntervals = 48 * numberOfDays;
+  for (let i = 0; i < totalIntervals; i++) {
     current = current.add({ minutes: 30 });
     intervals.push(current.toDate().getTime() as Milliseconds);
   }
@@ -137,9 +150,10 @@ function generate48IntervalsAEST(day: CalendarDate): Milliseconds[] {
 function buildRecordsMapFromLocal(
   readings: any[],
   allPoints: any[],
-  day: CalendarDate,
+  firstDay: CalendarDate,
+  numberOfDays: number,
 ): AmberReadingsBatch {
-  const group = new AmberReadingsBatch(day);
+  const group = new AmberReadingsBatch(firstDay, numberOfDays);
 
   for (const reading of readings) {
     const point = allPoints.find((p) => p.index === reading.pointId);
@@ -187,11 +201,12 @@ function buildRecordsMapFromLocal(
 
 /**
  * Stage 1a: Load Local Records
- * Fetches all point readings from the database for the specified day
+ * Fetches all point readings from the database for the specified date range
  */
 async function loadLocalRecords(
   systemId: number,
-  day: CalendarDate,
+  firstDay: CalendarDate,
+  numberOfDays: number,
   stageName: string,
 ): Promise<StageResult> {
   try {
@@ -234,8 +249,8 @@ async function loadLocalRecords(
       };
     }
 
-    // 2. Generate 48 expected intervals
-    const expectedIntervals = generate48IntervalsAEST(day);
+    // 2. Generate expected intervals
+    const expectedIntervals = generateIntervalsAEST(firstDay, numberOfDays);
 
     // 3. Fetch readings for all points
     const pointIds = allPoints.map((p) => p.index);
@@ -252,7 +267,12 @@ async function loadLocalRecords(
       .orderBy(pointReadingsAgg5m.intervalEnd);
 
     // 4. Build AmberReadingsBatch from database readings
-    const group = buildRecordsMapFromLocal(readings, allPoints, day);
+    const group = buildRecordsMapFromLocal(
+      readings,
+      allPoints,
+      firstDay,
+      numberOfDays,
+    );
 
     // 5. Get all views from group
     const info = group.getInfo();
@@ -282,21 +302,32 @@ async function loadLocalRecords(
  */
 async function loadRemoteUsage(
   credentials: AmberCredentials,
-  day: CalendarDate,
+  firstDay: CalendarDate,
+  numberOfDays: number,
   stageName: string,
 ): Promise<StageResult> {
   try {
-    const dateStr = formatDateAEST(day);
-    const request = `GET /v1/sites/${credentials.siteId}/usage?startDate=${dateStr}&endDate=${dateStr}`;
+    const startDateStr = formatDateAEST(firstDay);
+    const endDay = firstDay.add({ days: numberOfDays - 1 });
+    const endDateStr = formatDateAEST(endDay);
+    const request = `GET /v1/sites/${credentials.siteId}/usage?startDate=${startDateStr}&endDate=${endDateStr}`;
 
     // Fetch from Amber API
-    const usageRecords = await fetchAmberUsage(credentials, day);
+    const usageRecords = await fetchAmberUsage(
+      credentials,
+      firstDay,
+      numberOfDays,
+    );
 
     // Group by timestamp
     const recordsByTime = groupRecordsByTime(usageRecords);
 
     // Build AmberReadingsBatch from Amber data
-    const group = buildRecordsMapFromAmber(recordsByTime, day);
+    const group = buildRecordsMapFromAmber(
+      recordsByTime,
+      firstDay,
+      numberOfDays,
+    );
 
     // Get all views from group
     const info = group.getInfo();
@@ -332,14 +363,15 @@ async function loadRemoteUsage(
 function compareRecords(
   existingResult: StageResult,
   newResult: StageResult,
-  day: CalendarDate,
+  firstDay: CalendarDate,
+  numberOfDays: number,
   pointKeys: string[],
 ): BatchInfo & {
   comparisonOverviewsByPoint: Map<string, string>;
   records: Map<string, Map<string, PointReading>>;
 } {
   // Create AmberReadingsBatch for superior records
-  const superiorGroup = new AmberReadingsBatch(day);
+  const superiorGroup = new AmberReadingsBatch(firstDay, numberOfDays);
 
   // Initialize comparison overview arrays for each point
   const comparisonOverviewBuilders = new Map<string, string[]>();
@@ -382,9 +414,11 @@ function compareRecords(
   }
 
   // Determine completeness from comparison overview
+  const expectedLength = 48 * numberOfDays;
   const firstOverview =
-    comparisonOverviewsByPoint.values().next().value ?? "".padEnd(48, ".");
-  const completeness = determineCompleteness(firstOverview);
+    comparisonOverviewsByPoint.values().next().value ??
+    "".padEnd(expectedLength, ".");
+  const completeness = determineCompleteness(firstOverview, expectedLength);
 
   // Get characterisation and canonical from superior group
   const characterisation = superiorGroup.getCharacterisation();
@@ -414,7 +448,8 @@ function compareRecords(
 function createComparisonStage(
   existingResult: StageResult,
   newResult: StageResult,
-  day: CalendarDate,
+  firstDay: CalendarDate,
+  numberOfDays: number,
   stageName: string,
   useNewPoints: boolean = false,
 ): StageResult {
@@ -436,7 +471,8 @@ function createComparisonStage(
     const { comparisonOverviewsByPoint, records, ...info } = compareRecords(
       existingResult,
       newResult,
-      day,
+      firstDay,
+      numberOfDays,
       pointKeys,
     );
 
@@ -468,17 +504,23 @@ function createComparisonStage(
 
 /**
  * Fetch usage data from Amber API
+ * @param credentials - Amber API credentials
+ * @param firstDay - Starting day of the range
+ * @param numberOfDays - Number of days to fetch (default: 1)
  */
 async function fetchAmberUsage(
   credentials: AmberCredentials,
-  day: CalendarDate,
+  firstDay: CalendarDate,
+  numberOfDays: number = 1,
 ): Promise<AmberUsageRecord[]> {
-  const dateStr = formatDateAEST(day);
+  const startDateStr = formatDateAEST(firstDay);
+  const endDay = firstDay.add({ days: numberOfDays - 1 });
+  const endDateStr = formatDateAEST(endDay);
 
   const url = `https://api.amber.com.au/v1/sites/${credentials.siteId}/usage`;
   const params = new URLSearchParams({
-    startDate: dateStr,
-    endDate: dateStr,
+    startDate: startDateStr,
+    endDate: endDateStr,
   });
 
   const response = await fetch(`${url}?${params}`, {
@@ -521,9 +563,10 @@ function groupRecordsByTime(
  */
 function buildRecordsMapFromAmber(
   recordsByTime: Map<Milliseconds, AmberUsageRecord[]>,
-  day: CalendarDate,
+  firstDay: CalendarDate,
+  numberOfDays: number,
 ): AmberReadingsBatch {
-  const group = new AmberReadingsBatch(day);
+  const group = new AmberReadingsBatch(firstDay, numberOfDays);
 
   for (const [intervalMs, records] of recordsByTime.entries()) {
     for (const record of records) {
@@ -575,18 +618,24 @@ function buildRecordsMapFromAmber(
 }
 
 /**
- * Fetch price data from Amber API for the specified day
+ * Fetch price data from Amber API for the specified date range
+ * @param credentials - Amber API credentials
+ * @param firstDay - Starting day of the range
+ * @param numberOfDays - Number of days to fetch (default: 1)
  */
 async function fetchAmberPrices(
   credentials: AmberCredentials,
-  day: CalendarDate,
+  firstDay: CalendarDate,
+  numberOfDays: number = 1,
 ): Promise<AmberPriceRecord[]> {
-  // Try using /prices with date parameters (similar to usage endpoint)
-  const dateStr = formatDateAEST(day);
+  const startDateStr = formatDateAEST(firstDay);
+  const endDay = firstDay.add({ days: numberOfDays - 1 });
+  const endDateStr = formatDateAEST(endDay);
+
   const url = `https://api.amber.com.au/v1/sites/${credentials.siteId}/prices`;
   const params = new URLSearchParams({
-    startDate: dateStr,
-    endDate: dateStr,
+    startDate: startDateStr,
+    endDate: endDateStr,
   });
 
   const response = await fetch(`${url}?${params}`, {
@@ -608,23 +657,30 @@ async function fetchAmberPrices(
 
 /**
  * Stage 4: Load Remote Prices
- * Fetches price data from Amber API for the specified day
+ * Fetches price data from Amber API for the specified date range
  */
 async function loadRemotePrices(
   credentials: AmberCredentials,
-  day: CalendarDate,
+  firstDay: CalendarDate,
+  numberOfDays: number,
   stageName: string,
 ): Promise<StageResult> {
   try {
     // Build request info for debugging
-    const dateStr = formatDateAEST(day);
-    const request = `GET /v1/sites/${credentials.siteId}/prices?startDate=${dateStr}&endDate=${dateStr}`;
+    const startDateStr = formatDateAEST(firstDay);
+    const endDay = firstDay.add({ days: numberOfDays - 1 });
+    const endDateStr = formatDateAEST(endDay);
+    const request = `GET /v1/sites/${credentials.siteId}/prices?startDate=${startDateStr}&endDate=${endDateStr}`;
 
     // Fetch from Amber API
-    const priceRecords = await fetchAmberPrices(credentials, day);
+    const priceRecords = await fetchAmberPrices(
+      credentials,
+      firstDay,
+      numberOfDays,
+    );
 
     // Build AmberReadingsBatch from price data
-    const group = new AmberReadingsBatch(day);
+    const group = new AmberReadingsBatch(firstDay, numberOfDays);
 
     for (const record of priceRecords) {
       // Use nemTime (AEST/UTC+10) instead of endTime (UTC) to match our interval times
@@ -716,7 +772,8 @@ async function loadRemotePrices(
  */
 export async function updateUsage(
   systemId: number,
-  day: CalendarDate,
+  firstDay: CalendarDate,
+  numberOfDays: number = 1,
   credentials: AmberCredentials,
 ): Promise<SyncAudit> {
   const tracker = new StageTracker();
@@ -730,7 +787,8 @@ export async function updateUsage(
     // STAGE 1: Load local data
     const localResult = await loadLocalRecords(
       systemId,
-      day,
+      firstDay,
+      numberOfDays,
       tracker.nextStage("load local data"),
     );
     stages.push(localResult);
@@ -744,7 +802,8 @@ export async function updateUsage(
       // STAGE 2: Load remote usage
       const remoteResult = await loadRemoteUsage(
         credentials,
-        day,
+        firstDay,
+        numberOfDays,
         tracker.nextStage("load remote usage"),
       );
       stages.push(remoteResult);
@@ -767,7 +826,8 @@ export async function updateUsage(
         const compareResult = createComparisonStage(
           localResult,
           remoteResult,
-          day,
+          firstDay,
+          numberOfDays,
           tracker.nextStage("compare local vs remote usage"),
         );
         stages.push(compareResult);
@@ -792,7 +852,8 @@ export async function updateUsage(
 
   const result: SyncAudit = {
     systemId,
-    day,
+    firstDay,
+    numberOfDays,
     stages,
     summary: {
       totalStages: stages.length,
@@ -816,7 +877,8 @@ export async function updateUsage(
  */
 export async function updateForecasts(
   systemId: number,
-  day: CalendarDate,
+  firstDay: CalendarDate,
+  numberOfDays: number = 1,
   credentials: AmberCredentials,
 ): Promise<SyncAudit> {
   const tracker = new StageTracker();
@@ -830,7 +892,8 @@ export async function updateForecasts(
     // STAGE 1: Load local data
     const localResult = await loadLocalRecords(
       systemId,
-      day,
+      firstDay,
+      numberOfDays,
       tracker.nextStage("load local data"),
     );
     stages.push(localResult);
@@ -850,7 +913,8 @@ export async function updateForecasts(
         // STAGE 2: Load remote prices
         const pricesResult = await loadRemotePrices(
           credentials,
-          day,
+          firstDay,
+          numberOfDays,
           tracker.nextStage("load remote prices"),
         );
         stages.push(pricesResult);
@@ -872,7 +936,8 @@ export async function updateForecasts(
           const compareResult = createComparisonStage(
             localResult,
             pricesResult,
-            day,
+            firstDay,
+            numberOfDays,
             tracker.nextStage("compare local vs remote prices"),
             true, // useNewPoints: true for prices
           );
@@ -898,7 +963,8 @@ export async function updateForecasts(
 
   const result: SyncAudit = {
     systemId,
-    day,
+    firstDay,
+    numberOfDays,
     stages,
     summary: {
       totalStages: stages.length,

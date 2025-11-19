@@ -6,6 +6,7 @@
  *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=forecasts
  *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=usage
  *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=both
+ *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --days=3 --action=both
  */
 
 import { updateUsage, updateForecasts } from "@/lib/vendors/amber/client";
@@ -20,19 +21,22 @@ async function testSync() {
   const args = process.argv.slice(2);
   let dateArg = "";
   let actionArg = "usage";
+  let daysArg = "1";
 
   for (const arg of args) {
     if (arg.startsWith("--date=")) {
       dateArg = arg.substring(7);
     } else if (arg.startsWith("--action=")) {
       actionArg = arg.substring(9).toLowerCase();
+    } else if (arg.startsWith("--days=")) {
+      daysArg = arg.substring(7);
     }
   }
 
   if (!dateArg) {
     console.error("Error: --date argument is required");
     console.error(
-      "Usage: npx tsx scripts/test-amber-sync.ts --date=YYYY-MM-DD --action=usage|forecasts|both",
+      "Usage: npx tsx scripts/test-amber-sync.ts --date=YYYY-MM-DD [--days=N] --action=usage|forecasts|both",
     );
     process.exit(1);
   }
@@ -44,7 +48,15 @@ async function testSync() {
     process.exit(1);
   }
 
-  const day = parseDateISO(dateArg);
+  // Parse and validate days
+  const numberOfDays = parseInt(daysArg, 10);
+  if (isNaN(numberOfDays) || numberOfDays < 1 || numberOfDays > 30) {
+    console.error(`Invalid --days value: ${daysArg}`);
+    console.error("Must be a number between 1 and 30");
+    process.exit(1);
+  }
+
+  const firstDay = parseDateISO(dateArg);
 
   // Credentials from environment or hardcoded for testing
   const credentials = {
@@ -53,19 +65,29 @@ async function testSync() {
   };
 
   console.log(
-    `Testing Amber sync for system ${systemId}, day: ${day.toString()}, action: ${actionArg}...`,
+    `Testing Amber sync for system ${systemId}, first day: ${firstDay.toString()}, days: ${numberOfDays}, action: ${actionArg}...`,
   );
   console.log("=".repeat(60));
 
   const audits: SyncAudit[] = [];
 
   if (actionArg === "usage" || actionArg === "both") {
-    const audit = await updateUsage(systemId, day, credentials);
+    const audit = await updateUsage(
+      systemId,
+      firstDay,
+      numberOfDays,
+      credentials,
+    );
     audits.push(audit);
   }
 
   if (actionArg === "forecasts" || actionArg === "both") {
-    const audit = await updateForecasts(systemId, day, credentials);
+    const audit = await updateForecasts(
+      systemId,
+      firstDay,
+      numberOfDays,
+      credentials,
+    );
     audits.push(audit);
   }
 
@@ -83,7 +105,8 @@ async function testSync() {
     console.log(`=== ${taskName} SYNC AUDIT SUMMARY ===`);
     console.log("=".repeat(60));
     console.log(`System ID: ${audit.systemId}`);
-    console.log(`Day: ${audit.day.toString()}`);
+    console.log(`First Day: ${audit.firstDay.toString()}`);
+    console.log(`Number of Days: ${audit.numberOfDays}`);
     console.log(`Total stages: ${audit.summary.totalStages}`);
     console.log(`Duration: ${audit.summary.durationMs}ms`);
 
@@ -180,7 +203,8 @@ async function testSync() {
     // Create a clean version without records
     const cleanAudit = {
       systemId: audit.systemId,
-      day: audit.day.toString(),
+      firstDay: audit.firstDay.toString(),
+      numberOfDays: audit.numberOfDays,
       stages: audit.stages.map((stage) => ({
         stage: stage.stage,
         request: stage.request,
