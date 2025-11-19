@@ -1,18 +1,18 @@
 /**
- * Tests for PointReadingGroup class
+ * Tests for AmberReadingsBatch class
  */
 
 import { describe, it, expect } from "@jest/globals";
 import { CalendarDate } from "@internationalized/date";
-import { PointReadingGroup } from "../point-reading-group";
-import type { PointReading, Milliseconds } from "../types";
+import { AmberReadingsBatch } from "../amber-readings-batch";
+import type { Milliseconds } from "../types";
 
-describe("PointReadingGroup", () => {
+describe("AmberReadingsBatch", () => {
   describe("characterisation with partial point coverage", () => {
     it("should include intervals where only some points have data", () => {
       // Test day: 2025-11-19
       const day = new CalendarDate(2025, 11, 19);
-      const group = new PointReadingGroup(day);
+      const group = new AmberReadingsBatch(day);
 
       // Add readings that simulate the actual bug scenario:
       // - grid.spotPerKwh has superior data for first 13 intervals (00:00-06:30)
@@ -101,6 +101,7 @@ describe("PointReadingGroup", () => {
       const firstRange = characterisation![0];
       expect(firstRange.quality).toBe("a"); // actual abbreviated
       expect(firstRange.pointOriginIds).toEqual(["grid.spotPerKwh"]);
+      expect(firstRange.numPeriods).toBe(13); // 13 half-hour periods (00:00-06:30)
 
       // Check the time range (00:00 AEST to 06:30 AEST)
       expect(firstRange.rangeStartTimeMs).toBe(dayStartMs);
@@ -112,7 +113,7 @@ describe("PointReadingGroup", () => {
     it("should throw an exception when adding readings outside the day boundaries", () => {
       // Test day: 2025-11-19
       const day = new CalendarDate(2025, 11, 19);
-      const group = new PointReadingGroup(day);
+      const group = new AmberReadingsBatch(day);
 
       // AEST is UTC+10, so 2025-11-19 00:00 AEST = 1763474400000ms
       const dayStartMs = 1763474400000;

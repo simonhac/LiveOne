@@ -115,6 +115,7 @@ export interface CharacterisationRange {
   rangeEndTimeMs: Milliseconds;
   quality: string | null;
   pointOriginIds: string[]; // e.g., ["E1.kwh", "B1.cost"] - varies by site
+  numPeriods: number; // Number of 30-minute periods in this range
 }
 
 // Point reading structure for sync records

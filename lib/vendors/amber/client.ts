@@ -23,7 +23,13 @@ import type {
 } from "./types";
 import type { PointMetadata } from "@/lib/vendors/base-vendor-adapter";
 import { formatDateAEST } from "@/lib/date-utils";
-import { PointReadingGroup } from "./point-reading-group";
+import { AmberReadingsBatch } from "./amber-readings-batch";
+import {
+  createChannelPoint,
+  createRenewablesPoint,
+  createSpotPricePoint,
+  getChannelMetadata,
+} from "./point-metadata";
 
 /**
  * Quality precedence for comparison
@@ -51,15 +57,6 @@ class StageTracker {
 /**
  * Helper Functions
  */
-
-/**
- * Abbreviate quality to first letter lowercase
- * No mapping - use quality string directly
- */
-function abbreviateQuality(quality: string | null): string {
-  if (quality === null) return ".";
-  return quality.charAt(0).toLowerCase();
-}
 
 /**
  * Get quality precedence value
@@ -134,108 +131,14 @@ function generate48IntervalsAEST(day: CalendarDate): Milliseconds[] {
 }
 
 /**
- * Build overview string from intervals
- */
-function buildOverviewFromIntervals(
-  intervals: Array<{ dataQuality: string | null }>,
-): string {
-  return intervals.map((i) => abbreviateQuality(i.dataQuality)).join("");
-}
-
-/**
- * Build characterisation ranges from intervals
- * Groups consecutive intervals with the same quality
- */
-function buildCharacterisation(
-  intervals: Array<{
-    timeMs: Milliseconds;
-    quality: string | null;
-    pointOriginIds: string[];
-  }>,
-): CharacterisationRange[] {
-  if (intervals.length === 0) return [];
-
-  const ranges: CharacterisationRange[] = [];
-  let currentRange: CharacterisationRange | null = null;
-
-  for (const interval of intervals) {
-    const isAdjacent =
-      currentRange &&
-      interval.timeMs === currentRange.rangeEndTimeMs + 30 * 60 * 1000;
-    const isSameQuality =
-      currentRange && currentRange.quality === interval.quality;
-
-    if (!currentRange || !isAdjacent || !isSameQuality) {
-      // Start new range
-      if (currentRange) {
-        ranges.push(currentRange);
-      }
-      currentRange = {
-        rangeStartTimeMs: interval.timeMs,
-        rangeEndTimeMs: interval.timeMs, // Will be updated when range extends
-        quality: interval.quality,
-        pointOriginIds: interval.pointOriginIds,
-      };
-    } else {
-      // Extend current range - interval is adjacent and same quality
-      currentRange.rangeEndTimeMs = interval.timeMs;
-    }
-  }
-
-  // Push final range
-  if (currentRange) {
-    ranges.push(currentRange);
-  }
-
-  return ranges;
-}
-
-/**
- * Build characterisation from local database readings
- */
-function buildCharacterisationFromLocal(
-  readings: any[],
-  allPoints: any[],
-  expectedIntervals: Milliseconds[],
-): CharacterisationRange[] {
-  const intervals = expectedIntervals.map((timeMs) => {
-    // Get readings for this interval across all points
-    const intervalReadings = readings.filter((r) => r.intervalEnd === timeMs);
-
-    // Use the quality from the first reading (they should all be the same)
-    const quality =
-      intervalReadings.length > 0 ? intervalReadings[0].dataQuality : null;
-
-    // Get all point origin IDs for this interval
-    const pointOriginIds = intervalReadings
-      .map((r) => {
-        const point = allPoints.find((p) => p.index === r.pointId);
-        if (!point) return "";
-        return point.originSubId
-          ? `${point.originId}.${point.originSubId}`
-          : point.originId;
-      })
-      .filter((id) => id !== "");
-
-    return {
-      timeMs,
-      quality,
-      pointOriginIds,
-    };
-  });
-
-  return buildCharacterisation(intervals);
-}
-
-/**
- * Build PointReadingGroup from local database readings
+ * Build AmberReadingsBatch from local database readings
  */
 function buildRecordsMapFromLocal(
   readings: any[],
   allPoints: any[],
   day: CalendarDate,
-): PointReadingGroup {
-  const group = new PointReadingGroup(day);
+): AmberReadingsBatch {
+  const group = new AmberReadingsBatch(day);
 
   for (const reading of readings) {
     const point = allPoints.find((p) => p.index === reading.pointId);
@@ -344,7 +247,7 @@ async function loadLocalUsage(
       )
       .orderBy(pointReadingsAgg5m.intervalEnd);
 
-    // 4. Build PointReadingGroup from database readings
+    // 4. Build AmberReadingsBatch from database readings
     const group = buildRecordsMapFromLocal(readings, allPoints, day);
 
     // 5. Get all views from group
@@ -389,7 +292,7 @@ async function loadRemoteUsage(
     // Group by timestamp
     const recordsByTime = groupRecordsByTime(usageRecords);
 
-    // Build PointReadingGroup from Amber data
+    // Build AmberReadingsBatch from Amber data
     const group = buildRecordsMapFromAmber(recordsByTime, day);
 
     // Get all views from group
@@ -420,9 +323,9 @@ async function loadRemoteUsage(
  * Generic comparison function for comparing existing and new records
  *
  * Strategy:
- * 1. Iterate through intervals and points, building superior PointReadingGroup
+ * 1. Iterate through intervals and points, building superior AmberReadingsBatch
  * 2. Build comparison overview character-by-character (uppercase = superior)
- * 3. Use PointReadingGroup methods to derive views from superior records
+ * 3. Use AmberReadingsBatch methods to derive views from superior records
  */
 function compareRecords(
   existingResult: StageResult,
@@ -436,8 +339,8 @@ function compareRecords(
   characterisation: CharacterisationRange[] | undefined;
   records: Map<string, Map<string, PointReading>>;
 } {
-  // Create PointReadingGroup for superior records
-  const superiorGroup = new PointReadingGroup(day);
+  // Create AmberReadingsBatch for superior records
+  const superiorGroup = new AmberReadingsBatch(day);
 
   // Initialize comparison overview arrays for each point
   const comparisonOverviewBuilders = new Map<string, string[]>();
@@ -462,17 +365,13 @@ function compareRecords(
         // New record is superior - add to superior group
         superiorGroup.add(newRecord);
 
-        // Add uppercase to comparison overview
-        const quality = newRecord.dataQuality ?? null;
-        comparisonOverviewBuilders
-          .get(pointKey)!
-          .push(abbreviateQuality(quality).toUpperCase());
+        // Add uppercase to comparison overview (quality is already single lowercase letter)
+        const quality = newRecord.dataQuality ?? ".";
+        comparisonOverviewBuilders.get(pointKey)!.push(quality.toUpperCase());
       } else {
         // Existing is same or better - add lowercase to comparison overview
-        const quality = existingRecord?.dataQuality ?? null;
-        comparisonOverviewBuilders
-          .get(pointKey)!
-          .push(abbreviateQuality(quality));
+        const quality = existingRecord?.dataQuality ?? ".";
+        comparisonOverviewBuilders.get(pointKey)!.push(quality);
       }
     }
   }
@@ -505,13 +404,18 @@ function compareRecords(
  * Stage 3: Compare Local vs Remote Usage
  * Compares local and remote data, identifies superior remote data
  */
-async function compareUsage(
+/**
+ * Generic comparison function for both usage and prices
+ * For usage: uses local points if available, otherwise remote
+ * For prices: uses all new price points
+ */
+function createComparisonStage(
   existingResult: StageResult,
   newResult: StageResult,
   day: CalendarDate,
   stageName: string,
-): Promise<StageResult> {
-  // Should not reach here if either failed
+  useNewPoints: boolean = false,
+): StageResult {
   if (existingResult.error || newResult.error) {
     throw new Error(
       `Cannot compare with errors: existing=${existingResult.error}, new=${newResult.error}`,
@@ -519,14 +423,13 @@ async function compareUsage(
   }
 
   try {
-    // Determine which points to compare
-    // If local has points, use those (remote may have different/fewer points)
-    // If local is empty, use remote points instead
-    const localPointKeys = Array.from(existingResult.overviews.keys());
-    const remotePointKeys = Array.from(newResult.overviews.keys());
-    const pointKeys =
-      localPointKeys.length > 0 ? localPointKeys : remotePointKeys;
-    const sortedPointKeys = pointKeys.sort();
+    const pointKeys = useNewPoints
+      ? Array.from(newResult.overviews.keys()).sort()
+      : (() => {
+          const local = Array.from(existingResult.overviews.keys());
+          const remote = Array.from(newResult.overviews.keys());
+          return (local.length > 0 ? local : remote).sort();
+        })();
 
     const {
       comparisonOverviewsByPoint,
@@ -534,7 +437,7 @@ async function compareUsage(
       completeness,
       characterisation,
       records,
-    } = compareRecords(existingResult, newResult, day, sortedPointKeys);
+    } = compareRecords(existingResult, newResult, day, pointKeys);
 
     return {
       stage: stageName,
@@ -610,72 +513,13 @@ function groupRecordsByTime(
 }
 
 /**
- * Build overview strings for each series from grouped records
- */
-function buildOverviewsFromRecords(
-  recordsByTime: Map<Milliseconds, AmberUsageRecord[]>,
-): Map<string, string> {
-  const overviews = new Map<string, string>();
-
-  // Get all unique series (channel + metric combinations)
-  const seriesKeys = new Set<string>();
-  for (const records of recordsByTime.values()) {
-    for (const record of records) {
-      seriesKeys.add(`${record.channelIdentifier}.kwh`);
-      seriesKeys.add(`${record.channelIdentifier}.cost`);
-      seriesKeys.add(`${record.channelIdentifier}.perKwh`);
-    }
-  }
-
-  // Build overview for each series
-  const sortedTimes = Array.from(recordsByTime.keys()).sort((a, b) => a - b);
-
-  for (const seriesKey of seriesKeys) {
-    const overview = sortedTimes
-      .map((timeMs) => {
-        const records = recordsByTime.get(timeMs) || [];
-        const [channelId] = seriesKey.split(".");
-        const record = records.find((r) => r.channelIdentifier === channelId);
-        return abbreviateQuality(record?.quality ?? null);
-      })
-      .join("");
-
-    overviews.set(seriesKey, overview);
-  }
-
-  return overviews;
-}
-
-/**
- * Build characterisation from Amber records
- */
-function buildCharacterisationFromRecords(
-  recordsByTime: Map<Milliseconds, AmberUsageRecord[]>,
-  expectedIntervals: Milliseconds[],
-): CharacterisationRange[] {
-  const intervals = expectedIntervals.map((timeMs) => {
-    const records = recordsByTime.get(timeMs) || [];
-    const quality = records.length > 0 ? records[0].quality : null;
-    const pointOriginIds = records.map((r) => `${r.channelIdentifier}.kwh`);
-
-    return {
-      timeMs,
-      quality,
-      pointOriginIds,
-    };
-  });
-
-  return buildCharacterisation(intervals);
-}
-
-/**
- * Build PointReadingGroup from Amber usage data
+ * Build AmberReadingsBatch from Amber usage data
  */
 function buildRecordsMapFromAmber(
   recordsByTime: Map<Milliseconds, AmberUsageRecord[]>,
   day: CalendarDate,
-): PointReadingGroup {
-  const group = new PointReadingGroup(day);
+): AmberReadingsBatch {
+  const group = new AmberReadingsBatch(day);
 
   for (const [intervalMs, records] of recordsByTime.entries()) {
     for (const record of records) {
@@ -684,9 +528,8 @@ function buildRecordsMapFromAmber(
 
       // Energy reading
       group.add({
-        pointMetadata: createAmberPointMetadata(
-          channelId,
-          record.channelType,
+        pointMetadata: createChannelPoint(
+          getChannelMetadata(channelId, record.channelType),
           "energy",
         ),
         rawValue: record.kwh * 1000, // Convert to Wh
@@ -698,9 +541,8 @@ function buildRecordsMapFromAmber(
 
       // Cost reading
       group.add({
-        pointMetadata: createAmberPointMetadata(
-          channelId,
-          record.channelType,
+        pointMetadata: createChannelPoint(
+          getChannelMetadata(channelId, record.channelType),
           "value",
         ),
         rawValue: record.cost,
@@ -712,9 +554,8 @@ function buildRecordsMapFromAmber(
 
       // Price reading
       group.add({
-        pointMetadata: createAmberPointMetadata(
-          channelId,
-          record.channelType,
+        pointMetadata: createChannelPoint(
+          getChannelMetadata(channelId, record.channelType),
           "rate",
         ),
         rawValue: record.perKwh,
@@ -727,42 +568,6 @@ function buildRecordsMapFromAmber(
   }
 
   return group;
-}
-
-/**
- * Create point metadata for Amber points
- */
-function createAmberPointMetadata(
-  channelId: string,
-  channelType: string,
-  metricType: "energy" | "value" | "rate",
-): PointMetadata {
-  const metricConfig = {
-    energy: { subId: "kwh", unit: "Wh" },
-    value: { subId: "cost", unit: "cents" },
-    rate: { subId: "perKwh", unit: "cents_kWh" },
-  };
-
-  const config = metricConfig[metricType];
-  const extension =
-    channelType === "general"
-      ? "import"
-      : channelType === "feedIn"
-        ? "export"
-        : "controlled";
-
-  return {
-    originId: channelId,
-    originSubId: config.subId,
-    defaultName: `${channelId} ${metricType}`,
-    subsystem: "grid",
-    type: "bidi",
-    subtype: "grid",
-    extension,
-    metricType,
-    metricUnit: config.unit,
-    transform: null,
-  };
 }
 
 /**
@@ -814,8 +619,8 @@ async function loadRemotePrices(
     // Fetch from Amber API
     const priceRecords = await fetchAmberPrices(credentials, day);
 
-    // Build PointReadingGroup from price data
-    const group = new PointReadingGroup(day);
+    // Build AmberReadingsBatch from price data
+    const group = new AmberReadingsBatch(day);
 
     for (const record of priceRecords) {
       // Use nemTime (AEST/UTC+10) instead of endTime (UTC) to match our interval times
@@ -838,7 +643,10 @@ async function loadRemotePrices(
 
       // perKwh reading (per-channel: E1.perKwh or B1.perKwh)
       group.add({
-        pointMetadata: createAmberPointMetadata(channelId, channelType, "rate"),
+        pointMetadata: createChannelPoint(
+          getChannelMetadata(channelId, channelType),
+          "rate",
+        ),
         rawValue: record.perKwh,
         measurementTimeMs: intervalMs,
         receivedTimeMs: Date.now() as Milliseconds,
@@ -848,7 +656,7 @@ async function loadRemotePrices(
 
       // spotPerKwh reading (grid-level: grid.spotPerKwh)
       group.add({
-        pointMetadata: createGridPointMetadata("spotPerKwh"),
+        pointMetadata: createSpotPricePoint(),
         rawValue: record.spotPerKwh,
         measurementTimeMs: intervalMs,
         receivedTimeMs: Date.now() as Milliseconds,
@@ -858,7 +666,7 @@ async function loadRemotePrices(
 
       // renewables reading (grid-level: grid.renewables)
       group.add({
-        pointMetadata: createGridPointMetadata("renewables"),
+        pointMetadata: createRenewablesPoint(),
         rawValue: record.renewables,
         measurementTimeMs: intervalMs,
         receivedTimeMs: Date.now() as Milliseconds,
@@ -879,93 +687,6 @@ async function loadRemotePrices(
       characterisation,
       records: group.getRecords(),
       request,
-    };
-  } catch (error) {
-    return {
-      stage: stageName,
-      completeness: "none",
-      overviews: new Map(),
-      numRecords: 0,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-/**
- * Create point metadata for grid-level points (spotPerKwh, renewables, tariffPeriod)
- */
-function createGridPointMetadata(
-  subId: "spotPerKwh" | "renewables" | "tariffPeriod",
-): PointMetadata {
-  const metricConfig = {
-    spotPerKwh: {
-      defaultName: "Grid spot price",
-      metricType: "rate" as const,
-      unit: "cents_kWh",
-    },
-    renewables: {
-      defaultName: "Grid renewables",
-      metricType: "value" as const,
-      unit: "percent",
-    },
-    tariffPeriod: {
-      defaultName: "Tariff period",
-      metricType: "code" as const,
-      unit: "text",
-    },
-  };
-
-  const config = metricConfig[subId];
-
-  return {
-    originId: "grid",
-    originSubId: subId,
-    defaultName: config.defaultName,
-    subsystem: "grid",
-    type: "bidi",
-    subtype: "grid",
-    extension: "import", // Grid-level, default to import
-    metricType: config.metricType,
-    metricUnit: config.unit,
-    transform: null,
-  };
-}
-
-/**
- * Stage 5: Compare Prices
- * Compares local price data with remote price data
- */
-async function comparePrices(
-  existingResult: StageResult,
-  newPricesResult: StageResult,
-  day: CalendarDate,
-  stageName: string,
-): Promise<StageResult> {
-  if (existingResult.error || newPricesResult.error) {
-    throw new Error(
-      `Cannot compare with errors: existing=${existingResult.error}, new=${newPricesResult.error}`,
-    );
-  }
-
-  try {
-    // Get all new price point keys
-    const newPriceKeys = Array.from(newPricesResult.overviews.keys()).sort();
-
-    const {
-      comparisonOverviewsByPoint,
-      numSuperiorRecords,
-      completeness,
-      characterisation,
-      records,
-    } = compareRecords(existingResult, newPricesResult, day, newPriceKeys);
-
-    return {
-      stage: stageName,
-      completeness,
-      overviews: comparisonOverviewsByPoint,
-      numRecords: numSuperiorRecords,
-      characterisation,
-      records,
     };
   } catch (error) {
     return {
@@ -1040,7 +761,7 @@ export async function updateUsage(
         }
 
         // STAGE 3: Compare usage
-        const compareResult = await compareUsage(
+        const compareResult = createComparisonStage(
           localResult,
           remoteResult,
           day,
@@ -1145,11 +866,12 @@ export async function updateForecasts(
           }
 
           // STAGE 3: Compare prices
-          const compareResult = await comparePrices(
+          const compareResult = createComparisonStage(
             localResult,
             pricesResult,
             day,
             tracker.nextStage("compare local vs remote prices"),
+            true, // useNewPoints: true for prices
           );
           stages.push(compareResult);
 

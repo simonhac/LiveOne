@@ -1,5 +1,5 @@
 /**
- * PointReadingGroup - Encapsulates a day's worth of point readings
+ * AmberReadingsBatch - Encapsulates a day's worth of point readings
  * organized by time interval and point key
  */
 
@@ -34,17 +34,12 @@ function generateIntervalEndTimes(day: CalendarDate): Milliseconds[] {
 /**
  * Abbreviates quality string to single character for overview
  */
-function abbreviateQuality(quality: string | null | undefined): string {
+export function abbreviateQuality(quality: string | null | undefined): string {
   if (!quality) return ".";
-  const q = quality.toLowerCase();
-  if (q.includes("billable")) return "b";
-  if (q.includes("actual")) return "a";
-  if (q.includes("estimated")) return "e";
-  if (q.includes("forecast")) return "f";
-  return "?";
+  return quality.charAt(0).toLowerCase();
 }
 
-export class PointReadingGroup {
+export class AmberReadingsBatch {
   private records: Map<string, Map<string, PointReading>>;
   private day: CalendarDate;
   private intervalEndTimes: Milliseconds[];
@@ -97,7 +92,13 @@ export class PointReadingGroup {
       this.records.set(timeKey, new Map());
     }
 
-    this.records.get(timeKey)!.set(pointKey, reading);
+    // Normalize quality to single lowercase letter on entry
+    const normalizedReading: PointReading = {
+      ...reading,
+      dataQuality: abbreviateQuality(reading.dataQuality),
+    };
+
+    this.records.get(timeKey)!.set(pointKey, normalizedReading);
   }
 
   /**
@@ -160,6 +161,7 @@ export class PointReadingGroup {
 
   /**
    * Generate overview string for a specific point (48 chars)
+   * Quality is already normalized to single lowercase letter when added
    */
   getOverview(pointKey: string): string {
     let overview = "";
@@ -167,7 +169,7 @@ export class PointReadingGroup {
       const reading = this.records
         .get(String(intervalEndTimeMs))
         ?.get(pointKey);
-      overview += abbreviateQuality(reading?.dataQuality);
+      overview += reading?.dataQuality ?? ".";
     }
     return overview;
   }
@@ -195,6 +197,7 @@ export class PointReadingGroup {
 
   /**
    * Determine completeness state
+   * Quality is already normalized to single lowercase letter
    */
   getCompleteness(): Completeness {
     let hasBillable = false;
@@ -202,8 +205,8 @@ export class PointReadingGroup {
 
     for (const pointMap of this.records.values()) {
       for (const reading of pointMap.values()) {
-        const quality = reading.dataQuality?.toLowerCase() ?? "";
-        if (quality.includes("billable")) {
+        const quality = reading.dataQuality ?? "";
+        if (quality === "b") {
           hasBillable = true;
         } else {
           hasNonBillable = true;
@@ -246,16 +249,14 @@ export class PointReadingGroup {
       const pointMap = this.records.get(String(intervalEndTimeMs))!;
 
       // Get qualities for all points at this interval
+      // Quality is already normalized to single lowercase letter
       const qualities = new Set<string | null>();
       const pointsAtInterval: string[] = [];
 
       for (const pointKey of pointKeys) {
         const reading = pointMap.get(pointKey);
         if (reading) {
-          const quality = reading.dataQuality ?? null;
-          // Abbreviate quality for characterisation
-          const abbreviated = quality ? abbreviateQuality(quality) : null;
-          qualities.add(abbreviated);
+          qualities.add(reading.dataQuality ?? null);
           pointsAtInterval.push(pointKey);
         }
       }
@@ -269,7 +270,7 @@ export class PointReadingGroup {
       if (currentRange) {
         pointSetChanged =
           sortedPoints.length !== currentRange.pointOriginIds.length ||
-          sortedPoints.some((p, i) => p !== currentRange.pointOriginIds[i]);
+          sortedPoints.some((p, i) => p !== currentRange!.pointOriginIds[i]);
       }
 
       // Start new range or extend current one
@@ -294,10 +295,12 @@ export class PointReadingGroup {
           rangeEndTimeMs: intervalEndTimeMs,
           quality,
           pointOriginIds: [...pointsAtInterval].sort(),
+          numPeriods: 1, // Will be incremented as range extends
         };
       } else {
         // Extend current range
         currentRange.rangeEndTimeMs = intervalEndTimeMs;
+        currentRange.numPeriods++;
         // Merge point lists
         const mergedPoints = new Set([
           ...currentRange.pointOriginIds,

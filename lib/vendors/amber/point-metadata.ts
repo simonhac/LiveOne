@@ -12,7 +12,7 @@ import type { AmberChannelMetadata } from "./types";
  * Create a channel point with specified metric type
  * Simplified - uses originId (E1/B1) to differentiate import/export
  */
-function createChannelPoint(
+export function createChannelPoint(
   channel: AmberChannelMetadata,
   metricType: "energy" | "value" | "rate",
 ): PointMetadata {
