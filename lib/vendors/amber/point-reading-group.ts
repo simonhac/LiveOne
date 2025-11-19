@@ -251,11 +251,11 @@ export class PointReadingGroup {
 
       for (const pointKey of pointKeys) {
         const reading = pointMap.get(pointKey);
-        const quality = reading?.dataQuality ?? null;
-        // Abbreviate quality for characterisation
-        const abbreviated = quality ? abbreviateQuality(quality) : null;
-        qualities.add(abbreviated);
         if (reading) {
+          const quality = reading.dataQuality ?? null;
+          // Abbreviate quality for characterisation
+          const abbreviated = quality ? abbreviateQuality(quality) : null;
+          qualities.add(abbreviated);
           pointsAtInterval.push(pointKey);
         }
       }
@@ -263,8 +263,21 @@ export class PointReadingGroup {
       // Determine single quality for this interval (or null if mixed)
       const quality = qualities.size === 1 ? Array.from(qualities)[0] : null;
 
+      // Check if point set changed
+      const sortedPoints = [...pointsAtInterval].sort();
+      let pointSetChanged = false;
+      if (currentRange) {
+        pointSetChanged =
+          sortedPoints.length !== currentRange.pointOriginIds.length ||
+          sortedPoints.some((p, i) => p !== currentRange.pointOriginIds[i]);
+      }
+
       // Start new range or extend current one
-      if (!currentRange || currentRange.quality !== quality) {
+      if (
+        !currentRange ||
+        currentRange.quality !== quality ||
+        pointSetChanged
+      ) {
         // Save previous range if exists
         if (currentRange) {
           ranges.push(currentRange);
@@ -299,7 +312,8 @@ export class PointReadingGroup {
       ranges.push(currentRange);
     }
 
-    return ranges;
+    // Filter out ranges where quality is null (missing data only)
+    return ranges.filter((range) => range.quality !== null);
   }
 
   /**
