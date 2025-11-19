@@ -4,7 +4,7 @@
  */
 
 import type { CalendarDate } from "@internationalized/date";
-import { toCalendarDateTime, toZoned } from "@internationalized/date";
+import { toCalendarDateTime, toZoned, fromDate } from "@internationalized/date";
 import type {
   PointReading,
   Completeness,
@@ -338,9 +338,13 @@ export class AmberReadingsBatch {
       const pointMap = this.records.get(String(intervalEndTimeMs));
       if (!pointMap) continue;
 
-      // Format time as HH:MM AEST
-      const timeAEST = new Date(intervalEndTimeMs + 10 * 60 * 60 * 1000);
-      const timeStr = `${String(timeAEST.getUTCHours()).padStart(2, "0")}:${String(timeAEST.getUTCMinutes()).padStart(2, "0")}`;
+      // Convert to ZonedDateTime in Melbourne timezone and subtract 30 minutes to get interval start
+      const intervalEndZoned = toZoned(
+        fromDate(new Date(intervalEndTimeMs), "UTC"),
+        "Australia/Melbourne",
+      );
+      const intervalStartZoned = intervalEndZoned.subtract({ minutes: 30 });
+      const timeStr = `${String(intervalStartZoned.hour).padStart(2, "0")}:${String(intervalStartZoned.minute).padStart(2, "0")}`;
       timeRow.push(timeStr);
 
       // Get E1.perKwh value

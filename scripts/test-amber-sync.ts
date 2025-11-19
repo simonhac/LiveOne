@@ -147,7 +147,7 @@ async function testSync() {
 
       // Display canonical table if available
       if (stage.info.canonical && stage.info.canonical.length > 0) {
-        console.log("\nCanonical Display:");
+        console.log("\nCanonical Display (Melbourne Timezone):");
         for (const line of stage.info.canonical) {
           console.log(line);
         }
