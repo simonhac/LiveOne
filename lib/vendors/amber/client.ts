@@ -33,14 +33,15 @@ import {
 import { insertPointReadingsDirectTo5m } from "@/lib/monitoring-points-manager";
 
 /**
- * Quality precedence for comparison
+ * Quality rank for comparison (single-character codes)
  * Higher values = higher precedence/quality
  */
-const QUALITY_PRECEDENCE: Record<string, number> = {
-  billable: 4,
-  actual: 3,
-  estimated: 2,
-  forecast: 1,
+const QUALITY_RANK: Record<string, number> = {
+  b: 4, // billable
+  a: 3, // actual
+  e: 2, // estimated
+  f: 1, // forecast
+  ".": 0, // null/missing
 };
 
 /**
@@ -60,38 +61,35 @@ class StageTracker {
  */
 
 /**
- * Get quality precedence value
+ * Compare local and remote readings to determine which is superior
+ *
+ * @param local - Local record (may be undefined)
+ * @param remote - Remote record (should not be undefined)
+ * @returns 1 if remote wins, -1 if local wins, 0 if equal
+ * @throws Error if remote is undefined (impossible situation)
  */
-function getQualityPrecedence(quality: string | null): number {
-  if (quality === null) return 0;
-  return QUALITY_PRECEDENCE[quality] ?? 0;
-}
+function compareReadings(
+  local: PointReading | undefined,
+  remote: PointReading | undefined,
+): number {
+  // Guard: throw if remote is null (impossible situation)
+  if (!remote) {
+    throw new Error("compareReadings: remote is null");
+  }
 
-/**
- * Check if new record is superior to existing record
- * Takes into account quality precedence and raw value
- */
-function isNewRecordSuperior(
-  existingRecord: PointReading | undefined,
-  newRecord: PointReading | undefined,
-): boolean {
-  // If no existing record, new is superior (if it exists)
-  if (!existingRecord) return !!newRecord;
+  // Case 1: local is null → remote wins
+  if (!local) return 1;
 
-  // If no new record, existing is superior
-  if (!newRecord) return false;
+  // Case 2: Compare quality ranks
+  const localRank = QUALITY_RANK[local.dataQuality] ?? 0;
+  const remoteRank = QUALITY_RANK[remote.dataQuality] ?? 0;
 
-  // Both exist - compare quality
-  const existingPrecedence = getQualityPrecedence(
-    existingRecord.dataQuality ?? null,
-  );
-  const newPrecedence = getQualityPrecedence(newRecord.dataQuality ?? null);
+  if (remoteRank > localRank) return 1;
+  if (localRank > remoteRank) return -1;
 
-  if (newPrecedence > existingPrecedence) return true;
-  if (newPrecedence < existingPrecedence) return false;
-
-  // Same quality - new is superior ONLY if raw value is different
-  return existingRecord.rawValue !== newRecord.rawValue;
+  // Case 3: Same quality → compare values (exact equality)
+  if (remote.rawValue !== local.rawValue) return 1;
+  return 0;
 }
 
 /**
@@ -334,9 +332,14 @@ async function loadRemoteUsage(
  * Generic comparison function for comparing existing and new records
  *
  * Strategy:
- * 1. Iterate through intervals and points, building superior AmberReadingsBatch
- * 2. Build comparison overview character-by-character (uppercase = superior)
- * 3. Use AmberReadingsBatch methods to derive views from superior records
+ * 1. Create empty superiorPoints batch
+ * 2. For each remote point key, build comparison overview showing:
+ *    - Uppercase = remote wins (added to superiorPoints)
+ *    - Lowercase = local wins
+ *    - '=' = equal
+ *    - '.' = both null
+ * 3. Compute regular overviews and other BatchInfo from superiorPoints
+ * 4. Return both regular overviews and comparison overviews
  */
 function compareRecords(
   existingResult: StageResult,
@@ -348,67 +351,82 @@ function compareRecords(
   comparisonOverviews: Record<string, string>;
   records: Map<string, Map<string, PointReading>>;
 } {
-  // Create AmberReadingsBatch for superior records
-  const superiorGroup = new AmberReadingsBatch(firstDay, numberOfDays);
+  // Create empty AmberReadingsBatch for superior records
+  const superiorPoints = new AmberReadingsBatch(firstDay, numberOfDays);
 
-  // Initialize comparison overview arrays for each point
+  // Initialize comparison overview builders for each remote point key
   const comparisonOverviewBuilders = new Map<string, string[]>();
   for (const pointKey of pointKeys) {
     comparisonOverviewBuilders.set(pointKey, []);
   }
 
-  const existingRecords = existingResult.records || new Map();
-  const newRecords = newResult.records || new Map();
+  const localRecords = existingResult.records || new Map();
+  const remoteRecords = newResult.records || new Map();
 
-  // Iterate through each time interval and compare
-  for (const [intervalMs] of superiorGroup.getPointRecords(
-    pointKeys[0] ?? "",
-  )) {
+  // Generate expected intervals for the date range
+  const expectedIntervals = generateIntervalsAEST(firstDay, numberOfDays);
+
+  // Iterate through each interval and each remote point key
+  for (const intervalMs of expectedIntervals) {
     const timeKey = String(intervalMs);
 
     for (const pointKey of pointKeys) {
-      const existingRecord = existingRecords.get(timeKey)?.get(pointKey);
-      const newRecord = newRecords.get(timeKey)?.get(pointKey);
+      const localRecord = localRecords.get(timeKey)?.get(pointKey);
+      const remoteRecord = remoteRecords.get(timeKey)?.get(pointKey);
 
-      const isSuperior = isNewRecordSuperior(existingRecord, newRecord);
+      // Case 1: Both null
+      if (!localRecord && !remoteRecord) {
+        comparisonOverviewBuilders.get(pointKey)!.push(".");
+        continue;
+      }
 
-      if (isSuperior && newRecord) {
-        // New record is superior - add to superior group
-        superiorGroup.add(newRecord);
-
-        // Add uppercase to comparison overview (quality is already single lowercase letter)
-        const quality = newRecord.dataQuality ?? ".";
+      // Case 2: Local doesn't have this key (no local point for it)
+      if (!localRecord && remoteRecord) {
+        const quality = remoteRecord.dataQuality ?? ".";
         comparisonOverviewBuilders.get(pointKey)!.push(quality.toUpperCase());
+        superiorPoints.add(remoteRecord);
+        continue;
+      }
+
+      // Case 2b: Remote doesn't have this key (local wins by default, nothing to upgrade)
+      if (localRecord && !remoteRecord) {
+        const quality = localRecord.dataQuality ?? ".";
+        comparisonOverviewBuilders.get(pointKey)!.push(quality);
+        continue;
+      }
+
+      // Case 3: Both exist - use compareReadings to decide
+      const comp = compareReadings(localRecord, remoteRecord);
+
+      if (comp === 1) {
+        // Remote wins
+        const quality = remoteRecord!.dataQuality ?? ".";
+        comparisonOverviewBuilders.get(pointKey)!.push(quality.toUpperCase());
+        superiorPoints.add(remoteRecord!);
+      } else if (comp === 0) {
+        // Equal
+        comparisonOverviewBuilders.get(pointKey)!.push("=");
       } else {
-        // Existing is same or better - add lowercase to comparison overview
-        const quality = existingRecord?.dataQuality ?? ".";
+        // Local wins
+        const quality = localRecord!.dataQuality ?? ".";
         comparisonOverviewBuilders.get(pointKey)!.push(quality);
       }
     }
   }
 
-  // Build comparison overview strings as single object
+  // Build comparison overview strings
   const comparisonOverviews: Record<string, string> = {};
   for (const [pointKey, builder] of comparisonOverviewBuilders.entries()) {
     comparisonOverviews[pointKey] = builder.join("");
   }
 
-  // Get uniformQuality and other info from superior group
-  const uniformQuality = superiorGroup.getUniformQuality();
-  const characterisation = superiorGroup.getCharacterisation();
-  const canonical = superiorGroup.getCanonicalDisplay();
-  const sampleRecords = superiorGroup.getSampleRecords();
-  const numRecords = superiorGroup.getCount();
+  // Get all BatchInfo fields from superiorPoints
+  const info = superiorPoints.getInfo();
 
   return {
-    overviews: comparisonOverviews,
-    numRecords,
-    uniformQuality,
-    characterisation,
-    canonical,
-    sampleRecords,
+    ...info,
     comparisonOverviews,
-    records: superiorGroup.getRecords(),
+    records: superiorPoints.getRecords(),
   };
 }
 
@@ -461,7 +479,8 @@ function createComparisonStage(
       stage: stageName,
       info: {
         ...info,
-        overviews: comparisonOverviews,
+        // Keep regular overviews from superiorPoints and add comparison overviews
+        comparisonOverviews,
       },
       records,
     };
@@ -829,8 +848,15 @@ export async function updateUsage(
       error = `Usage stage 1 failed: ${localResult.error}`;
     } else if (localResult.info.uniformQuality === "b") {
       // EARLY EXIT: Local already has complete billable data
-      localResult.discovery = "local is already up to date";
+      localResult.discovery =
+        "yay, we already have BILLABLE usage data locally for this period";
     } else {
+      // Set discovery for local data when it's not billable
+      if (localResult.info.uniformQuality !== null) {
+        localResult.discovery =
+          "billable usage data held locally for this period is INCOMPLETE";
+      }
+
       // STAGE 2: Load remote usage
       const remoteResult = await loadRemoteUsage(
         credentials,
@@ -843,8 +869,9 @@ export async function updateUsage(
       if (remoteResult.error) {
         error = `Usage stage 2 failed: ${remoteResult.error}`;
       } else if (remoteResult.info.numRecords === 0) {
-        // EARLY EXIT: Both local and remote are empty
-        remoteResult.discovery = "local and remote both empty";
+        // EARLY EXIT: remote is empty
+        remoteResult.discovery =
+          "remote usage data for this interval is NOT AVAILABLE";
       } else {
         // Set discovery based on what we found
         if (remoteResult.info.uniformQuality === "b") {
@@ -867,10 +894,10 @@ export async function updateUsage(
         if (compareResult.error) {
           error = `Usage stage 3 failed: ${compareResult.error}`;
         } else {
-          // Verify we have records
           if (compareResult.info.numRecords === 0) {
-            error =
-              "Usage stage 3 unexpected: no records found (should be impossible)";
+            // No superior records - local is already equal to or better than remote
+            compareResult.discovery =
+              "local usage is already equal to or better than remote";
           } else {
             compareResult.discovery = `found ${compareResult.info.numRecords} superior remote records to update/insert`;
 
@@ -1031,8 +1058,9 @@ export async function updateForecasts(
             error = `Forecast stage 3 failed: ${compareResult.error}`;
           } else {
             if (compareResult.info.numRecords === 0) {
-              error =
-                "Forecast stage 3 unexpected: no records found (should be impossible)";
+              // No superior records - local is already equal to or better than remote
+              compareResult.discovery =
+                "local prices are already equal to or better than remote";
             } else {
               compareResult.discovery = `found ${compareResult.info.numRecords} superior remote price records to update/insert`;
 

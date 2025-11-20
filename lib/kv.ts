@@ -15,15 +15,37 @@ import { getEnvironment } from "./env";
  * - This prevents data collisions when using the same KV instance
  */
 
-if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
-  console.warn(
-    "KV_REST_API_URL or KV_REST_API_TOKEN not set - KV cache will not function",
-  );
+const kvConfigured = !!(
+  process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
+);
+let kvWarned = false;
+
+function warnOnce() {
+  if (!kvWarned) {
+    console.warn(
+      "KV_REST_API_URL or KV_REST_API_TOKEN not set - KV cache will not function",
+    );
+    kvWarned = true;
+  }
 }
 
-export const kv = createClient({
-  url: process.env.KV_REST_API_URL!,
-  token: process.env.KV_REST_API_TOKEN!,
+// Create client eagerly, but use a Proxy to warn only on actual access
+const kvClient = kvConfigured
+  ? createClient({
+      url: process.env.KV_REST_API_URL!,
+      token: process.env.KV_REST_API_TOKEN!,
+    })
+  : null;
+
+export const kv = new Proxy({} as ReturnType<typeof createClient>, {
+  get(_target, prop) {
+    if (!kvClient) {
+      warnOnce();
+      // Return no-op functions instead of throwing
+      return () => Promise.resolve(null);
+    }
+    return (kvClient as any)[prop];
+  },
 });
 
 /**

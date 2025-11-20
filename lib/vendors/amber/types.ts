@@ -118,6 +118,7 @@ export interface BatchInfo {
   characterisation?: CharacterisationRange[];
   canonical: string[]; // Formatted table display (one line per row, monospaced)
   sampleRecords?: Record<string, SampleRecordsForPoint>; // Single object: {pointKey: {records, numSkipped}, ...}
+  comparisonOverviews?: Record<string, string>; // Comparison overview showing uppercase=remote wins, lowercase=local wins, '='=equal, '.'=both null
 }
 
 // Helper functions for BatchInfo

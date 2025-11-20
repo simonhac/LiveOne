@@ -106,9 +106,11 @@ async function testSync() {
     console.log("   Data will be written to the database!");
   }
   console.log("=".repeat(60));
+  console.log(`Testing Amber sync for system ${systemId}:`);
   console.log(
-    `Testing Amber sync for system ${systemId}, first day: ${firstDay.toString()}, days: ${numberOfDays}, action: ${actionArg}`,
+    `    day: ${firstDay.toString()} for ${numberOfDays} ${numberOfDays === 1 ? "day" : "days"}`,
   );
+  console.log(`    action: *${actionArg}*`);
   console.log("=".repeat(60));
 
   const audits: AmberSyncResult[] = [];
@@ -176,69 +178,88 @@ async function testSync() {
       if (stage.discovery) {
         console.log(`Discovery: ${stage.discovery}`);
       }
-      console.log(`Completeness: ${stage.info.completeness}`);
       console.log(`Num Records: ${stage.info.numRecords}`);
+      console.log(`Uniformity: '${stage.info.uniformQuality}'`);
 
-      // Display overviews sorted by point key
-      const overviewKeys = getOverviewKeys(stage.info);
-      if (overviewKeys.length > 0) {
-        console.log(`\nOverviews by point (${overviewKeys.length} series):`);
-        for (const pointKey of overviewKeys.sort()) {
-          console.log(
-            `  ${pointKey.padEnd(20)}: ${stage.info.overviews[pointKey]}`,
-          );
+      // Display comparison overviews first if present (even when numRecords is 0)
+      if (stage.info.comparisonOverviews) {
+        const compKeys = Object.keys(stage.info.comparisonOverviews);
+        if (compKeys.length > 0) {
+          console.log(`\nComparison Overviews (${compKeys.length} series):`);
+          for (const pointKey of compKeys.sort()) {
+            console.log(
+              `  ${pointKey.padEnd(20)}: ${stage.info.comparisonOverviews[pointKey]}`,
+            );
+          }
         }
-      } else {
-        console.log("\nNo overviews available");
       }
 
-      if (stage.info.characterisation) {
+      if (stage.info.numRecords === 0) {
         console.log(
-          `\nCharacterisation (${stage.info.characterisation.length} ranges):`,
+          "\nNo regular overview or canonical display (0 superior records).",
         );
-        for (const range of stage.info.characterisation) {
-          const startTime = formatAESTTime(range.rangeStartTimeMs);
-          const endTime = formatAESTTime(range.rangeEndTimeMs);
-          const quality = range.quality || "null";
-          const points = range.pointOriginIds.join(", ") || "(none)";
+      } else {
+        // Display regular overviews sorted by point key
+        const overviewKeys = getOverviewKeys(stage.info);
+        if (overviewKeys.length > 0) {
           console.log(
-            `  ${startTime} → ${endTime} | Quality: '${quality}' | Points: ${points}`,
+            `\nRegular Overviews by point (${overviewKeys.length} series):`,
           );
-        }
-      }
-
-      // Display sample records if available
-      const sampleKeys = getSampleRecordKeys(stage.info);
-      if (sampleKeys.length > 0) {
-        console.log(`\nSample Records (up to 2 from each point):`);
-        for (const pointKey of sampleKeys.sort()) {
-          const sampleInfo = stage.info.sampleRecords![pointKey];
-          console.log(`\n  ${pointKey}:`);
-          for (let i = 0; i < sampleInfo.records.length; i++) {
-            const r = sampleInfo.records[i];
-            const timeStr = formatAESTDateTime(r.measurementTimeMs);
-            const value =
-              typeof r.rawValue === "number"
-                ? r.rawValue.toFixed(3)
-                : r.rawValue;
-            const quality = r.quality || "—";
+          for (const pointKey of overviewKeys.sort()) {
             console.log(
-              `    ${i + 1}. ${timeStr} | value: ${value} | quality: ${quality}`,
-            );
-          }
-          if (sampleInfo.numSkipped) {
-            console.log(
-              `    (and ${sampleInfo.numSkipped} ${sampleInfo.numSkipped === 1 ? "record" : "records"} omitted for brevity)`,
+              `  ${pointKey.padEnd(20)}: ${stage.info.overviews[pointKey]}`,
             );
           }
         }
-      }
 
-      // Display canonical table if available
-      if (stage.info.canonical && stage.info.canonical.length > 0) {
-        console.log("\nCanonical Display (Melbourne Timezone):");
-        for (const line of stage.info.canonical) {
-          console.log(line);
+        if (stage.info.characterisation) {
+          console.log(
+            `\nCharacterisation (${stage.info.characterisation.length} ranges):`,
+          );
+          for (const range of stage.info.characterisation) {
+            const startTime = formatAESTTime(range.rangeStartTimeMs);
+            const endTime = formatAESTTime(range.rangeEndTimeMs);
+            const quality = range.quality || "null";
+            const points = range.pointOriginIds.join(", ") || "(none)";
+            console.log(
+              `  ${startTime} → ${endTime} | Quality: '${quality}' | Points: ${points}`,
+            );
+          }
+        }
+
+        // Display sample records if available
+        const sampleKeys = getSampleRecordKeys(stage.info);
+        if (sampleKeys.length > 0) {
+          console.log(`\nSample Records (up to 2 from each point):`);
+          for (const pointKey of sampleKeys.sort()) {
+            const sampleInfo = stage.info.sampleRecords![pointKey];
+            console.log(`\n  ${pointKey}:`);
+            for (let i = 0; i < sampleInfo.records.length; i++) {
+              const r = sampleInfo.records[i];
+              const timeStr = formatAESTDateTime(r.measurementTimeMs);
+              const value =
+                typeof r.rawValue === "number"
+                  ? r.rawValue.toFixed(3)
+                  : r.rawValue;
+              const quality = r.quality || "—";
+              console.log(
+                `    ${i + 1}. ${timeStr} | value: ${value} | quality: ${quality}`,
+              );
+            }
+            if (sampleInfo.numSkipped) {
+              console.log(
+                `    (and ${sampleInfo.numSkipped} ${sampleInfo.numSkipped === 1 ? "record" : "records"} omitted for brevity)`,
+              );
+            }
+          }
+        }
+
+        // Display canonical table if available
+        if (stage.info.canonical && stage.info.canonical.length > 0) {
+          console.log("\nCanonical Display (Melbourne Timezone):");
+          for (const line of stage.info.canonical) {
+            console.log(line);
+          }
         }
       }
 
@@ -276,9 +297,9 @@ async function testSync() {
         request: stage.request,
         discovery: stage.discovery,
         info: {
-          completeness: stage.info.completeness,
-          overviews: stage.info.overviews,
           numRecords: stage.info.numRecords,
+          uniformQuality: stage.info.uniformQuality,
+          overviews: stage.info.overviews,
           characterisation: stage.info.characterisation?.map((range) => ({
             rangeStartTimeMs: range.rangeStartTimeMs,
             rangeEndTimeMs: range.rangeEndTimeMs,
