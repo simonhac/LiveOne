@@ -116,19 +116,16 @@ export function formatDate(date: Date | string): string {
  * @returns Formatted duration string
  *
  * Examples:
- * - < 1s: "250ms"
- * - 1-60s: "1.5s"
+ * - < 1s: "0.3 s"
+ * - 1-60s: "1.5 s"
  * - > 60s: "2m 15s"
  */
 export function formatDuration(ms: number): string {
-  if (ms < 1000) {
-    return `${ms}ms`;
-  }
-
   const seconds = ms / 1000;
+
   if (seconds < 60) {
-    // Show one decimal place for seconds
-    return `${seconds.toFixed(1)}s`;
+    // Show one decimal place for seconds, always use "s" format
+    return `${seconds.toFixed(1)}\u00A0s`;
   }
 
   const minutes = Math.floor(seconds / 60);
@@ -136,7 +133,7 @@ export function formatDuration(ms: number): string {
 
   if (minutes < 60) {
     return remainingSeconds > 0
-      ? `${minutes}m ${remainingSeconds}s`
+      ? `${minutes}m\u00A0${remainingSeconds}s`
       : `${minutes}m`;
   }
 
@@ -145,7 +142,7 @@ export function formatDuration(ms: number): string {
 
   if (hours < 24) {
     if (remainingMinutes > 0) {
-      return `${hours}h ${remainingMinutes}m`;
+      return `${hours}h\u00A0${remainingMinutes}m`;
     }
     return `${hours}h`;
   }
@@ -154,7 +151,7 @@ export function formatDuration(ms: number): string {
   const remainingHours = hours % 24;
 
   if (remainingHours > 0) {
-    return `${days}d ${remainingHours}h`;
+    return `${days}d\u00A0${remainingHours}h`;
   }
   return `${days}d`;
 }
