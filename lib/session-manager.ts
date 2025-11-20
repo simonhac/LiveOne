@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { sessions, systems, type NewSession } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { transformForStorage } from "@/lib/json";
 
 export type SessionCause = "CRON" | "ADMIN" | "USER" | "PUSH" | "USER-TEST";
 
@@ -94,6 +95,27 @@ export class SessionManager {
     },
   ): Promise<void> {
     try {
+      // ⚠️  CRITICAL: Transform response data before storage
+      //
+      // The response may contain objects like CalendarDate, Date, or fields ending in *TimeMs
+      // that need to be converted to JSON-serializable formats before storage.
+      //
+      // transformForStorage() from @/lib/json will:
+      // - Convert CalendarDate objects → ISO8601 date strings (YYYY-MM-DD)
+      // - Convert Date objects → ISO8601 datetime strings with timezone
+      // - Convert *TimeMs fields → Rename (remove "Ms") and format as ISO8601
+      // - Preserve string values unchanged (including whitespace)
+      //
+      // This ensures the database stores clean, serialized data that can be displayed
+      // directly without rendering issues.
+      //
+      // WARNING: If you modify this to skip transformation, be prepared for:
+      // - Weird object representations in JSON viewer (e.g., {calendar: {identifier: "gregory"}})
+      // - Date serialization issues
+      const transformedResponse = data.response
+        ? transformForStorage(data.response)
+        : null;
+
       await db
         .update(sessions)
         .set({
@@ -101,7 +123,7 @@ export class SessionManager {
           successful: data.successful,
           errorCode: data.errorCode || null,
           error: data.error || null,
-          response: data.response || null,
+          response: transformedResponse,
           numRows: data.numRows,
         })
         .where(eq(sessions.id, sessionId));
@@ -126,6 +148,12 @@ export class SessionManager {
       }
       sessionLabel = sessionLabel || null;
 
+      // ⚠️  CRITICAL: Transform response data before storage
+      // See updateSessionResult() for detailed explanation of why this is necessary
+      const transformedResponse = data.response
+        ? transformForStorage(data.response)
+        : null;
+
       const sessionRecord: NewSession = {
         sessionLabel,
         systemId: data.systemId,
@@ -137,7 +165,7 @@ export class SessionManager {
         successful: data.successful,
         errorCode: data.errorCode || null,
         error: data.error || null,
-        response: data.response || null,
+        response: transformedResponse,
         numRows: data.numRows,
       };
 

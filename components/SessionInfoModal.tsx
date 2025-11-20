@@ -2,8 +2,7 @@
 
 import { formatDateTime } from "@/lib/fe-date-format";
 import { AlertCircle, X } from "lucide-react";
-import { JsonView, darkStyles } from "react-json-view-lite";
-import "react-json-view-lite/dist/index.css";
+import JsonViewer from "@/components/JsonViewer";
 
 interface Session {
   id: number;
@@ -159,20 +158,7 @@ export default function SessionInfoModal({
               )}
 
               {/* Response data */}
-              {session.response && (
-                <div>
-                  <div className="text-sm text-gray-400 mb-3">Raw Comms</div>
-                  <div className="bg-gray-950 border border-gray-700 rounded-lg">
-                    <div className="overflow-x-auto font-mono text-sm">
-                      <JsonView
-                        data={session.response}
-                        shouldExpandNode={(level) => level < 3}
-                        style={darkStyles}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
+              {session.response && <JsonViewer data={session.response} />}
             </div>
 
             {/* Action Buttons */}

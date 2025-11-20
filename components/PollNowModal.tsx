@@ -6,18 +6,13 @@ import {
   Check,
   AlertCircle,
   RefreshCw,
-  ChevronRight,
-  ChevronDown,
-  Server,
   Activity,
-  Database,
   FileJson,
   Clock,
   Hash,
 } from "lucide-react";
 import { formatDateTime, formatDuration } from "@/lib/fe-date-format";
-import { JsonView, darkStyles } from "react-json-view-lite";
-import "react-json-view-lite/dist/index.css";
+import JsonViewer from "@/components/JsonViewer";
 
 interface PollNowModalProps {
   systemId: number;
@@ -48,7 +43,6 @@ export default function PollNowModal({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PollResult | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [showRawResponse, setShowRawResponse] = useState(false);
   const [pollDuration, setPollDuration] = useState<number | null>(null);
   const hasInitiatedPoll = useRef(false);
 
@@ -287,33 +281,7 @@ export default function PollNowModal({
               </div>
 
               {/* Raw Response Section */}
-              {result.rawResponse && (
-                <div>
-                  <button
-                    onClick={() => setShowRawResponse(!showRawResponse)}
-                    className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors"
-                  >
-                    {showRawResponse ? (
-                      <ChevronDown className="w-4 h-4" />
-                    ) : (
-                      <ChevronRight className="w-4 h-4" />
-                    )}
-                    Raw Comms
-                  </button>
-
-                  {showRawResponse && (
-                    <div className="mt-3 bg-gray-950 border border-gray-700 rounded-lg">
-                      <div className="overflow-x-auto font-mono text-sm">
-                        <JsonView
-                          data={result.rawResponse}
-                          shouldExpandNode={(level) => level < 3}
-                          style={darkStyles}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+              {result.rawResponse && <JsonViewer data={result.rawResponse} />}
             </div>
           </div>
         )}

@@ -1,10 +1,12 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect } from 'react';
-import { X, ChevronRight, ChevronDown, Activity, CheckCircle, AlertCircle } from 'lucide-react';
-import { formatDateTime as formatDateTimeFE, formatDuration } from '@/lib/fe-date-format';
-import { JsonView, darkStyles, allExpanded } from 'react-json-view-lite';
-import 'react-json-view-lite/dist/index.css';
+import React, { useState, useEffect } from "react";
+import { X, Activity, CheckCircle, AlertCircle } from "lucide-react";
+import {
+  formatDateTime as formatDateTimeFE,
+  formatDuration,
+} from "@/lib/fe-date-format";
+import JsonViewer from "@/components/JsonViewer";
 
 interface PollingStats {
   isActive: boolean;
@@ -26,25 +28,31 @@ interface PollingStatsModalProps {
   systemId: number | null;
   systemName: string;
   vendorType: string;
-  status: 'active' | 'disabled' | 'removed' | null;
+  status: "active" | "disabled" | "removed" | null;
   stats: PollingStats;
 }
 
-export default function PollingStatsModal({ isOpen, onClose, systemId, systemName, vendorType, status, stats }: PollingStatsModalProps) {
-  const [showRawComms, setShowRawComms] = useState(false);
-
+export default function PollingStatsModal({
+  isOpen,
+  onClose,
+  systemId,
+  systemName,
+  vendorType,
+  status,
+  stats,
+}: PollingStatsModalProps) {
   // Handle Escape key to close modal
   useEffect(() => {
     if (!isOpen) return;
 
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose()
+      if (e.key === "Escape") {
+        onClose();
       }
-    }
-    document.addEventListener('keydown', handleEscape)
-    return () => document.removeEventListener('keydown', handleEscape)
-  }, [isOpen, onClose])
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -66,7 +74,8 @@ export default function PollingStatsModal({ isOpen, onClose, systemId, systemNam
         {/* Header */}
         <div className="flex justify-between items-start mb-4">
           <h3 className="text-lg font-semibold text-white">
-            Statistics for {systemName} <span className="text-gray-500">ID: {systemId}</span> — {vendorType}
+            Statistics for {systemName}{" "}
+            <span className="text-gray-500">ID: {systemId}</span> — {vendorType}
           </h3>
           <button
             onClick={onClose}
@@ -76,20 +85,25 @@ export default function PollingStatsModal({ isOpen, onClose, systemId, systemNam
           </button>
         </div>
 
-
-
         {/* Metrics Grid */}
         <div className="bg-gray-900/50 rounded-lg p-4 mb-4">
           <div className="grid grid-cols-4 gap-4">
             <div>
               <div className="text-sm text-gray-400 mb-1">Status</div>
-              <div className={`text-lg font-bold ${
-                status === 'active' ? 'text-green-400' :
-                status === 'disabled' ? 'text-orange-400' :
-                status === 'removed' ? 'text-red-400' :
-                'text-gray-400'
-              }`}>
-                {status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown'}
+              <div
+                className={`text-lg font-bold ${
+                  status === "active"
+                    ? "text-green-400"
+                    : status === "disabled"
+                      ? "text-orange-400"
+                      : status === "removed"
+                        ? "text-red-400"
+                        : "text-gray-400"
+                }`}
+              >
+                {status
+                  ? status.charAt(0).toUpperCase() + status.slice(1)
+                  : "Unknown"}
               </div>
             </div>
 
@@ -99,20 +113,32 @@ export default function PollingStatsModal({ isOpen, onClose, systemId, systemNam
                 {stats.totalPolls.toLocaleString()}
               </div>
               <div className="text-xs text-gray-400 mt-1">
-                <span className="text-green-400">{stats.successfulPolls.toLocaleString()}</span> ok,{' '}
-                <span className={stats.failedPolls > 0 ? 'text-red-400' : 'text-gray-400'}>
+                <span className="text-green-400">
+                  {stats.successfulPolls.toLocaleString()}
+                </span>{" "}
+                ok,{" "}
+                <span
+                  className={
+                    stats.failedPolls > 0 ? "text-red-400" : "text-gray-400"
+                  }
+                >
                   {stats.failedPolls.toLocaleString()}
-                </span> failed
+                </span>{" "}
+                failed
               </div>
             </div>
 
             <div>
               <div className="text-sm text-gray-400 mb-1">Success Rate</div>
-              <div className={`text-lg font-bold ${
-                stats.successRate >= 95 ? 'text-green-400' :
-                stats.successRate >= 80 ? 'text-yellow-400' :
-                'text-red-400'
-              }`}>
+              <div
+                className={`text-lg font-bold ${
+                  stats.successRate >= 95
+                    ? "text-green-400"
+                    : stats.successRate >= 80
+                      ? "text-yellow-400"
+                      : "text-red-400"
+                }`}
+              >
                 {stats.successRate.toFixed(1)}%
               </div>
               {stats.consecutiveErrors > 0 && (
@@ -149,7 +175,7 @@ export default function PollingStatsModal({ isOpen, onClose, systemId, systemNam
                     {stats.lastError && (
                       <div className="text-xs text-red-400 mt-1">
                         {stats.lastError.length > 50
-                          ? stats.lastError.substring(0, 50) + '...'
+                          ? stats.lastError.substring(0, 50) + "..."
                           : stats.lastError}
                       </div>
                     )}
@@ -165,25 +191,7 @@ export default function PollingStatsModal({ isOpen, onClose, systemId, systemNam
         {/* Raw Comms Section */}
         {stats.lastResponse && (
           <div className="mb-4">
-            <button
-              onClick={() => setShowRawComms(!showRawComms)}
-              className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors mb-3">
-              {showRawComms ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-              <span className="text-sm font-medium">Raw Comms</span>
-            </button>
-
-            {showRawComms && (
-              <div className="bg-gray-950 border border-gray-700 rounded-lg overflow-hidden">
-                <div className="overflow-x-auto font-mono text-xs p-3">
-                  <JsonView
-                    data={stats.lastResponse}
-                    shouldExpandNode={allExpanded}
-                    style={darkStyles}
-                    clickToExpandNode={false}
-                  />
-                </div>
-              </div>
-            )}
+            <JsonViewer data={stats.lastResponse} />
           </div>
         )}
 

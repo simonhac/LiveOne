@@ -1,6 +1,7 @@
-import { db } from '@/lib/db';
-import { pollingStatus } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { db } from "@/lib/db";
+import { pollingStatus } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import { transformForStorage } from "@/lib/json";
 
 /**
  * Get the last polling status for a system
@@ -11,7 +12,7 @@ export async function getPollingStatus(systemId: number) {
     .from(pollingStatus)
     .where(eq(pollingStatus.systemId, systemId))
     .limit(1);
-  
+
   return status || null;
 }
 
@@ -20,11 +21,32 @@ export async function getPollingStatus(systemId: number) {
  */
 export async function updatePollingStatusSuccess(
   systemId: number,
-  responseData?: any
+  responseData?: any,
 ) {
   const now = new Date();
   const existingStatus = await getPollingStatus(systemId);
-  
+
+  // ⚠️  CRITICAL: Transform response data before storage
+  //
+  // The responseData may contain objects like CalendarDate, Date, or fields ending in *TimeMs
+  // that need to be converted to JSON-serializable formats before storage.
+  //
+  // transformForStorage() from @/lib/json will:
+  // - Convert CalendarDate objects → ISO8601 date strings (YYYY-MM-DD)
+  // - Convert Date objects → ISO8601 datetime strings with timezone
+  // - Convert *TimeMs fields → Rename (remove "Ms") and format as ISO8601
+  // - Preserve string values unchanged (including whitespace)
+  //
+  // This ensures the database stores clean, serialized data that can be displayed
+  // directly without rendering issues.
+  //
+  // WARNING: If you modify this to skip transformation, be prepared for:
+  // - Weird object representations in JSON viewer (e.g., {calendar: {identifier: "gregory"}})
+  // - Date serialization issues
+  const transformedResponse = responseData
+    ? transformForStorage(responseData)
+    : null;
+
   await db
     .insert(pollingStatus)
     .values({
@@ -32,11 +54,11 @@ export async function updatePollingStatusSuccess(
       lastPollTime: now,
       lastSuccessTime: now,
       lastError: null,
-      lastResponse: responseData,
+      lastResponse: transformedResponse,
       consecutiveErrors: 0,
       totalPolls: 1,
       successfulPolls: 1,
-      updatedAt: now
+      updatedAt: now,
     })
     .onConflictDoUpdate({
       target: pollingStatus.systemId,
@@ -44,12 +66,14 @@ export async function updatePollingStatusSuccess(
         lastPollTime: now,
         lastSuccessTime: now,
         lastError: null,
-        lastResponse: responseData,
+        lastResponse: transformedResponse,
         consecutiveErrors: 0,
         totalPolls: existingStatus ? (existingStatus.totalPolls || 0) + 1 : 1,
-        successfulPolls: existingStatus ? (existingStatus.successfulPolls || 0) + 1 : 1,
-        updatedAt: now
-      }
+        successfulPolls: existingStatus
+          ? (existingStatus.successfulPolls || 0) + 1
+          : 1,
+        updatedAt: now,
+      },
     });
 }
 
@@ -58,12 +82,12 @@ export async function updatePollingStatusSuccess(
  */
 export async function updatePollingStatusError(
   systemId: number,
-  error: Error | string
+  error: Error | string,
 ) {
   const now = new Date();
   const existingStatus = await getPollingStatus(systemId);
   const errorMessage = error instanceof Error ? error.message : error;
-  
+
   await db
     .insert(pollingStatus)
     .values({
@@ -75,7 +99,7 @@ export async function updatePollingStatusError(
       consecutiveErrors: 1,
       totalPolls: 1,
       successfulPolls: 0,
-      updatedAt: now
+      updatedAt: now,
     })
     .onConflictDoUpdate({
       target: pollingStatus.systemId,
@@ -84,10 +108,12 @@ export async function updatePollingStatusError(
         lastErrorTime: now,
         lastError: errorMessage,
         lastResponse: null,
-        consecutiveErrors: existingStatus ? (existingStatus.consecutiveErrors || 0) + 1 : 1,
+        consecutiveErrors: existingStatus
+          ? (existingStatus.consecutiveErrors || 0) + 1
+          : 1,
         totalPolls: existingStatus ? (existingStatus.totalPolls || 0) + 1 : 1,
-        updatedAt: now
-      }
+        updatedAt: now,
+      },
     });
 }
 
@@ -98,7 +124,7 @@ export interface PollingResult {
   systemId: number;
   displayName?: string;
   vendorType?: string;
-  status: 'polled' | 'skipped' | 'error';
+  status: "polled" | "skipped" | "error";
   recordsUpserted?: number;
   skipReason?: string;
   error?: string;
@@ -115,39 +141,39 @@ export interface PollingResult {
  */
 export function validateSystemForPolling(
   system: any,
-  expectedVendorType?: string
+  expectedVendorType?: string,
 ): PollingResult | null {
   // Check if system exists
   if (!system) {
     return {
       systemId: 0,
-      status: 'error',
-      error: 'System not found'
+      status: "error",
+      error: "System not found",
     };
   }
-  
+
   // Check vendor type if specified
   if (expectedVendorType && system.vendorType !== expectedVendorType) {
     return {
       systemId: system.id,
       displayName: system.displayName || undefined,
       vendorType: system.vendorType,
-      status: 'error',
-      error: `Not a ${expectedVendorType} system (type: ${system.vendorType})`
+      status: "error",
+      error: `Not a ${expectedVendorType} system (type: ${system.vendorType})`,
     };
   }
-  
+
   // Check if owner is configured
   if (!system.ownerClerkUserId) {
     return {
       systemId: system.id,
       displayName: system.displayName || undefined,
       vendorType: system.vendorType,
-      status: 'error',
-      error: 'No owner configured'
+      status: "error",
+      error: "No owner configured",
     };
   }
-  
+
   // Validation passed
   return null;
 }

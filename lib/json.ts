@@ -6,6 +6,7 @@
 
 import { NextResponse } from "next/server";
 import { formatTime_fromJSDate } from "./date-utils";
+import { CalendarDate } from "@internationalized/date";
 
 // ============================================================================
 // CLIENT-SIDE: JSON Deserialization with Date Parsing
@@ -62,6 +63,7 @@ const DEFAULT_TIMEZONE_OFFSET_MIN = 600;
  * Transform object to convert Unix timestamp fields to formatted dates and rename them
  * - Fields ending in "TimeMs" are converted to ISO8601 dates and renamed (remove "Ms" suffix)
  * - Date objects are converted to AEST formatted ISO8601 strings
+ * - CalendarDate objects are converted to ISO8601 date strings (YYYY-MM-DD)
  */
 function transformDates(obj: any, timezoneOffsetMin: number): any {
   if (obj === null || obj === undefined) {
@@ -71,6 +73,11 @@ function transformDates(obj: any, timezoneOffsetMin: number): any {
   // Handle Date objects
   if (obj instanceof Date) {
     return formatTime_fromJSDate(obj, timezoneOffsetMin);
+  }
+
+  // Handle CalendarDate objects (must check before generic objects)
+  if (obj instanceof CalendarDate) {
+    return obj.toString();
   }
 
   // Handle arrays
@@ -100,6 +107,22 @@ function transformDates(obj: any, timezoneOffsetMin: number): any {
 
   // Return primitives as-is
   return obj;
+}
+
+/**
+ * Transform data for storage in database
+ * Similar to transformDates but doesn't create NextResponse
+ * Use this when storing JSON in database fields
+ *
+ * @param data - Data to transform
+ * @param timezoneOffsetMin - Timezone offset in minutes (default: 600 = AEST)
+ * @returns Transformed data ready for JSON.stringify
+ */
+export function transformForStorage(
+  data: any,
+  timezoneOffsetMin: number = DEFAULT_TIMEZONE_OFFSET_MIN,
+): any {
+  return transformDates(data, timezoneOffsetMin);
 }
 
 /**
