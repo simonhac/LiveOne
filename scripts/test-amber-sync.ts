@@ -11,7 +11,11 @@
 
 import { updateUsage, updateForecasts } from "@/lib/vendors/amber/client";
 import { parseDateISO } from "@/lib/date-utils";
-import type { SyncAudit } from "@/lib/vendors/amber/types";
+import type { AmberSyncResult } from "@/lib/vendors/amber/types";
+import {
+  getOverviewKeys,
+  getSampleRecordKeys,
+} from "../lib/vendors/amber/types";
 
 async function testSync() {
   // Amber system ID (from dev database)
@@ -69,7 +73,7 @@ async function testSync() {
   );
   console.log("=".repeat(60));
 
-  const audits: SyncAudit[] = [];
+  const audits: AmberSyncResult[] = [];
 
   if (actionArg === "usage" || actionArg === "both") {
     const audit = await updateUsage(
@@ -77,6 +81,7 @@ async function testSync() {
       firstDay,
       numberOfDays,
       credentials,
+      -1, // sessionId: -1 for test script
     );
     audits.push(audit);
   }
@@ -87,6 +92,7 @@ async function testSync() {
       firstDay,
       numberOfDays,
       credentials,
+      -1, // sessionId: -1 for test script
     );
     audits.push(audit);
   }
@@ -107,6 +113,7 @@ async function testSync() {
     console.log(`System ID: ${audit.systemId}`);
     console.log(`First Day: ${audit.firstDay.toString()}`);
     console.log(`Number of Days: ${audit.numberOfDays}`);
+    console.log(`Success: ${audit.success ? "✅ YES" : "❌ NO"}`);
     console.log(`Total stages: ${audit.summary.totalStages}`);
     console.log(`Duration: ${audit.summary.durationMs}ms`);
 
@@ -133,15 +140,13 @@ async function testSync() {
       console.log(`Num Records: ${stage.info.numRecords}`);
 
       // Display overviews sorted by point key
-      if (stage.info.overviews.size > 0) {
-        console.log(
-          `\nOverviews by point (${stage.info.overviews.size} series):`,
-        );
-        const sortedPoints = Array.from(stage.info.overviews.entries()).sort(
-          (a, b) => a[0].localeCompare(b[0]),
-        );
-        for (const [pointKey, overview] of sortedPoints) {
-          console.log(`  ${pointKey.padEnd(20)}: ${overview}`);
+      const overviewKeys = getOverviewKeys(stage.info);
+      if (overviewKeys.length > 0) {
+        console.log(`\nOverviews by point (${overviewKeys.length} series):`);
+        for (const pointKey of overviewKeys.sort()) {
+          console.log(
+            `  ${pointKey.padEnd(20)}: ${stage.info.overviews[pointKey]}`,
+          );
         }
       } else {
         console.log("\nNo overviews available");
@@ -166,6 +171,35 @@ async function testSync() {
         }
       } else if (stage.records && stage.records.size > 0) {
         console.log(`\nRecords: ${stage.records.size} time intervals`);
+      }
+
+      // Display sample records if available
+      const sampleKeys = getSampleRecordKeys(stage.info);
+      if (sampleKeys.length > 0) {
+        console.log(`\nSample Records (up to 3 from each point):`);
+        for (const pointKey of sampleKeys.sort()) {
+          const sampleInfo = stage.info.sampleRecords![pointKey];
+          console.log(`\n  ${pointKey}:`);
+          for (let i = 0; i < sampleInfo.records.length; i++) {
+            const r = sampleInfo.records[i];
+            // Convert timestamp to ISO string for display
+            const timestamp = new Date(r.measurementTimeMs);
+            const isoStr = timestamp.toISOString();
+            const value =
+              typeof r.rawValue === "number"
+                ? r.rawValue.toFixed(3)
+                : r.rawValue;
+            const quality = r.quality || "—";
+            console.log(
+              `    ${i + 1}. ${isoStr} | value: ${value} | quality: ${quality}`,
+            );
+          }
+          if (sampleInfo.numSkipped) {
+            console.log(
+              `    (and ${sampleInfo.numSkipped} ${sampleInfo.numSkipped === 1 ? "record" : "records"} omitted for brevity)`,
+            );
+          }
+        }
       }
 
       // Display canonical table if available
@@ -211,7 +245,7 @@ async function testSync() {
         discovery: stage.discovery,
         info: {
           completeness: stage.info.completeness,
-          overviews: Object.fromEntries(stage.info.overviews),
+          overviews: stage.info.overviews,
           numRecords: stage.info.numRecords,
           characterisation: stage.info.characterisation?.map((range) => ({
             rangeStartTimeMs: range.rangeStartTimeMs,
@@ -219,6 +253,7 @@ async function testSync() {
             quality: range.quality,
             pointOriginIds: range.pointOriginIds,
           })),
+          sampleRecords: stage.info.sampleRecords,
         },
         error: stage.error,
       })),

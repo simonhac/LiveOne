@@ -99,13 +99,37 @@ export type Milliseconds = number & { readonly __brand: "Milliseconds" };
 // Completeness states for data quality overview
 export type Completeness = "all-billable" | "none" | "mixed";
 
+// Simplified sample record (stripped down from PointReading)
+export interface SimplifiedSampleRecord {
+  rawValue: any;
+  measurementTimeMs: Milliseconds;
+  receivedTimeMs: Milliseconds;
+  quality?: string;
+}
+
+// Sample records for a single point
+export interface SampleRecordsForPoint {
+  records: SimplifiedSampleRecord[]; // Up to 3 sample records
+  numSkipped?: number; // Number of records not included (if total > 3)
+}
+
 // Batch info - summary views of a time period's readings
 export interface BatchInfo {
   completeness: Completeness;
-  overviews: Map<string, string>; // Map of point origin ID to overview (48 × numberOfDays chars each)
+  overviews: Record<string, string>; // Single object: {pointKey: overview, ...} (48 × numberOfDays chars each)
   numRecords: number; // Count of non-null records
   characterisation?: CharacterisationRange[];
   canonical: string[]; // Formatted table display (one line per row, monospaced)
+  sampleRecords?: Record<string, SampleRecordsForPoint>; // Single object: {pointKey: {records, numSkipped}, ...}
+}
+
+// Helper functions for BatchInfo
+export function getOverviewKeys(info: BatchInfo): string[] {
+  return Object.keys(info.overviews);
+}
+
+export function getSampleRecordKeys(info: BatchInfo): string[] {
+  return info.sampleRecords ? Object.keys(info.sampleRecords) : [];
 }
 
 // Result from a single sync stage
@@ -139,14 +163,14 @@ export interface PointReading {
   error?: string | null;
 }
 
-// Complete sync audit result
+// Complete sync audit result (strips out records field to reduce payload size)
 export interface AmberSyncResult {
   action: "updateUsage" | "updateForecasts";
   success: boolean; // True if sync completed without errors
   systemId: number;
   firstDay: CalendarDate;
   numberOfDays: number;
-  stages: StageResult[];
+  stages: Omit<StageResult, "records">[]; // Omit records Map - use sampleRecords instead
   summary: {
     totalStages: number;
     numRowsInserted: number; // Total rows inserted across all stages

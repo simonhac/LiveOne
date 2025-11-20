@@ -242,7 +242,7 @@ async function loadLocalRecords(
         stage: stageName,
         info: {
           completeness: "none",
-          overviews: new Map(),
+          overviews: {},
           numRecords: 0,
           canonical: [],
         },
@@ -288,7 +288,7 @@ async function loadLocalRecords(
       stage: stageName,
       info: {
         completeness: "none",
-        overviews: new Map(),
+        overviews: {},
         numRecords: 0,
         canonical: [],
       },
@@ -344,7 +344,7 @@ async function loadRemoteUsage(
       stage: stageName,
       info: {
         completeness: "none",
-        overviews: new Map(),
+        overviews: {},
         numRecords: 0,
         canonical: [],
       },
@@ -369,7 +369,7 @@ function compareRecords(
   numberOfDays: number,
   pointKeys: string[],
 ): BatchInfo & {
-  comparisonOverviewsByPoint: Map<string, string>;
+  comparisonOverviews: Record<string, string>;
   records: Map<string, Map<string, PointReading>>;
 } {
   // Create AmberReadingsBatch for superior records
@@ -381,14 +381,16 @@ function compareRecords(
     comparisonOverviewBuilders.set(pointKey, []);
   }
 
-  // Iterate through each point's entries and compare
-  for (const pointKey of pointKeys) {
-    const existingRecords = existingResult.records || new Map();
-    const newRecords = newResult.records || new Map();
+  const existingRecords = existingResult.records || new Map();
+  const newRecords = newResult.records || new Map();
 
-    for (const [intervalMs] of superiorGroup.getPointRecords(pointKey)) {
-      const timeKey = String(intervalMs);
+  // Iterate through each time interval and compare
+  for (const [intervalMs] of superiorGroup.getPointRecords(
+    pointKeys[0] ?? "",
+  )) {
+    const timeKey = String(intervalMs);
 
+    for (const pointKey of pointKeys) {
       const existingRecord = existingRecords.get(timeKey)?.get(pointKey);
       const newRecord = newRecords.get(timeKey)?.get(pointKey);
 
@@ -409,31 +411,33 @@ function compareRecords(
     }
   }
 
-  // Build comparison overview strings
-  const comparisonOverviewsByPoint = new Map<string, string>();
+  // Build comparison overview strings as single object
+  const comparisonOverviews: Record<string, string> = {};
   for (const [pointKey, builder] of comparisonOverviewBuilders.entries()) {
-    comparisonOverviewsByPoint.set(pointKey, builder.join(""));
+    comparisonOverviews[pointKey] = builder.join("");
   }
 
   // Determine completeness from comparison overview
   const expectedLength = 48 * numberOfDays;
   const firstOverview =
-    comparisonOverviewsByPoint.values().next().value ??
+    comparisonOverviewBuilders.values().next().value?.join("") ??
     "".padEnd(expectedLength, ".");
   const completeness = determineCompleteness(firstOverview, expectedLength);
 
-  // Get characterisation and canonical from superior group
+  // Get characterisation, canonical, and sample records from superior group
   const characterisation = superiorGroup.getCharacterisation();
   const canonical = superiorGroup.getCanonicalDisplay();
+  const sampleRecords = superiorGroup.getSampleRecords();
   const numRecords = superiorGroup.getCount();
 
   return {
     completeness,
-    overviews: comparisonOverviewsByPoint,
+    overviews: comparisonOverviews,
     numRecords,
     characterisation,
     canonical,
-    comparisonOverviewsByPoint,
+    sampleRecords,
+    comparisonOverviews,
     records: superiorGroup.getRecords(),
   };
 }
@@ -462,15 +466,20 @@ function createComparisonStage(
   }
 
   try {
+    // Extract point keys from overviews object
+    const getPointKeys = (overviews: Record<string, string>): string[] => {
+      return Object.keys(overviews);
+    };
+
     const pointKeys = useNewPoints
-      ? Array.from(newResult.info.overviews.keys()).sort()
+      ? getPointKeys(newResult.info.overviews).sort()
       : (() => {
-          const local = Array.from(existingResult.info.overviews.keys());
-          const remote = Array.from(newResult.info.overviews.keys());
+          const local = getPointKeys(existingResult.info.overviews);
+          const remote = getPointKeys(newResult.info.overviews);
           return (local.length > 0 ? local : remote).sort();
         })();
 
-    const { comparisonOverviewsByPoint, records, ...info } = compareRecords(
+    const { comparisonOverviews, records, ...info } = compareRecords(
       existingResult,
       newResult,
       firstDay,
@@ -482,7 +491,7 @@ function createComparisonStage(
       stage: stageName,
       info: {
         ...info,
-        overviews: comparisonOverviewsByPoint,
+        overviews: comparisonOverviews,
       },
       records,
     };
@@ -491,7 +500,7 @@ function createComparisonStage(
       stage: stageName,
       info: {
         completeness: "none",
-        overviews: new Map(),
+        overviews: {},
         numRecords: 0,
         canonical: [],
       },
@@ -751,7 +760,7 @@ async function loadRemotePrices(
       stage: stageName,
       info: {
         completeness: "none",
-        overviews: new Map(),
+        overviews: {},
         numRecords: 0,
         canonical: [],
       },
@@ -932,13 +941,16 @@ export async function updateUsage(
     0,
   );
 
+  // Strip out records field from stages to reduce payload size
+  const stagesWithoutRecords = stages.map(({ records, ...stage }) => stage);
+
   const result: AmberSyncResult = {
     action: "updateUsage",
     success: error === undefined && exception === undefined,
     systemId,
     firstDay,
     numberOfDays,
-    stages,
+    stages: stagesWithoutRecords,
     summary: {
       totalStages: stages.length,
       numRowsInserted,
@@ -989,7 +1001,8 @@ export async function updateForecasts(
       error = `Forecast stage 1 failed: ${localResult.error}`;
     } else {
       // Check if local has price points (E1.perKwh, B1.perKwh, grid.spotPerKwh, grid.renewables)
-      const hasPricePoints = Array.from(localResult.info.overviews.keys()).some(
+      const pointKeys = Object.keys(localResult.info.overviews);
+      const hasPricePoints = pointKeys.some(
         (key) => key === "grid.spotPerKwh" || key === "grid.renewables",
       );
 
@@ -1079,13 +1092,16 @@ export async function updateForecasts(
     0,
   );
 
+  // Strip out records field from stages to reduce payload size
+  const stagesWithoutRecords = stages.map(({ records, ...stage }) => stage);
+
   const result: AmberSyncResult = {
     action: "updateForecasts",
     success: error === undefined && exception === undefined,
     systemId,
     firstDay,
     numberOfDays,
-    stages,
+    stages: stagesWithoutRecords,
     summary: {
       totalStages: stages.length,
       numRowsInserted,

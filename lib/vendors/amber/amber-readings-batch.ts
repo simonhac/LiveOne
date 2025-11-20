@@ -10,6 +10,7 @@ import type {
   Completeness,
   CharacterisationRange,
   Milliseconds,
+  SimplifiedSampleRecord,
 } from "./types";
 
 /**
@@ -385,21 +386,104 @@ export class AmberReadingsBatch {
   }
 
   /**
+   * Get up to 3 sample records for each point type (sorted by key and timestamp)
+   * Returns simplified records: {pointKey: {records, numSkipped}, ...}
+   */
+  getSampleRecords(): Record<
+    string,
+    { records: SimplifiedSampleRecord[]; numSkipped?: number }
+  > {
+    const samples: Record<
+      string,
+      { records: SimplifiedSampleRecord[]; numSkipped?: number }
+    > = {};
+
+    // First, collect all point keys from all timestamps
+    const allPointKeys = new Set<string>();
+    for (const pointMap of this.records.values()) {
+      for (const pointKey of pointMap.keys()) {
+        allPointKeys.add(pointKey);
+      }
+    }
+
+    // Sort point keys alphabetically
+    const sortedPointKeys = Array.from(allPointKeys).sort();
+
+    for (const pointKey of sortedPointKeys) {
+      // Collect all records for this point across all timestamps
+      const allRecordsForPoint: Array<[string, PointReading]> = [];
+      for (const [timeKey, pointMap] of this.records.entries()) {
+        const reading = pointMap.get(pointKey);
+        if (
+          reading &&
+          reading.rawValue !== null &&
+          reading.rawValue !== undefined
+        ) {
+          allRecordsForPoint.push([timeKey, reading]);
+        }
+      }
+
+      // Sort by timestamp
+      allRecordsForPoint.sort((a, b) => Number(a[0]) - Number(b[0]));
+
+      if (allRecordsForPoint.length > 0) {
+        // Take first 3 and simplify
+        const records: SimplifiedSampleRecord[] = [];
+        for (let i = 0; i < Math.min(3, allRecordsForPoint.length); i++) {
+          const reading = allRecordsForPoint[i][1];
+          records.push({
+            rawValue: reading.rawValue,
+            measurementTimeMs: reading.measurementTimeMs,
+            receivedTimeMs: reading.receivedTimeMs,
+            quality: reading.dataQuality,
+          });
+        }
+
+        const sampleInfo: {
+          records: SimplifiedSampleRecord[];
+          numSkipped?: number;
+        } = { records };
+
+        // Add numSkipped if there are more than 3 records
+        if (allRecordsForPoint.length > 3) {
+          sampleInfo.numSkipped = allRecordsForPoint.length - 3;
+        }
+
+        samples[pointKey] = sampleInfo;
+      }
+    }
+
+    return samples;
+  }
+
+  /**
    * Get all views in one call - convenience method for stages
    */
   getInfo(): {
-    overviews: Map<string, string>;
+    overviews: Record<string, string>;
     completeness: Completeness;
     characterisation: CharacterisationRange[] | undefined;
     numRecords: number;
     canonical: string[];
+    sampleRecords: Record<
+      string,
+      { records: SimplifiedSampleRecord[]; numSkipped?: number }
+    >;
   } {
+    // Convert overviews Map to single object
+    const overviewsMap = this.getOverviews();
+    const overviews: Record<string, string> = {};
+    for (const [pointKey, overview] of overviewsMap.entries()) {
+      overviews[pointKey] = overview;
+    }
+
     return {
-      overviews: this.getOverviews(),
+      overviews,
       completeness: this.getCompleteness(),
       characterisation: this.getCharacterisation(),
       numRecords: this.getCount(),
       canonical: this.getCanonicalDisplay(),
+      sampleRecords: this.getSampleRecords(),
     };
   }
 }
