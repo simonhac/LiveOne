@@ -30,16 +30,22 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Determine session cause: CRON (scheduled) vs ADMIN (manual trigger)
+    // Determine session cause: CRON (scheduled) vs ADMIN (manual trigger) vs ADMIN-DRYRUN (dry run)
     const authHeader = request.headers.get("authorization");
     const isCronRequest = authHeader === `Bearer ${process.env.CRON_SECRET}`;
-    const sessionCause = isCronRequest ? "CRON" : "ADMIN";
 
     // In development, allow testing specific systems with isUserOriginated flag
     const searchParams = request.nextUrl.searchParams;
     const testSystemId = searchParams.get("systemId");
     const isUserOriginated = searchParams.get("force") === "true"; // Keep "force" param name for backwards compatibility
     const includeRaw = searchParams.get("includeRaw") === "true";
+    const dryRun = searchParams.get("dryRun") === "true";
+
+    const sessionCause = isCronRequest
+      ? "CRON"
+      : dryRun
+        ? "ADMIN-DRYRUN"
+        : "ADMIN";
 
     if (testSystemId && isUserOriginated) {
       console.log(
@@ -238,6 +244,7 @@ export async function GET(request: NextRequest) {
           isUserOriginated,
           now,
           dbSessionId,
+          dryRun,
         );
 
         // Calculate duration
@@ -261,84 +268,88 @@ export async function GET(request: NextRequest) {
                 );
 
                 // Insert reading into database (Drizzle handles Date -> Unix conversion)
-                await db.insert(readings).values({
-                  systemId: system.id,
-                  inverterTime, // Pass Date directly - Drizzle converts to Unix timestamp
-                  receivedTime,
-                  delaySeconds,
-                  solarW: data.solarW ?? null, // Preserve null, don't convert to 0
-                  solarLocalW: data.solarLocalW ?? null,
-                  solarRemoteW: data.solarRemoteW ?? null,
-                  loadW: data.loadW ?? null,
-                  batteryW: data.batteryW ?? null,
-                  gridW: data.gridW ?? null,
-                  batterySOC:
-                    data.batterySOC != null
-                      ? Math.round(data.batterySOC * 10) / 10
+                // Skip database write in dry run mode
+                if (!dryRun) {
+                  await db.insert(readings).values({
+                    systemId: system.id,
+                    inverterTime, // Pass Date directly - Drizzle converts to Unix timestamp
+                    receivedTime,
+                    delaySeconds,
+                    solarW: data.solarW ?? null, // Preserve null, don't convert to 0
+                    solarLocalW: data.solarLocalW ?? null,
+                    solarRemoteW: data.solarRemoteW ?? null,
+                    loadW: data.loadW ?? null,
+                    batteryW: data.batteryW ?? null,
+                    gridW: data.gridW ?? null,
+                    batterySOC:
+                      data.batterySOC != null
+                        ? Math.round(data.batterySOC * 10) / 10
+                        : null,
+                    faultCode: data.faultCode ?? null,
+                    faultTimestamp: data.faultTimestamp
+                      ? Math.floor(data.faultTimestamp.getTime() / 1000)
                       : null,
-                  faultCode: data.faultCode ?? null,
-                  faultTimestamp: data.faultTimestamp
-                    ? Math.floor(data.faultTimestamp.getTime() / 1000)
-                    : null,
-                  generatorStatus: data.generatorStatus ?? null,
-                  // Energy interval counters (Wh) - integers, preserve nulls
-                  solarWhInterval:
-                    data.solarWhInterval != null
-                      ? Math.round(data.solarWhInterval)
-                      : null,
-                  loadWhInterval:
-                    data.loadWhInterval != null
-                      ? Math.round(data.loadWhInterval)
-                      : null,
-                  batteryInWhInterval:
-                    data.batteryInWhInterval != null
-                      ? Math.round(data.batteryInWhInterval)
-                      : null,
-                  batteryOutWhInterval:
-                    data.batteryOutWhInterval != null
-                      ? Math.round(data.batteryOutWhInterval)
-                      : null,
-                  gridInWhInterval:
-                    data.gridInWhInterval != null
-                      ? Math.round(data.gridInWhInterval)
-                      : null,
-                  gridOutWhInterval:
-                    data.gridOutWhInterval != null
-                      ? Math.round(data.gridOutWhInterval)
-                      : null,
-                  // Energy counters (kWh) - rounded to 3 decimal places, preserve nulls
-                  solarKwhTotal:
-                    data.solarKwhTotal != null
-                      ? Math.round(data.solarKwhTotal * 1000) / 1000
-                      : null,
-                  loadKwhTotal:
-                    data.loadKwhTotal != null
-                      ? Math.round(data.loadKwhTotal * 1000) / 1000
-                      : null,
-                  batteryInKwhTotal:
-                    data.batteryInKwhTotal != null
-                      ? Math.round(data.batteryInKwhTotal * 1000) / 1000
-                      : null,
-                  batteryOutKwhTotal:
-                    data.batteryOutKwhTotal != null
-                      ? Math.round(data.batteryOutKwhTotal * 1000) / 1000
-                      : null,
-                  gridInKwhTotal:
-                    data.gridInKwhTotal != null
-                      ? Math.round(data.gridInKwhTotal * 1000) / 1000
-                      : null,
-                  gridOutKwhTotal:
-                    data.gridOutKwhTotal != null
-                      ? Math.round(data.gridOutKwhTotal * 1000) / 1000
-                      : null,
-                });
+                    generatorStatus: data.generatorStatus ?? null,
+                    // Energy interval counters (Wh) - integers, preserve nulls
+                    solarWhInterval:
+                      data.solarWhInterval != null
+                        ? Math.round(data.solarWhInterval)
+                        : null,
+                    loadWhInterval:
+                      data.loadWhInterval != null
+                        ? Math.round(data.loadWhInterval)
+                        : null,
+                    batteryInWhInterval:
+                      data.batteryInWhInterval != null
+                        ? Math.round(data.batteryInWhInterval)
+                        : null,
+                    batteryOutWhInterval:
+                      data.batteryOutWhInterval != null
+                        ? Math.round(data.batteryOutWhInterval)
+                        : null,
+                    gridInWhInterval:
+                      data.gridInWhInterval != null
+                        ? Math.round(data.gridInWhInterval)
+                        : null,
+                    gridOutWhInterval:
+                      data.gridOutWhInterval != null
+                        ? Math.round(data.gridOutWhInterval)
+                        : null,
+                    // Energy counters (kWh) - rounded to 3 decimal places, preserve nulls
+                    solarKwhTotal:
+                      data.solarKwhTotal != null
+                        ? Math.round(data.solarKwhTotal * 1000) / 1000
+                        : null,
+                    loadKwhTotal:
+                      data.loadKwhTotal != null
+                        ? Math.round(data.loadKwhTotal * 1000) / 1000
+                        : null,
+                    batteryInKwhTotal:
+                      data.batteryInKwhTotal != null
+                        ? Math.round(data.batteryInKwhTotal * 1000) / 1000
+                        : null,
+                    batteryOutKwhTotal:
+                      data.batteryOutKwhTotal != null
+                        ? Math.round(data.batteryOutKwhTotal * 1000) / 1000
+                        : null,
+                    gridInKwhTotal:
+                      data.gridInKwhTotal != null
+                        ? Math.round(data.gridInKwhTotal * 1000) / 1000
+                        : null,
+                    gridOutKwhTotal:
+                      data.gridOutKwhTotal != null
+                        ? Math.round(data.gridOutKwhTotal * 1000) / 1000
+                        : null,
+                  });
 
-                // Update 5-minute aggregated data
-                await updateAggregatedData(system.id, inverterTime);
+                  // Update 5-minute aggregated data
+                  await updateAggregatedData(system.id, inverterTime);
+                }
               }
             }
 
             // Update polling status with raw response
+            // Note: We update polling status even in dry run mode to track that the poll happened
             await updatePollingStatusSuccess(system.id, result.rawResponse);
 
             // Update session with successful result

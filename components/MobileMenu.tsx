@@ -54,7 +54,7 @@ interface MobileMenuProps {
   onAddSystem?: () => void;
   onSystemSettings?: () => void;
   onViewData?: () => void;
-  onPollNow?: () => void;
+  onPollNow?: (dryRun?: boolean) => void;
 }
 
 export default function MobileMenu({
@@ -77,11 +77,72 @@ export default function MobileMenu({
 }: MobileMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isSystemDropdownOpen, setIsSystemDropdownOpen] = useState(false);
+  const [shiftKeyDown, setShiftKeyDown] = useState(false);
+  const [longPressActive, setLongPressActive] = useState(false);
+  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
   const router = useRouter();
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { user } = useUser();
 
+  const isDryRunMode = shiftKeyDown || longPressActive;
+
   const toggleMenu = () => setIsOpen(!isOpen);
+
+  // Shift key detection
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.shiftKey) {
+        setShiftKeyDown(true);
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (!e.shiftKey) {
+        setShiftKeyDown(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, []);
+
+  // Long-press handlers for mobile hamburger menu button
+  const handleTouchStart = () => {
+    longPressTimer.current = setTimeout(() => {
+      setLongPressActive(true);
+    }, 500); // 500ms long-press threshold
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
+  const handleTouchCancel = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    setLongPressActive(false);
+  };
+
+  // Reset long-press when menu closes
+  useEffect(() => {
+    if (!isOpen) {
+      setLongPressActive(false);
+      if (longPressTimer.current) {
+        clearTimeout(longPressTimer.current);
+        longPressTimer.current = null;
+      }
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -180,6 +241,9 @@ export default function MobileMenu({
             {/* Hamburger Menu Button */}
             <button
               onClick={toggleMenu}
+              onTouchStart={handleTouchStart}
+              onTouchEnd={handleTouchEnd}
+              onTouchCancel={handleTouchCancel}
               className="p-1.5 text-gray-400 hover:text-white transition-colors"
               aria-label="Toggle menu"
             >
@@ -267,7 +331,7 @@ export default function MobileMenu({
                     onClick={() => {
                       if (supportsPolling) {
                         setIsOpen(false);
-                        onPollNow();
+                        onPollNow(isDryRunMode);
                       }
                     }}
                     disabled={!supportsPolling}
@@ -278,7 +342,7 @@ export default function MobileMenu({
                     }`}
                   >
                     <RefreshCw className="w-4 h-4" />
-                    Poll Now…
+                    {isDryRunMode ? "Dry Run Poll…" : "Poll Now…"}
                   </button>
                 )}
 

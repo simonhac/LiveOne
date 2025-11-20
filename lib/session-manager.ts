@@ -3,7 +3,13 @@ import { sessions, systems, type NewSession } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { transformForStorage } from "@/lib/json";
 
-export type SessionCause = "CRON" | "ADMIN" | "USER" | "PUSH" | "USER-TEST";
+export type SessionCause =
+  | "CRON"
+  | "ADMIN"
+  | "USER"
+  | "PUSH"
+  | "USER-TEST"
+  | "ADMIN-DRYRUN";
 
 export interface SessionData {
   sessionLabel?: string | null;

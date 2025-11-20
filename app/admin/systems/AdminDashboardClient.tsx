@@ -143,11 +143,13 @@ export default function AdminDashboardClient() {
     systemId: number | null;
     displayName: string | null;
     vendorType: string | null;
+    dryRun: boolean;
   }>({
     isOpen: false,
     systemId: null,
     displayName: null,
     vendorType: null,
+    dryRun: false,
   });
   const [viewDataModal, setViewDataModal] = useState<{
     isOpen: boolean;
@@ -183,12 +185,13 @@ export default function AdminDashboardClient() {
     });
   };
 
-  const openPollNowModal = (system: SystemData) => {
+  const openPollNowModal = (system: SystemData, dryRun: boolean = false) => {
     setPollNowModal({
       isOpen: true,
       systemId: system.systemId,
       displayName: system.displayName,
       vendorType: system.vendor.type,
+      dryRun,
     });
   };
 
@@ -198,6 +201,7 @@ export default function AdminDashboardClient() {
       systemId: null,
       displayName: null,
       vendorType: null,
+      dryRun: false,
     });
   };
 
@@ -435,7 +439,9 @@ export default function AdminDashboardClient() {
                             supportsPolling={system.vendor.supportsPolling}
                             dataStore={system.vendor.dataStore}
                             onTest={() => openTestModal(system)}
-                            onPollNow={() => openPollNowModal(system)}
+                            onPollNow={(dryRun) =>
+                              openPollNowModal(system, dryRun)
+                            }
                             onStatusChange={(newStatus) =>
                               updateSystemStatus(system.systemId, newStatus)
                             }
@@ -708,6 +714,7 @@ export default function AdminDashboardClient() {
           systemId={pollNowModal.systemId}
           displayName={pollNowModal.displayName}
           vendorType={pollNowModal.vendorType}
+          dryRun={pollNowModal.dryRun}
           onClose={closePollNowModal}
         />
       )}

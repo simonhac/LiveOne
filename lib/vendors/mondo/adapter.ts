@@ -200,6 +200,7 @@ export class MondoAdapter extends BaseVendorAdapter {
     now: Date,
     sessionId: number,
     isUserOriginated: boolean,
+    dryRun: boolean = false,
   ): Promise<PollingResult> {
     try {
       console.log(`[Mondo] Starting poll for system ${system.id}`);

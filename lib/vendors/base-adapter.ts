@@ -154,6 +154,8 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * @param credentials - Vendor credentials
    * @param isUserOriginated - If true, bypass rate limiting and poll immediately
    * @param now - Current time from cron job
+   * @param sessionId - The session ID to associate with this polling operation
+   * @param dryRun - If true, skip database writes (for testing/debugging)
    */
   async poll(
     system: SystemWithPolling,
@@ -161,6 +163,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     isUserOriginated: boolean,
     now: Date,
     sessionId: number,
+    dryRun: boolean = false,
   ): Promise<PollingResult> {
     const check = await this.shouldPoll(system, isUserOriginated, now);
 
@@ -169,7 +172,14 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     }
 
     // Delegate to the actual polling implementation
-    return this.doPoll(system, credentials, now, sessionId, isUserOriginated);
+    return this.doPoll(
+      system,
+      credentials,
+      now,
+      sessionId,
+      isUserOriginated,
+      dryRun,
+    );
   }
 
   /**
@@ -180,6 +190,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * @param now - Current time from cron job
    * @param sessionId - The session ID to associate with this polling operation
    * @param isUserOriginated - If true, the poll was triggered manually by a user
+   * @param dryRun - If true, skip database writes (for testing/debugging)
    */
   protected async doPoll(
     system: SystemWithPolling,
@@ -187,6 +198,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     now: Date,
     sessionId: number,
     isUserOriginated: boolean,
+    dryRun: boolean = false,
   ): Promise<PollingResult> {
     // Default implementation for push-only systems (should never be called)
     return this.error("This vendor does not support polling");

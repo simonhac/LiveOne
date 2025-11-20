@@ -19,6 +19,7 @@ interface PollNowModalProps {
   systemId: number;
   displayName: string | null;
   vendorType?: string | null;
+  dryRun?: boolean;
   onClose: () => void;
 }
 
@@ -38,6 +39,7 @@ export default function PollNowModal({
   systemId,
   displayName,
   vendorType,
+  dryRun = false,
   onClose,
 }: PollNowModalProps) {
   const [loading, setLoading] = useState(false);
@@ -83,8 +85,9 @@ export default function PollNowModal({
     const startTime = Date.now();
 
     try {
+      const dryRunParam = dryRun ? "&dryRun=true" : "";
       const response = await fetch(
-        `/api/cron/minutely?systemId=${systemId}&force=true&includeRaw=true`,
+        `/api/cron/minutely?systemId=${systemId}&force=true&includeRaw=true${dryRunParam}`,
       );
       const data = await response.json();
 
@@ -175,6 +178,21 @@ export default function PollNowModal({
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Dry Run Banner */}
+        {dryRun && (
+          <div className="mb-4 bg-blue-500/20 border border-blue-500/50 rounded-lg p-3 flex items-center gap-2">
+            <Activity className="w-5 h-5 text-blue-400" />
+            <div>
+              <p className="text-blue-300 font-semibold text-sm">
+                🧪 DRY RUN MODE
+              </p>
+              <p className="text-blue-400 text-xs">
+                No data will be written to the database
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Loading State - Initial */}
         {loading && !result && (

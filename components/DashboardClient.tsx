@@ -191,7 +191,10 @@ export default function DashboardClient({
   const [showSystemDropdown, setShowSystemDropdown] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [showTestConnection, setShowTestConnection] = useState(false);
-  const [showPollNow, setShowPollNow] = useState(false);
+  const [showPollNow, setShowPollNow] = useState<{
+    isOpen: boolean;
+    dryRun: boolean;
+  }>({ isOpen: false, dryRun: false });
   const [showAddSystemDialog, setShowAddSystemDialog] = useState(false);
   const [showSystemSettingsDialog, setShowSystemSettingsDialog] =
     useState(false);
@@ -201,6 +204,7 @@ export default function DashboardClient({
   }>({ type: null });
   const [showSessionTimeout, setShowSessionTimeout] = useState(false);
   const [showViewDataModal, setShowViewDataModal] = useState(false);
+  const [shiftKeyDown, setShiftKeyDown] = useState(false);
 
   // Get modal context to pause polling when modals are open
   const { isAnyModalOpen } = useModalContext();
@@ -457,6 +461,29 @@ export default function DashboardClient({
       setCurrentDisplayTimezone(data.system.displayTimezone);
     }
   }, [data?.system?.displayTimezone, currentDisplayTimezone]);
+
+  // Shift key detection for dry run mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.shiftKey) {
+        setShiftKeyDown(true);
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (!e.shiftKey) {
+        setShiftKeyDown(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, []);
 
   useEffect(() => {
     // Initial fetch
@@ -1042,7 +1069,9 @@ export default function DashboardClient({
             onAddSystem={() => setShowAddSystemDialog(true)}
             onSystemSettings={() => setShowSystemSettingsDialog(true)}
             onViewData={() => setShowViewDataModal(true)}
-            onPollNow={() => setShowPollNow(true)}
+            onPollNow={(dryRun) =>
+              setShowPollNow({ isOpen: true, dryRun: dryRun || false })
+            }
           />
 
           {/* Desktop Layout */}
@@ -1138,7 +1167,10 @@ export default function DashboardClient({
                           <button
                             onClick={() => {
                               if (data?.system.supportsPolling) {
-                                setShowPollNow(true);
+                                setShowPollNow({
+                                  isOpen: true,
+                                  dryRun: shiftKeyDown,
+                                });
                                 setShowSettingsDropdown(false);
                               }
                             }}
@@ -1150,7 +1182,7 @@ export default function DashboardClient({
                             }`}
                           >
                             <RefreshCw className="w-4 h-4" />
-                            Poll Now…
+                            {shiftKeyDown ? "Dry Run Poll…" : "Poll Now…"}
                           </button>
                           <div className="border-t border-gray-700 my-1"></div>
                         </>
@@ -2024,12 +2056,13 @@ export default function DashboardClient({
       )}
 
       {/* Poll Now Modal */}
-      {showPollNow && systemId && (
+      {showPollNow.isOpen && systemId && (
         <PollNowModal
           systemId={parseInt(systemId)}
           displayName={data?.system.displayName || systemDisplayName}
           vendorType={data?.system.vendorType}
-          onClose={() => setShowPollNow(false)}
+          dryRun={showPollNow.dryRun}
+          onClose={() => setShowPollNow({ isOpen: false, dryRun: false })}
         />
       )}
 

@@ -22,7 +22,7 @@ interface SystemActionsMenuProps {
   supportsPolling?: boolean;
   dataStore?: "readings" | "point_readings";
   onTest: () => void;
-  onPollNow?: () => void;
+  onPollNow?: (dryRun?: boolean) => void;
   onStatusChange: (status: "active" | "disabled" | "removed") => void;
   onPollingStats?: () => void;
   onSettings?: () => void;
@@ -46,8 +46,13 @@ export default function SystemActionsMenu({
   const [isOpen, setIsOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const [isPositioned, setIsPositioned] = useState(false);
+  const [shiftKeyDown, setShiftKeyDown] = useState(false);
+  const [longPressActive, setLongPressActive] = useState(false);
+  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const isDryRunMode = shiftKeyDown || longPressActive;
 
   useEffect(() => {
     if (isOpen && buttonRef.current && menuRef.current) {
@@ -86,6 +91,29 @@ export default function SystemActionsMenu({
     }
   }, [isOpen]);
 
+  // Shift key detection
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.shiftKey) {
+        setShiftKeyDown(true);
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (!e.shiftKey) {
+        setShiftKeyDown(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, []);
+
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (
@@ -106,11 +134,47 @@ export default function SystemActionsMenu({
     setIsOpen(false);
   };
 
+  // Long-press handlers for mobile
+  const handleTouchStart = () => {
+    longPressTimer.current = setTimeout(() => {
+      setLongPressActive(true);
+    }, 500); // 500ms long-press threshold
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
+  const handleTouchCancel = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    setLongPressActive(false);
+  };
+
+  // Reset long-press when menu closes
+  useEffect(() => {
+    if (!isOpen) {
+      setLongPressActive(false);
+      if (longPressTimer.current) {
+        clearTimeout(longPressTimer.current);
+        longPressTimer.current = null;
+      }
+    }
+  }, [isOpen]);
+
   return (
     <>
       <button
         ref={buttonRef}
         onClick={() => setIsOpen(!isOpen)}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchCancel}
         className="inline-flex p-1.5 hover:bg-gray-600 rounded transition-colors"
       >
         <MoreVertical className="w-4 h-4 text-gray-400" />
@@ -158,7 +222,10 @@ export default function SystemActionsMenu({
             {/* Poll Now - Always show if available, disabled for systems that don't support polling */}
             {onPollNow && (
               <button
-                onClick={() => supportsPolling && handleMenuClick(onPollNow)}
+                onClick={() =>
+                  supportsPolling &&
+                  handleMenuClick(() => onPollNow(isDryRunMode))
+                }
                 disabled={!supportsPolling}
                 className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 ${
                   supportsPolling
@@ -167,7 +234,7 @@ export default function SystemActionsMenu({
                 }`}
               >
                 <RefreshCw className="w-4 h-4" />
-                Poll Now…
+                {isDryRunMode ? "Dry Run Poll…" : "Poll Now…"}
               </button>
             )}
             {onPollingStats && (
