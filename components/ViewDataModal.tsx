@@ -102,10 +102,8 @@ export default function ViewDataModal({
   useEffect(() => {
     if (isOpen) {
       registerModal("view-data-modal");
-    } else {
-      unregisterModal("view-data-modal");
+      return () => unregisterModal("view-data-modal");
     }
-    return () => unregisterModal("view-data-modal");
   }, [isOpen, registerModal, unregisterModal]);
 
   // Helper to check if cursor is CalendarDate

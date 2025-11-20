@@ -69,10 +69,8 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
   useEffect(() => {
     if (open) {
       registerModal("add-system-dialog");
-    } else {
-      unregisterModal("add-system-dialog");
+      return () => unregisterModal("add-system-dialog");
     }
-    return () => unregisterModal("add-system-dialog");
   }, [open, registerModal, unregisterModal]);
 
   // Handle dialog close - only allow closing via explicit actions

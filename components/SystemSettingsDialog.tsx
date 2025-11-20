@@ -60,10 +60,8 @@ export default function SystemSettingsDialog({
   useEffect(() => {
     if (isOpen) {
       registerModal("system-settings-dialog");
-    } else {
-      unregisterModal("system-settings-dialog");
+      return () => unregisterModal("system-settings-dialog");
     }
-    return () => unregisterModal("system-settings-dialog");
   }, [isOpen, registerModal, unregisterModal]);
 
   // Fetch settings when modal opens

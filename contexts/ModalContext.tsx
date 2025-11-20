@@ -43,7 +43,13 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
 export function useModalContext() {
   const context = useContext(ModalContext);
   if (context === undefined) {
-    throw new Error("useModalContext must be used within a ModalProvider");
+    // Return no-op functions if not within a provider (e.g., admin pages)
+    // This allows modals to work everywhere without requiring ModalProvider
+    return {
+      isAnyModalOpen: false,
+      registerModal: () => {},
+      unregisterModal: () => {},
+    };
   }
   return context;
 }
