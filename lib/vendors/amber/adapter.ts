@@ -497,6 +497,7 @@ export class AmberAdapter extends BaseVendorAdapter {
           1,
           credentialsWithSite,
           sessionId,
+          dryRun,
         );
         audits.push(usageAudit);
         totalRecords += usageAudit.summary.numRowsInserted;
@@ -529,6 +530,7 @@ export class AmberAdapter extends BaseVendorAdapter {
           2,
           credentialsWithSite,
           sessionId,
+          dryRun,
         );
         audits.push(forecastAudit);
         totalRecords += forecastAudit.summary.numRowsInserted;

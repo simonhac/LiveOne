@@ -7,7 +7,6 @@ import type { CalendarDate } from "@internationalized/date";
 import { toCalendarDateTime, toZoned, fromDate } from "@internationalized/date";
 import type {
   PointReading,
-  Completeness,
   CharacterisationRange,
   Milliseconds,
   SimplifiedSampleRecord,
@@ -185,148 +184,179 @@ export class AmberReadingsBatch {
   }
 
   /**
-   * Generate overview strings for all points found in the data
+   * Get all unique point keys present in this batch
    */
-  getOverviews(): Map<string, string> {
-    // Collect all unique point keys
+  getKeys(): string[] {
     const pointKeys = new Set<string>();
     for (const pointMap of this.records.values()) {
       for (const pointKey of pointMap.keys()) {
         pointKeys.add(pointKey);
       }
     }
-
-    // Build overview for each point
-    const overviews = new Map<string, string>();
-    for (const pointKey of pointKeys) {
-      overviews.set(pointKey, this.getOverview(pointKey));
-    }
-
-    return overviews;
+    return Array.from(pointKeys).sort();
   }
 
   /**
-   * Determine completeness state
-   * Quality is already normalized to single lowercase letter
+   * Get the uniform quality across all readings, if uniform
+   * Returns the quality if all readings have the same quality, undefined if mixed
+   *
+   * @returns The uniform quality ('a', 'b', 'f', '.') or null if no data, undefined if mixed
+   *
+   * Examples:
+   * - Returns 'b' if all readings are billable
+   * - Returns 'a' if all readings are actual
+   * - Returns '.' if all readings have missing/null quality
+   * - Returns null if there's no data
+   * - Returns undefined if qualities are mixed
    */
-  getCompleteness(): Completeness {
-    let hasBillable = false;
-    let hasNonBillable = false;
+  getUniformQuality(): string | null | undefined {
+    let firstQuality: string | undefined = undefined;
+    let hasFoundFirst = false;
 
     for (const pointMap of this.records.values()) {
       for (const reading of pointMap.values()) {
-        const quality = reading.dataQuality ?? "";
-        if (quality === "b") {
-          hasBillable = true;
-        } else {
-          hasNonBillable = true;
-        }
+        // dataQuality is always a string (never undefined) because abbreviateQuality is called on entry
+        const readingQuality = reading.dataQuality;
 
-        // Early exit if we've seen both
-        if (hasBillable && hasNonBillable) {
-          return "mixed";
+        if (!hasFoundFirst) {
+          // First reading sets the expected quality
+          firstQuality = readingQuality;
+          hasFoundFirst = true;
+        } else if (readingQuality !== firstQuality) {
+          // Found a different quality - not uniform
+          return undefined;
         }
       }
     }
 
-    if (!hasBillable && !hasNonBillable) return "none";
-    if (hasBillable && !hasNonBillable) return "all-billable";
-    return "mixed";
+    // If no data was found, return null
+    // Otherwise return the uniform quality (which could be '.' for missing quality)
+    return hasFoundFirst ? firstQuality : null;
   }
 
   /**
-   * Generate characterisation ranges (groups of consecutive intervals with same quality)
+   * Generate characterisation ranges using a streaming algorithm:
+   * - Maintains open ranges (currently being extended)
+   * - Closes ranges when point quality changes or points disappear
+   * - Creates new ranges when new point/quality combinations appear
+   *
+   * Returns undefined only if there's no data.
+   * Generates characterisation even for uniform quality data.
    */
   getCharacterisation(): CharacterisationRange[] | undefined {
-    const completeness = this.getCompleteness();
-    if (completeness !== "mixed") {
-      return undefined; // Only characterize mixed completeness
+    // No data - no characterisation
+    if (this.getCount() === 0) {
+      return undefined;
     }
 
-    // Collect all unique point keys
-    const pointKeys = new Set<string>();
-    for (const pointMap of this.records.values()) {
-      for (const pointKey of pointMap.keys()) {
-        pointKeys.add(pointKey);
-      }
+    // Generate detailed characterisation ranges
+
+    interface OpenRange {
+      quality: string;
+      pointOriginIds: Set<string>;
+      startIntervalIdx: number;
+      endIntervalIdx: number;
     }
 
-    const ranges: CharacterisationRange[] = [];
-    let currentRange: CharacterisationRange | null = null;
+    const openRanges: OpenRange[] = [];
+    const closedRanges: CharacterisationRange[] = [];
 
     for (let i = 0; i < this.intervalEndTimes.length; i++) {
       const intervalEndTimeMs = this.intervalEndTimes[i];
       const pointMap = this.records.get(String(intervalEndTimeMs))!;
 
-      // Get qualities for all points at this interval
-      // Quality is already normalized to single lowercase letter
-      const qualities = new Set<string | null>();
-      const pointsAtInterval: string[] = [];
-
-      for (const pointKey of pointKeys) {
-        const reading = pointMap.get(pointKey);
-        if (reading) {
-          qualities.add(reading.dataQuality ?? null);
-          pointsAtInterval.push(pointKey);
+      // Build bag of readings at this interval: Map<pointKey, quality>
+      const bag = new Map<string, string>();
+      for (const [pointKey, reading] of pointMap.entries()) {
+        if (reading && reading.dataQuality) {
+          bag.set(pointKey, reading.dataQuality);
         }
       }
 
-      // Determine single quality for this interval (or null if mixed)
-      const quality = qualities.size === 1 ? Array.from(qualities)[0] : null;
+      // Process each open range: extend or close
+      const rangesToKeepOpen: OpenRange[] = [];
+      for (const range of openRanges) {
+        let canExtend = true;
 
-      // Check if point set changed
-      const sortedPoints = [...pointsAtInterval].sort();
-      let pointSetChanged = false;
-      if (currentRange) {
-        pointSetChanged =
-          sortedPoints.length !== currentRange.pointOriginIds.length ||
-          sortedPoints.some((p, i) => p !== currentRange!.pointOriginIds[i]);
-      }
-
-      // Start new range or extend current one
-      if (
-        !currentRange ||
-        currentRange.quality !== quality ||
-        pointSetChanged
-      ) {
-        // Save previous range if exists
-        if (currentRange) {
-          ranges.push(currentRange);
+        // Check if all points in the range still have the same quality
+        for (const pointKey of range.pointOriginIds) {
+          const quality = bag.get(pointKey);
+          if (quality !== range.quality) {
+            canExtend = false;
+            break;
+          }
         }
 
-        // Start new range
-        const rangeStartTimeMs: Milliseconds =
-          i === 0
-            ? ((this.intervalEndTimes[0] - 30 * 60 * 1000) as Milliseconds)
-            : currentRange!.rangeEndTimeMs;
+        if (canExtend) {
+          // Extend the range and remove points from bag
+          range.endIntervalIdx = i;
+          for (const pointKey of range.pointOriginIds) {
+            bag.delete(pointKey);
+          }
+          rangesToKeepOpen.push(range);
+        } else {
+          // Close the range
+          const rangeStartTimeMs: Milliseconds =
+            range.startIntervalIdx === 0
+              ? ((this.intervalEndTimes[0] - 30 * 60 * 1000) as Milliseconds)
+              : this.intervalEndTimes[range.startIntervalIdx - 1];
 
-        currentRange = {
-          rangeStartTimeMs,
-          rangeEndTimeMs: intervalEndTimeMs,
-          quality,
-          pointOriginIds: [...pointsAtInterval].sort(),
-          numPeriods: 1, // Will be incremented as range extends
-        };
-      } else {
-        // Extend current range
-        currentRange.rangeEndTimeMs = intervalEndTimeMs;
-        currentRange.numPeriods++;
-        // Merge point lists
-        const mergedPoints = new Set([
-          ...currentRange.pointOriginIds,
-          ...pointsAtInterval,
-        ]);
-        currentRange.pointOriginIds = [...mergedPoints].sort();
+          closedRanges.push({
+            rangeStartTimeMs,
+            rangeEndTimeMs: this.intervalEndTimes[range.endIntervalIdx],
+            quality: range.quality,
+            pointOriginIds: Array.from(range.pointOriginIds).sort(),
+            numPeriods: range.endIntervalIdx - range.startIntervalIdx + 1,
+          });
+        }
       }
+
+      openRanges.length = 0;
+      openRanges.push(...rangesToKeepOpen);
+
+      // Process remaining readings in bag - these are NEW or CHANGED points
+      // They can only join NEW ranges (created in this interval), not existing open ranges
+      const newRanges: OpenRange[] = [];
+
+      for (const [pointKey, quality] of bag.entries()) {
+        // Check if there's a NEW range (created this interval) with matching quality
+        let foundNewRange = newRanges.find((r) => r.quality === quality);
+
+        if (foundNewRange) {
+          // Add point to the new range
+          foundNewRange.pointOriginIds.add(pointKey);
+        } else {
+          // Create a new range
+          newRanges.push({
+            quality,
+            pointOriginIds: new Set([pointKey]),
+            startIntervalIdx: i,
+            endIntervalIdx: i,
+          });
+        }
+      }
+
+      // Add all new ranges to open ranges
+      openRanges.push(...newRanges);
     }
 
-    // Save final range
-    if (currentRange) {
-      ranges.push(currentRange);
+    // Close all remaining open ranges
+    for (const range of openRanges) {
+      const rangeStartTimeMs: Milliseconds =
+        range.startIntervalIdx === 0
+          ? ((this.intervalEndTimes[0] - 30 * 60 * 1000) as Milliseconds)
+          : this.intervalEndTimes[range.startIntervalIdx - 1];
+
+      closedRanges.push({
+        rangeStartTimeMs,
+        rangeEndTimeMs: this.intervalEndTimes[range.endIntervalIdx],
+        quality: range.quality,
+        pointOriginIds: Array.from(range.pointOriginIds).sort(),
+        numPeriods: range.endIntervalIdx - range.startIntervalIdx + 1,
+      });
     }
 
-    // Filter out ranges where quality is null (missing data only)
-    return ranges.filter((range) => range.quality !== null);
+    return closedRanges;
   }
 
   /**
@@ -386,7 +416,7 @@ export class AmberReadingsBatch {
   }
 
   /**
-   * Get up to 3 sample records for each point type (sorted by key and timestamp)
+   * Get up to 2 sample records for each point type (sorted by key and timestamp)
    * Returns simplified records: {pointKey: {records, numSkipped}, ...}
    */
   getSampleRecords(): Record<
@@ -427,9 +457,9 @@ export class AmberReadingsBatch {
       allRecordsForPoint.sort((a, b) => Number(a[0]) - Number(b[0]));
 
       if (allRecordsForPoint.length > 0) {
-        // Take first 3 and simplify
+        // Take first 2 and simplify
         const records: SimplifiedSampleRecord[] = [];
-        for (let i = 0; i < Math.min(3, allRecordsForPoint.length); i++) {
+        for (let i = 0; i < Math.min(2, allRecordsForPoint.length); i++) {
           const reading = allRecordsForPoint[i][1];
           records.push({
             rawValue: reading.rawValue,
@@ -444,9 +474,9 @@ export class AmberReadingsBatch {
           numSkipped?: number;
         } = { records };
 
-        // Add numSkipped if there are more than 3 records
-        if (allRecordsForPoint.length > 3) {
-          sampleInfo.numSkipped = allRecordsForPoint.length - 3;
+        // Add numSkipped if there are more than 2 records
+        if (allRecordsForPoint.length > 2) {
+          sampleInfo.numSkipped = allRecordsForPoint.length - 2;
         }
 
         samples[pointKey] = sampleInfo;
@@ -461,27 +491,29 @@ export class AmberReadingsBatch {
    */
   getInfo(): {
     overviews: Record<string, string>;
-    completeness: Completeness;
     characterisation: CharacterisationRange[] | undefined;
     numRecords: number;
+    uniformQuality?: string | null;
     canonical: string[];
     sampleRecords: Record<
       string,
       { records: SimplifiedSampleRecord[]; numSkipped?: number }
     >;
   } {
-    // Convert overviews Map to single object
-    const overviewsMap = this.getOverviews();
+    // Build overviews for all points
     const overviews: Record<string, string> = {};
-    for (const [pointKey, overview] of overviewsMap.entries()) {
-      overviews[pointKey] = overview;
+    for (const pointKey of this.getKeys()) {
+      overviews[pointKey] = this.getOverview(pointKey);
     }
+
+    // Determine uniform quality if present
+    const uniformQuality = this.getUniformQuality();
 
     return {
       overviews,
-      completeness: this.getCompleteness(),
       characterisation: this.getCharacterisation(),
       numRecords: this.getCount(),
+      uniformQuality,
       canonical: this.getCanonicalDisplay(),
       sampleRecords: this.getSampleRecords(),
     };

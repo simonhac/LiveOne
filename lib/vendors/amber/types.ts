@@ -96,28 +96,25 @@ export interface AmberChannelMetadata {
 // Branded type for millisecond timestamps
 export type Milliseconds = number & { readonly __brand: "Milliseconds" };
 
-// Completeness states for data quality overview
-export type Completeness = "all-billable" | "none" | "mixed";
-
 // Simplified sample record (stripped down from PointReading)
 export interface SimplifiedSampleRecord {
   rawValue: any;
   measurementTimeMs: Milliseconds;
   receivedTimeMs: Milliseconds;
-  quality?: string;
+  quality: string;
 }
 
 // Sample records for a single point
 export interface SampleRecordsForPoint {
-  records: SimplifiedSampleRecord[]; // Up to 3 sample records
-  numSkipped?: number; // Number of records not included (if total > 3)
+  records: SimplifiedSampleRecord[]; // Up to 2 sample records
+  numSkipped?: number; // Number of records not included (if total > 2)
 }
 
 // Batch info - summary views of a time period's readings
 export interface BatchInfo {
-  completeness: Completeness;
   overviews: Record<string, string>; // Single object: {pointKey: overview, ...} (48 × numberOfDays chars each)
   numRecords: number; // Count of non-null records
+  uniformQuality?: string | null; // If all readings have the same quality, this is set (e.g., 'b', 'a', null); undefined if mixed
   characterisation?: CharacterisationRange[];
   canonical: string[]; // Formatted table display (one line per row, monospaced)
   sampleRecords?: Record<string, SampleRecordsForPoint>; // Single object: {pointKey: {records, numSkipped}, ...}
@@ -158,7 +155,7 @@ export interface PointReading {
   rawValue: any;
   measurementTimeMs: Milliseconds;
   receivedTimeMs: Milliseconds;
-  dataQuality?: string;
+  dataQuality: string;
   sessionId: number;
   error?: string | null;
 }

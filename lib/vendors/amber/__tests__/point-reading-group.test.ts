@@ -9,6 +9,181 @@ import type { Milliseconds } from "../types";
 
 describe("AmberReadingsBatch", () => {
   describe("characterisation with partial point coverage", () => {
+    it("should NOT merge ranges with same quality but different point sets", () => {
+      // This test reproduces the actual bug from production logs
+      // The overviews showed:
+      // E1.perKwh:     "aaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" (13 a's, then b's)
+      // grid.renewables: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" (all a's)
+      // B1.perKwh:     "aaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" (13 a's, then b's)
+      // grid.spotPerKwh: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" (all a's)
+      //
+      // But characterisation incorrectly showed only 1 range with all 4 points,
+      // when it should show at least 2 ranges:
+      // - Range 1: Intervals 0-12 with all 4 points having 'a' quality
+      // - Range 2: Intervals 13-47 with only grid.renewables and grid.spotPerKwh having 'a', others having 'b'
+
+      const day = new CalendarDate(2025, 11, 19);
+      const group = new AmberReadingsBatch(day, 1);
+      const dayStartMs = 1763474400000;
+
+      // Add all 4 points for first 13 intervals with 'Actual' quality
+      const allPoints = [
+        "E1.perKwh",
+        "B1.perKwh",
+        "grid.renewables",
+        "grid.spotPerKwh",
+      ];
+      for (let i = 0; i < 13; i++) {
+        const measurementTimeMs = (dayStartMs +
+          (i + 1) * 30 * 60 * 1000) as Milliseconds;
+        for (const pointKey of allPoints) {
+          group.add({
+            measurementTimeMs,
+            rawValue: 0.25 + i * 0.01,
+            dataQuality: "Actual",
+            pointMetadata: {
+              originId: pointKey.split(".")[0],
+              originSubId: pointKey.split(".")[1] || undefined,
+              defaultName: "Price data",
+              subsystem: "grid",
+              type: "bidi",
+              subtype: "grid",
+              extension: "price",
+              metricType: "rate",
+              metricUnit: "cents_kWh",
+              transform: null,
+            },
+            receivedTimeMs: Date.now() as Milliseconds,
+            sessionId: 0,
+          });
+        }
+      }
+
+      // For intervals 13-47: Only grid points have 'Actual', price points have 'Billable'
+      for (let i = 13; i < 48; i++) {
+        const measurementTimeMs = (dayStartMs +
+          (i + 1) * 30 * 60 * 1000) as Milliseconds;
+
+        // grid.renewables and grid.spotPerKwh continue with 'Actual'
+        for (const pointKey of ["grid.renewables", "grid.spotPerKwh"]) {
+          group.add({
+            measurementTimeMs,
+            rawValue: 0.25 + i * 0.01,
+            dataQuality: "Actual",
+            pointMetadata: {
+              originId: pointKey.split(".")[0],
+              originSubId: pointKey.split(".")[1],
+              defaultName: "Grid data",
+              subsystem: "grid",
+              type: "bidi",
+              subtype: "grid",
+              extension: "price",
+              metricType: "rate",
+              metricUnit: "cents_kWh",
+              transform: null,
+            },
+            receivedTimeMs: Date.now() as Milliseconds,
+            sessionId: 0,
+          });
+        }
+
+        // E1.perKwh and B1.perKwh switch to 'Billable'
+        for (const pointKey of ["E1.perKwh", "B1.perKwh"]) {
+          group.add({
+            measurementTimeMs,
+            rawValue: 0.25 + i * 0.01,
+            dataQuality: "Billable",
+            pointMetadata: {
+              originId: pointKey.split(".")[0],
+              originSubId: pointKey.split(".")[1],
+              defaultName: "Price data",
+              subsystem: "grid",
+              type: "bidi",
+              subtype: "grid",
+              extension: "price",
+              metricType: "rate",
+              metricUnit: "cents_kWh",
+              transform: null,
+            },
+            receivedTimeMs: Date.now() as Milliseconds,
+            sessionId: 0,
+          });
+        }
+      }
+
+      // Verify overviews match the pattern from production logs
+      expect(group.getOverview("E1.perKwh")).toBe(
+        "a".repeat(13) + "b".repeat(35),
+      );
+      expect(group.getOverview("B1.perKwh")).toBe(
+        "a".repeat(13) + "b".repeat(35),
+      );
+      expect(group.getOverview("grid.renewables")).toBe("a".repeat(48));
+      expect(group.getOverview("grid.spotPerKwh")).toBe("a".repeat(48));
+
+      // Get characterisation
+      const characterisation = group.getCharacterisation();
+
+      expect(characterisation).toBeDefined();
+
+      // Expected 3 ranges:
+      // 1. Intervals 0-12: All 4 points with 'a' quality
+      // 2. Intervals 13-47: E1.perKwh + B1.perKwh with 'b' quality
+      // 3. Intervals 13-47: grid.renewables + grid.spotPerKwh with 'a' quality
+      expect(characterisation!.length).toBe(3);
+
+      // Find ranges by their characteristics (order may vary)
+      const allFourPointsRange = characterisation!.find(
+        (r) =>
+          r.pointOriginIds.length === 4 &&
+          r.quality === "a" &&
+          r.numPeriods === 13,
+      );
+      const pricePointsRange = characterisation!.find(
+        (r) =>
+          r.pointOriginIds.length === 2 &&
+          r.pointOriginIds.includes("B1.perKwh") &&
+          r.pointOriginIds.includes("E1.perKwh") &&
+          r.quality === "b",
+      );
+      const gridPointsRange = characterisation!.find(
+        (r) =>
+          r.pointOriginIds.length === 2 &&
+          r.pointOriginIds.includes("grid.renewables") &&
+          r.pointOriginIds.includes("grid.spotPerKwh") &&
+          r.quality === "a",
+      );
+
+      // Range 1: All 4 points with 'a' quality (intervals 0-12)
+      expect(allFourPointsRange).toBeDefined();
+      expect(allFourPointsRange!.pointOriginIds.sort()).toEqual([
+        "B1.perKwh",
+        "E1.perKwh",
+        "grid.renewables",
+        "grid.spotPerKwh",
+      ]);
+      expect(allFourPointsRange!.quality).toBe("a");
+      expect(allFourPointsRange!.numPeriods).toBe(13);
+
+      // Range 2: E1 and B1 with 'b' quality (intervals 13-47)
+      expect(pricePointsRange).toBeDefined();
+      expect(pricePointsRange!.pointOriginIds.sort()).toEqual([
+        "B1.perKwh",
+        "E1.perKwh",
+      ]);
+      expect(pricePointsRange!.quality).toBe("b");
+      expect(pricePointsRange!.numPeriods).toBe(35);
+
+      // Range 3: grid points with 'a' quality (intervals 13-47)
+      expect(gridPointsRange).toBeDefined();
+      expect(gridPointsRange!.pointOriginIds.sort()).toEqual([
+        "grid.renewables",
+        "grid.spotPerKwh",
+      ]);
+      expect(gridPointsRange!.quality).toBe("a");
+      expect(gridPointsRange!.numPeriods).toBe(35);
+    });
+
     it("should include intervals where only some points have data", () => {
       // Test day: 2025-11-19
       const day = new CalendarDate(2025, 11, 19);
@@ -115,21 +290,67 @@ describe("AmberReadingsBatch", () => {
       expect(characterisation).toBeDefined();
       expect(characterisation).not.toBeNull();
 
-      // Should have at least 3 ranges:
-      // 1. 00:00-06:30: Only grid.spotPerKwh with actual quality
-      // 2. 06:30-13:00: All points with actual quality
-      // 3. 13:00-00:00: All points with forecast quality
-      expect(characterisation!.length).toBeGreaterThanOrEqual(3);
+      // Should have exactly 3 ranges:
+      // 1. 00:00-13:00: grid.spotPerKwh with actual quality (extends through all intervals where it has 'a')
+      // 2. 06:30-13:00: B1.perKwh, E1.perKwh, grid.renewables with actual quality
+      // 3. 13:00-00:00: All 4 points with forecast quality
+      expect(characterisation!.length).toBe(3);
 
-      // First range should cover the period where only grid.spotPerKwh has data
-      const firstRange = characterisation![0];
-      expect(firstRange.quality).toBe("a"); // actual abbreviated
-      expect(firstRange.pointOriginIds).toEqual(["grid.spotPerKwh"]);
-      expect(firstRange.numPeriods).toBe(13); // 13 half-hour periods (00:00-06:30)
+      // Find ranges by characteristics since order may vary
+      const gridSpotRange = characterisation!.find(
+        (r) =>
+          r.pointOriginIds.length === 1 &&
+          r.pointOriginIds[0] === "grid.spotPerKwh" &&
+          r.quality === "a",
+      );
+      const threePricePointsRange = characterisation!.find(
+        (r) =>
+          r.pointOriginIds.length === 3 &&
+          r.pointOriginIds.includes("B1.perKwh") &&
+          r.pointOriginIds.includes("E1.perKwh") &&
+          r.pointOriginIds.includes("grid.renewables") &&
+          r.quality === "a",
+      );
+      const forecastRange = characterisation!.find(
+        (r) => r.pointOriginIds.length === 4 && r.quality === "f",
+      );
 
-      // Check the time range (00:00 AEST to 06:30 AEST)
-      expect(firstRange.rangeStartTimeMs).toBe(dayStartMs);
-      expect(firstRange.rangeEndTimeMs).toBe(dayStartMs + 13 * 30 * 60 * 1000);
+      // Verify all ranges found
+      expect(gridSpotRange).toBeDefined();
+      expect(threePricePointsRange).toBeDefined();
+      expect(forecastRange).toBeDefined();
+
+      // First range: grid.spotPerKwh alone for 26 periods (00:00-13:00)
+      expect(gridSpotRange!.pointOriginIds).toEqual(["grid.spotPerKwh"]);
+      expect(gridSpotRange!.numPeriods).toBe(26); // Extends from interval 0-25
+      expect(gridSpotRange!.rangeStartTimeMs).toBe(dayStartMs);
+      expect(gridSpotRange!.rangeEndTimeMs).toBe(
+        dayStartMs + 26 * 30 * 60 * 1000,
+      );
+
+      // Second range: B1, E1, renewables for 13 periods (06:30-13:00)
+      expect(threePricePointsRange!.numPeriods).toBe(13);
+      expect(threePricePointsRange!.rangeStartTimeMs).toBe(
+        dayStartMs + 13 * 30 * 60 * 1000,
+      );
+      expect(threePricePointsRange!.rangeEndTimeMs).toBe(
+        dayStartMs + 26 * 30 * 60 * 1000,
+      );
+
+      // Third range: all 4 points with forecast for 22 periods (13:00-00:00)
+      expect(forecastRange!.pointOriginIds).toEqual([
+        "B1.perKwh",
+        "E1.perKwh",
+        "grid.renewables",
+        "grid.spotPerKwh",
+      ]);
+      expect(forecastRange!.numPeriods).toBe(22);
+      expect(forecastRange!.rangeStartTimeMs).toBe(
+        dayStartMs + 26 * 30 * 60 * 1000,
+      );
+      expect(forecastRange!.rangeEndTimeMs).toBe(
+        dayStartMs + 48 * 30 * 60 * 1000,
+      );
     });
   });
 
@@ -260,8 +481,8 @@ describe("AmberReadingsBatch", () => {
       // Verify count
       expect(group.getCount()).toBe(144);
 
-      // Verify completeness
-      expect(group.getCompleteness()).toBe("all-billable");
+      // Verify uniform quality
+      expect(group.getUniformQuality()).toBe("b");
     });
 
     it("should correctly validate boundaries for multi-day ranges", () => {
@@ -407,8 +628,8 @@ describe("AmberReadingsBatch", () => {
       expect(overview.length).toBe(96);
       expect(overview).toBe("a".repeat(48) + "f".repeat(48));
 
-      // Verify mixed completeness
-      expect(group.getCompleteness()).toBe("mixed");
+      // Verify mixed quality (undefined = mixed)
+      expect(group.getUniformQuality()).toBe(undefined);
 
       // Verify characterisation has 2 ranges
       const characterisation = group.getCharacterisation();
@@ -422,6 +643,132 @@ describe("AmberReadingsBatch", () => {
       // Second range: forecast (48 periods)
       expect(characterisation![1].quality).toBe("f");
       expect(characterisation![1].numPeriods).toBe(48);
+    });
+  });
+
+  describe("getUniformQuality", () => {
+    const dayStartMs = 1763474400000; // 2025-11-19 00:00:00 UTC
+
+    const createReading = (
+      intervalIdx: number,
+      pointKey: string,
+      quality: string,
+    ) => ({
+      measurementTimeMs: (dayStartMs +
+        (intervalIdx + 1) * 30 * 60 * 1000) as Milliseconds,
+      rawValue: 0.25,
+      dataQuality: quality,
+      pointMetadata: {
+        originId: pointKey.split(".")[0],
+        originSubId: pointKey.split(".")[1] || undefined,
+        defaultName: "Test point",
+        subsystem: "grid",
+        type: "bidi" as const,
+        subtype: "grid",
+        extension: "test",
+        metricType: "rate" as const,
+        metricUnit: "cents_kWh",
+        transform: null,
+      },
+      receivedTimeMs: Date.now() as Milliseconds,
+      sessionId: 0,
+    });
+
+    it("should return 'b' when all readings are billable", () => {
+      const day = new CalendarDate(2025, 11, 19);
+      const batch = new AmberReadingsBatch(day, 1);
+
+      // Add billable readings for multiple points and intervals
+      for (let i = 0; i < 10; i++) {
+        batch.add(createReading(i, "E1.perKwh", "Billable"));
+        batch.add(createReading(i, "B1.perKwh", "Billable"));
+      }
+
+      expect(batch.getUniformQuality()).toBe("b");
+    });
+
+    it("should return 'a' when all readings are actual", () => {
+      const day = new CalendarDate(2025, 11, 19);
+      const batch = new AmberReadingsBatch(day, 1);
+
+      // Add actual readings
+      for (let i = 0; i < 10; i++) {
+        batch.add(createReading(i, "E1.perKwh", "Actual"));
+        batch.add(createReading(i, "grid.spotPerKwh", "Actual"));
+      }
+
+      expect(batch.getUniformQuality()).toBe("a");
+    });
+
+    it("should return 'f' when all readings are forecast", () => {
+      const day = new CalendarDate(2025, 11, 19);
+      const batch = new AmberReadingsBatch(day, 1);
+
+      // Add forecast readings
+      for (let i = 0; i < 5; i++) {
+        batch.add(createReading(i, "E1.perKwh", "Forecast"));
+      }
+
+      expect(batch.getUniformQuality()).toBe("f");
+    });
+
+    it("should return null when there's no data", () => {
+      const day = new CalendarDate(2025, 11, 19);
+      const batch = new AmberReadingsBatch(day, 1);
+
+      // Empty batch - no data
+      expect(batch.getUniformQuality()).toBe(null);
+    });
+
+    it("should return undefined when qualities are mixed (actual and billable)", () => {
+      const day = new CalendarDate(2025, 11, 19);
+      const batch = new AmberReadingsBatch(day, 1);
+
+      // Add mix of actual and billable
+      batch.add(createReading(0, "E1.perKwh", "Actual"));
+      batch.add(createReading(1, "E1.perKwh", "Billable"));
+
+      expect(batch.getUniformQuality()).toBe(undefined);
+    });
+
+    it("should return undefined when qualities are mixed (billable and forecast)", () => {
+      const day = new CalendarDate(2025, 11, 19);
+      const batch = new AmberReadingsBatch(day, 1);
+
+      // Add mix of billable and forecast
+      for (let i = 0; i < 5; i++) {
+        batch.add(createReading(i, "E1.perKwh", "Billable"));
+      }
+      for (let i = 5; i < 10; i++) {
+        batch.add(createReading(i, "E1.perKwh", "Forecast"));
+      }
+
+      expect(batch.getUniformQuality()).toBe(undefined);
+    });
+
+    it("should check uniformity across all points and intervals", () => {
+      const day = new CalendarDate(2025, 11, 19);
+      const batch = new AmberReadingsBatch(day, 1);
+
+      // Add billable for multiple points across many intervals
+      const points = [
+        "E1.perKwh",
+        "B1.perKwh",
+        "grid.spotPerKwh",
+        "grid.renewables",
+      ];
+      for (let i = 0; i < 20; i++) {
+        for (const point of points) {
+          batch.add(createReading(i, point, "Billable"));
+        }
+      }
+
+      // All should be billable
+      expect(batch.getUniformQuality()).toBe("b");
+
+      // Add one actual reading - should break uniformity
+      batch.add(createReading(20, "E1.perKwh", "Actual"));
+      expect(batch.getUniformQuality()).toBe(undefined);
     });
   });
 });

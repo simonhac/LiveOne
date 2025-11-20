@@ -17,7 +17,6 @@ import type {
   Milliseconds,
   StageResult,
   AmberSyncResult,
-  Completeness,
   CharacterisationRange,
   PointReading,
   BatchInfo,
@@ -93,29 +92,6 @@ function isNewRecordSuperior(
 
   // Same quality - new is superior ONLY if raw value is different
   return existingRecord.rawValue !== newRecord.rawValue;
-}
-
-/**
- * Determine completeness from overview string
- * @param overview - Overview string (48 × numberOfDays chars)
- * @param expectedLength - Expected overview length (48 × numberOfDays)
- */
-function determineCompleteness(
-  overview: string,
-  expectedLength: number,
-): Completeness {
-  if (overview.length !== expectedLength) {
-    throw new Error(
-      `Invalid overview length: ${overview.length}, expected ${expectedLength}`,
-    );
-  }
-
-  const nonNull = overview.replace(/\./g, "").length;
-  const billable = overview.replace(/[^b]/g, "").length;
-
-  if (billable === expectedLength) return "all-billable";
-  if (nonNull === 0) return "none";
-  return "mixed";
 }
 
 /**
@@ -241,9 +217,9 @@ async function loadLocalRecords(
       return {
         stage: stageName,
         info: {
-          completeness: "none",
           overviews: {},
           numRecords: 0,
+          uniformQuality: null,
           canonical: [],
         },
         error: "No points found for system",
@@ -287,9 +263,9 @@ async function loadLocalRecords(
     return {
       stage: stageName,
       info: {
-        completeness: "none",
         overviews: {},
         numRecords: 0,
+        uniformQuality: null,
         canonical: [],
       },
       error: error instanceof Error ? error.message : String(error),
@@ -343,9 +319,9 @@ async function loadRemoteUsage(
     return {
       stage: stageName,
       info: {
-        completeness: "none",
         overviews: {},
         numRecords: 0,
+        uniformQuality: null,
         canonical: [],
       },
       error: error instanceof Error ? error.message : String(error),
@@ -417,23 +393,17 @@ function compareRecords(
     comparisonOverviews[pointKey] = builder.join("");
   }
 
-  // Determine completeness from comparison overview
-  const expectedLength = 48 * numberOfDays;
-  const firstOverview =
-    comparisonOverviewBuilders.values().next().value?.join("") ??
-    "".padEnd(expectedLength, ".");
-  const completeness = determineCompleteness(firstOverview, expectedLength);
-
-  // Get characterisation, canonical, and sample records from superior group
+  // Get uniformQuality and other info from superior group
+  const uniformQuality = superiorGroup.getUniformQuality();
   const characterisation = superiorGroup.getCharacterisation();
   const canonical = superiorGroup.getCanonicalDisplay();
   const sampleRecords = superiorGroup.getSampleRecords();
   const numRecords = superiorGroup.getCount();
 
   return {
-    completeness,
     overviews: comparisonOverviews,
     numRecords,
+    uniformQuality,
     characterisation,
     canonical,
     sampleRecords,
@@ -499,9 +469,9 @@ function createComparisonStage(
     return {
       stage: stageName,
       info: {
-        completeness: "none",
         overviews: {},
         numRecords: 0,
+        uniformQuality: null,
         canonical: [],
       },
       error: error instanceof Error ? error.message : String(error),
@@ -706,11 +676,12 @@ async function loadRemotePrices(
             ? "B1"
             : channelType; // fallback for "controlledLoad" if present
 
-      // Infer quality from type
-      let quality: string | undefined = undefined;
+      // Infer quality from type (always has a value)
+      let quality: string;
       if (record.type === "ActualInterval") quality = "actual";
       else if (record.type === "CurrentInterval") quality = "actual";
       else if (record.type === "ForecastInterval") quality = "forecast";
+      else quality = "unknown"; // Fallback for unexpected types
 
       // perKwh reading (per-channel: E1.perKwh or B1.perKwh)
       group.add({
@@ -759,9 +730,9 @@ async function loadRemotePrices(
     return {
       stage: stageName,
       info: {
-        completeness: "none",
         overviews: {},
         numRecords: 0,
+        uniformQuality: null,
         canonical: [],
       },
       error: error instanceof Error ? error.message : String(error),
@@ -835,6 +806,7 @@ export async function updateUsage(
   numberOfDays: number = 1,
   credentials: AmberCredentials,
   sessionId: number,
+  dryRun: boolean = false,
 ): Promise<AmberSyncResult> {
   const tracker = new StageTracker();
   const stages: StageResult[] = [];
@@ -855,7 +827,7 @@ export async function updateUsage(
 
     if (localResult.error) {
       error = `Usage stage 1 failed: ${localResult.error}`;
-    } else if (localResult.info.completeness === "all-billable") {
+    } else if (localResult.info.uniformQuality === "b") {
       // EARLY EXIT: Local already has complete billable data
       localResult.discovery = "local is already up to date";
     } else {
@@ -870,14 +842,14 @@ export async function updateUsage(
 
       if (remoteResult.error) {
         error = `Usage stage 2 failed: ${remoteResult.error}`;
-      } else if (remoteResult.info.completeness === "none") {
+      } else if (remoteResult.info.numRecords === 0) {
         // EARLY EXIT: Both local and remote are empty
         remoteResult.discovery = "local and remote both empty";
       } else {
         // Set discovery based on what we found
-        if (remoteResult.info.completeness === "all-billable") {
+        if (remoteResult.info.uniformQuality === "b") {
           remoteResult.discovery = "remote has full day of data";
-        } else if (remoteResult.info.completeness === "mixed") {
+        } else if (remoteResult.info.uniformQuality === undefined) {
           remoteResult.discovery =
             "local empty, remote has partial day of data (unexpected!)";
         }
@@ -895,10 +867,10 @@ export async function updateUsage(
         if (compareResult.error) {
           error = `Usage stage 3 failed: ${compareResult.error}`;
         } else {
-          // Verify completeness is not "none"
-          if (compareResult.info.completeness === "none") {
+          // Verify we have records
+          if (compareResult.info.numRecords === 0) {
             error =
-              "Usage stage 3 unexpected: completeness is none (should be impossible)";
+              "Usage stage 3 unexpected: no records found (should be impossible)";
           } else {
             compareResult.discovery = `found ${compareResult.info.numRecords} superior remote records to update/insert`;
 
@@ -914,16 +886,27 @@ export async function updateUsage(
                 }
               }
 
-              const storeResult = await storeRecordsLocally(
-                systemId,
-                sessionId,
-                batch,
-                "usage stage 4: store superior usage records",
-              );
-              stages.push(storeResult);
+              if (!dryRun) {
+                const storeResult = await storeRecordsLocally(
+                  systemId,
+                  sessionId,
+                  batch,
+                  "usage stage 4: store superior usage records",
+                );
+                stages.push(storeResult);
 
-              if (storeResult.error) {
-                error = `Usage stage 4 failed: ${storeResult.error}`;
+                if (storeResult.error) {
+                  error = `Usage stage 4 failed: ${storeResult.error}`;
+                }
+              } else {
+                // Dry run: create a stage result without actually storing
+                stages.push({
+                  stage:
+                    "usage stage 4: store superior usage records (DRY RUN)",
+                  discovery: `would insert ${compareResult.info.numRecords} readings (dry run, skipped)`,
+                  info: batch.getInfo(),
+                  numRowsInserted: 0,
+                });
               }
             }
           }
@@ -979,6 +962,7 @@ export async function updateForecasts(
   numberOfDays: number = 1,
   credentials: AmberCredentials,
   sessionId: number,
+  dryRun: boolean = false,
 ): Promise<AmberSyncResult> {
   const tracker = new StageTracker();
   const stages: StageResult[] = [];
@@ -1006,7 +990,7 @@ export async function updateForecasts(
         (key) => key === "grid.spotPerKwh" || key === "grid.renewables",
       );
 
-      if (localResult.info.completeness === "all-billable" && hasPricePoints) {
+      if (localResult.info.uniformQuality === "b" && hasPricePoints) {
         // EARLY EXIT: Local already has complete forecast data
         localResult.discovery = "local forecasts already up to date";
       } else {
@@ -1021,14 +1005,14 @@ export async function updateForecasts(
 
         if (pricesResult.error) {
           error = `Forecast stage 2 failed: ${pricesResult.error}`;
-        } else if (pricesResult.info.completeness === "none") {
+        } else if (pricesResult.info.numRecords === 0) {
           // EARLY EXIT: No price data available
           pricesResult.discovery = "no price data available yet";
         } else {
           // Set discovery based on what we found
-          if (pricesResult.info.completeness === "mixed") {
+          if (pricesResult.info.uniformQuality === undefined) {
             pricesResult.discovery = "remote has price forecasts available";
-          } else if (pricesResult.info.completeness === "all-billable") {
+          } else if (pricesResult.info.uniformQuality === "b") {
             pricesResult.discovery = "remote has all actual prices";
           }
 
@@ -1046,9 +1030,9 @@ export async function updateForecasts(
           if (compareResult.error) {
             error = `Forecast stage 3 failed: ${compareResult.error}`;
           } else {
-            if (compareResult.info.completeness === "none") {
+            if (compareResult.info.numRecords === 0) {
               error =
-                "Forecast stage 3 unexpected: completeness is none (should be impossible)";
+                "Forecast stage 3 unexpected: no records found (should be impossible)";
             } else {
               compareResult.discovery = `found ${compareResult.info.numRecords} superior remote price records to update/insert`;
 
@@ -1064,16 +1048,27 @@ export async function updateForecasts(
                   }
                 }
 
-                const storeResult = await storeRecordsLocally(
-                  systemId,
-                  sessionId,
-                  batch,
-                  "forecast stage 4: store superior price records",
-                );
-                stages.push(storeResult);
+                if (!dryRun) {
+                  const storeResult = await storeRecordsLocally(
+                    systemId,
+                    sessionId,
+                    batch,
+                    "forecast stage 4: store superior price records",
+                  );
+                  stages.push(storeResult);
 
-                if (storeResult.error) {
-                  error = `Forecast stage 4 failed: ${storeResult.error}`;
+                  if (storeResult.error) {
+                    error = `Forecast stage 4 failed: ${storeResult.error}`;
+                  }
+                } else {
+                  // Dry run: create a stage result without actually storing
+                  stages.push({
+                    stage:
+                      "forecast stage 4: store superior price records (DRY RUN)",
+                    discovery: `would insert ${compareResult.info.numRecords} readings (dry run, skipped)`,
+                    info: batch.getInfo(),
+                    numRowsInserted: 0,
+                  });
                 }
               }
             }

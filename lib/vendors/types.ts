@@ -47,6 +47,7 @@ export interface VendorAdapter {
     force: boolean,
     now: Date,
     sessionId: number,
+    dryRun?: boolean,
   ): Promise<PollingResult>;
 
   // Get the latest reading for this system

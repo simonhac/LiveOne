@@ -2,20 +2,42 @@
  * Test script for Amber sync client
  * Tests the methodical audit-based syncing system
  *
+ * ⚠️  DRY RUN BY DEFAULT - No database writes unless --dry=false
+ *
  * Usage:
  *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=forecasts
  *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=usage
  *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=both
  *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --days=3 --action=both
+ *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=both --dry=false  # Actually write to DB
  */
 
-import { updateUsage, updateForecasts } from "@/lib/vendors/amber/client";
-import { parseDateISO } from "@/lib/date-utils";
-import type { AmberSyncResult } from "@/lib/vendors/amber/types";
+import { updateUsage, updateForecasts } from "../lib/vendors/amber/client.js";
+import { parseDateISO } from "../lib/date-utils.js";
+import type { AmberSyncResult } from "../lib/vendors/amber/types.js";
 import {
   getOverviewKeys,
   getSampleRecordKeys,
-} from "../lib/vendors/amber/types";
+} from "../lib/vendors/amber/types.js";
+import { toZoned, fromDate } from "@internationalized/date";
+
+/**
+ * Format timestamp as AEST (UTC+10) time string (HH:MM)
+ * Used for characterisations
+ */
+function formatAESTTime(timestampMs: number): string {
+  const zonedTime = toZoned(fromDate(new Date(timestampMs), "UTC"), "+10:00");
+  return `${String(zonedTime.hour).padStart(2, "0")}:${String(zonedTime.minute).padStart(2, "0")}`;
+}
+
+/**
+ * Format timestamp as AEST (UTC+10) datetime string (YYYY-MM-DD HH:MM)
+ * Used for sample records
+ */
+function formatAESTDateTime(timestampMs: number): string {
+  const zonedTime = toZoned(fromDate(new Date(timestampMs), "UTC"), "+10:00");
+  return `${String(zonedTime.year).padStart(4, "0")}-${String(zonedTime.month).padStart(2, "0")}-${String(zonedTime.day).padStart(2, "0")} ${String(zonedTime.hour).padStart(2, "0")}:${String(zonedTime.minute).padStart(2, "0")}`;
+}
 
 async function testSync() {
   // Amber system ID (from dev database)
@@ -26,6 +48,7 @@ async function testSync() {
   let dateArg = "";
   let actionArg = "usage";
   let daysArg = "1";
+  let dryRun = true; // Default to dry run
 
   for (const arg of args) {
     if (arg.startsWith("--date=")) {
@@ -34,13 +57,19 @@ async function testSync() {
       actionArg = arg.substring(9).toLowerCase();
     } else if (arg.startsWith("--days=")) {
       daysArg = arg.substring(7);
+    } else if (arg.startsWith("--dry=")) {
+      const dryValue = arg.substring(6).toLowerCase();
+      dryRun = dryValue !== "false";
     }
   }
 
   if (!dateArg) {
     console.error("Error: --date argument is required");
     console.error(
-      "Usage: npx tsx scripts/test-amber-sync.ts --date=YYYY-MM-DD [--days=N] --action=usage|forecasts|both",
+      "Usage: npx tsx scripts/test-amber-sync.ts --date=YYYY-MM-DD [--days=N] [--dry=true|false] --action=usage|forecasts|both",
+    );
+    console.error(
+      "\n⚠️  DRY RUN BY DEFAULT - Add --dry=false to actually persist to the database",
     );
     process.exit(1);
   }
@@ -68,8 +97,17 @@ async function testSync() {
     siteId: process.env.AMBER_SITE_ID || "01E8RD8Q0GABW66Z0WP8RDT6X1",
   };
 
+  console.log("=".repeat(60));
+  if (dryRun) {
+    console.log("🧪 DRY RUN MODE - No database writes will occur");
+    console.log("   Add --dry=false to actually persist to the database");
+  } else {
+    console.log("⚠️  LIVE MODE - Database writes ENABLED");
+    console.log("   Data will be written to the database!");
+  }
+  console.log("=".repeat(60));
   console.log(
-    `Testing Amber sync for system ${systemId}, first day: ${firstDay.toString()}, days: ${numberOfDays}, action: ${actionArg}...`,
+    `Testing Amber sync for system ${systemId}, first day: ${firstDay.toString()}, days: ${numberOfDays}, action: ${actionArg}`,
   );
   console.log("=".repeat(60));
 
@@ -82,6 +120,7 @@ async function testSync() {
       numberOfDays,
       credentials,
       -1, // sessionId: -1 for test script
+      dryRun,
     );
     audits.push(audit);
   }
@@ -93,6 +132,7 @@ async function testSync() {
       numberOfDays,
       credentials,
       -1, // sessionId: -1 for test script
+      dryRun,
     );
     audits.push(audit);
   }
@@ -157,41 +197,33 @@ async function testSync() {
           `\nCharacterisation (${stage.info.characterisation.length} ranges):`,
         );
         for (const range of stage.info.characterisation) {
-          // Convert to AEST (UTC+10) and format as HH:MM
-          const startAEST = new Date(
-            range.rangeStartTimeMs + 10 * 60 * 60 * 1000,
-          );
-          const endAEST = new Date(range.rangeEndTimeMs + 10 * 60 * 60 * 1000);
-          const startTime = `${String(startAEST.getUTCHours()).padStart(2, "0")}:${String(startAEST.getUTCMinutes()).padStart(2, "0")}`;
-          const endTime = `${String(endAEST.getUTCHours()).padStart(2, "0")}:${String(endAEST.getUTCMinutes()).padStart(2, "0")}`;
+          const startTime = formatAESTTime(range.rangeStartTimeMs);
+          const endTime = formatAESTTime(range.rangeEndTimeMs);
           const quality = range.quality || "null";
           const points = range.pointOriginIds.join(", ") || "(none)";
-          console.log(`  ${startTime} → ${endTime} | Quality: ${quality}`);
-          console.log(`    Points: ${points}`);
+          console.log(
+            `  ${startTime} → ${endTime} | Quality: '${quality}' | Points: ${points}`,
+          );
         }
-      } else if (stage.records && stage.records.size > 0) {
-        console.log(`\nRecords: ${stage.records.size} time intervals`);
       }
 
       // Display sample records if available
       const sampleKeys = getSampleRecordKeys(stage.info);
       if (sampleKeys.length > 0) {
-        console.log(`\nSample Records (up to 3 from each point):`);
+        console.log(`\nSample Records (up to 2 from each point):`);
         for (const pointKey of sampleKeys.sort()) {
           const sampleInfo = stage.info.sampleRecords![pointKey];
           console.log(`\n  ${pointKey}:`);
           for (let i = 0; i < sampleInfo.records.length; i++) {
             const r = sampleInfo.records[i];
-            // Convert timestamp to ISO string for display
-            const timestamp = new Date(r.measurementTimeMs);
-            const isoStr = timestamp.toISOString();
+            const timeStr = formatAESTDateTime(r.measurementTimeMs);
             const value =
               typeof r.rawValue === "number"
                 ? r.rawValue.toFixed(3)
                 : r.rawValue;
             const quality = r.quality || "—";
             console.log(
-              `    ${i + 1}. ${isoStr} | value: ${value} | quality: ${quality}`,
+              `    ${i + 1}. ${timeStr} | value: ${value} | quality: ${quality}`,
             );
           }
           if (sampleInfo.numSkipped) {
