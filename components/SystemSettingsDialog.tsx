@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { X, Shield } from "lucide-react";
+import { useModalContext } from "@/contexts/ModalContext";
 import PointsTab from "./PointsTab";
 import CompositeTab from "./CompositeTab";
 import AdminTab from "./AdminTab";
@@ -53,6 +54,17 @@ export default function SystemSettingsDialog({
   >("general");
   const compositeSaveRef = useRef<(() => Promise<any>) | null>(null);
   const adminSaveRef = useRef<(() => Promise<any>) | null>(null);
+
+  // Register this modal with the global modal context
+  const { registerModal, unregisterModal } = useModalContext();
+  useEffect(() => {
+    if (isOpen) {
+      registerModal("system-settings-dialog");
+    } else {
+      unregisterModal("system-settings-dialog");
+    }
+    return () => unregisterModal("system-settings-dialog");
+  }, [isOpen, registerModal, unregisterModal]);
 
   // Fetch settings when modal opens
   useEffect(() => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { useModalContext } from "@/contexts/ModalContext";
 import {
   X,
   Check,
@@ -44,6 +45,13 @@ export default function PollNowModal({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pollDuration, setPollDuration] = useState<number | null>(null);
   const hasInitiatedPoll = useRef(false);
+
+  // Register this modal with the global modal context
+  const { registerModal, unregisterModal } = useModalContext();
+  useEffect(() => {
+    registerModal("poll-now-modal");
+    return () => unregisterModal("poll-now-modal");
+  }, [registerModal, unregisterModal]);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {

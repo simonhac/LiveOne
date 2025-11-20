@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useModalContext } from "@/contexts/ModalContext";
 import {
   CheckCircle,
   XCircle,
@@ -76,6 +77,13 @@ export default function TestConnectionModal({
   const [vendorResponse, setVendorResponse] = useState<any>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const hasInitiatedTest = useRef(false);
+
+  // Register this modal with the global modal context
+  const { registerModal, unregisterModal } = useModalContext();
+  useEffect(() => {
+    registerModal("test-connection-modal");
+    return () => unregisterModal("test-connection-modal");
+  }, [registerModal, unregisterModal]);
 
   // Handle Escape key to close modal
   useEffect(() => {

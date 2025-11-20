@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
+import { useModalContext } from "@/contexts/ModalContext";
 import {
   formatDateTime,
   formatDate,
@@ -95,6 +96,17 @@ export default function ViewDataModal({
   const [cursorDirection, setCursorDirection] = useState<"older" | "newer">(
     "newer",
   );
+
+  // Register this modal with the global modal context
+  const { registerModal, unregisterModal } = useModalContext();
+  useEffect(() => {
+    if (isOpen) {
+      registerModal("view-data-modal");
+    } else {
+      unregisterModal("view-data-modal");
+    }
+    return () => unregisterModal("view-data-modal");
+  }, [isOpen, registerModal, unregisterModal]);
 
   // Helper to check if cursor is CalendarDate
   const isCalendarDate = (

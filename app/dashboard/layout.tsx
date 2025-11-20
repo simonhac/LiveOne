@@ -1,7 +1,9 @@
+import { ModalProvider } from "@/contexts/ModalContext";
+
 export default function DashboardLayout({
   children,
 }: {
-  children: React.ReactNode
+  children: React.ReactNode;
 }) {
-  return <>{children}</>
+  return <ModalProvider>{children}</ModalProvider>;
 }

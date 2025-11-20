@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useModalContext } from "@/contexts/ModalContext";
 import { UserButton } from "@clerk/nextjs";
 import EnergyChart from "@/components/EnergyChart";
 import EnergyPanel from "@/components/EnergyPanel";
@@ -200,6 +201,9 @@ export default function DashboardClient({
   }>({ type: null });
   const [showSessionTimeout, setShowSessionTimeout] = useState(false);
   const [showViewDataModal, setShowViewDataModal] = useState(false);
+
+  // Get modal context to pause polling when modals are open
+  const { isAnyModalOpen } = useModalContext();
 
   // Helper function to safely get a point value
   // Helper function to get a point (contains value and measurementTime)
@@ -458,29 +462,35 @@ export default function DashboardClient({
     // Initial fetch
     fetchData();
 
-    // Set up polling interval (30 seconds)
-    const interval = setInterval(fetchData, 30000);
+    // Set up polling interval (30 seconds) - but skip if modal is open
+    const interval = setInterval(() => {
+      if (!isAnyModalOpen) {
+        fetchData();
+      }
+    }, 30000);
 
     // Cleanup on unmount
     return () => {
       clearInterval(interval);
     };
-  }, [fetchData]);
+  }, [fetchData, isAnyModalOpen]);
 
   // Update seconds since last update and trigger refresh at 70 seconds
-  // Trigger refresh 70 seconds after last update
+  // Trigger refresh 70 seconds after last update (unless modal is open)
   useEffect(() => {
-    if (!lastUpdate) return;
+    if (!lastUpdate || isAnyModalOpen) return;
 
     const msUntil70s = 70000 - (Date.now() - lastUpdate.getTime());
     if (msUntil70s <= 0) return; // Already past 70 seconds
 
     const timeout = setTimeout(() => {
-      fetchData();
+      if (!isAnyModalOpen) {
+        fetchData();
+      }
     }, msUntil70s);
 
     return () => clearTimeout(timeout);
-  }, [lastUpdate, fetchData]);
+  }, [lastUpdate, fetchData, isAnyModalOpen]);
 
   // Fetch and process Mondo/Composite history data when needed
   useEffect(() => {

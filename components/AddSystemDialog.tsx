@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useModalContext } from "@/contexts/ModalContext";
 import {
   Dialog,
   DialogContent,
@@ -62,6 +63,17 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
   const [error, setError] = useState<string | null>(null);
   const [testSuccess, setTestSuccess] = useState(false);
   const [systemInfo, setSystemInfo] = useState<any>(null);
+
+  // Register this modal with the global modal context
+  const { registerModal, unregisterModal } = useModalContext();
+  useEffect(() => {
+    if (open) {
+      registerModal("add-system-dialog");
+    } else {
+      unregisterModal("add-system-dialog");
+    }
+    return () => unregisterModal("add-system-dialog");
+  }, [open, registerModal, unregisterModal]);
 
   // Handle dialog close - only allow closing via explicit actions
   const handleOpenChange = (newOpen: boolean) => {
