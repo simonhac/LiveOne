@@ -33,6 +33,12 @@ import {
 import { insertPointReadingsDirectTo5m } from "@/lib/monitoring-points-manager";
 
 /**
+ * Flag to control whether sampleRecords are included in sync results
+ * Set to false to strip sampleRecords from AmberSyncResult (reduces payload size)
+ */
+const INCLUDE_SAMPLE_RECORDS = false;
+
+/**
  * Quality rank for comparison (single-character codes)
  * Higher values = higher precedence/quality
  */
@@ -59,6 +65,23 @@ class StageTracker {
 /**
  * Helper Functions
  */
+
+/**
+ * Strip records and optionally sampleRecords from stages to reduce payload size
+ */
+function stripLargeFieldsFromStages(
+  stages: StageResult[],
+): Omit<StageResult, "records">[] {
+  return stages.map(({ records, ...stage }) => ({
+    ...stage,
+    info: INCLUDE_SAMPLE_RECORDS
+      ? stage.info
+      : {
+          ...stage.info,
+          sampleRecords: undefined,
+        },
+  }));
+}
 
 /**
  * Compare local and remote readings to determine which is superior
@@ -436,8 +459,7 @@ function compareRecords(
  */
 /**
  * Generic comparison function for both usage and prices
- * For usage: uses local points if available, otherwise remote
- * For prices: uses all new price points
+ * Always compares based on remote/new point keys
  */
 function createComparisonStage(
   existingResult: StageResult,
@@ -445,7 +467,6 @@ function createComparisonStage(
   firstDay: CalendarDate,
   numberOfDays: number,
   stageName: string,
-  useNewPoints: boolean = false,
 ): StageResult {
   if (existingResult.error || newResult.error) {
     throw new Error(
@@ -454,18 +475,8 @@ function createComparisonStage(
   }
 
   try {
-    // Extract point keys from overviews object
-    const getPointKeys = (overviews: Record<string, string>): string[] => {
-      return Object.keys(overviews);
-    };
-
-    const pointKeys = useNewPoints
-      ? getPointKeys(newResult.info.overviews).sort()
-      : (() => {
-          const local = getPointKeys(existingResult.info.overviews);
-          const remote = getPointKeys(newResult.info.overviews);
-          return (local.length > 0 ? local : remote).sort();
-        })();
+    // Always use remote/new point keys for comparison
+    const pointKeys = Object.keys(newResult.info.overviews).sort();
 
     const { comparisonOverviews, records, ...info } = compareRecords(
       existingResult,
@@ -479,8 +490,8 @@ function createComparisonStage(
       stage: stageName,
       info: {
         ...info,
-        // Keep regular overviews from superiorPoints and add comparison overviews
-        comparisonOverviews,
+        // Replace regular overviews with comparison overviews
+        overviews: comparisonOverviews,
       },
       records,
     };
@@ -951,8 +962,8 @@ export async function updateUsage(
     0,
   );
 
-  // Strip out records field from stages to reduce payload size
-  const stagesWithoutRecords = stages.map(({ records, ...stage }) => stage);
+  // Strip out large fields from stages to reduce payload size
+  const cleanedStages = stripLargeFieldsFromStages(stages);
 
   const result: AmberSyncResult = {
     action: "updateUsage",
@@ -960,7 +971,7 @@ export async function updateUsage(
     systemId,
     firstDay,
     numberOfDays,
-    stages: stagesWithoutRecords,
+    stages: cleanedStages,
     summary: {
       totalStages: stages.length,
       numRowsInserted,
@@ -1050,7 +1061,6 @@ export async function updateForecasts(
             firstDay,
             numberOfDays,
             "forecast stage 3: compare local vs remote prices",
-            true, // useNewPoints: true for prices
           );
           stages.push(compareResult);
 
@@ -1115,8 +1125,8 @@ export async function updateForecasts(
     0,
   );
 
-  // Strip out records field from stages to reduce payload size
-  const stagesWithoutRecords = stages.map(({ records, ...stage }) => stage);
+  // Strip out large fields from stages to reduce payload size
+  const cleanedStages = stripLargeFieldsFromStages(stages);
 
   const result: AmberSyncResult = {
     action: "updateForecasts",
@@ -1124,7 +1134,7 @@ export async function updateForecasts(
     systemId,
     firstDay,
     numberOfDays,
-    stages: stagesWithoutRecords,
+    stages: cleanedStages,
     summary: {
       totalStages: stages.length,
       numRowsInserted,

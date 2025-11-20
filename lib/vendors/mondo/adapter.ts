@@ -81,12 +81,20 @@ export class MondoAdapter extends BaseVendorAdapter {
   private async authenticate(credentials: MondoCredentials): Promise<string> {
     try {
       // Step 1: Get login page and CSRF token
-      const loginPageResponse = await fetch(`${this.authUrl}/Account/Login`, {
-        method: "GET",
-        headers: {
-          "User-Agent": "Mozilla/5.0",
-        },
-      });
+      const loginPageUrl = `${this.authUrl}/Account/Login`;
+      let loginPageResponse;
+      try {
+        loginPageResponse = await fetch(loginPageUrl, {
+          method: "GET",
+          headers: {
+            "User-Agent": "Mozilla/5.0",
+          },
+        });
+      } catch (fetchError) {
+        throw new Error(
+          `Failed to connect to Mondo authentication server (${loginPageUrl}): ${fetchError instanceof Error ? fetchError.message : String(fetchError)}. Check network connection.`,
+        );
+      }
 
       // Store cookies
       const setCookies = loginPageResponse.headers.getSetCookie?.() || [];
@@ -217,20 +225,26 @@ export class MondoAdapter extends BaseVendorAdapter {
 
       try {
         // Get subcircuit details
-        const subcircuitResponse = await fetch(
-          `${this.baseUrl}/subcircuit/${system.vendorSiteId}`,
-          {
+        const subcircuitUrl = `${this.baseUrl}/subcircuit/${system.vendorSiteId}`;
+        let subcircuitResponse;
+        try {
+          subcircuitResponse = await fetch(subcircuitUrl, {
             headers: {
               Authorization: `Bearer ${accessToken}`,
               Accept: "application/json",
             },
-          },
-        );
+          });
+        } catch (fetchError) {
+          throw new Error(
+            `Failed to fetch subcircuit data from ${subcircuitUrl}: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`,
+          );
+        }
         apiCallCount++;
 
         if (!subcircuitResponse.ok) {
+          const errorText = await subcircuitResponse.text().catch(() => "");
           throw new Error(
-            `Subcircuit API failed: ${subcircuitResponse.status}`,
+            `Subcircuit API failed: ${subcircuitResponse.status} ${subcircuitResponse.statusText}${errorText ? ` - ${errorText}` : ""}`,
           );
         }
 

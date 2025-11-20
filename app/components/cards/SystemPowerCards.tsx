@@ -404,7 +404,7 @@ export default function SystemPowerCards({
     }
 
     return maxTime;
-  }, [allLoads, latest]);
+  }, [allLoads, latest, getMeasurementTime]);
 
   // Battery
   const batterySoc = getPointValue("bidi.battery/soc");

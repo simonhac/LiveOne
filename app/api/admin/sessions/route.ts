@@ -22,10 +22,14 @@ export async function GET(request: NextRequest) {
     const start = searchParams.get("start");
     const count = searchParams.get("count");
     const last = searchParams.get("last");
+    const label = searchParams.get("label");
 
     let result;
 
-    if (last) {
+    if (label) {
+      // Get sessions by label
+      result = await sessionManager.getSessionsByLabel(label);
+    } else if (last) {
       // Get the last N sessions
       const lastCount = Math.min(parseInt(last), 200);
       result = await sessionManager.getLastSessions(lastCount);

@@ -78,6 +78,15 @@ export interface Capability {
 }
 
 /**
+ * Stage timing information for Poll All modal
+ */
+export interface PollStage {
+  name: "login" | "download" | "insert";
+  startMs: number; // Absolute timestamp in milliseconds (Date.now())
+  endMs: number; // Absolute timestamp in milliseconds (Date.now())
+}
+
+/**
  * Result from a polling operation
  * Also used for cron API responses (with additional fields populated by the cron route)
  */
@@ -98,6 +107,10 @@ export interface PollingResult {
   sessionLabel?: string;
   lastPoll?: string | null;
   durationMs?: number; // Elapsed time for the poll operation in milliseconds
+  startMs?: number; // Start time of this poll (absolute timestamp in milliseconds)
+  endMs?: number; // End time of this poll (absolute timestamp in milliseconds)
+  stages?: PollStage[]; // Detailed stage timing (login, download, insert)
+  inProgress?: boolean; // True when sending periodic updates during a stage
 }
 
 /**

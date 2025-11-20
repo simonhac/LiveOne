@@ -58,7 +58,7 @@ export default function SessionInfoModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center z-50 overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center z-60 overflow-y-auto">
       <div className="bg-gray-800/95 backdrop-blur-sm border border-gray-700 rounded-lg p-6 max-w-2xl w-full mx-4 my-8 max-h-[90vh] overflow-y-auto">
         {session && (
           <>

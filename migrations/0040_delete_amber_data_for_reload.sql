@@ -40,9 +40,9 @@ LEFT JOIN point_readings_agg_5m pr ON s.id = pr.system_id
 WHERE s.vendor_type = 'amber'
 GROUP BY s.id, s.display_name;
 
--- Track migration
+-- Track migration (idempotent - safe to run multiple times)
 CREATE TABLE IF NOT EXISTS migrations (
-  id TEXT PRIMARY KEY,
+  id TEXT NOT NULL,
   applied_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
 );
 

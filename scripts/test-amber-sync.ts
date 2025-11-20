@@ -3,6 +3,7 @@
  * Tests the methodical audit-based syncing system
  *
  * ⚠️  DRY RUN BY DEFAULT - No database writes unless --dry=false
+ * ⚠️  SAMPLE RECORDS HIDDEN BY DEFAULT - Add --sample=true to show sample records
  *
  * Usage:
  *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=forecasts
@@ -10,6 +11,7 @@
  *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=both
  *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --days=3 --action=both
  *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=both --dry=false  # Actually write to DB
+ *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=both --sample=true  # Show sample records
  */
 
 import { updateUsage, updateForecasts } from "../lib/vendors/amber/client.js";
@@ -49,6 +51,7 @@ async function testSync() {
   let actionArg = "usage";
   let daysArg = "1";
   let dryRun = true; // Default to dry run
+  let showSample = false; // Default to not showing sample records
 
   for (const arg of args) {
     if (arg.startsWith("--date=")) {
@@ -60,16 +63,22 @@ async function testSync() {
     } else if (arg.startsWith("--dry=")) {
       const dryValue = arg.substring(6).toLowerCase();
       dryRun = dryValue !== "false";
+    } else if (arg.startsWith("--sample=")) {
+      const sampleValue = arg.substring(9).toLowerCase();
+      showSample = sampleValue === "true";
     }
   }
 
   if (!dateArg) {
     console.error("Error: --date argument is required");
     console.error(
-      "Usage: npx tsx scripts/test-amber-sync.ts --date=YYYY-MM-DD [--days=N] [--dry=true|false] --action=usage|forecasts|both",
+      "Usage: npx tsx scripts/test-amber-sync.ts --date=YYYY-MM-DD [--days=N] [--dry=true|false] [--sample=true|false] --action=usage|forecasts|both",
     );
     console.error(
       "\n⚠️  DRY RUN BY DEFAULT - Add --dry=false to actually persist to the database",
+    );
+    console.error(
+      "⚠️  SAMPLE RECORDS HIDDEN BY DEFAULT - Add --sample=true to show sample records",
     );
     process.exit(1);
   }
@@ -227,29 +236,31 @@ async function testSync() {
           }
         }
 
-        // Display sample records if available
-        const sampleKeys = getSampleRecordKeys(stage.info);
-        if (sampleKeys.length > 0) {
-          console.log(`\nSample Records (up to 2 from each point):`);
-          for (const pointKey of sampleKeys.sort()) {
-            const sampleInfo = stage.info.sampleRecords![pointKey];
-            console.log(`\n  ${pointKey}:`);
-            for (let i = 0; i < sampleInfo.records.length; i++) {
-              const r = sampleInfo.records[i];
-              const timeStr = formatAESTDateTime(r.measurementTimeMs);
-              const value =
-                typeof r.rawValue === "number"
-                  ? r.rawValue.toFixed(3)
-                  : r.rawValue;
-              const quality = r.quality || "—";
-              console.log(
-                `    ${i + 1}. ${timeStr} | value: ${value} | quality: ${quality}`,
-              );
-            }
-            if (sampleInfo.numSkipped) {
-              console.log(
-                `    (and ${sampleInfo.numSkipped} ${sampleInfo.numSkipped === 1 ? "record" : "records"} omitted for brevity)`,
-              );
+        // Display sample records if available and requested
+        if (showSample) {
+          const sampleKeys = getSampleRecordKeys(stage.info);
+          if (sampleKeys.length > 0) {
+            console.log(`\nSample Records (up to 2 from each point):`);
+            for (const pointKey of sampleKeys.sort()) {
+              const sampleInfo = stage.info.sampleRecords![pointKey];
+              console.log(`\n  ${pointKey}:`);
+              for (let i = 0; i < sampleInfo.records.length; i++) {
+                const r = sampleInfo.records[i];
+                const timeStr = formatAESTDateTime(r.measurementTimeMs);
+                const value =
+                  typeof r.rawValue === "number"
+                    ? r.rawValue.toFixed(3)
+                    : r.rawValue;
+                const quality = r.quality || "—";
+                console.log(
+                  `    ${i + 1}. ${timeStr} | value: ${value} | quality: ${quality}`,
+                );
+              }
+              if (sampleInfo.numSkipped) {
+                console.log(
+                  `    (and ${sampleInfo.numSkipped} ${sampleInfo.numSkipped === 1 ? "record" : "records"} omitted for brevity)`,
+                );
+              }
             }
           }
         }
@@ -287,7 +298,7 @@ async function testSync() {
     console.log(`${taskName} AUDIT JSON (records omitted):`);
     console.log("=".repeat(60));
 
-    // Create a clean version without records
+    // Create a clean version without records and samples (temporary)
     const cleanAudit = {
       systemId: audit.systemId,
       firstDay: audit.firstDay.toString(),
@@ -306,7 +317,7 @@ async function testSync() {
             quality: range.quality,
             pointOriginIds: range.pointOriginIds,
           })),
-          sampleRecords: stage.info.sampleRecords,
+          // Temporarily omit sampleRecords
         },
         error: stage.error,
       })),

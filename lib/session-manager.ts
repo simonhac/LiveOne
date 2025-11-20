@@ -346,6 +346,51 @@ export class SessionManager {
   }
 
   /**
+   * Get sessions by label
+   */
+  async getSessionsByLabel(label: string): Promise<{
+    sessions: Array<{
+      id: number;
+      sessionLabel: string | null;
+      systemId: number;
+      vendorType: string;
+      systemName: string;
+      cause: string;
+      started: Date;
+      duration: number;
+      successful: boolean;
+      errorCode: string | null;
+      error: string | null;
+      response: any | null;
+      numRows: number;
+      createdAt: Date;
+    }>;
+    count: number;
+  }> {
+    try {
+      const results = await db
+        .select()
+        .from(sessions)
+        .where(eq(sessions.sessionLabel, label))
+        .limit(100); // Cap at 100 results per label
+
+      return {
+        sessions: results,
+        count: results.length,
+      };
+    } catch (error) {
+      console.error(
+        "[SessionManager] Failed to fetch sessions by label:",
+        error,
+      );
+      return {
+        sessions: [],
+        count: 0,
+      };
+    }
+  }
+
+  /**
    * Get a single session by ID
    */
   async getSessionById(sessionId: number): Promise<{

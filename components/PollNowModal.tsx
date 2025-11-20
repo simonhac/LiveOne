@@ -310,18 +310,18 @@ export default function PollNowModal({
             <button
               onClick={refreshPoll}
               disabled={isRefreshing}
-              className="flex items-center justify-center gap-2 px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white rounded-lg transition-colors w-40"
+              className="flex items-center justify-center gap-2 px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white rounded-lg transition-colors w-50"
             >
               <RefreshCw
                 className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
               />
-              Poll Again
+              {dryRun ? "Dry Run Again" : "Poll Again"}
             </button>
           )}
 
           <button
             onClick={onClose}
-            className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors w-40"
+            className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors w-50"
           >
             Close
           </button>

@@ -112,13 +112,12 @@ export interface SampleRecordsForPoint {
 
 // Batch info - summary views of a time period's readings
 export interface BatchInfo {
-  overviews: Record<string, string>; // Single object: {pointKey: overview, ...} (48 × numberOfDays chars each)
+  overviews: Record<string, string>; // Single object: {pointKey: overview, ...} (48 × numberOfDays chars each) - for comparison stages, this contains comparison overview notation
   numRecords: number; // Count of non-null records
   uniformQuality?: string | null; // If all readings have the same quality, this is set (e.g., 'b', 'a', null); undefined if mixed
   characterisation?: CharacterisationRange[];
   canonical: string[]; // Formatted table display (one line per row, monospaced)
   sampleRecords?: Record<string, SampleRecordsForPoint>; // Single object: {pointKey: {records, numSkipped}, ...}
-  comparisonOverviews?: Record<string, string>; // Comparison overview showing uppercase=remote wins, lowercase=local wins, '='=equal, '.'=both null
 }
 
 // Helper functions for BatchInfo
@@ -161,14 +160,16 @@ export interface PointReading {
   error?: string | null;
 }
 
-// Complete sync audit result (strips out records field to reduce payload size)
+// Complete sync audit result (strips out records and sampleRecords fields to reduce payload size)
 export interface AmberSyncResult {
   action: "updateUsage" | "updateForecasts";
   success: boolean; // True if sync completed without errors
   systemId: number;
   firstDay: CalendarDate;
   numberOfDays: number;
-  stages: Omit<StageResult, "records">[]; // Omit records Map - use sampleRecords instead
+  stages: Array<
+    Omit<StageResult, "records"> & { info: Omit<BatchInfo, "sampleRecords"> }
+  >; // Omit large data structures
   summary: {
     totalStages: number;
     numRowsInserted: number; // Total rows inserted across all stages

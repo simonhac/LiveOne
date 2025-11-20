@@ -10,6 +10,7 @@ import {
   Home,
   PauseCircle,
   Sun,
+  PlayCircle,
 } from "lucide-react";
 import SystemInfoTooltip from "@/components/SystemInfoTooltip";
 import SystemActionsMenu from "@/components/SystemActionsMenu";
@@ -18,6 +19,7 @@ import TestConnectionModal from "@/components/TestConnectionModal";
 import SystemSettingsDialog from "@/components/SystemSettingsDialog";
 import PollNowModal from "@/components/PollNowModal";
 import ViewDataModal from "@/components/ViewDataModal";
+import { PollAllModal } from "@/components/PollAllModal";
 import { formatDateTime, formatTime } from "@/lib/fe-date-format";
 
 interface SystemInfo {
@@ -167,6 +169,16 @@ export default function AdminDashboardClient() {
     timezoneOffsetMin: null,
   });
 
+  const [pollAllModal, setPollAllModal] = useState<{
+    isOpen: boolean;
+    data: any | null;
+    loading: boolean;
+  }>({
+    isOpen: false,
+    data: null,
+    loading: false,
+  });
+
   const openTestModal = (system: SystemData) => {
     setTestModal({
       isOpen: true,
@@ -205,6 +217,171 @@ export default function AdminDashboardClient() {
     });
   };
 
+  const handlePollAll = async () => {
+    setPollAllModal({ isOpen: true, data: null, loading: true });
+
+    // Create cleanup function for this polling session
+    let eventSource: EventSource | null = null;
+    let timeoutCheckInterval: NodeJS.Timeout | null = null;
+    let lastMessageTime = Date.now();
+
+    const cleanup = () => {
+      if (timeoutCheckInterval) {
+        clearInterval(timeoutCheckInterval);
+        timeoutCheckInterval = null;
+      }
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+    };
+
+    try {
+      // Use SSE for real-time updates
+      eventSource = new EventSource(
+        "/api/cron/minutely?force=true&realTime=true",
+      );
+
+      // Check for timeout every 5 seconds
+      timeoutCheckInterval = setInterval(() => {
+        const timeSinceLastMessage = Date.now() - lastMessageTime;
+        if (timeSinceLastMessage > 20000) {
+          // 20 seconds without updates
+          console.warn("[PollAll] Timeout: No updates for 20 seconds");
+
+          // Mark all active/waiting systems as timed out
+          setPollAllModal((prev) => {
+            if (!prev.data) return prev;
+
+            return {
+              ...prev,
+              loading: false,
+              data: {
+                ...prev.data,
+                sessionEndMs: Date.now(),
+                results: prev.data.results.map((r: any) => {
+                  // Timeout systems that are waiting or in progress
+                  const isWaitingOrInProgress =
+                    r.action === "POLLED" && (!r.stages || r.stages.length < 3);
+
+                  if (isWaitingOrInProgress) {
+                    return {
+                      ...r,
+                      action: "ERROR" as const,
+                      error: "Connection timeout - no updates for 20 seconds",
+                      errorCode: "TIMEOUT",
+                    };
+                  }
+                  return r;
+                }),
+              },
+            };
+          });
+
+          // Clean up this session
+          cleanup();
+        }
+      }, 5000);
+
+      eventSource.addEventListener("message", (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          lastMessageTime = Date.now(); // Reset timeout on any message
+
+          switch (message.type) {
+            case "start":
+              console.log("[PollAll] Started:", message.data);
+              // Pre-populate table with all systems that will be polled
+              setPollAllModal({
+                isOpen: true,
+                loading: true, // Keep loading until complete/error/timeout
+                data: {
+                  success: true,
+                  sessionId: message.data.sessionId,
+                  timestamp: message.data.timestamp,
+                  durationMs: 0,
+                  sessionStartMs: message.data.sessionStartMs,
+                  sessionEndMs: message.data.sessionStartMs,
+                  summary: {
+                    total: message.data.totalSystems,
+                    successful: 0,
+                    failed: 0,
+                    skipped: 0,
+                  },
+                  results: message.data.systems.map((sys: any) => ({
+                    action: "POLLED" as const,
+                    systemId: sys.systemId,
+                    displayName: sys.displayName,
+                    vendorType: sys.vendorType,
+                    stages: [],
+                  })),
+                },
+              });
+              break;
+
+            case "progress":
+              // Update the existing system row with progress data
+              setPollAllModal((prev) => {
+                if (!prev.data) return prev;
+
+                return {
+                  ...prev,
+                  data: {
+                    ...prev.data,
+                    sessionEndMs: Date.now(),
+                    results: prev.data.results.map((r: any) =>
+                      r.systemId === message.data.systemId ? message.data : r,
+                    ),
+                  },
+                };
+              });
+              break;
+
+            case "complete":
+              // Final data received
+              setPollAllModal({
+                isOpen: true,
+                data: message.data,
+                loading: false,
+              });
+              cleanup();
+              break;
+
+            case "error":
+              console.error("[PollAll] Error:", message.error);
+              alert(`Polling error: ${message.error}`);
+              setPollAllModal({ isOpen: false, data: null, loading: false });
+              cleanup();
+              break;
+          }
+        } catch (parseErr) {
+          console.error("[PollAll] Failed to parse SSE message:", parseErr);
+        }
+      });
+
+      eventSource.addEventListener("error", (err) => {
+        console.error("[PollAll] EventSource error:", err);
+        cleanup();
+        // If we have partial data, keep the modal open with what we got
+        setPollAllModal((prev) => ({
+          ...prev,
+          loading: false,
+        }));
+      });
+    } catch (err) {
+      console.error("Error polling all systems:", err);
+      cleanup();
+      setPollAllModal({ isOpen: false, data: null, loading: false });
+      alert("Failed to poll systems. Please try again.");
+    }
+  };
+
+  const closePollAllModal = () => {
+    setPollAllModal({ isOpen: false, data: null, loading: false });
+    // Refresh systems list after poll
+    fetchSystems();
+  };
+
   // Track if any modal is open
   const isAnyModalOpen = useCallback(() => {
     return (
@@ -212,7 +389,8 @@ export default function AdminDashboardClient() {
       pollingStatsModal.isOpen ||
       settingsModal.isOpen ||
       pollNowModal.isOpen ||
-      viewDataModal.isOpen
+      viewDataModal.isOpen ||
+      pollAllModal.isOpen
     );
   }, [
     testModal.isOpen,
@@ -220,6 +398,7 @@ export default function AdminDashboardClient() {
     settingsModal.isOpen,
     pollNowModal.isOpen,
     viewDataModal.isOpen,
+    pollAllModal.isOpen,
   ]);
 
   const fetchSystems = useCallback(async () => {
@@ -362,26 +541,36 @@ export default function AdminDashboardClient() {
           {/* Systems Table */}
           <div className="bg-gray-800 border-t md:border border-gray-700 md:rounded-t overflow-hidden flex flex-col">
             <div className="border-b border-gray-700">
-              <div className="flex items-end -mb-px">
+              <div className="flex items-stretch justify-between -mb-px">
+                <div className="flex items-stretch">
+                  <button
+                    onClick={() => setActiveTab("active")}
+                    className={`px-4 md:px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
+                      activeTab === "active"
+                        ? "text-white border-blue-500 bg-gray-700/50"
+                        : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
+                    }`}
+                  >
+                    Active Systems
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("removed")}
+                    className={`px-4 md:px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
+                      activeTab === "removed"
+                        ? "text-white border-blue-500 bg-gray-700/50"
+                        : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
+                    }`}
+                  >
+                    Removed
+                  </button>
+                </div>
                 <button
-                  onClick={() => setActiveTab("active")}
-                  className={`px-4 md:px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
-                    activeTab === "active"
-                      ? "text-white border-blue-500 bg-gray-700/50"
-                      : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
-                  }`}
+                  onClick={handlePollAll}
+                  disabled={pollAllModal.loading}
+                  className="px-4 py-2 m-3 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded transition-colors flex items-center gap-2"
                 >
-                  Active Systems
-                </button>
-                <button
-                  onClick={() => setActiveTab("removed")}
-                  className={`px-4 md:px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
-                    activeTab === "removed"
-                      ? "text-white border-blue-500 bg-gray-700/50"
-                      : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
-                  }`}
-                >
-                  Removed
+                  <PlayCircle className="w-4 h-4" />
+                  Poll All
                 </button>
               </div>
             </div>
@@ -745,6 +934,15 @@ export default function AdminDashboardClient() {
             timezoneOffsetMin={viewDataModal.timezoneOffsetMin}
           />
         )}
+
+      {/* Poll All Modal */}
+      <PollAllModal
+        isOpen={pollAllModal.isOpen}
+        onClose={closePollAllModal}
+        data={pollAllModal.data}
+        onPollAgain={handlePollAll}
+        isPolling={pollAllModal.loading}
+      />
     </>
   );
 }
