@@ -3,6 +3,7 @@
  */
 
 import type { CalendarDate } from "@internationalized/date";
+import type { PointMetadata } from "@/lib/monitoring-points-manager";
 
 export interface AmberCredentials {
   apiKey: string;
@@ -115,6 +116,7 @@ export interface StageResult {
   error?: string;
   request?: string; // Debug info about the API request made
   discovery?: string; // Optional text description of what was discovered/learned
+  numRowsInserted?: number; // Number of rows inserted into database (only for store stages)
 }
 
 // Quality range grouping for mixed completeness
@@ -128,7 +130,7 @@ export interface CharacterisationRange {
 
 // Point reading structure for sync records
 export interface PointReading {
-  pointMetadata: import("@/lib/vendors/base-vendor-adapter").PointMetadata;
+  pointMetadata: PointMetadata;
   rawValue: any;
   measurementTimeMs: Milliseconds;
   receivedTimeMs: Milliseconds;
@@ -138,13 +140,16 @@ export interface PointReading {
 }
 
 // Complete sync audit result
-export interface SyncAudit {
+export interface AmberSyncResult {
+  action: "updateUsage" | "updateForecasts";
+  success: boolean; // True if sync completed without errors
   systemId: number;
   firstDay: CalendarDate;
   numberOfDays: number;
   stages: StageResult[];
   summary: {
     totalStages: number;
+    numRowsInserted: number; // Total rows inserted across all stages
     durationMs: Milliseconds;
     error?: string;
     exception?: Error;

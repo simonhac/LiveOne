@@ -307,12 +307,12 @@ async function loadRemoteUsage(
   numberOfDays: number,
   stageName: string,
 ): Promise<StageResult> {
-  try {
-    const startDateStr = formatDateAEST(firstDay);
-    const endDay = firstDay.add({ days: numberOfDays - 1 });
-    const endDateStr = formatDateAEST(endDay);
-    const request = `GET /v1/sites/${credentials.siteId}/usage?startDate=${startDateStr}&endDate=${endDateStr}`;
+  const startDateStr = formatDateAEST(firstDay);
+  const endDay = firstDay.add({ days: numberOfDays - 1 });
+  const endDateStr = formatDateAEST(endDay);
+  const request = `GET /v1/sites/${credentials.siteId}/usage?startDate=${startDateStr}&endDate=${endDateStr}`;
 
+  try {
     // Fetch from Amber API
     const usageRecords = await fetchAmberUsage(
       credentials,
@@ -349,6 +349,7 @@ async function loadRemoteUsage(
         canonical: [],
       },
       error: error instanceof Error ? error.message : String(error),
+      request,
     };
   }
 }
@@ -666,13 +667,13 @@ async function loadRemotePrices(
   numberOfDays: number,
   stageName: string,
 ): Promise<StageResult> {
-  try {
-    // Build request info for debugging
-    const startDateStr = formatDateAEST(firstDay);
-    const endDay = firstDay.add({ days: numberOfDays - 1 });
-    const endDateStr = formatDateAEST(endDay);
-    const request = `GET /v1/sites/${credentials.siteId}/prices?startDate=${startDateStr}&endDate=${endDateStr}`;
+  // Build request info for debugging
+  const startDateStr = formatDateAEST(firstDay);
+  const endDay = firstDay.add({ days: numberOfDays - 1 });
+  const endDateStr = formatDateAEST(endDay);
+  const request = `GET /v1/sites/${credentials.siteId}/prices?startDate=${startDateStr}&endDate=${endDateStr}`;
 
+  try {
     // Fetch from Amber API
     const priceRecords = await fetchAmberPrices(
       credentials,
@@ -755,6 +756,7 @@ async function loadRemotePrices(
         canonical: [],
       },
       error: error instanceof Error ? error.message : String(error),
+      request,
     };
   }
 }
@@ -801,6 +803,7 @@ async function storeRecordsLocally(
     stage: stageName,
     discovery: `inserted ${readingsToInsert.length} readings into database`,
     info: batch.getInfo(),
+    numRowsInserted: readingsToInsert.length,
   };
 }
 
@@ -923,6 +926,12 @@ export async function updateUsage(
     error = exception.message;
   }
 
+  // Calculate total rows inserted from all stages
+  const numRowsInserted = stages.reduce(
+    (sum, stage) => sum + (stage.numRowsInserted ?? 0),
+    0,
+  );
+
   const result: AmberSyncResult = {
     action: "updateUsage",
     success: error === undefined && exception === undefined,
@@ -932,6 +941,7 @@ export async function updateUsage(
     stages,
     summary: {
       totalStages: stages.length,
+      numRowsInserted,
       durationMs: (Date.now() - startTime) as Milliseconds,
     },
   };
@@ -1063,6 +1073,12 @@ export async function updateForecasts(
     error = exception.message;
   }
 
+  // Calculate total rows inserted from all stages
+  const numRowsInserted = stages.reduce(
+    (sum, stage) => sum + (stage.numRowsInserted ?? 0),
+    0,
+  );
+
   const result: AmberSyncResult = {
     action: "updateForecasts",
     success: error === undefined && exception === undefined,
@@ -1072,6 +1088,7 @@ export async function updateForecasts(
     stages,
     summary: {
       totalStages: stages.length,
+      numRowsInserted,
       durationMs: (Date.now() - startTime) as Milliseconds,
     },
   };

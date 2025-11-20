@@ -484,18 +484,21 @@ export class AmberAdapter extends BaseVendorAdapter {
         const yesterday = getYesterdayInTimezone(system.timezoneOffsetMin);
         console.log(`[Amber] Running usage sync for ${yesterday.toString()}`);
 
+        // Add siteId from system to credentials
+        const credentialsWithSite: AmberCredentials = {
+          ...credentials,
+          siteId: system.vendorSiteId || undefined,
+        };
+
         const usageAudit = await updateUsage(
           system.id,
           yesterday,
           1,
-          credentials,
+          credentialsWithSite,
           sessionId,
         );
         audits.push(usageAudit);
-        totalRecords += usageAudit.stages.reduce(
-          (sum, stage) => sum + stage.info.numRecords,
-          0,
-        );
+        totalRecords += usageAudit.summary.numRowsInserted;
 
         // Check if usage sync failed
         if (!usageAudit.success) {
@@ -513,18 +516,21 @@ export class AmberAdapter extends BaseVendorAdapter {
           `[Amber] Running forecast sync for ${today.toString()} + 1 day`,
         );
 
+        // Add siteId from system to credentials
+        const credentialsWithSite: AmberCredentials = {
+          ...credentials,
+          siteId: system.vendorSiteId || undefined,
+        };
+
         const forecastAudit = await updateForecasts(
           system.id,
           today,
           2,
-          credentials,
+          credentialsWithSite,
           sessionId,
         );
         audits.push(forecastAudit);
-        totalRecords += forecastAudit.stages.reduce(
-          (sum, stage) => sum + stage.info.numRecords,
-          0,
-        );
+        totalRecords += forecastAudit.summary.numRowsInserted;
 
         // Check if forecast sync failed
         if (!forecastAudit.success) {
