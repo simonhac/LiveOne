@@ -68,6 +68,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         value,
         measurementTimeMs,
         "W",
+        "Test Point",
       );
 
       // Verify it was stored
@@ -96,6 +97,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         firstValue,
         measurementTimeMs,
         "W",
+        "Test Point",
       );
       let result = await getLatestPointValues(testSystemId);
       expect(result[pointPath].value).toBe(firstValue);
@@ -108,6 +110,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         secondValue,
         measurementTimeMs + 60000,
         "W",
+        "Test Point",
       );
       result = await getLatestPointValues(testSystemId);
       expect(result[pointPath].value).toBe(secondValue);
@@ -133,6 +136,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
           point.value,
           measurementTimeMs,
           point.unit,
+          "Test Point",
         );
       }
 
@@ -165,6 +169,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         5000,
         measurementTimeMs,
         "W",
+        "Test Point",
       );
       await updateLatestPointValue(
         testSystemId,
@@ -173,6 +178,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         1200,
         measurementTimeMs,
         "W",
+        "Test Point",
       );
 
       const result = await getLatestPointValues(testSystemId);
@@ -216,6 +222,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         value,
         measurementTimeMs,
         "W",
+        "Test Point",
       );
 
       // Verify source system has the value
@@ -261,6 +268,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
           point.value,
           measurementTimeMs,
           "W",
+          "Test Point",
         );
       }
 
@@ -314,6 +322,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         value,
         measurementTimeMs,
         "W",
+        "Test Point",
       );
 
       // Verify source has the value
@@ -353,6 +362,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         value,
         measurementTimeMs,
         "W",
+        "Test Point",
       );
 
       // Read multiple times

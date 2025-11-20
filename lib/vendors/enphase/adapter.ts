@@ -271,6 +271,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
     credentials: any,
     now: Date,
     sessionId: number,
+    isUserOriginated: boolean,
   ): Promise<PollingResult> {
     const startTime = Date.now();
 

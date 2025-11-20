@@ -7,6 +7,7 @@ import {
   PriceLevel,
 } from "./AmberPriceIndicator";
 import { formatInTimezone } from "@/lib/date-utils";
+import { fromDate, toZoned } from "@internationalized/date";
 
 interface AmberCardProps {
   systemId: number;
@@ -182,18 +183,20 @@ export default function AmberCard({
             {/* Date Row */}
             <tr>
               {timeSlots.map((slot, index) => {
-                // Subtract 30 minutes to show period start instead of period end
-                const periodStart = new Date(
-                  slot.time.getTime() - 30 * 60 * 1000,
+                // slot.time represents interval end time
+                // Subtract 30 minutes to show interval start (matching Amber's display)
+                const intervalEndZoned = toZoned(
+                  fromDate(slot.time, "UTC"),
+                  displayTimezone!,
                 );
+                const intervalStartZoned = intervalEndZoned.subtract({
+                  minutes: 30,
+                });
 
                 // Check if this is midnight in display timezone
-                const timeStr = formatInTimezone(
-                  periodStart,
-                  displayTimezone!,
-                  "HH:mm",
-                );
-                const isMidnight = timeStr === "00:00";
+                const isMidnight =
+                  intervalStartZoned.hour === 0 &&
+                  intervalStartZoned.minute === 0;
 
                 return (
                   <td
@@ -213,7 +216,7 @@ export default function AmberCard({
                         }}
                       >
                         {formatInTimezone(
-                          periodStart,
+                          intervalStartZoned.toDate(),
                           displayTimezone!,
                           "d MMM",
                         )}
@@ -235,10 +238,15 @@ export default function AmberCard({
                 const isCurrent =
                   !slot.isPast && (index === 0 || timeSlots[index - 1]?.isPast);
 
-                // Subtract 30 minutes to show period start instead of period end
-                const periodStart = new Date(
-                  slot.time.getTime() - 30 * 60 * 1000,
+                // slot.time represents interval end time
+                // Subtract 30 minutes to show interval start (matching Amber's display)
+                const intervalEndZoned = toZoned(
+                  fromDate(slot.time, "UTC"),
+                  displayTimezone!,
                 );
+                const intervalStartZoned = intervalEndZoned.subtract({
+                  minutes: 30,
+                });
 
                 return (
                   <td
@@ -269,11 +277,7 @@ export default function AmberCard({
                           lineHeight: "16px",
                         }}
                       >
-                        {formatInTimezone(
-                          periodStart,
-                          displayTimezone!,
-                          "HH:mm",
-                        )}
+                        {`${String(intervalStartZoned.hour).padStart(2, "0")}:${String(intervalStartZoned.minute).padStart(2, "0")}`}
                       </div>
 
                       {/* Price Indicator */}

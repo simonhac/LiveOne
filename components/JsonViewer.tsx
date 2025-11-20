@@ -57,7 +57,7 @@ export default function JsonViewer({
               <Copy className="w-4 h-4 text-gray-400" />
             )}
           </button>
-          <div className="overflow-x-auto font-mono text-xs whitespace-pre">
+          <div className="overflow-x-auto font-mono text-xs whitespace-pre [&_.json-view]:whitespace-pre [&_*]:whitespace-pre">
             <JsonView
               data={data}
               shouldExpandNode={() => true}

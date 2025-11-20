@@ -80,6 +80,8 @@ describeIfKV("Subscription Registry (integration)", () => {
         vendorType: "sungrow",
         vendorSiteId: "test-source",
         status: "active",
+        timezoneOffsetMin: 600,
+        displayTimezone: "Australia/Brisbane",
       });
 
       // Create test points on source system
@@ -122,6 +124,8 @@ describeIfKV("Subscription Registry (integration)", () => {
         vendorType: "composite",
         vendorSiteId: "test-composite-1",
         status: "active",
+        timezoneOffsetMin: 600,
+        displayTimezone: "Australia/Brisbane",
         metadata: {
           version: 2,
           mappings: {
@@ -139,6 +143,8 @@ describeIfKV("Subscription Registry (integration)", () => {
         vendorType: "composite",
         vendorSiteId: "test-composite-2",
         status: "active",
+        timezoneOffsetMin: 600,
+        displayTimezone: "Australia/Brisbane",
         metadata: {
           version: 2,
           mappings: {
@@ -182,6 +188,8 @@ describeIfKV("Subscription Registry (integration)", () => {
         vendorType: "composite",
         vendorSiteId: "test-invalid",
         status: "active",
+        timezoneOffsetMin: 600,
+        displayTimezone: "Australia/Brisbane",
         metadata: {
           version: 1, // Wrong version
         },
@@ -212,6 +220,8 @@ describeIfKV("Subscription Registry (integration)", () => {
         vendorType: "sungrow",
         vendorSiteId: "test-source",
         status: "active",
+        timezoneOffsetMin: 600,
+        displayTimezone: "Australia/Brisbane",
       });
 
       await db.insert(pointInfoTable).values([
@@ -248,6 +258,8 @@ describeIfKV("Subscription Registry (integration)", () => {
         vendorType: "composite",
         vendorSiteId: "comp1",
         status: "active",
+        timezoneOffsetMin: 600,
+        displayTimezone: "Australia/Brisbane",
         metadata: {
           version: 2,
           mappings: {
@@ -264,6 +276,8 @@ describeIfKV("Subscription Registry (integration)", () => {
         vendorType: "composite",
         vendorSiteId: "comp2",
         status: "active",
+        timezoneOffsetMin: 600,
+        displayTimezone: "Australia/Brisbane",
         metadata: {
           version: 2,
           mappings: {
@@ -287,6 +301,7 @@ describeIfKV("Subscription Registry (integration)", () => {
         5000,
         Date.now(),
         "W",
+        "Solar",
       );
 
       // Update point 2 (subscribed by composite 1 only)
@@ -297,6 +312,7 @@ describeIfKV("Subscription Registry (integration)", () => {
         85,
         Date.now(),
         "%",
+        "Battery",
       );
 
       // Verify source system has both values
@@ -338,8 +354,17 @@ describeIfKV("Subscription Registry (integration)", () => {
           6000,
           now,
           "W",
+          "Solar",
         ),
-        updateLatestPointValue(testSourceSystemId, 2, pointPath2, 90, now, "%"),
+        updateLatestPointValue(
+          testSourceSystemId,
+          2,
+          pointPath2,
+          90,
+          now,
+          "%",
+          "Battery",
+        ),
       ]);
 
       // Both should be in composite 1

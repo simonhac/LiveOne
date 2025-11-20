@@ -63,6 +63,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
     credentials: any,
     now: Date,
     sessionId: number,
+    isUserOriginated: boolean,
   ): Promise<PollingResult> {
     try {
       const client = new SelectronicFetchClient({

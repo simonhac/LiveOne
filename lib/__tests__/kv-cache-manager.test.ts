@@ -73,6 +73,7 @@ describe("kv-cache-manager", () => {
         5234.5,
         1731627600000,
         "W",
+        "Test Point",
       );
 
       // Should update the source system's cache
@@ -83,6 +84,7 @@ describe("kv-cache-manager", () => {
             value: 5234.5,
             measurementTimeMs: 1731627600000,
             metricUnit: "W",
+            displayName: "Test Point",
           }),
         }),
       );
@@ -99,6 +101,7 @@ describe("kv-cache-manager", () => {
         5234.5,
         1731627600000,
         "W",
+        "Test Point",
       );
 
       const afterTime = Date.now();
@@ -128,6 +131,7 @@ describe("kv-cache-manager", () => {
         5234.5,
         1731627600000,
         "W",
+        "Test Point",
       );
 
       // Should update source system + 2 composite systems = 3 total hset calls
@@ -161,12 +165,14 @@ describe("kv-cache-manager", () => {
           measurementTimeMs: 1731627600000,
           receivedTimeMs: 1731627605000,
           metricUnit: "W",
+          displayName: "Test Point",
         },
         "load.hvac/power": {
           value: 1200,
           measurementTimeMs: 1731627600000,
           receivedTimeMs: 1731627605000,
           metricUnit: "W",
+          displayName: "Test Point",
         },
       };
 

@@ -29,14 +29,22 @@ describe("AmberReadingsBatch", () => {
           (i + 1) * 30 * 60 * 1000) as Milliseconds;
         group.add({
           measurementTimeMs,
-          value: 0.25 + i * 0.01,
+          rawValue: 0.25 + i * 0.01,
           dataQuality: "Actual",
           pointMetadata: {
-            originId: "grid.spotPerKwh",
-            dataType: "PerKwh",
-            description: "Grid spot price",
-            dataCategory: "Price",
+            originId: "grid",
+            originSubId: "spotPerKwh",
+            defaultName: "Grid spot price",
+            subsystem: "grid",
+            type: "bidi",
+            subtype: "grid",
+            extension: "spot",
+            metricType: "rate",
+            metricUnit: "cents_kWh",
+            transform: null,
           },
+          receivedTimeMs: Date.now() as Milliseconds,
+          sessionId: 0,
         });
       }
 
@@ -53,14 +61,22 @@ describe("AmberReadingsBatch", () => {
         for (const pointKey of pointKeys) {
           group.add({
             measurementTimeMs,
-            value: 0.25 + i * 0.01,
+            rawValue: 0.25 + i * 0.01,
             dataQuality: "Actual",
             pointMetadata: {
-              originId: pointKey,
-              dataType: "PerKwh",
-              description: "Price data",
-              dataCategory: "Price",
+              originId: pointKey.split(".")[0],
+              originSubId: pointKey.split(".")[1],
+              defaultName: "Price data",
+              subsystem: "grid",
+              type: "bidi",
+              subtype: "grid",
+              extension: "price",
+              metricType: "rate",
+              metricUnit: "cents_kWh",
+              transform: null,
             },
+            receivedTimeMs: Date.now() as Milliseconds,
+            sessionId: 0,
           });
         }
       }
@@ -72,14 +88,22 @@ describe("AmberReadingsBatch", () => {
         for (const pointKey of pointKeys) {
           group.add({
             measurementTimeMs,
-            value: 0.25 + i * 0.01,
+            rawValue: 0.25 + i * 0.01,
             dataQuality: "Forecast",
             pointMetadata: {
-              originId: pointKey,
-              dataType: "PerKwh",
-              description: "Price data",
-              dataCategory: "Price",
+              originId: pointKey.split(".")[0],
+              originSubId: pointKey.split(".")[1],
+              defaultName: "Price data",
+              subsystem: "grid",
+              type: "bidi",
+              subtype: "grid",
+              extension: "price",
+              metricType: "rate",
+              metricUnit: "cents_kWh",
+              transform: null,
             },
+            receivedTimeMs: Date.now() as Milliseconds,
+            sessionId: 0,
           });
         }
       }
@@ -124,14 +148,22 @@ describe("AmberReadingsBatch", () => {
       expect(() => {
         group.add({
           measurementTimeMs: beforeDayMs,
-          value: 0.25,
+          rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            originId: "grid.spotPerKwh",
-            dataType: "PerKwh",
-            description: "Grid spot price",
-            dataCategory: "Price",
+            originId: "grid",
+            originSubId: "spotPerKwh",
+            defaultName: "Grid spot price",
+            subsystem: "grid",
+            type: "bidi",
+            subtype: "grid",
+            extension: "spot",
+            metricType: "rate",
+            metricUnit: "cents_kWh",
+            transform: null,
           },
+          receivedTimeMs: Date.now() as Milliseconds,
+          sessionId: 0,
         });
       }).toThrow(/outside range boundaries/);
 
@@ -140,14 +172,22 @@ describe("AmberReadingsBatch", () => {
       expect(() => {
         group.add({
           measurementTimeMs: afterDayMs,
-          value: 0.25,
+          rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            originId: "grid.spotPerKwh",
-            dataType: "PerKwh",
-            description: "Grid spot price",
-            dataCategory: "Price",
+            originId: "grid",
+            originSubId: "spotPerKwh",
+            defaultName: "Grid spot price",
+            subsystem: "grid",
+            type: "bidi",
+            subtype: "grid",
+            extension: "spot",
+            metricType: "rate",
+            metricUnit: "cents_kWh",
+            transform: null,
           },
+          receivedTimeMs: Date.now() as Milliseconds,
+          sessionId: 0,
         });
       }).toThrow(/outside range boundaries/);
 
@@ -156,14 +196,22 @@ describe("AmberReadingsBatch", () => {
       expect(() => {
         group.add({
           measurementTimeMs: lastIntervalMs,
-          value: 0.25,
+          rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            originId: "grid.spotPerKwh",
-            dataType: "PerKwh",
-            description: "Grid spot price",
-            dataCategory: "Price",
+            originId: "grid",
+            originSubId: "spotPerKwh",
+            defaultName: "Grid spot price",
+            subsystem: "grid",
+            type: "bidi",
+            subtype: "grid",
+            extension: "spot",
+            metricType: "rate",
+            metricUnit: "cents_kWh",
+            transform: null,
           },
+          receivedTimeMs: Date.now() as Milliseconds,
+          sessionId: 0,
         });
       }).not.toThrow();
     });
