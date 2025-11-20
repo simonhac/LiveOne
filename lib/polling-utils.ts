@@ -83,10 +83,16 @@ export async function updatePollingStatusSuccess(
 export async function updatePollingStatusError(
   systemId: number,
   error: Error | string,
+  responseData?: any,
 ) {
   const now = new Date();
   const existingStatus = await getPollingStatus(systemId);
   const errorMessage = error instanceof Error ? error.message : error;
+
+  // Transform response data if provided (same as success case)
+  const transformedResponse = responseData
+    ? transformForStorage(responseData)
+    : null;
 
   await db
     .insert(pollingStatus)
@@ -95,7 +101,7 @@ export async function updatePollingStatusError(
       lastPollTime: now,
       lastErrorTime: now,
       lastError: errorMessage,
-      lastResponse: null,
+      lastResponse: transformedResponse,
       consecutiveErrors: 1,
       totalPolls: 1,
       successfulPolls: 0,
@@ -107,7 +113,7 @@ export async function updatePollingStatusError(
         lastPollTime: now,
         lastErrorTime: now,
         lastError: errorMessage,
-        lastResponse: null,
+        lastResponse: transformedResponse,
         consecutiveErrors: existingStatus
           ? (existingStatus.consecutiveErrors || 0) + 1
           : 1,

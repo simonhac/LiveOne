@@ -6,7 +6,11 @@ import type {
 } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { LatestReadingData } from "@/lib/types/readings";
-import { getNextMinuteBoundary } from "@/lib/date-utils";
+import {
+  getNextMinuteBoundary,
+  getYesterdayInTimezone,
+  getTodayInTimezone,
+} from "@/lib/date-utils";
 import { insertPointReadingsDirectTo5m } from "@/lib/monitoring-points-manager";
 import {
   createChannelPoints,
@@ -23,6 +27,7 @@ import type {
   AmberPriceRecord,
   AmberChannelMetadata,
 } from "./types";
+import { updateUsage, updateForecasts } from "./client";
 
 export class AmberAdapter extends BaseVendorAdapter {
   readonly vendorType = "amber";
@@ -449,50 +454,108 @@ export class AmberAdapter extends BaseVendorAdapter {
 
   /**
    * Perform the actual polling
-   * Polls both usage data (every 30 min) and price forecasts (every 5 min)
+   * Uses audit-based syncing with time-based logic:
+   * - Usage: hourly at :10 past or when user-originated
+   * - Forecasts: every 5 minutes (always)
    */
   protected async doPoll(
     system: SystemWithPolling,
     credentials: AmberCredentials,
     now: Date,
     sessionId: number,
+    isUserOriginated: boolean,
   ): Promise<PollingResult> {
     try {
-      console.log(`[Amber] Starting poll for system ${system.id}`);
+      console.log(
+        `[Amber] Starting poll for system ${system.id} (isUserOriginated=${isUserOriginated})`,
+      );
 
+      const audits = [];
       let totalRecords = 0;
+      let hasError = false;
+      let errorMessage: string | undefined;
 
-      // Always poll price forecasts (every 5 minutes)
-      const forecastRecords = await this.pollPriceForecast(
-        system,
-        credentials,
-        sessionId,
-      );
-      totalRecords += forecastRecords;
+      // Determine if we should run usage update
+      const currentMinute = now.getMinutes();
+      const shouldRunUsage = isUserOriginated || currentMinute === 10;
 
-      // Poll usage data based on schedule (every 30 minutes)
-      // Check if enough time has passed since last usage poll
-      // For now, always poll usage - the base class handles scheduling
-      const usageRecords = await this.pollUsageData(
-        system,
-        credentials,
-        sessionId,
-      );
-      totalRecords += usageRecords;
+      if (shouldRunUsage) {
+        // Run usage sync for yesterday (billable data becomes available)
+        const yesterday = getYesterdayInTimezone(system.timezoneOffsetMin);
+        console.log(`[Amber] Running usage sync for ${yesterday.toString()}`);
 
-      // Calculate next poll time
-      // We poll every 5 minutes for forecasts, but the base class uses pollIntervalMinutes (30)
-      // So we'll return 5 minutes for more frequent polling
+        const usageAudit = await updateUsage(
+          system.id,
+          yesterday,
+          1,
+          credentials,
+          sessionId,
+        );
+        audits.push(usageAudit);
+        totalRecords += usageAudit.stages.reduce(
+          (sum, stage) => sum + stage.info.numRecords,
+          0,
+        );
+
+        // Check if usage sync failed
+        if (!usageAudit.success) {
+          hasError = true;
+          errorMessage = usageAudit.summary.error || "Usage sync failed";
+          console.error(`[Amber] Usage sync failed: ${errorMessage}`);
+        }
+      }
+
+      // Only run forecast sync if usage didn't fail (or if usage wasn't run)
+      if (!hasError) {
+        // Run forecast sync for today + tomorrow (2 days)
+        const today = getTodayInTimezone(system.timezoneOffsetMin);
+        console.log(
+          `[Amber] Running forecast sync for ${today.toString()} + 1 day`,
+        );
+
+        const forecastAudit = await updateForecasts(
+          system.id,
+          today,
+          2,
+          credentials,
+          sessionId,
+        );
+        audits.push(forecastAudit);
+        totalRecords += forecastAudit.stages.reduce(
+          (sum, stage) => sum + stage.info.numRecords,
+          0,
+        );
+
+        // Check if forecast sync failed
+        if (!forecastAudit.success) {
+          hasError = true;
+          const forecastError =
+            forecastAudit.summary.error || "Forecast sync failed";
+          errorMessage = forecastError;
+          console.error(
+            `[Amber] Forecast sync failed: ${forecastAudit.summary.error}`,
+          );
+        }
+      } else {
+        console.log(`[Amber] Skipping forecast sync because usage sync failed`);
+      }
+
+      // Calculate next poll time (5 minutes for forecasts)
       const nextPollTime = getNextMinuteBoundary(
         this.priceForecastIntervalMinutes,
         system.timezoneOffsetMin,
       );
 
+      // Return error if any sync failed
+      if (hasError) {
+        return this.error(errorMessage || "Sync failed", audits); // Include audits in error response
+      }
+
       return this.polled(
         null as any, // Amber doesn't use common readings table
         totalRecords,
         nextPollTime,
-        { usageRecords, forecastRecords },
+        audits, // Return audit objects as rawResponse
       );
     } catch (error) {
       console.error("[Amber] Poll error:", error);

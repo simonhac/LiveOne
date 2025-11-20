@@ -165,27 +165,20 @@ export default function PollingStatsModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-4 gap-4 mt-4">
-            <div>
+          {/* Last Error - Full Width Row */}
+          {stats.lastErrorTime && (
+            <div className="mt-4 pt-4 border-t border-gray-700">
               <div className="text-sm text-gray-400 mb-1">Last Error</div>
               <div className="text-white">
-                {stats.lastErrorTime ? (
-                  <>
-                    {formatDateTime(stats.lastErrorTime)}
-                    {stats.lastError && (
-                      <div className="text-xs text-red-400 mt-1">
-                        {stats.lastError.length > 50
-                          ? stats.lastError.substring(0, 50) + "..."
-                          : stats.lastError}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-gray-400">No errors</span>
+                {formatDateTime(stats.lastErrorTime)}
+                {stats.lastError && (
+                  <div className="text-sm text-red-400 mt-1 break-words">
+                    {stats.lastError}
+                  </div>
                 )}
               </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Raw Comms Section */}

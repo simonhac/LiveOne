@@ -16,13 +16,13 @@ import type {
   AmberPriceRecord,
   Milliseconds,
   StageResult,
-  SyncAudit,
+  AmberSyncResult,
   Completeness,
   CharacterisationRange,
   PointReading,
   BatchInfo,
 } from "./types";
-import type { PointMetadata } from "@/lib/vendors/base-vendor-adapter";
+import type { PointMetadata } from "@/lib/monitoring-points-manager";
 import { formatDateAEST } from "@/lib/date-utils";
 import { AmberReadingsBatch } from "./amber-readings-batch";
 import {
@@ -31,6 +31,7 @@ import {
   createSpotPricePoint,
   getChannelMetadata,
 } from "./point-metadata";
+import { insertPointReadingsDirectTo5m } from "@/lib/monitoring-points-manager";
 
 /**
  * Quality precedence for comparison
@@ -696,7 +697,7 @@ async function loadRemotePrices(
             : channelType; // fallback for "controlledLoad" if present
 
       // Infer quality from type
-      let quality: string | null = null;
+      let quality: string | undefined = undefined;
       if (record.type === "ActualInterval") quality = "actual";
       else if (record.type === "CurrentInterval") quality = "actual";
       else if (record.type === "ForecastInterval") quality = "forecast";
@@ -759,6 +760,51 @@ async function loadRemotePrices(
 }
 
 /**
+ * Store superior records to local database (point_readings_agg_5m)
+ */
+async function storeRecordsLocally(
+  systemId: number,
+  sessionId: number,
+  batch: AmberReadingsBatch,
+  stageName: string,
+): Promise<StageResult> {
+  const records = batch.getRecords();
+
+  // Flatten nested Map structure into array for insertPointReadingsDirectTo5m
+  const readingsToInsert: Array<{
+    pointMetadata: PointMetadata;
+    rawValue: any;
+    intervalEndMs: number;
+    dataQuality?: string | null;
+    error?: string | null;
+  }> = [];
+
+  for (const [intervalMsStr, pointMap] of records.entries()) {
+    const intervalEndMs = Number(intervalMsStr);
+
+    for (const [pointKey, reading] of pointMap.entries()) {
+      readingsToInsert.push({
+        pointMetadata: reading.pointMetadata,
+        rawValue: reading.rawValue,
+        intervalEndMs,
+        dataQuality: reading.dataQuality ?? null,
+        error: reading.error ?? null,
+      });
+    }
+  }
+
+  // Batch insert to point_readings_agg_5m
+  await insertPointReadingsDirectTo5m(systemId, sessionId, readingsToInsert);
+
+  // Return stage result
+  return {
+    stage: stageName,
+    discovery: `inserted ${readingsToInsert.length} readings into database`,
+    info: batch.getInfo(),
+  };
+}
+
+/**
  * Main Entry Points
  */
 
@@ -769,13 +815,15 @@ async function loadRemotePrices(
  * - Stage 1: If local is all-billable, we're done
  * - Stage 2: If both local and remote are empty, we're done
  * - Stage 3: Compare and identify superior records
+ * - Stage 4: Store superior records to database
  */
 export async function updateUsage(
   systemId: number,
   firstDay: CalendarDate,
   numberOfDays: number = 1,
   credentials: AmberCredentials,
-): Promise<SyncAudit> {
+  sessionId: number,
+): Promise<AmberSyncResult> {
   const tracker = new StageTracker();
   const stages: StageResult[] = [];
   const startTime = Date.now();
@@ -789,12 +837,12 @@ export async function updateUsage(
       systemId,
       firstDay,
       numberOfDays,
-      tracker.nextStage("load local data"),
+      "usage stage 1: load local data",
     );
     stages.push(localResult);
 
     if (localResult.error) {
-      error = `Stage 1 failed: ${localResult.error}`;
+      error = `Usage stage 1 failed: ${localResult.error}`;
     } else if (localResult.info.completeness === "all-billable") {
       // EARLY EXIT: Local already has complete billable data
       localResult.discovery = "local is already up to date";
@@ -804,12 +852,12 @@ export async function updateUsage(
         credentials,
         firstDay,
         numberOfDays,
-        tracker.nextStage("load remote usage"),
+        "usage stage 2: load remote usage",
       );
       stages.push(remoteResult);
 
       if (remoteResult.error) {
-        error = `Stage 2 failed: ${remoteResult.error}`;
+        error = `Usage stage 2 failed: ${remoteResult.error}`;
       } else if (remoteResult.info.completeness === "none") {
         // EARLY EXIT: Both local and remote are empty
         remoteResult.discovery = "local and remote both empty";
@@ -828,19 +876,44 @@ export async function updateUsage(
           remoteResult,
           firstDay,
           numberOfDays,
-          tracker.nextStage("compare local vs remote usage"),
+          "usage stage 3: compare local vs remote usage",
         );
         stages.push(compareResult);
 
         if (compareResult.error) {
-          error = `Stage 3 failed: ${compareResult.error}`;
+          error = `Usage stage 3 failed: ${compareResult.error}`;
         } else {
           // Verify completeness is not "none"
           if (compareResult.info.completeness === "none") {
             error =
-              "Stage 3 unexpected: completeness is none (should be impossible)";
+              "Usage stage 3 unexpected: completeness is none (should be impossible)";
           } else {
             compareResult.discovery = `found ${compareResult.info.numRecords} superior remote records to update/insert`;
+
+            // STAGE 4: Store superior records to database
+            if (compareResult.records && compareResult.info.numRecords > 0) {
+              const batch = new AmberReadingsBatch(firstDay, numberOfDays);
+              for (const [
+                intervalMsStr,
+                pointMap,
+              ] of compareResult.records.entries()) {
+                for (const reading of pointMap.values()) {
+                  batch.add(reading);
+                }
+              }
+
+              const storeResult = await storeRecordsLocally(
+                systemId,
+                sessionId,
+                batch,
+                "usage stage 4: store superior usage records",
+              );
+              stages.push(storeResult);
+
+              if (storeResult.error) {
+                error = `Usage stage 4 failed: ${storeResult.error}`;
+              }
+            }
           }
         }
       }
@@ -850,7 +923,9 @@ export async function updateUsage(
     error = exception.message;
   }
 
-  const result: SyncAudit = {
+  const result: AmberSyncResult = {
+    action: "updateUsage",
+    success: error === undefined && exception === undefined,
     systemId,
     firstDay,
     numberOfDays,
@@ -874,13 +949,15 @@ export async function updateUsage(
  * - Stage 1: If local has all-billable price data, we're done
  * - Stage 2: If remote has no price data, we're done
  * - Stage 3: Compare and identify superior price records
+ * - Stage 4: Store superior records to database
  */
 export async function updateForecasts(
   systemId: number,
   firstDay: CalendarDate,
   numberOfDays: number = 1,
   credentials: AmberCredentials,
-): Promise<SyncAudit> {
+  sessionId: number,
+): Promise<AmberSyncResult> {
   const tracker = new StageTracker();
   const stages: StageResult[] = [];
   const startTime = Date.now();
@@ -894,12 +971,12 @@ export async function updateForecasts(
       systemId,
       firstDay,
       numberOfDays,
-      tracker.nextStage("load local data"),
+      "forecast stage 1: load local data",
     );
     stages.push(localResult);
 
     if (localResult.error) {
-      error = `Stage 1 failed: ${localResult.error}`;
+      error = `Forecast stage 1 failed: ${localResult.error}`;
     } else {
       // Check if local has price points (E1.perKwh, B1.perKwh, grid.spotPerKwh, grid.renewables)
       const hasPricePoints = Array.from(localResult.info.overviews.keys()).some(
@@ -915,12 +992,12 @@ export async function updateForecasts(
           credentials,
           firstDay,
           numberOfDays,
-          tracker.nextStage("load remote prices"),
+          "forecast stage 2: load remote prices",
         );
         stages.push(pricesResult);
 
         if (pricesResult.error) {
-          error = `Stage 2 failed: ${pricesResult.error}`;
+          error = `Forecast stage 2 failed: ${pricesResult.error}`;
         } else if (pricesResult.info.completeness === "none") {
           // EARLY EXIT: No price data available
           pricesResult.discovery = "no price data available yet";
@@ -938,19 +1015,44 @@ export async function updateForecasts(
             pricesResult,
             firstDay,
             numberOfDays,
-            tracker.nextStage("compare local vs remote prices"),
+            "forecast stage 3: compare local vs remote prices",
             true, // useNewPoints: true for prices
           );
           stages.push(compareResult);
 
           if (compareResult.error) {
-            error = `Stage 3 failed: ${compareResult.error}`;
+            error = `Forecast stage 3 failed: ${compareResult.error}`;
           } else {
             if (compareResult.info.completeness === "none") {
               error =
-                "Stage 3 unexpected: completeness is none (should be impossible)";
+                "Forecast stage 3 unexpected: completeness is none (should be impossible)";
             } else {
               compareResult.discovery = `found ${compareResult.info.numRecords} superior remote price records to update/insert`;
+
+              // STAGE 4: Store superior records to database
+              if (compareResult.records && compareResult.info.numRecords > 0) {
+                const batch = new AmberReadingsBatch(firstDay, numberOfDays);
+                for (const [
+                  intervalMsStr,
+                  pointMap,
+                ] of compareResult.records.entries()) {
+                  for (const reading of pointMap.values()) {
+                    batch.add(reading);
+                  }
+                }
+
+                const storeResult = await storeRecordsLocally(
+                  systemId,
+                  sessionId,
+                  batch,
+                  "forecast stage 4: store superior price records",
+                );
+                stages.push(storeResult);
+
+                if (storeResult.error) {
+                  error = `Forecast stage 4 failed: ${storeResult.error}`;
+                }
+              }
             }
           }
         }
@@ -961,7 +1063,9 @@ export async function updateForecasts(
     error = exception.message;
   }
 
-  const result: SyncAudit = {
+  const result: AmberSyncResult = {
+    action: "updateForecasts",
+    success: error === undefined && exception === undefined,
     systemId,
     firstDay,
     numberOfDays,

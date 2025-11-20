@@ -18,6 +18,7 @@ import { and } from "drizzle-orm";
 import { fromDate } from "@internationalized/date";
 import { formatTimeAEST } from "@/lib/date-utils";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
+import { jsonResponse } from "@/lib/json";
 
 export async function GET(request: NextRequest) {
   const apiStartTime = Date.now(); // Track API call start time
@@ -34,14 +35,16 @@ export async function GET(request: NextRequest) {
     const isCronRequest = authHeader === `Bearer ${process.env.CRON_SECRET}`;
     const sessionCause = isCronRequest ? "CRON" : "ADMIN";
 
-    // In development, allow testing specific systems with force flag
+    // In development, allow testing specific systems with isUserOriginated flag
     const searchParams = request.nextUrl.searchParams;
     const testSystemId = searchParams.get("systemId");
-    const forceTest = searchParams.get("force") === "true";
+    const isUserOriginated = searchParams.get("force") === "true"; // Keep "force" param name for backwards compatibility
     const includeRaw = searchParams.get("includeRaw") === "true";
 
-    if (testSystemId && forceTest) {
-      console.log(`[Cron] Testing system ${testSystemId} with force=true`);
+    if (testSystemId && isUserOriginated) {
+      console.log(
+        `[Cron] Testing system ${testSystemId} with isUserOriginated=true`,
+      );
     }
 
     console.log("[Cron] Starting system polling...");
@@ -121,7 +124,11 @@ export async function GET(request: NextRequest) {
 
       // Check if we should poll - if not time yet, skip without creating session
       const now = new Date();
-      const shouldPollCheck = await adapter.shouldPoll(system, forceTest, now);
+      const shouldPollCheck = await adapter.shouldPoll(
+        system,
+        isUserOriginated,
+        now,
+      );
 
       if (!shouldPollCheck.shouldPoll) {
         results.push({
@@ -228,7 +235,7 @@ export async function GET(request: NextRequest) {
         const result = await adapter.poll(
           system,
           credentials,
-          forceTest,
+          isUserOriginated,
           now,
           dbSessionId,
         );
@@ -369,10 +376,11 @@ export async function GET(request: NextRequest) {
             break;
 
           case "ERROR":
-            // Update error status
+            // Update error status with rawResponse for debugging
             await updatePollingStatusError(
               system.id,
               result.error || "Unknown error",
+              result.rawResponse,
             );
 
             // Update session with error result
@@ -381,6 +389,7 @@ export async function GET(request: NextRequest) {
               successful: false,
               errorCode: result.errorCode || null,
               error: result.error || null,
+              response: result.rawResponse, // Include rawResponse even for errors
               numRows: 0,
             });
 
@@ -392,6 +401,9 @@ export async function GET(request: NextRequest) {
               sessionLabel: sessionLabel || undefined,
               error: result.error,
               durationMs: Date.now() - pollStartTime,
+              ...(includeRaw && result.rawResponse
+                ? { rawResponse: result.rawResponse }
+                : {}),
               lastPoll: system.pollingStatus?.lastPollTime
                 ? formatTimeAEST(
                     fromDate(
@@ -481,19 +493,22 @@ export async function GET(request: NextRequest) {
     const nowZoned = fromDate(new Date(), "Australia/Brisbane");
     const timestamp = formatTimeAEST(nowZoned);
 
-    return NextResponse.json({
-      success: true,
-      sessionId,
-      timestamp,
-      durationMs,
-      summary: {
-        total: results.length,
-        successful: successCount,
-        failed: failureCount,
-        skipped: skippedCount,
+    return jsonResponse(
+      {
+        success: true,
+        sessionId,
+        timestamp,
+        durationMs,
+        summary: {
+          total: results.length,
+          successful: successCount,
+          failed: failureCount,
+          skipped: skippedCount,
+        },
+        results,
       },
-      results,
-    });
+      600,
+    ); // AEST timezone offset
   } catch (error) {
     console.error("[Cron] Fatal error:", error);
 

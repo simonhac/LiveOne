@@ -23,8 +23,8 @@ interface PollNowModalProps {
 
 interface PollResult {
   systemId: number;
-  displayName: string;
-  vendorType: string;
+  displayName?: string;
+  vendorType?: string;
   status: "polled" | "skipped" | "error";
   recordsProcessed?: number;
   skipReason?: string;
@@ -40,7 +40,6 @@ export default function PollNowModal({
   onClose,
 }: PollNowModalProps) {
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PollResult | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pollDuration, setPollDuration] = useState<number | null>(null);
@@ -72,7 +71,6 @@ export default function PollNowModal({
       setLoading(true);
       setResult(null);
     }
-    setError(null);
 
     const startTime = Date.now();
 
@@ -106,10 +104,14 @@ export default function PollNowModal({
       setResult(mappedResult);
     } catch (err) {
       console.error("Poll now error:", err);
-      setError(err instanceof Error ? err.message : "Failed to poll system");
-      if (!isRefresh) {
-        setResult(null);
-      }
+      // Create an error result object instead of setting separate error state
+      setResult({
+        systemId,
+        displayName: displayName ?? undefined,
+        vendorType: vendorType ?? undefined,
+        status: "error",
+        error: err instanceof Error ? err.message : "Failed to poll system",
+      });
     } finally {
       setLoading(false);
       setIsRefreshing(false);
@@ -165,16 +167,6 @@ export default function PollNowModal({
             <X className="w-5 h-5" />
           </button>
         </div>
-
-        {/* Error Display */}
-        {error && (
-          <div className="bg-red-900/20 border border-red-700 rounded-lg p-4 mb-4">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-5 h-5 text-red-400" />
-              <p className="text-red-400">{error}</p>
-            </div>
-          </div>
-        )}
 
         {/* Loading State - Initial */}
         {loading && !result && (
@@ -292,18 +284,18 @@ export default function PollNowModal({
             <button
               onClick={refreshPoll}
               disabled={isRefreshing}
-              className="flex items-center justify-center gap-2 px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white rounded-lg transition-colors min-w-32"
+              className="flex items-center justify-center gap-2 px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white rounded-lg transition-colors w-40"
             >
               <RefreshCw
                 className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
               />
-              Refresh
+              Poll Again
             </button>
           )}
 
           <button
             onClick={onClose}
-            className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors min-w-32"
+            className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors w-40"
           >
             Close
           </button>

@@ -113,13 +113,13 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   /**
    * Check if system should be polled based on schedule
    * @param system - The system to check
-   * @param force - If true, always returns { shouldPoll: true }
+   * @param isUserOriginated - If true, always returns { shouldPoll: true }
    * @param now - Current time
    * @returns Object with shouldPoll flag, reason if skipped, and nextPoll time
    */
   async shouldPoll(
     system: SystemWithPolling,
-    force: boolean,
+    isUserOriginated: boolean,
     now: Date,
   ): Promise<{
     shouldPoll: boolean;
@@ -133,7 +133,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       };
     }
 
-    if (force) {
+    if (isUserOriginated) {
       return { shouldPoll: true };
     }
 
@@ -152,24 +152,24 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * Push-only systems should not override this method.
    * @param system - The system to poll
    * @param credentials - Vendor credentials
-   * @param force - If true, bypass rate limiting and poll immediately
+   * @param isUserOriginated - If true, bypass rate limiting and poll immediately
    * @param now - Current time from cron job
    */
   async poll(
     system: SystemWithPolling,
     credentials: any,
-    force: boolean,
+    isUserOriginated: boolean,
     now: Date,
     sessionId: number,
   ): Promise<PollingResult> {
-    const check = await this.shouldPoll(system, force, now);
+    const check = await this.shouldPoll(system, isUserOriginated, now);
 
     if (!check.shouldPoll) {
       return this.skipped(check.reason || "Skipped", check.nextPoll);
     }
 
     // Delegate to the actual polling implementation
-    return this.doPoll(system, credentials, now, sessionId);
+    return this.doPoll(system, credentials, now, sessionId, isUserOriginated);
   }
 
   /**
@@ -179,12 +179,14 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * @param credentials - Vendor credentials
    * @param now - Current time from cron job
    * @param sessionId - The session ID to associate with this polling operation
+   * @param isUserOriginated - If true, the poll was triggered manually by a user
    */
   protected async doPoll(
     system: SystemWithPolling,
     credentials: any,
     now: Date,
     sessionId: number,
+    isUserOriginated: boolean,
   ): Promise<PollingResult> {
     // Default implementation for push-only systems (should never be called)
     return this.error("This vendor does not support polling");
@@ -316,10 +318,11 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   /**
    * Helper to create an ERROR result
    */
-  protected error(error: string | Error): PollingResult {
+  protected error(error: string | Error, rawResponse?: any): PollingResult {
     return {
       action: "ERROR",
       error: error instanceof Error ? error.message : error,
+      rawResponse,
     };
   }
 
