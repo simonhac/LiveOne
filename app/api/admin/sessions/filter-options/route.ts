@@ -19,33 +19,26 @@ export async function GET() {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Get all distinct values for each filterable column
-    const [systemNames, vendorTypes, causes, statuses] = await Promise.all([
-      db
-        .selectDistinct({ value: sessions.systemName })
-        .from(sessions)
-        .orderBy(sessions.systemName),
-      db
-        .selectDistinct({ value: sessions.vendorType })
-        .from(sessions)
-        .orderBy(sessions.vendorType),
-      db
-        .selectDistinct({ value: sessions.cause })
-        .from(sessions)
-        .orderBy(sessions.cause),
-      db
-        .selectDistinct({ value: sessions.successful })
-        .from(sessions)
-        .orderBy(sessions.successful),
-    ]);
+    // Get all sessions and extract unique values
+    const allSessions = await db.select().from(sessions);
+
+    // Extract unique values for each filterable column
+    const systemNames = [
+      ...new Set(allSessions.map((s) => s.systemName)),
+    ].sort();
+    const vendorTypes = [
+      ...new Set(allSessions.map((s) => s.vendorType)),
+    ].sort();
+    const causes = [...new Set(allSessions.map((s) => s.cause))].sort();
+    const statuses = [...new Set(allSessions.map((s) => s.successful))].sort();
 
     return NextResponse.json({
       success: true,
       filterOptions: {
-        systemName: systemNames.map((row) => row.value),
-        vendorType: vendorTypes.map((row) => row.value),
-        cause: causes.map((row) => row.value),
-        successful: statuses.map((row) => row.value),
+        systemName: systemNames,
+        vendorType: vendorTypes,
+        cause: causes,
+        successful: statuses,
       },
     });
   } catch (error) {
