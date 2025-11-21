@@ -90,7 +90,7 @@ function HeaderFilter({
   const hasActiveFilter = filterValue.length > 0;
 
   return (
-    <DropdownMenu.Root modal={false}>
+    <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
         <button
           className={`p-0.5 rounded hover:bg-gray-700 transition-colors ${
@@ -106,9 +106,8 @@ function HeaderFilter({
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           className="min-w-[200px] bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-1 max-h-[400px] overflow-y-auto z-50"
+          style={{ transform: "translateZ(0)" }}
           sideOffset={5}
-          align="start"
-          side="bottom"
         >
           {hasActiveFilter && (
             <>
