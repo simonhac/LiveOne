@@ -63,7 +63,6 @@ function HeaderFilter({
   column: any;
   availableOptions: any[];
 }) {
-  const [open, setOpen] = useState(false);
   const filterValue = (column.getFilterValue() as any[]) ?? [];
 
   // Use provided options (from database), already sorted
@@ -91,7 +90,7 @@ function HeaderFilter({
   const hasActiveFilter = filterValue.length > 0;
 
   return (
-    <DropdownMenu.Root open={open} onOpenChange={setOpen}>
+    <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
         <button
           className={`p-0.5 rounded hover:bg-gray-700 transition-colors ${
@@ -104,11 +103,10 @@ function HeaderFilter({
           />
         </button>
       </DropdownMenu.Trigger>
-      <DropdownMenu.Portal forceMount={open ? true : undefined}>
+      <DropdownMenu.Portal>
         <DropdownMenu.Content
           className="min-w-[200px] bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-1 max-h-[400px] overflow-y-auto z-50"
           sideOffset={5}
-          forceMount={open ? true : undefined}
         >
           {hasActiveFilter && (
             <>
