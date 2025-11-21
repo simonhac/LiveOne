@@ -74,7 +74,8 @@ export async function GET(request: NextRequest) {
         | "duration"
         | "systemName"
         | "vendorType"
-        | "cause" = "started";
+        | "cause"
+        | "numRows" = "started";
       let sortOrder: "asc" | "desc" = "desc";
       if (sortParam) {
         const [field, direction] = sortParam.split(".");
@@ -83,7 +84,8 @@ export async function GET(request: NextRequest) {
           field === "duration" ||
           field === "systemName" ||
           field === "vendorType" ||
-          field === "cause"
+          field === "cause" ||
+          field === "numRows"
         ) {
           sortBy = field;
         }

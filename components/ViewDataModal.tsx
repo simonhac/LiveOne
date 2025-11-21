@@ -80,7 +80,9 @@ export default function ViewDataModal({
 
   const [showExtras, setShowExtras] = useState(true);
   const [source, setSource] = useState<"raw" | "5m" | "daily">("raw");
-  const [selectedSession, setSelectedSession] = useState<any | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(
+    null,
+  );
   const [isSessionInfoModalOpen, setIsSessionInfoModalOpen] = useState(false);
   const [rawDataUnavailable, setRawDataUnavailable] = useState(false);
   const [pagination, setPagination] = useState<{
@@ -347,34 +349,10 @@ export default function ViewDataModal({
     setIsPointInfoModalOpen(true);
   };
 
-  const handleSessionClick = async (sessionId: number | null) => {
+  const handleSessionClick = (sessionId: number | null) => {
     if (sessionId === null) return;
-
-    // Delay showing wait cursor by 500ms
-    const cursorTimeout = setTimeout(() => {
-      document.body.style.cursor = "wait";
-    }, 500);
-
-    try {
-      const response = await fetch(`/api/admin/sessions/${sessionId}`);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch session: ${response.status}`);
-      }
-      const data = await response.json();
-
-      // Clear timeout and reset cursor
-      clearTimeout(cursorTimeout);
-      document.body.style.cursor = "";
-
-      // Set session data and open modal
-      setSelectedSession(data.session);
-      setIsSessionInfoModalOpen(true);
-    } catch (error) {
-      console.error("Error fetching session:", error);
-      clearTimeout(cursorTimeout);
-      document.body.style.cursor = "";
-      // Could show an error toast here if desired
-    }
+    setSelectedSessionId(sessionId);
+    setIsSessionInfoModalOpen(true);
   };
 
   const handleUpdatePointInfo = async (
@@ -1081,7 +1059,7 @@ export default function ViewDataModal({
       <SessionInfoModal
         isOpen={isSessionInfoModalOpen}
         onClose={() => setIsSessionInfoModalOpen(false)}
-        session={selectedSession}
+        sessionId={selectedSessionId}
       />
 
       {selectedReading && (

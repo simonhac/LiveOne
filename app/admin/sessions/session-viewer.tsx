@@ -45,7 +45,6 @@ interface Session {
   successful: boolean;
   errorCode?: string;
   error?: string;
-  response?: any;
   numRows: number;
   createdAt: string;
 }
@@ -95,11 +94,13 @@ function HeaderFilter({
       <DropdownMenu.Trigger asChild>
         <button
           className={`p-0.5 rounded hover:bg-gray-700 transition-colors ${
-            hasActiveFilter ? "text-blue-400" : "text-gray-500"
+            hasActiveFilter ? "text-white font-bold" : "text-gray-500"
           }`}
           title="Filter column"
         >
-          <ChevronDown className="h-3 w-3" />
+          <ChevronDown
+            className={`h-3 w-3 ${hasActiveFilter ? "stroke-[2.5]" : ""}`}
+          />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal container={document.body}>
@@ -216,7 +217,9 @@ export default function ActivityViewer() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedSession, setSelectedSession] = useState<Session | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(
+    null,
+  );
   const [rotateKey, setRotateKey] = useState(0);
 
   // Filter options (all possible values from database)
@@ -453,7 +456,7 @@ export default function ActivityViewer() {
           const label = row.original.sessionLabel;
           return label ? (
             <button
-              onClick={() => setSelectedSession(row.original)}
+              onClick={() => setSelectedSessionId(row.original.id)}
               className="font-mono text-xs text-gray-400 hover:text-gray-200 hover:underline transition-colors cursor-pointer"
             >
               {label}
@@ -581,17 +584,17 @@ export default function ActivityViewer() {
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setSelectedSession(null);
+        setSelectedSessionId(null);
         if (document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
         }
       }
     };
-    if (selectedSession) {
+    if (selectedSessionId) {
       document.addEventListener("keydown", handleEscape);
       return () => document.removeEventListener("keydown", handleEscape);
     }
-  }, [selectedSession]);
+  }, [selectedSessionId]);
 
   const clearAllFilters = () => {
     table.resetColumnFilters();
@@ -736,7 +739,11 @@ export default function ActivityViewer() {
                           {canSort ? (
                             <button
                               onClick={header.column.getToggleSortingHandler()}
-                              className="flex items-center gap-1 hover:text-gray-200 transition-colors"
+                              className={`flex items-center gap-1 transition-colors ${
+                                sortDirection
+                                  ? "text-white font-bold hover:text-gray-100"
+                                  : "hover:text-gray-200"
+                              }`}
                             >
                               <span>
                                 {flexRender(
@@ -745,9 +752,9 @@ export default function ActivityViewer() {
                                 )}
                               </span>
                               {sortDirection === "asc" ? (
-                                <ArrowUp className="h-3 w-3" />
+                                <ArrowUp className="h-3 w-3 stroke-[2.5]" />
                               ) : sortDirection === "desc" ? (
-                                <ArrowDown className="h-3 w-3" />
+                                <ArrowDown className="h-3 w-3 stroke-[2.5]" />
                               ) : (
                                 <ArrowUpDown className="h-3 w-3 opacity-50" />
                               )}
@@ -789,7 +796,7 @@ export default function ActivityViewer() {
                   className={`border-b border-gray-700 hover:bg-gray-700/50 transition-colors cursor-pointer ${
                     index % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"
                   }`}
-                  onClick={() => setSelectedSession(row.original)}
+                  onClick={() => setSelectedSessionId(row.original.id)}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <td
@@ -818,9 +825,9 @@ export default function ActivityViewer() {
       </div>
 
       <SessionInfoModal
-        isOpen={selectedSession !== null}
-        onClose={() => setSelectedSession(null)}
-        session={selectedSession}
+        isOpen={selectedSessionId !== null}
+        onClose={() => setSelectedSessionId(null)}
+        sessionId={selectedSessionId}
       />
     </>
   );

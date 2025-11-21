@@ -47,8 +47,9 @@ export function PollAllModal({
   isPolling = false,
 }: PollAllModalProps) {
   const { registerModal, unregisterModal } = useModalContext();
-  const [selectedSession, setSelectedSession] = useState<any>(null);
-  const [loadingSession, setLoadingSession] = useState(false);
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(
+    null,
+  );
   const [elapsedTime, setElapsedTime] = useState(0);
   const [errorTooltip, setErrorTooltip] = useState<ErrorTooltipState | null>(
     null,
@@ -81,8 +82,8 @@ export function PollAllModal({
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         // Close session modal first if it's open, otherwise close poll all modal
-        if (selectedSession) {
-          setSelectedSession(null);
+        if (selectedSessionId) {
+          setSelectedSessionId(null);
         } else {
           onClose();
         }
@@ -92,24 +93,10 @@ export function PollAllModal({
       document.addEventListener("keydown", handleEscape);
     }
     return () => document.removeEventListener("keydown", handleEscape);
-  }, [isOpen, onClose, selectedSession]);
+  }, [isOpen, onClose, selectedSessionId]);
 
-  const handleSessionClick = async (sessionLabel: string) => {
-    setLoadingSession(true);
-    try {
-      const response = await fetch(`/api/admin/sessions?label=${sessionLabel}`);
-      if (!response.ok) {
-        throw new Error("Failed to fetch session");
-      }
-      const result = await response.json();
-      if (result.success && result.sessions && result.sessions.length > 0) {
-        setSelectedSession(result.sessions[0]);
-      }
-    } catch (err) {
-      console.error("Error fetching session:", err);
-    } finally {
-      setLoadingSession(false);
-    }
+  const handleSessionClick = (sessionId: number) => {
+    setSelectedSessionId(sessionId);
   };
 
   if (!isOpen) return null;
@@ -160,12 +147,11 @@ export function PollAllModal({
       children: React.ReactNode;
       className: string;
     }) => {
-      if (result.sessionLabel) {
+      if (result.sessionLabel && result.sessionId) {
         return (
           <button
-            onClick={() => handleSessionClick(result.sessionLabel!)}
-            disabled={loadingSession}
-            className={`${className} session-col-narrow-link transition-opacity disabled:opacity-50 disabled:cursor-not-allowed`}
+            onClick={() => handleSessionClick(result.sessionId!)}
+            className={`${className} session-col-narrow-link`}
           >
             {children}
           </button>
@@ -363,13 +349,10 @@ export function PollAllModal({
                       {getStatusText(result)}
                     </td>
                     <td className="session-col px-4 py-2.5 text-sm">
-                      {result.sessionLabel ? (
+                      {result.sessionLabel && result.sessionId ? (
                         <button
-                          onClick={() =>
-                            handleSessionClick(result.sessionLabel!)
-                          }
-                          disabled={loadingSession}
-                          className="font-mono text-xs text-gray-400 hover:text-gray-200 hover:underline transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          onClick={() => handleSessionClick(result.sessionId!)}
+                          className="font-mono text-xs text-gray-400 hover:text-gray-200 hover:underline transition-colors"
                         >
                           {result.sessionLabel}
                         </button>
@@ -547,9 +530,9 @@ export function PollAllModal({
 
       {/* Session Info Modal (z-60, appears above this modal) */}
       <SessionInfoModal
-        isOpen={selectedSession !== null}
-        onClose={() => setSelectedSession(null)}
-        session={selectedSession}
+        isOpen={selectedSessionId !== null}
+        onClose={() => setSelectedSessionId(null)}
+        sessionId={selectedSessionId}
       />
 
       {/* Error Tooltip Portal */}

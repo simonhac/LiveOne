@@ -104,7 +104,8 @@ export interface PollingResult {
   systemId?: number;
   displayName?: string;
   vendorType?: string;
-  sessionLabel?: string;
+  sessionId?: number; // Database session ID (numeric primary key)
+  sessionLabel?: string; // Session label (string identifier)
   lastPoll?: string | null;
   durationMs?: number; // Elapsed time for the poll operation in milliseconds
   startMs?: number; // Start time of this poll (absolute timestamp in milliseconds)

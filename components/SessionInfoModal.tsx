@@ -3,6 +3,7 @@
 import { formatDateTime } from "@/lib/fe-date-format";
 import { AlertCircle, X } from "lucide-react";
 import JsonViewer from "@/components/JsonViewer";
+import { useState, useEffect } from "react";
 
 interface Session {
   id: number;
@@ -24,7 +25,7 @@ interface Session {
 interface SessionInfoModalProps {
   isOpen: boolean;
   onClose: () => void;
-  session: Session | null;
+  sessionId: number | null;
 }
 
 // Helper function to format duration
@@ -53,14 +54,60 @@ const getCauseColor = (cause: string) => {
 export default function SessionInfoModal({
   isOpen,
   onClose,
-  session,
+  sessionId,
 }: SessionInfoModalProps) {
+  const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch session details when modal opens
+  useEffect(() => {
+    if (isOpen && sessionId) {
+      setLoading(true);
+      setError(null);
+      fetch(`/api/admin/sessions/${sessionId}`)
+        .then((res) => {
+          if (!res.ok) {
+            throw new Error(`Failed to fetch session: ${res.status}`);
+          }
+          return res.json();
+        })
+        .then((data) => {
+          if (data.success) {
+            setSession(data.session);
+          } else {
+            setError("Failed to load session data");
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to fetch session details:", err);
+          setError(err.message || "Failed to load session data");
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    } else {
+      setSession(null);
+      setError(null);
+    }
+  }, [isOpen, sessionId]);
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center z-60 overflow-y-auto">
       <div className="bg-gray-800/95 backdrop-blur-sm border border-gray-700 rounded-lg p-6 max-w-2xl w-full mx-4 my-8 max-h-[90vh] overflow-y-auto">
-        {session && (
+        {loading && (
+          <div className="flex items-center justify-center py-8">
+            <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          </div>
+        )}
+        {error && (
+          <div className="bg-red-900/20 border border-red-700 rounded-lg p-4">
+            <p className="text-red-400">{error}</p>
+          </div>
+        )}
+        {session && !loading && (
           <>
             {/* Header */}
             <div className="flex justify-between items-start mb-4">

@@ -435,7 +435,13 @@ export class SessionManager {
     timeRangeHours?: number; // e.g., 24, 72, 168, 720 for 24h, 3d, 7d, 30d
 
     // Sorting
-    sortBy?: "started" | "duration" | "systemName" | "vendorType" | "cause";
+    sortBy?:
+      | "started"
+      | "duration"
+      | "systemName"
+      | "vendorType"
+      | "cause"
+      | "numRows";
     sortOrder?: "asc" | "desc";
 
     // Pagination
@@ -457,7 +463,6 @@ export class SessionManager {
       successful: boolean;
       errorCode: string | null;
       error: string | null;
-      response: any | null;
       numRows: number;
       createdAt: Date;
     }>;
@@ -520,6 +525,9 @@ export class SessionManager {
         case "cause":
           orderByClause = sortOrder(sessions.cause);
           break;
+        case "numRows":
+          orderByClause = sortOrder(sessions.numRows);
+          break;
         case "started":
         default:
           orderByClause = sortOrder(sessions.started);
@@ -540,7 +548,8 @@ export class SessionManager {
         totalCount = undefined;
       }
 
-      // Execute main query
+      // Execute main query - fetch all fields including response
+      // Response field will be excluded in the API route mapping
       const results = await db
         .select()
         .from(sessions)
@@ -549,8 +558,25 @@ export class SessionManager {
         .limit(pageSize)
         .offset(offset);
 
+      // Map results to exclude response field for performance
+      const sessionsWithoutResponse = results.map((session) => ({
+        id: session.id,
+        sessionLabel: session.sessionLabel,
+        systemId: session.systemId,
+        vendorType: session.vendorType,
+        systemName: session.systemName,
+        cause: session.cause,
+        started: session.started,
+        duration: session.duration,
+        successful: session.successful,
+        errorCode: session.errorCode,
+        error: session.error,
+        numRows: session.numRows,
+        createdAt: session.createdAt,
+      }));
+
       return {
-        sessions: results,
+        sessions: sessionsWithoutResponse,
         totalCount,
         page,
         pageSize,
