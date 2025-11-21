@@ -90,7 +90,7 @@ function HeaderFilter({
   const hasActiveFilter = filterValue.length > 0;
 
   return (
-    <DropdownMenu.Root>
+    <DropdownMenu.Root modal={false}>
       <DropdownMenu.Trigger asChild>
         <button
           className={`p-0.5 rounded hover:bg-gray-700 transition-colors ${
