@@ -187,7 +187,9 @@ export async function POST(request: NextRequest) {
                 send(`Discovery: ${stage.discovery}`);
               }
               send(`Num Records: ${stage.info.numRecords}`);
-              send(`Uniformity: '${stage.info.uniformQuality}'`);
+              send(
+                `Uniformity: '${stage.info.uniformQuality ?? "not uniform"}'`,
+              );
               await delay();
 
               // Display overviews (includes comparison notation for comparison stages)
