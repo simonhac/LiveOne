@@ -11,14 +11,13 @@ import {
   X,
   ChevronDown,
   Check,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 import SessionInfoModal from "@/components/SessionInfoModal";
 import {
   useReactTable,
   getCoreRowModel,
-  getSortedRowModel,
-  getFilteredRowModel,
-  getFacetedUniqueValues,
   ColumnDef,
   SortingState,
   ColumnFiltersState,
@@ -30,6 +29,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 declare module "@tanstack/react-table" {
   interface ColumnMeta<TData, TValue> {
     showFilter?: boolean;
+    showTimeFilter?: boolean;
   }
 }
 
@@ -59,13 +59,17 @@ const formatDuration = (durationMs: number): string => {
 };
 
 // Multi-select filter component for header cells
-function HeaderFilter({ column }: { column: any }) {
+function HeaderFilter({
+  column,
+  availableOptions,
+}: {
+  column: any;
+  availableOptions: any[];
+}) {
   const filterValue = (column.getFilterValue() as any[]) ?? [];
-  const facetedValues = column.getFacetedUniqueValues();
-  const sortedUniqueValues = useMemo(
-    () => Array.from(facetedValues.keys()).sort(),
-    [facetedValues],
-  );
+
+  // Use provided options (from database), already sorted
+  const sortedUniqueValues = availableOptions;
 
   const toggleValue = (value: any) => {
     const newFilterValue: any[] = filterValue.includes(value)
@@ -127,8 +131,64 @@ function HeaderFilter({ column }: { column: any }) {
                   {isSelected && <Check className="h-3 w-3 text-blue-400" />}
                 </div>
                 <span className="flex-1">{String(value)}</span>
-                <span className="text-xs text-gray-500">
-                  {String(facetedValues.get(value))}
+              </DropdownMenu.Item>
+            );
+          })}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
+// Time range filter component for TIME column header
+function TimeFilter({
+  timeRange,
+  setTimeRange,
+  setCurrentPage,
+}: {
+  timeRange: string | null;
+  setTimeRange: (range: string | null) => void;
+  setCurrentPage: (page: number) => void;
+}) {
+  const hasActiveFilter = timeRange !== null;
+
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button
+          className={`p-0.5 rounded hover:bg-gray-700 transition-colors ${
+            hasActiveFilter ? "text-blue-400" : "text-gray-500"
+          }`}
+          title="Filter time range"
+        >
+          <ChevronDown className="h-3 w-3" />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          className="min-w-[120px] bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-1 z-50"
+          sideOffset={5}
+        >
+          {["24h", "3d", "7d", "30d", "All"].map((range) => {
+            const isSelected =
+              range === "All" ? !timeRange : timeRange === range;
+            return (
+              <DropdownMenu.Item
+                key={range}
+                className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-700 rounded cursor-pointer outline-none"
+                onSelect={(e: Event) => {
+                  e.preventDefault();
+                  setTimeRange(range === "All" ? null : range);
+                  setCurrentPage(0);
+                }}
+              >
+                <div className="w-4 h-4 flex items-center justify-center">
+                  {isSelected && <Check className="h-3 w-3 text-blue-400" />}
+                </div>
+                <span
+                  className={isSelected ? "text-blue-400" : "text-gray-300"}
+                >
+                  {range}
                 </span>
               </DropdownMenu.Item>
             );
@@ -148,7 +208,19 @@ export default function ActivityViewer() {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
   const [rotateKey, setRotateKey] = useState(0);
-  const [maxSessionId, setMaxSessionId] = useState<number | null>(null);
+
+  // Filter options (all possible values from database)
+  const [filterOptions, setFilterOptions] = useState<{
+    systemName: string[];
+    vendorType: string[];
+    cause: string[];
+    successful: boolean[];
+  }>({
+    systemName: [],
+    vendorType: [],
+    cause: [],
+    successful: [],
+  });
 
   // Initialize sorting from URL
   const [sorting, setSorting] = useState<SortingState>(() => {
@@ -180,7 +252,17 @@ export default function ActivityViewer() {
     return filters;
   });
 
-  // Update URL when sorting or filters change
+  // Time range filter state
+  const [timeRange, setTimeRange] = useState<string | null>(() => {
+    return searchParams.get("timeRange");
+  });
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(0);
+  const [totalCount, setTotalCount] = useState<number | null>(null);
+  const pageSize = 100;
+
+  // Update URL when sorting, filters, or time range change
   useEffect(() => {
     const params = new URLSearchParams();
 
@@ -214,10 +296,23 @@ export default function ActivityViewer() {
       }
     });
 
+    // Add time range to URL
+    if (timeRange) {
+      params.set("timeRange", timeRange);
+    }
+
+    // Add page to URL if not first page
+    if (currentPage > 0) {
+      params.set("page", currentPage.toString());
+    }
+
     const queryString = params.toString();
     const newUrl = queryString ? `?${queryString}` : window.location.pathname;
     router.replace(newUrl, { scroll: false });
-  }, [sorting, columnFilters, router]);
+
+    // Reset to page 0 when filters/sorting change (but not when just changing pages)
+    // This effect runs after state updates, so we check if we need to reset
+  }, [sorting, columnFilters, timeRange, currentPage, router]);
 
   const getCauseColor = (cause: string) => {
     switch (cause) {
@@ -254,14 +349,16 @@ export default function ActivityViewer() {
     () => [
       {
         accessorKey: "started",
-        header: "Time",
+        header: "TIME",
         cell: ({ getValue }) => formatDateTime(getValue<string>()).display,
         sortingFn: "datetime",
         enableColumnFilter: false,
+        meta: { showTimeFilter: true },
       },
       {
         accessorKey: "systemName",
-        header: "System",
+        header: "SYSTEM",
+        size: 250,
         cell: ({ row }) => (
           <div>
             <a
@@ -284,7 +381,7 @@ export default function ActivityViewer() {
       },
       {
         accessorKey: "vendorType",
-        header: "Vendor",
+        header: "VENDOR",
         filterFn: (row, id, filterValue) => {
           if (!filterValue || !Array.isArray(filterValue)) return true;
           return filterValue.includes(row.getValue(id));
@@ -293,7 +390,7 @@ export default function ActivityViewer() {
       },
       {
         accessorKey: "cause",
-        header: "Cause",
+        header: "CAUSE",
         cell: ({ getValue }) => {
           const cause = getValue<string>();
           return (
@@ -310,13 +407,16 @@ export default function ActivityViewer() {
       },
       {
         accessorKey: "duration",
-        header: "Duration",
-        cell: ({ getValue }) => formatDuration(getValue<number>()),
+        header: "DURATION",
+        size: 90,
+        cell: ({ getValue }) => (
+          <div className="text-right">{formatDuration(getValue<number>())}</div>
+        ),
         sortingFn: "basic",
       },
       {
         accessorKey: "successful",
-        header: "Status",
+        header: "STATUS",
         cell: ({ row }) =>
           getStatusBadge(row.original.successful, row.original.errorCode),
         filterFn: (row, id, filterValue) => {
@@ -327,16 +427,18 @@ export default function ActivityViewer() {
       },
       {
         accessorKey: "numRows",
-        header: "Rows",
+        header: "ROWS",
         cell: ({ getValue }) => {
           const numRows = getValue<number>();
-          return numRows > 0 ? numRows : "-";
+          return (
+            <div className="text-right">{numRows > 0 ? numRows : "-"}</div>
+          );
         },
         sortingFn: "basic",
       },
       {
         accessorKey: "sessionLabel",
-        header: "Label",
+        header: "LABEL",
         cell: ({ row }) => {
           const label = row.original.sessionLabel;
           return label ? (
@@ -366,69 +468,103 @@ export default function ActivityViewer() {
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getFacetedUniqueValues: getFacetedUniqueValues(),
+    // Server-side sorting/filtering, so disable client-side
+    manualSorting: true,
+    manualFiltering: true,
+    manualPagination: true,
+    pageCount: totalCount ? Math.ceil(totalCount / pageSize) : -1,
   });
 
-  const fetchSessions = useCallback(
-    async (isRefresh = false) => {
-      try {
-        const url =
-          isRefresh && maxSessionId
-            ? `/api/admin/sessions?start=${maxSessionId}&count=200`
-            : "/api/admin/sessions?last=200";
-
-        const response = await fetch(url);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch sessions: ${response.status}`);
-        }
-        const data = await response.json();
-
-        if (isRefresh) {
-          setSessions((prev) => {
-            const sessionMap = new Map<number, Session>();
-            prev.forEach((session) => sessionMap.set(session.id, session));
-            data.sessions.forEach((session: Session) =>
-              sessionMap.set(session.id, session),
-            );
-            return Array.from(sessionMap.values()).sort((a, b) => b.id - a.id);
-          });
-        } else {
-          setSessions(data.sessions);
-        }
-
-        if (data.sessions.length > 0) {
-          const newMaxId = Math.max(...data.sessions.map((s: Session) => s.id));
-          setMaxSessionId((prevMax) =>
-            prevMax ? Math.max(prevMax, newMaxId) : newMaxId,
-          );
-        }
-
-        setError(null);
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to load sessions",
-        );
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    },
-    [maxSessionId],
-  );
-
+  // Fetch filter options on mount
   useEffect(() => {
-    if (loading) {
-      fetchSessions();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const fetchFilterOptions = async () => {
+      try {
+        const response = await fetch("/api/admin/sessions/filter-options");
+        if (response.ok) {
+          const data = await response.json();
+          setFilterOptions(data.filterOptions);
+        }
+      } catch (error) {
+        console.error("Failed to fetch filter options:", error);
+      }
+    };
+
+    fetchFilterOptions();
   }, []);
 
+  const fetchSessions = useCallback(async () => {
+    try {
+      setRefreshing(true);
+
+      // Build query params for server-side filtering/sorting
+      const params = new URLSearchParams();
+
+      // Add sorting
+      if (sorting.length > 0) {
+        const { id, desc } = sorting[0];
+        params.set("sort", `${id}.${desc ? "desc" : "asc"}`);
+      }
+
+      // Add filters
+      columnFilters.forEach((filter) => {
+        if (Array.isArray(filter.value) && filter.value.length > 0) {
+          const key = {
+            vendorType: "vendor",
+            systemName: "system",
+            cause: "cause",
+            successful: "status",
+          }[filter.id];
+
+          if (key) {
+            if (filter.id === "successful") {
+              const statusValues = (filter.value as boolean[]).map((v) =>
+                v ? "success" : "error",
+              );
+              params.set(key, statusValues.join(","));
+            } else {
+              params.set(key, (filter.value as string[]).join(","));
+            }
+          }
+        }
+      });
+
+      // Add time range
+      if (timeRange) {
+        params.set("timeRange", timeRange);
+      }
+
+      // Add pagination
+      params.set("page", currentPage.toString());
+      params.set("pageSize", pageSize.toString());
+
+      const url = `/api/admin/sessions?${params.toString()}`;
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch sessions: ${response.status}`);
+      }
+
+      const data = await response.json();
+      setSessions(data.sessions);
+      setTotalCount(data.totalCount ?? null);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load sessions");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [sorting, columnFilters, timeRange, currentPage, pageSize]);
+
+  // Fetch sessions when filters, sorting, or pagination changes
+  useEffect(() => {
+    fetchSessions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sorting, columnFilters, timeRange, currentPage]);
+
   const handleRefresh = () => {
-    setRefreshing(true);
     setRotateKey((prev) => prev + 1);
-    fetchSessions(true);
+    fetchSessions();
   };
 
   // Handle modal close on Escape key
@@ -449,11 +585,13 @@ export default function ActivityViewer() {
 
   const clearAllFilters = () => {
     table.resetColumnFilters();
+    setTimeRange(null);
+    setCurrentPage(0);
   };
 
-  const hasActiveFilters = columnFilters.length > 0;
-  const filteredRowCount = table.getFilteredRowModel().rows.length;
-  const totalRowCount = table.getCoreRowModel().rows.length;
+  const hasActiveFilters = columnFilters.length > 0 || timeRange !== null;
+  const totalPages = totalCount ? Math.ceil(totalCount / pageSize) : undefined;
+  const hasMorePages = sessions.length === pageSize; // If we got a full page, there might be more
 
   if (loading) {
     return (
@@ -483,114 +621,149 @@ export default function ActivityViewer() {
   return (
     <>
       <div className="bg-gray-800 border-t md:border border-gray-700 md:rounded-t overflow-hidden flex flex-col min-h-0 flex-1">
-        {/* Active filters info */}
-        {hasActiveFilters && (
-          <div className="border-b border-gray-700 px-4 py-2 bg-gray-800/50">
-            <div className="flex items-center gap-3 flex-wrap">
-              <button
-                onClick={clearAllFilters}
-                className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-red-500/20 hover:bg-red-500/30 text-red-400 transition-colors"
-              >
-                <X className="h-3 w-3" />
-                Clear all filters
-              </button>
-              <div className="text-xs text-gray-400">
-                Showing {filteredRowCount} of {totalRowCount} sessions
-              </div>
-            </div>
+        {/* Pagination and refresh controls */}
+        <div className="border-b border-gray-700 px-4 py-2 bg-gray-800/50 flex items-center justify-between flex-wrap gap-3">
+          {/* Left side: Filter info */}
+          <div className="flex items-center gap-3">
+            {hasActiveFilters && (
+              <>
+                <button
+                  onClick={clearAllFilters}
+                  className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-red-500/20 hover:bg-red-500/30 text-red-400 transition-colors"
+                >
+                  <X className="h-3 w-3" />
+                  Clear all filters
+                </button>
+                {totalCount !== null && (
+                  <div className="text-xs text-gray-400">
+                    {totalCount} session{totalCount !== 1 ? "s" : ""} match
+                    {totalCount === 1 ? "es" : ""}
+                  </div>
+                )}
+              </>
+            )}
           </div>
-        )}
+
+          {/* Right side: Pagination controls */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="text-gray-500 hover:text-gray-300 transition-colors disabled:opacity-50"
+              title="Refresh"
+            >
+              <RefreshCw
+                className="h-4 w-4"
+                style={{
+                  transform: `rotate(${rotateKey * 180}deg)`,
+                  transition: "transform 500ms ease",
+                }}
+              />
+            </button>
+            {(totalPages !== undefined
+              ? totalPages > 1
+              : currentPage > 0 || hasMorePages) && (
+              <>
+                <button
+                  onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
+                  disabled={currentPage === 0}
+                  className="p-1 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-gray-400 hover:text-gray-200 hover:bg-gray-700"
+                  title="Previous page"
+                >
+                  <ChevronsLeft className="h-4 w-4" />
+                </button>
+                <span className="text-xs text-gray-400">
+                  {totalPages !== undefined ? (
+                    <>
+                      Page {currentPage + 1} of {totalPages}
+                    </>
+                  ) : (
+                    <>Page {currentPage + 1}</>
+                  )}
+                </span>
+                <button
+                  onClick={() =>
+                    setCurrentPage((p) =>
+                      totalPages !== undefined
+                        ? Math.min(totalPages - 1, p + 1)
+                        : p + 1,
+                    )
+                  }
+                  disabled={
+                    totalPages !== undefined
+                      ? currentPage >= totalPages - 1
+                      : !hasMorePages
+                  }
+                  className="p-1 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-gray-400 hover:text-gray-200 hover:bg-gray-700"
+                  title="Next page"
+                >
+                  <ChevronsRight className="h-4 w-4" />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
 
         {/* Table */}
         <div className="overflow-auto flex-1">
           <table className="w-full">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-gray-800">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id} className="border-b border-gray-700">
                   {headerGroup.headers.map((header) => {
                     const canSort = header.column.getCanSort();
                     const sortDirection = header.column.getIsSorted();
                     const showFilter = header.column.columnDef.meta?.showFilter;
+                    const showTimeFilter =
+                      header.column.columnDef.meta?.showTimeFilter;
 
                     return (
                       <th
                         key={header.id}
-                        className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider"
+                        className="px-2.5 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider bg-gray-800"
                       >
                         <div className="flex items-center gap-2">
-                          {header.id === "started" ? (
-                            <>
-                              {canSort ? (
-                                <button
-                                  onClick={header.column.getToggleSortingHandler()}
-                                  className="flex items-center gap-1 hover:text-gray-200 transition-colors"
-                                >
-                                  <span>
-                                    {flexRender(
-                                      header.column.columnDef.header,
-                                      header.getContext(),
-                                    )}
-                                  </span>
-                                  {sortDirection === "asc" ? (
-                                    <ArrowUp className="h-3 w-3" />
-                                  ) : sortDirection === "desc" ? (
-                                    <ArrowDown className="h-3 w-3" />
-                                  ) : (
-                                    <ArrowUpDown className="h-3 w-3 opacity-50" />
-                                  )}
-                                </button>
-                              ) : (
-                                flexRender(
+                          {canSort ? (
+                            <button
+                              onClick={header.column.getToggleSortingHandler()}
+                              className="flex items-center gap-1 hover:text-gray-200 transition-colors"
+                            >
+                              <span>
+                                {flexRender(
                                   header.column.columnDef.header,
                                   header.getContext(),
-                                )
+                                )}
+                              </span>
+                              {sortDirection === "asc" ? (
+                                <ArrowUp className="h-3 w-3" />
+                              ) : sortDirection === "desc" ? (
+                                <ArrowDown className="h-3 w-3" />
+                              ) : (
+                                <ArrowUpDown className="h-3 w-3 opacity-50" />
                               )}
-                              <button
-                                onClick={handleRefresh}
-                                disabled={refreshing}
-                                className="text-gray-500 hover:text-gray-300 transition-colors disabled:opacity-50"
-                                title="Refresh"
-                              >
-                                <RefreshCw
-                                  className="h-4 w-4"
-                                  style={{
-                                    transform: `rotate(${rotateKey * 180}deg)`,
-                                    transition: "transform 500ms ease",
-                                  }}
-                                />
-                              </button>
-                            </>
+                            </button>
                           ) : (
-                            <>
-                              {canSort ? (
-                                <button
-                                  onClick={header.column.getToggleSortingHandler()}
-                                  className="flex items-center gap-1 hover:text-gray-200 transition-colors"
-                                >
-                                  <span>
-                                    {flexRender(
-                                      header.column.columnDef.header,
-                                      header.getContext(),
-                                    )}
-                                  </span>
-                                  {sortDirection === "asc" ? (
-                                    <ArrowUp className="h-3 w-3" />
-                                  ) : sortDirection === "desc" ? (
-                                    <ArrowDown className="h-3 w-3" />
-                                  ) : (
-                                    <ArrowUpDown className="h-3 w-3 opacity-50" />
-                                  )}
-                                </button>
-                              ) : (
-                                flexRender(
-                                  header.column.columnDef.header,
-                                  header.getContext(),
-                                )
-                              )}
-                              {showFilter && (
-                                <HeaderFilter column={header.column} />
-                              )}
-                            </>
+                            flexRender(
+                              header.column.columnDef.header,
+                              header.getContext(),
+                            )
+                          )}
+                          {showFilter && (
+                            <HeaderFilter
+                              column={header.column}
+                              availableOptions={
+                                filterOptions[
+                                  header.column.id as keyof typeof filterOptions
+                                ] || []
+                              }
+                            />
+                          )}
+                          {showTimeFilter && (
+                            <TimeFilter
+                              timeRange={timeRange}
+                              setTimeRange={setTimeRange}
+                              setCurrentPage={setCurrentPage}
+                            />
                           )}
                         </div>
                       </th>
@@ -603,12 +776,15 @@ export default function ActivityViewer() {
               {table.getRowModel().rows.map((row, index) => (
                 <tr
                   key={row.id}
-                  className={`group ${index % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"} hover:bg-gray-700 transition-colors`}
+                  className={`border-b border-gray-700 hover:bg-gray-700/50 transition-colors cursor-pointer ${
+                    index % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"
+                  }`}
+                  onClick={() => setSelectedSession(row.original)}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <td
                       key={cell.id}
-                      className="px-4 py-3 text-sm text-gray-300 align-top"
+                      className="px-2.5 py-3 text-sm text-gray-300 align-top"
                     >
                       {flexRender(
                         cell.column.columnDef.cell,
@@ -622,15 +798,11 @@ export default function ActivityViewer() {
           </table>
         </div>
 
-        {sessions.length === 0 && (
+        {sessions.length === 0 && !loading && (
           <div className="px-4 py-8 text-center text-gray-500">
-            No sessions recorded yet
-          </div>
-        )}
-
-        {sessions.length > 0 && filteredRowCount === 0 && (
-          <div className="px-4 py-8 text-center text-gray-500">
-            No sessions match the current filters
+            {hasActiveFilters
+              ? "No sessions match the current filters"
+              : "No sessions recorded yet"}
           </div>
         )}
       </div>

@@ -19,11 +19,114 @@ export async function GET(request: NextRequest) {
 
     // Parse query parameters
     const searchParams = request.nextUrl.searchParams;
+
+    // Legacy parameters (for backwards compatibility)
     const start = searchParams.get("start");
     const count = searchParams.get("count");
     const last = searchParams.get("last");
     const label = searchParams.get("label");
 
+    // New server-side filtering/sorting parameters
+    const systemParam = searchParams.get("system");
+    const vendorParam = searchParams.get("vendor");
+    const causeParam = searchParams.get("cause");
+    const statusParam = searchParams.get("status");
+    const timeRangeParam = searchParams.get("timeRange");
+    const sortParam = searchParams.get("sort");
+    const pageParam = searchParams.get("page");
+    const pageSizeParam = searchParams.get("pageSize");
+
+    // If using new query parameters, use querySessions
+    if (
+      systemParam ||
+      vendorParam ||
+      causeParam ||
+      statusParam ||
+      timeRangeParam ||
+      sortParam ||
+      pageParam
+    ) {
+      // Parse filters
+      const systemIds = systemParam
+        ? systemParam.split(",").map((id) => parseInt(id))
+        : undefined;
+      const vendorTypes = vendorParam ? vendorParam.split(",") : undefined;
+      const causes = causeParam ? causeParam.split(",") : undefined;
+      const successful = statusParam
+        ? statusParam.split(",").map((s) => s === "success")
+        : undefined;
+
+      // Parse time range (24h, 3d, 7d, 30d)
+      let timeRangeHours: number | undefined;
+      if (timeRangeParam) {
+        const rangeMap: Record<string, number> = {
+          "24h": 24,
+          "3d": 72,
+          "7d": 168,
+          "30d": 720,
+        };
+        timeRangeHours = rangeMap[timeRangeParam];
+      }
+
+      // Parse sort (format: "field.direction")
+      let sortBy:
+        | "started"
+        | "duration"
+        | "systemName"
+        | "vendorType"
+        | "cause" = "started";
+      let sortOrder: "asc" | "desc" = "desc";
+      if (sortParam) {
+        const [field, direction] = sortParam.split(".");
+        if (
+          field === "started" ||
+          field === "duration" ||
+          field === "systemName" ||
+          field === "vendorType" ||
+          field === "cause"
+        ) {
+          sortBy = field;
+        }
+        if (direction === "asc" || direction === "desc") {
+          sortOrder = direction;
+        }
+      }
+
+      // Parse pagination
+      const page = pageParam ? parseInt(pageParam) : 0;
+      const pageSize = pageSizeParam ? parseInt(pageSizeParam) : 100;
+
+      // Query sessions
+      const result = await sessionManager.querySessions({
+        systemIds,
+        vendorTypes,
+        causes,
+        successful,
+        timeRangeHours,
+        sortBy,
+        sortOrder,
+        page,
+        pageSize,
+        includeTotalCount: true,
+      });
+
+      // Format dates to ISO strings for JSON response
+      const formattedSessions = result.sessions.map((session) => ({
+        ...session,
+        started: session.started.toISOString(),
+        createdAt: session.createdAt.toISOString(),
+      }));
+
+      return NextResponse.json({
+        success: true,
+        sessions: formattedSessions,
+        totalCount: result.totalCount,
+        page: result.page,
+        pageSize: result.pageSize,
+      });
+    }
+
+    // Legacy API (backwards compatibility)
     let result;
 
     if (label) {
