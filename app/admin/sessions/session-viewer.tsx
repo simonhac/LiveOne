@@ -69,6 +69,14 @@ function HeaderFilter({
   // Use provided options (from database), already sorted
   const sortedUniqueValues = availableOptions;
 
+  // Helper to display boolean values as Success/Failed
+  const getDisplayValue = (value: any): string => {
+    if (typeof value === "boolean") {
+      return value ? "Success" : "Failed";
+    }
+    return String(value);
+  };
+
   const toggleValue = (value: any) => {
     const newFilterValue: any[] = filterValue.includes(value)
       ? filterValue.filter((v) => v !== value)
@@ -94,12 +102,14 @@ function HeaderFilter({
           <ChevronDown className="h-3 w-3" />
         </button>
       </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
+      <DropdownMenu.Portal container={document.body}>
         <DropdownMenu.Content
           className="min-w-[200px] bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-1 max-h-[400px] overflow-y-auto"
           style={{ zIndex: 9999 }}
           sideOffset={5}
           align="start"
+          collisionPadding={8}
+          avoidCollisions={true}
         >
           {hasActiveFilter && (
             <>
@@ -130,7 +140,7 @@ function HeaderFilter({
                 <div className="w-4 h-4 flex items-center justify-center">
                   {isSelected && <Check className="h-3 w-3 text-blue-400" />}
                 </div>
-                <span className="flex-1">{String(value)}</span>
+                <span className="flex-1">{getDisplayValue(value)}</span>
               </DropdownMenu.Item>
             );
           })}
@@ -427,7 +437,7 @@ export default function ActivityViewer() {
       },
       {
         accessorKey: "numRows",
-        header: "ROWS",
+        header: "RECORDS",
         cell: ({ getValue }) => {
           const numRows = getValue<number>();
           return (
@@ -444,7 +454,7 @@ export default function ActivityViewer() {
           return label ? (
             <button
               onClick={() => setSelectedSession(row.original)}
-              className="font-mono text-xs text-gray-400 hover:text-gray-200 group-hover:underline transition-colors cursor-pointer"
+              className="font-mono text-xs text-gray-400 hover:text-gray-200 hover:underline transition-colors cursor-pointer"
             >
               {label}
             </button>
