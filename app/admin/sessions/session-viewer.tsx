@@ -52,10 +52,8 @@ interface Session {
 
 // Helper function to format duration
 const formatDuration = (durationMs: number): string => {
-  if (durationMs >= 2000) {
-    return `${(durationMs / 1000).toFixed(1)}s`;
-  }
-  return `${durationMs}ms`;
+  // Always use seconds format with non-breaking space
+  return `${(durationMs / 1000).toFixed(1)}\u00A0s`;
 };
 
 // Multi-select filter component for header cells
@@ -98,8 +96,10 @@ function HeaderFilter({
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
-          className="min-w-[200px] bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-1 z-50 max-h-[400px] overflow-y-auto"
+          className="min-w-[200px] bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-1 max-h-[400px] overflow-y-auto"
+          style={{ zIndex: 9999 }}
           sideOffset={5}
+          align="start"
         >
           {hasActiveFilter && (
             <>
