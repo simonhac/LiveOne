@@ -722,7 +722,7 @@ export default function ActivityViewer() {
                         key={header.id}
                         className="px-2.5 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider bg-gray-800"
                       >
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
                           {canSort ? (
                             <button
                               onClick={header.column.getToggleSortingHandler()}
