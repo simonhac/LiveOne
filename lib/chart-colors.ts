@@ -4,6 +4,13 @@
  */
 
 import { PointPath } from "@/lib/identifiers";
+import {
+  interpolateViridis,
+  interpolatePlasma,
+  interpolateTurbo,
+  interpolateRdYlBu,
+  interpolateGreens,
+} from "d3-scale-chromatic";
 
 // Fixed colors for specific series types
 export const CHART_COLORS = {
@@ -161,3 +168,39 @@ export function getColorForPath(path: string, label?: string): string {
   // Default fallback
   return "rgb(156, 163, 175)"; // gray-400
 }
+
+/**
+ * Heatmap color palettes using d3-scale-chromatic
+ * All palettes are scientifically designed for data visualization
+ */
+export const HEATMAP_PALETTES = {
+  viridis: {
+    name: "Viridis",
+    description:
+      "Purple → Green → Yellow (perceptually uniform, colorblind-safe)",
+    fn: interpolateViridis,
+  },
+  plasma: {
+    name: "Plasma",
+    description:
+      "Purple → Pink → Orange → Yellow (vibrant, perceptually uniform)",
+    fn: interpolatePlasma,
+  },
+  turbo: {
+    name: "Turbo",
+    description: "Blue → Cyan → Green → Yellow → Red (high contrast)",
+    fn: interpolateTurbo,
+  },
+  rdylbu: {
+    name: "Cool-Warm",
+    description: "Blue → Yellow → Red (diverging)",
+    fn: interpolateRdYlBu,
+  },
+  greens: {
+    name: "Greens",
+    description: "Light → Dark Green (sequential)",
+    fn: interpolateGreens,
+  },
+} as const;
+
+export type HeatmapPaletteKey = keyof typeof HEATMAP_PALETTES;
