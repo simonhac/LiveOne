@@ -235,6 +235,8 @@ async function loadLocalRecords(
     const allPoints = await pointManager.getPointsForSystem(systemId);
 
     if (allPoints.length === 0) {
+      // No points yet - this is valid for a new system
+      // Return empty result and let stage 2 fetch from remote
       return {
         stage: stageName,
         info: {
@@ -243,7 +245,7 @@ async function loadLocalRecords(
           uniformQuality: null,
           canonical: [],
         },
-        error: "No points found for system",
+        discovery: "No points defined yet - will fetch from remote",
       };
     }
 
