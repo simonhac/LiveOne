@@ -36,8 +36,8 @@ export class AmberAdapter extends BaseVendorAdapter {
   readonly dataStore = "point_readings" as const;
   readonly supportsAddSystem = true;
 
-  // Amber usage data: poll every 30 minutes
-  protected pollIntervalMinutes = 30;
+  // Amber usage data: poll every 5 minutes
+  protected pollIntervalMinutes = 5;
   protected toleranceSeconds = 60;
 
   // Price forecasts: poll every 5 minutes (separate from usage)
