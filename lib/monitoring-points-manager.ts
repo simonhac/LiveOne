@@ -453,40 +453,8 @@ export async function insertPointReadingsDirectTo5m(
     );
   }
 
-  // Update KV cache with latest values
-  // Skip if KV is not configured (will log warning from kv.ts)
-  try {
-    const pointManager = PointManager.getInstance();
-    const points = await pointManager.getPointsForSystem(systemId);
-
-    const cacheUpdates = aggregatesToInsert.map((agg) => {
-      const point = points.find((p) => p.index === agg.pointId);
-      if (point) {
-        // Determine which value to cache (prioritize last, then avg, then delta)
-        const valueToCache = agg.last ?? agg.avg ?? agg.delta;
-
-        if (valueToCache !== null && valueToCache !== undefined) {
-          const pointPath = point.getPath().toString();
-          return updateLatestPointValue(
-            systemId,
-            agg.pointId, // Pass point index for subscription lookup
-            pointPath,
-            valueToCache,
-            agg.intervalEnd,
-            point.metricUnit,
-            point.name, // displayName if set, otherwise defaultName
-          );
-        }
-      }
-      return null;
-    });
-
-    await Promise.all(cacheUpdates.filter((p) => p !== null));
-    console.log(
-      `[PointsManager] Updated KV cache for ${cacheUpdates.filter((p) => p !== null).length} points`,
-    );
-  } catch (error) {
-    console.error("Failed to update KV cache:", error);
-    // Don't throw - cache update failures shouldn't break reading insertion
-  }
+  // Note: We intentionally do NOT update the KV cache here.
+  // Cache updates should only happen from real-time data in point_readings table
+  // via insertPointReadingsBatch(). Pre-aggregated data is typically historical/backfill
+  // and should not overwrite the actual latest values in the cache.
 }
