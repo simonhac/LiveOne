@@ -133,6 +133,7 @@ export async function POST(request: NextRequest) {
                   : action.toUpperCase();
 
             send("\u00A0");
+            send("\u00A0");
             send(
               "============================================================",
             );
@@ -144,6 +145,9 @@ export async function POST(request: NextRequest) {
 
             send(`System ID: ${audit.systemId}`);
             send(`First Day: ${audit.firstDay.toString()}`);
+            send(
+              `Last Day: ${audit.firstDay.add({ days: audit.numberOfDays - 1 }).toString()}`,
+            );
             send(`Number of Days: ${audit.numberOfDays}`);
             send(`Success: ${audit.success ? "YES" : "NO"}`);
             send(`Total stages: ${audit.summary.totalStages}`);

@@ -14,7 +14,7 @@ export default function AmberSyncPage() {
     return start.toISOString().split("T")[0];
   });
   const [days, setDays] = useState<number | "">(2); // 12h before + 18h after = 30h ~= 2 days
-  const [dryRun, setDryRun] = useState(true);
+  const [dryRun, setDryRun] = useState(false);
   const [showSample, setShowSample] = useState(false);
   const [output, setOutput] = useState("");
   const [isRunning, setIsRunning] = useState(false);
