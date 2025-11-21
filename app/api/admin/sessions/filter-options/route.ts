@@ -39,9 +39,8 @@ export async function GET() {
       (r: any) => r.vendor_type as string,
     );
     const causes = causesResult.rows.map((r: any) => r.cause as string);
-    const statuses = statusesResult.rows.map(
-      (r: any) => r.successful as boolean,
-    );
+    // SQLite stores booleans as 0/1, convert to actual booleans
+    const statuses = statusesResult.rows.map((r: any) => Boolean(r.successful));
 
     return NextResponse.json({
       success: true,
