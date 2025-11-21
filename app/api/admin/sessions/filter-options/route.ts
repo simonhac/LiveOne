@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { isUserAdmin } from "@/lib/auth-utils";
-import { db } from "@/lib/db";
-import { sessions } from "@/lib/db/schema";
-import { sql } from "drizzle-orm";
+import { rawClient } from "@/lib/db";
 
 export async function GET() {
   try {
@@ -19,18 +17,31 @@ export async function GET() {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Get all sessions and extract unique values
-    const allSessions = await db.select().from(sessions);
+    // Get unique values for each filterable column using SQL DISTINCT
+    // This is much more efficient than fetching all sessions
+    const systemNamesResult = await rawClient.execute(
+      "SELECT DISTINCT system_name FROM sessions ORDER BY system_name",
+    );
+    const vendorTypesResult = await rawClient.execute(
+      "SELECT DISTINCT vendor_type FROM sessions ORDER BY vendor_type",
+    );
+    const causesResult = await rawClient.execute(
+      "SELECT DISTINCT cause FROM sessions ORDER BY cause",
+    );
+    const statusesResult = await rawClient.execute(
+      "SELECT DISTINCT successful FROM sessions ORDER BY successful",
+    );
 
-    // Extract unique values for each filterable column
-    const systemNames = [
-      ...new Set(allSessions.map((s) => s.systemName)),
-    ].sort();
-    const vendorTypes = [
-      ...new Set(allSessions.map((s) => s.vendorType)),
-    ].sort();
-    const causes = [...new Set(allSessions.map((s) => s.cause))].sort();
-    const statuses = [...new Set(allSessions.map((s) => s.successful))].sort();
+    const systemNames = systemNamesResult.rows.map(
+      (r: any) => r.system_name as string,
+    );
+    const vendorTypes = vendorTypesResult.rows.map(
+      (r: any) => r.vendor_type as string,
+    );
+    const causes = causesResult.rows.map((r: any) => r.cause as string);
+    const statuses = statusesResult.rows.map(
+      (r: any) => r.successful as boolean,
+    );
 
     return NextResponse.json({
       success: true,
