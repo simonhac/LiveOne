@@ -714,7 +714,7 @@ export default function ActivityViewer() {
         </div>
 
         {/* Table */}
-        <div className="overflow-auto flex-1">
+        <div className="overflow-x-auto overflow-y-visible flex-1">
           <table className="w-full">
             <thead className="sticky top-0 z-20 bg-gray-800">
               {table.getHeaderGroups().map((headerGroup) => (
