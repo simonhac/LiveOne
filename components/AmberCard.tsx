@@ -50,11 +50,11 @@ export default function AmberCard({
         const roundedNow = new Date(now);
         roundedNow.setMinutes(roundedMinutes, 0, 0); // Set seconds and ms to 0
 
-        const past24h = new Date(roundedNow.getTime() - 24 * 60 * 60 * 1000);
+        const past12h = new Date(roundedNow.getTime() - 12 * 60 * 60 * 1000);
         const future24h = new Date(roundedNow.getTime() + 24 * 60 * 60 * 1000);
 
         // Build URL for history API - don't use URLSearchParams to avoid encoding
-        const url = `/api/history?systemId=${systemId}&startTime=${past24h.toISOString()}&endTime=${future24h.toISOString()}&interval=30m&series=bidi.grid.import/rate.avg,bidi.grid.import/rate.quality,bidi.grid.renewables/proportion.avg,bidi.grid.import/value.avg,bidi.grid.export/value.avg`;
+        const url = `/api/history?systemId=${systemId}&startTime=${past12h.toISOString()}&endTime=${future24h.toISOString()}&interval=30m&series=bidi.grid.import/rate.avg,bidi.grid.import/rate.quality,bidi.grid.renewables/proportion.avg,bidi.grid.import/value.avg,bidi.grid.export/value.avg`;
 
         const response = await fetch(url, {
           credentials: "same-origin",
@@ -89,11 +89,35 @@ export default function AmberCard({
 
         // Parse the start time from the history data
         const historyStart = new Date(priceSeries.history.start);
-        const priceData = priceSeries.history.data;
-        const qualityData = qualitySeries?.history?.data || [];
-        const renewablesData = renewablesSeries?.history?.data || [];
-        const costData = costSeries?.history?.data || [];
-        const incomeData = incomeSeries?.history?.data || [];
+        let priceData = priceSeries.history.data;
+        let qualityData = qualitySeries?.history?.data || [];
+        let renewablesData = renewablesSeries?.history?.data || [];
+        let costData = costSeries?.history?.data || [];
+        let incomeData = incomeSeries?.history?.data || [];
+
+        // Trim trailing nulls (only if ALL three series have null)
+        // Find rightmost index where at least one of the three series has a non-null value
+        let lastValidIndex = -1;
+        for (let i = priceData.length - 1; i >= 0; i--) {
+          const hasPrice = priceData[i] !== null;
+          const hasRenewables = renewablesData[i] !== null;
+          const hasUsage = costData[i] !== null || incomeData[i] !== null;
+
+          // Keep this timestamp if ANY of the three series has data
+          if (hasPrice || hasRenewables || hasUsage) {
+            lastValidIndex = i;
+            break;
+          }
+        }
+
+        // Trim all arrays to remove trailing nulls
+        if (lastValidIndex >= 0 && lastValidIndex < priceData.length - 1) {
+          priceData = priceData.slice(0, lastValidIndex + 1);
+          qualityData = qualityData.slice(0, lastValidIndex + 1);
+          renewablesData = renewablesData.slice(0, lastValidIndex + 1);
+          costData = costData.slice(0, lastValidIndex + 1);
+          incomeData = incomeData.slice(0, lastValidIndex + 1);
+        }
 
         // Build time slots from the history data
         const slots: TimeSlot[] = priceData.map(

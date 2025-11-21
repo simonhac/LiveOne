@@ -166,6 +166,7 @@ async function testSync() {
     console.log(`Number of Days: ${audit.numberOfDays}`);
     console.log(`Success: ${audit.success ? "✅ YES" : "❌ NO"}`);
     console.log(`Total stages: ${audit.summary.totalStages}`);
+    console.log(`Rows inserted: ${audit.summary.numRowsInserted}`);
     console.log(`Duration: ${audit.summary.durationMs}ms`);
 
     if (audit.summary.error) {

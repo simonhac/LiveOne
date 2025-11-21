@@ -609,41 +609,81 @@ async function getSystemHistoryInOpenNEMFormat(
       }));
     }
 
-    // Handle 30m aggregation if needed (skip for quality which is a string)
-    if (
-      interval === "30m" &&
-      aggTable === "point_readings_agg_5m" &&
-      series.aggregationField !== "quality"
-    ) {
-      const aggregated: Array<{
-        interval_end: number;
-        value: number | null;
-      }> = [];
-      const buckets = new Map<number, number[]>();
+    // Handle 30m aggregation if needed
+    if (interval === "30m" && aggTable === "point_readings_agg_5m") {
+      if (series.aggregationField === "quality") {
+        // For quality (string values), take the last value in each 30m bucket
+        const aggregated: Array<{
+          interval_end: number;
+          value: string | null;
+        }> = [];
+        const buckets = new Map<
+          number,
+          Array<{ interval_end: number; value: string }>
+        >();
 
-      for (const row of rows) {
-        const bucketEnd =
-          Math.floor(row.interval_end / intervalMs) * intervalMs + intervalMs;
+        for (const row of rows) {
+          const bucketEnd =
+            Math.floor(row.interval_end / intervalMs) * intervalMs + intervalMs;
 
-        if (!buckets.has(bucketEnd)) {
-          buckets.set(bucketEnd, []);
+          if (!buckets.has(bucketEnd)) {
+            buckets.set(bucketEnd, []);
+          }
+
+          if (row.value !== null) {
+            buckets.get(bucketEnd)!.push({
+              interval_end: row.interval_end,
+              value: row.value as string,
+            });
+          }
         }
 
-        if (row.value !== null) {
-          buckets.get(bucketEnd)!.push(row.value as number);
+        // Take the last (most recent) quality value in each bucket
+        for (const [bucketEnd, values] of buckets.entries()) {
+          if (values.length > 0) {
+            // Sort by interval_end and take the last one
+            values.sort((a, b) => a.interval_end - b.interval_end);
+            aggregated.push({
+              interval_end: bucketEnd,
+              value: values[values.length - 1].value,
+            });
+          }
         }
-      }
 
-      for (const [bucketEnd, values] of buckets.entries()) {
-        const avg =
-          values.length > 0
-            ? values.reduce((sum, v) => sum + v, 0) / values.length
-            : null;
-        aggregated.push({ interval_end: bucketEnd, value: avg });
-      }
+        aggregated.sort((a, b) => a.interval_end - b.interval_end);
+        rows = aggregated;
+      } else {
+        // For numeric values, average them
+        const aggregated: Array<{
+          interval_end: number;
+          value: number | null;
+        }> = [];
+        const buckets = new Map<number, number[]>();
 
-      aggregated.sort((a, b) => a.interval_end - b.interval_end);
-      rows = aggregated;
+        for (const row of rows) {
+          const bucketEnd =
+            Math.floor(row.interval_end / intervalMs) * intervalMs + intervalMs;
+
+          if (!buckets.has(bucketEnd)) {
+            buckets.set(bucketEnd, []);
+          }
+
+          if (row.value !== null) {
+            buckets.get(bucketEnd)!.push(row.value as number);
+          }
+        }
+
+        for (const [bucketEnd, values] of buckets.entries()) {
+          const avg =
+            values.length > 0
+              ? values.reduce((sum, v) => sum + v, 0) / values.length
+              : null;
+          aggregated.push({ interval_end: bucketEnd, value: avg });
+        }
+
+        aggregated.sort((a, b) => a.interval_end - b.interval_end);
+        rows = aggregated;
+      }
     }
 
     // Get source system for series ID
