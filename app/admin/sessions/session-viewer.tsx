@@ -106,7 +106,6 @@ function HeaderFilter({
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           className="min-w-[200px] bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-1 max-h-[400px] overflow-y-auto z-50"
-          style={{ position: "fixed", zIndex: 9999 }}
           sideOffset={5}
         >
           {hasActiveFilter && (
@@ -717,7 +716,7 @@ export default function ActivityViewer() {
         {/* Table */}
         <div className="overflow-auto flex-1">
           <table className="w-full">
-            <thead className="sticky top-0 z-10 bg-gray-800">
+            <thead className="sticky top-0 z-20 bg-gray-800">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id} className="border-b border-gray-700">
                   {headerGroup.headers.map((header) => {
