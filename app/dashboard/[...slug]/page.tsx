@@ -1,6 +1,8 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import DashboardClient from "@/components/DashboardClient";
+import HeatmapClient from "@/components/HeatmapClient";
+import GeneratorClient from "@/components/GeneratorClient";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { VendorRegistry } from "@/lib/vendors/registry";
@@ -22,11 +24,38 @@ export default async function DashboardPage({ params }: PageProps) {
   const isAdmin = await isUserAdmin();
   const systemsManager = SystemsManager.getInstance();
 
+  // Check route type based on last segment
+  const lastSegment = slug[slug.length - 1];
+  const isHeatmapRoute = lastSegment === "heatmap";
+  const isGeneratorRoute = lastSegment === "generator";
+
   let system = null;
   let systemId: string;
+  let systemIdentifier: string | undefined;
 
   // Handle different URL patterns
-  if (slug.length === 1) {
+  if ((isHeatmapRoute || isGeneratorRoute) && slug.length === 2) {
+    // Special route with numeric ID: /dashboard/1586/[heatmap|generator]
+    const segment = slug[0];
+    const isNumericId = /^\d+$/.test(segment);
+
+    if (isNumericId) {
+      system = await systemsManager.getSystem(parseInt(segment));
+      systemId = system?.id?.toString() || segment;
+      systemIdentifier = segment;
+    } else {
+      redirect("/dashboard");
+    }
+  } else if ((isHeatmapRoute || isGeneratorRoute) && slug.length === 3) {
+    // Special route with username/alias: /dashboard/username/alias/[heatmap|generator]
+    const [username, shortname] = slug;
+    system = await systemsManager.getSystemByUserNameShortName(
+      username,
+      shortname,
+    );
+    systemId = system?.id?.toString() || `${username}/${shortname}`;
+    systemIdentifier = `${username}/${shortname}`;
+  } else if (slug.length === 1) {
     // Single segment: could be numeric ID or shortname (legacy)
     const segment = slug[0];
     const isNumericId = /^\d+$/.test(segment);
@@ -48,7 +77,7 @@ export default async function DashboardPage({ params }: PageProps) {
       // Non-numeric single segment - no longer supported
       redirect("/dashboard");
     }
-  } else if (slug.length === 2) {
+  } else if (slug.length === 2 && !isHeatmapRoute && !isGeneratorRoute) {
     // Two segments: username/shortname format
     const [username, shortname] = slug;
     system = await systemsManager.getSystemByUserNameShortName(
@@ -57,7 +86,7 @@ export default async function DashboardPage({ params }: PageProps) {
     );
     systemId = system?.id?.toString() || `${username}/${shortname}`;
   } else {
-    // More than 2 segments - invalid
+    // Invalid route
     redirect("/dashboard");
   }
 
@@ -101,6 +130,36 @@ export default async function DashboardPage({ params }: PageProps) {
     ? VendorRegistry.getDataStore(system.vendorType)
     : undefined;
 
+  // Render special routes based on last segment
+  if (systemIdentifier && system) {
+    if (isHeatmapRoute) {
+      // Check access
+      if (!hasAccess) {
+        redirect("/dashboard");
+      }
+      return (
+        <HeatmapClient
+          systemIdentifier={systemIdentifier}
+          systemId={system.id}
+        />
+      );
+    }
+
+    if (isGeneratorRoute) {
+      // Check access
+      if (!hasAccess) {
+        redirect("/dashboard");
+      }
+      return (
+        <GeneratorClient
+          systemIdentifier={systemIdentifier}
+          systemId={system.id}
+        />
+      );
+    }
+  }
+
+  // Render main dashboard
   return (
     <DashboardClient
       systemId={systemId}

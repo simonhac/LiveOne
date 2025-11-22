@@ -21,6 +21,8 @@ import { isUserAdmin } from "@/lib/auth-utils";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { getLatestPointValues } from "@/lib/kv-cache-manager";
 import { jsonResponse } from "@/lib/json";
+import { SystemsManager } from "@/lib/systems-manager";
+import { clerkClient } from "@clerk/nextjs/server";
 
 // Helper function to ensure values are null instead of undefined
 function nullifyUndefined<T>(value: T | undefined): T | null {
@@ -237,6 +239,24 @@ export async function GET(request: Request) {
       // lastMonth: null,
     };
 
+    // Fetch available systems for the user
+    const systemsManager = SystemsManager.getInstance();
+    const availableSystems = await systemsManager.getSystemsVisibleByUser(
+      userId,
+      true, // active only
+    );
+
+    // Get current user's username for their own systems
+    const clerk = await clerkClient();
+    const currentUser = await clerk.users.getUser(userId);
+    const currentUsername = currentUser.username || null;
+
+    // Add username to systems owned by current user
+    const systemsWithUsernames = availableSystems.map((sys) => ({
+      ...sys,
+      ownerUsername: sys.ownerClerkUserId === userId ? currentUsername : null,
+    }));
+
     // Return with automatic date formatting and field renaming
     // (measurementTimeMs -> measurementTime, receivedTimeMs -> receivedTime)
     return jsonResponse(
@@ -244,6 +264,7 @@ export async function GET(request: Request) {
         system: systemData,
         latest: latest,
         historical: historical,
+        availableSystems: systemsWithUsernames,
       },
       system.timezoneOffsetMin,
     );

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import HeatmapChart from "@/components/HeatmapChart";
 import {
   Select,
@@ -11,10 +11,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/chart-colors";
-import { SystemIdentifier } from "@/lib/identifiers";
 import type { ZonedDateTime } from "@internationalized/date";
 import { toZoned } from "@internationalized/date";
 import { getUnitDisplay } from "@/lib/point/unit-display";
+import DashboardHeader from "@/components/DashboardHeader";
+import { useUser } from "@clerk/nextjs";
 
 interface PointInfo {
   logicalPath: string;
@@ -32,13 +33,33 @@ interface SystemInfo {
   displayName: string;
 }
 
-export default function HeatmapPage() {
-  const params = useParams();
+interface AvailableSystem {
+  id: number;
+  displayName: string;
+  vendorSiteId: string;
+  ownerClerkUserId?: string | null;
+  alias?: string | null;
+  ownerUsername?: string | null;
+}
+
+interface HeatmapClientProps {
+  systemIdentifier: string; // For display/routing purposes (can be "1586" or "simon/kinkora")
+  systemId: number; // Numeric ID for API calls
+}
+
+export default function HeatmapClient({
+  systemIdentifier,
+  systemId,
+}: HeatmapClientProps) {
   const searchParams = useSearchParams();
-  const systemIdentifier = params.systemIdentifier as string;
+  const router = useRouter();
+  const { user } = useUser();
 
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [points, setPoints] = useState<PointInfo[]>([]);
+  const [availableSystems, setAvailableSystems] = useState<AvailableSystem[]>(
+    [],
+  );
   const [selectedPoint, setSelectedPoint] = useState<string | undefined>(
     undefined,
   );
@@ -75,7 +96,7 @@ export default function HeatmapPage() {
     [],
   );
 
-  // Read URL parameters on mount
+  // Read URL parameters on mount only (not on every searchParams change)
   useEffect(() => {
     const pointParam = searchParams.get("point");
     const paletteParam = searchParams.get("palette");
@@ -86,7 +107,8 @@ export default function HeatmapPage() {
     if (paletteParam && paletteParam in HEATMAP_PALETTES) {
       setSelectedPalette(paletteParam as HeatmapPaletteKey);
     }
-  }, [searchParams]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once on mount
 
   // Handle point selection change
   const handlePointChange = useCallback(
@@ -109,24 +131,20 @@ export default function HeatmapPage() {
   // Fetch system info and points on mount
   useEffect(() => {
     const fetchData = async () => {
+      if (!systemId) {
+        setError("Invalid system ID");
+        setLoading(false);
+        return;
+      }
+
       try {
         setLoading(true);
         setError(null);
 
-        // Parse system identifier to get system ID
-        const parsedIdentifier = SystemIdentifier.parse(systemIdentifier);
-        if (!parsedIdentifier) {
-          throw new Error("Invalid system identifier");
-        }
-
-        // For username.shortname format, we need to resolve it to a systemId
-        // For now, we'll fetch points which includes system info
-        const pointsResponse = await fetch(
-          `/api/system/${systemIdentifier}/points`,
-          {
-            credentials: "same-origin",
-          },
-        );
+        // Fetch points using numeric systemId
+        const pointsResponse = await fetch(`/api/system/${systemId}/points`, {
+          credentials: "same-origin",
+        });
 
         if (!pointsResponse.ok) {
           throw new Error(
@@ -142,12 +160,7 @@ export default function HeatmapPage() {
 
         setPoints(pointsData.points);
 
-        // Extract system ID from the first point's reference (format: "systemId.pointIndex")
-        const systemId = parseInt(pointsData.points[0].reference.split(".")[0]);
-
-        // Fetch system info from SystemsManager (we'll use the dashboard API pattern)
-        // For now, we'll use a default timezone and get it from a different source
-        // Let's fetch from the dashboard data endpoint
+        // Fetch system info
         const systemResponse = await fetch(`/api/data?systemId=${systemId}`, {
           credentials: "same-origin",
         });
@@ -160,6 +173,11 @@ export default function HeatmapPage() {
               systemData.system?.displayTimezone || "Australia/Sydney",
             displayName: systemData.system?.displayName || "System",
           });
+
+          // Set available systems from response
+          if (systemData.availableSystems) {
+            setAvailableSystems(systemData.availableSystems);
+          }
         } else {
           // Fallback to default timezone
           setSystem({
@@ -167,12 +185,6 @@ export default function HeatmapPage() {
             displayTimezone: "Australia/Sydney",
             displayName: "System",
           });
-        }
-
-        // Auto-select first point only if not already set from URL
-        const pointParam = searchParams.get("point");
-        if (!pointParam && pointsData.points.length > 0) {
-          setSelectedPoint(pointsData.points[0].logicalPath);
         }
 
         setLoading(false);
@@ -184,7 +196,14 @@ export default function HeatmapPage() {
     };
 
     fetchData();
-  }, [systemIdentifier]); // Removed searchParams - only fetch on mount/system change
+  }, [systemId]);
+
+  // Auto-select first point if none selected
+  useEffect(() => {
+    if (!selectedPoint && points.length > 0) {
+      setSelectedPoint(points[0].logicalPath);
+    }
+  }, [points, selectedPoint]);
 
   // Keyboard navigation for points
   useEffect(() => {
@@ -240,6 +259,10 @@ export default function HeatmapPage() {
     };
   }, [sortedPoints, selectedPoint, handlePointChange]);
 
+  const handleLogout = () => {
+    router.push("/sign-in");
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-800 flex items-center justify-center">
@@ -266,25 +289,20 @@ export default function HeatmapPage() {
 
   const selectedPointInfo = points.find((p) => p.logicalPath === selectedPoint);
 
-  // Debug logging
-  console.log("selectedPoint:", selectedPoint);
-  console.log("points:", points);
-  console.log("selectedPointInfo:", selectedPointInfo);
-  console.log("will render heatmap:", !!(selectedPoint && selectedPointInfo));
-
   return (
-    <div className="min-h-screen bg-gray-800 text-gray-200">
-      <div className="container mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold mb-2">
-            {system.displayName} — Heatmap
-          </h1>
-          <p className="text-gray-400 text-sm">
-            30-day view at 30-minute intervals
-          </p>
-        </div>
+    <div className="min-h-screen bg-gray-900 text-gray-200">
+      {/* Header */}
+      <DashboardHeader
+        displayName={`${system.displayName} — Heatmap`}
+        systemId={system.id.toString()}
+        lastUpdate={null}
+        isAdmin={false}
+        userId={user?.id}
+        availableSystems={availableSystems}
+        onLogout={handleLogout}
+      />
 
+      <div className="container mx-auto px-4 py-8">
         {/* Controls */}
         <div className="mb-6 flex flex-wrap gap-4">
           {/* Point selector */}

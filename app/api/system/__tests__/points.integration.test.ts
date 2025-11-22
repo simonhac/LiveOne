@@ -121,7 +121,8 @@ describe("GET /api/system/[systemIdentifier]/points", () => {
 
       // Check first point has expected structure
       const firstPoint = data.points[0];
-      expect(firstPoint).toHaveProperty("path");
+      expect(firstPoint).toHaveProperty("logicalPath");
+      expect(firstPoint).toHaveProperty("physicalPath");
       expect(firstPoint).toHaveProperty("name");
       expect(firstPoint).toHaveProperty("metricType");
       expect(firstPoint).toHaveProperty("metricUnit");
@@ -129,7 +130,8 @@ describe("GET /api/system/[systemIdentifier]/points", () => {
       expect(firstPoint).toHaveProperty("active");
 
       // Validate types
-      expect(typeof firstPoint.path).toBe("string");
+      expect(typeof firstPoint.logicalPath).toBe("string");
+      expect(typeof firstPoint.physicalPath).toBe("string");
       expect(typeof firstPoint.name).toBe("string");
       expect(typeof firstPoint.metricType).toBe("string");
       expect(typeof firstPoint.metricUnit).toBe("string");
@@ -180,7 +182,8 @@ describe("GET /api/system/[systemIdentifier]/points", () => {
       expect(data.points).toBeDefined();
       expect(Array.isArray(data.points)).toBe(true);
       expect(data.points.length).toBeGreaterThan(0);
-      expect(data.points[0]).toHaveProperty("path");
+      expect(data.points[0]).toHaveProperty("logicalPath");
+      expect(data.points[0]).toHaveProperty("physicalPath");
       expect(data.points[0]).toHaveProperty("name");
     });
   });
@@ -276,7 +279,7 @@ describe("GET /api/system/[systemIdentifier]/points", () => {
       expect(fullResponse.status).toBe(200);
 
       const shortPaths = shortResponse.data;
-      const fullPaths = fullResponse.data.points.map((p: any) => p.path);
+      const fullPaths = fullResponse.data.points.map((p: any) => p.logicalPath);
 
       expect(shortPaths.length).toBe(fullPaths.length);
       expect(shortPaths.sort()).toEqual(fullPaths.sort());

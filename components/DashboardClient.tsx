@@ -1,14 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useModalContext } from "@/contexts/ModalContext";
-import { UserButton } from "@clerk/nextjs";
 import EnergyChart from "@/components/EnergyChart";
 import EnergyPanel from "@/components/EnergyPanel";
-import MobileMenu from "@/components/MobileMenu";
-import LastUpdateTime from "@/components/LastUpdateTime";
-import SystemInfoTooltip from "@/components/SystemInfoTooltip";
 import AmberCard from "@/components/AmberCard";
 import PowerCard from "@/components/PowerCard";
 import ConnectionNotification from "@/components/ConnectionNotification";
@@ -17,11 +13,11 @@ import PollNowModal from "@/components/PollNowModal";
 import ServerErrorModal from "@/components/ServerErrorModal";
 import SessionTimeoutModal from "@/components/SessionTimeoutModal";
 import { AddSystemDialog } from "@/components/AddSystemDialog";
-import SystemsMenu from "@/components/SystemsMenu";
 import ViewDataModal from "@/components/ViewDataModal";
 import SystemSettingsDialog from "@/components/SystemSettingsDialog";
 import SitePowerChart, { type ChartData } from "@/components/SitePowerChart";
 import EnergyTable from "@/components/EnergyTable";
+import DashboardHeader from "@/components/DashboardHeader";
 import { fetchAndProcessSiteData } from "@/lib/site-data-processor";
 import EnergyFlowSankey from "@/components/EnergyFlowSankey";
 import { calculateEnergyFlowMatrix } from "@/lib/energy-flow-matrix";
@@ -44,16 +40,8 @@ import {
   Battery,
   Zap,
   AlertTriangle,
-  Shield,
-  ChevronDown,
-  Settings as SettingsIcon,
-  FlaskConical,
-  Plus,
-  MoreHorizontal,
   ChevronLeft,
   ChevronRight,
-  Database,
-  RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -188,8 +176,6 @@ export default function DashboardClient({
   const [currentDisplayTimezone, setCurrentDisplayTimezone] = useState(
     system?.displayTimezone || null,
   );
-  const [showSystemDropdown, setShowSystemDropdown] = useState(false);
-  const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [showTestConnection, setShowTestConnection] = useState(false);
   const [showPollNow, setShowPollNow] = useState<{
     isOpen: boolean;
@@ -335,8 +321,6 @@ export default function DashboardClient({
   const [generationVisibleSeries, setGenerationVisibleSeries] = useState<
     Set<string>
   >(new Set());
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const settingsDropdownRef = useRef<HTMLDivElement>(null);
 
   // Function to fetch data from API
   const fetchData = useCallback(async () => {
@@ -651,32 +635,6 @@ export default function DashboardClient({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Run only on mount - intentionally ignoring dependencies
-
-  // Handle clicks outside of the dropdowns
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
-        setShowSystemDropdown(false);
-      }
-      if (
-        settingsDropdownRef.current &&
-        !settingsDropdownRef.current.contains(event.target as Node)
-      ) {
-        setShowSettingsDropdown(false);
-      }
-    };
-
-    if (showSystemDropdown || showSettingsDropdown) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [showSystemDropdown, showSettingsDropdown]);
 
   // Navigation handlers for prev/next buttons
   const handlePageNewer = useCallback(() => {
@@ -1050,197 +1008,28 @@ export default function DashboardClient({
       <ConnectionNotification />
 
       {/* Header */}
-      <header className="bg-gray-800 border-b border-gray-700">
-        <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 py-2 sm:py-4">
-          {/* Mobile Layout */}
-          <MobileMenu
-            displayName={systemDisplayName}
-            lastUpdate={lastUpdate}
-            onLogout={handleLogout}
-            systemInfo={systemInfo}
-            availableSystems={availableSystems}
-            currentSystemId={systemId as string}
-            onTestConnection={() => setShowTestConnection(true)}
-            vendorType={data?.system.vendorType}
-            supportsPolling={data?.system.supportsPolling}
-            isAdmin={isAdmin}
-            systemStatus={system?.status}
-            userId={userId}
-            onAddSystem={() => setShowAddSystemDialog(true)}
-            onSystemSettings={() => setShowSystemSettingsDialog(true)}
-            onViewData={() => setShowViewDataModal(true)}
-            onPollNow={(dryRun) =>
-              setShowPollNow({ isOpen: true, dryRun: dryRun || false })
-            }
-          />
-
-          {/* Desktop Layout */}
-          <div className="hidden sm:flex justify-between items-center">
-            <div className="relative" ref={dropdownRef}>
-              {availableSystems.length > 1 ? (
-                <>
-                  <button
-                    onClick={() => setShowSystemDropdown(!showSystemDropdown)}
-                    className="flex items-center gap-2 hover:bg-gray-700 rounded-lg px-3 py-2 transition-colors"
-                  >
-                    <h1 className="text-2xl font-bold text-white">
-                      {systemDisplayName}
-                    </h1>
-                    <ChevronDown
-                      className={`w-5 h-5 text-gray-400 transition-transform ${showSystemDropdown ? "rotate-180" : ""}`}
-                    />
-                  </button>
-
-                  {showSystemDropdown && (
-                    <div className="absolute top-full left-0 mt-2 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
-                      <div className="py-1">
-                        <SystemsMenu
-                          availableSystems={availableSystems}
-                          currentSystemId={systemId}
-                          userId={userId}
-                          isAdmin={isAdmin}
-                          onSystemSelect={() => setShowSystemDropdown(false)}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <h1 className="text-2xl font-bold text-white">
-                  {systemDisplayName}
-                </h1>
-              )}
-            </div>
-            <div className="flex items-center gap-4">
-              <LastUpdateTime lastUpdate={lastUpdate} />
-              {systemInfo && (
-                <SystemInfoTooltip
-                  systemInfo={systemInfo}
-                  systemNumber={data?.system.vendorSiteId || ""}
-                />
-              )}
-              {isAdmin && (
-                <Link
-                  href="/admin/systems"
-                  className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"
-                >
-                  <Shield className="w-4 h-4" />
-                  Admin
-                </Link>
-              )}
-              {/* Settings dropdown - Only show for admin or non-removed systems */}
-              {(isAdmin || system?.status !== "removed") && (
-                <div className="relative" ref={settingsDropdownRef}>
-                  <button
-                    onClick={() =>
-                      setShowSettingsDropdown(!showSettingsDropdown)
-                    }
-                    className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
-                    title="Settings"
-                  >
-                    <SettingsIcon className="w-5 h-5" />
-                  </button>
-
-                  {showSettingsDropdown && (
-                    <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
-                      {/* View Data - Show for admin users, disabled for composite systems */}
-                      {isAdmin && (
-                        <>
-                          <button
-                            onClick={() => {
-                              if (data?.system.vendorType !== "composite") {
-                                setShowViewDataModal(true);
-                                setShowSettingsDropdown(false);
-                              }
-                            }}
-                            disabled={data?.system.vendorType === "composite"}
-                            className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 ${
-                              data?.system.vendorType !== "composite"
-                                ? "text-gray-300 hover:bg-gray-700 hover:text-white transition-colors cursor-pointer"
-                                : "text-gray-500 cursor-not-allowed opacity-70"
-                            }`}
-                          >
-                            <Database className="w-4 h-4" />
-                            View Data…
-                          </button>
-                          {/* Poll Now - Always show, disabled for systems that don't support polling */}
-                          <button
-                            onClick={() => {
-                              if (data?.system.supportsPolling) {
-                                setShowPollNow({
-                                  isOpen: true,
-                                  dryRun: shiftKeyDown,
-                                });
-                                setShowSettingsDropdown(false);
-                              }
-                            }}
-                            disabled={!data?.system.supportsPolling}
-                            className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 ${
-                              data?.system.supportsPolling
-                                ? "text-gray-300 hover:bg-gray-700 hover:text-white transition-colors cursor-pointer"
-                                : "text-gray-500 cursor-not-allowed opacity-70"
-                            }`}
-                          >
-                            <RefreshCw className="w-4 h-4" />
-                            {shiftKeyDown ? "Dry Run Poll…" : "Poll Now…"}
-                          </button>
-                          <div className="border-t border-gray-700 my-1"></div>
-                        </>
-                      )}
-
-                      {/* Test Connection - Only show for vendors that support polling */}
-                      {data?.system.supportsPolling && (
-                        <button
-                          onClick={() => {
-                            setShowTestConnection(true);
-                            setShowSettingsDropdown(false);
-                          }}
-                          className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
-                        >
-                          <FlaskConical className="w-4 h-4" />
-                          Test Connection…
-                        </button>
-                      )}
-
-                      {/* Always show Add System */}
-                      <button
-                        onClick={() => {
-                          setShowSettingsDropdown(false);
-                          setShowAddSystemDialog(true);
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
-                      >
-                        <Plus className="w-4 h-4" />
-                        Add System…
-                      </button>
-
-                      {/* System Settings */}
-                      <button
-                        onClick={() => {
-                          setShowSettingsDropdown(false);
-                          setShowSystemSettingsDialog(true);
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
-                      >
-                        <SettingsIcon className="w-4 h-4" />
-                        System Settings…
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-              <UserButton
-                afterSignOutUrl="/sign-in"
-                appearance={{
-                  elements: {
-                    avatarBox: "w-8 h-8",
-                  },
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      </header>
+      <DashboardHeader
+        displayName={systemDisplayName}
+        systemId={systemId}
+        vendorSiteId={data?.system.vendorSiteId}
+        lastUpdate={lastUpdate}
+        systemInfo={systemInfo}
+        vendorType={data?.system.vendorType}
+        supportsPolling={data?.system.supportsPolling}
+        systemStatus={system?.status}
+        isAdmin={isAdmin}
+        userId={userId}
+        availableSystems={availableSystems}
+        onLogout={handleLogout}
+        onTestConnection={() => setShowTestConnection(true)}
+        onViewData={() => setShowViewDataModal(true)}
+        onPollNow={(dryRun) =>
+          setShowPollNow({ isOpen: true, dryRun: dryRun || false })
+        }
+        onAddSystem={() => setShowAddSystemDialog(true)}
+        onSystemSettings={() => setShowSystemSettingsDialog(true)}
+        shiftKeyDown={shiftKeyDown}
+      />
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-0.5 sm:px-6 lg:px-8 py-4">

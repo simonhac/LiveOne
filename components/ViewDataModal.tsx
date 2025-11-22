@@ -19,6 +19,7 @@ import PointInfoModal from "./PointInfoModal";
 import SessionInfoModal from "./SessionInfoModal";
 import PointReadingInspectorModal from "./PointReadingInspectorModal";
 import { PointInfo } from "@/lib/point/point-info";
+import { getContextualUnitDisplay } from "@/lib/point/unit-display";
 
 // Group data rows by timestamp and combine session labels
 function groupDataByTimestamp(data: any[]): any[] {
@@ -516,32 +517,16 @@ export default function ViewDataModal({
     // Session label has no type/unit display
     if (key === "sessionLabel") return "";
 
-    if (pointInfo?.metricType === "energy") {
-      // For differentiated points in raw view, show MWh
-      if (pointInfo?.transform === "d" && source === "raw") {
-        return "MWh";
-      }
-      // For all energy in daily view, show kWh
-      if (source === "daily") {
-        return "kWh";
-      }
-      return "Wh";
-    } else if (pointInfo?.metricType === "power") {
-      // For power, we'll show kW for most values
-      return "kW";
-    } else if (
-      pointInfo?.metricType === "time" &&
-      pointInfo?.metricUnit === "epochMs"
-    ) {
-      // Show just "time" for time columns
-      return "time";
-    } else if (pointInfo?.metricUnit === "cents_kWh") {
-      // Format cents per kWh with cent symbol
-      return "¢/kWh";
-    } else if (pointInfo?.metricUnit) {
-      return pointInfo.metricUnit;
-    }
-    return "";
+    if (!pointInfo?.metricType) return "";
+
+    return getContextualUnitDisplay(
+      pointInfo.metricType,
+      pointInfo.metricUnit,
+      {
+        source,
+        transform: pointInfo.transform,
+      },
+    );
   };
 
   // Get subsystem color

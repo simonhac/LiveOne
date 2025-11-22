@@ -88,7 +88,7 @@ export default function PointsTab({
         // Parse paths at serialization boundary
         const parsedPoints: ParsedPoint[] = data.points
           .map((p: any) => {
-            const pointPath = PointPath.parse(p.path);
+            const pointPath = PointPath.parse(p.logicalPath);
             if (!pointPath) return null;
             return {
               pointPath,

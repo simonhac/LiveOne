@@ -75,10 +75,10 @@ export default function AdminLayout({
             <div className="flex items-center gap-4">
               <Link
                 href="/dashboard"
-                className="flex items-center gap-2 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm font-medium"
+                className="flex items-center gap-2 p-1.5 sm:px-3 sm:py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm font-medium"
               >
                 <Home className="w-4 h-4" />
-                Dashboard
+                <span className="hidden sm:inline">Dashboard</span>
               </Link>
               <UserButton
                 afterSignOutUrl="/sign-in"

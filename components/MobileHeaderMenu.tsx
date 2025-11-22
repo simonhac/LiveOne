@@ -1,25 +1,17 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useUser } from "@clerk/nextjs";
 import {
-  Menu,
   X,
   User,
   LogOut,
   Info,
-  ChevronDown,
   Settings,
   FlaskConical,
   Plus,
-  Shield,
   Database,
   RefreshCw,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { useUser } from "@clerk/nextjs";
-import LastUpdateTime from "./LastUpdateTime";
-import SystemsMenu from "./SystemsMenu";
 
 interface SystemInfo {
   model?: string;
@@ -29,241 +21,52 @@ interface SystemInfo {
   batterySize?: string;
 }
 
-interface AvailableSystem {
-  id: number;
-  displayName: string;
-  vendorSiteId: string;
-  ownerClerkUserId?: string | null;
-  alias?: string | null;
-  ownerUsername?: string | null;
-}
-
-interface MobileMenuProps {
-  displayName: string | null;
-  lastUpdate: Date | null;
+interface MobileHeaderMenuProps {
+  isOpen: boolean;
+  onClose: () => void;
   onLogout: () => void;
   systemInfo?: SystemInfo | null;
-  availableSystems?: AvailableSystem[];
-  currentSystemId?: string;
-  onTestConnection?: () => void;
   vendorType?: string;
   supportsPolling?: boolean;
   isAdmin?: boolean;
   systemStatus?: "active" | "disabled" | "removed";
-  userId?: string;
-  onAddSystem?: () => void;
-  onSystemSettings?: () => void;
+  onTestConnection?: () => void;
   onViewData?: () => void;
   onPollNow?: (dryRun?: boolean) => void;
+  onAddSystem?: () => void;
+  onSystemSettings?: () => void;
+  isDryRunMode?: boolean;
 }
 
-export default function MobileMenu({
-  displayName,
-  lastUpdate,
+export default function MobileHeaderMenu({
+  isOpen,
+  onClose,
   onLogout,
   systemInfo,
-  availableSystems = [],
-  currentSystemId,
-  onTestConnection,
   vendorType,
   supportsPolling = false,
   isAdmin = false,
   systemStatus,
-  userId,
-  onAddSystem,
-  onSystemSettings,
+  onTestConnection,
   onViewData,
   onPollNow,
-}: MobileMenuProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [isSystemDropdownOpen, setIsSystemDropdownOpen] = useState(false);
-  const [shiftKeyDown, setShiftKeyDown] = useState(false);
-  const [longPressActive, setLongPressActive] = useState(false);
-  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
-  const router = useRouter();
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  onAddSystem,
+  onSystemSettings,
+  isDryRunMode = false,
+}: MobileHeaderMenuProps) {
   const { user } = useUser();
 
-  const isDryRunMode = shiftKeyDown || longPressActive;
-
-  const toggleMenu = () => setIsOpen(!isOpen);
-
-  // Shift key detection
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.shiftKey) {
-        setShiftKeyDown(true);
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (!e.shiftKey) {
-        setShiftKeyDown(false);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
-    };
-  }, []);
-
-  // Long-press handlers for mobile hamburger menu button
-  const handleTouchStart = () => {
-    longPressTimer.current = setTimeout(() => {
-      setLongPressActive(true);
-    }, 500); // 500ms long-press threshold
-  };
-
-  const handleTouchEnd = () => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-  };
-
-  const handleTouchCancel = () => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-    setLongPressActive(false);
-  };
-
-  // Reset long-press when menu closes
-  useEffect(() => {
-    if (!isOpen) {
-      setLongPressActive(false);
-      if (longPressTimer.current) {
-        clearTimeout(longPressTimer.current);
-        longPressTimer.current = null;
-      }
-    }
-  }, [isOpen]);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
-        setIsSystemDropdownOpen(false);
-      }
-    };
-
-    if (isSystemDropdownOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [isSystemDropdownOpen]);
-
-  const handleSystemSelect = (systemId: number) => {
-    // Find the system to get username and shortname
-    const system = availableSystems.find((s) => s.id === systemId);
-
-    // Prefer username/shortname path if available, otherwise use system ID
-    const path =
-      system?.ownerUsername && system?.alias
-        ? `/dashboard/${system.ownerUsername}/${system.alias}`
-        : `/dashboard/${systemId}`;
-
-    router.push(path);
-    setIsSystemDropdownOpen(false);
-  };
+  if (!isOpen) return null;
 
   return (
     <>
-      {/* Mobile Header Bar */}
-      <div className="sm:hidden">
-        <div className="flex justify-between items-center">
-          <div className="relative" ref={dropdownRef}>
-            {availableSystems.length > 1 ? (
-              <button
-                onClick={() => setIsSystemDropdownOpen(!isSystemDropdownOpen)}
-                className="flex items-center gap-1 text-base font-bold text-white hover:text-blue-400 transition-colors"
-              >
-                {displayName || "Select System"}
-                <ChevronDown
-                  className={`w-4 h-4 transition-transform ${isSystemDropdownOpen ? "rotate-180" : ""}`}
-                />
-              </button>
-            ) : (
-              <h1 className="text-base font-bold text-white">
-                {displayName || "LiveOne"}
-              </h1>
-            )}
-
-            {/* System Dropdown Menu */}
-            {isSystemDropdownOpen && availableSystems.length > 1 && (
-              <div className="absolute top-full left-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
-                <SystemsMenu
-                  availableSystems={availableSystems}
-                  currentSystemId={currentSystemId}
-                  userId={userId}
-                  isAdmin={isAdmin}
-                  onSystemSelect={(systemId) => {
-                    handleSystemSelect(systemId);
-                    setIsSystemDropdownOpen(false);
-                  }}
-                  isMobile={true}
-                  itemClassName="w-full text-left px-4 py-2 text-sm hover:bg-gray-700 transition-colors first:rounded-t-lg last:rounded-b-lg text-white"
-                  activeItemClassName="text-blue-400 bg-gray-700/50"
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2">
-            {/* Connection Status and Time */}
-            <LastUpdateTime
-              lastUpdate={lastUpdate}
-              showIcon={true}
-              className="text-xs"
-            />
-
-            {/* Admin Link */}
-            {isAdmin && (
-              <Link
-                href="/admin/systems"
-                className="p-1.5 text-blue-500 hover:text-blue-400 transition-colors"
-                aria-label="Admin"
-              >
-                <Shield className="w-4 h-4" />
-              </Link>
-            )}
-
-            {/* Hamburger Menu Button */}
-            <button
-              onClick={toggleMenu}
-              onTouchStart={handleTouchStart}
-              onTouchEnd={handleTouchEnd}
-              onTouchCancel={handleTouchCancel}
-              className="p-1.5 text-gray-400 hover:text-white transition-colors"
-              aria-label="Toggle menu"
-            >
-              {isOpen ? (
-                <X className="w-4 h-4" />
-              ) : (
-                <Menu className="w-4 h-4" />
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-
       {/* Mobile Menu Overlay */}
       {isOpen && (
         <div className="sm:hidden fixed inset-0 z-50">
           {/* Backdrop */}
           <div
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-            onClick={() => setIsOpen(false)}
+            onClick={onClose}
           />
 
           {/* Menu Panel */}
@@ -272,7 +75,7 @@ export default function MobileMenu({
             <div className="flex justify-between items-center p-4 border-b border-gray-700">
               <h2 className="text-lg font-semibold text-white">Menu</h2>
               <button
-                onClick={() => setIsOpen(false)}
+                onClick={onClose}
                 className="p-1 text-gray-400 hover:text-white transition-colors"
                 aria-label="Close menu"
               >
@@ -309,7 +112,7 @@ export default function MobileMenu({
                   <button
                     onClick={() => {
                       if (vendorType !== "composite") {
-                        setIsOpen(false);
+                        onClose();
                         onViewData();
                       }
                     }}
@@ -330,7 +133,7 @@ export default function MobileMenu({
                   <button
                     onClick={() => {
                       if (supportsPolling) {
-                        setIsOpen(false);
+                        onClose();
                         onPollNow(isDryRunMode);
                       }
                     }}
@@ -352,7 +155,7 @@ export default function MobileMenu({
                   (isAdmin || systemStatus !== "removed") && (
                     <button
                       onClick={() => {
-                        setIsOpen(false);
+                        onClose();
                         onTestConnection();
                       }}
                       className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
@@ -366,7 +169,7 @@ export default function MobileMenu({
                 {onAddSystem && (
                   <button
                     onClick={() => {
-                      setIsOpen(false);
+                      onClose();
                       onAddSystem();
                     }}
                     className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
@@ -380,7 +183,7 @@ export default function MobileMenu({
                 {onSystemSettings && (
                   <button
                     onClick={() => {
-                      setIsOpen(false);
+                      onClose();
                       onSystemSettings();
                     }}
                     className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
@@ -442,7 +245,7 @@ export default function MobileMenu({
               {/* Logout Button */}
               <button
                 onClick={() => {
-                  setIsOpen(false);
+                  onClose();
                   onLogout();
                 }}
                 className="w-full bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded flex items-center justify-center gap-2 transition-colors"

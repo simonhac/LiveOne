@@ -129,7 +129,10 @@ export async function GET(
     } else {
       // Return detailed point information
       const pointsData = points.map((point) => ({
-        path: point.getPath().toString(),
+        logicalPath: point.getPath().toString(),
+        physicalPath: point.originSubId
+          ? `${point.originId}.${point.originSubId}`
+          : point.originId,
         name: point.name,
         metricType: point.metricType,
         metricUnit: point.metricUnit,
