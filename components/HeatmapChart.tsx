@@ -42,8 +42,8 @@ const customYAxisPlugin = {
 
       if (!label) return;
 
-      // Check if this label has a month prefix (starts with a 3-letter month)
-      const monthMatch = label.match(/^([A-Z][a-z]{2})\s+(.+)$/);
+      // Check if this label has a month prefix (word word ...)
+      const monthMatch = label.match(/^([A-Za-z]+)\s+([A-Za-z]+\s+.+)$/);
 
       if (monthMatch) {
         // Label has month prefix - render month in white/bold, rest in gray/normal
@@ -104,6 +104,7 @@ interface HeatmapChartProps {
   systemId: number;
   pointPath: string;
   pointUnit: string;
+  metricType: string;
   timezone: string;
   palette: HeatmapPaletteKey;
   className?: string;
@@ -133,6 +134,7 @@ export default function HeatmapChart({
   systemId,
   pointPath,
   pointUnit,
+  metricType,
   timezone,
   palette,
   className = "",
@@ -152,6 +154,12 @@ export default function HeatmapChart({
 
   useEffect(() => {
     const fetchData = async () => {
+      // Hide tooltip when starting to load new data
+      const tooltipEl = document.getElementById("chartjs-tooltip");
+      if (tooltipEl) {
+        tooltipEl.style.opacity = "0";
+      }
+
       setLoading(true);
       setError(null);
 
@@ -183,7 +191,9 @@ export default function HeatmapChart({
         const endTimeEncoded = encodeI18nToUrlSafeString(fetchEndTime, true);
 
         // Fetch 30 days of data at 30-minute intervals
-        const url = `/api/history?interval=30m&startTime=${startTimeEncoded}&endTime=${endTimeEncoded}&systemId=${systemId}&series=${pointPath}.avg`;
+        // Use .delta for energy metrics, .avg for others
+        const seriesSuffix = metricType === "energy" ? "delta" : "avg";
+        const url = `/api/history?interval=30m&startTime=${startTimeEncoded}&endTime=${endTimeEncoded}&systemId=${systemId}&series=${pointPath}.${seriesSuffix}`;
         console.log("[HeatmapChart] Fetching:", url);
         console.log(
           "[HeatmapChart] Calculated range - Start:",
@@ -215,6 +225,8 @@ export default function HeatmapChart({
         console.log("[HeatmapChart] result.data:", result.data);
 
         // Find the series for the requested point
+        // Use .delta for energy metrics, .avg for others (same as request)
+        const expectedSeriesPath = `${pointPath}.${seriesSuffix}`;
         const series = result.data?.find((s: any) => {
           const seriesPath = s.path || s.id?.split(".").slice(2).join(".");
           console.log(
@@ -223,9 +235,9 @@ export default function HeatmapChart({
             "path:",
             seriesPath,
             "looking for:",
-            `${pointPath}.avg`,
+            expectedSeriesPath,
           );
-          return seriesPath === `${pointPath}.avg`;
+          return seriesPath === expectedSeriesPath;
         });
         console.log("[HeatmapChart] Found series:", series);
 
@@ -339,6 +351,16 @@ export default function HeatmapChart({
 
     fetchData();
   }, [systemId, pointPath, timezone]);
+
+  // Cleanup tooltip on unmount
+  useEffect(() => {
+    return () => {
+      const tooltipEl = document.getElementById("chartjs-tooltip");
+      if (tooltipEl) {
+        tooltipEl.remove();
+      }
+    };
+  }, []);
 
   // Parse interval string to milliseconds
   function parseInterval(interval: string): number {
@@ -486,10 +508,23 @@ export default function HeatmapChart({
               cellColor = getColor(normalized);
             }
 
+            // Convert Wh to kWh for energy metrics, use 1 decimal place
+            let displayValue: string;
+            let displayUnit: string;
+            if (dataPoint.v === null) {
+              displayValue = "No data";
+              displayUnit = "";
+            } else if (metricType === "energy") {
+              displayValue = (dataPoint.v / 1000).toFixed(1);
+              displayUnit = pointUnit.replace("Wh", "kWh");
+            } else {
+              displayValue = dataPoint.v.toFixed(1);
+              displayUnit = pointUnit;
+            }
             const bodyText =
-              dataPoint.v === null
-                ? "No data"
-                : `${dataPoint.v.toFixed(2)}${pointUnit}`;
+              displayValue === "No data"
+                ? displayValue
+                : `${displayValue}${displayUnit}`;
 
             tooltipEl.innerHTML = `
               <div style="
@@ -650,10 +685,18 @@ export default function HeatmapChart({
     ],
   };
 
-  if (loading) {
+  // Only show spinner for initial load (no data yet)
+  if (loading && !heatmapData) {
     return (
-      <div className={`flex items-center justify-center ${className}`}>
-        <div className="text-gray-400">Loading heatmap...</div>
+      <div className={className}>
+        <div className="bg-gray-900 p-4 rounded-lg border border-gray-700">
+          <div
+            className="flex items-center justify-center"
+            style={{ height: "600px" }}
+          >
+            <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -692,15 +735,28 @@ export default function HeatmapChart({
   return (
     <div className={className}>
       <div className="bg-gray-900 p-4 rounded-lg border border-gray-700">
-        <div ref={chartContainerRef} style={{ height: "600px" }}>
-          <Chart type="matrix" data={chartData} options={chartOptions} />
+        <div className="relative">
+          <div ref={chartContainerRef} style={{ height: "600px" }}>
+            <Chart type="matrix" data={chartData} options={chartOptions} />
+          </div>
+
+          {/* Loading overlay - dims chart and shows spinner while loading new data */}
+          {loading && (
+            <div className="absolute inset-0 bg-gray-900/80 flex items-center justify-center rounded">
+              <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            </div>
+          )}
         </div>
 
         {/* Color legend */}
         <div className="mt-4 flex items-center justify-center gap-2">
           <span className="text-xs text-gray-400">
-            {heatmapData.min.toFixed(1)}
-            {pointUnit}
+            {metricType === "energy"
+              ? (heatmapData.min / 1000).toFixed(1)
+              : heatmapData.min.toFixed(1)}
+            {metricType === "energy"
+              ? pointUnit.replace("Wh", "kWh")
+              : pointUnit}
           </span>
           <div
             className="h-4 rounded"
@@ -710,8 +766,12 @@ export default function HeatmapChart({
             }}
           />
           <span className="text-xs text-gray-400">
-            {heatmapData.max.toFixed(1)}
-            {pointUnit}
+            {metricType === "energy"
+              ? (heatmapData.max / 1000).toFixed(1)
+              : heatmapData.max.toFixed(1)}
+            {metricType === "energy"
+              ? pointUnit.replace("Wh", "kWh")
+              : pointUnit}
           </span>
         </div>
       </div>

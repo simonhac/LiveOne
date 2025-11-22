@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import HeatmapChart from "@/components/HeatmapChart";
 import {
   Select,
@@ -34,7 +34,6 @@ interface SystemInfo {
 
 export default function HeatmapPage() {
   const params = useParams();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const systemIdentifier = params.systemIdentifier as string;
 
@@ -54,18 +53,27 @@ export default function HeatmapPage() {
     endTime: ZonedDateTime | null;
   } | null>(null);
 
+  // Sort points by logical path (used for both menu display and keyboard navigation)
+  const sortedPoints = useMemo(
+    () =>
+      [...points].sort((a, b) => a.logicalPath.localeCompare(b.logicalPath)),
+    [points],
+  );
+
   // Helper to update URL parameters
-  const updateUrlParams = (
-    point: string | undefined,
-    palette: HeatmapPaletteKey,
-  ) => {
-    const parts: string[] = [];
-    if (point) {
-      parts.push(`point=${point}`);
-    }
-    parts.push(`palette=${palette}`);
-    router.replace(`?${parts.join("&")}`, { scroll: false });
-  };
+  const updateUrlParams = useCallback(
+    (point: string | undefined, palette: HeatmapPaletteKey) => {
+      const parts: string[] = [];
+      if (point) {
+        parts.push(`point=${point}`);
+      }
+      parts.push(`palette=${palette}`);
+      // Use window.history instead of router to avoid Next.js navigation flash
+      const newUrl = `${window.location.pathname}?${parts.join("&")}`;
+      window.history.replaceState(null, "", newUrl);
+    },
+    [],
+  );
 
   // Read URL parameters on mount
   useEffect(() => {
@@ -81,16 +89,22 @@ export default function HeatmapPage() {
   }, [searchParams]);
 
   // Handle point selection change
-  const handlePointChange = (point: string) => {
-    setSelectedPoint(point);
-    updateUrlParams(point, selectedPalette);
-  };
+  const handlePointChange = useCallback(
+    (point: string) => {
+      setSelectedPoint(point);
+      updateUrlParams(point, selectedPalette);
+    },
+    [selectedPalette, updateUrlParams],
+  );
 
   // Handle palette selection change
-  const handlePaletteChange = (palette: HeatmapPaletteKey) => {
-    setSelectedPalette(palette);
-    updateUrlParams(selectedPoint, palette);
-  };
+  const handlePaletteChange = useCallback(
+    (palette: HeatmapPaletteKey) => {
+      setSelectedPalette(palette);
+      updateUrlParams(selectedPoint, palette);
+    },
+    [selectedPoint, updateUrlParams],
+  );
 
   // Fetch system info and points on mount
   useEffect(() => {
@@ -170,7 +184,61 @@ export default function HeatmapPage() {
     };
 
     fetchData();
-  }, [systemIdentifier, searchParams]);
+  }, [systemIdentifier]); // Removed searchParams - only fetch on mount/system change
+
+  // Keyboard navigation for points
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't handle if an input/textarea/select is focused
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      // Don't handle if no points or point not selected
+      if (!sortedPoints.length || !selectedPoint) {
+        return;
+      }
+
+      // Find current point index in sorted array
+      const currentIndex = sortedPoints.findIndex(
+        (p) => p.logicalPath === selectedPoint,
+      );
+      if (currentIndex === -1) return;
+
+      let newPoint: string | undefined;
+
+      // Left or Up: Previous point
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        if (currentIndex > 0) {
+          newPoint = sortedPoints[currentIndex - 1].logicalPath;
+          e.preventDefault();
+        }
+      }
+      // Right or Down: Next point
+      else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        if (currentIndex < sortedPoints.length - 1) {
+          newPoint = sortedPoints[currentIndex + 1].logicalPath;
+          e.preventDefault();
+        }
+      }
+
+      // Update selected point
+      if (newPoint) {
+        handlePointChange(newPoint);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [sortedPoints, selectedPoint, handlePointChange]);
 
   if (loading) {
     return (
@@ -220,7 +288,7 @@ export default function HeatmapPage() {
         {/* Controls */}
         <div className="mb-6 flex flex-wrap gap-4">
           {/* Point selector */}
-          <div className="flex-1 min-w-[300px]">
+          <div className="flex-1 min-w-[150px] max-w-[250px]">
             <label className="block text-sm text-gray-400 mb-2">
               Select Point
             </label>
@@ -228,21 +296,12 @@ export default function HeatmapPage() {
               <SelectTrigger className="bg-gray-900 border-gray-700">
                 <SelectValue placeholder="Select a point" />
               </SelectTrigger>
-              <SelectContent>
-                {[...points]
-                  .sort((a, b) => a.physicalPath.localeCompare(b.physicalPath))
-                  .map((point) => (
-                    <SelectItem key={point.reference} value={point.logicalPath}>
-                      <div className="flex flex-col">
-                        <div>
-                          {point.name} ({point.metricType})
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {point.logicalPath}
-                        </div>
-                      </div>
-                    </SelectItem>
-                  ))}
+              <SelectContent className="max-h-[500px]">
+                {sortedPoints.map((point) => (
+                  <SelectItem key={point.reference} value={point.logicalPath}>
+                    {point.name} ({point.metricType})
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -317,7 +376,7 @@ export default function HeatmapPage() {
               <tbody>
                 <tr>
                   <td className="pr-4 align-top">Timezone:</td>
-                  <td>{system.displayTimezone}</td>
+                  <td>{system?.displayTimezone}</td>
                 </tr>
                 <tr>
                   <td className="pr-4 align-top">Physical Path:</td>
@@ -359,8 +418,9 @@ export default function HeatmapPage() {
                         `${fetchInfo.startTime.year}-${String(fetchInfo.startTime.month).padStart(2, "0")}-${String(fetchInfo.startTime.day).padStart(2, "0")} ${String(fetchInfo.startTime.hour).padStart(2, "0")}:${String(fetchInfo.startTime.minute).padStart(2, "0")}`}{" "}
                       <span className="text-gray-600">
                         {fetchInfo.startTime &&
+                          system?.displayTimezone &&
                           new Intl.DateTimeFormat("en-US", {
-                            timeZone: system.displayTimezone ?? undefined,
+                            timeZone: system.displayTimezone,
                             timeZoneName: "short",
                           })
                             .formatToParts(fetchInfo.startTime.toDate())
@@ -372,8 +432,9 @@ export default function HeatmapPage() {
                         `${fetchInfo.endTime.year}-${String(fetchInfo.endTime.month).padStart(2, "0")}-${String(fetchInfo.endTime.day).padStart(2, "0")} ${String(fetchInfo.endTime.hour).padStart(2, "0")}:${String(fetchInfo.endTime.minute).padStart(2, "0")}`}{" "}
                       <span className="text-gray-600">
                         {fetchInfo.endTime &&
+                          system?.displayTimezone &&
                           new Intl.DateTimeFormat("en-US", {
-                            timeZone: system.displayTimezone ?? undefined,
+                            timeZone: system.displayTimezone,
                             timeZoneName: "short",
                           })
                             .formatToParts(fetchInfo.endTime.toDate())
@@ -394,6 +455,7 @@ export default function HeatmapPage() {
             systemId={system.id}
             pointPath={selectedPoint}
             pointUnit={getUnitDisplay(selectedPointInfo.metricUnit)}
+            metricType={selectedPointInfo.metricType}
             timezone={system.displayTimezone}
             palette={selectedPalette}
             className="w-full"
