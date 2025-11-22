@@ -1001,6 +1001,9 @@ async function syncSessions(ctx: SyncContext) {
       return {
         ...row,
         system_id: mappedSystemId,
+        session_label: row.session_label
+          ? `prod_${row.session_label}`
+          : row.session_label,
       };
     },
     timestampField: "started",
