@@ -8,6 +8,7 @@ import {
 } from "@/lib/vendors/amber/types";
 import { toZoned, fromDate } from "@internationalized/date";
 import { sessionManager } from "@/lib/session-manager";
+import { getNextSessionId, formatSessionId } from "@/lib/session-id";
 
 /**
  * Format timestamp as AEST (UTC+10) time string (HH:MM)
@@ -68,6 +69,10 @@ export async function POST(request: NextRequest) {
 
     const encoder = new TextEncoder();
 
+    // Generate session ID and label
+    const sessionIdStr = getNextSessionId();
+    const sessionLabel = formatSessionId(sessionIdStr, 1); // Sub-sequence 1 for Amber sync
+
     const stream = new ReadableStream({
       async start(controller) {
         const send = (
@@ -94,14 +99,15 @@ export async function POST(request: NextRequest) {
         const delay = () => new Promise((resolve) => setTimeout(resolve, 100));
 
         const startTime = Date.now();
-        let sessionId: number | null = null;
+        let dbSessionId: number | null = null;
         let totalRowsInserted = 0;
         let overallSuccess = true;
         let overallError: string | null = null;
 
         try {
           // Create session at the start
-          sessionId = await sessionManager.createSession({
+          dbSessionId = await sessionManager.createSession({
+            sessionLabel,
             systemId,
             vendorType: systemInfo.vendorType,
             systemName: systemInfo.systemName,
@@ -127,7 +133,7 @@ export async function POST(request: NextRequest) {
             `    day: ${firstDay.toString()} for ${numberOfDays} ${numberOfDays === 1 ? "day" : "days"}`,
           );
           send(`    action: *${action}*`);
-          send(`    session ID: ${sessionId}`);
+          send(`    session ID: ${dbSessionId}`);
 
           const audits: AmberSyncResult[] = [];
 
@@ -139,7 +145,7 @@ export async function POST(request: NextRequest) {
               firstDay,
               numberOfDays,
               credentials,
-              sessionId,
+              dbSessionId,
               dryRun,
             );
             audits.push(audit);
@@ -159,7 +165,7 @@ export async function POST(request: NextRequest) {
               firstDay,
               numberOfDays,
               credentials,
-              sessionId,
+              dbSessionId,
               dryRun,
             );
             audits.push(audit);
@@ -340,9 +346,9 @@ export async function POST(request: NextRequest) {
           await delay();
 
           // Update session with results
-          if (sessionId) {
+          if (dbSessionId) {
             const duration = Date.now() - startTime;
-            await sessionManager.updateSessionResult(sessionId, {
+            await sessionManager.updateSessionResult(dbSessionId, {
               duration,
               successful: overallSuccess,
               error: overallError,
@@ -358,9 +364,9 @@ export async function POST(request: NextRequest) {
           send(error instanceof Error ? error.message : String(error));
 
           // Update session with error if we have a session ID
-          if (sessionId) {
+          if (dbSessionId) {
             const duration = Date.now() - startTime;
-            await sessionManager.updateSessionResult(sessionId, {
+            await sessionManager.updateSessionResult(dbSessionId, {
               duration,
               successful: false,
               error: error instanceof Error ? error.message : String(error),
