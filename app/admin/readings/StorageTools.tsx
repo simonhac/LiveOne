@@ -8,20 +8,18 @@ import SyncModal from "./SyncModal";
 interface TableStat {
   name: string;
   count: number;
-  earliestTimestamp?: string;
-  latestTimestamp?: string;
+  createdAtMinTime?: string;
+  createdAtMaxTime?: string;
+  updatedAtMinTime?: string;
+  updatedAtMaxTime?: string;
+  earliestTime?: string;
+  latestTime?: string;
   recordsPerDay?: number | null;
 }
 
 interface CacheInfo {
-  systemsManager: {
-    lastRefreshed: string | null;
-    isLoaded: boolean;
-  };
-  pointManager: {
-    lastRefreshed: string | null;
-    isLoaded: boolean;
-  };
+  systemsManagerLoadedTime: string | null;
+  pointManagerLoadedTime: string | null;
 }
 
 interface DatabaseInfo {
@@ -661,6 +659,25 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
+                  {/* Group headers */}
+                  <tr>
+                    <th className="px-4 py-1 text-left border-b border-gray-700"></th>
+                    <th className="px-4 py-1 text-right border-b border-gray-700"></th>
+                    <th
+                      colSpan={2}
+                      className="px-4 py-1 text-center text-xs font-medium text-gray-400 uppercase tracking-wider border-b border-gray-600"
+                    >
+                      Created
+                    </th>
+                    <th
+                      colSpan={2}
+                      className="px-4 py-1 text-center text-xs font-medium text-gray-400 uppercase tracking-wider border-b border-gray-600"
+                    >
+                      Updated
+                    </th>
+                    <th className="px-4 py-1 text-right border-b border-gray-700"></th>
+                  </tr>
+                  {/* Column headers */}
                   <tr className="border-b border-gray-700">
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                       Table
@@ -668,10 +685,16 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                     <th className="px-4 py-2 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
                       Records
                     </th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 tracking-wider">
                       Earliest
                     </th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 tracking-wider">
+                      Latest
+                    </th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 tracking-wider">
+                      Earliest
+                    </th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 tracking-wider">
                       Latest
                     </th>
                     <th className="px-4 py-2 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
@@ -691,18 +714,28 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                       <td className="px-4 py-2 text-xs text-gray-300 text-right">
                         {table.count.toLocaleString()}
                       </td>
-                      <td className="px-4 py-2 text-xs text-gray-300">
-                        {table.earliestTimestamp
-                          ? table.name === "readings_agg_1d"
-                            ? formatDate(table.earliestTimestamp)
-                            : formatDateTime(table.earliestTimestamp).display
+                      {/* Created Range - Earliest */}
+                      <td className="px-2 py-2 text-xs text-gray-300">
+                        {table.createdAtMinTime
+                          ? formatDateTime(table.createdAtMinTime).display
                           : "—"}
                       </td>
-                      <td className="px-4 py-2 text-xs text-gray-300">
-                        {table.latestTimestamp
-                          ? table.name === "readings_agg_1d"
-                            ? formatDate(table.latestTimestamp)
-                            : formatDateTime(table.latestTimestamp).display
+                      {/* Created Range - Latest */}
+                      <td className="px-2 py-2 text-xs text-gray-300">
+                        {table.createdAtMaxTime
+                          ? formatDateTime(table.createdAtMaxTime).display
+                          : "—"}
+                      </td>
+                      {/* Updated Range - Earliest */}
+                      <td className="px-2 py-2 text-xs text-gray-300">
+                        {table.updatedAtMinTime
+                          ? formatDateTime(table.updatedAtMinTime).display
+                          : "—"}
+                      </td>
+                      {/* Updated Range - Latest */}
+                      <td className="px-2 py-2 text-xs text-gray-300">
+                        {table.updatedAtMaxTime
+                          ? formatDateTime(table.updatedAtMaxTime).display
                           : "—"}
                       </td>
                       <td className="px-4 py-2 text-xs text-gray-300 text-right">
@@ -788,12 +821,12 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
               <div>
                 <span className="text-gray-400">SystemsManager Cache:</span>
                 <span className="ml-2">
-                  {cacheInfo.systemsManager.isLoaded ? (
+                  {cacheInfo.systemsManagerLoadedTime ? (
                     <span className="text-white">
-                      {cacheInfo.systemsManager.lastRefreshed
-                        ? formatDateTime(cacheInfo.systemsManager.lastRefreshed)
-                            .display
-                        : "Loaded (no timestamp)"}
+                      {
+                        formatDateTime(cacheInfo.systemsManagerLoadedTime)
+                          .display
+                      }
                     </span>
                   ) : (
                     <span className="text-gray-500 italic">Not yet loaded</span>
@@ -803,12 +836,9 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
               <div>
                 <span className="text-gray-400">PointManager Cache:</span>
                 <span className="ml-2">
-                  {cacheInfo.pointManager.isLoaded ? (
+                  {cacheInfo.pointManagerLoadedTime ? (
                     <span className="text-white">
-                      {cacheInfo.pointManager.lastRefreshed
-                        ? formatDateTime(cacheInfo.pointManager.lastRefreshed)
-                            .display
-                        : "Loaded (no timestamp)"}
+                      {formatDateTime(cacheInfo.pointManagerLoadedTime).display}
                     </span>
                   ) : (
                     <span className="text-gray-500 italic">Not yet loaded</span>
@@ -825,7 +855,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
               style={{ cursor: isReloadingCaches ? "wait" : "pointer" }}
             >
               <RefreshCw className="w-4 h-4" />
-              Reload Caches
+              Invalidate Caches
             </button>
           </div>
         </div>

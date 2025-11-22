@@ -178,7 +178,7 @@ async function aggregateDailyPointData(
           delta: sql`excluded.delta`,
           sampleCount: sql`excluded.sample_count`,
           errorCount: sql`excluded.error_count`,
-          updatedAt: sql`excluded.updated_at`,
+          updatedAt: sql`(unixepoch() * 1000)`,
         },
       });
     queryCount++;

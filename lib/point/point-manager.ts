@@ -323,7 +323,10 @@ export class PointManager {
   ): Promise<void> {
     await db
       .update(pointInfoTable)
-      .set(updates)
+      .set({
+        ...updates,
+        updatedAt: Date.now(), // Unix milliseconds
+      })
       .where(eq(pointInfoTable.index, pointIndex));
 
     // Invalidate cache for this system

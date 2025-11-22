@@ -46,6 +46,7 @@ export const pointInfo = sqliteTable(
 
     // Timestamps
     created: integer("created"), // Creation timestamp (Unix milliseconds)
+    updatedAt: integer("updated_at").default(sql`(unixepoch() * 1000)`), // Last update timestamp (Unix milliseconds)
   },
   (table) => ({
     pk: primaryKey({ columns: [table.systemId, table.index] }),
