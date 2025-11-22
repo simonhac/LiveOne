@@ -6,13 +6,12 @@ import { formatOpenNEMResponse } from "@/lib/history/format-opennem";
 import {
   formatTimeAEST,
   formatDateAEST,
-  parseTimeRange as parseTimeRangeUtil,
-  parseDateRange,
   parseRelativeTime,
   getDateDifferenceMs,
   getTimeDifferenceMs,
   formatTime_fromJSDate,
 } from "@/lib/date-utils";
+import { decodeUrlSafeStringToI18n } from "@/lib/url-date";
 import { CalendarDate, ZonedDateTime, now } from "@internationalized/date";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { splitBraceAware } from "@/lib/series-filter-utils";
@@ -219,6 +218,7 @@ function parseTimeRangeParams(
   const lastParam = searchParams.get("last");
   const startTimeParam = searchParams.get("startTime");
   const endTimeParam = searchParams.get("endTime");
+  const timezoneOffsetParam = searchParams.get("timezoneOffset");
 
   let startTime: ZonedDateTime | CalendarDate;
   let endTime: ZonedDateTime | CalendarDate;
@@ -232,26 +232,15 @@ function parseTimeRangeParams(
         systemTimezoneOffsetMin,
       );
     } else if (startTimeParam && endTimeParam) {
-      // Parse absolute time based on interval
-      switch (interval) {
-        case "1d":
-          // For daily intervals, expect date-only strings
-          [startTime, endTime] = parseDateRange(startTimeParam, endTimeParam);
-          break;
+      // Parse timezone offset if provided, otherwise use system timezone
+      const offsetMin = timezoneOffsetParam
+        ? parseInt(timezoneOffsetParam)
+        : systemTimezoneOffsetMin;
 
-        case "30m":
-        case "5m":
-          // For minute intervals, accept datetime or date strings
-          [startTime, endTime] = parseTimeRangeUtil(
-            startTimeParam,
-            endTimeParam,
-            systemTimezoneOffsetMin,
-          );
-          break;
-
-        default:
-          throw new Error(`Unsupported interval: ${interval}`);
-      }
+      // Decode URL-safe strings to CalendarDate or ZonedDateTime
+      // The function automatically determines the format based on the string
+      startTime = decodeUrlSafeStringToI18n(startTimeParam, offsetMin);
+      endTime = decodeUrlSafeStringToI18n(endTimeParam, offsetMin);
     } else {
       return {
         isValid: false,
@@ -409,11 +398,11 @@ async function getSystemHistoryInOpenNEMFormat(
   const { rawClient } = await import("@/lib/db");
   const aggTable =
     interval === "1d" ? "point_readings_agg_1d" : "point_readings_agg_5m";
-  const startEpoch =
+  const firstEpoch =
     interval === "1d"
       ? (startTime as CalendarDate).toDate("UTC").getTime()
       : (startTime as ZonedDateTime).toDate().getTime();
-  const endEpoch =
+  const lastEpoch =
     interval === "1d"
       ? (endTime as CalendarDate).toDate("UTC").getTime()
       : (endTime as ZonedDateTime).toDate().getTime();
@@ -499,29 +488,45 @@ async function getSystemHistoryInOpenNEMFormat(
       })
     ).rows as unknown as typeof allRows;
   } else {
+    // When aggregating 5m data to 30m, we need to fetch earlier data
+    // For 30m bucket ending at 00:30, we need 5m data from 00:05-00:30 (6 readings)
+    // That's 25 minutes earlier: 30m - 5m = 25m
+    const queryFirstEpoch =
+      interval === "30m" ? firstEpoch - 25 * 60 * 1000 : firstEpoch;
+
     queryTemplate = `
-      WITH pairs(system_id, point_id) AS (
-        VALUES ${pairsPlaceholders}
-      )
+      WITH RECURSIVE
+        timeline AS (
+          -- Generate dense timeline at 5-minute intervals
+          SELECT ? as interval_end
+          UNION ALL
+          SELECT interval_end + 300000
+          FROM timeline
+          WHERE interval_end < ?
+        ),
+        pairs(system_id, point_id) AS (
+          VALUES ${pairsPlaceholders}
+        )
       SELECT
-        pra.system_id,
-        pra.point_id,
-        pra.interval_end,
+        t.interval_end,
+        p.system_id,
+        p.point_id,
         pra.avg,
         pra.min,
         pra.max,
         pra.last,
         pra.delta,
         pra.data_quality
-      FROM ${aggTable} AS pra
-      JOIN pairs p
-        ON p.system_id = pra.system_id
-       AND p.point_id = pra.point_id
-      WHERE pra.interval_end >= ? AND pra.interval_end < ?
-      ORDER BY pra.system_id, pra.point_id, pra.interval_end
+      FROM timeline t
+      CROSS JOIN pairs p
+      LEFT JOIN ${aggTable} AS pra
+        ON pra.system_id = p.system_id
+       AND pra.point_id = p.point_id
+       AND pra.interval_end = t.interval_end
+      ORDER BY p.system_id, p.point_id, t.interval_end
     `;
 
-    queryArgs = [...pairArgs, startEpoch, endEpoch];
+    queryArgs = [queryFirstEpoch, lastEpoch, ...pairArgs];
 
     allRows = (
       await rawClient.execute({
@@ -557,7 +562,8 @@ async function getSystemHistoryInOpenNEMFormat(
     const intervalEnd =
       row.interval_end ?? new Date(row.day! + "T00:00:00Z").getTime();
 
-    // Process each aggregation field that has a value
+    // Process each aggregation field (including NULLs from dense timeline)
+    // With CTE-generated dense timeline, we always have rows even if data is NULL
     for (const field of [
       "avg",
       "min",
@@ -569,16 +575,15 @@ async function getSystemHistoryInOpenNEMFormat(
       // Map field name to database column (quality -> data_quality)
       const dbField = field === "quality" ? "data_quality" : field;
 
-      if (row[dbField] !== undefined && row[dbField] !== null) {
-        const key = `${row.system_id}.${row.point_id}.${field}`;
-        if (!rowsByPointAndField.has(key)) {
-          rowsByPointAndField.set(key, []);
-        }
-        rowsByPointAndField.get(key)!.push({
-          interval_end: intervalEnd,
-          value: row[dbField]!,
-        });
+      // Always add an entry for this field (value may be null)
+      const key = `${row.system_id}.${row.point_id}.${field}`;
+      if (!rowsByPointAndField.has(key)) {
+        rowsByPointAndField.set(key, []);
       }
+      rowsByPointAndField.get(key)!.push({
+        interval_end: intervalEnd,
+        value: row[dbField] ?? null,
+      });
     }
   }
 
@@ -623,8 +628,12 @@ async function getSystemHistoryInOpenNEMFormat(
         >();
 
         for (const row of rows) {
-          const bucketEnd =
-            Math.floor(row.interval_end / intervalMs) * intervalMs + intervalMs;
+          // Align bucketing to request boundaries
+          // Use ceil to round readings UP to the next bucket boundary
+          const bucketIndex = Math.ceil(
+            (row.interval_end - firstEpoch) / intervalMs,
+          );
+          const bucketEnd = firstEpoch + bucketIndex * intervalMs;
 
           if (!buckets.has(bucketEnd)) {
             buckets.set(bucketEnd, []);
@@ -661,8 +670,12 @@ async function getSystemHistoryInOpenNEMFormat(
         const buckets = new Map<number, number[]>();
 
         for (const row of rows) {
-          const bucketEnd =
-            Math.floor(row.interval_end / intervalMs) * intervalMs + intervalMs;
+          // Align bucketing to request boundaries
+          // Use ceil to round readings UP to the next bucket boundary
+          const bucketIndex = Math.ceil(
+            (row.interval_end - firstEpoch) / intervalMs,
+          );
+          const bucketEnd = firstEpoch + bucketIndex * intervalMs;
 
           if (!buckets.has(bucketEnd)) {
             buckets.set(bucketEnd, []);
@@ -694,37 +707,16 @@ async function getSystemHistoryInOpenNEMFormat(
     const seriesPath = getSeriesPath(series);
     const seriesId = seriesPath.toString();
 
-    // Build field data with gap filling
-    const fieldData: (number | string | null)[] = [];
-    let dataIndex = 0;
-
-    for (
-      let expectedIntervalEnd = startEpoch;
-      expectedIntervalEnd < endEpoch;
-      expectedIntervalEnd += intervalMs
-    ) {
-      if (dataIndex < rows.length) {
-        const dataPoint = rows[dataIndex];
-        const dataIntervalEnd = dataPoint.interval_end;
-
-        if (dataIntervalEnd === expectedIntervalEnd) {
-          const value = dataPoint.value;
-          // For quality (string), push as-is; for numbers, apply precision
-          if (typeof value === "string") {
-            fieldData.push(value);
-          } else {
-            fieldData.push(
-              value === null ? null : parseFloat(value.toPrecision(4)),
-            );
-          }
-          dataIndex++;
-        } else {
-          fieldData.push(null);
-        }
+    // Build field data - database CTE provides dense timeline with NULLs for gaps
+    const fieldData: (number | string | null)[] = rows.map((row) => {
+      const value = row.value;
+      // For quality (string), push as-is; for numbers, apply precision
+      if (typeof value === "string") {
+        return value;
       } else {
-        fieldData.push(null);
+        return value === null ? null : parseFloat(value.toPrecision(4));
       }
-    }
+    });
 
     // Build path for the series (e.g., "bidi.battery/power.avg")
     const pointPath = series.point.getPath();
@@ -733,11 +725,11 @@ async function getSystemHistoryInOpenNEMFormat(
     // Format timestamps
     const timezoneOffsetMin = system.timezoneOffsetMin ?? 600;
     const startFormatted = formatTime_fromJSDate(
-      new Date(startEpoch),
+      new Date(firstEpoch),
       timezoneOffsetMin,
     );
     const endFormatted = formatTime_fromJSDate(
-      new Date(endEpoch - intervalMs),
+      new Date(lastEpoch),
       timezoneOffsetMin,
     );
 
@@ -750,6 +742,7 @@ async function getSystemHistoryInOpenNEMFormat(
         start: startFormatted,
         last: endFormatted,
         interval: interval,
+        numIntervals: fieldData.length,
         data: fieldData,
       },
     });

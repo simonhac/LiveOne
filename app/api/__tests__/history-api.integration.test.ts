@@ -1,42 +1,60 @@
-import { describe, it, expect, beforeAll } from '@jest/globals';
+import { describe, it, expect, beforeAll } from "@jest/globals";
 
 // Load environment variables from .env.local for testing
-import * as dotenv from 'dotenv';
-import * as path from 'path';
-dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
+import * as dotenv from "dotenv";
+import * as path from "path";
+dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
 
-import { getTestSession } from '@/lib/__tests__/test-auth-helper';
+import { getTestSession } from "@/lib/__tests__/test-auth-helper";
+import { parseDate, parseAbsolute, toZoned } from "@internationalized/date";
+import { encodeI18nToUrlSafeString } from "@/lib/url-date";
 
-const API_URL = 'http://localhost:3000/api/history';
+const API_URL = "http://localhost:3000/api/history";
 
-describe('History API Integration Tests - Multiple Interval Support', () => {
+describe("History API Integration Tests - Multiple Interval Support", () => {
   let sessionToken: string | null = null;
-  
+
   // Helper to align times to 5-minute boundaries
   const alignTo5Minutes = (date: Date): Date => {
-    return new Date(Math.floor(date.getTime() / (5 * 60 * 1000)) * (5 * 60 * 1000));
+    return new Date(
+      Math.floor(date.getTime() / (5 * 60 * 1000)) * (5 * 60 * 1000),
+    );
   };
 
   // Helper to align times to 30-minute boundaries
   const alignTo30Minutes = (date: Date): Date => {
-    return new Date(Math.floor(date.getTime() / (30 * 60 * 1000)) * (30 * 60 * 1000));
+    return new Date(
+      Math.floor(date.getTime() / (30 * 60 * 1000)) * (30 * 60 * 1000),
+    );
   };
-  
+
+  // Helper to convert Date to URL-safe string with UTC timezone
+  const toUrlSafeString = (date: Date): string => {
+    const zoned = toZoned(parseAbsolute(date.toISOString(), "UTC"), "UTC");
+    return encodeI18nToUrlSafeString(zoned, true) as string;
+  };
+
   beforeAll(async () => {
     // Check if dev server is running
     try {
-      const response = await fetch('http://localhost:3000/api/health');
+      const response = await fetch("http://localhost:3000/api/health");
       if (!response.ok) {
-        throw new Error('Dev server not responding properly. Please run: npm run dev');
+        throw new Error(
+          "Dev server not responding properly. Please run: npm run dev",
+        );
       }
     } catch (error) {
-      throw new Error('Dev server is not running. Please start it with: npm run dev');
+      throw new Error(
+        "Dev server is not running. Please start it with: npm run dev",
+      );
     }
-    
+
     // Get test session token from Clerk
     sessionToken = await getTestSession();
     if (!sessionToken) {
-      throw new Error('Failed to get test session token from Clerk. Ensure TEST_USER_ID is set in .env.local');
+      throw new Error(
+        "Failed to get test session token from Clerk. Ensure TEST_USER_ID is set in .env.local",
+      );
     }
   });
 
@@ -45,161 +63,173 @@ describe('History API Integration Tests - Multiple Interval Support', () => {
     Object.entries(params).forEach(([key, value]) => {
       url.searchParams.set(key, value);
     });
-    
+
     // Add default test system ID if not provided
     // Use the database ID (1), not the vendor site ID (1586)
     if (!params.systemId) {
-      url.searchParams.set('systemId', '1');
+      url.searchParams.set("systemId", "1");
     }
-    
+
     const headers: HeadersInit = {};
     if (sessionToken) {
       // Try Authorization header with Bearer token
-      headers['Authorization'] = `Bearer ${sessionToken}`;
+      headers["Authorization"] = `Bearer ${sessionToken}`;
     }
-    
+
     return fetch(url.toString(), { headers });
   };
 
-  describe('Parameter Validation', () => {
-    it('should accept startTime and endTime parameters in ISO 8601 format', async () => {
+  describe("Parameter Validation", () => {
+    it("should accept startTime and endTime parameters in URL-safe format", async () => {
       const endTime = alignTo5Minutes(new Date());
-      const startTime = alignTo5Minutes(new Date(endTime.getTime() - 2 * 60 * 60 * 1000)); // 2 hours ago
+      const startTime = alignTo5Minutes(
+        new Date(endTime.getTime() - 2 * 60 * 60 * 1000),
+      ); // 2 hours ago
 
       const response = await makeRequest({
-        interval: '5m',
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
+        interval: "5m",
+        startTime: toUrlSafeString(startTime),
+        endTime: toUrlSafeString(endTime),
       });
 
       if (response.status !== 200) {
         const errorData = await response.json();
-        console.error('Response status:', response.status);
-        console.error('Error:', errorData);
+        console.error("Response status:", response.status);
+        console.error("Error:", errorData);
       }
 
       expect(response.status).toBe(200);
 
       const data = await response.json();
-      expect(data.type).toBe('energy');
+      expect(data.type).toBe("energy");
       expect(data.data).toBeDefined();
     });
 
-    it('should reject invalid date formats', async () => {
+    it("should reject invalid date formats", async () => {
       const response = await makeRequest({
-        interval: '5m',
-        startTime: 'invalid-date',
-        endTime: new Date().toISOString(),
+        interval: "5m",
+        startTime: "invalid-date",
+        endTime: toUrlSafeString(new Date()),
       });
 
       expect(response.status).toBe(400);
 
       const data = await response.json();
-      expect(data.error).toContain('Invalid ISO 8601');
+      expect(data.error).toContain("Invalid URL date format");
     });
 
-    it('should reject when startTime is after endTime', async () => {
+    it("should reject when startTime is after endTime", async () => {
       const now = new Date();
       const earlier = new Date(now.getTime() - 60 * 60 * 1000);
 
       const response = await makeRequest({
-        interval: '5m',
-        startTime: now.toISOString(),
-        endTime: earlier.toISOString(),
+        interval: "5m",
+        startTime: toUrlSafeString(now),
+        endTime: toUrlSafeString(earlier),
       });
 
       expect(response.status).toBe(400);
 
       const data = await response.json();
-      expect(data.error).toContain('startTime must be before endTime');
+      expect(data.error).toContain("startTime must be before endTime");
     });
   });
 
-  describe('Interval-Specific Time Limits', () => {
-    it('should accept 5m interval with time range up to 7.5 days', async () => {
+  describe("Interval-Specific Time Limits", () => {
+    it("should accept 5m interval with time range up to 7.5 days", async () => {
       const endTime = alignTo5Minutes(new Date());
-      const startTime = alignTo5Minutes(new Date(endTime.getTime() - 7.4 * 24 * 60 * 60 * 1000)); // 7.4 days
+      const startTime = alignTo5Minutes(
+        new Date(endTime.getTime() - 7.4 * 24 * 60 * 60 * 1000),
+      ); // 7.4 days
 
       const response = await makeRequest({
-        interval: '5m',
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
+        interval: "5m",
+        startTime: toUrlSafeString(startTime),
+        endTime: toUrlSafeString(endTime),
       });
 
       expect(response.status).toBe(200);
 
       const data = await response.json();
-      expect(data.data[0]?.history?.interval).toBe('5m');
+      expect(data.data[0]?.history?.interval).toBe("5m");
     });
 
-    it('should reject 5m interval with time range exceeding 7.5 days', async () => {
+    it("should reject 5m interval with time range exceeding 7.5 days", async () => {
       const endTime = alignTo5Minutes(new Date());
-      const startTime = alignTo5Minutes(new Date(endTime.getTime() - 8 * 24 * 60 * 60 * 1000)); // 8 days
+      const startTime = alignTo5Minutes(
+        new Date(endTime.getTime() - 8 * 24 * 60 * 60 * 1000),
+      ); // 8 days
 
       const response = await makeRequest({
-        interval: '5m',
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
+        interval: "5m",
+        startTime: toUrlSafeString(startTime),
+        endTime: toUrlSafeString(endTime),
       });
 
       expect(response.status).toBe(400);
 
       const data = await response.json();
-      expect(data.error).toContain('Time range exceeds maximum of 7.5 days');
+      expect(data.error).toContain("Time range exceeds maximum of 7.5 days");
     });
 
-    it('should accept 30m interval with time range up to 30 days', async () => {
+    it("should accept 30m interval with time range up to 30 days", async () => {
       const endTime = alignTo30Minutes(new Date());
-      const startTime = alignTo30Minutes(new Date(endTime.getTime() - 29 * 24 * 60 * 60 * 1000)); // 29 days
+      const startTime = alignTo30Minutes(
+        new Date(endTime.getTime() - 29 * 24 * 60 * 60 * 1000),
+      ); // 29 days
 
       const response = await makeRequest({
-        interval: '30m',
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
+        interval: "30m",
+        startTime: toUrlSafeString(startTime),
+        endTime: toUrlSafeString(endTime),
       });
 
       expect(response.status).toBe(200);
 
       const data = await response.json();
-      expect(data.data[0]?.history?.interval).toBe('30m');
+      expect(data.data[0]?.history?.interval).toBe("30m");
     });
 
-    it('should reject 30m interval with time range exceeding 30 days', async () => {
+    it("should reject 30m interval with time range exceeding 30 days", async () => {
       const endTime = alignTo30Minutes(new Date());
-      const startTime = alignTo30Minutes(new Date(endTime.getTime() - 31 * 24 * 60 * 60 * 1000)); // 31 days
+      const startTime = alignTo30Minutes(
+        new Date(endTime.getTime() - 31 * 24 * 60 * 60 * 1000),
+      ); // 31 days
 
       const response = await makeRequest({
-        interval: '30m',
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
+        interval: "30m",
+        startTime: toUrlSafeString(startTime),
+        endTime: toUrlSafeString(endTime),
       });
 
       expect(response.status).toBe(400);
 
       const data = await response.json();
-      expect(data.error).toContain('Time range exceeds maximum of 30 days');
+      expect(data.error).toContain("Time range exceeds maximum of 30 days");
     });
 
-    it('should accept 1d interval with time range up to 13 months (390 days)', async () => {
+    it("should accept 1d interval with time range up to 13 months (390 days)", async () => {
       // 390 days = 13 * 30 days
       const response = await makeRequest({
-        interval: '1d',
-        startTime: '2024-10-01',
-        endTime: '2025-10-24',
+        interval: "1d",
+        startTime: "2024-10-01",
+        endTime: "2025-10-24",
       });
 
       expect(response.status).toBe(200);
 
       const data = await response.json();
-      expect(data.data[0]?.history?.interval).toBe('1d');
+      expect(data.data[0]?.history?.interval).toBe("1d");
     });
 
-    it('should reject unsupported 1m interval', async () => {
+    it("should reject unsupported 1m interval", async () => {
       const endTime = alignTo5Minutes(new Date());
-      const startTime = alignTo5Minutes(new Date(endTime.getTime() - 1 * 60 * 60 * 1000)); // 1 hour
+      const startTime = alignTo5Minutes(
+        new Date(endTime.getTime() - 1 * 60 * 60 * 1000),
+      ); // 1 hour
 
       const response = await makeRequest({
-        interval: '1m',
+        interval: "1m",
         startTime: startTime.toISOString(),
         endTime: endTime.toISOString(),
       });
@@ -207,17 +237,21 @@ describe('History API Integration Tests - Multiple Interval Support', () => {
       expect(response.status).toBe(501);
 
       const data = await response.json();
-      expect(data.error).toContain('Only 5m, 30m, and 1d intervals are supported');
+      expect(data.error).toContain(
+        "Only 5m, 30m, and 1d intervals are supported",
+      );
     });
   });
 
-  describe('5-Minute Data Aggregation', () => {
-    it('should aggregate data to 5-minute boundaries', async () => {
+  describe("5-Minute Data Aggregation", () => {
+    it("should aggregate data to 5-minute boundaries", async () => {
       const endTime = alignTo5Minutes(new Date());
-      const startTime = alignTo5Minutes(new Date(endTime.getTime() - 60 * 60 * 1000)); // 1 hour
+      const startTime = alignTo5Minutes(
+        new Date(endTime.getTime() - 60 * 60 * 1000),
+      ); // 1 hour
 
       const response = await makeRequest({
-        interval: '5m',
+        interval: "5m",
         startTime: startTime.toISOString(),
         endTime: endTime.toISOString(),
       });
@@ -225,7 +259,7 @@ describe('History API Integration Tests - Multiple Interval Support', () => {
       expect(response.status).toBe(200);
 
       const data = await response.json();
-      expect(data.data[0]?.history?.interval).toBe('5m');
+      expect(data.data[0]?.history?.interval).toBe("5m");
 
       // Should have approximately 13 data points for 1 hour at 5-minute intervals (0, 5, 10, ..., 60)
       const dataPoints = data.data[0]?.history?.data?.length || 0;
@@ -233,12 +267,14 @@ describe('History API Integration Tests - Multiple Interval Support', () => {
       expect(dataPoints).toBeLessThanOrEqual(14); // Allow one extra for boundary conditions
     });
 
-    it('should handle null values for missing data points', async () => {
+    it("should handle null values for missing data points", async () => {
       const endTime = alignTo5Minutes(new Date());
-      const startTime = alignTo5Minutes(new Date(endTime.getTime() - 3 * 60 * 60 * 1000)); // 3 hours
+      const startTime = alignTo5Minutes(
+        new Date(endTime.getTime() - 3 * 60 * 60 * 1000),
+      ); // 3 hours
 
       const response = await makeRequest({
-        interval: '5m',
+        interval: "5m",
         startTime: startTime.toISOString(),
         endTime: endTime.toISOString(),
       });
@@ -248,31 +284,35 @@ describe('History API Integration Tests - Multiple Interval Support', () => {
       const data = await response.json();
 
       // Check that data arrays exist and may contain nulls
-      const solarData = data.data.find((d: any) => d.id.includes('solar'))?.history?.data || [];
-      const loadData = data.data.find((d: any) => d.id.includes('load'))?.history?.data || [];
+      const solarData =
+        data.data.find((d: any) => d.id.includes("solar"))?.history?.data || [];
+      const loadData =
+        data.data.find((d: any) => d.id.includes("load"))?.history?.data || [];
 
       expect(Array.isArray(solarData)).toBe(true);
       expect(Array.isArray(loadData)).toBe(true);
 
       // Data should contain either numbers or nulls
       solarData.forEach((value: any) => {
-        expect(value === null || typeof value === 'number').toBe(true);
+        expect(value === null || typeof value === "number").toBe(true);
       });
 
       loadData.forEach((value: any) => {
-        expect(value === null || typeof value === 'number').toBe(true);
+        expect(value === null || typeof value === "number").toBe(true);
       });
     });
   });
 
-  describe('Interval Support', () => {
-    it('should support 5m, 30m, and 1d intervals', async () => {
+  describe("Interval Support", () => {
+    it("should support 5m, 30m, and 1d intervals", async () => {
       const endTime5m = alignTo5Minutes(new Date());
-      const startTime5m = alignTo5Minutes(new Date(endTime5m.getTime() - 2 * 60 * 60 * 1000)); // 2 hours
+      const startTime5m = alignTo5Minutes(
+        new Date(endTime5m.getTime() - 2 * 60 * 60 * 1000),
+      ); // 2 hours
 
       // Test that 5m works
       const response5m = await makeRequest({
-        interval: '5m',
+        interval: "5m",
         startTime: startTime5m.toISOString(),
         endTime: endTime5m.toISOString(),
       });
@@ -281,10 +321,12 @@ describe('History API Integration Tests - Multiple Interval Support', () => {
 
       // Test that 30m works (needs 30-minute alignment)
       const endTime30m = alignTo30Minutes(new Date());
-      const startTime30m = alignTo30Minutes(new Date(endTime30m.getTime() - 2 * 60 * 60 * 1000)); // 2 hours
+      const startTime30m = alignTo30Minutes(
+        new Date(endTime30m.getTime() - 2 * 60 * 60 * 1000),
+      ); // 2 hours
 
       const response30m = await makeRequest({
-        interval: '30m',
+        interval: "30m",
         startTime: startTime30m.toISOString(),
         endTime: endTime30m.toISOString(),
       });
@@ -293,16 +335,16 @@ describe('History API Integration Tests - Multiple Interval Support', () => {
 
       // Test that 1d works (390 days = 13 * 30 days)
       const response1d = await makeRequest({
-        interval: '1d',
-        startTime: '2024-10-01',
-        endTime: '2025-10-24',
+        interval: "1d",
+        startTime: "2024-10-01",
+        endTime: "2025-10-24",
       });
 
       expect(response1d.status).toBe(200);
 
       // Test that 1m is rejected
       const response1m = await makeRequest({
-        interval: '1m',
+        interval: "1m",
         startTime: startTime5m.toISOString(),
         endTime: endTime5m.toISOString(),
       });
@@ -310,17 +352,21 @@ describe('History API Integration Tests - Multiple Interval Support', () => {
       expect(response1m.status).toBe(501);
 
       const error1m = await response1m.json();
-      expect(error1m.error).toContain('Only 5m, 30m, and 1d intervals are supported');
+      expect(error1m.error).toContain(
+        "Only 5m, 30m, and 1d intervals are supported",
+      );
     });
   });
 
-  describe('Default Behavior', () => {
-    it('should return all available fields dynamically', async () => {
+  describe("Default Behavior", () => {
+    it("should return all available fields dynamically", async () => {
       const endTime = alignTo5Minutes(new Date());
-      const startTime = alignTo5Minutes(new Date(endTime.getTime() - 30 * 60 * 1000)); // 30 minutes
+      const startTime = alignTo5Minutes(
+        new Date(endTime.getTime() - 30 * 60 * 1000),
+      ); // 30 minutes
 
       const response = await makeRequest({
-        interval: '5m',
+        interval: "5m",
         startTime: startTime.toISOString(),
         endTime: endTime.toISOString(),
       });
@@ -331,20 +377,22 @@ describe('History API Integration Tests - Multiple Interval Support', () => {
       const dataIds = data.data.map((d: any) => d.id);
 
       // Should include all default fields (dynamically generated)
-      expect(dataIds.some((id: string) => id.includes('solar'))).toBe(true);
-      expect(dataIds.some((id: string) => id.includes('load'))).toBe(true);
-      expect(dataIds.some((id: string) => id.includes('battery'))).toBe(true);
-      expect(dataIds.some((id: string) => id.includes('grid'))).toBe(true);
+      expect(dataIds.some((id: string) => id.includes("solar"))).toBe(true);
+      expect(dataIds.some((id: string) => id.includes("load"))).toBe(true);
+      expect(dataIds.some((id: string) => id.includes("battery"))).toBe(true);
+      expect(dataIds.some((id: string) => id.includes("grid"))).toBe(true);
     });
   });
 
-  describe('Response Format', () => {
-    it('should return OpenNEM-compatible format', async () => {
+  describe("Response Format", () => {
+    it("should return OpenNEM-compatible format", async () => {
       const endTime = alignTo5Minutes(new Date());
-      const startTime = alignTo5Minutes(new Date(endTime.getTime() - 60 * 60 * 1000)); // 1 hour
+      const startTime = alignTo5Minutes(
+        new Date(endTime.getTime() - 60 * 60 * 1000),
+      ); // 1 hour
 
       const response = await makeRequest({
-        interval: '5m',
+        interval: "5m",
         startTime: startTime.toISOString(),
         endTime: endTime.toISOString(),
       });
@@ -354,9 +402,9 @@ describe('History API Integration Tests - Multiple Interval Support', () => {
       const data = await response.json();
 
       // Check OpenNEM format
-      expect(data.type).toBe('energy');
-      expect(data.version).toBe('v4.1');
-      expect(data.network).toBe('liveone');
+      expect(data.type).toBe("energy");
+      expect(data.version).toBe("v4.1");
+      expect(data.network).toBe("liveone");
       expect(data.created_at).toBeDefined();
       expect(Array.isArray(data.data)).toBe(true);
 
@@ -369,8 +417,85 @@ describe('History API Integration Tests - Multiple Interval Support', () => {
       expect(series.history).toBeDefined();
       expect(series.history.start).toBeDefined();
       expect(series.history.last).toBeDefined();
-      expect(series.history.interval).toBe('5m');
+      expect(series.history.interval).toBe("5m");
       expect(Array.isArray(series.history.data)).toBe(true);
+    });
+  });
+
+  describe("Interval Boundary Handling (Bug Fixes)", () => {
+    it("should return 48 intervals for 30m query from 00:30 to 00:00 next day without leading null", async () => {
+      // Test case: 2025-10-25 00:30 AEDT to 2025-10-26 00:00 AEDT
+      // Expected: 48 intervals (00:30, 01:00, 01:30, ..., 23:30, 00:00)
+      // Bug: Currently returns 48 intervals but first value is null (off-by-one error)
+
+      const response = await makeRequest({
+        interval: "30m",
+        startTime: "2025-10-25_00.30T11",
+        endTime: "2025-10-26_00.00T11",
+        systemId: "9",
+        series: "bidi.grid.export/value.avg",
+      });
+
+      expect(response.status).toBe(200);
+
+      const data = await response.json();
+
+      // Find the grid export series
+      const gridExportSeries = data.data.find((d: any) =>
+        d.id.includes("bidi.grid.export"),
+      );
+
+      expect(gridExportSeries).toBeDefined();
+      expect(gridExportSeries.history.interval).toBe("30m");
+
+      // Should have exactly 48 intervals
+      expect(gridExportSeries.history.data.length).toBe(48);
+
+      // First value should NOT be null (this is the bug we're fixing)
+      // Note: If there's genuinely no data at 00:30, it may be null - but it shouldn't
+      // be null due to an off-by-one error in the loop logic
+      const firstNonNullIndex = gridExportSeries.history.data.findIndex(
+        (v: any) => v !== null,
+      );
+
+      // If all values are null, something is wrong with data availability
+      // But the first value should not be null when second value has data
+      if (gridExportSeries.history.data[1] !== null) {
+        expect(firstNonNullIndex).toBe(0);
+      }
+    });
+
+    it("should return 12 intervals for 5m query from 00:05 to 01:00 (inclusive endpoints)", async () => {
+      // Test case: 2025-10-25 00:05 AEDT to 2025-10-25 01:00 AEDT
+      // Expected: 12 intervals (00:05, 00:10, 00:15, ..., 00:55, 01:00)
+      // Bug: Currently returns 11 intervals (missing 01:00 due to < instead of <=)
+
+      const response = await makeRequest({
+        interval: "5m",
+        startTime: "2025-10-25_00.05T11",
+        endTime: "2025-10-25_01.00T11",
+        systemId: "9",
+        series: "bidi.grid.export/value.avg",
+      });
+
+      expect(response.status).toBe(200);
+
+      const data = await response.json();
+
+      // Find the grid export series
+      const gridExportSeries = data.data.find((d: any) =>
+        d.id.includes("bidi.grid.export"),
+      );
+
+      expect(gridExportSeries).toBeDefined();
+      expect(gridExportSeries.history.interval).toBe("5m");
+
+      // Should have exactly 12 intervals (00:05 through 01:00 inclusive)
+      expect(gridExportSeries.history.data.length).toBe(12);
+
+      // Verify start and end times (API returns AEST +10:00)
+      expect(gridExportSeries.history.start).toBe("2025-10-24T23:05:00+10:00");
+      expect(gridExportSeries.history.last).toBe("2025-10-25T00:00:00+10:00");
     });
   });
 });

@@ -201,6 +201,7 @@ export class OpenNEMConverter {
           start: startStr,
           last: lastStr,
           interval,
+          numIntervals: fieldData.length,
           data: formatDataArray(fieldData),
         },
         network: "liveone",
