@@ -42,8 +42,11 @@ const customYAxisPlugin = {
 
       if (!label) return;
 
+      // Convert label to string (it might be a number or array)
+      const labelStr = String(label);
+
       // Check if this label has a month prefix (word word ...)
-      const monthMatch = label.match(/^([A-Za-z]+)\s+([A-Za-z]+\s+.+)$/);
+      const monthMatch = labelStr.match(/^([A-Za-z]+)\s+([A-Za-z]+\s+.+)$/);
 
       if (monthMatch) {
         // Label has month prefix - render month in white/bold, rest in gray/normal
@@ -78,7 +81,7 @@ const customYAxisPlugin = {
         ctx.fillStyle = "#9ca3af";
         ctx.textAlign = "right";
         const chartAreaLeft = chart.chartArea.left;
-        ctx.fillText(label, chartAreaLeft - 10, y);
+        ctx.fillText(labelStr, chartAreaLeft - 10, y);
         ctx.textAlign = "left"; // Reset
       }
     });
@@ -508,7 +511,7 @@ export default function HeatmapChart({
               cellColor = getColor(normalized);
             }
 
-            // Convert Wh to kWh for energy metrics, use 1 decimal place
+            // Convert Wh to kWh for energy metrics, W to kW for power metrics, use 1 decimal place
             let displayValue: string;
             let displayUnit: string;
             if (dataPoint.v === null) {
@@ -518,8 +521,9 @@ export default function HeatmapChart({
               displayValue = (dataPoint.v / 1000).toFixed(1);
               displayUnit = pointUnit.replace("Wh", "kWh");
             } else {
-              displayValue = dataPoint.v.toFixed(1);
-              displayUnit = pointUnit;
+              // Power metrics: convert W to kW
+              displayValue = (dataPoint.v / 1000).toFixed(1);
+              displayUnit = "kW";
             }
             const bodyText =
               displayValue === "No data"
@@ -751,12 +755,8 @@ export default function HeatmapChart({
         {/* Color legend */}
         <div className="mt-4 flex items-center justify-center gap-2">
           <span className="text-xs text-gray-400">
-            {metricType === "energy"
-              ? (heatmapData.min / 1000).toFixed(1)
-              : heatmapData.min.toFixed(1)}
-            {metricType === "energy"
-              ? pointUnit.replace("Wh", "kWh")
-              : pointUnit}
+            {(heatmapData.min / 1000).toFixed(1)}
+            {metricType === "energy" ? pointUnit.replace("Wh", "kWh") : "kW"}
           </span>
           <div
             className="h-4 rounded"
@@ -766,12 +766,8 @@ export default function HeatmapChart({
             }}
           />
           <span className="text-xs text-gray-400">
-            {metricType === "energy"
-              ? (heatmapData.max / 1000).toFixed(1)
-              : heatmapData.max.toFixed(1)}
-            {metricType === "energy"
-              ? pointUnit.replace("Wh", "kWh")
-              : pointUnit}
+            {(heatmapData.max / 1000).toFixed(1)}
+            {metricType === "energy" ? pointUnit.replace("Wh", "kWh") : "kW"}
           </span>
         </div>
       </div>
