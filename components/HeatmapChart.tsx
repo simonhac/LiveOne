@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -22,6 +22,7 @@ import { encodeI18nToUrlSafeString } from "@/lib/url-date";
 import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/chart-colors";
 import ServerErrorModal from "./ServerErrorModal";
 import { formatTimeAEST } from "@/lib/date-utils";
+import { formatTime, formatDate } from "@/lib/fe-date-format";
 
 // Custom plugin to render y-axis labels with mixed colors
 const customYAxisPlugin = {
@@ -147,6 +148,7 @@ export default function HeatmapChart({
   const [errorDetails, setErrorDetails] = useState<string | undefined>(
     undefined,
   );
+  const chartContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -271,8 +273,8 @@ export default function HeatmapChart({
           const zonedDateForTime = fromDate(jsDateForTime, timezone);
           const timeKey = `${String(zonedDateForTime.hour).padStart(2, "0")}:${String(zonedDateForTime.minute).padStart(2, "0")}`;
 
-          // Use interval END time for the date (e.g., Sat for the interval ending on Saturday)
-          const jsDateForDate = new Date(intervalEndTimestamp);
+          // Use interval START time for the date (consistent with time key)
+          const jsDateForDate = new Date(intervalStartTimestamp);
           const zonedDateForDate = fromDate(jsDateForDate, timezone);
           const dateKey = `${zonedDateForDate.year}-${String(zonedDateForDate.month).padStart(2, "0")}-${String(zonedDateForDate.day).padStart(2, "0")}`;
 
@@ -366,13 +368,58 @@ export default function HeatmapChart({
     return paletteConfig.fn(normalizedValue);
   };
 
+  // Add mousemove listener to hide tooltip when mouse leaves chart area
+  useEffect(() => {
+    const container = chartContainerRef.current;
+    if (!container) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const canvas = container.querySelector("canvas");
+      if (!canvas) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      // Get the chart instance to access chartArea
+      const chartInstance = ChartJS.getChart(canvas);
+      if (!chartInstance?.chartArea) return;
+
+      const chartArea = chartInstance.chartArea;
+
+      // Check if mouse is outside the chart data area
+      const isOutside =
+        x < chartArea.left ||
+        x > chartArea.right ||
+        y < chartArea.top ||
+        y > chartArea.bottom;
+
+      if (isOutside) {
+        // Hide tooltip
+        const tooltipEl = document.getElementById("chartjs-tooltip");
+        if (tooltipEl) {
+          tooltipEl.style.opacity = "0";
+        }
+      }
+    };
+
+    container.addEventListener("mousemove", handleMouseMove);
+    return () => {
+      container.removeEventListener("mousemove", handleMouseMove);
+    };
+  }, [heatmapData]); // Re-run when chart data changes
+
   // Chart configuration
   const chartOptions: ChartOptions<"matrix"> = {
     responsive: true,
     maintainAspectRatio: false,
+    interaction: {
+      mode: "point",
+      intersect: true,
+    },
     layout: {
       padding: {
-        left: 50, // Extra space for y-axis labels
+        left: 10, // Minimal space for y-axis labels
       },
     },
     plugins: {
@@ -380,16 +427,136 @@ export default function HeatmapChart({
         display: false,
       },
       tooltip: {
-        callbacks: {
-          title: (context) => {
-            const point = context[0].raw as HeatmapDataPoint;
-            return `${point.y} ${point.x}`;
-          },
-          label: (context) => {
-            const point = context.raw as HeatmapDataPoint;
-            if (point.v === null) return "No data";
-            return `${point.v.toFixed(2)}${pointUnit}`;
-          },
+        enabled: false, // Disable default tooltip, we'll use external
+        external: (context) => {
+          // Get or create tooltip element
+          let tooltipEl = document.getElementById("chartjs-tooltip");
+
+          if (!tooltipEl) {
+            tooltipEl = document.createElement("div");
+            tooltipEl.id = "chartjs-tooltip";
+            tooltipEl.style.position = "absolute";
+            tooltipEl.style.zIndex = "9999";
+            tooltipEl.style.pointerEvents = "none";
+            tooltipEl.style.transition = "all 0.1s ease";
+            document.body.appendChild(tooltipEl);
+          }
+
+          // Hide if no tooltip
+          const tooltipModel = context.tooltip;
+          if (tooltipModel.opacity === 0) {
+            tooltipEl.style.opacity = "0";
+            return;
+          }
+
+          // Check if pointer is within the chart data area (not over labels/axes)
+          const chartArea = context.chart.chartArea;
+          const isInChartArea =
+            tooltipModel.caretX >= chartArea.left &&
+            tooltipModel.caretX <= chartArea.right &&
+            tooltipModel.caretY >= chartArea.top &&
+            tooltipModel.caretY <= chartArea.bottom;
+
+          if (!isInChartArea) {
+            tooltipEl.style.opacity = "0";
+            return;
+          }
+
+          // Set tooltip content
+          if (tooltipModel.body) {
+            const dataPoint = tooltipModel.dataPoints[0]
+              .raw as HeatmapDataPoint;
+
+            // Parse date and time from dataPoint (y is YYYY-MM-DD, x is HH:mm)
+            const dateTimeStr = `${dataPoint.y}T${dataPoint.x}:00`;
+            const dateTime = new Date(dateTimeStr);
+
+            // Format using standardized formatting functions
+            const timeStr = formatTime(dateTime, false); // e.g., "6:30 am"
+            const dateStr = formatDate(dateTime); // e.g., "24 Oct 2025"
+
+            // Calculate cell color (same logic as chart backgroundColor)
+            let cellColor: string;
+            if (dataPoint.v === null || dataPoint.v === undefined) {
+              cellColor = "rgba(55, 65, 81, 0.3)"; // gray-700 for null values
+            } else {
+              const normalized =
+                (dataPoint.v - (heatmapData?.min || 0)) /
+                ((heatmapData?.max || 1) - (heatmapData?.min || 0));
+              cellColor = getColor(normalized);
+            }
+
+            const bodyText =
+              dataPoint.v === null
+                ? "No data"
+                : `${dataPoint.v.toFixed(2)}${pointUnit}`;
+
+            tooltipEl.innerHTML = `
+              <div style="
+                background: rgb(17, 24, 39);
+                border: 1px solid rgb(75, 85, 99);
+                border-radius: 6px;
+                padding: 12px;
+                color: white;
+                font-size: 12px;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+              ">
+                <div style="font-weight: bold; margin-bottom: 4px;">${timeStr}, ${dateStr}</div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <div style="
+                    width: 12px;
+                    height: 12px;
+                    background: ${cellColor};
+                    border: 1px solid rgba(255, 255, 255, 0.2);
+                    border-radius: 2px;
+                    flex-shrink: 0;
+                  "></div>
+                  <div>${bodyText}</div>
+                </div>
+              </div>
+            `;
+          }
+
+          // Position tooltip
+          const canvas = context.chart.canvas;
+          const rect = canvas.getBoundingClientRect();
+
+          // Calculate base position
+          const baseX = rect.left + window.scrollX + tooltipModel.caretX;
+          const baseY = rect.top + window.scrollY + tooltipModel.caretY;
+
+          // Get tooltip dimensions (need to make visible first to measure)
+          tooltipEl.style.opacity = "1";
+          const tooltipRect = tooltipEl.getBoundingClientRect();
+          const tooltipWidth = tooltipRect.width;
+          const tooltipHeight = tooltipRect.height;
+
+          // Check if tooltip would overflow chart boundaries
+          const offset = 10; // Offset from pointer
+          const chartRight = rect.right + window.scrollX;
+          const chartBottom = rect.bottom + window.scrollY;
+
+          const wouldOverflowRight = baseX + tooltipWidth + offset > chartRight;
+          const wouldOverflowBottom =
+            baseY + tooltipHeight + offset > chartBottom;
+
+          // Position horizontally
+          if (wouldOverflowRight) {
+            // Position to the left of pointer
+            tooltipEl.style.left = baseX - tooltipWidth - offset + "px";
+          } else {
+            // Position to the right of pointer
+            tooltipEl.style.left = baseX + offset + "px";
+          }
+
+          // Position vertically
+          if (wouldOverflowBottom) {
+            // Position above pointer
+            tooltipEl.style.top = baseY - tooltipHeight - offset + "px";
+          } else {
+            // Position below pointer
+            tooltipEl.style.top = baseY + offset + "px";
+          }
         },
       },
     },
@@ -525,7 +692,7 @@ export default function HeatmapChart({
   return (
     <div className={className}>
       <div className="bg-gray-900 p-4 rounded-lg border border-gray-700">
-        <div style={{ height: "600px" }}>
+        <div ref={chartContainerRef} style={{ height: "600px" }}>
           <Chart type="matrix" data={chartData} options={chartOptions} />
         </div>
 
