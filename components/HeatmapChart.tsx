@@ -23,6 +23,69 @@ import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/chart-colors";
 import ServerErrorModal from "./ServerErrorModal";
 import { formatTimeAEST } from "@/lib/date-utils";
 
+// Custom plugin to render y-axis labels with mixed colors
+const customYAxisPlugin = {
+  id: "customYAxisLabels",
+  afterDraw: (chart: any) => {
+    const ctx = chart.ctx;
+    const yAxis = chart.scales.y;
+
+    if (!yAxis) return;
+
+    ctx.save();
+    ctx.textBaseline = "middle";
+
+    yAxis.ticks.forEach((tick: any, index: number) => {
+      const y = yAxis.getPixelForTick(index);
+      const label = tick.label;
+
+      if (!label) return;
+
+      // Check if this label has a month prefix (starts with a 3-letter month)
+      const monthMatch = label.match(/^([A-Z][a-z]{2})\s+(.+)$/);
+
+      if (monthMatch) {
+        // Label has month prefix - render month in white/bold, rest in gray/normal
+        const monthPart = monthMatch[1];
+        const dayPart = monthMatch[2];
+
+        // Measure text widths for proper positioning
+        ctx.font = "10px DM Sans, system-ui, sans-serif";
+        const normalDayWidth = ctx.measureText(dayPart).width;
+        const spaceWidth = ctx.measureText(" ").width;
+
+        ctx.font = "bold 10px DM Sans, system-ui, sans-serif";
+        const boldMonthWidth = ctx.measureText(monthPart).width;
+
+        // Calculate starting x position (right-aligned, using chart area left edge)
+        const totalWidth = boldMonthWidth + spaceWidth + normalDayWidth;
+        const chartAreaLeft = chart.chartArea.left;
+        const startX = chartAreaLeft - totalWidth - 10;
+
+        // Draw month in white/bold
+        ctx.font = "bold 10px DM Sans, system-ui, sans-serif";
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(monthPart, startX, y);
+
+        // Draw space and day in gray/normal (same as regular labels)
+        ctx.font = "10px DM Sans, system-ui, sans-serif";
+        ctx.fillStyle = "#9ca3af";
+        ctx.fillText(" " + dayPart, startX + boldMonthWidth, y);
+      } else {
+        // Regular label - render in gray, right-aligned
+        ctx.font = "10px DM Sans, system-ui, sans-serif";
+        ctx.fillStyle = "#9ca3af";
+        ctx.textAlign = "right";
+        const chartAreaLeft = chart.chartArea.left;
+        ctx.fillText(label, chartAreaLeft - 10, y);
+        ctx.textAlign = "left"; // Reset
+      }
+    });
+
+    ctx.restore();
+  },
+};
+
 // Register Chart.js components
 ChartJS.register(
   CategoryScale,
@@ -32,6 +95,9 @@ ChartJS.register(
   MatrixController,
   MatrixElement,
 );
+
+// Register custom plugin
+ChartJS.register(customYAxisPlugin as any);
 
 interface HeatmapChartProps {
   systemId: number;
@@ -192,12 +258,10 @@ export default function HeatmapChart({
         }
 
         // Group data by date and time
-        const dataByDate = new Map<string, Map<string, number>>();
+        const dataByDate = new Map<string, Map<string, number | null>>();
         const dates = new Set<string>();
 
         data.forEach((value: number | null, index: number) => {
-          if (value === null) return;
-
           // startTime is the end of the first interval
           const intervalEndTimestamp = startTime + index * intervalMs;
           const intervalStartTimestamp = intervalEndTimestamp - intervalMs;
@@ -217,6 +281,7 @@ export default function HeatmapChart({
           if (!dataByDate.has(dateKey)) {
             dataByDate.set(dateKey, new Map());
           }
+          // Store null values as well
           dataByDate.get(dateKey)!.set(timeKey, value);
         });
 
@@ -305,6 +370,11 @@ export default function HeatmapChart({
   const chartOptions: ChartOptions<"matrix"> = {
     responsive: true,
     maintainAspectRatio: false,
+    layout: {
+      padding: {
+        left: 50, // Extra space for y-axis labels
+      },
+    },
     plugins: {
       legend: {
         display: false,
@@ -318,7 +388,7 @@ export default function HeatmapChart({
           label: (context) => {
             const point = context.raw as HeatmapDataPoint;
             if (point.v === null) return "No data";
-            return `${point.v.toFixed(2)} ${pointUnit}`;
+            return `${point.v.toFixed(2)}${pointUnit}`;
           },
         },
       },
@@ -336,7 +406,7 @@ export default function HeatmapChart({
           },
           maxRotation: 90,
           minRotation: 90,
-          callback: function (value: any, index: any) {
+          callback: function (_value: any, index: any) {
             // Show every 4th label (every 2 hours)
             if (index % 4 === 0) {
               return heatmapData?.xLabels[index];
@@ -353,16 +423,25 @@ export default function HeatmapChart({
         labels: heatmapData?.yLabels || [],
         offset: true,
         ticks: {
-          color: "#9ca3af", // gray-400
-          font: {
-            size: 10,
-            family: "DM Sans, system-ui, sans-serif",
-          },
-          callback: function (value: any, index: any) {
+          display: true, // Keep visible but use custom rendering
+          color: "transparent", // Make default labels invisible
+          padding: 5,
+          callback: function (_value: any, index: any) {
             const date = heatmapData?.yLabels[index];
             if (!date) return "";
-            // Format as "Mon 22"
+
             const localDate = new Date(date + "T00:00:00");
+            // Dates are sorted most recent first, so last index is the oldest (first chronologically)
+            const isFirstChronologically =
+              index === (heatmapData?.yLabels.length ?? 0) - 1;
+            const isFirstOfMonth = localDate.getDate() === 1;
+
+            // Show month for first chronological date or first of month
+            if (isFirstChronologically || isFirstOfMonth) {
+              return format(localDate, "MMM EEE d");
+            }
+
+            // Regular format
             return format(localDate, "EEE d");
           },
         },
@@ -453,7 +532,8 @@ export default function HeatmapChart({
         {/* Color legend */}
         <div className="mt-4 flex items-center justify-center gap-2">
           <span className="text-xs text-gray-400">
-            {heatmapData.min.toFixed(1)} {pointUnit}
+            {heatmapData.min.toFixed(1)}
+            {pointUnit}
           </span>
           <div
             className="h-4 rounded"
@@ -463,7 +543,8 @@ export default function HeatmapChart({
             }}
           />
           <span className="text-xs text-gray-400">
-            {heatmapData.max.toFixed(1)} {pointUnit}
+            {heatmapData.max.toFixed(1)}
+            {pointUnit}
           </span>
         </div>
       </div>

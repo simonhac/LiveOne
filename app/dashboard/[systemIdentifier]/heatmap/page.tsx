@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import HeatmapChart from "@/components/HeatmapChart";
 import {
   Select,
@@ -14,9 +14,11 @@ import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/chart-colors";
 import { SystemIdentifier } from "@/lib/identifiers";
 import type { ZonedDateTime } from "@internationalized/date";
 import { toZoned } from "@internationalized/date";
+import { getUnitDisplay } from "@/lib/point/unit-display";
 
 interface PointInfo {
-  path: string;
+  logicalPath: string;
+  physicalPath: string;
   name: string;
   metricType: string;
   metricUnit: string;
@@ -32,6 +34,8 @@ interface SystemInfo {
 
 export default function HeatmapPage() {
   const params = useParams();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const systemIdentifier = params.systemIdentifier as string;
 
   const [system, setSystem] = useState<SystemInfo | null>(null);
@@ -49,6 +53,44 @@ export default function HeatmapPage() {
     startTime: ZonedDateTime | null;
     endTime: ZonedDateTime | null;
   } | null>(null);
+
+  // Helper to update URL parameters
+  const updateUrlParams = (
+    point: string | undefined,
+    palette: HeatmapPaletteKey,
+  ) => {
+    const parts: string[] = [];
+    if (point) {
+      parts.push(`point=${point}`);
+    }
+    parts.push(`palette=${palette}`);
+    router.replace(`?${parts.join("&")}`, { scroll: false });
+  };
+
+  // Read URL parameters on mount
+  useEffect(() => {
+    const pointParam = searchParams.get("point");
+    const paletteParam = searchParams.get("palette");
+
+    if (pointParam) {
+      setSelectedPoint(pointParam);
+    }
+    if (paletteParam && paletteParam in HEATMAP_PALETTES) {
+      setSelectedPalette(paletteParam as HeatmapPaletteKey);
+    }
+  }, [searchParams]);
+
+  // Handle point selection change
+  const handlePointChange = (point: string) => {
+    setSelectedPoint(point);
+    updateUrlParams(point, selectedPalette);
+  };
+
+  // Handle palette selection change
+  const handlePaletteChange = (palette: HeatmapPaletteKey) => {
+    setSelectedPalette(palette);
+    updateUrlParams(selectedPoint, palette);
+  };
 
   // Fetch system info and points on mount
   useEffect(() => {
@@ -113,9 +155,10 @@ export default function HeatmapPage() {
           });
         }
 
-        // Auto-select first point
-        if (pointsData.points.length > 0) {
-          setSelectedPoint(pointsData.points[0].path);
+        // Auto-select first point only if not already set from URL
+        const pointParam = searchParams.get("point");
+        if (!pointParam && pointsData.points.length > 0) {
+          setSelectedPoint(pointsData.points[0].logicalPath);
         }
 
         setLoading(false);
@@ -127,7 +170,7 @@ export default function HeatmapPage() {
     };
 
     fetchData();
-  }, [systemIdentifier]);
+  }, [systemIdentifier, searchParams]);
 
   if (loading) {
     return (
@@ -153,7 +196,7 @@ export default function HeatmapPage() {
     );
   }
 
-  const selectedPointInfo = points.find((p) => p.path === selectedPoint);
+  const selectedPointInfo = points.find((p) => p.logicalPath === selectedPoint);
 
   // Debug logging
   console.log("selectedPoint:", selectedPoint);
@@ -181,21 +224,25 @@ export default function HeatmapPage() {
             <label className="block text-sm text-gray-400 mb-2">
               Select Point
             </label>
-            <Select value={selectedPoint} onValueChange={setSelectedPoint}>
+            <Select value={selectedPoint} onValueChange={handlePointChange}>
               <SelectTrigger className="bg-gray-900 border-gray-700">
                 <SelectValue placeholder="Select a point" />
               </SelectTrigger>
               <SelectContent>
-                {points.map((point) => (
-                  <SelectItem key={point.reference} value={point.path}>
-                    <div className="flex flex-col">
-                      <div>
-                        {point.name} ({point.metricType})
+                {[...points]
+                  .sort((a, b) => a.physicalPath.localeCompare(b.physicalPath))
+                  .map((point) => (
+                    <SelectItem key={point.reference} value={point.logicalPath}>
+                      <div className="flex flex-col">
+                        <div>
+                          {point.name} ({point.metricType})
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {point.logicalPath}
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-500">{point.path}</div>
-                    </div>
-                  </SelectItem>
-                ))}
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </div>
@@ -208,7 +255,7 @@ export default function HeatmapPage() {
             <Select
               value={selectedPalette}
               onValueChange={(value) =>
-                setSelectedPalette(value as HeatmapPaletteKey)
+                handlePaletteChange(value as HeatmapPaletteKey)
               }
             >
               <SelectTrigger className="bg-gray-900 border-gray-700">
@@ -273,6 +320,14 @@ export default function HeatmapPage() {
                   <td>{system.displayTimezone}</td>
                 </tr>
                 <tr>
+                  <td className="pr-4 align-top">Physical Path:</td>
+                  <td>{selectedPointInfo?.physicalPath}</td>
+                </tr>
+                <tr>
+                  <td className="pr-4 align-top">Logical Path:</td>
+                  <td>{selectedPoint}</td>
+                </tr>
+                <tr>
                   <td className="pr-4 align-top">Interval:</td>
                   <td>
                     {fetchInfo.interval} over {fetchInfo.duration}
@@ -290,19 +345,19 @@ export default function HeatmapPage() {
                           );
                           return `${aestStart.year}-${String(aestStart.month).padStart(2, "0")}-${String(aestStart.day).padStart(2, "0")} ${String(aestStart.hour).padStart(2, "0")}:${String(aestStart.minute).padStart(2, "0")}`;
                         })()}{" "}
-                      <span className="text-[0.6em] text-gray-600">AEST</span>
+                      <span className="text-gray-600">AEST</span>
                       {" → "}
                       {fetchInfo.endTime &&
                         (() => {
                           const aestEnd = toZoned(fetchInfo.endTime, "+10:00");
                           return `${aestEnd.year}-${String(aestEnd.month).padStart(2, "0")}-${String(aestEnd.day).padStart(2, "0")} ${String(aestEnd.hour).padStart(2, "0")}:${String(aestEnd.minute).padStart(2, "0")}`;
                         })()}{" "}
-                      <span className="text-[0.6em] text-gray-600">AEST</span>
+                      <span className="text-gray-600">AEST</span>
                     </div>
                     <div>
                       {fetchInfo.startTime &&
                         `${fetchInfo.startTime.year}-${String(fetchInfo.startTime.month).padStart(2, "0")}-${String(fetchInfo.startTime.day).padStart(2, "0")} ${String(fetchInfo.startTime.hour).padStart(2, "0")}:${String(fetchInfo.startTime.minute).padStart(2, "0")}`}{" "}
-                      <span className="text-[0.6em] text-gray-600">
+                      <span className="text-gray-600">
                         {fetchInfo.startTime &&
                           new Intl.DateTimeFormat("en-US", {
                             timeZone: system.displayTimezone ?? undefined,
@@ -315,7 +370,7 @@ export default function HeatmapPage() {
                       {" → "}
                       {fetchInfo.endTime &&
                         `${fetchInfo.endTime.year}-${String(fetchInfo.endTime.month).padStart(2, "0")}-${String(fetchInfo.endTime.day).padStart(2, "0")} ${String(fetchInfo.endTime.hour).padStart(2, "0")}:${String(fetchInfo.endTime.minute).padStart(2, "0")}`}{" "}
-                      <span className="text-[0.6em] text-gray-600">
+                      <span className="text-gray-600">
                         {fetchInfo.endTime &&
                           new Intl.DateTimeFormat("en-US", {
                             timeZone: system.displayTimezone ?? undefined,
@@ -338,7 +393,7 @@ export default function HeatmapPage() {
           <HeatmapChart
             systemId={system.id}
             pointPath={selectedPoint}
-            pointUnit={selectedPointInfo.metricUnit}
+            pointUnit={getUnitDisplay(selectedPointInfo.metricUnit)}
             timezone={system.displayTimezone}
             palette={selectedPalette}
             className="w-full"
