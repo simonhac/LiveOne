@@ -1,19 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import {
-  Database,
-  Server,
-  CheckCircle,
-  XCircle,
-  Info,
-  AlertCircle,
-  Globe,
-  Shield,
-  Download,
-  X,
-  RefreshCw,
-} from "lucide-react";
+import { Server, AlertCircle, Globe, Download, RefreshCw } from "lucide-react";
 import { formatDateTime, formatDate } from "@/lib/fe-date-format";
 import SyncModal from "./SyncModal";
 
@@ -23,6 +11,17 @@ interface TableStat {
   earliestTimestamp?: string;
   latestTimestamp?: string;
   recordsPerDay?: number | null;
+}
+
+interface CacheInfo {
+  systemsManager: {
+    lastRefreshed: string | null;
+    isLoaded: boolean;
+  };
+  pointManager: {
+    lastRefreshed: string | null;
+    isLoaded: boolean;
+  };
 }
 
 interface DatabaseInfo {
@@ -57,8 +56,10 @@ interface StorageToolsProps {
 
 export default function StorageTools({ initialStages }: StorageToolsProps) {
   const [databaseInfo, setDatabaseInfo] = useState<DatabaseInfo | null>(null);
+  const [cacheInfo, setCacheInfo] = useState<CacheInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isReloadingCaches, setIsReloadingCaches] = useState(false);
   const [syncProgress, setSyncProgress] = useState<{
     isActive: boolean;
     message: string;
@@ -85,6 +86,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
 
       if (data.success) {
         setDatabaseInfo(data.database);
+        setCacheInfo(data.cacheInfo || null);
         setError(null);
       } else {
         setError(data.error || "Failed to load settings");
@@ -530,8 +532,51 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
     }
   };
 
+  const forceReloadCaches = async () => {
+    setIsReloadingCaches(true);
+    const startTime = Date.now();
+
+    try {
+      const response = await fetch("/api/admin/storage", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "force-reload-caches" }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Immediately fetch fresh settings to show updated cache status
+        await fetchSettings();
+      } else {
+        console.error("Failed to reload caches:", data.error);
+        alert(`Error: ${data.error || "Failed to reload caches"}`);
+      }
+    } catch (err) {
+      console.error("Error reloading caches:", err);
+      alert("Failed to reload caches");
+    } finally {
+      // Ensure wait state is shown for at least 500ms
+      const elapsedTime = Date.now() - startTime;
+      const remainingTime = Math.max(0, 500 - elapsedTime);
+
+      setTimeout(() => {
+        setIsReloadingCaches(false);
+      }, remainingTime);
+    }
+  };
+
   useEffect(() => {
     fetchSettings();
+
+    // Auto-refresh cache info every 10 seconds
+    const intervalId = setInterval(() => {
+      fetchSettings();
+    }, 10000);
+
+    return () => clearInterval(intervalId);
   }, []);
 
   // Set default daysToSync based on hasSyncStatus when databaseInfo loads (only once)
@@ -640,27 +685,27 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                       key={table.name}
                       className={`${index % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"}`}
                     >
-                      <td className="px-4 py-2 text-sm text-gray-300 font-mono">
+                      <td className="px-4 py-2 text-xs text-gray-300 font-mono">
                         {table.name}
                       </td>
-                      <td className="px-4 py-2 text-sm text-gray-300 text-right">
+                      <td className="px-4 py-2 text-xs text-gray-300 text-right">
                         {table.count.toLocaleString()}
                       </td>
-                      <td className="px-4 py-2 text-sm text-gray-300">
+                      <td className="px-4 py-2 text-xs text-gray-300">
                         {table.earliestTimestamp
                           ? table.name === "readings_agg_1d"
                             ? formatDate(table.earliestTimestamp)
                             : formatDateTime(table.earliestTimestamp).display
                           : "—"}
                       </td>
-                      <td className="px-4 py-2 text-sm text-gray-300">
+                      <td className="px-4 py-2 text-xs text-gray-300">
                         {table.latestTimestamp
                           ? table.name === "readings_agg_1d"
                             ? formatDate(table.latestTimestamp)
                             : formatDateTime(table.latestTimestamp).display
                           : "—"}
                       </td>
-                      <td className="px-4 py-2 text-sm text-gray-300 text-right">
+                      <td className="px-4 py-2 text-xs text-gray-300 text-right">
                         {table.recordsPerDay !== undefined &&
                         table.recordsPerDay !== null
                           ? table.recordsPerDay < 1
@@ -723,10 +768,64 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
             )}
             <button
               onClick={recreateDailies}
-              className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors text-sm"
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors text-sm w-[180px]"
             >
               <RefreshCw className="w-4 h-4" />
               Recreate Dailies
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Cache Refresh Times */}
+      {cacheInfo && (
+        <div className="mt-8 -mx-2 sm:mx-0">
+          <h3 className="text-sm font-medium text-gray-400 mb-3">
+            Cache Status
+          </h3>
+          <div className="bg-gray-800 border border-gray-700 sm:rounded-lg p-4 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="text-gray-400">SystemsManager Cache:</span>
+                <span className="ml-2">
+                  {cacheInfo.systemsManager.isLoaded ? (
+                    <span className="text-white">
+                      {cacheInfo.systemsManager.lastRefreshed
+                        ? formatDateTime(cacheInfo.systemsManager.lastRefreshed)
+                            .display
+                        : "Loaded (no timestamp)"}
+                    </span>
+                  ) : (
+                    <span className="text-gray-500 italic">Not yet loaded</span>
+                  )}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-400">PointManager Cache:</span>
+                <span className="ml-2">
+                  {cacheInfo.pointManager.isLoaded ? (
+                    <span className="text-white">
+                      {cacheInfo.pointManager.lastRefreshed
+                        ? formatDateTime(cacheInfo.pointManager.lastRefreshed)
+                            .display
+                        : "Loaded (no timestamp)"}
+                    </span>
+                  ) : (
+                    <span className="text-gray-500 italic">Not yet loaded</span>
+                  )}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <button
+              onClick={forceReloadCaches}
+              disabled={isReloadingCaches}
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-wait text-white rounded-lg transition-colors text-sm w-[180px]"
+              style={{ cursor: isReloadingCaches ? "wait" : "pointer" }}
+            >
+              <RefreshCw className="w-4 h-4" />
+              Reload Caches
             </button>
           </div>
         </div>

@@ -38,6 +38,19 @@ export class SystemsManager {
   }
 
   /**
+   * Get cache status information
+   */
+  static getCacheStatus(): {
+    isLoaded: boolean;
+    lastLoadedAt: number;
+  } {
+    return {
+      isLoaded: SystemsManager.instance !== null,
+      lastLoadedAt: SystemsManager.lastLoadedAt,
+    };
+  }
+
+  /**
    * Get the singleton instance of SystemsManager
    * Automatically refreshes cache if TTL has expired
    */
@@ -62,7 +75,7 @@ export class SystemsManager {
   }
 
   /**
-   * Clear the cached instance (useful for cron jobs that need fresh data)
+   * Invalidate the cache (useful for cron jobs that need fresh data)
    *
    * TEMPORARY: This is a workaround for the cache consistency issue where
    * the singleton persists across requests in Vercel/Next.js, causing stale
@@ -71,8 +84,15 @@ export class SystemsManager {
    * TODO: Implement proper cache management with TTL, invalidation on updates,
    * or request-scoped instances instead of global singletons.
    */
-  static clearInstance(): void {
+  static invalidateCache(): void {
     SystemsManager.instance = null;
+  }
+
+  /**
+   * @deprecated Use invalidateCache() instead
+   */
+  static clearInstance(): void {
+    SystemsManager.invalidateCache();
   }
 
   /**
@@ -345,7 +365,7 @@ export class SystemsManager {
     );
 
     // Invalidate cache and refresh immediately
-    SystemsManager.clearInstance();
+    SystemsManager.invalidateCache();
     const freshManager = SystemsManager.getInstance();
     await freshManager.loadPromise;
 

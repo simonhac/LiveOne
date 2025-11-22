@@ -28,6 +28,20 @@ export class PointManager {
   private constructor() {}
 
   /**
+   * Get cache status information
+   */
+  static getCacheStatus(): {
+    isLoaded: boolean;
+    lastLoadedAt: number;
+  } {
+    return {
+      isLoaded:
+        PointManager.instance !== null && PointManager.instance !== undefined,
+      lastLoadedAt: PointManager.lastLoadedAt,
+    };
+  }
+
+  /**
    * Get the singleton instance
    * Automatically refreshes cache if TTL has expired
    */
@@ -269,19 +283,23 @@ export class PointManager {
   }
 
   /**
+   * Invalidate the entire cache (both singleton instance and series cache)
+   * This forces a complete reload on next access
+   */
+  static invalidateCache(): void {
+    if (PointManager.instance) {
+      PointManager.instance.seriesCache.clear();
+    }
+    PointManager.instance = undefined as any;
+    PointManager.lastLoadedAt = 0;
+  }
+
+  /**
    * Invalidate the series cache for a specific system
    * Call this after any write operations to point_info
    */
   invalidateSeriesCache(systemId: number): void {
     this.seriesCache.delete(systemId);
-  }
-
-  /**
-   * Invalidate the entire series cache
-   * Call this if you're unsure which systems were affected
-   */
-  invalidateAllSeriesCache(): void {
-    this.seriesCache.clear();
   }
 
   /**

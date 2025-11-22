@@ -2,26 +2,36 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { rawClient } from "@/lib/db";
 import { isUserAdmin } from "@/lib/auth-utils";
-import { fromDate } from "@internationalized/date";
-import { formatTimeAEST } from "@/lib/date-utils";
+import { SystemsManager } from "@/lib/systems-manager";
+import { PointManager } from "@/lib/point/point-manager";
 
 export async function GET(request: NextRequest) {
   try {
-    // Check if user is authenticated
-    const { userId } = await auth();
+    // In development, allow bypass with X-Claude header
+    const isDev = process.env.NODE_ENV === "development";
+    const claudeHeader = request.headers.get("x-claude");
+    const bypassAuth = isDev && claudeHeader === "true";
 
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    let userId: string | null = null;
 
-    // Check if user is admin - pass userId to avoid duplicate auth() call
-    const isAdmin = await isUserAdmin(userId);
+    if (!bypassAuth) {
+      // Check if user is authenticated
+      const auth_result = await auth();
+      userId = auth_result.userId;
 
-    if (!isAdmin) {
-      return NextResponse.json(
-        { error: "Admin access required" },
-        { status: 403 },
-      );
+      if (!userId) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+
+      // Check if user is admin - pass userId to avoid duplicate auth() call
+      const isAdmin = await isUserAdmin(userId);
+
+      if (!isAdmin) {
+        return NextResponse.json(
+          { error: "Admin access required" },
+          { status: 403 },
+        );
+      }
     }
 
     // Determine database type based on environment variables
@@ -181,6 +191,32 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Get cache refresh times from managers
+    let cacheInfo = null;
+    try {
+      const systemsStatus = SystemsManager.getCacheStatus();
+      const pointsStatus = PointManager.getCacheStatus();
+
+      cacheInfo = {
+        systemsManager: {
+          lastRefreshed:
+            systemsStatus.lastLoadedAt > 0
+              ? new Date(systemsStatus.lastLoadedAt).toISOString()
+              : null,
+          isLoaded: systemsStatus.isLoaded,
+        },
+        pointManager: {
+          lastRefreshed:
+            pointsStatus.lastLoadedAt > 0
+              ? new Date(pointsStatus.lastLoadedAt).toISOString()
+              : null,
+          isLoaded: pointsStatus.isLoaded,
+        },
+      };
+    } catch (err) {
+      console.error("Error fetching cache info:", err);
+    }
+
     // Prepare response
     const response = {
       success: true,
@@ -190,6 +226,7 @@ export async function GET(request: NextRequest) {
         stats,
         hasSyncStatus, // Whether automatic sync is available
       },
+      cacheInfo,
       environment: {
         nodeEnv: process.env.NODE_ENV || "development",
         vercelEnv: process.env.VERCEL_ENV,
@@ -205,6 +242,64 @@ export async function GET(request: NextRequest) {
       {
         success: false,
         error: "Failed to fetch settings",
+      },
+      { status: 500 },
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    // In development, allow bypass with X-Claude header
+    const isDev = process.env.NODE_ENV === "development";
+    const claudeHeader = request.headers.get("x-claude");
+    const bypassAuth = isDev && claudeHeader === "true";
+
+    if (!bypassAuth) {
+      // Check if user is authenticated
+      const auth_result = await auth();
+      const userId = auth_result.userId;
+
+      if (!userId) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+
+      // Check if user is admin
+      const isAdmin = await isUserAdmin(userId);
+
+      if (!isAdmin) {
+        return NextResponse.json(
+          { error: "Admin access required" },
+          { status: 403 },
+        );
+      }
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { action } = body;
+
+    if (action === "force-reload-caches") {
+      // Clear both cache instances to force reload on next access
+      SystemsManager.invalidateCache();
+      PointManager.invalidateCache();
+
+      return NextResponse.json({
+        success: true,
+        message: "Caches cleared successfully",
+      });
+    }
+
+    return NextResponse.json(
+      { success: false, error: "Unknown action" },
+      { status: 400 },
+    );
+  } catch (error) {
+    console.error("Error handling POST request:", error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Failed to process request",
       },
       { status: 500 },
     );

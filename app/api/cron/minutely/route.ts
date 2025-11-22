@@ -641,7 +641,7 @@ export async function GET(request: NextRequest) {
 
     // TEMPORARY: Clear SystemsManager cache to ensure fresh polling status data
     // TODO: Implement proper request-scoped caching instead of global singleton
-    SystemsManager.clearInstance();
+    SystemsManager.invalidateCache();
 
     // Get SystemsManager with fresh data for this request
     const systemsManager = SystemsManager.getInstance();

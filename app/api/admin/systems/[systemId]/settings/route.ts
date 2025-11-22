@@ -247,7 +247,7 @@ export async function PATCH(
     }
 
     // Invalidate SystemsManager cache so next request gets fresh data
-    SystemsManager.clearInstance();
+    SystemsManager.invalidateCache();
 
     // Revalidate dashboard paths to refresh server-side data
     revalidatePath("/dashboard", "layout");
