@@ -93,6 +93,63 @@ export async function POST(request: NextRequest) {
     // (Daily cron will refresh, but keep a week in case cron fails)
     await kv.set("db:stats:sizes", stats, { ex: 7 * 24 * 60 * 60 });
 
+    // Store daily snapshot for growth tracking
+    // Get today's date in YYYY-MM-DD format (UTC)
+    const today = new Date().toISOString().split("T")[0];
+
+    console.log("[DB Stats Cron] Storing daily snapshots...");
+
+    // Get record counts for all tables
+    const countResult = await rawClient.execute(`
+      SELECT 'systems' as table_name, COUNT(*) as count FROM systems
+      UNION ALL SELECT 'readings' as table_name, COUNT(*) as count FROM readings
+      UNION ALL SELECT 'readings_agg_5m' as table_name, COUNT(*) as count FROM readings_agg_5m
+      UNION ALL SELECT 'readings_agg_1d' as table_name, COUNT(*) as count FROM readings_agg_1d
+      UNION ALL SELECT 'user_systems' as table_name, COUNT(*) as count FROM user_systems
+      UNION ALL SELECT 'sessions' as table_name, COUNT(*) as count FROM sessions
+      UNION ALL SELECT 'point_info' as table_name, COUNT(*) as count FROM point_info
+      UNION ALL SELECT 'point_readings' as table_name, COUNT(*) as count FROM point_readings
+      UNION ALL SELECT 'point_readings_agg_5m' as table_name, COUNT(*) as count FROM point_readings_agg_5m
+    `);
+
+    // Insert snapshots for each table
+    let snapshotsInserted = 0;
+    for (const row of countResult.rows as any[]) {
+      const tableName = row.table_name;
+      const recordCount = row.count;
+      const sizes = sizeMap[tableName];
+
+      if (sizes && recordCount > 0) {
+        await rawClient.execute({
+          sql: `
+            INSERT INTO db_growth_snapshots
+              (snapshot_date, table_name, record_count, data_mb, index_mb, is_estimated, created_at)
+            VALUES (?, ?, ?, ?, ?, 0, ?)
+            ON CONFLICT (snapshot_date, table_name)
+            DO UPDATE SET
+              record_count = excluded.record_count,
+              data_mb = excluded.data_mb,
+              index_mb = excluded.index_mb,
+              is_estimated = 0,
+              created_at = excluded.created_at
+          `,
+          args: [
+            today,
+            tableName,
+            recordCount,
+            sizes.dataMb,
+            sizes.indexesMb,
+            Date.now(),
+          ],
+        });
+        snapshotsInserted++;
+      }
+    }
+
+    console.log(
+      `[DB Stats Cron] Stored ${snapshotsInserted} snapshots for ${today}`,
+    );
+
     const duration = Date.now() - startTime;
     console.log(
       `[DB Stats Cron] Completed in ${(duration / 1000).toFixed(1)}s. Calculated sizes for ${Object.keys(sizeMap).length} tables.`,
@@ -102,6 +159,8 @@ export async function POST(request: NextRequest) {
       success: true,
       durationMs: duration,
       tableCount: Object.keys(sizeMap).length,
+      snapshotsInserted,
+      snapshotDate: today,
       timestamp: stats.timestamp,
       sizes: sizeMap,
     });

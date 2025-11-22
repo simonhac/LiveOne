@@ -219,6 +219,100 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // Calculate per-day metrics from last 30 days of snapshots
+    let growthData: Record<
+      string,
+      {
+        recordsPerDay: number | null;
+        dataMbPerDay: number | null;
+        indexMbPerDay: number | null;
+        totalMbPerDay: number | null;
+        daysInPeriod: number;
+        using30DayWindow: boolean;
+      }
+    > = {};
+
+    if (stats) {
+      for (const tableStat of stats.tableStats) {
+        try {
+          // Get last 30 days of snapshots for this table
+          const snapshotsResult = await rawClient.execute({
+            sql: `
+              SELECT
+                snapshot_date,
+                record_count,
+                data_mb,
+                index_mb
+              FROM db_growth_snapshots
+              WHERE table_name = ?
+              ORDER BY snapshot_date DESC
+              LIMIT 30
+            `,
+            args: [tableStat.name],
+          });
+
+          const snapshots = snapshotsResult.rows as any[];
+
+          if (snapshots.length >= 2) {
+            // We need at least 2 snapshots to calculate growth
+            const oldestSnapshot = snapshots[snapshots.length - 1];
+            const newestSnapshot = snapshots[0];
+
+            // Calculate deltas
+            const recordsDelta =
+              newestSnapshot.record_count - oldestSnapshot.record_count;
+            const dataMbDelta = newestSnapshot.data_mb - oldestSnapshot.data_mb;
+            const indexMbDelta =
+              newestSnapshot.index_mb - oldestSnapshot.index_mb;
+
+            // Calculate days between snapshots
+            const oldestDate = new Date(oldestSnapshot.snapshot_date);
+            const newestDate = new Date(newestSnapshot.snapshot_date);
+            const daysDiff = Math.max(
+              1,
+              Math.round(
+                (newestDate.getTime() - oldestDate.getTime()) /
+                  (1000 * 60 * 60 * 24),
+              ),
+            );
+
+            // Calculate per-day averages
+            growthData[tableStat.name] = {
+              recordsPerDay: Math.round((recordsDelta / daysDiff) * 10) / 10,
+              dataMbPerDay: Math.round((dataMbDelta / daysDiff) * 1000) / 1000,
+              indexMbPerDay:
+                Math.round((indexMbDelta / daysDiff) * 1000) / 1000,
+              totalMbPerDay:
+                Math.round(((dataMbDelta + indexMbDelta) / daysDiff) * 1000) /
+                1000,
+              daysInPeriod: daysDiff,
+              using30DayWindow: snapshots.length === 30,
+            };
+          } else {
+            // Not enough data
+            growthData[tableStat.name] = {
+              recordsPerDay: null,
+              dataMbPerDay: null,
+              indexMbPerDay: null,
+              totalMbPerDay: null,
+              daysInPeriod: snapshots.length,
+              using30DayWindow: false,
+            };
+          }
+        } catch (err) {
+          console.error(`Error calculating growth for ${tableStat.name}:`, err);
+          growthData[tableStat.name] = {
+            recordsPerDay: null,
+            dataMbPerDay: null,
+            indexMbPerDay: null,
+            totalMbPerDay: null,
+            daysInPeriod: 0,
+            using30DayWindow: false,
+          };
+        }
+      }
+    }
+
     // Get cache refresh times from managers
     let cacheInfo = null;
     try {
@@ -234,6 +328,14 @@ export async function GET(request: NextRequest) {
       };
     } catch (err) {
       console.error("Error fetching cache info:", err);
+    }
+
+    // Merge growth data into table stats
+    if (stats) {
+      stats.tableStats = stats.tableStats.map((tableStat) => ({
+        ...tableStat,
+        growth: growthData[tableStat.name] || null,
+      }));
     }
 
     // Prepare response

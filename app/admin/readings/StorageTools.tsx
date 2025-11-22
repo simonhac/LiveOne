@@ -1,9 +1,25 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { Server, AlertCircle, Globe, Download, RefreshCw } from "lucide-react";
+import {
+  Server,
+  AlertCircle,
+  Globe,
+  Download,
+  RefreshCw,
+  Wrench,
+} from "lucide-react";
 import { formatDateTime, formatDate } from "@/lib/fe-date-format";
 import SyncModal from "./SyncModal";
+
+interface GrowthData {
+  recordsPerDay: number | null;
+  dataMbPerDay: number | null;
+  indexMbPerDay: number | null;
+  totalMbPerDay: number | null;
+  daysInPeriod: number;
+  using30DayWindow: boolean;
+}
 
 interface TableStat {
   name: string;
@@ -17,6 +33,7 @@ interface TableStat {
   recordsPerDay?: number | null;
   dataSizeMb?: number | null;
   indexSizeMb?: number | null;
+  growth?: GrowthData | null;
 }
 
 interface CacheInfo {
@@ -74,7 +91,9 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
   const [syncMetadata, setSyncMetadata] = useState(false);
   const [daysToSync, setDaysToSync] = useState(1);
   const [recordCounts, setRecordCounts] = useState<Record<string, number>>({});
+  const [isToolboxOpen, setIsToolboxOpen] = useState(false);
   const initialDefaultSet = useRef(false);
+  const toolboxRef = useRef<HTMLDivElement>(null);
 
   const fetchSettings = async () => {
     try {
@@ -637,6 +656,25 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
     resetStagesAndCount,
   ]);
 
+  // Close toolbox menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        toolboxRef.current &&
+        !toolboxRef.current.contains(event.target as Node)
+      ) {
+        setIsToolboxOpen(false);
+      }
+    }
+
+    if (isToolboxOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => {
+        document.removeEventListener("mousedown", handleClickOutside);
+      };
+    }
+  }, [isToolboxOpen]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
@@ -746,7 +784,13 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                       Count
                     </th>
                     <th className="px-2 py-2 text-right text-xs font-medium text-gray-500 tracking-wider">
-                      Per Day
+                      Daily
+                      {(() => {
+                        const hasWindow = databaseInfo.stats?.tableStats.some(
+                          (t) => t.growth?.using30DayWindow,
+                        );
+                        return hasWindow ? "*" : "";
+                      })()}
                     </th>
                     <th className="w-[5px]"></th>
                     <th className="hidden lg:table-cell px-2 py-2 text-right text-xs font-medium text-gray-500 tracking-wider">
@@ -759,47 +803,24 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                       Total
                     </th>
                     <th className="px-2 py-2 text-right text-xs font-medium text-gray-500 tracking-wider">
-                      Per Day
+                      Daily
+                      {(() => {
+                        const hasWindow = databaseInfo.stats?.tableStats.some(
+                          (t) => t.growth?.using30DayWindow,
+                        );
+                        return hasWindow ? "*" : "";
+                      })()}
                     </th>
                   </tr>
                 </thead>
                 <tbody>
                   {databaseInfo.stats.tableStats.map((table, index) => {
-                    // Calculate duration: max(createdAtMax, updatedAtMax) - createdAtMin
-                    const createdMin = table.createdAtMinTime
-                      ? new Date(table.createdAtMinTime).getTime()
-                      : null;
-                    const createdMax = table.createdAtMaxTime
-                      ? new Date(table.createdAtMaxTime).getTime()
-                      : null;
-                    const updatedMax = table.updatedAtMaxTime
-                      ? new Date(table.updatedAtMaxTime).getTime()
-                      : null;
-
-                    let durationDays: number | null = null;
-                    if (createdMin) {
-                      const endTime = Math.max(
-                        createdMax || 0,
-                        updatedMax || 0,
-                      );
-                      if (endTime > 0) {
-                        const durationMs = endTime - createdMin;
-                        durationDays = durationMs / (1000 * 60 * 60 * 24);
-                      }
-                    }
-
-                    // Calculate per-day metrics
-                    const recordsPerDay =
-                      durationDays && durationDays > 0
-                        ? table.count / durationDays
-                        : null;
-
+                    // Get growth data from table
+                    const growth = table.growth;
+                    const recordsPerDay = growth?.recordsPerDay ?? null;
+                    const mbPerDay = growth?.totalMbPerDay ?? null;
                     const totalMb =
                       (table.dataSizeMb || 0) + (table.indexSizeMb || 0);
-                    const mbPerDay =
-                      durationDays && durationDays > 0
-                        ? totalMb / durationDays
-                        : null;
 
                     return (
                       <tr
@@ -997,32 +1018,16 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                     );
                     const totalMb = totalDataMb + totalIndexMb;
 
-                    // Calculate duration: max(createdAtMax, updatedAtMax) - createdAtMin
-                    let durationDays: number | null = null;
-                    if (createdMinTime) {
-                      const createdMaxMs = createdMaxTime
-                        ? new Date(createdMaxTime).getTime()
-                        : 0;
-                      const updatedMaxMs = updatedMaxTime
-                        ? new Date(updatedMaxTime).getTime()
-                        : 0;
-                      const endTime = Math.max(createdMaxMs, updatedMaxMs);
-                      if (endTime > 0) {
-                        const durationMs =
-                          endTime - new Date(createdMinTime).getTime();
-                        durationDays = durationMs / (1000 * 60 * 60 * 24);
-                      }
-                    }
+                    // Sum per-day metrics from growth data
+                    const recordsPerDay = tables.reduce((sum, t) => {
+                      const growth = t.growth;
+                      return sum + (growth?.recordsPerDay || 0);
+                    }, 0);
 
-                    // Calculate per-day metrics
-                    const recordsPerDay =
-                      durationDays && durationDays > 0
-                        ? totalRecords / durationDays
-                        : null;
-                    const mbPerDay =
-                      durationDays && durationDays > 0
-                        ? totalMb / durationDays
-                        : null;
+                    const mbPerDay = tables.reduce((sum, t) => {
+                      const growth = t.growth;
+                      return sum + (growth?.totalMbPerDay || 0);
+                    }, 0);
 
                     return (
                       <tr className="border-t-2 border-gray-600 bg-gray-800/70">
@@ -1134,6 +1139,17 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
               </table>
             </div>
           </div>
+          {/* Note for 30-day window - outside table card */}
+          {(() => {
+            const hasWindow = databaseInfo.stats?.tableStats.some(
+              (t) => t.growth?.using30DayWindow,
+            );
+            return hasWindow ? (
+              <div className="px-2 sm:px-0 pt-1 text-xs text-gray-500">
+                * Based on last 30 days
+              </div>
+            ) : null;
+          })()}
         </div>
       )}
 
@@ -1167,27 +1183,104 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                 {databaseInfo.provider}
               </span>
             </div>
+
+            {databaseInfo.stats?.tableStats &&
+              (() => {
+                // Find earliest creation date across all tables
+                const earliestTimeMs = Math.min(
+                  ...databaseInfo.stats.tableStats
+                    .map((t) =>
+                      t.createdAtMinTime
+                        ? new Date(t.createdAtMinTime).getTime()
+                        : Infinity,
+                    )
+                    .filter((t): t is number => t !== Infinity),
+                );
+
+                if (!earliestTimeMs || earliestTimeMs === Infinity) return null;
+
+                const daysActive = Math.floor(
+                  (Date.now() - earliestTimeMs) / (1000 * 60 * 60 * 24),
+                );
+
+                return (
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-400">Active:</span>
+                    <span className="text-white font-medium">
+                      {daysActive.toLocaleString()}{" "}
+                      {daysActive === 1 ? "Day" : "Days"}
+                    </span>
+                  </div>
+                );
+              })()}
           </div>
 
           {/* Actions - Right Aligned */}
           <div className="flex items-center gap-3">
-            {databaseInfo.type === "development" && (
+            <div className="relative" ref={toolboxRef}>
               <button
-                onClick={openSyncDialog}
-                disabled={syncProgress.isActive}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white rounded-lg transition-colors text-sm"
+                onClick={() => setIsToolboxOpen(!isToolboxOpen)}
+                className="flex items-center justify-center gap-2 p-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+                title="Tools"
               >
-                <Download className="w-4 h-4" />
-                Sync from Production…
+                <Wrench className="w-5 h-5" />
               </button>
-            )}
-            <button
-              onClick={recreateDailies}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors text-sm w-[180px]"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Recreate Dailies
-            </button>
+
+              {isToolboxOpen && (
+                <div className="absolute right-0 mt-2 w-56 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
+                  <div className="py-1">
+                    {databaseInfo.type === "development" && (
+                      <button
+                        onClick={() => {
+                          openSyncDialog();
+                          setIsToolboxOpen(false);
+                        }}
+                        disabled={syncProgress.isActive}
+                        className="w-full flex items-center gap-2 px-4 py-2 text-sm text-white hover:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-colors text-left"
+                      >
+                        <Download className="w-4 h-4" />
+                        Sync from Production…
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        recreateDailies();
+                        setIsToolboxOpen(false);
+                      }}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-white hover:bg-gray-700 transition-colors text-left"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      Recreate Dailies
+                    </button>
+                    <button
+                      onClick={() => {
+                        refreshDbStats();
+                        setIsToolboxOpen(false);
+                      }}
+                      disabled={isRefreshingDbStats}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-white hover:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-colors text-left"
+                      title="Recalculate database sizes (takes ~2 minutes)"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      {isRefreshingDbStats
+                        ? "Calculating..."
+                        : "Refresh DB Sizes"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        forceReloadCaches();
+                        setIsToolboxOpen(false);
+                      }}
+                      disabled={isReloadingCaches}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-white hover:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-colors text-left"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      Invalidate Caches
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1211,7 +1304,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                       }
                     </span>
                   ) : (
-                    <span className="text-gray-500 italic">Not yet loaded</span>
+                    <span className="text-gray-500 italic">empty</span>
                   )}
                 </span>
               </div>
@@ -1223,7 +1316,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                       {formatDateTime(cacheInfo.pointManagerLoadedTime).display}
                     </span>
                   ) : (
-                    <span className="text-gray-500 italic">Not yet loaded</span>
+                    <span className="text-gray-500 italic">empty</span>
                   )}
                 </span>
               </div>
@@ -1251,32 +1344,11 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                       })()}
                     </>
                   ) : (
-                    <span className="text-gray-500 italic">Not yet loaded</span>
+                    <span className="text-gray-500 italic">empty</span>
                   )}
                 </span>
               </div>
             </div>
-          </div>
-          <div className="flex justify-end gap-3">
-            <button
-              onClick={refreshDbStats}
-              disabled={isRefreshingDbStats}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-wait text-white rounded-lg transition-colors text-sm w-[180px]"
-              style={{ cursor: isRefreshingDbStats ? "wait" : "pointer" }}
-              title="Recalculate database sizes (takes ~2 minutes)"
-            >
-              <RefreshCw className="w-4 h-4" />
-              {isRefreshingDbStats ? "Calculating..." : "Refresh DB Sizes"}
-            </button>
-            <button
-              onClick={forceReloadCaches}
-              disabled={isReloadingCaches}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-wait text-white rounded-lg transition-colors text-sm w-[180px]"
-              style={{ cursor: isReloadingCaches ? "wait" : "pointer" }}
-            >
-              <RefreshCw className="w-4 h-4" />
-              Invalidate Caches
-            </button>
           </div>
         </div>
       )}
