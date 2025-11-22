@@ -20,6 +20,62 @@ import SessionInfoModal from "./SessionInfoModal";
 import PointReadingInspectorModal from "./PointReadingInspectorModal";
 import { PointInfo } from "@/lib/point/point-info";
 
+// Group data rows by timestamp and combine session labels
+function groupDataByTimestamp(data: any[]): any[] {
+  if (data.length === 0) return [];
+
+  // Group rows by timestamp (time or date)
+  const timeKey = data[0].time ? "time" : "date";
+  const grouped = new Map<string, any[]>();
+
+  data.forEach((row) => {
+    const timestamp = row[timeKey];
+    if (!grouped.has(timestamp)) {
+      grouped.set(timestamp, []);
+    }
+    grouped.get(timestamp)!.push(row);
+  });
+
+  // Merge rows with the same timestamp
+  return Array.from(grouped.values()).map((rows) => {
+    if (rows.length === 1) return rows[0];
+
+    // Multiple rows for same timestamp - merge them
+    const mergedRow = { ...rows[0] };
+
+    // Store array of sessions for multiple links
+    const sessions = rows
+      .map((r) => ({
+        label: r.sessionLabel,
+        id: r.sessionId,
+      }))
+      .filter((s) => s.label !== null && s.label !== undefined);
+
+    if (sessions.length > 0) {
+      mergedRow.sessions = sessions; // Array of {label, id} objects
+      mergedRow.sessionLabel = null; // Clear the single label
+      mergedRow.sessionId = null; // Clear the single id
+    }
+
+    // For each point column, use the first non-null value
+    Object.keys(mergedRow).forEach((key) => {
+      if (
+        key !== timeKey &&
+        key !== "sessionLabel" &&
+        key !== "sessionId" &&
+        key !== "sessions"
+      ) {
+        const nonNullValue = rows.find((r) => r[key] !== null)?.[key];
+        if (nonNullValue !== undefined) {
+          mergedRow[key] = nonNullValue;
+        }
+      }
+    });
+
+    return mergedRow;
+  });
+}
+
 interface ViewDataModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -271,7 +327,13 @@ export default function ViewDataModal({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't handle keyboard events if modal is not open or if user is typing in an input
-      if (!isOpen || isPointInfoModalOpen || isReadingInspectorOpen) return;
+      if (
+        !isOpen ||
+        isPointInfoModalOpen ||
+        isReadingInspectorOpen ||
+        isSessionInfoModalOpen
+      )
+        return;
 
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
@@ -292,6 +354,7 @@ export default function ViewDataModal({
     isOpen,
     isPointInfoModalOpen,
     isReadingInspectorOpen,
+    isSessionInfoModalOpen,
     onClose,
     pagination,
     loading,
@@ -530,6 +593,9 @@ export default function ViewDataModal({
     return seriesId || null;
   };
 
+  // Group data by timestamp and combine session labels
+  const groupedData = useMemo(() => groupDataByTimestamp(data), [data]);
+
   // Filter headers based on showExtras state
   const filteredHeaders = Array.from(headers.entries()).filter(
     ([key, pointInfo]) => {
@@ -598,7 +664,7 @@ export default function ViewDataModal({
         key={`${headerKey}-${rowKey}`}
         data-col={colIndex}
         className={`py-1 ${isLastRow ? "pb-2" : ""} px-2 align-top bg-gray-900 ${
-          !isSpecialColumn ? "text-right" : ""
+          !isSpecialColumn ? "text-right" : "text-left"
         } ${
           !isSpecialColumn && pointInfo?.index ? "cursor-pointer" : ""
         } ${isLastSeriesIdColumn ? "border-r border-gray-700" : ""} ${
@@ -908,10 +974,10 @@ export default function ViewDataModal({
                 </tr>
               </thead>
               <tbody className="text-gray-300">
-                {data.map((row, idx) => (
+                {groupedData.map((row, idx) => (
                   <tr
                     key={idx}
-                    className={`${
+                    className={`group ${
                       idx % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"
                     } hover:bg-gray-700/50 transition-colors`}
                   >
@@ -931,11 +997,15 @@ export default function ViewDataModal({
                       return (
                         <td
                           key={key}
-                          className={`py-1 px-2 ${
+                          className={`py-0.5 px-2 ${
                             key !== "time" &&
                             key !== "date" &&
                             key !== "sessionLabel"
                               ? "text-right cursor-pointer"
+                              : "text-left"
+                          } ${
+                            key === "sessionLabel"
+                              ? "w-[80px] lg:w-[120px] xl:w-auto"
                               : ""
                           } ${
                             isLastSeriesIdColumn
@@ -1011,17 +1081,45 @@ export default function ViewDataModal({
                               })()}
                             </span>
                           ) : key === "sessionLabel" ? (
-                            row[key] !== null && row.sessionId ? (
+                            row.sessions && row.sessions.length > 0 ? (
+                              <div className="flex flex-wrap gap-x-1">
+                                {row.sessions.map(
+                                  (
+                                    session: { label: string; id: number },
+                                    idx: number,
+                                  ) => (
+                                    <span
+                                      key={idx}
+                                      className="inline-flex items-center"
+                                    >
+                                      <button
+                                        onClick={() =>
+                                          handleSessionClick(session.id)
+                                        }
+                                        className="text-[10px] font-mono text-gray-400 hover:text-blue-400 group-hover:underline cursor-pointer break-words"
+                                      >
+                                        {session.label}
+                                      </button>
+                                      {idx < row.sessions.length - 1 && (
+                                        <span className="text-gray-600 text-[10px]">
+                                          ,
+                                        </span>
+                                      )}
+                                    </span>
+                                  ),
+                                )}
+                              </div>
+                            ) : row[key] !== null && row.sessionId ? (
                               <button
                                 onClick={() =>
                                   handleSessionClick(row.sessionId)
                                 }
-                                className="text-xs font-mono text-gray-400 hover:text-blue-400 hover:underline cursor-pointer"
+                                className="text-[10px] font-mono text-gray-400 hover:text-blue-400 group-hover:underline cursor-pointer break-words"
                               >
                                 {row[key]}
                               </button>
                             ) : (
-                              <span className="text-xs font-mono text-gray-400">
+                              <span className="text-[10px] font-mono text-gray-400">
                                 -
                               </span>
                             )

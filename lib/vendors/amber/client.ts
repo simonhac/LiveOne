@@ -910,7 +910,7 @@ export async function updateUsage(
           if (compareResult.info.numRecords === 0) {
             // No superior records - local is already equal to or better than remote
             compareResult.discovery =
-              "local usage is already equal to or better than remote";
+              "local usage is already equal or superior to remote";
           } else {
             compareResult.discovery = `found ${compareResult.info.numRecords} superior remote records to update/insert`;
 

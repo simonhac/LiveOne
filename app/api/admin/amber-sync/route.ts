@@ -7,6 +7,7 @@ import {
   getSampleRecordKeys,
 } from "@/lib/vendors/amber/types";
 import { toZoned, fromDate } from "@internationalized/date";
+import { sessionManager } from "@/lib/session-manager";
 
 /**
  * Format timestamp as AEST (UTC+10) time string (HH:MM)
@@ -52,6 +53,12 @@ export async function POST(request: NextRequest) {
       return new Response("Invalid system identifier", { status: 400 });
     }
 
+    // Get system info for session
+    const systemInfo = await sessionManager.getSystemInfo(systemId);
+    if (!systemInfo) {
+      return new Response("System not found", { status: 404 });
+    }
+
     // Credentials from environment
     const credentials = {
       apiKey:
@@ -63,64 +70,117 @@ export async function POST(request: NextRequest) {
 
     const stream = new ReadableStream({
       async start(controller) {
-        const send = (text: string) => {
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ text })}\n\n`),
-          );
+        const send = (
+          text: string | string[],
+          emphasis = false,
+          heading?: 0 | 1 | 2,
+        ) => {
+          const lines = Array.isArray(text) ? text : [text];
+          for (const line of lines) {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ text: line, emphasis, heading })}\n\n`,
+              ),
+            );
+          }
+        };
+
+        const sendLinefeed = () => send("\u00A0");
+
+        const sendHeader = (text: string, level: 0 | 1 | 2 = 1) => {
+          send(text, true, level);
         };
 
         const delay = () => new Promise((resolve) => setTimeout(resolve, 100));
 
+        const startTime = Date.now();
+        let sessionId: number | null = null;
+        let totalRowsInserted = 0;
+        let overallSuccess = true;
+        let overallError: string | null = null;
+
         try {
+          // Create session at the start
+          sessionId = await sessionManager.createSession({
+            systemId,
+            vendorType: systemInfo.vendorType,
+            systemName: systemInfo.systemName,
+            cause: dryRun ? "ADMIN-DRYRUN" : "ADMIN",
+            started: new Date(),
+          });
+
           // Initial header
-          send("============================================================");
+          sendHeader("AMBER ELECTRIC DATA SYNC TERMINAL", 0);
           await delay();
 
           if (dryRun) {
-            send("DRY RUN MODE - No database writes will occur");
+            send("DRY RUN MODE - No database writes will occur", true);
             send("   Add dry run toggle to actually persist to the database");
           } else {
-            send("LIVE MODE - Database writes ENABLED");
+            send("LIVE MODE - Database writes ENABLED", true);
             send("   Data will be written to the database!");
           }
           await delay();
 
-          send("============================================================");
           send(`Testing Amber sync for system ${systemId}:`);
           send(
             `    day: ${firstDay.toString()} for ${numberOfDays} ${numberOfDays === 1 ? "day" : "days"}`,
           );
           send(`    action: *${action}*`);
-          send("============================================================");
-          await delay();
+          send(`    session ID: ${sessionId}`);
 
           const audits: AmberSyncResult[] = [];
 
           // Run usage sync if requested
+          let usageRowsInserted = 0;
           if (action === "usage" || action === "both") {
             const audit = await updateUsage(
               systemId,
               firstDay,
               numberOfDays,
               credentials,
-              -1, // sessionId: -1 for admin tool
+              sessionId,
               dryRun,
             );
             audits.push(audit);
+            usageRowsInserted = audit.summary.numRowsInserted;
+            if (!audit.success) {
+              overallSuccess = false;
+              overallError = audit.summary.error || "Usage sync failed";
+            }
+            totalRowsInserted += audit.summary.numRowsInserted;
           }
 
           // Run pricing sync if requested
+          let priceRowsInserted = 0;
           if (action === "pricing" || action === "both") {
             const audit = await updateForecasts(
               systemId,
               firstDay,
               numberOfDays,
               credentials,
-              -1,
+              sessionId,
               dryRun,
             );
             audits.push(audit);
+            priceRowsInserted = audit.summary.numRowsInserted;
+            if (!audit.success) {
+              overallSuccess = false;
+              overallError = audit.summary.error || "Pricing sync failed";
+            }
+            totalRowsInserted += audit.summary.numRowsInserted;
           }
+
+          // Display row counts
+          sendLinefeed();
+          send("Rows inserted:");
+          if (action === "usage" || action === "both") {
+            send(`    usage: ${usageRowsInserted}`, true);
+          }
+          if (action === "pricing" || action === "both") {
+            send(`    price: ${priceRowsInserted}`, true);
+          }
+          await delay();
 
           // Display each audit
           for (let i = 0; i < audits.length; i++) {
@@ -132,70 +192,56 @@ export async function POST(request: NextRequest) {
                   ? "PRICING"
                   : action.toUpperCase();
 
-            send("\u00A0");
-            send("\u00A0");
-            send(
-              "============================================================",
-            );
-            send(`=== ${taskName} SYNC AUDIT SUMMARY ===`);
-            send(
-              "============================================================",
-            );
+            sendHeader(`${taskName} SYNC AUDIT SUMMARY`, 1);
             await delay();
 
             send(`System ID: ${audit.systemId}`);
-            send(`First Day: ${audit.firstDay.toString()}`);
+            send(`First Day: ${audit.firstDay.toString()}`, true);
             send(
               `Last Day: ${audit.firstDay.add({ days: audit.numberOfDays - 1 }).toString()}`,
             );
             send(`Number of Days: ${audit.numberOfDays}`);
             send(`Success: ${audit.success ? "YES" : "NO"}`);
             send(`Total stages: ${audit.summary.totalStages}`);
-            send(`Rows inserted: ${audit.summary.numRowsInserted}`);
+            send(`Rows inserted: ${audit.summary.numRowsInserted}`, true);
             send(`Duration: ${audit.summary.durationMs}ms`);
             await delay();
 
             if (audit.summary.error) {
-              send("");
+              sendLinefeed();
               send(`ERROR: ${audit.summary.error}`);
               await delay();
             }
 
             if (audit.summary.exception) {
-              send("");
+              sendLinefeed();
               send(`EXCEPTION: ${JSON.stringify(audit.summary.exception)}`);
               await delay();
             }
 
             // Display each stage result
             for (const stage of audit.stages) {
-              send("\u00A0");
-              send("\u00A0");
-              send(
-                "------------------------------------------------------------",
-              );
-              send(`--- ${stage.stage} ---`);
-              send(
-                "------------------------------------------------------------",
-              );
+              sendHeader(stage.stage, 2);
               await delay();
 
               if (stage.request) {
-                send(`Request: ${stage.request}`);
+                send(`Request: ${stage.request}`, true);
               }
               if (stage.discovery) {
-                send(`Discovery: ${stage.discovery}`);
+                send(`Discovery: ${stage.discovery}`, true);
               }
               send(`Num Records: ${stage.info.numRecords}`);
-              send(
-                `Uniformity: '${stage.info.uniformQuality ?? "not uniform"}'`,
-              );
+              const uniformity = stage.info.uniformQuality ?? "not uniform";
+              // Only quote single-character uniformity values (quality codes)
+              const formattedUniformity =
+                uniformity.length === 1 ? `'${uniformity}'` : uniformity;
+              send(`Uniformity: ${formattedUniformity}`);
               await delay();
 
               // Display overviews (includes comparison notation for comparison stages)
               const overviewKeys = getOverviewKeys(stage.info);
               if (overviewKeys.length > 0) {
-                send("\u00A0");
+                sendLinefeed();
                 if (stage.info.numRecords === 0) {
                   send(`Comparison Overviews (${overviewKeys.length} series):`);
                 } else {
@@ -212,14 +258,14 @@ export async function POST(request: NextRequest) {
               }
 
               if (stage.info.numRecords === 0 && overviewKeys.length === 0) {
-                send("\u00A0");
+                sendLinefeed();
                 send(
                   "No regular overview or canonical display (0 superior records).",
                 );
                 await delay();
               } else {
                 if (stage.info.characterisation) {
-                  send("\u00A0");
+                  sendLinefeed();
                   send(
                     `Characterisation (${stage.info.characterisation.length} ranges):`,
                   );
@@ -239,11 +285,11 @@ export async function POST(request: NextRequest) {
                 if (showSample) {
                   const sampleKeys = getSampleRecordKeys(stage.info);
                   if (sampleKeys.length > 0) {
-                    send("\u00A0");
+                    sendLinefeed();
                     send("Sample Records (up to 2 from each point):");
                     for (const pointKey of sampleKeys.sort()) {
                       const sampleInfo = stage.info.sampleRecords![pointKey];
-                      send("");
+                      sendLinefeed();
                       send(`  ${pointKey}:`);
                       for (
                         let idx = 0;
@@ -273,7 +319,7 @@ export async function POST(request: NextRequest) {
 
                 // Display canonical table if available
                 if (stage.info.canonical && stage.info.canonical.length > 0) {
-                  send("\u00A0");
+                  sendLinefeed();
                   send("Canonical Display (Melbourne Timezone):");
                   for (const line of stage.info.canonical) {
                     send(line);
@@ -283,24 +329,45 @@ export async function POST(request: NextRequest) {
               }
 
               if (stage.error) {
-                send("");
+                sendLinefeed();
                 send(`ERROR: ${stage.error}`);
                 await delay();
               }
             }
           }
 
-          send("");
-          send("============================================================");
-          send("Test completed");
-          send("============================================================");
+          sendHeader("Test completed", 1);
           await delay();
+
+          // Update session with results
+          if (sessionId) {
+            const duration = Date.now() - startTime;
+            await sessionManager.updateSessionResult(sessionId, {
+              duration,
+              successful: overallSuccess,
+              error: overallError,
+              numRows: totalRowsInserted,
+              response: audits,
+            });
+          }
 
           controller.close();
         } catch (error) {
-          send("");
+          sendLinefeed();
           send("ERROR: Test failed with exception:");
           send(error instanceof Error ? error.message : String(error));
+
+          // Update session with error if we have a session ID
+          if (sessionId) {
+            const duration = Date.now() - startTime;
+            await sessionManager.updateSessionResult(sessionId, {
+              duration,
+              successful: false,
+              error: error instanceof Error ? error.message : String(error),
+              numRows: totalRowsInserted,
+            });
+          }
+
           controller.close();
         }
       },

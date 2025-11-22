@@ -16,16 +16,56 @@ export default function AmberSyncPage() {
   const [days, setDays] = useState<number | "">(2); // 12h before + 18h after = 30h ~= 2 days
   const [dryRun, setDryRun] = useState(false);
   const [showSample, setShowSample] = useState(false);
-  const [output, setOutput] = useState("");
+  const [output, setOutput] = useState<
+    Array<{ text: string; emphasis: boolean; heading?: 0 | 1 | 2 }>
+  >([]);
   const [isRunning, setIsRunning] = useState(false);
   const outputRef = useRef<HTMLDivElement>(null);
 
   const isDaysValid = typeof days === "number" && days >= 1 && days <= 30;
 
+  const renderHeader = (text: string, level: 0 | 1 | 2) => {
+    const width = 80;
+
+    if (level === 0) {
+      // Boxed format
+      const padding = Math.max(0, width - text.length - 2);
+      const leftPad = Math.floor(padding / 2);
+      const rightPad = padding - leftPad;
+      const paddedText = " ".repeat(leftPad) + text + " ".repeat(rightPad);
+
+      return [
+        "╔" + "═".repeat(width - 2) + "╗",
+        "║" + paddedText + "║",
+        "╚" + "═".repeat(width - 2) + "╝",
+      ].join("\n");
+    } else if (level === 1) {
+      // Level 1: single-line box drawing characters
+      const topBorder = "┌" + "─".repeat(width - 2) + "┐";
+      const bottomBorder = "└" + "─".repeat(width - 2) + "┘";
+      const padding = Math.max(0, width - text.length - 2); // -2 for the │ characters
+      const leftPad = Math.floor(padding / 2);
+      const rightPad = padding - leftPad;
+      const textLine =
+        "│" + " ".repeat(leftPad) + text + " ".repeat(rightPad) + "│";
+      return "\n" + topBorder + "\n" + textLine + "\n" + bottomBorder + "\n";
+    } else {
+      // Level 2: simple box with + corners and | sides
+      const topBorder = "+" + "-".repeat(width - 2) + "+";
+      const bottomBorder = "+" + "-".repeat(width - 2) + "+";
+      const padding = Math.max(0, width - text.length - 2); // -2 for the | characters
+      const leftPad = Math.floor(padding / 2);
+      const rightPad = padding - leftPad;
+      const textLine =
+        "|" + " ".repeat(leftPad) + text + " ".repeat(rightPad) + "|";
+      return "\n" + topBorder + "\n" + textLine + "\n" + bottomBorder + "\n";
+    }
+  };
+
   const handleSync = async () => {
     if (isRunning || !isDaysValid) return;
 
-    setOutput("");
+    setOutput([]);
     setIsRunning(true);
 
     try {
@@ -45,7 +85,7 @@ export default function AmberSyncPage() {
       });
 
       if (!response.ok) {
-        setOutput(`ERROR: ${response.statusText}\n`);
+        setOutput([{ text: `ERROR: ${response.statusText}`, emphasis: false }]);
         setIsRunning(false);
         return;
       }
@@ -54,7 +94,7 @@ export default function AmberSyncPage() {
       const decoder = new TextDecoder();
 
       if (!reader) {
-        setOutput("ERROR: No response stream\n");
+        setOutput([{ text: "ERROR: No response stream", emphasis: false }]);
         setIsRunning(false);
         return;
       }
@@ -71,7 +111,14 @@ export default function AmberSyncPage() {
             try {
               const data = JSON.parse(line.substring(6));
               if (data.text) {
-                setOutput((prev) => prev + data.text + "\n");
+                setOutput((prev) => [
+                  ...prev,
+                  {
+                    text: data.text,
+                    emphasis: data.emphasis || false,
+                    heading: data.heading,
+                  },
+                ]);
               }
             } catch (e) {
               // Ignore parse errors
@@ -80,11 +127,13 @@ export default function AmberSyncPage() {
         }
       }
     } catch (error) {
-      setOutput(
-        (prev) =>
-          prev +
-          `\nERROR: ${error instanceof Error ? error.message : "Unknown error"}\n`,
-      );
+      setOutput((prev) => [
+        ...prev,
+        {
+          text: `\nERROR: ${error instanceof Error ? error.message : "Unknown error"}`,
+          emphasis: false,
+        },
+      ]);
     } finally {
       setIsRunning(false);
     }
@@ -111,9 +160,7 @@ export default function AmberSyncPage() {
             marginBottom: "20px",
           }}
         >
-          {`╔══════════════════════════════════════════════════════════════════════════════╗
-║                     AMBER ELECTRIC DATA SYNC TERMINAL                        ║
-╚══════════════════════════════════════════════════════════════════════════════╝`}
+          {renderHeader("AMBER ELECTRIC DATA SYNC TERMINAL", 0)}
         </pre>
 
         {/* Controls */}
@@ -283,7 +330,26 @@ export default function AmberSyncPage() {
             paddingBottom: "20px",
           }}
         >
-          {output || "Ready. Press SYNC to begin..."}
+          {output.length === 0 ? (
+            "Ready. Press SYNC to begin..."
+          ) : (
+            <>
+              {output.map((chunk, idx) => (
+                <span
+                  key={idx}
+                  style={{
+                    color: chunk.emphasis ? "#00ff00" : "#33cc33",
+                    fontWeight: chunk.emphasis ? "bold" : "normal",
+                  }}
+                >
+                  {chunk.heading !== undefined
+                    ? renderHeader(chunk.text, chunk.heading)
+                    : chunk.text}
+                  {"\n"}
+                </span>
+              ))}
+            </>
+          )}
           {"\n"}
           <span className="cursor">_</span>
         </div>
