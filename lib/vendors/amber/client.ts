@@ -31,6 +31,7 @@ import {
   getChannelMetadata,
 } from "./point-metadata";
 import { insertPointReadingsDirectTo5m } from "@/lib/monitoring-points-manager";
+import type { PointInfo } from "@/lib/point/point-info";
 
 /**
  * Flag to control whether sampleRecords are included in sync results
@@ -160,6 +161,26 @@ function generateIntervalsAEST(
 }
 
 /**
+ * Filter for usage-related points: *.{kwh,cost,perKwh}
+ * These are channel-specific energy, cost, and rate values
+ */
+function usagePointFilter(point: PointInfo): boolean {
+  const usageSubIds = ["kwh", "cost", "perKwh"];
+  return point.originSubId !== null && usageSubIds.includes(point.originSubId);
+}
+
+/**
+ * Filter for pricing-related points: grid.{renewables,spotPerKwh} and *.perKwh
+ * These are grid-level renewables proportion, spot price, and channel-specific rates
+ */
+function pricingPointFilter(point: PointInfo): boolean {
+  const pricingSubIds = ["renewables", "spotPerKwh", "perKwh"];
+  return (
+    point.originSubId !== null && pricingSubIds.includes(point.originSubId)
+  );
+}
+
+/**
  * Build AmberReadingsBatch from local database readings
  */
 function buildRecordsMapFromLocal(
@@ -217,12 +238,14 @@ function buildRecordsMapFromLocal(
 /**
  * Stage 1a: Load Local Records
  * Fetches all point readings from the database for the specified date range
+ * @param pointFilter Optional filter function to select specific points (e.g., usage vs pricing points)
  */
 async function loadLocalRecords(
   systemId: number,
   firstDay: CalendarDate,
   numberOfDays: number,
   stageName: string,
+  pointFilter?: (point: PointInfo) => boolean,
 ): Promise<StageResult> {
   try {
     const { SystemsManager } = await import("@/lib/systems-manager");
@@ -251,7 +274,12 @@ async function loadLocalRecords(
     const pointManager = PointManager.getInstance();
     const allPoints = await pointManager.getPointsForSystem(systemId);
 
-    if (allPoints.length === 0) {
+    // Apply point filter if provided (e.g., usage vs pricing points)
+    const filteredPoints = pointFilter
+      ? allPoints.filter(pointFilter)
+      : allPoints;
+
+    if (filteredPoints.length === 0) {
       // No points yet - this is valid for a new system
       // Return empty result and let stage 2 fetch from remote
       return {
@@ -269,8 +297,8 @@ async function loadLocalRecords(
     // 2. Generate expected intervals
     const expectedIntervals = generateIntervalsAEST(firstDay, numberOfDays);
 
-    // 3. Fetch readings for all points
-    const pointIds = allPoints.map((p) => p.index);
+    // 3. Fetch readings for filtered points only
+    const pointIds = filteredPoints.map((p) => p.index);
     const readings = await db
       .select()
       .from(pointReadingsAgg5m)
@@ -286,7 +314,7 @@ async function loadLocalRecords(
     // 4. Build AmberReadingsBatch from database readings
     const group = buildRecordsMapFromLocal(
       readings,
-      allPoints,
+      filteredPoints,
       firstDay,
       numberOfDays,
     );
@@ -865,12 +893,13 @@ export async function updateUsage(
   let exception: Error | undefined;
 
   try {
-    // STAGE 1: Load local data
+    // STAGE 1: Load local data (usage points only)
     const localResult = await loadLocalRecords(
       systemId,
       firstDay,
       numberOfDays,
       "usage stage 1: load local data",
+      usagePointFilter,
     );
     stages.push(localResult);
 
@@ -1036,12 +1065,13 @@ export async function updateForecasts(
   let exception: Error | undefined;
 
   try {
-    // STAGE 1: Load local data
+    // STAGE 1: Load local data (pricing points only)
     const localResult = await loadLocalRecords(
       systemId,
       firstDay,
       numberOfDays,
       "forecast stage 1: load local data",
+      pricingPointFilter,
     );
     stages.push(localResult);
 

@@ -8,12 +8,16 @@ export default function AmberSyncPage() {
   const systemIdentifier = params.systemIdentifier as string;
   const [action, setAction] = useState<"usage" | "pricing" | "both">("both");
   const [startDate, setStartDate] = useState(() => {
-    // Start from 12 hours before now
-    const start = new Date();
-    start.setHours(start.getHours() - 12);
-    return start.toISOString().split("T")[0];
+    // Get today's date in AEST (UTC+10)
+    const now = new Date();
+    const aestOffset = 10 * 60; // AEST is UTC+10
+    const localOffset = now.getTimezoneOffset();
+    const aestTime = new Date(
+      now.getTime() + (aestOffset + localOffset) * 60 * 1000,
+    );
+    return aestTime.toISOString().split("T")[0];
   });
-  const [days, setDays] = useState<number | "">(2); // 12h before + 18h after = 30h ~= 2 days
+  const [days, setDays] = useState<number | "">(1);
   const [dryRun, setDryRun] = useState(false);
   const [showSample, setShowSample] = useState(false);
   const [output, setOutput] = useState<
@@ -22,7 +26,7 @@ export default function AmberSyncPage() {
   const [isRunning, setIsRunning] = useState(false);
   const outputRef = useRef<HTMLDivElement>(null);
 
-  const isDaysValid = typeof days === "number" && days >= 1 && days <= 30;
+  const isDaysValid = typeof days === "number" && days >= 1 && days <= 7;
 
   const renderHeader = (text: string, level: 0 | 1 | 2) => {
     const width = 80;
@@ -150,6 +154,7 @@ export default function AmberSyncPage() {
         minHeight: "100vh",
         padding: "20px",
         position: "relative",
+        cursor: isRunning ? "wait" : "default",
       }}
     >
       <div style={{ position: "relative", zIndex: 2 }}>
@@ -166,60 +171,80 @@ export default function AmberSyncPage() {
         {/* Controls */}
         <div style={{ marginBottom: "30px" }}>
           <div style={{ marginBottom: "15px" }}>
-            UPDATE:{" "}
-            <button
-              onClick={() => setAction("usage")}
-              disabled={isRunning}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#33cc33",
-                fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-                cursor: isRunning ? "not-allowed" : "pointer",
-                padding: 0,
-                opacity: isRunning ? 0.5 : 1,
-              }}
-            >
-              [{action === "usage" ? "X" : " "}] USAGE
-            </button>{" "}
-            <button
-              onClick={() => setAction("pricing")}
-              disabled={isRunning}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#33cc33",
-                fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-                cursor: isRunning ? "not-allowed" : "pointer",
-                padding: 0,
-                opacity: isRunning ? 0.5 : 1,
-              }}
-            >
-              [{action === "pricing" ? "X" : " "}] PRICING
-            </button>{" "}
-            <button
-              onClick={() => setAction("both")}
-              disabled={isRunning}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#33cc33",
-                fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-                cursor: isRunning ? "not-allowed" : "pointer",
-                padding: 0,
-                opacity: isRunning ? 0.5 : 1,
-              }}
-            >
-              [{action === "both" ? "X" : " "}] BOTH
-            </button>
+            <div>
+              <pre style={{ margin: 0, display: "inline" }}>
+                {"UPDATE:     "}
+              </pre>
+              <button
+                onClick={() => setAction("usage")}
+                disabled={isRunning}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#33cc33",
+                  fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+                  cursor: isRunning ? "not-allowed" : "pointer",
+                  padding: 0,
+                  opacity: isRunning ? 0.5 : 1,
+                }}
+              >
+                [{action === "usage" ? "X" : " "}] USAGE
+              </button>
+            </div>
+            <div>
+              <pre style={{ margin: 0, display: "inline" }}>
+                {"            "}
+              </pre>
+              <button
+                onClick={() => setAction("pricing")}
+                disabled={isRunning}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#33cc33",
+                  fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+                  cursor: isRunning ? "not-allowed" : "pointer",
+                  padding: 0,
+                  opacity: isRunning ? 0.5 : 1,
+                }}
+              >
+                [{action === "pricing" ? "X" : " "}] PRICING
+              </button>
+            </div>
+            <div>
+              <pre style={{ margin: 0, display: "inline" }}>
+                {"            "}
+              </pre>
+              <button
+                onClick={() => setAction("both")}
+                disabled={isRunning}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#33cc33",
+                  fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+                  cursor: isRunning ? "not-allowed" : "pointer",
+                  padding: 0,
+                  opacity: isRunning ? 0.5 : 1,
+                }}
+              >
+                [{action === "both" ? "X" : " "}] BOTH
+              </button>
+            </div>
           </div>
 
           <div style={{ marginBottom: "15px" }}>
-            START DATE:{" "}
+            <pre style={{ margin: 0, display: "inline" }}>{"PERIOD:     "}</pre>
+            START:{" "}
             <input
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !isRunning && isDaysValid) {
+                  handleSync();
+                }
+              }}
               disabled={isRunning}
               style={{
                 backgroundColor: "#000000",
@@ -246,6 +271,11 @@ export default function AmberSyncPage() {
                   }
                 }
               }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !isRunning && isDaysValid) {
+                  handleSync();
+                }
+              }}
               disabled={isRunning}
               style={{
                 backgroundColor: "#000000",
@@ -254,69 +284,81 @@ export default function AmberSyncPage() {
                 fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
                 fontSize: "11px",
                 padding: "2px 4px",
-                width: "50px",
+                width: "3ch",
                 opacity: isRunning ? 0.5 : 1,
                 MozAppearance: "textfield",
               }}
               className="no-spinner"
             />{" "}
-            (MAX 30)
+            (MAX 7)
           </div>
 
           <div style={{ marginBottom: "20px" }}>
-            <button
-              onClick={() => setDryRun(!dryRun)}
-              disabled={isRunning}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#33cc33",
-                fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-                cursor: isRunning ? "not-allowed" : "pointer",
-                padding: 0,
-                marginRight: "20px",
-                opacity: isRunning ? 0.5 : 1,
-              }}
-            >
-              [{dryRun ? "X" : " "}] DRY RUN
-            </button>
-            <button
-              onClick={() => setShowSample(!showSample)}
-              disabled={isRunning}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#33cc33",
-                fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-                cursor: isRunning ? "not-allowed" : "pointer",
-                padding: 0,
-                opacity: isRunning ? 0.5 : 1,
-              }}
-            >
-              [{showSample ? "X" : " "}] SHOW SAMPLES
-            </button>
+            <div>
+              <pre style={{ margin: 0, display: "inline" }}>
+                {"OPTIONS:    "}
+              </pre>
+              <button
+                onClick={() => setDryRun(!dryRun)}
+                disabled={isRunning}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#33cc33",
+                  fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+                  cursor: isRunning ? "not-allowed" : "pointer",
+                  padding: 0,
+                  opacity: isRunning ? 0.5 : 1,
+                }}
+              >
+                [{dryRun ? "X" : " "}] DRY RUN
+              </button>
+            </div>
+            <div>
+              <pre style={{ margin: 0, display: "inline" }}>
+                {"            "}
+              </pre>
+              <button
+                onClick={() => setShowSample(!showSample)}
+                disabled={isRunning}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#33cc33",
+                  fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+                  cursor: isRunning ? "not-allowed" : "pointer",
+                  padding: 0,
+                  opacity: isRunning ? 0.5 : 1,
+                }}
+              >
+                [{showSample ? "X" : " "}] SHOW SAMPLES
+              </button>
+            </div>
           </div>
 
-          <button
-            onClick={handleSync}
-            disabled={isRunning || !isDaysValid}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "#33cc33",
-              fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-              cursor: isRunning || !isDaysValid ? "not-allowed" : "pointer",
-              padding: 0,
-              textShadow: "0 0 3px rgba(51, 204, 51, 0.3)",
-              opacity: isRunning || !isDaysValid ? 0.5 : 1,
-            }}
-          >
+          <div>
             <pre style={{ margin: 0 }}>
-              {`┌──────────┐
+              {"                                  "}
+              <button
+                onClick={handleSync}
+                disabled={isRunning || !isDaysValid}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#33cc33",
+                  fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+                  cursor: isRunning || !isDaysValid ? "not-allowed" : "pointer",
+                  padding: 0,
+                  textShadow: "0 0 3px rgba(51, 204, 51, 0.3)",
+                  opacity: isRunning || !isDaysValid ? 0.5 : 1,
+                }}
+              >
+                {`┌──────────┐
 │   SYNC   │
 └──────────┘`}
+              </button>
             </pre>
-          </button>
+          </div>
         </div>
 
         {/* Terminal Output */}
@@ -338,7 +380,7 @@ export default function AmberSyncPage() {
                 <span
                   key={idx}
                   style={{
-                    color: chunk.emphasis ? "#00ff00" : "#33cc33",
+                    color: chunk.emphasis ? "#00ff00" : "#218221",
                     fontWeight: chunk.emphasis ? "bold" : "normal",
                   }}
                 >

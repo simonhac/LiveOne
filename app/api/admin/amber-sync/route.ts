@@ -231,17 +231,19 @@ export async function POST(request: NextRequest) {
               await delay();
 
               if (stage.request) {
-                send(`Request: ${stage.request}`, true);
+                send(`Request: ${stage.request}`, false);
               }
               if (stage.discovery) {
                 send(`Discovery: ${stage.discovery}`, true);
               }
               send(`Num Records: ${stage.info.numRecords}`);
-              const uniformity = stage.info.uniformQuality ?? "not uniform";
-              // Only quote single-character uniformity values (quality codes)
-              const formattedUniformity =
-                uniformity.length === 1 ? `'${uniformity}'` : uniformity;
-              send(`Uniformity: ${formattedUniformity}`);
+              if (stage.info.numRecords > 0) {
+                const uniformity = stage.info.uniformQuality ?? "not uniform";
+                // Only quote single-character uniformity values (quality codes)
+                const formattedUniformity =
+                  uniformity.length === 1 ? `'${uniformity}'` : uniformity;
+                send(`Uniformity: ${formattedUniformity}`);
+              }
               await delay();
 
               // Display overviews (includes comparison notation for comparison stages)
