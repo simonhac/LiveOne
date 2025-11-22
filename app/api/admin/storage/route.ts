@@ -68,54 +68,52 @@ export async function GET(request: NextRequest) {
     let stats = null;
     try {
       const result = await rawClient.execute(`
-        SELECT 'systems' as table_name, COUNT(*) as count, NULL as earliest, NULL as latest,
+        SELECT 'systems' as table_name, COUNT(*) as count,
           MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
           MIN(updated_at) as updated_at_min, MAX(updated_at) as updated_at_max
         FROM systems
         UNION ALL
-        SELECT 'readings' as table_name, COUNT(*) as count, MIN(inverter_time) as earliest, MAX(inverter_time) as latest,
+        SELECT 'readings' as table_name, COUNT(*) as count,
           MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
           NULL as updated_at_min, NULL as updated_at_max
         FROM readings
         UNION ALL
         SELECT 'polling_status' as table_name, COUNT(*) as count,
-          MIN(COALESCE(last_poll_time, last_success_time, last_error_time)) as earliest,
-          MAX(COALESCE(last_poll_time, last_success_time, last_error_time)) as latest,
           NULL as created_at_min, NULL as created_at_max,
           MIN(updated_at) as updated_at_min, MAX(updated_at) as updated_at_max
         FROM polling_status
         UNION ALL
-        SELECT 'readings_agg_5m' as table_name, COUNT(*) as count, MIN(interval_end) as earliest, MAX(interval_end) as latest,
+        SELECT 'readings_agg_5m' as table_name, COUNT(*) as count,
           MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
           NULL as updated_at_min, NULL as updated_at_max
         FROM readings_agg_5m
         UNION ALL
-        SELECT 'readings_agg_1d' as table_name, COUNT(*) as count, MIN(day) as earliest, MAX(day) as latest,
+        SELECT 'readings_agg_1d' as table_name, COUNT(*) as count,
           MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
           MIN(updated_at) as updated_at_min, MAX(updated_at) as updated_at_max
         FROM readings_agg_1d
         UNION ALL
-        SELECT 'user_systems' as table_name, COUNT(*) as count, NULL as earliest, NULL as latest,
+        SELECT 'user_systems' as table_name, COUNT(*) as count,
           MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
           MIN(updated_at) as updated_at_min, MAX(updated_at) as updated_at_max
         FROM user_systems
         UNION ALL
-        SELECT 'sessions' as table_name, COUNT(*) as count, MIN(started) as earliest, MAX(started) as latest,
+        SELECT 'sessions' as table_name, COUNT(*) as count,
           MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
           NULL as updated_at_min, NULL as updated_at_max
         FROM sessions
         UNION ALL
-        SELECT 'point_info' as table_name, COUNT(*) as count, MIN(created) as earliest, MAX(created) as latest,
+        SELECT 'point_info' as table_name, COUNT(*) as count,
           MIN(created) as created_at_min, MAX(created) as created_at_max,
           MIN(updated_at) as updated_at_min, MAX(updated_at) as updated_at_max
         FROM point_info
         UNION ALL
-        SELECT 'point_readings' as table_name, COUNT(*) as count, MIN(measurement_time) as earliest, MAX(measurement_time) as latest,
-          NULL as created_at_min, NULL as created_at_max,
+        SELECT 'point_readings' as table_name, COUNT(*) as count,
+          MIN(received_time) as created_at_min, MAX(received_time) as created_at_max,
           NULL as updated_at_min, NULL as updated_at_max
         FROM point_readings
         UNION ALL
-        SELECT 'point_readings_agg_5m' as table_name, COUNT(*) as count, MIN(interval_end) as earliest, MAX(interval_end) as latest,
+        SELECT 'point_readings_agg_5m' as table_name, COUNT(*) as count,
           MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
           MIN(updated_at) as updated_at_min, MAX(updated_at) as updated_at_max
         FROM point_readings_agg_5m
@@ -124,8 +122,6 @@ export async function GET(request: NextRequest) {
       interface TableStat {
         table_name: string;
         count: number;
-        earliest: number | string | null;
-        latest: number | string | null;
         created_at_min: number | null;
         created_at_max: number | null;
         updated_at_min: number | null;
@@ -134,67 +130,29 @@ export async function GET(request: NextRequest) {
 
       const tableStats = (result.rows as unknown as TableStat[]).map((row) => {
         // Convert timestamps to Unix milliseconds for jsonifier
-        // readings_agg_1d stores day as string (YYYY-MM-DD), return as-is for earliest/latest
-        // point_readings and point_readings_agg_5m store timestamps as Unix milliseconds
         // point_info.created and updated_at store timestamps as Unix milliseconds
+        // point_readings.received_time stores timestamps as Unix milliseconds
+        // point_readings_agg_5m stores timestamps as Unix milliseconds
         // ALL other tables store timestamps as Unix seconds
 
         const toMilliseconds = (
-          val: number | string | null,
+          val: number | null,
           tableName: string,
-          fieldType: "data" | "metadata",
         ): number | null => {
           if (!val) return null;
 
-          // For data timestamps (earliest/latest)
-          if (fieldType === "data") {
-            if (tableName === "readings_agg_1d") {
-              // Parse YYYY-MM-DD string to milliseconds
-              return new Date(val as string).getTime();
-            }
-
-            // Point tables store milliseconds
-            if (
-              tableName === "point_readings" ||
-              tableName === "point_readings_agg_5m" ||
-              tableName === "point_info"
-            ) {
-              return val as number;
-            }
-
-            // All other data timestamps are stored as Unix seconds
-            return (val as number) * 1000;
-          }
-
-          // For metadata timestamps (created_at, updated_at)
-          // Point tables use milliseconds, others use seconds
+          // Point tables and point_readings use milliseconds
           if (
             tableName === "point_info" ||
+            tableName === "point_readings" ||
             tableName === "point_readings_agg_5m"
           ) {
             return val as number;
           }
 
-          // All other metadata timestamps are Unix seconds
+          // All other tables store timestamps as Unix seconds
           return (val as number) * 1000;
         };
-
-        // Calculate records per day
-        let recordsPerDay: number | null = null;
-        const earliestMs = toMilliseconds(row.earliest, row.table_name, "data");
-        const latestMs = toMilliseconds(row.latest, row.table_name, "data");
-
-        if (earliestMs && latestMs && row.count > 0) {
-          const durationMs = latestMs - earliestMs;
-          const durationDays = durationMs / (1000 * 60 * 60 * 24);
-
-          // Avoid division by zero - if timestamps are the same, treat as 1 day
-          if (durationDays > 0) {
-            recordsPerDay = row.count / durationDays;
-          } else {
-            recordsPerDay = row.count;
-          }
-        }
 
         return {
           name: row.table_name,
@@ -202,26 +160,19 @@ export async function GET(request: NextRequest) {
           createdAtMinTimeMs: toMilliseconds(
             row.created_at_min,
             row.table_name,
-            "metadata",
           ),
           createdAtMaxTimeMs: toMilliseconds(
             row.created_at_max,
             row.table_name,
-            "metadata",
           ),
           updatedAtMinTimeMs: toMilliseconds(
             row.updated_at_min,
             row.table_name,
-            "metadata",
           ),
           updatedAtMaxTimeMs: toMilliseconds(
             row.updated_at_max,
             row.table_name,
-            "metadata",
           ),
-          earliestTimeMs: earliestMs,
-          latestTimeMs: latestMs,
-          recordsPerDay: recordsPerDay,
         };
       });
 

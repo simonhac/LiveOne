@@ -103,6 +103,9 @@ export const pointReadings = sqliteTable(
       table.systemId,
       table.measurementTime,
     ),
+    measurementTimeIdx: index("pr_measurement_time_idx").on(
+      table.measurementTime,
+    ),
     // Composite foreign key to point_info
     pointInfoFk: foreignKey({
       columns: [table.systemId, table.pointId],
@@ -152,6 +155,7 @@ export const pointReadingsAgg5m = sqliteTable(
       table.systemId,
       table.intervalEnd,
     ),
+    intervalEndIdx: index("pr5m_interval_end_idx").on(table.intervalEnd),
     // Composite foreign key to point_info
     pointInfoFk: foreignKey({
       columns: [table.systemId, table.pointId],

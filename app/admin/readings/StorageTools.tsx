@@ -692,149 +692,444 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                 <thead>
                   {/* Group headers */}
                   <tr>
-                    <th className="px-4 py-1 text-left border-b border-gray-700"></th>
-                    <th className="px-4 py-1 text-right border-b border-gray-700"></th>
+                    <th className="px-4 py-1 text-left"></th>
+                    <th className="w-[5px]"></th>
                     <th
                       colSpan={2}
                       className="px-4 py-1 text-center text-xs font-medium text-gray-400 uppercase tracking-wider border-b border-gray-600"
                     >
                       Created
                     </th>
+                    <th className="w-[5px]"></th>
                     <th
                       colSpan={2}
                       className="px-4 py-1 text-center text-xs font-medium text-gray-400 uppercase tracking-wider border-b border-gray-600"
                     >
                       Updated
                     </th>
+                    <th className="w-[5px]"></th>
                     <th
                       colSpan={2}
                       className="px-4 py-1 text-center text-xs font-medium text-gray-400 uppercase tracking-wider border-b border-gray-600"
                     >
+                      Records
+                    </th>
+                    <th className="w-[5px]"></th>
+                    <th
+                      colSpan={4}
+                      className="px-4 py-1 text-center text-xs font-medium text-gray-400 uppercase tracking-wider border-b border-gray-600"
+                    >
                       Size (MB)
                     </th>
-                    <th className="px-4 py-1 text-right border-b border-gray-700"></th>
                   </tr>
                   {/* Column headers */}
                   <tr className="border-b border-gray-700">
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                       Table
                     </th>
-                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
-                      Records
-                    </th>
+                    <th className="w-[5px]"></th>
                     <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 tracking-wider">
                       Earliest
                     </th>
                     <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 tracking-wider">
                       Latest
                     </th>
+                    <th className="w-[5px]"></th>
                     <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 tracking-wider">
                       Earliest
                     </th>
                     <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 tracking-wider">
                       Latest
+                    </th>
+                    <th className="w-[5px]"></th>
+                    <th className="px-2 py-2 text-right text-xs font-medium text-gray-500 tracking-wider">
+                      Count
                     </th>
                     <th className="px-2 py-2 text-right text-xs font-medium text-gray-500 tracking-wider">
+                      Per Day
+                    </th>
+                    <th className="w-[5px]"></th>
+                    <th className="hidden lg:table-cell px-2 py-2 text-right text-xs font-medium text-gray-500 tracking-wider">
                       Data
                     </th>
-                    <th className="px-2 py-2 text-right text-xs font-medium text-gray-500 tracking-wider">
+                    <th className="hidden lg:table-cell px-2 py-2 text-right text-xs font-medium text-gray-500 tracking-wider">
                       Indexes
                     </th>
-                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+                    <th className="px-2 py-2 text-right text-xs font-medium text-gray-500 tracking-wider">
+                      Total
+                    </th>
+                    <th className="px-2 py-2 text-right text-xs font-medium text-gray-500 tracking-wider">
                       Per Day
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {databaseInfo.stats.tableStats.map((table, index) => (
-                    <tr
-                      key={table.name}
-                      className={`${index % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"}`}
-                    >
-                      <td className="px-4 py-2 text-xs text-gray-300 font-mono">
-                        {table.name}
-                      </td>
-                      <td className="px-4 py-2 text-xs text-gray-300 text-right">
-                        {table.count.toLocaleString()}
-                      </td>
-                      {/* Created Range - Earliest */}
-                      <td className="px-2 py-2 text-xs text-gray-300">
-                        {table.createdAtMinTime ? (
-                          formatDateTime(table.createdAtMinTime).display
-                        ) : (
-                          <span className="text-gray-500">—</span>
-                        )}
-                      </td>
-                      {/* Created Range - Latest */}
-                      <td className="px-2 py-2 text-xs text-gray-300">
-                        {table.createdAtMaxTime ? (
-                          formatDateTime(table.createdAtMaxTime).display
-                        ) : (
-                          <span className="text-gray-500">—</span>
-                        )}
-                      </td>
-                      {/* Updated Range - Earliest */}
-                      <td className="px-2 py-2 text-xs text-gray-300">
-                        {table.updatedAtMinTime ? (
-                          formatDateTime(table.updatedAtMinTime).display
-                        ) : (
-                          <span className="text-gray-500">—</span>
-                        )}
-                      </td>
-                      {/* Updated Range - Latest */}
-                      <td className="px-2 py-2 text-xs text-gray-300">
-                        {table.updatedAtMaxTime ? (
-                          formatDateTime(table.updatedAtMaxTime).display
-                        ) : (
-                          <span className="text-gray-500">—</span>
-                        )}
-                      </td>
-                      {/* Size - Data */}
-                      <td className="px-2 py-2 text-xs text-right">
-                        {table.dataSizeMb !== undefined &&
-                        table.dataSizeMb !== null ? (
-                          table.dataSizeMb < 1 ? (
+                  {databaseInfo.stats.tableStats.map((table, index) => {
+                    // Calculate duration: max(createdAtMax, updatedAtMax) - createdAtMin
+                    const createdMin = table.createdAtMinTime
+                      ? new Date(table.createdAtMinTime).getTime()
+                      : null;
+                    const createdMax = table.createdAtMaxTime
+                      ? new Date(table.createdAtMaxTime).getTime()
+                      : null;
+                    const updatedMax = table.updatedAtMaxTime
+                      ? new Date(table.updatedAtMaxTime).getTime()
+                      : null;
+
+                    let durationDays: number | null = null;
+                    if (createdMin) {
+                      const endTime = Math.max(
+                        createdMax || 0,
+                        updatedMax || 0,
+                      );
+                      if (endTime > 0) {
+                        const durationMs = endTime - createdMin;
+                        durationDays = durationMs / (1000 * 60 * 60 * 24);
+                      }
+                    }
+
+                    // Calculate per-day metrics
+                    const recordsPerDay =
+                      durationDays && durationDays > 0
+                        ? table.count / durationDays
+                        : null;
+
+                    const totalMb =
+                      (table.dataSizeMb || 0) + (table.indexSizeMb || 0);
+                    const mbPerDay =
+                      durationDays && durationDays > 0
+                        ? totalMb / durationDays
+                        : null;
+
+                    return (
+                      <tr
+                        key={table.name}
+                        className={`${index % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"}`}
+                      >
+                        <td className="px-4 py-2 text-xs text-gray-300 font-mono">
+                          {table.name}
+                        </td>
+                        <td className="w-[5px]"></td>
+                        {/* Created Range - Earliest */}
+                        <td className="px-2 py-2 text-xs text-gray-300">
+                          {table.createdAtMinTime ? (
+                            formatDateTime(table.createdAtMinTime).display
+                          ) : (
+                            <span className="text-gray-500">—</span>
+                          )}
+                        </td>
+                        {/* Created Range - Latest */}
+                        <td className="px-2 py-2 text-xs text-gray-300">
+                          {table.createdAtMaxTime ? (
+                            formatDateTime(table.createdAtMaxTime).display
+                          ) : (
+                            <span className="text-gray-500">—</span>
+                          )}
+                        </td>
+                        <td className="w-[5px]"></td>
+                        {/* Updated Range - Earliest */}
+                        <td className="px-2 py-2 text-xs text-gray-300">
+                          {table.updatedAtMinTime ? (
+                            formatDateTime(table.updatedAtMinTime).display
+                          ) : (
+                            <span className="text-gray-500">—</span>
+                          )}
+                        </td>
+                        {/* Updated Range - Latest */}
+                        <td className="px-2 py-2 text-xs text-gray-300">
+                          {table.updatedAtMaxTime ? (
+                            formatDateTime(table.updatedAtMaxTime).display
+                          ) : (
+                            <span className="text-gray-500">—</span>
+                          )}
+                        </td>
+                        <td className="w-[5px]"></td>
+                        {/* Records - Count */}
+                        <td className="px-2 py-2 text-xs text-gray-300 text-right">
+                          {table.count.toLocaleString()}
+                        </td>
+                        {/* Records - Per Day */}
+                        <td className="px-2 py-2 text-xs text-right">
+                          {recordsPerDay !== null && recordsPerDay > 0 ? (
+                            recordsPerDay < 1 ? (
+                              <span className="text-gray-500">{"< 1"}</span>
+                            ) : (
+                              <span className="text-gray-300">
+                                {Math.round(recordsPerDay).toLocaleString()}
+                              </span>
+                            )
+                          ) : (
+                            <span className="text-gray-500">—</span>
+                          )}
+                        </td>
+                        <td className="w-[5px]"></td>
+                        {/* Size - Data */}
+                        <td className="hidden lg:table-cell px-2 py-2 text-xs text-right">
+                          {table.dataSizeMb !== undefined &&
+                          table.dataSizeMb !== null ? (
+                            table.dataSizeMb < 1 ? (
+                              <span className="text-gray-500">{"< 1"}</span>
+                            ) : (
+                              <span className="text-gray-300">
+                                {Math.round(table.dataSizeMb)}
+                              </span>
+                            )
+                          ) : (
+                            <span className="text-gray-500">—</span>
+                          )}
+                        </td>
+                        {/* Size - Indexes */}
+                        <td className="hidden lg:table-cell px-2 py-2 text-xs text-right">
+                          {table.indexSizeMb !== undefined &&
+                          table.indexSizeMb !== null ? (
+                            table.indexSizeMb < 1 ? (
+                              <span className="text-gray-500">{"< 1"}</span>
+                            ) : (
+                              <span className="text-gray-300">
+                                {Math.round(table.indexSizeMb)}
+                              </span>
+                            )
+                          ) : (
+                            <span className="text-gray-500">—</span>
+                          )}
+                        </td>
+                        {/* Size - Total */}
+                        <td className="px-2 py-2 text-xs text-right">
+                          {totalMb > 0 ? (
+                            totalMb < 1 ? (
+                              <span className="text-gray-500">{"< 1"}</span>
+                            ) : (
+                              <span className="text-gray-300">
+                                {Math.round(totalMb)}
+                              </span>
+                            )
+                          ) : (
+                            <span className="text-gray-500">—</span>
+                          )}
+                        </td>
+                        {/* Size - Per Day */}
+                        <td className="px-2 py-2 text-xs text-right">
+                          {mbPerDay !== null && mbPerDay > 0 ? (
+                            mbPerDay < 0.1 ? (
+                              <span className="text-gray-500">{"< 0.1"}</span>
+                            ) : (
+                              <span className="text-gray-300">
+                                {mbPerDay.toFixed(1)}
+                              </span>
+                            )
+                          ) : (
+                            <span className="text-gray-500">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {/* Summary Row */}
+                  {(() => {
+                    const tables = databaseInfo.stats.tableStats;
+                    const totalRecords = tables.reduce(
+                      (sum, t) => sum + t.count,
+                      0,
+                    );
+
+                    const createdMins = tables
+                      .map((t) => t.createdAtMinTime)
+                      .filter(
+                        (t): t is string => t !== null && t !== undefined,
+                      );
+                    const createdMaxs = tables
+                      .map((t) => t.createdAtMaxTime)
+                      .filter(
+                        (t): t is string => t !== null && t !== undefined,
+                      );
+                    const updatedMins = tables
+                      .map((t) => t.updatedAtMinTime)
+                      .filter(
+                        (t): t is string => t !== null && t !== undefined,
+                      );
+                    const updatedMaxs = tables
+                      .map((t) => t.updatedAtMaxTime)
+                      .filter(
+                        (t): t is string => t !== null && t !== undefined,
+                      );
+
+                    const createdMinTime =
+                      createdMins.length > 0
+                        ? new Date(
+                            Math.min(
+                              ...createdMins.map((d) => new Date(d).getTime()),
+                            ),
+                          ).toISOString()
+                        : null;
+                    const createdMaxTime =
+                      createdMaxs.length > 0
+                        ? new Date(
+                            Math.max(
+                              ...createdMaxs.map((d) => new Date(d).getTime()),
+                            ),
+                          ).toISOString()
+                        : null;
+                    const updatedMinTime =
+                      updatedMins.length > 0
+                        ? new Date(
+                            Math.min(
+                              ...updatedMins.map((d) => new Date(d).getTime()),
+                            ),
+                          ).toISOString()
+                        : null;
+                    const updatedMaxTime =
+                      updatedMaxs.length > 0
+                        ? new Date(
+                            Math.max(
+                              ...updatedMaxs.map((d) => new Date(d).getTime()),
+                            ),
+                          ).toISOString()
+                        : null;
+
+                    const totalDataMb = tables.reduce(
+                      (sum, t) => sum + (t.dataSizeMb || 0),
+                      0,
+                    );
+                    const totalIndexMb = tables.reduce(
+                      (sum, t) => sum + (t.indexSizeMb || 0),
+                      0,
+                    );
+                    const totalMb = totalDataMb + totalIndexMb;
+
+                    // Calculate duration: max(createdAtMax, updatedAtMax) - createdAtMin
+                    let durationDays: number | null = null;
+                    if (createdMinTime) {
+                      const createdMaxMs = createdMaxTime
+                        ? new Date(createdMaxTime).getTime()
+                        : 0;
+                      const updatedMaxMs = updatedMaxTime
+                        ? new Date(updatedMaxTime).getTime()
+                        : 0;
+                      const endTime = Math.max(createdMaxMs, updatedMaxMs);
+                      if (endTime > 0) {
+                        const durationMs =
+                          endTime - new Date(createdMinTime).getTime();
+                        durationDays = durationMs / (1000 * 60 * 60 * 24);
+                      }
+                    }
+
+                    // Calculate per-day metrics
+                    const recordsPerDay =
+                      durationDays && durationDays > 0
+                        ? totalRecords / durationDays
+                        : null;
+                    const mbPerDay =
+                      durationDays && durationDays > 0
+                        ? totalMb / durationDays
+                        : null;
+
+                    return (
+                      <tr className="border-t-2 border-gray-600 bg-gray-800/70">
+                        <td className="px-4 py-2 text-xs text-gray-200 font-mono">
+                          SUMMARY
+                        </td>
+                        <td className="w-[5px]"></td>
+                        {/* Created - Earliest */}
+                        <td className="px-2 py-2 text-xs text-gray-200">
+                          {createdMinTime ? (
+                            formatDateTime(createdMinTime).display
+                          ) : (
+                            <span className="text-gray-500">—</span>
+                          )}
+                        </td>
+                        {/* Created - Latest */}
+                        <td className="px-2 py-2 text-xs text-gray-200">
+                          {createdMaxTime ? (
+                            formatDateTime(createdMaxTime).display
+                          ) : (
+                            <span className="text-gray-500">—</span>
+                          )}
+                        </td>
+                        <td className="w-[5px]"></td>
+                        {/* Updated - Earliest */}
+                        <td className="px-2 py-2 text-xs text-gray-200">
+                          {updatedMinTime ? (
+                            formatDateTime(updatedMinTime).display
+                          ) : (
+                            <span className="text-gray-500">—</span>
+                          )}
+                        </td>
+                        {/* Updated - Latest */}
+                        <td className="px-2 py-2 text-xs text-gray-200">
+                          {updatedMaxTime ? (
+                            formatDateTime(updatedMaxTime).display
+                          ) : (
+                            <span className="text-gray-500">—</span>
+                          )}
+                        </td>
+                        <td className="w-[5px]"></td>
+                        {/* Records - Count */}
+                        <td className="px-2 py-2 text-xs text-gray-200 text-right">
+                          {totalRecords.toLocaleString()}
+                        </td>
+                        {/* Records - Per Day */}
+                        <td className="px-2 py-2 text-xs text-right">
+                          {recordsPerDay !== null && recordsPerDay > 0 ? (
+                            recordsPerDay < 1 ? (
+                              <span className="text-gray-500">{"< 1"}</span>
+                            ) : (
+                              <span className="text-gray-200">
+                                {Math.round(recordsPerDay).toLocaleString()}
+                              </span>
+                            )
+                          ) : (
+                            <span className="text-gray-500">—</span>
+                          )}
+                        </td>
+                        <td className="w-[5px]"></td>
+                        {/* Size - Data */}
+                        <td className="hidden lg:table-cell px-2 py-2 text-xs text-right">
+                          {totalDataMb < 1 ? (
                             <span className="text-gray-500">{"< 1"}</span>
                           ) : (
-                            <span className="text-gray-300">
-                              {Math.round(table.dataSizeMb)}
+                            <span className="text-gray-200">
+                              {Math.round(totalDataMb)}
                             </span>
-                          )
-                        ) : (
-                          <span className="text-gray-500">—</span>
-                        )}
-                      </td>
-                      {/* Size - Indexes */}
-                      <td className="px-2 py-2 text-xs text-right">
-                        {table.indexSizeMb !== undefined &&
-                        table.indexSizeMb !== null ? (
-                          table.indexSizeMb < 1 ? (
+                          )}
+                        </td>
+                        {/* Size - Indexes */}
+                        <td className="hidden lg:table-cell px-2 py-2 text-xs text-right">
+                          {totalIndexMb < 1 ? (
                             <span className="text-gray-500">{"< 1"}</span>
                           ) : (
-                            <span className="text-gray-300">
-                              {Math.round(table.indexSizeMb)}
+                            <span className="text-gray-200">
+                              {Math.round(totalIndexMb)}
                             </span>
-                          )
-                        ) : (
-                          <span className="text-gray-500">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2 text-xs text-right">
-                        {table.recordsPerDay !== undefined &&
-                        table.recordsPerDay !== null ? (
-                          table.recordsPerDay < 1 ? (
+                          )}
+                        </td>
+                        {/* Size - Total */}
+                        <td className="px-2 py-2 text-xs text-right">
+                          {totalMb < 1 ? (
                             <span className="text-gray-500">{"< 1"}</span>
                           ) : (
-                            <span className="text-gray-300">
-                              {Math.round(table.recordsPerDay).toLocaleString()}
+                            <span className="text-gray-200">
+                              {Math.round(totalMb)}
                             </span>
-                          )
-                        ) : (
-                          <span className="text-gray-300">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                          )}
+                        </td>
+                        {/* Size - Per Day */}
+                        <td className="px-2 py-2 text-xs text-right">
+                          {mbPerDay !== null && mbPerDay > 0 ? (
+                            mbPerDay < 0.1 ? (
+                              <span className="text-gray-500">{"< 0.1"}</span>
+                            ) : (
+                              <span className="text-gray-200">
+                                {mbPerDay.toFixed(1)}
+                              </span>
+                            )
+                          ) : (
+                            <span className="text-gray-500">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })()}
                 </tbody>
               </table>
             </div>
