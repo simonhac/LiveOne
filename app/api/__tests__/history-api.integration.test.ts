@@ -415,8 +415,8 @@ describe("History API Integration Tests - Multiple Interval Support", () => {
       expect(series.type).toBeDefined();
       expect(series.units).toBeDefined();
       expect(series.history).toBeDefined();
-      expect(series.history.start).toBeDefined();
-      expect(series.history.last).toBeDefined();
+      expect(series.history.firstInterval).toBeDefined();
+      expect(series.history.lastInterval).toBeDefined();
       expect(series.history.interval).toBe("5m");
       expect(Array.isArray(series.history.data)).toBe(true);
     });
@@ -494,8 +494,12 @@ describe("History API Integration Tests - Multiple Interval Support", () => {
       expect(gridExportSeries.history.data.length).toBe(12);
 
       // Verify start and end times (API returns AEST +10:00)
-      expect(gridExportSeries.history.start).toBe("2025-10-24T23:05:00+10:00");
-      expect(gridExportSeries.history.last).toBe("2025-10-25T00:00:00+10:00");
+      expect(gridExportSeries.history.firstInterval).toBe(
+        "2025-10-24T23:05:00+10:00",
+      );
+      expect(gridExportSeries.history.lastInterval).toBe(
+        "2025-10-25T00:00:00+10:00",
+      );
     });
   });
 });

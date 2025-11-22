@@ -540,7 +540,7 @@ export default function EnergyChart({
         // Load and battery are optional (e.g., solar-only systems)
 
         // Parse the start time - the API returns timestamps like "2025-08-16T12:17:53+10:00"
-        const startTimeString = solarData.history.start;
+        const startTimeString = solarData.history.firstInterval;
 
         // JavaScript Date constructor handles timezone offsets correctly
         const startTime = new Date(startTimeString);

@@ -84,6 +84,23 @@ function stripLargeFieldsFromStages(
 }
 
 /**
+ * Check if characterisation ranges contain any intervals with the specified quality
+ * @param characterisation - Array of characterisation ranges (may be undefined)
+ * @param quality - Quality code to look for (e.g., 'b' for billable)
+ * @returns true if any range has the specified quality, false otherwise
+ */
+function hasQuality(
+  characterisation: CharacterisationRange[] | undefined,
+  quality: string,
+): boolean {
+  if (!characterisation) {
+    return false;
+  }
+
+  return characterisation.some((range) => range.quality === quality);
+}
+
+/**
  * Compare local and remote readings to determine which is superior
  *
  * @param local - Local record (may be undefined)
@@ -865,7 +882,14 @@ export async function updateUsage(
         "yay, we already have BILLABLE usage data locally for this period";
     } else {
       // Set discovery for local data when it's not billable
-      if (localResult.info.uniformQuality !== null) {
+      const hasBillableData = hasQuality(
+        localResult.info.characterisation,
+        "b",
+      );
+      if (!hasBillableData) {
+        localResult.discovery =
+          "NO BILLABLE USAGE DATA held locally for this period";
+      } else {
         localResult.discovery =
           "billable usage data held locally for this period is INCOMPLETE";
       }

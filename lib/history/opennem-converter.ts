@@ -198,8 +198,8 @@ export class OpenNEMConverter {
         type,
         units,
         history: {
-          start: startStr,
-          last: lastStr,
+          firstInterval: startStr,
+          lastInterval: lastStr,
           interval,
           numIntervals: fieldData.length,
           data: formatDataArray(fieldData),

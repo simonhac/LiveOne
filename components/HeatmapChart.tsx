@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -12,9 +12,16 @@ import {
 import { Chart } from "react-chartjs-2";
 import { MatrixController, MatrixElement } from "chartjs-chart-matrix";
 import { format } from "date-fns";
-import { fromDate } from "@internationalized/date";
+import {
+  fromDate,
+  now,
+  toCalendarDate,
+  type ZonedDateTime,
+} from "@internationalized/date";
+import { encodeI18nToUrlSafeString } from "@/lib/url-date";
 import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/chart-colors";
 import ServerErrorModal from "./ServerErrorModal";
+import { formatTimeAEST } from "@/lib/date-utils";
 
 // Register Chart.js components
 ChartJS.register(
@@ -33,6 +40,12 @@ interface HeatmapChartProps {
   timezone: string;
   palette: HeatmapPaletteKey;
   className?: string;
+  onFetchInfo?: (info: {
+    interval: string;
+    duration: string;
+    startTime: ZonedDateTime | null;
+    endTime: ZonedDateTime | null;
+  }) => void;
 }
 
 interface HeatmapDataPoint {
@@ -56,6 +69,7 @@ export default function HeatmapChart({
   timezone,
   palette,
   className = "",
+  onFetchInfo,
 }: HeatmapChartProps) {
   const [heatmapData, setHeatmapData] = useState<HeatmapData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -68,25 +82,47 @@ export default function HeatmapChart({
     undefined,
   );
 
-  // Track if a fetch is in progress to prevent duplicate fetches
-  const fetchInProgressRef = useRef(false);
-
   useEffect(() => {
-    let cancelled = false;
-
     const fetchData = async () => {
-      // Prevent duplicate fetches
-      if (fetchInProgressRef.current) {
-        return;
-      }
-
-      fetchInProgressRef.current = true;
       setLoading(true);
       setError(null);
 
       try {
+        // Calculate date range using @internationalized/date
+        // End: midnight tomorrow (00:00 tomorrow in AEST)
+        const nowAEST = now(timezone);
+        const tomorrowDate = toCalendarDate(nowAEST).add({ days: 1 });
+        const fetchEndTime = nowAEST.set({
+          year: tomorrowDate.year,
+          month: tomorrowDate.month,
+          day: tomorrowDate.day,
+          hour: 0,
+          minute: 0,
+          second: 0,
+          millisecond: 0,
+        });
+
+        // Start: 30 days before end, plus 30 minutes
+        const fetchStartTime = fetchEndTime
+          .subtract({ days: 30 })
+          .add({ minutes: 30 });
+
+        // Encode times as URL-safe strings (with embedded timezone)
+        const startTimeEncoded = encodeI18nToUrlSafeString(
+          fetchStartTime,
+          true,
+        );
+        const endTimeEncoded = encodeI18nToUrlSafeString(fetchEndTime, true);
+
         // Fetch 30 days of data at 30-minute intervals
-        const url = `/api/history?interval=30m&last=30d&systemId=${systemId}&series=${pointPath}.avg`;
+        const url = `/api/history?interval=30m&startTime=${startTimeEncoded}&endTime=${endTimeEncoded}&systemId=${systemId}&series=${pointPath}.avg`;
+        console.log("[HeatmapChart] Fetching:", url);
+        console.log(
+          "[HeatmapChart] Calculated range - Start:",
+          formatTimeAEST(fetchStartTime),
+          "End:",
+          formatTimeAEST(fetchEndTime),
+        );
 
         const response = await fetch(url, {
           credentials: "same-origin",
@@ -107,23 +143,46 @@ export default function HeatmapChart({
         }
 
         const result = await response.json();
-
-        if (cancelled) return;
+        console.log("[HeatmapChart] Response:", result);
+        console.log("[HeatmapChart] result.data:", result.data);
 
         // Find the series for the requested point
         const series = result.data?.find((s: any) => {
           const seriesPath = s.path || s.id?.split(".").slice(2).join(".");
+          console.log(
+            "[HeatmapChart] Checking series:",
+            s.id,
+            "path:",
+            seriesPath,
+            "looking for:",
+            `${pointPath}.avg`,
+          );
           return seriesPath === `${pointPath}.avg`;
         });
+        console.log("[HeatmapChart] Found series:", series);
 
         if (!series || !series.history) {
+          console.error(
+            "[HeatmapChart] No series or history found. series:",
+            series,
+          );
           throw new Error("No data found for this point");
         }
 
         // Process the data
-        const { start, interval, data } = series.history;
-        const startTime = new Date(start).getTime();
+        const { firstInterval, interval, data } = series.history;
+        const startTime = new Date(firstInterval).getTime();
         const intervalMs = parseInterval(interval);
+
+        // Send fetch info to parent (using the calculated times from above)
+        if (onFetchInfo) {
+          onFetchInfo({
+            interval: "30m",
+            duration: "30d",
+            startTime: fetchStartTime,
+            endTime: fetchEndTime,
+          });
+        }
 
         // Generate time labels (48 half-hour slots: 00:00, 00:30, ..., 23:30)
         const timeLabels: string[] = [];
@@ -139,11 +198,19 @@ export default function HeatmapChart({
         data.forEach((value: number | null, index: number) => {
           if (value === null) return;
 
-          const timestamp = startTime + index * intervalMs;
-          const jsDate = new Date(timestamp);
-          const zonedDate = fromDate(jsDate, timezone);
-          const dateKey = `${zonedDate.year}-${String(zonedDate.month).padStart(2, "0")}-${String(zonedDate.day).padStart(2, "0")}`;
-          const timeKey = `${String(zonedDate.hour).padStart(2, "0")}:${String(zonedDate.minute).padStart(2, "0")}`;
+          // startTime is the end of the first interval
+          const intervalEndTimestamp = startTime + index * intervalMs;
+          const intervalStartTimestamp = intervalEndTimestamp - intervalMs;
+
+          // Use interval START time for the time slot (e.g., 00:00 for the 00:00-00:30 interval)
+          const jsDateForTime = new Date(intervalStartTimestamp);
+          const zonedDateForTime = fromDate(jsDateForTime, timezone);
+          const timeKey = `${String(zonedDateForTime.hour).padStart(2, "0")}:${String(zonedDateForTime.minute).padStart(2, "0")}`;
+
+          // Use interval END time for the date (e.g., Sat for the interval ending on Saturday)
+          const jsDateForDate = new Date(intervalEndTimestamp);
+          const zonedDateForDate = fromDate(jsDateForDate, timezone);
+          const dateKey = `${zonedDateForDate.year}-${String(zonedDateForDate.month).padStart(2, "0")}-${String(zonedDateForDate.day).padStart(2, "0")}`;
 
           dates.add(dateKey);
 
@@ -191,25 +258,19 @@ export default function HeatmapChart({
           xLabels: timeLabels,
           yLabels: sortedDates,
         });
+        console.log("[HeatmapChart] Data processed, setting loading=false");
         setLoading(false);
       } catch (err) {
-        if (cancelled) return;
         console.error("Error fetching heatmap data:", err);
         setError(err instanceof Error ? err.message : "Unknown error");
         setIsErrorModalOpen(true);
         setErrorType("server");
         setErrorDetails(err instanceof Error ? err.message : "Unknown error");
         setLoading(false);
-      } finally {
-        fetchInProgressRef.current = false;
       }
     };
 
     fetchData();
-
-    return () => {
-      cancelled = true;
-    };
   }, [systemId, pointPath, timezone]);
 
   // Parse interval string to milliseconds
@@ -273,6 +334,8 @@ export default function HeatmapChart({
             size: 10,
             family: "DM Sans, system-ui, sans-serif",
           },
+          maxRotation: 90,
+          minRotation: 90,
           callback: function (value: any, index: any) {
             // Show every 4th label (every 2 hours)
             if (index % 4 === 0) {

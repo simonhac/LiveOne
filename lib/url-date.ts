@@ -6,6 +6,14 @@
  * - 30D Format: YYYY-MM-DD (e.g., "2025-11-07")
  */
 
+import {
+  CalendarDate,
+  ZonedDateTime,
+  parseDate,
+  parseAbsolute,
+  toZoned,
+} from "@internationalized/date";
+
 /**
  * Encode an ISO timestamp and timezone offset into a URL-friendly format
  *
@@ -140,4 +148,139 @@ export function encodeUrlOffset(offsetMinutes: number): string {
  */
 export function decodeUrlOffset(urlOffset: string): number {
   return parseInt(urlOffset.replace("m", ""), 10);
+}
+
+/**
+ * Decode a URL-safe string to CalendarDate or ZonedDateTime
+ *
+ * @param urlDate - URL-safe date string
+ * @param timezoneOffsetMin - Optional timezone offset in minutes (required for format without embedded timezone)
+ * @returns CalendarDate for date-only format, ZonedDateTime for datetime formats
+ * @throws Error if format is invalid or timezoneOffsetMin is missing when required
+ *
+ * Supported formats:
+ * - "2025-11-02" → CalendarDate
+ * - "2025-11-02_14.15" → ZonedDateTime (requires timezoneOffsetMin parameter)
+ * - "2025-11-02_14.15T10.00" → ZonedDateTime (timezone HH.MM in string)
+ * - "2025-11-02_14.15T10" → ZonedDateTime (timezone HH in string)
+ */
+export function decodeUrlSafeStringToI18n(
+  urlDate: string,
+  timezoneOffsetMin?: number,
+): CalendarDate | ZonedDateTime {
+  // Date-only format: YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(urlDate)) {
+    return parseDate(urlDate);
+  }
+
+  // DateTime with embedded timezone: YYYY-MM-DD_HH.MM[T][-]HH[.MM]
+  const withTzMatch = urlDate.match(
+    /^(\d{4})-(\d{2})-(\d{2})_(\d{2})\.(\d{2})T(-?\d{1,2})(?:\.(\d{2}))?$/,
+  );
+  if (withTzMatch) {
+    const [, year, month, day, hour, minute, tzHour, tzMinute] = withTzMatch;
+
+    // Build timezone offset string (e.g., "+10:00" or "-05:30")
+    const tzMinutes = parseInt(tzMinute || "0");
+    const tzHours = parseInt(tzHour);
+    const isNegative = tzHours < 0;
+    const absHours = Math.abs(tzHours);
+    const tzOffset = `${isNegative ? "-" : "+"}${String(absHours).padStart(2, "0")}:${String(tzMinutes).padStart(2, "0")}`;
+
+    // Parse as absolute time with the timezone offset
+    const isoString = `${year}-${month}-${day}T${hour}:${minute}:00${tzOffset}`;
+    const absolute = parseAbsolute(isoString, tzOffset);
+    return toZoned(absolute, tzOffset);
+  }
+
+  // DateTime without embedded timezone: YYYY-MM-DD_HH.MM
+  const withoutTzMatch = urlDate.match(
+    /^(\d{4})-(\d{2})-(\d{2})_(\d{2})\.(\d{2})$/,
+  );
+  if (withoutTzMatch) {
+    if (timezoneOffsetMin === undefined) {
+      throw new Error(
+        `timezoneOffsetMin is required for URL date format without embedded timezone: ${urlDate}`,
+      );
+    }
+
+    const [, year, month, day, hour, minute] = withoutTzMatch;
+
+    // Convert offset in minutes to ±HH:MM format
+    const isNegative = timezoneOffsetMin < 0;
+    const absMinutes = Math.abs(timezoneOffsetMin);
+    const tzHours = Math.floor(absMinutes / 60);
+    const tzMinutes = absMinutes % 60;
+    const tzOffset = `${isNegative ? "-" : "+"}${String(tzHours).padStart(2, "0")}:${String(tzMinutes).padStart(2, "0")}`;
+
+    // Parse as absolute time with the timezone offset
+    const isoString = `${year}-${month}-${day}T${hour}:${minute}:00${tzOffset}`;
+    const absolute = parseAbsolute(isoString, tzOffset);
+    return toZoned(absolute, tzOffset);
+  }
+
+  throw new Error(`Invalid URL date format: ${urlDate}`);
+}
+
+/**
+ * Encode CalendarDate or ZonedDateTime to URL-safe string
+ *
+ * @param dateTime - CalendarDate or ZonedDateTime to encode
+ * @param includeOffsetInString - If true, embed timezone in string; if false, return as tuple with offset (default: true)
+ * @returns For CalendarDate: string (date-only format)
+ *          For ZonedDateTime with includeOffsetInString=false: [string, offsetMinutes] tuple
+ *          For ZonedDateTime with includeOffsetInString=true: string with embedded timezone
+ *
+ * Examples:
+ * - CalendarDate → "2025-11-02"
+ * - ZonedDateTime, includeOffsetInString=false → ["2025-11-02_14.15", 600]
+ * - ZonedDateTime, includeOffsetInString=true → "2025-11-02_14.15T10.00"
+ */
+export function encodeI18nToUrlSafeString(
+  dateTime: CalendarDate | ZonedDateTime,
+  includeOffsetInString: boolean = true,
+): string | [string, number] {
+  // Check if it's a CalendarDate using instanceof
+  if (dateTime instanceof CalendarDate) {
+    // CalendarDate → date-only format
+    const date = dateTime;
+    const year = date.year;
+    const month = String(date.month).padStart(2, "0");
+    const day = String(date.day).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  // ZonedDateTime → datetime format
+  const zoned = dateTime as ZonedDateTime;
+  const year = zoned.year;
+  const month = String(zoned.month).padStart(2, "0");
+  const day = String(zoned.day).padStart(2, "0");
+  const hour = String(zoned.hour).padStart(2, "0");
+  const minute = String(zoned.minute).padStart(2, "0");
+
+  const dateTimePart = `${year}-${month}-${day}_${hour}.${minute}`;
+
+  // Get timezone offset from ZonedDateTime
+  const offsetMs = zoned.offset;
+  const offsetMinutes = offsetMs / (1000 * 60);
+
+  if (includeOffsetInString) {
+    // Embed timezone in string as THH.MM or THH
+    const isNegative = offsetMinutes < 0;
+    const absMinutes = Math.abs(offsetMinutes);
+    const tzHours = Math.floor(absMinutes / 60);
+    const tzMinutes = absMinutes % 60;
+
+    const sign = isNegative ? "-" : "";
+    if (tzMinutes === 0) {
+      // Format as THH (e.g., T10)
+      return `${dateTimePart}T${sign}${tzHours}`;
+    } else {
+      // Format as THH.MM (e.g., T10.30)
+      return `${dateTimePart}T${sign}${tzHours}.${String(tzMinutes).padStart(2, "0")}`;
+    }
+  } else {
+    // Return tuple with offset in minutes
+    return [dateTimePart, offsetMinutes];
+  }
 }

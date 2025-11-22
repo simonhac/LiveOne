@@ -5,6 +5,8 @@ import {
 } from "@/components/SitePowerChart";
 import { getColorForPath } from "@/lib/chart-colors";
 import { SeriesPath } from "@/lib/identifiers";
+import { parseAbsolute, parseDate, toZoned } from "@internationalized/date";
+import { encodeI18nToUrlSafeString } from "@/lib/url-date";
 
 export interface ProcessedSiteData {
   load: ChartData | null;
@@ -21,8 +23,8 @@ interface ParsedSeries {
   type: string;
   units: string;
   history: {
-    start: string;
-    last: string;
+    firstInterval: string;
+    lastInterval: string;
     interval: string;
     data: (number | null)[];
   };
@@ -50,17 +52,31 @@ async function fetchHistoryData(
   let apiUrl: string;
   if (startTime && endTime) {
     // Historical data with specific time range
-    // For 1d interval, convert ISO timestamps to YYYY-MM-DD format
-    let start = startTime;
-    let end = endTime;
+    // Convert ISO timestamps to URL-safe format
+    let startEncoded: string;
+    let endEncoded: string;
 
     if (requestInterval === "1d") {
-      // Extract just the date part (YYYY-MM-DD)
-      start = startTime.split("T")[0];
-      end = endTime.split("T")[0];
+      // For daily intervals, use date-only format (CalendarDate)
+      const startDate = parseDate(startTime.split("T")[0]);
+      const endDate = parseDate(endTime.split("T")[0]);
+      startEncoded = encodeI18nToUrlSafeString(startDate) as string;
+      endEncoded = encodeI18nToUrlSafeString(endDate) as string;
+    } else {
+      // For minute intervals, use ZonedDateTime with UTC timezone
+      const startZoned = parseAbsolute(startTime, "UTC");
+      const endZoned = parseAbsolute(endTime, "UTC");
+      startEncoded = encodeI18nToUrlSafeString(
+        toZoned(startZoned, "UTC"),
+        true,
+      ) as string;
+      endEncoded = encodeI18nToUrlSafeString(
+        toZoned(endZoned, "UTC"),
+        true,
+      ) as string;
     }
 
-    apiUrl = `/api/history?interval=${requestInterval}&startTime=${encodeURIComponent(start)}&endTime=${encodeURIComponent(end)}&systemId=${systemId}&series=${seriesFilter}`;
+    apiUrl = `/api/history?interval=${requestInterval}&startTime=${startEncoded}&endTime=${endEncoded}&systemId=${systemId}&series=${seriesFilter}`;
   } else {
     // Current/live data - use relative time
     apiUrl = `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId}&series=${seriesFilter}`;
@@ -186,7 +202,7 @@ function calculateTimeWindow(
   selectedIndices: number[];
   filteredTimestamps: Date[];
 } {
-  const startTimeString = firstSeries.history.start;
+  const startTimeString = firstSeries.history.firstInterval;
   const dataStartTime = new Date(startTimeString);
   const interval = firstSeries.history.interval;
 

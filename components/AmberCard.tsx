@@ -8,6 +8,7 @@ import {
 } from "./AmberPriceIndicator";
 import { formatInTimezone } from "@/lib/date-utils";
 import { fromDate, toZoned } from "@internationalized/date";
+import { encodeI18nToUrlSafeString } from "@/lib/url-date";
 
 interface AmberCardProps {
   systemId: number;
@@ -53,8 +54,17 @@ export default function AmberCard({
         const past12h = new Date(roundedNow.getTime() - 12 * 60 * 60 * 1000);
         const future24h = new Date(roundedNow.getTime() + 24 * 60 * 60 * 1000);
 
-        // Build URL for history API - don't use URLSearchParams to avoid encoding
-        const url = `/api/history?systemId=${systemId}&startTime=${past12h.toISOString()}&endTime=${future24h.toISOString()}&interval=30m&series=bidi.grid.import/rate.avg,bidi.grid.import/rate.quality,bidi.grid.renewables/proportion.avg,bidi.grid.import/value.avg,bidi.grid.export/value.avg`;
+        // Convert JS Dates to ZonedDateTime using the display timezone
+        const timezone = displayTimezone || "Australia/Sydney";
+        const past12hZoned = fromDate(past12h, timezone);
+        const future24hZoned = fromDate(future24h, timezone);
+
+        // Encode as URL-safe strings (with embedded timezone)
+        const startTimeEncoded = encodeI18nToUrlSafeString(past12hZoned, true);
+        const endTimeEncoded = encodeI18nToUrlSafeString(future24hZoned, true);
+
+        // Build URL for history API
+        const url = `/api/history?systemId=${systemId}&startTime=${startTimeEncoded}&endTime=${endTimeEncoded}&interval=30m&series=bidi.grid.import/rate.avg,bidi.grid.import/rate.quality,bidi.grid.renewables/proportion.avg,bidi.grid.import/value.avg,bidi.grid.export/value.avg`;
 
         const response = await fetch(url, {
           credentials: "same-origin",
@@ -88,7 +98,7 @@ export default function AmberCard({
         }
 
         // Parse the start time from the history data
-        const historyStart = new Date(priceSeries.history.start);
+        const historyStart = new Date(priceSeries.history.firstInterval);
         let priceData = priceSeries.history.data;
         let qualityData = qualitySeries?.history?.data || [];
         let renewablesData = renewablesSeries?.history?.data || [];

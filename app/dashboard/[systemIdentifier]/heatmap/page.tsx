@@ -12,6 +12,8 @@ import {
 } from "@/components/ui/select";
 import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/chart-colors";
 import { SystemIdentifier } from "@/lib/identifiers";
+import type { ZonedDateTime } from "@internationalized/date";
+import { toZoned } from "@internationalized/date";
 
 interface PointInfo {
   path: string;
@@ -34,11 +36,19 @@ export default function HeatmapPage() {
 
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [points, setPoints] = useState<PointInfo[]>([]);
-  const [selectedPoint, setSelectedPoint] = useState<string>("");
+  const [selectedPoint, setSelectedPoint] = useState<string | undefined>(
+    undefined,
+  );
   const [selectedPalette, setSelectedPalette] =
     useState<HeatmapPaletteKey>("viridis");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [fetchInfo, setFetchInfo] = useState<{
+    interval: string;
+    duration: string;
+    startTime: ZonedDateTime | null;
+    endTime: ZonedDateTime | null;
+  } | null>(null);
 
   // Fetch system info and points on mount
   useEffect(() => {
@@ -145,13 +155,19 @@ export default function HeatmapPage() {
 
   const selectedPointInfo = points.find((p) => p.path === selectedPoint);
 
+  // Debug logging
+  console.log("selectedPoint:", selectedPoint);
+  console.log("points:", points);
+  console.log("selectedPointInfo:", selectedPointInfo);
+  console.log("will render heatmap:", !!(selectedPoint && selectedPointInfo));
+
   return (
     <div className="min-h-screen bg-gray-800 text-gray-200">
       <div className="container mx-auto px-4 py-8">
         {/* Header */}
         <div className="mb-6">
           <h1 className="text-2xl font-bold mb-2">
-            {system.displayName} - Heatmap
+            {system.displayName} — Heatmap
           </h1>
           <p className="text-gray-400 text-sm">
             30-day view at 30-minute intervals
@@ -172,7 +188,12 @@ export default function HeatmapPage() {
               <SelectContent>
                 {points.map((point) => (
                   <SelectItem key={point.reference} value={point.path}>
-                    {point.name} ({point.metricUnit})
+                    <div className="flex flex-col">
+                      <div>
+                        {point.name} ({point.metricType})
+                      </div>
+                      <div className="text-xs text-gray-500">{point.path}</div>
+                    </div>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -191,32 +212,142 @@ export default function HeatmapPage() {
               }
             >
               <SelectTrigger className="bg-gray-900 border-gray-700">
-                <SelectValue />
+                <SelectValue>
+                  {(() => {
+                    const config = HEATMAP_PALETTES[selectedPalette];
+                    const gradientStops = [0, 0.25, 0.5, 0.75, 1]
+                      .map((t) => config.fn(t))
+                      .join(", ");
+
+                    return (
+                      <div className="flex items-center gap-2 w-full">
+                        <div
+                          className="h-4 rounded flex-1 min-w-[120px]"
+                          style={{
+                            background: `linear-gradient(to right, ${gradientStops})`,
+                          }}
+                        />
+                        <span className="text-xs text-gray-400 whitespace-nowrap">
+                          {config.name}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(HEATMAP_PALETTES).map(([key, config]) => (
-                  <SelectItem key={key} value={key}>
-                    {config.name}
-                  </SelectItem>
-                ))}
+                {Object.entries(HEATMAP_PALETTES).map(([key, config]) => {
+                  // Generate gradient preview
+                  const gradientStops = [0, 0.25, 0.5, 0.75, 1]
+                    .map((t) => config.fn(t))
+                    .join(", ");
+
+                  return (
+                    <SelectItem key={key} value={key}>
+                      <div className="flex items-center gap-2 w-full">
+                        <div
+                          className="h-4 rounded flex-1 min-w-[120px]"
+                          style={{
+                            background: `linear-gradient(to right, ${gradientStops})`,
+                          }}
+                        />
+                        <span className="text-xs text-gray-400 whitespace-nowrap">
+                          {config.name}
+                        </span>
+                      </div>
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
-            <p className="text-xs text-gray-500 mt-1">
-              {HEATMAP_PALETTES[selectedPalette].description}
-            </p>
           </div>
         </div>
 
+        {/* Debug info */}
+        {fetchInfo && (
+          <div className="mb-4 text-xs text-gray-400">
+            <table>
+              <tbody>
+                <tr>
+                  <td className="pr-4 align-top">Timezone:</td>
+                  <td>{system.displayTimezone}</td>
+                </tr>
+                <tr>
+                  <td className="pr-4 align-top">Interval:</td>
+                  <td>
+                    {fetchInfo.interval} over {fetchInfo.duration}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="pr-4 align-top">Range:</td>
+                  <td>
+                    <div>
+                      {fetchInfo.startTime &&
+                        (() => {
+                          const aestStart = toZoned(
+                            fetchInfo.startTime,
+                            "+10:00",
+                          );
+                          return `${aestStart.year}-${String(aestStart.month).padStart(2, "0")}-${String(aestStart.day).padStart(2, "0")} ${String(aestStart.hour).padStart(2, "0")}:${String(aestStart.minute).padStart(2, "0")}`;
+                        })()}{" "}
+                      <span className="text-[0.6em] text-gray-600">AEST</span>
+                      {" → "}
+                      {fetchInfo.endTime &&
+                        (() => {
+                          const aestEnd = toZoned(fetchInfo.endTime, "+10:00");
+                          return `${aestEnd.year}-${String(aestEnd.month).padStart(2, "0")}-${String(aestEnd.day).padStart(2, "0")} ${String(aestEnd.hour).padStart(2, "0")}:${String(aestEnd.minute).padStart(2, "0")}`;
+                        })()}{" "}
+                      <span className="text-[0.6em] text-gray-600">AEST</span>
+                    </div>
+                    <div>
+                      {fetchInfo.startTime &&
+                        `${fetchInfo.startTime.year}-${String(fetchInfo.startTime.month).padStart(2, "0")}-${String(fetchInfo.startTime.day).padStart(2, "0")} ${String(fetchInfo.startTime.hour).padStart(2, "0")}:${String(fetchInfo.startTime.minute).padStart(2, "0")}`}{" "}
+                      <span className="text-[0.6em] text-gray-600">
+                        {fetchInfo.startTime &&
+                          new Intl.DateTimeFormat("en-US", {
+                            timeZone: system.displayTimezone ?? undefined,
+                            timeZoneName: "short",
+                          })
+                            .formatToParts(fetchInfo.startTime.toDate())
+                            .find((part) => part.type === "timeZoneName")
+                            ?.value}
+                      </span>
+                      {" → "}
+                      {fetchInfo.endTime &&
+                        `${fetchInfo.endTime.year}-${String(fetchInfo.endTime.month).padStart(2, "0")}-${String(fetchInfo.endTime.day).padStart(2, "0")} ${String(fetchInfo.endTime.hour).padStart(2, "0")}:${String(fetchInfo.endTime.minute).padStart(2, "0")}`}{" "}
+                      <span className="text-[0.6em] text-gray-600">
+                        {fetchInfo.endTime &&
+                          new Intl.DateTimeFormat("en-US", {
+                            timeZone: system.displayTimezone ?? undefined,
+                            timeZoneName: "short",
+                          })
+                            .formatToParts(fetchInfo.endTime.toDate())
+                            .find((part) => part.type === "timeZoneName")
+                            ?.value}
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+
         {/* Heatmap */}
-        {selectedPoint && selectedPointInfo && (
+        {selectedPoint && selectedPointInfo && system.displayTimezone ? (
           <HeatmapChart
             systemId={system.id}
             pointPath={selectedPoint}
             pointUnit={selectedPointInfo.metricUnit}
-            timezone={system.displayTimezone || "Australia/Sydney"}
+            timezone={system.displayTimezone}
             palette={selectedPalette}
             className="w-full"
+            onFetchInfo={setFetchInfo}
           />
+        ) : (
+          <div className="flex items-center justify-center h-96 bg-gray-900 rounded-lg border border-gray-700">
+            <div className="text-gray-400">Select a point to view heatmap</div>
+          </div>
         )}
       </div>
     </div>

@@ -739,8 +739,8 @@ async function getSystemHistoryInOpenNEMFormat(
       units: series.point.metricUnit,
       path: fullPath,
       history: {
-        start: startFormatted,
-        last: endFormatted,
+        firstInterval: startFormatted,
+        lastInterval: endFormatted,
         interval: interval,
         numIntervals: fieldData.length,
         data: fieldData,
