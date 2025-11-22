@@ -136,10 +136,7 @@ export async function updateAggregatedData(
       .values(aggregatedData)
       .onConflictDoUpdate({
         target: [readingsAgg5m.systemId, readingsAgg5m.intervalEnd],
-        set: {
-          ...aggregatedData,
-          updatedAt: new Date(),
-        },
+        set: aggregatedData,
       });
 
     // Use AEST timezone (600 min offset) for logging
