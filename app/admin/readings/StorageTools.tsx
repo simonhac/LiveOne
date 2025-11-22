@@ -15,11 +15,14 @@ interface TableStat {
   earliestTime?: string;
   latestTime?: string;
   recordsPerDay?: number | null;
+  dataSizeMb?: number | null;
+  indexSizeMb?: number | null;
 }
 
 interface CacheInfo {
   systemsManagerLoadedTime: string | null;
   pointManagerLoadedTime: string | null;
+  dbSizesCachedTime?: string | null;
 }
 
 interface DatabaseInfo {
@@ -58,6 +61,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isReloadingCaches, setIsReloadingCaches] = useState(false);
+  const [isRefreshingDbStats, setIsRefreshingDbStats] = useState(false);
   const [syncProgress, setSyncProgress] = useState<{
     isActive: boolean;
     message: string;
@@ -566,6 +570,33 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
     }
   };
 
+  const refreshDbStats = async () => {
+    setIsRefreshingDbStats(true);
+    const startTime = Date.now();
+
+    try {
+      const response = await fetch("/api/cron/db-stats", {
+        method: "POST",
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Immediately fetch fresh settings to show updated stats
+        await fetchSettings();
+      } else {
+        console.error("Failed to refresh DB stats:", data.error);
+        alert(`Error: ${data.error || "Failed to refresh DB stats"}`);
+      }
+    } catch (err) {
+      console.error("Error refreshing DB stats:", err);
+      alert("Failed to refresh DB stats");
+    } finally {
+      // This can take 2+ minutes, so we show wait state until complete
+      setIsRefreshingDbStats(false);
+    }
+  };
+
   useEffect(() => {
     fetchSettings();
 
@@ -675,6 +706,12 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                     >
                       Updated
                     </th>
+                    <th
+                      colSpan={2}
+                      className="px-4 py-1 text-center text-xs font-medium text-gray-400 uppercase tracking-wider border-b border-gray-600"
+                    >
+                      Size (MB)
+                    </th>
                     <th className="px-4 py-1 text-right border-b border-gray-700"></th>
                   </tr>
                   {/* Column headers */}
@@ -697,6 +734,12 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                     <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 tracking-wider">
                       Latest
                     </th>
+                    <th className="px-2 py-2 text-right text-xs font-medium text-gray-500 tracking-wider">
+                      Data
+                    </th>
+                    <th className="px-2 py-2 text-right text-xs font-medium text-gray-500 tracking-wider">
+                      Indexes
+                    </th>
                     <th className="px-4 py-2 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
                       Per Day
                     </th>
@@ -716,35 +759,79 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                       </td>
                       {/* Created Range - Earliest */}
                       <td className="px-2 py-2 text-xs text-gray-300">
-                        {table.createdAtMinTime
-                          ? formatDateTime(table.createdAtMinTime).display
-                          : "—"}
+                        {table.createdAtMinTime ? (
+                          formatDateTime(table.createdAtMinTime).display
+                        ) : (
+                          <span className="text-gray-500">—</span>
+                        )}
                       </td>
                       {/* Created Range - Latest */}
                       <td className="px-2 py-2 text-xs text-gray-300">
-                        {table.createdAtMaxTime
-                          ? formatDateTime(table.createdAtMaxTime).display
-                          : "—"}
+                        {table.createdAtMaxTime ? (
+                          formatDateTime(table.createdAtMaxTime).display
+                        ) : (
+                          <span className="text-gray-500">—</span>
+                        )}
                       </td>
                       {/* Updated Range - Earliest */}
                       <td className="px-2 py-2 text-xs text-gray-300">
-                        {table.updatedAtMinTime
-                          ? formatDateTime(table.updatedAtMinTime).display
-                          : "—"}
+                        {table.updatedAtMinTime ? (
+                          formatDateTime(table.updatedAtMinTime).display
+                        ) : (
+                          <span className="text-gray-500">—</span>
+                        )}
                       </td>
                       {/* Updated Range - Latest */}
                       <td className="px-2 py-2 text-xs text-gray-300">
-                        {table.updatedAtMaxTime
-                          ? formatDateTime(table.updatedAtMaxTime).display
-                          : "—"}
+                        {table.updatedAtMaxTime ? (
+                          formatDateTime(table.updatedAtMaxTime).display
+                        ) : (
+                          <span className="text-gray-500">—</span>
+                        )}
                       </td>
-                      <td className="px-4 py-2 text-xs text-gray-300 text-right">
+                      {/* Size - Data */}
+                      <td className="px-2 py-2 text-xs text-right">
+                        {table.dataSizeMb !== undefined &&
+                        table.dataSizeMb !== null ? (
+                          table.dataSizeMb < 1 ? (
+                            <span className="text-gray-500">{"< 1"}</span>
+                          ) : (
+                            <span className="text-gray-300">
+                              {Math.round(table.dataSizeMb)}
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-gray-500">—</span>
+                        )}
+                      </td>
+                      {/* Size - Indexes */}
+                      <td className="px-2 py-2 text-xs text-right">
+                        {table.indexSizeMb !== undefined &&
+                        table.indexSizeMb !== null ? (
+                          table.indexSizeMb < 1 ? (
+                            <span className="text-gray-500">{"< 1"}</span>
+                          ) : (
+                            <span className="text-gray-300">
+                              {Math.round(table.indexSizeMb)}
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-gray-500">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-xs text-right">
                         {table.recordsPerDay !== undefined &&
-                        table.recordsPerDay !== null
-                          ? table.recordsPerDay < 1
-                            ? "< 1"
-                            : Math.round(table.recordsPerDay).toLocaleString()
-                          : "—"}
+                        table.recordsPerDay !== null ? (
+                          table.recordsPerDay < 1 ? (
+                            <span className="text-gray-500">{"< 1"}</span>
+                          ) : (
+                            <span className="text-gray-300">
+                              {Math.round(table.recordsPerDay).toLocaleString()}
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-gray-300">—</span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -817,7 +904,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
             Cache Status
           </h3>
           <div className="bg-gray-800 border border-gray-700 sm:rounded-lg p-4 mb-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
               <div>
                 <span className="text-gray-400">SystemsManager Cache:</span>
                 <span className="ml-2">
@@ -845,9 +932,47 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                   )}
                 </span>
               </div>
+              <div>
+                <span className="text-gray-400">DB Sizes Cache:</span>
+                <span className="ml-2">
+                  {cacheInfo.dbSizesCachedTime ? (
+                    <>
+                      <span className="text-white">
+                        {formatDateTime(cacheInfo.dbSizesCachedTime).display}
+                      </span>
+                      {(() => {
+                        const cacheAge =
+                          Date.now() -
+                          new Date(cacheInfo.dbSizesCachedTime).getTime();
+                        const hoursOld = cacheAge / (1000 * 60 * 60);
+                        if (hoursOld > 25) {
+                          return (
+                            <span className="ml-2 px-2 py-0.5 text-xs bg-yellow-600/20 text-yellow-400 border border-yellow-600/30 rounded">
+                              Stale
+                            </span>
+                          );
+                        }
+                        return null;
+                      })()}
+                    </>
+                  ) : (
+                    <span className="text-gray-500 italic">Not yet loaded</span>
+                  )}
+                </span>
+              </div>
             </div>
           </div>
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={refreshDbStats}
+              disabled={isRefreshingDbStats}
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-wait text-white rounded-lg transition-colors text-sm w-[180px]"
+              style={{ cursor: isRefreshingDbStats ? "wait" : "pointer" }}
+              title="Recalculate database sizes (takes ~2 minutes)"
+            >
+              <RefreshCw className="w-4 h-4" />
+              {isRefreshingDbStats ? "Calculating..." : "Refresh DB Sizes"}
+            </button>
             <button
               onClick={forceReloadCaches}
               disabled={isReloadingCaches}

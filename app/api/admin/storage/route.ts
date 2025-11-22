@@ -5,6 +5,7 @@ import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { PointManager } from "@/lib/point/point-manager";
 import { jsonResponse } from "@/lib/json";
+import { kv } from "@vercel/kv";
 
 export async function GET(request: NextRequest) {
   try {
@@ -224,6 +225,7 @@ export async function GET(request: NextRequest) {
         };
       });
 
+      // Merge size data from KV cache if available (calculated outside this try block)
       stats = { tableStats };
     } catch (err) {
       console.error("Error fetching database stats:", err);
@@ -243,6 +245,29 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Get table size data from KV cache
+    let sizeData: {
+      timestamp: number;
+      sizes: Record<string, { dataMb: number; indexesMb: number }>;
+    } | null = null;
+    try {
+      sizeData = await kv.get("db:stats:sizes");
+    } catch (err) {
+      console.error("Error fetching size data from KV:", err);
+    }
+
+    // Merge size data into table stats
+    if (stats && sizeData) {
+      stats.tableStats = stats.tableStats.map((tableStat) => {
+        const sizeInfo = sizeData.sizes[tableStat.name];
+        return {
+          ...tableStat,
+          dataSizeMb: sizeInfo?.dataMb ?? null,
+          indexSizeMb: sizeInfo?.indexesMb ?? null,
+        };
+      });
+    }
+
     // Get cache refresh times from managers
     let cacheInfo = null;
     try {
@@ -254,6 +279,7 @@ export async function GET(request: NextRequest) {
           systemsStatus.lastLoadedAt > 0 ? systemsStatus.lastLoadedAt : null,
         pointManagerLoadedTimeMs:
           pointsStatus.lastLoadedAt > 0 ? pointsStatus.lastLoadedAt : null,
+        dbSizesCachedTimeMs: sizeData ? sizeData.timestamp : null,
       };
     } catch (err) {
       console.error("Error fetching cache info:", err);

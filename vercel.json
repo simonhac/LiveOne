@@ -8,11 +8,18 @@
     {
       "path": "/api/cron/daily",
       "schedule": "5 14 * * *"
+    },
+    {
+      "path": "/api/cron/db-stats",
+      "schedule": "0 0 * * *"
     }
   ],
   "functions": {
     "app/api/cron/minutely/route.ts": {
       "maxDuration": 60
+    },
+    "app/api/cron/db-stats/route.ts": {
+      "maxDuration": 180
     },
     "app/api/history/route.ts": {
       "maxDuration": 30
