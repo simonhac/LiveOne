@@ -511,19 +511,24 @@ export default function HeatmapChart({
               cellColor = getColor(normalized);
             }
 
-            // Convert Wh to kWh for energy metrics, W to kW for power metrics, use 1 decimal place
+            // Format value and unit based on metric type
             let displayValue: string;
             let displayUnit: string;
             if (dataPoint.v === null) {
               displayValue = "No data";
               displayUnit = "";
             } else if (metricType === "energy") {
+              // Energy: convert Wh to kWh
               displayValue = (dataPoint.v / 1000).toFixed(1);
               displayUnit = pointUnit.replace("Wh", "kWh");
-            } else {
-              // Power metrics: convert W to kW
+            } else if (metricType === "power") {
+              // Power: convert W to kW
               displayValue = (dataPoint.v / 1000).toFixed(1);
               displayUnit = "kW";
+            } else {
+              // Other metrics (rate, time, etc.): use value and unit as-is
+              displayValue = dataPoint.v.toFixed(2);
+              displayUnit = pointUnit;
             }
             const bodyText =
               displayValue === "No data"
@@ -755,8 +760,14 @@ export default function HeatmapChart({
         {/* Color legend */}
         <div className="mt-4 flex items-center justify-center gap-2">
           <span className="text-xs text-gray-400">
-            {(heatmapData.min / 1000).toFixed(1)}
-            {metricType === "energy" ? pointUnit.replace("Wh", "kWh") : "kW"}
+            {metricType === "energy" || metricType === "power"
+              ? (heatmapData.min / 1000).toFixed(1)
+              : heatmapData.min.toFixed(2)}
+            {metricType === "energy"
+              ? pointUnit.replace("Wh", "kWh")
+              : metricType === "power"
+                ? "kW"
+                : pointUnit}
           </span>
           <div
             className="h-4 rounded"
@@ -766,8 +777,14 @@ export default function HeatmapChart({
             }}
           />
           <span className="text-xs text-gray-400">
-            {(heatmapData.max / 1000).toFixed(1)}
-            {metricType === "energy" ? pointUnit.replace("Wh", "kWh") : "kW"}
+            {metricType === "energy" || metricType === "power"
+              ? (heatmapData.max / 1000).toFixed(1)
+              : heatmapData.max.toFixed(2)}
+            {metricType === "energy"
+              ? pointUnit.replace("Wh", "kWh")
+              : metricType === "power"
+                ? "kW"
+                : pointUnit}
           </span>
         </div>
       </div>
