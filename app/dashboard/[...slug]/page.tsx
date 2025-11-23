@@ -4,6 +4,7 @@ import DashboardClient from "@/components/DashboardClient";
 import HeatmapClient from "@/components/HeatmapClient";
 import GeneratorClient from "@/components/GeneratorClient";
 import AmberSync from "@/components/AmberSync";
+import DashboardHeader from "@/components/DashboardHeader";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { VendorRegistry } from "@/lib/vendors/registry";
@@ -139,18 +140,32 @@ export default async function DashboardPage({ params }: PageProps) {
         return (
           <HeatmapClient
             systemIdentifier={systemIdentifier}
-            systemId={system.id}
+            system={system}
+            userId={userId}
+            isAdmin={isAdmin}
+            availableSystems={systemsWithUsernames}
           />
         );
       case "generator":
         return (
           <GeneratorClient
             systemIdentifier={systemIdentifier}
-            systemId={system.id}
+            system={system}
+            userId={userId}
+            isAdmin={isAdmin}
+            availableSystems={systemsWithUsernames}
           />
         );
       case "amber":
-        return <AmberSync />;
+        return (
+          <AmberSync
+            systemIdentifier={systemIdentifier}
+            system={system}
+            userId={userId}
+            isAdmin={isAdmin}
+            availableSystems={systemsWithUsernames}
+          />
+        );
     }
   }
 

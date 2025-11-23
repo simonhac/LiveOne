@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import DashboardHeader from "@/components/DashboardHeader";
-import { useUser } from "@clerk/nextjs";
 
 interface GeneratorEvent {
   date: string;
@@ -30,59 +29,35 @@ interface AvailableSystem {
 
 interface GeneratorClientProps {
   systemIdentifier: string; // For display/routing purposes
-  systemId: number; // Numeric ID for API calls
+  system: {
+    id: number;
+    displayName: string;
+  };
+  userId: string;
+  isAdmin: boolean;
+  availableSystems: AvailableSystem[];
 }
 
 export default function GeneratorClient({
   systemIdentifier,
-  systemId: propSystemId,
+  system,
+  userId,
+  isAdmin,
+  availableSystems,
 }: GeneratorClientProps) {
+  const propSystemId = system.id;
   const router = useRouter();
-  const { user } = useUser();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [systemData, setSystemData] = useState<{
-    id: number;
-    displayName: string;
-  } | null>(null);
-  const [availableSystems, setAvailableSystems] = useState<AvailableSystem[]>(
-    [],
-  );
   const [generatorData, setGeneratorData] = useState<GeneratorData | null>(
     null,
   );
 
   useEffect(() => {
-    const fetchSystemData = async () => {
+    const fetchGeneratorData = async () => {
       try {
         setLoading(true);
         setError(null);
-
-        // Fetch system details
-        const systemResponse = await fetch(
-          `/api/data?systemId=${propSystemId}`,
-          {
-            credentials: "same-origin",
-          },
-        );
-
-        if (systemResponse.ok) {
-          const systemData = await systemResponse.json();
-          setSystemData({
-            id: propSystemId,
-            displayName: systemData.system?.displayName || "System",
-          });
-
-          // Set available systems from response
-          if (systemData.availableSystems) {
-            setAvailableSystems(systemData.availableSystems);
-          }
-        } else {
-          setSystemData({
-            id: propSystemId,
-            displayName: "System",
-          });
-        }
 
         // Fetch generator events
         const generatorResponse = await fetch(
@@ -99,13 +74,13 @@ export default function GeneratorClient({
 
         setLoading(false);
       } catch (err) {
-        console.error("Error fetching system data:", err);
+        console.error("Error fetching generator data:", err);
         setError(err instanceof Error ? err.message : "Unknown error");
         setLoading(false);
       }
     };
 
-    fetchSystemData();
+    fetchGeneratorData();
   }, [propSystemId]);
 
   const handleLogout = () => {
@@ -128,23 +103,15 @@ export default function GeneratorClient({
     );
   }
 
-  if (!systemData) {
-    return (
-      <div className="min-h-screen bg-gray-800 flex items-center justify-center">
-        <div className="text-gray-400">No data available</div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200">
       {/* Header */}
       <DashboardHeader
-        displayName={`${systemData.displayName} — Generator`}
-        systemId={systemData.id.toString()}
+        displayName={`${system.displayName} — Generator`}
+        systemId={system.id.toString()}
         lastUpdate={null}
-        isAdmin={false}
-        userId={user?.id}
+        isAdmin={isAdmin}
+        userId={userId}
         availableSystems={availableSystems}
         onLogout={handleLogout}
       />

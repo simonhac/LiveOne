@@ -1,11 +1,37 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useRouter } from "next/navigation";
+import DashboardHeader from "@/components/DashboardHeader";
 
-export default function AmberSyncPage() {
-  const params = useParams();
-  const systemIdentifier = params.systemIdentifier as string;
+interface AvailableSystem {
+  id: number;
+  displayName: string;
+  vendorSiteId: string;
+  ownerClerkUserId?: string | null;
+  alias?: string | null;
+  ownerUsername?: string | null;
+}
+
+interface AmberSyncProps {
+  systemIdentifier: string; // For display/routing purposes
+  system: {
+    id: number;
+    displayName: string;
+  };
+  userId: string;
+  isAdmin: boolean;
+  availableSystems: AvailableSystem[];
+}
+
+export default function AmberSync({
+  systemIdentifier,
+  system,
+  userId,
+  isAdmin,
+  availableSystems,
+}: AmberSyncProps) {
+  const router = useRouter();
   const [action, setAction] = useState<"usage" | "pricing" | "both">("both");
   const [startDate, setStartDate] = useState(() => {
     // Get today's date in AEST (UTC+10)
@@ -143,294 +169,314 @@ export default function AmberSyncPage() {
     }
   };
 
+  const handleLogout = () => {
+    router.push("/sign-in");
+  };
+
   return (
-    <div
-      className="terminal-container"
-      style={{
-        backgroundColor: "#000000",
-        color: "#33cc33",
-        fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-        fontSize: "11px",
-        minHeight: "100vh",
-        padding: "20px",
-        position: "relative",
-        cursor: isRunning ? "wait" : "default",
-      }}
-    >
-      <div style={{ position: "relative", zIndex: 2 }}>
-        {/* Title */}
-        <pre
-          style={{
-            textShadow: "0 0 3px rgba(51, 204, 51, 0.3)",
-            marginBottom: "20px",
-          }}
-        >
-          {renderHeader("AMBER ELECTRIC DATA SYNC TERMINAL", 0)}
-        </pre>
+    <div className="min-h-screen bg-gray-900 text-gray-200">
+      {/* Header */}
+      <DashboardHeader
+        displayName={`${system.displayName} — Amber Sync`}
+        systemId={system.id.toString()}
+        lastUpdate={null}
+        isAdmin={isAdmin}
+        userId={userId}
+        availableSystems={availableSystems}
+        onLogout={handleLogout}
+      />
 
-        {/* Controls */}
-        <div style={{ marginBottom: "30px" }}>
-          <div style={{ marginBottom: "15px" }}>
-            <div>
-              <pre style={{ margin: 0, display: "inline" }}>
-                {"UPDATE:     "}
-              </pre>
-              <button
-                onClick={() => setAction("usage")}
-                disabled={isRunning}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "#33cc33",
-                  fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-                  cursor: isRunning ? "not-allowed" : "pointer",
-                  padding: 0,
-                  opacity: isRunning ? 0.5 : 1,
-                }}
-              >
-                [{action === "usage" ? "X" : " "}] USAGE
-              </button>
-            </div>
-            <div>
-              <pre style={{ margin: 0, display: "inline" }}>
-                {"            "}
-              </pre>
-              <button
-                onClick={() => setAction("pricing")}
-                disabled={isRunning}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "#33cc33",
-                  fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-                  cursor: isRunning ? "not-allowed" : "pointer",
-                  padding: 0,
-                  opacity: isRunning ? 0.5 : 1,
-                }}
-              >
-                [{action === "pricing" ? "X" : " "}] PRICING
-              </button>
-            </div>
-            <div>
-              <pre style={{ margin: 0, display: "inline" }}>
-                {"            "}
-              </pre>
-              <button
-                onClick={() => setAction("both")}
-                disabled={isRunning}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "#33cc33",
-                  fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-                  cursor: isRunning ? "not-allowed" : "pointer",
-                  padding: 0,
-                  opacity: isRunning ? 0.5 : 1,
-                }}
-              >
-                [{action === "both" ? "X" : " "}] BOTH
-              </button>
-            </div>
-          </div>
+      <div
+        className="terminal-container"
+        style={{
+          backgroundColor: "#000000",
+          color: "#33cc33",
+          fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+          fontSize: "11px",
+          minHeight: "calc(100vh - 64px)", // Account for header height
+          padding: "20px",
+          position: "relative",
+          cursor: isRunning ? "wait" : "default",
+        }}
+      >
+        <div style={{ position: "relative", zIndex: 2 }}>
+          {/* Title */}
+          <pre
+            style={{
+              textShadow: "0 0 3px rgba(51, 204, 51, 0.3)",
+              marginBottom: "20px",
+            }}
+          >
+            {renderHeader("AMBER ELECTRIC DATA SYNC TERMINAL", 0)}
+          </pre>
 
-          <div style={{ marginBottom: "15px" }}>
-            <pre style={{ margin: 0, display: "inline" }}>{"PERIOD:     "}</pre>
-            START:{" "}
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !isRunning && isDaysValid) {
-                  handleSync();
-                }
-              }}
-              disabled={isRunning}
-              style={{
-                backgroundColor: "#000000",
-                color: "#33cc33",
-                border: "1px solid #33cc33",
-                fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-                fontSize: "11px",
-                padding: "2px 4px",
-                opacity: isRunning ? 0.5 : 1,
-              }}
-            />{" "}
-            DAYS:{" "}
-            <input
-              type="number"
-              value={days}
-              onChange={(e) => {
-                const val = e.target.value;
-                if (val === "") {
-                  setDays("");
-                } else {
-                  const num = parseInt(val, 10);
-                  if (!isNaN(num)) {
-                    setDays(num);
-                  }
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !isRunning && isDaysValid) {
-                  handleSync();
-                }
-              }}
-              disabled={isRunning}
-              style={{
-                backgroundColor: "#000000",
-                color: "#33cc33",
-                border: "1px solid #33cc33",
-                fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-                fontSize: "11px",
-                padding: "2px 4px",
-                width: "3ch",
-                opacity: isRunning ? 0.5 : 1,
-                MozAppearance: "textfield",
-              }}
-              className="no-spinner"
-            />{" "}
-            (MAX 7)
-          </div>
-
-          <div style={{ marginBottom: "20px" }}>
-            <div>
-              <pre style={{ margin: 0, display: "inline" }}>
-                {"OPTIONS:    "}
-              </pre>
-              <button
-                onClick={() => setDryRun(!dryRun)}
-                disabled={isRunning}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "#33cc33",
-                  fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-                  cursor: isRunning ? "not-allowed" : "pointer",
-                  padding: 0,
-                  opacity: isRunning ? 0.5 : 1,
-                }}
-              >
-                [{dryRun ? "X" : " "}] DRY RUN
-              </button>
-            </div>
-            <div>
-              <pre style={{ margin: 0, display: "inline" }}>
-                {"            "}
-              </pre>
-              <button
-                onClick={() => setShowSample(!showSample)}
-                disabled={isRunning}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "#33cc33",
-                  fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-                  cursor: isRunning ? "not-allowed" : "pointer",
-                  padding: 0,
-                  opacity: isRunning ? 0.5 : 1,
-                }}
-              >
-                [{showSample ? "X" : " "}] SHOW SAMPLES
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <pre style={{ margin: 0 }}>
-              {"                                  "}
-              <button
-                onClick={handleSync}
-                disabled={isRunning || !isDaysValid}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "#33cc33",
-                  fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-                  cursor: isRunning || !isDaysValid ? "not-allowed" : "pointer",
-                  padding: 0,
-                  textShadow: "0 0 3px rgba(51, 204, 51, 0.3)",
-                  opacity: isRunning || !isDaysValid ? 0.5 : 1,
-                }}
-              >
-                {`┌──────────┐
-│   SYNC   │
-└──────────┘`}
-              </button>
-            </pre>
-          </div>
-        </div>
-
-        {/* Terminal Output */}
-        <div
-          ref={outputRef}
-          style={{
-            color: "#33cc33",
-            fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
-            whiteSpace: "pre",
-            textShadow: "0 0 3px rgba(51, 204, 51, 0.3)",
-            paddingBottom: "20px",
-          }}
-        >
-          {output.length === 0 ? (
-            "Ready. Press SYNC to begin..."
-          ) : (
-            <>
-              {output.map((chunk, idx) => (
-                <span
-                  key={idx}
+          {/* Controls */}
+          <div style={{ marginBottom: "30px" }}>
+            <div style={{ marginBottom: "15px" }}>
+              <div>
+                <pre style={{ margin: 0, display: "inline" }}>
+                  {"UPDATE:     "}
+                </pre>
+                <button
+                  onClick={() => setAction("usage")}
+                  disabled={isRunning}
                   style={{
-                    color: chunk.emphasis ? "#00ff00" : "#218221",
-                    fontWeight: chunk.emphasis ? "bold" : "normal",
+                    background: "transparent",
+                    border: "none",
+                    color: "#33cc33",
+                    fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+                    cursor: isRunning ? "not-allowed" : "pointer",
+                    padding: 0,
+                    opacity: isRunning ? 0.5 : 1,
                   }}
                 >
-                  {chunk.heading !== undefined
-                    ? renderHeader(chunk.text, chunk.heading)
-                    : chunk.text}
-                  {"\n"}
-                </span>
-              ))}
-            </>
-          )}
-          {"\n"}
-          <span className="cursor">_</span>
-        </div>
+                  [{action === "usage" ? "X" : " "}] USAGE
+                </button>
+              </div>
+              <div>
+                <pre style={{ margin: 0, display: "inline" }}>
+                  {"            "}
+                </pre>
+                <button
+                  onClick={() => setAction("pricing")}
+                  disabled={isRunning}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#33cc33",
+                    fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+                    cursor: isRunning ? "not-allowed" : "pointer",
+                    padding: 0,
+                    opacity: isRunning ? 0.5 : 1,
+                  }}
+                >
+                  [{action === "pricing" ? "X" : " "}] PRICING
+                </button>
+              </div>
+              <div>
+                <pre style={{ margin: 0, display: "inline" }}>
+                  {"            "}
+                </pre>
+                <button
+                  onClick={() => setAction("both")}
+                  disabled={isRunning}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#33cc33",
+                    fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+                    cursor: isRunning ? "not-allowed" : "pointer",
+                    padding: 0,
+                    opacity: isRunning ? 0.5 : 1,
+                  }}
+                >
+                  [{action === "both" ? "X" : " "}] BOTH
+                </button>
+              </div>
+            </div>
 
-        <style jsx global>{`
-          .terminal-container::before {
-            content: "";
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: repeating-linear-gradient(
-              0deg,
-              rgba(0, 0, 0, 0.4) 0px,
-              rgba(0, 0, 0, 0.4) 1px,
-              transparent 1px,
-              transparent 2px
-            );
-            pointer-events: none;
-            z-index: 1000;
-          }
+            <div style={{ marginBottom: "15px" }}>
+              <pre style={{ margin: 0, display: "inline" }}>
+                {"PERIOD:     "}
+              </pre>
+              START:{" "}
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !isRunning && isDaysValid) {
+                    handleSync();
+                  }
+                }}
+                disabled={isRunning}
+                style={{
+                  backgroundColor: "#000000",
+                  color: "#33cc33",
+                  border: "1px solid #33cc33",
+                  fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+                  fontSize: "11px",
+                  padding: "2px 4px",
+                  opacity: isRunning ? 0.5 : 1,
+                }}
+              />{" "}
+              DAYS:{" "}
+              <input
+                type="number"
+                value={days}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === "") {
+                    setDays("");
+                  } else {
+                    const num = parseInt(val, 10);
+                    if (!isNaN(num)) {
+                      setDays(num);
+                    }
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !isRunning && isDaysValid) {
+                    handleSync();
+                  }
+                }}
+                disabled={isRunning}
+                style={{
+                  backgroundColor: "#000000",
+                  color: "#33cc33",
+                  border: "1px solid #33cc33",
+                  fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+                  fontSize: "11px",
+                  padding: "2px 4px",
+                  width: "3ch",
+                  opacity: isRunning ? 0.5 : 1,
+                  MozAppearance: "textfield",
+                }}
+                className="no-spinner"
+              />{" "}
+              (MAX 7)
+            </div>
 
-          .cursor {
-            animation: blink 1s step-start infinite;
-          }
+            <div style={{ marginBottom: "20px" }}>
+              <div>
+                <pre style={{ margin: 0, display: "inline" }}>
+                  {"OPTIONS:    "}
+                </pre>
+                <button
+                  onClick={() => setDryRun(!dryRun)}
+                  disabled={isRunning}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#33cc33",
+                    fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+                    cursor: isRunning ? "not-allowed" : "pointer",
+                    padding: 0,
+                    opacity: isRunning ? 0.5 : 1,
+                  }}
+                >
+                  [{dryRun ? "X" : " "}] DRY RUN
+                </button>
+              </div>
+              <div>
+                <pre style={{ margin: 0, display: "inline" }}>
+                  {"            "}
+                </pre>
+                <button
+                  onClick={() => setShowSample(!showSample)}
+                  disabled={isRunning}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#33cc33",
+                    fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+                    cursor: isRunning ? "not-allowed" : "pointer",
+                    padding: 0,
+                    opacity: isRunning ? 0.5 : 1,
+                  }}
+                >
+                  [{showSample ? "X" : " "}] SHOW SAMPLES
+                </button>
+              </div>
+            </div>
 
-          @keyframes blink {
-            50% {
-              opacity: 0;
+            <div>
+              <pre style={{ margin: 0 }}>
+                {"                                  "}
+                <button
+                  onClick={handleSync}
+                  disabled={isRunning || !isDaysValid}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#33cc33",
+                    fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+                    cursor:
+                      isRunning || !isDaysValid ? "not-allowed" : "pointer",
+                    padding: 0,
+                    textShadow: "0 0 3px rgba(51, 204, 51, 0.3)",
+                    opacity: isRunning || !isDaysValid ? 0.5 : 1,
+                  }}
+                >
+                  {`┌──────────┐
+│   SYNC   │
+└──────────┘`}
+                </button>
+              </pre>
+            </div>
+          </div>
+
+          {/* Terminal Output */}
+          <div
+            ref={outputRef}
+            style={{
+              color: "#33cc33",
+              fontFamily: "'SF Mono', 'Monaco', 'Courier New', monospace",
+              whiteSpace: "pre",
+              textShadow: "0 0 3px rgba(51, 204, 51, 0.3)",
+              paddingBottom: "20px",
+            }}
+          >
+            {output.length === 0 ? (
+              "Ready. Press SYNC to begin..."
+            ) : (
+              <>
+                {output.map((chunk, idx) => (
+                  <span
+                    key={idx}
+                    style={{
+                      color: chunk.emphasis ? "#00ff00" : "#218221",
+                      fontWeight: chunk.emphasis ? "bold" : "normal",
+                    }}
+                  >
+                    {chunk.heading !== undefined
+                      ? renderHeader(chunk.text, chunk.heading)
+                      : chunk.text}
+                    {"\n"}
+                  </span>
+                ))}
+              </>
+            )}
+            {"\n"}
+            <span className="cursor">_</span>
+          </div>
+
+          <style jsx global>{`
+            .terminal-container::before {
+              content: "";
+              position: fixed;
+              top: 0;
+              left: 0;
+              right: 0;
+              bottom: 0;
+              background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 0, 0, 0.4) 0px,
+                rgba(0, 0, 0, 0.4) 1px,
+                transparent 1px,
+                transparent 2px
+              );
+              pointer-events: none;
+              z-index: 1000;
             }
-          }
 
-          .no-spinner::-webkit-outer-spin-button,
-          .no-spinner::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-          }
-        `}</style>
+            .cursor {
+              animation: blink 1s step-start infinite;
+            }
+
+            @keyframes blink {
+              50% {
+                opacity: 0;
+              }
+            }
+
+            .no-spinner::-webkit-outer-spin-button,
+            .no-spinner::-webkit-inner-spin-button {
+              -webkit-appearance: none;
+              margin: 0;
+            }
+          `}</style>
+        </div>
       </div>
     </div>
   );

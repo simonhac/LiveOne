@@ -15,7 +15,6 @@ import type { ZonedDateTime } from "@internationalized/date";
 import { toZoned } from "@internationalized/date";
 import { getUnitDisplay } from "@/lib/point/unit-display";
 import DashboardHeader from "@/components/DashboardHeader";
-import { useUser } from "@clerk/nextjs";
 
 interface PointInfo {
   logicalPath: string;
@@ -25,12 +24,6 @@ interface PointInfo {
   metricUnit: string;
   reference: string;
   active: boolean;
-}
-
-interface SystemInfo {
-  id: number;
-  displayTimezone: string | null;
-  displayName: string;
 }
 
 interface AvailableSystem {
@@ -44,22 +37,28 @@ interface AvailableSystem {
 
 interface HeatmapClientProps {
   systemIdentifier: string; // For display/routing purposes (can be "1586" or "simon/kinkora")
-  systemId: number; // Numeric ID for API calls
+  system: {
+    id: number;
+    displayName: string;
+    displayTimezone: string;
+  };
+  userId: string;
+  isAdmin: boolean;
+  availableSystems: AvailableSystem[];
 }
 
 export default function HeatmapClient({
   systemIdentifier,
-  systemId,
+  system,
+  userId,
+  isAdmin,
+  availableSystems,
 }: HeatmapClientProps) {
+  const systemId = system.id;
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { user } = useUser();
 
-  const [system, setSystem] = useState<SystemInfo | null>(null);
   const [points, setPoints] = useState<PointInfo[]>([]);
-  const [availableSystems, setAvailableSystems] = useState<AvailableSystem[]>(
-    [],
-  );
   const [selectedPoint, setSelectedPoint] = useState<string | undefined>(
     undefined,
   );
@@ -159,34 +158,6 @@ export default function HeatmapClient({
         }
 
         setPoints(pointsData.points);
-
-        // Fetch system info
-        const systemResponse = await fetch(`/api/data?systemId=${systemId}`, {
-          credentials: "same-origin",
-        });
-
-        if (systemResponse.ok) {
-          const systemData = await systemResponse.json();
-          setSystem({
-            id: systemId,
-            displayTimezone:
-              systemData.system?.displayTimezone || "Australia/Sydney",
-            displayName: systemData.system?.displayName || "System",
-          });
-
-          // Set available systems from response
-          if (systemData.availableSystems) {
-            setAvailableSystems(systemData.availableSystems);
-          }
-        } else {
-          // Fallback to default timezone
-          setSystem({
-            id: systemId,
-            displayTimezone: "Australia/Sydney",
-            displayName: "System",
-          });
-        }
-
         setLoading(false);
       } catch (err) {
         console.error("Error fetching data:", err);
@@ -279,7 +250,7 @@ export default function HeatmapClient({
     );
   }
 
-  if (!system || points.length === 0) {
+  if (points.length === 0) {
     return (
       <div className="min-h-screen bg-gray-800 flex items-center justify-center">
         <div className="text-gray-400">No data available</div>
@@ -296,8 +267,8 @@ export default function HeatmapClient({
         displayName={`${system.displayName} — Heatmap`}
         systemId={system.id.toString()}
         lastUpdate={null}
-        isAdmin={false}
-        userId={user?.id}
+        isAdmin={isAdmin}
+        userId={userId}
         availableSystems={availableSystems}
         onLogout={handleLogout}
       />
@@ -394,7 +365,7 @@ export default function HeatmapClient({
               <tbody>
                 <tr>
                   <td className="pr-4 align-top">Timezone:</td>
-                  <td>{system?.displayTimezone}</td>
+                  <td>{system.displayTimezone}</td>
                 </tr>
                 <tr>
                   <td className="pr-4 align-top">Physical Path:</td>
@@ -436,7 +407,6 @@ export default function HeatmapClient({
                         `${fetchInfo.startTime.year}-${String(fetchInfo.startTime.month).padStart(2, "0")}-${String(fetchInfo.startTime.day).padStart(2, "0")} ${String(fetchInfo.startTime.hour).padStart(2, "0")}:${String(fetchInfo.startTime.minute).padStart(2, "0")}`}{" "}
                       <span className="text-gray-600">
                         {fetchInfo.startTime &&
-                          system?.displayTimezone &&
                           new Intl.DateTimeFormat("en-US", {
                             timeZone: system.displayTimezone,
                             timeZoneName: "short",
@@ -450,7 +420,6 @@ export default function HeatmapClient({
                         `${fetchInfo.endTime.year}-${String(fetchInfo.endTime.month).padStart(2, "0")}-${String(fetchInfo.endTime.day).padStart(2, "0")} ${String(fetchInfo.endTime.hour).padStart(2, "0")}:${String(fetchInfo.endTime.minute).padStart(2, "0")}`}{" "}
                       <span className="text-gray-600">
                         {fetchInfo.endTime &&
-                          system?.displayTimezone &&
                           new Intl.DateTimeFormat("en-US", {
                             timeZone: system.displayTimezone,
                             timeZoneName: "short",
