@@ -147,15 +147,15 @@ export class SystemsManager {
   }
 
   /**
-   * Get system by username and short name
+   * Get system by username and alias
    */
-  async getSystemByUserNameShortName(
+  async getSystemByUsernameAndAlias(
     username: string,
     alias: string,
   ): Promise<SystemWithPolling | null> {
     await this.loadPromise;
 
-    // Find all systems with matching shortname
+    // Find all systems with matching alias
     const matchingSystems = Array.from(this.systemsMap.values()).filter(
       (system) => system.alias === alias,
     );

@@ -234,16 +234,16 @@ export default function HeatmapClient({
 
       // Left or Up: Previous point
       if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault(); // Always prevent default scrolling
         if (currentIndex > 0) {
           newPoint = sortedPoints[currentIndex - 1].logicalPath;
-          e.preventDefault();
         }
       }
       // Right or Down: Next point
       else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault(); // Always prevent default scrolling
         if (currentIndex < sortedPoints.length - 1) {
           newPoint = sortedPoints[currentIndex + 1].logicalPath;
-          e.preventDefault();
         }
       }
 
