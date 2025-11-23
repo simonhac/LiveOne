@@ -4,7 +4,7 @@ import DashboardClient from "@/components/DashboardClient";
 import HeatmapClient from "@/components/HeatmapClient";
 import GeneratorClient from "@/components/GeneratorClient";
 import AmberSync from "@/components/AmberSync";
-import DashboardHeader from "@/components/DashboardHeader";
+import DashboardLayout from "@/components/DashboardLayout";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { VendorRegistry } from "@/lib/vendors/registry";
@@ -138,48 +138,96 @@ export default async function DashboardPage({ params }: PageProps) {
     switch (subPageRoute) {
       case "heatmap":
         return (
-          <HeatmapClient
-            systemIdentifier={systemIdentifier}
+          <DashboardLayout
             system={system}
             userId={userId}
             isAdmin={isAdmin}
             availableSystems={systemsWithUsernames}
-          />
+            supportsPolling={VendorRegistry.supportsPolling(system.vendorType)}
+          >
+            <HeatmapClient
+              systemIdentifier={systemIdentifier}
+              system={system}
+              userId={userId}
+              isAdmin={isAdmin}
+              availableSystems={systemsWithUsernames}
+            />
+          </DashboardLayout>
         );
       case "generator":
         return (
-          <GeneratorClient
-            systemIdentifier={systemIdentifier}
+          <DashboardLayout
             system={system}
             userId={userId}
             isAdmin={isAdmin}
             availableSystems={systemsWithUsernames}
-          />
+            supportsPolling={VendorRegistry.supportsPolling(system.vendorType)}
+          >
+            <GeneratorClient
+              systemIdentifier={systemIdentifier}
+              system={system}
+              userId={userId}
+              isAdmin={isAdmin}
+              availableSystems={systemsWithUsernames}
+            />
+          </DashboardLayout>
         );
       case "amber":
         return (
-          <AmberSync
-            systemIdentifier={systemIdentifier}
+          <DashboardLayout
             system={system}
             userId={userId}
             isAdmin={isAdmin}
             availableSystems={systemsWithUsernames}
-          />
+            supportsPolling={VendorRegistry.supportsPolling(system.vendorType)}
+          >
+            <AmberSync
+              systemIdentifier={systemIdentifier}
+              system={system}
+              userId={userId}
+              isAdmin={isAdmin}
+              availableSystems={systemsWithUsernames}
+            />
+          </DashboardLayout>
         );
     }
   }
 
   // Render main dashboard
+  if (!system) {
+    return (
+      <DashboardClient
+        systemId={systemId}
+        system={system}
+        hasAccess={hasAccess}
+        systemExists={systemExists}
+        isAdmin={isAdmin}
+        availableSystems={systemsWithUsernames}
+        userId={userId}
+        dataStore={dataStore}
+      />
+    );
+  }
+
   return (
-    <DashboardClient
-      systemId={systemId}
+    <DashboardLayout
       system={system}
-      hasAccess={hasAccess}
-      systemExists={systemExists}
+      userId={userId}
       isAdmin={isAdmin}
       availableSystems={systemsWithUsernames}
-      userId={userId}
-      dataStore={dataStore}
-    />
+      lastUpdate={null}
+      systemInfo={null}
+    >
+      <DashboardClient
+        systemId={systemId}
+        system={system}
+        hasAccess={hasAccess}
+        systemExists={systemExists}
+        isAdmin={isAdmin}
+        availableSystems={systemsWithUsernames}
+        userId={userId}
+        dataStore={dataStore}
+      />
+    </DashboardLayout>
   );
 }

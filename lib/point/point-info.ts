@@ -62,6 +62,26 @@ export class PointInfo {
   }
 
   /**
+   * Get the logical path for typed points only
+   * Returns "type.subtype.extension/metricType" for points with type != null
+   * Returns null for points without type
+   *
+   * This is a convenience method that wraps getPath().toString() but returns
+   * null for untyped points (instead of the fallback "{index}/metricType" format)
+   *
+   * Examples:
+   * - type="load", subtype="hvac", metricType="power" → "load.hvac/power"
+   * - type="source", subtype="solar", metricType="energy" → "source.solar/energy"
+   * - type=null → null
+   */
+  getLogicalPath(): string | null {
+    if (!this.type) {
+      return null;
+    }
+    return this.getPath().toString();
+  }
+
+  /**
    * Get the PointReference for this point (composite database key)
    * Format: "systemId.pointIndex"
    *
@@ -69,6 +89,42 @@ export class PointInfo {
    */
   getReference(): PointReference {
     return PointReference.fromIds(this.systemId, this.index);
+  }
+
+  /**
+   * Get the preferred aggregation type for this metric type
+   *
+   * @returns The preferred aggregation field for this metric type
+   *
+   * Rules:
+   * - energy: "delta" (cumulative change)
+   * - soc: "last" (latest value)
+   * - power and others: "avg" (average)
+   */
+  getPreferredAggregation(): string {
+    return PointInfo.getPreferredAggregationForMetricType(this.metricType);
+  }
+
+  /**
+   * Static helper: Get the preferred aggregation type for a given metric type
+   *
+   * @param metricType - The metric type (e.g., "energy", "soc", "power")
+   * @returns The preferred aggregation field for this metric type
+   *
+   * Rules:
+   * - energy: "delta" (cumulative change)
+   * - soc: "last" (latest value)
+   * - power and others: "avg" (average)
+   */
+  static getPreferredAggregationForMetricType(metricType: string): string {
+    switch (metricType) {
+      case "energy":
+        return "delta";
+      case "soc":
+        return "last";
+      default:
+        return "avg";
+    }
   }
 
   /**

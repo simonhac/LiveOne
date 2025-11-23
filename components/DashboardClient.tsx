@@ -4,20 +4,10 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useModalContext } from "@/contexts/ModalContext";
 import EnergyChart from "@/components/EnergyChart";
-import EnergyPanel from "@/components/EnergyPanel";
 import AmberCard from "@/components/AmberCard";
 import PowerCard from "@/components/PowerCard";
-import ConnectionNotification from "@/components/ConnectionNotification";
-import TestConnectionModal from "@/components/TestConnectionModal";
-import PollNowModal from "@/components/PollNowModal";
-import ServerErrorModal from "@/components/ServerErrorModal";
-import SessionTimeoutModal from "@/components/SessionTimeoutModal";
-import { AddSystemDialog } from "@/components/AddSystemDialog";
-import ViewDataModal from "@/components/ViewDataModal";
-import SystemSettingsDialog from "@/components/SystemSettingsDialog";
 import SitePowerChart, { type ChartData } from "@/components/SitePowerChart";
 import EnergyTable from "@/components/EnergyTable";
-import DashboardHeader from "@/components/DashboardHeader";
 import { fetchAndProcessSiteData } from "@/lib/site-data-processor";
 import EnergyFlowSankey from "@/components/EnergyFlowSankey";
 import { calculateEnergyFlowMatrix } from "@/lib/energy-flow-matrix";
@@ -176,21 +166,6 @@ export default function DashboardClient({
   const [currentDisplayTimezone, setCurrentDisplayTimezone] = useState(
     system?.displayTimezone || null,
   );
-  const [showTestConnection, setShowTestConnection] = useState(false);
-  const [showPollNow, setShowPollNow] = useState<{
-    isOpen: boolean;
-    dryRun: boolean;
-  }>({ isOpen: false, dryRun: false });
-  const [showAddSystemDialog, setShowAddSystemDialog] = useState(false);
-  const [showSystemSettingsDialog, setShowSystemSettingsDialog] =
-    useState(false);
-  const [serverError, setServerError] = useState<{
-    type: "connection" | "server" | null;
-    details?: string;
-  }>({ type: null });
-  const [showSessionTimeout, setShowSessionTimeout] = useState(false);
-  const [showViewDataModal, setShowViewDataModal] = useState(false);
-  const [shiftKeyDown, setShiftKeyDown] = useState(false);
 
   // Get modal context to pause polling when modals are open
   const { isAnyModalOpen } = useModalContext();
@@ -348,8 +323,7 @@ export default function DashboardClient({
         ) {
           console.log("Session token expired");
           console.log("Auth message:", authMessage);
-          // Show session timeout modal
-          setShowSessionTimeout(true);
+          // Session expired - reload will redirect to sign in
           setLoading(false);
           return;
         }
@@ -363,7 +337,6 @@ export default function DashboardClient({
         if (contentType && !contentType.includes("application/json")) {
           // If we get an HTML response, it's likely a token expiration that wasn't caught above
           console.log("Non-JSON response received, likely token expired");
-          setShowSessionTimeout(true);
           setLoading(false);
           return;
         }
@@ -416,15 +389,12 @@ export default function DashboardClient({
       // Check if error message indicates a 404 (which might mean token expired)
       if (err instanceof Error && err.message.includes("404")) {
         console.log("Session might be expired (404 error)");
-        // Show session timeout modal
-        setShowSessionTimeout(true);
         setLoading(false);
         return;
       }
 
       // Check if it's a network/connection error
       if (err instanceof TypeError && err.message === "Failed to fetch") {
-        setServerError({ type: "connection" });
         setError("Unable to connect to server");
       } else {
         setError("Failed to fetch data");
@@ -445,29 +415,6 @@ export default function DashboardClient({
       setCurrentDisplayTimezone(data.system.displayTimezone);
     }
   }, [data?.system?.displayTimezone, currentDisplayTimezone]);
-
-  // Shift key detection for dry run mode
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.shiftKey) {
-        setShiftKeyDown(true);
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (!e.shiftKey) {
-        setShiftKeyDown(false);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
-    };
-  }, []);
 
   useEffect(() => {
     // Initial fetch
@@ -873,40 +820,6 @@ export default function DashboardClient({
     );
   }
 
-  const handleLogout = async () => {
-    router.push("/sign-in");
-  };
-
-  const handleUpdateSystemSettings = async (updates?: {
-    displayName?: string;
-    alias?: string | null;
-  }) => {
-    // Update local state immediately for instant UI feedback
-    if (updates?.displayName) {
-      setCurrentDisplayName(updates.displayName);
-    }
-    if (updates && "alias" in updates) {
-      setCurrentAlias(updates.alias);
-
-      // If alias changed, update the URL
-      const currentSystem = availableSystems.find(
-        (s) => s.id === parseInt(systemId as string),
-      );
-      const username = currentSystem?.ownerUsername;
-
-      if (username && updates.alias) {
-        // Build new URL preserving query parameters
-        const params = new URLSearchParams(searchParams.toString());
-        const queryString = params.toString();
-        const newPath = `/dashboard/${username}/${updates.alias}${queryString ? `?${queryString}` : ""}`;
-        router.replace(newPath);
-      }
-    }
-
-    // Refetch data to get latest system settings
-    await fetchData();
-  };
-
   // Handle series visibility toggle with special logic
   const handleLoadSeriesToggle = (seriesId: string, shiftKey: boolean) => {
     const allSeriesIds = loadChartData?.series.map((s) => s.id) ?? [];
@@ -996,87 +909,45 @@ export default function DashboardClient({
     ? getPoint(data.latest, "bidi.grid/power") !== null
     : false;
 
-  // Get display name for the system (prefer local state which updates immediately)
-  const systemDisplayName =
-    currentDisplayName ||
-    data?.system.displayName ||
-    (systemId ? `System ${systemId}` : "LiveOne Dashboard");
-
   return (
-    <div className="min-h-screen bg-gray-900">
-      {/* Connection Notification */}
-      <ConnectionNotification />
-
-      {/* Header */}
-      <DashboardHeader
-        displayName={systemDisplayName}
-        systemId={systemId}
-        vendorSiteId={data?.system.vendorSiteId}
-        lastUpdate={lastUpdate}
-        systemInfo={systemInfo}
-        vendorType={data?.system.vendorType}
-        supportsPolling={data?.system.supportsPolling}
-        systemStatus={system?.status}
-        isAdmin={isAdmin}
-        userId={userId}
-        availableSystems={availableSystems}
-        onLogout={handleLogout}
-        onTestConnection={() => setShowTestConnection(true)}
-        onViewData={() => setShowViewDataModal(true)}
-        onPollNow={(dryRun) =>
-          setShowPollNow({ isOpen: true, dryRun: dryRun || false })
-        }
-        onAddSystem={() => setShowAddSystemDialog(true)}
-        onSystemSettings={() => setShowSystemSettingsDialog(true)}
-        shiftKeyDown={shiftKeyDown}
-      />
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-0.5 sm:px-6 lg:px-8 py-4">
-        {/* Removed System Banner - Show regardless of data availability */}
-        {system?.status === "removed" && (
-          <div className="mb-4 p-4 bg-orange-900/50 border border-orange-700 text-orange-300 rounded-lg flex items-center gap-3">
-            <AlertTriangle className="w-5 h-5 flex-shrink-0" />
-            <div>
-              <span className="font-semibold">
-                This system has been marked as removed.
-              </span>
-              {!isAdmin && <span> Limited access is available.</span>}
-            </div>
+    <main className="max-w-7xl mx-auto px-0.5 sm:px-6 lg:px-8 py-4">
+      {/* Removed System Banner - Show regardless of data availability */}
+      {system?.status === "removed" && (
+        <div className="mb-4 p-4 bg-orange-900/50 border border-orange-700 text-orange-300 rounded-lg flex items-center gap-3">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+          <div>
+            <span className="font-semibold">
+              This system has been marked as removed.
+            </span>
+            {!isAdmin && <span> Limited access is available.</span>}
           </div>
-        )}
+        </div>
+      )}
 
-        {error &&
-          (error === "POINT_READINGS_NO_CHARTS" &&
-          data?.system.vendorType !== "mondo" &&
-          data?.system.vendorType !== "composite" ? (
-            <div className="bg-blue-900/50 border border-blue-700 text-blue-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5" />
-              <span>
-                Charts coming soon. For now{" "}
-                <button
-                  onClick={() => setShowViewDataModal(true)}
-                  className="underline hover:text-blue-200 transition-colors"
-                >
-                  raw data is available
-                </button>
-                .
-              </span>
-            </div>
-          ) : error !== "POINT_READINGS_NO_CHARTS" ? (
-            <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5" />
-              <span>{error}</span>
-            </div>
-          ) : null)}
+      {error &&
+        (error === "POINT_READINGS_NO_CHARTS" &&
+        data?.system.vendorType !== "mondo" &&
+        data?.system.vendorType !== "composite" ? (
+          <div className="bg-blue-900/50 border border-blue-700 text-blue-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5" />
+            <span>
+              Charts coming soon. Raw data is available via the settings menu.
+            </span>
+          </div>
+        ) : error !== "POINT_READINGS_NO_CHARTS" ? (
+          <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5" />
+            <span>{error}</span>
+          </div>
+        ) : null)}
 
-        {(data?.latest ||
-          (data &&
-            (data.system.vendorType === "mondo" ||
-              data.system.vendorType === "composite" ||
-              data.system.vendorType === "amber"))) && (
-          <div className="space-y-6">
-            {/* Fault Warning
+      {(data?.latest ||
+        (data &&
+          (data.system.vendorType === "mondo" ||
+            data.system.vendorType === "composite" ||
+            data.system.vendorType === "amber"))) && (
+        <div className="space-y-6">
+          {/* Fault Warning
                 TEMPORARILY DISABLED - Needs composite points implementation
 
                 Previously displayed fault codes from data.latest.system.faultCode
@@ -1087,7 +958,7 @@ export default function DashboardClient({
                 - Use getPointValue(data.latest, "system.fault/timestamp") for timing
                 - Parse the measurementTime from the point value
             */}
-            {/* {data.latest?.system.faultCode &&
+          {/* {data.latest?.system.faultCode &&
               data.latest.system.faultCode !== 0 &&
               data.latest.system.faultTimestamp &&
               data.latest.system.faultTimestamp > 0 && (
@@ -1107,124 +978,162 @@ export default function DashboardClient({
                 </div>
               )} */}
 
-            {/* Show warning for unconfigured composite systems */}
-            {system?.vendorType === "composite" &&
-              !historyLoading &&
-              !processedHistoryData.load &&
-              !processedHistoryData.generation && (
-                <div className="bg-yellow-900/50 border border-yellow-700 text-yellow-300 px-4 py-3 rounded flex items-center gap-2">
-                  <AlertTriangle className="w-5 h-5" />
-                  <span>
-                    Composite system needs to be configured before charts can be
-                    displayed.
-                  </span>
-                </div>
-              )}
-
-            {/* Amber Electric Dashboard - Show only Amber card */}
-            {data?.system.vendorType === "amber" && systemId && (
-              <AmberCard
-                systemId={parseInt(systemId)}
-                timezoneOffsetMin={data?.system.timezoneOffsetMin ?? 600}
-                displayTimezone={data?.system.displayTimezone}
-              />
+          {/* Show warning for unconfigured composite systems */}
+          {system?.vendorType === "composite" &&
+            !historyLoading &&
+            !processedHistoryData.load &&
+            !processedHistoryData.generation && (
+              <div className="bg-yellow-900/50 border border-yellow-700 text-yellow-300 px-4 py-3 rounded flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5" />
+                <span>
+                  Composite system needs to be configured before charts can be
+                  displayed.
+                </span>
+              </div>
             )}
 
-            {/* Main Dashboard Grid - Only show for admin or non-removed systems and non-Amber systems */}
-            {(isAdmin || system?.status !== "removed") &&
-              data?.system.vendorType !== "amber" && (
+          {/* Amber Electric Dashboard - Show only Amber card */}
+          {data?.system.vendorType === "amber" && systemId && (
+            <AmberCard
+              systemId={parseInt(systemId)}
+              timezoneOffsetMin={data?.system.timezoneOffsetMin ?? 600}
+              displayTimezone={data?.system.displayTimezone}
+            />
+          )}
+
+          {/* Main Dashboard Grid - Only show for admin or non-removed systems and non-Amber systems */}
+          {(isAdmin || system?.status !== "removed") &&
+            data?.system.vendorType !== "amber" && (
+              <div
+                className={
+                  data?.system.vendorType === "mondo" ||
+                  data?.system.vendorType === "composite"
+                    ? ""
+                    : "grid grid-cols-1 lg:grid-cols-3 gap-4"
+                }
+              >
+                {/* Charts - Full width for mondo/composite, 2/3 width for others */}
                 <div
                   className={
                     data?.system.vendorType === "mondo" ||
                     data?.system.vendorType === "composite"
                       ? ""
-                      : "grid grid-cols-1 lg:grid-cols-3 gap-4"
+                      : "lg:col-span-2"
                   }
                 >
-                  {/* Charts - Full width for mondo/composite, 2/3 width for others */}
-                  <div
-                    className={
-                      data?.system.vendorType === "mondo" ||
-                      data?.system.vendorType === "composite"
-                        ? ""
-                        : "lg:col-span-2"
-                    }
-                  >
-                    {data?.system.vendorType === "mondo" ||
-                    data?.system.vendorType === "composite" ? (
-                      <>
-                        {/* Power Cards - Composite and Mondo systems, horizontal grid at top */}
-                        {(data?.system.vendorType === "composite" ||
-                          data?.system.vendorType === "mondo") &&
-                          data.latest && (
-                            <SystemPowerCards
-                              latest={data.latest}
-                              vendorType={data.system.vendorType}
-                              getStaleThreshold={getStaleThreshold}
-                              showGrid={showGrid}
-                            />
-                          )}
+                  {data?.system.vendorType === "mondo" ||
+                  data?.system.vendorType === "composite" ? (
+                    <>
+                      {/* Power Cards - Composite and Mondo systems, horizontal grid at top */}
+                      {(data?.system.vendorType === "composite" ||
+                        data?.system.vendorType === "mondo") &&
+                        data.latest && (
+                          <SystemPowerCards
+                            latest={data.latest}
+                            vendorType={data.system.vendorType}
+                            getStaleThreshold={getStaleThreshold}
+                            showGrid={showGrid}
+                          />
+                        )}
 
-                        {/* Charts - For mondo/composite systems, show charts with tables in single container */}
-                        {/* Hide entire container for unconfigured composite systems */}
-                        {(historyLoading ||
-                          processedHistoryData.load ||
-                          processedHistoryData.generation ||
-                          system?.vendorType !== "composite") && (
-                          <div className="overflow-hidden">
-                            {/* Shared header with date/time and period switcher */}
-                            <div className="px-2 sm:px-4 pt-2 sm:pt-4 pb-1 sm:pb-2">
-                              <div className="flex justify-end items-center">
-                                <div className="flex items-center gap-2 sm:gap-4">
-                                  <span
-                                    className="text-xs sm:text-sm text-gray-400"
-                                    style={{
-                                      fontFamily:
-                                        "DM Sans, system-ui, sans-serif",
-                                    }}
-                                  >
-                                    {hoveredIndex !== null &&
-                                    (loadChartData || generationChartData)
-                                      ? // Show hovered timestamp from whichever chart has data - always show time when hovering
-                                        format(
-                                          loadChartData?.timestamps[
+                      {/* Charts - For mondo/composite systems, show charts with tables in single container */}
+                      {/* Hide entire container for unconfigured composite systems */}
+                      {(historyLoading ||
+                        processedHistoryData.load ||
+                        processedHistoryData.generation ||
+                        system?.vendorType !== "composite") && (
+                        <div className="overflow-hidden">
+                          {/* Shared header with date/time and period switcher */}
+                          <div className="px-2 sm:px-4 pt-2 sm:pt-4 pb-1 sm:pb-2">
+                            <div className="flex justify-end items-center">
+                              <div className="flex items-center gap-2 sm:gap-4">
+                                <span
+                                  className="text-xs sm:text-sm text-gray-400"
+                                  style={{
+                                    fontFamily:
+                                      "DM Sans, system-ui, sans-serif",
+                                  }}
+                                >
+                                  {hoveredIndex !== null &&
+                                  (loadChartData || generationChartData)
+                                    ? // Show hovered timestamp from whichever chart has data - always show time when hovering
+                                      format(
+                                        loadChartData?.timestamps[
+                                          hoveredIndex
+                                        ] ||
+                                          generationChartData?.timestamps[
                                             hoveredIndex
                                           ] ||
-                                            generationChartData?.timestamps[
-                                              hoveredIndex
-                                            ] ||
-                                            new Date(),
-                                          sitePeriod === "1D"
-                                            ? "h:mma"
-                                            : sitePeriod === "7D"
-                                              ? "EEE, d MMM h:mma"
-                                              : "EEE, d MMM",
-                                        )
-                                      : // Show date range from actual chart data when not hovering
-                                        (() => {
-                                          const chartData =
-                                            loadChartData ||
-                                            generationChartData;
-                                          // Get timezone offset from API data or system prop
-                                          const timezoneOffset =
-                                            data?.system.timezoneOffsetMin ??
-                                            system?.timezoneOffsetMin;
-                                          if (!timezoneOffset) {
-                                            return "Loading..."; // No timezone data yet
-                                          }
+                                          new Date(),
+                                        sitePeriod === "1D"
+                                          ? "h:mma"
+                                          : sitePeriod === "7D"
+                                            ? "EEE, d MMM h:mma"
+                                            : "EEE, d MMM",
+                                      )
+                                    : // Show date range from actual chart data when not hovering
+                                      (() => {
+                                        const chartData =
+                                          loadChartData || generationChartData;
+                                        // Get timezone offset from API data or system prop
+                                        const timezoneOffset =
+                                          data?.system.timezoneOffsetMin ??
+                                          system?.timezoneOffsetMin;
+                                        if (!timezoneOffset) {
+                                          return "Loading..."; // No timezone data yet
+                                        }
+                                        if (
+                                          chartData &&
+                                          chartData.timestamps.length > 0
+                                        ) {
+                                          const start = fromUnixTimestamp(
+                                            chartData.timestamps[0].getTime() /
+                                              1000,
+                                            timezoneOffset,
+                                          );
+                                          const end = fromUnixTimestamp(
+                                            chartData.timestamps[
+                                              chartData.timestamps.length - 1
+                                            ].getTime() / 1000,
+                                            timezoneOffset,
+                                          );
+                                          return (
+                                            <>
+                                              <span className="hidden sm:inline">
+                                                {formatDateTimeRange(
+                                                  start,
+                                                  end,
+                                                  sitePeriod !== "30D",
+                                                )}
+                                              </span>
+                                              <span className="sm:hidden">
+                                                {formatDateTimeRange(
+                                                  start,
+                                                  end,
+                                                  false,
+                                                )}
+                                              </span>
+                                            </>
+                                          );
+                                        } else {
+                                          // Fallback to calculated range if no data yet
+                                          // Use historyTimeRange if in historical mode, otherwise use current time
                                           if (
-                                            chartData &&
-                                            chartData.timestamps.length > 0
+                                            isHistoricalMode &&
+                                            historyTimeRange.start &&
+                                            historyTimeRange.end
                                           ) {
+                                            // Use the requested historical time range
                                             const start = fromUnixTimestamp(
-                                              chartData.timestamps[0].getTime() /
-                                                1000,
+                                              new Date(
+                                                historyTimeRange.start,
+                                              ).getTime() / 1000,
                                               timezoneOffset,
                                             );
                                             const end = fromUnixTimestamp(
-                                              chartData.timestamps[
-                                                chartData.timestamps.length - 1
-                                              ].getTime() / 1000,
+                                              new Date(
+                                                historyTimeRange.end,
+                                              ).getTime() / 1000,
                                               timezoneOffset,
                                             );
                                             return (
@@ -1246,566 +1155,516 @@ export default function DashboardClient({
                                               </>
                                             );
                                           } else {
-                                            // Fallback to calculated range if no data yet
-                                            // Use historyTimeRange if in historical mode, otherwise use current time
-                                            if (
-                                              isHistoricalMode &&
-                                              historyTimeRange.start &&
-                                              historyTimeRange.end
-                                            ) {
-                                              // Use the requested historical time range
-                                              const start = fromUnixTimestamp(
-                                                new Date(
-                                                  historyTimeRange.start,
-                                                ).getTime() / 1000,
-                                                timezoneOffset,
-                                              );
-                                              const end = fromUnixTimestamp(
-                                                new Date(
-                                                  historyTimeRange.end,
-                                                ).getTime() / 1000,
-                                                timezoneOffset,
-                                              );
-                                              return (
-                                                <>
-                                                  <span className="hidden sm:inline">
-                                                    {formatDateTimeRange(
-                                                      start,
-                                                      end,
-                                                      sitePeriod !== "30D",
-                                                    )}
-                                                  </span>
-                                                  <span className="sm:hidden">
-                                                    {formatDateTimeRange(
-                                                      start,
-                                                      end,
-                                                      false,
-                                                    )}
-                                                  </span>
-                                                </>
-                                              );
-                                            } else {
-                                              // Fallback to current time if not in historical mode
-                                              const now = new Date();
-                                              let windowHours: number;
-                                              if (sitePeriod === "1D")
-                                                windowHours = 24;
-                                              else if (sitePeriod === "7D")
-                                                windowHours = 24 * 7;
-                                              else windowHours = 24 * 30;
-                                              const windowStart = new Date(
-                                                now.getTime() -
-                                                  windowHours * 60 * 60 * 1000,
-                                              );
-                                              const start = fromUnixTimestamp(
-                                                windowStart.getTime() / 1000,
-                                                timezoneOffset,
-                                              );
-                                              const end = fromUnixTimestamp(
-                                                now.getTime() / 1000,
-                                                timezoneOffset,
-                                              );
-                                              return (
-                                                <>
-                                                  <span className="hidden sm:inline">
-                                                    {formatDateTimeRange(
-                                                      start,
-                                                      end,
-                                                      sitePeriod !== "30D",
-                                                    )}
-                                                  </span>
-                                                  <span className="sm:hidden">
-                                                    {formatDateTimeRange(
-                                                      start,
-                                                      end,
-                                                      false,
-                                                    )}
-                                                  </span>
-                                                </>
-                                              );
-                                            }
+                                            // Fallback to current time if not in historical mode
+                                            const now = new Date();
+                                            let windowHours: number;
+                                            if (sitePeriod === "1D")
+                                              windowHours = 24;
+                                            else if (sitePeriod === "7D")
+                                              windowHours = 24 * 7;
+                                            else windowHours = 24 * 30;
+                                            const windowStart = new Date(
+                                              now.getTime() -
+                                                windowHours * 60 * 60 * 1000,
+                                            );
+                                            const start = fromUnixTimestamp(
+                                              windowStart.getTime() / 1000,
+                                              timezoneOffset,
+                                            );
+                                            const end = fromUnixTimestamp(
+                                              now.getTime() / 1000,
+                                              timezoneOffset,
+                                            );
+                                            return (
+                                              <>
+                                                <span className="hidden sm:inline">
+                                                  {formatDateTimeRange(
+                                                    start,
+                                                    end,
+                                                    sitePeriod !== "30D",
+                                                  )}
+                                                </span>
+                                                <span className="sm:hidden">
+                                                  {formatDateTimeRange(
+                                                    start,
+                                                    end,
+                                                    false,
+                                                  )}
+                                                </span>
+                                              </>
+                                            );
                                           }
-                                        })()}
-                                  </span>
-                                  {/* Prev/Next navigation buttons */}
-                                  <div
-                                    className="inline-flex rounded-md shadow-sm"
-                                    role="group"
+                                        }
+                                      })()}
+                                </span>
+                                {/* Prev/Next navigation buttons */}
+                                <div
+                                  className="inline-flex rounded-md shadow-sm"
+                                  role="group"
+                                >
+                                  <button
+                                    onClick={handlePageOlder}
+                                    className="px-2 py-1 text-sm font-medium border rounded-l-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white transition-none"
+                                    title="Older (Previous)"
                                   >
-                                    <button
-                                      onClick={handlePageOlder}
-                                      className="px-2 py-1 text-sm font-medium border rounded-l-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white transition-none"
-                                      title="Older (Previous)"
-                                    >
-                                      <ChevronLeft className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                      onClick={handlePageNewer}
-                                      disabled={!isHistoricalMode}
-                                      className="px-2 py-1 text-sm font-medium border-l-0 border rounded-r-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-none"
-                                      title="Newer (Next)"
-                                    >
-                                      <ChevronRight className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                  <PeriodSwitcher
-                                    value={sitePeriod}
-                                    onChange={(newPeriod) => {
-                                      setSitePeriod(newPeriod);
-                                      setHistoryTimeRange({}); // Reset to current when period changes
-                                      setHistoryFetchTrigger(
-                                        (prev) => prev + 1,
-                                      ); // Trigger data refetch
-                                      const params = new URLSearchParams(
-                                        searchParams.toString(),
-                                      );
-                                      params.set("period", newPeriod);
-                                      params.delete("start");
-                                      params.delete("end");
-                                      params.delete("offset");
-                                      router.push(`?${params.toString()}`, {
-                                        scroll: false,
-                                      });
-                                    }}
-                                  />
+                                    <ChevronLeft className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={handlePageNewer}
+                                    disabled={!isHistoricalMode}
+                                    className="px-2 py-1 text-sm font-medium border-l-0 border rounded-r-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-none"
+                                    title="Newer (Next)"
+                                  >
+                                    <ChevronRight className="w-4 h-4" />
+                                  </button>
                                 </div>
+                                <PeriodSwitcher
+                                  value={sitePeriod}
+                                  onChange={(newPeriod) => {
+                                    setSitePeriod(newPeriod);
+                                    setHistoryTimeRange({}); // Reset to current when period changes
+                                    setHistoryFetchTrigger((prev) => prev + 1); // Trigger data refetch
+                                    const params = new URLSearchParams(
+                                      searchParams.toString(),
+                                    );
+                                    params.set("period", newPeriod);
+                                    params.delete("start");
+                                    params.delete("end");
+                                    params.delete("offset");
+                                    router.push(`?${params.toString()}`, {
+                                      scroll: false,
+                                    });
+                                  }}
+                                />
                               </div>
                             </div>
-
-                            {/* Loads Chart with Table */}
-                            <div className="px-2 sm:px-4 pt-1 sm:pt-2 pb-2 sm:pb-4">
-                              <div className="flex flex-col md:flex-row md:gap-4">
-                                <div className="flex-1 min-w-0">
-                                  <SitePowerChart
-                                    systemId={parseInt(systemId as string)}
-                                    mode="load"
-                                    title="Loads"
-                                    className="h-full min-h-[375px]"
-                                    period={sitePeriod}
-                                    onPeriodChange={(newPeriod) => {
-                                      setSitePeriod(newPeriod);
-                                      setHistoryTimeRange({}); // Reset to current when period changes
-                                      const params = new URLSearchParams(
-                                        searchParams.toString(),
-                                      );
-                                      params.set("period", newPeriod);
-                                      params.delete("start");
-                                      params.delete("end");
-                                      params.delete("offset");
-                                      router.push(`?${params.toString()}`, {
-                                        scroll: false,
-                                      });
-                                    }}
-                                    showPeriodSwitcher={false}
-                                    onDataChange={setLoadChartData}
-                                    onHoverIndexChange={
-                                      handleLoadHoverIndexChange
-                                    }
-                                    hoveredIndex={hoveredIndex}
-                                    visibleSeries={
-                                      loadVisibleSeries.size > 0
-                                        ? loadVisibleSeries
-                                        : undefined
-                                    }
-                                    onVisibilityChange={setLoadVisibleSeries}
-                                    data={processedHistoryData.load}
-                                    isLoading={historyLoading}
-                                  />
-                                </div>
-                                <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
-                                  <EnergyTable
-                                    chartData={loadChartData}
-                                    mode="load"
-                                    hoveredIndex={hoveredIndex}
-                                    className="h-full"
-                                    visibleSeries={
-                                      loadVisibleSeries.size > 0
-                                        ? loadVisibleSeries
-                                        : undefined
-                                    }
-                                    onSeriesToggle={handleLoadSeriesToggle}
-                                  />
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Generation Chart with Table */}
-                            <div className="p-2 sm:p-4">
-                              <div className="flex flex-col md:flex-row md:gap-4">
-                                <div className="flex-1 min-w-0">
-                                  <SitePowerChart
-                                    systemId={parseInt(systemId as string)}
-                                    mode="generation"
-                                    title="Generation"
-                                    className="h-full min-h-[375px]"
-                                    period={sitePeriod}
-                                    onPeriodChange={(newPeriod) => {
-                                      setSitePeriod(newPeriod);
-                                      setHistoryTimeRange({}); // Reset to current when period changes
-                                      const params = new URLSearchParams(
-                                        searchParams.toString(),
-                                      );
-                                      params.set("period", newPeriod);
-                                      params.delete("start");
-                                      params.delete("end");
-                                      params.delete("offset");
-                                      router.push(`?${params.toString()}`, {
-                                        scroll: false,
-                                      });
-                                    }}
-                                    showPeriodSwitcher={false}
-                                    onDataChange={setGenerationChartData}
-                                    onHoverIndexChange={
-                                      handleGenerationHoverIndexChange
-                                    }
-                                    hoveredIndex={hoveredIndex}
-                                    visibleSeries={
-                                      generationVisibleSeries.size > 0
-                                        ? generationVisibleSeries
-                                        : undefined
-                                    }
-                                    onVisibilityChange={
-                                      setGenerationVisibleSeries
-                                    }
-                                    data={processedHistoryData.generation}
-                                    isLoading={historyLoading}
-                                  />
-                                </div>
-                                <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
-                                  <EnergyTable
-                                    chartData={generationChartData}
-                                    mode="generation"
-                                    hoveredIndex={hoveredIndex}
-                                    className="h-full"
-                                    visibleSeries={
-                                      generationVisibleSeries.size > 0
-                                        ? generationVisibleSeries
-                                        : undefined
-                                    }
-                                    onSeriesToggle={
-                                      handleGenerationSeriesToggle
-                                    }
-                                  />
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Energy Flow Sankey Diagram */}
-                            {processedHistoryData.generation &&
-                              processedHistoryData.load &&
-                              (() => {
-                                const matrix = calculateEnergyFlowMatrix({
-                                  generation: processedHistoryData.generation,
-                                  load: processedHistoryData.load,
-                                });
-                                return matrix ? (
-                                  <div className="sm:p-4">
-                                    <h3 className="text-base font-semibold text-gray-300 mb-2 px-2 sm:px-0">
-                                      Flows
-                                    </h3>
-                                    <div className="flex justify-center">
-                                      <EnergyFlowSankey
-                                        matrix={matrix}
-                                        width={600}
-                                        height={680}
-                                      />
-                                    </div>
-                                    {sitePeriod === "30D" && (
-                                      <div className="mt-4 px-2 sm:px-0">
-                                        <div className="text-xs text-amber-400/80 bg-amber-950/20 border border-amber-800/30 rounded-md p-3">
-                                          <span className="font-medium">
-                                            Note:
-                                          </span>{" "}
-                                          Battery and grid energy values in 30D
-                                          view are not yet accurate due to daily
-                                          averaging. Values will be corrected
-                                          when server-side energy flow
-                                          calculation is implemented.
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : null;
-                              })()}
                           </div>
-                        )}
-                      </>
-                    ) : (
-                      // For other systems, show the regular energy chart
-                      <EnergyChart
-                        systemId={parseInt(systemId as string)}
-                        vendorType={data?.system.vendorType}
-                        className="h-full min-h-[400px]"
-                        maxPowerHint={(() => {
-                          // Parse solar size (format: "9 kW")
-                          let solarKW: number | undefined;
-                          if (systemInfo?.solarSize) {
-                            const solarMatch = systemInfo.solarSize.match(
-                              /^(\d+(?:\.\d+)?)\s+kW$/i,
-                            );
-                            if (solarMatch) {
-                              solarKW = parseFloat(solarMatch[1]);
-                            }
-                          }
 
-                          // Parse inverter rating (format: "7.5kW, 48V")
-                          let inverterKW: number | undefined;
-                          if (systemInfo?.ratings) {
-                            const ratingMatch =
-                              systemInfo.ratings.match(/(\d+(?:\.\d+)?)kW/i);
-                            if (ratingMatch) {
-                              inverterKW = parseFloat(ratingMatch[1]);
-                            }
-                          }
+                          {/* Loads Chart with Table */}
+                          <div className="px-2 sm:px-4 pt-1 sm:pt-2 pb-2 sm:pb-4">
+                            <div className="flex flex-col md:flex-row md:gap-4">
+                              <div className="flex-1 min-w-0">
+                                <SitePowerChart
+                                  systemId={parseInt(systemId as string)}
+                                  mode="load"
+                                  title="Loads"
+                                  className="h-full min-h-[375px]"
+                                  period={sitePeriod}
+                                  onPeriodChange={(newPeriod) => {
+                                    setSitePeriod(newPeriod);
+                                    setHistoryTimeRange({}); // Reset to current when period changes
+                                    const params = new URLSearchParams(
+                                      searchParams.toString(),
+                                    );
+                                    params.set("period", newPeriod);
+                                    params.delete("start");
+                                    params.delete("end");
+                                    params.delete("offset");
+                                    router.push(`?${params.toString()}`, {
+                                      scroll: false,
+                                    });
+                                  }}
+                                  showPeriodSwitcher={false}
+                                  onDataChange={setLoadChartData}
+                                  onHoverIndexChange={
+                                    handleLoadHoverIndexChange
+                                  }
+                                  hoveredIndex={hoveredIndex}
+                                  visibleSeries={
+                                    loadVisibleSeries.size > 0
+                                      ? loadVisibleSeries
+                                      : undefined
+                                  }
+                                  onVisibilityChange={setLoadVisibleSeries}
+                                  data={processedHistoryData.load}
+                                  isLoading={historyLoading}
+                                />
+                              </div>
+                              <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+                                <EnergyTable
+                                  chartData={loadChartData}
+                                  mode="load"
+                                  hoveredIndex={hoveredIndex}
+                                  className="h-full"
+                                  visibleSeries={
+                                    loadVisibleSeries.size > 0
+                                      ? loadVisibleSeries
+                                      : undefined
+                                  }
+                                  onSeriesToggle={handleLoadSeriesToggle}
+                                />
+                              </div>
+                            </div>
+                          </div>
 
-                          // Return the maximum of both values, or undefined if neither parsed
-                          if (
-                            solarKW !== undefined &&
-                            inverterKW !== undefined
-                          ) {
-                            return Math.max(solarKW, inverterKW);
-                          }
-                          return solarKW ?? inverterKW;
-                        })()}
-                      />
-                    )}
-                  </div>
+                          {/* Generation Chart with Table */}
+                          <div className="p-2 sm:p-4">
+                            <div className="flex flex-col md:flex-row md:gap-4">
+                              <div className="flex-1 min-w-0">
+                                <SitePowerChart
+                                  systemId={parseInt(systemId as string)}
+                                  mode="generation"
+                                  title="Generation"
+                                  className="h-full min-h-[375px]"
+                                  period={sitePeriod}
+                                  onPeriodChange={(newPeriod) => {
+                                    setSitePeriod(newPeriod);
+                                    setHistoryTimeRange({}); // Reset to current when period changes
+                                    const params = new URLSearchParams(
+                                      searchParams.toString(),
+                                    );
+                                    params.set("period", newPeriod);
+                                    params.delete("start");
+                                    params.delete("end");
+                                    params.delete("offset");
+                                    router.push(`?${params.toString()}`, {
+                                      scroll: false,
+                                    });
+                                  }}
+                                  showPeriodSwitcher={false}
+                                  onDataChange={setGenerationChartData}
+                                  onHoverIndexChange={
+                                    handleGenerationHoverIndexChange
+                                  }
+                                  hoveredIndex={hoveredIndex}
+                                  visibleSeries={
+                                    generationVisibleSeries.size > 0
+                                      ? generationVisibleSeries
+                                      : undefined
+                                  }
+                                  onVisibilityChange={
+                                    setGenerationVisibleSeries
+                                  }
+                                  data={processedHistoryData.generation}
+                                  isLoading={historyLoading}
+                                />
+                              </div>
+                              <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+                                <EnergyTable
+                                  chartData={generationChartData}
+                                  mode="generation"
+                                  hoveredIndex={hoveredIndex}
+                                  className="h-full"
+                                  visibleSeries={
+                                    generationVisibleSeries.size > 0
+                                      ? generationVisibleSeries
+                                      : undefined
+                                  }
+                                  onSeriesToggle={handleGenerationSeriesToggle}
+                                />
+                              </div>
+                            </div>
+                          </div>
 
-                  {/* Power Cards - 1/3 width on desktop, horizontal on mobile - Only for systems with latest data (excluding composite/mondo which use top section) */}
-                  {data.latest &&
-                    data?.system.vendorType !== "composite" &&
-                    data?.system.vendorType !== "mondo" &&
-                    (() => {
-                      // Solar card logic: handle different solar point configurations
-                      const solarTotalPoint = getPoint(
-                        data.latest,
-                        "source.solar/power",
-                      );
-                      const solarLocalPoint = getPoint(
-                        data.latest,
-                        "source.solar.local/power",
-                      );
-                      const solarRemotePoint = getPoint(
-                        data.latest,
-                        "source.solar.remote/power",
-                      );
-
-                      const solarTotal = solarTotalPoint?.value ?? null;
-                      const solarLocal = solarLocalPoint?.value ?? null;
-                      const solarRemote = solarRemotePoint?.value ?? null;
-
-                      const hasBothChildren =
-                        solarLocal !== null && solarRemote !== null;
-                      const hasTotal = solarTotal !== null;
-
-                      // Determine solar value to display
-                      let solarValue: number;
-                      if (hasTotal) {
-                        solarValue = solarTotal;
-                      } else if (hasBothChildren) {
-                        solarValue = solarLocal + solarRemote;
-                      } else {
-                        solarValue = 0;
-                      }
-
-                      // Show breakdown if we have total and both children, or if we calculated total from children
-                      const showBreakdown =
-                        (hasTotal && hasBothChildren) ||
-                        (!hasTotal && hasBothChildren);
-
-                      return (
-                        <div className="grid grid-cols-3 gap-2 lg:grid-cols-1 lg:gap-4 px-1">
-                          <PowerCard
-                            title="Solar"
-                            value={formatPower(solarValue)}
-                            icon={<Sun className="w-6 h-6" />}
-                            iconColor="text-yellow-400"
-                            bgColor="bg-yellow-900/20"
-                            borderColor="border-yellow-700"
-                            staleThresholdSeconds={getStaleThreshold(
-                              data.system.vendorType,
-                            )}
-                            measurementTime={
-                              solarTotalPoint?.measurementTime ?? undefined
-                            }
-                            extra={
-                              showBreakdown ? (
-                                <div className="text-xs space-y-1 text-gray-400">
-                                  {solarLocal !== null && (
-                                    <div>Local: {formatPower(solarLocal)}</div>
-                                  )}
-                                  {solarRemote !== null && (
-                                    <div>
-                                      Remote: {formatPower(solarRemote)}
+                          {/* Energy Flow Sankey Diagram */}
+                          {processedHistoryData.generation &&
+                            processedHistoryData.load &&
+                            (() => {
+                              const matrix = calculateEnergyFlowMatrix({
+                                generation: processedHistoryData.generation,
+                                load: processedHistoryData.load,
+                              });
+                              return matrix ? (
+                                <div className="sm:p-4">
+                                  <h3 className="text-base font-semibold text-gray-300 mb-2 px-2 sm:px-0">
+                                    Flows
+                                  </h3>
+                                  <div className="flex justify-center">
+                                    <EnergyFlowSankey
+                                      matrix={matrix}
+                                      width={600}
+                                      height={680}
+                                    />
+                                  </div>
+                                  {sitePeriod === "30D" && (
+                                    <div className="mt-4 px-2 sm:px-0">
+                                      <div className="text-xs text-amber-400/80 bg-amber-950/20 border border-amber-800/30 rounded-md p-3">
+                                        <span className="font-medium">
+                                          Note:
+                                        </span>{" "}
+                                        Battery and grid energy values in 30D
+                                        view are not yet accurate due to daily
+                                        averaging. Values will be corrected when
+                                        server-side energy flow calculation is
+                                        implemented.
+                                      </div>
                                     </div>
                                   )}
                                 </div>
-                              ) : undefined
-                            }
-                          />
-                          {(() => {
-                            const loadPowerPoint = getPoint(
-                              data.latest,
-                              "load/power",
-                            );
-                            const loadPower = loadPowerPoint?.value ?? null;
+                              ) : null;
+                            })()}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    // For other systems, show the regular energy chart
+                    <EnergyChart
+                      systemId={parseInt(systemId as string)}
+                      vendorType={data?.system.vendorType}
+                      className="h-full min-h-[400px]"
+                      maxPowerHint={(() => {
+                        // Parse solar size (format: "9 kW")
+                        let solarKW: number | undefined;
+                        if (systemInfo?.solarSize) {
+                          const solarMatch = systemInfo.solarSize.match(
+                            /^(\d+(?:\.\d+)?)\s+kW$/i,
+                          );
+                          if (solarMatch) {
+                            solarKW = parseFloat(solarMatch[1]);
+                          }
+                        }
 
-                            return (
-                              <PowerCard
-                                title="Load"
-                                value={
-                                  loadPower !== null
-                                    ? formatPower(loadPower)
-                                    : "—"
-                                }
-                                icon={<Home className="w-6 h-6" />}
-                                iconColor="text-blue-400"
-                                bgColor="bg-blue-900/20"
-                                borderColor="border-blue-700"
-                                staleThresholdSeconds={getStaleThreshold(
-                                  data.system.vendorType,
+                        // Parse inverter rating (format: "7.5kW, 48V")
+                        let inverterKW: number | undefined;
+                        if (systemInfo?.ratings) {
+                          const ratingMatch =
+                            systemInfo.ratings.match(/(\d+(?:\.\d+)?)kW/i);
+                          if (ratingMatch) {
+                            inverterKW = parseFloat(ratingMatch[1]);
+                          }
+                        }
+
+                        // Return the maximum of both values, or undefined if neither parsed
+                        if (solarKW !== undefined && inverterKW !== undefined) {
+                          return Math.max(solarKW, inverterKW);
+                        }
+                        return solarKW ?? inverterKW;
+                      })()}
+                    />
+                  )}
+                </div>
+
+                {/* Power Cards - 1/3 width on desktop, horizontal on mobile - Only for systems with latest data (excluding composite/mondo which use top section) */}
+                {data.latest &&
+                  data?.system.vendorType !== "composite" &&
+                  data?.system.vendorType !== "mondo" &&
+                  (() => {
+                    // Solar card logic: handle different solar point configurations
+                    const solarTotalPoint = getPoint(
+                      data.latest,
+                      "source.solar/power",
+                    );
+                    const solarLocalPoint = getPoint(
+                      data.latest,
+                      "source.solar.local/power",
+                    );
+                    const solarRemotePoint = getPoint(
+                      data.latest,
+                      "source.solar.remote/power",
+                    );
+
+                    const solarTotal = solarTotalPoint?.value ?? null;
+                    const solarLocal = solarLocalPoint?.value ?? null;
+                    const solarRemote = solarRemotePoint?.value ?? null;
+
+                    const hasBothChildren =
+                      solarLocal !== null && solarRemote !== null;
+                    const hasTotal = solarTotal !== null;
+
+                    // Determine solar value to display
+                    let solarValue: number;
+                    if (hasTotal) {
+                      solarValue = solarTotal;
+                    } else if (hasBothChildren) {
+                      solarValue = solarLocal + solarRemote;
+                    } else {
+                      solarValue = 0;
+                    }
+
+                    // Show breakdown if we have total and both children, or if we calculated total from children
+                    const showBreakdown =
+                      (hasTotal && hasBothChildren) ||
+                      (!hasTotal && hasBothChildren);
+
+                    return (
+                      <div className="grid grid-cols-3 gap-2 lg:grid-cols-1 lg:gap-4 px-1">
+                        <PowerCard
+                          title="Solar"
+                          value={formatPower(solarValue)}
+                          icon={<Sun className="w-6 h-6" />}
+                          iconColor="text-yellow-400"
+                          bgColor="bg-yellow-900/20"
+                          borderColor="border-yellow-700"
+                          staleThresholdSeconds={getStaleThreshold(
+                            data.system.vendorType,
+                          )}
+                          measurementTime={
+                            solarTotalPoint?.measurementTime ?? undefined
+                          }
+                          extra={
+                            showBreakdown ? (
+                              <div className="text-xs space-y-1 text-gray-400">
+                                {solarLocal !== null && (
+                                  <div>Local: {formatPower(solarLocal)}</div>
                                 )}
-                                measurementTime={
-                                  loadPowerPoint?.measurementTime ?? undefined
-                                }
-                              />
-                            );
-                          })()}
-                          {(() => {
-                            const batterySocPoint = getPoint(
+                                {solarRemote !== null && (
+                                  <div>Remote: {formatPower(solarRemote)}</div>
+                                )}
+                              </div>
+                            ) : undefined
+                          }
+                        />
+                        {(() => {
+                          const loadPowerPoint = getPoint(
+                            data.latest,
+                            "load/power",
+                          );
+                          const loadPower = loadPowerPoint?.value ?? null;
+
+                          return (
+                            <PowerCard
+                              title="Load"
+                              value={
+                                loadPower !== null
+                                  ? formatPower(loadPower)
+                                  : "—"
+                              }
+                              icon={<Home className="w-6 h-6" />}
+                              iconColor="text-blue-400"
+                              bgColor="bg-blue-900/20"
+                              borderColor="border-blue-700"
+                              staleThresholdSeconds={getStaleThreshold(
+                                data.system.vendorType,
+                              )}
+                              measurementTime={
+                                loadPowerPoint?.measurementTime ?? undefined
+                              }
+                            />
+                          );
+                        })()}
+                        {(() => {
+                          const batterySocPoint = getPoint(
+                            data.latest,
+                            "bidi.battery/soc",
+                          );
+                          const batteryPowerPoint = getPoint(
+                            data.latest,
+                            "bidi.battery/power",
+                          );
+                          const batterySoc = batterySocPoint?.value ?? null;
+                          const batteryPower = batteryPowerPoint?.value ?? null;
+
+                          return (
+                            <PowerCard
+                              title="Battery"
+                              value={
+                                batterySoc !== null
+                                  ? `${batterySoc.toFixed(1)}%`
+                                  : "—"
+                              }
+                              icon={<Battery className="w-6 h-6" />}
+                              iconColor={
+                                batteryPower === null
+                                  ? "text-gray-400"
+                                  : batteryPower < 0
+                                    ? "text-green-400"
+                                    : batteryPower > 0
+                                      ? "text-orange-400"
+                                      : "text-gray-400"
+                              }
+                              bgColor={
+                                batteryPower === null
+                                  ? "bg-gray-900/20"
+                                  : batteryPower < 0
+                                    ? "bg-green-900/20"
+                                    : batteryPower > 0
+                                      ? "bg-orange-900/20"
+                                      : "bg-gray-900/20"
+                              }
+                              borderColor={
+                                batteryPower === null
+                                  ? "border-gray-700"
+                                  : batteryPower < 0
+                                    ? "border-green-700"
+                                    : batteryPower > 0
+                                      ? "border-orange-700"
+                                      : "border-gray-700"
+                              }
+                              staleThresholdSeconds={getStaleThreshold(
+                                data.system.vendorType,
+                              )}
+                              measurementTime={
+                                batteryPowerPoint?.measurementTime ?? undefined
+                              }
+                              extraInfo={
+                                batteryPower === null
+                                  ? "—"
+                                  : batteryPower !== 0
+                                    ? `${batteryPower < 0 ? "Charging" : "Discharging"} ${formatPower(Math.abs(batteryPower))}`
+                                    : "Idle"
+                              }
+                            />
+                          );
+                        })()}
+                        {showGrid &&
+                          (() => {
+                            const gridPowerPoint = getPoint(
                               data.latest,
-                              "bidi.battery/soc",
+                              "bidi.grid/power",
                             );
-                            const batteryPowerPoint = getPoint(
-                              data.latest,
-                              "bidi.battery/power",
-                            );
-                            const batterySoc = batterySocPoint?.value ?? null;
-                            const batteryPower =
-                              batteryPowerPoint?.value ?? null;
+                            const gridPower = gridPowerPoint?.value ?? null;
 
                             return (
                               <PowerCard
-                                title="Battery"
+                                title="Grid"
                                 value={
-                                  batterySoc !== null
-                                    ? `${batterySoc.toFixed(1)}%`
+                                  gridPower !== null
+                                    ? formatPower(gridPower)
                                     : "—"
                                 }
-                                icon={<Battery className="w-6 h-6" />}
+                                icon={<Zap className="w-6 h-6" />}
                                 iconColor={
-                                  batteryPower === null
+                                  gridPower === null
                                     ? "text-gray-400"
-                                    : batteryPower < 0
-                                      ? "text-green-400"
-                                      : batteryPower > 0
-                                        ? "text-orange-400"
+                                    : gridPower > 0
+                                      ? "text-red-400"
+                                      : gridPower < 0
+                                        ? "text-green-400"
                                         : "text-gray-400"
                                 }
                                 bgColor={
-                                  batteryPower === null
+                                  gridPower === null
                                     ? "bg-gray-900/20"
-                                    : batteryPower < 0
-                                      ? "bg-green-900/20"
-                                      : batteryPower > 0
-                                        ? "bg-orange-900/20"
+                                    : gridPower > 0
+                                      ? "bg-red-900/20"
+                                      : gridPower < 0
+                                        ? "bg-green-900/20"
                                         : "bg-gray-900/20"
                                 }
                                 borderColor={
-                                  batteryPower === null
+                                  gridPower === null
                                     ? "border-gray-700"
-                                    : batteryPower < 0
-                                      ? "border-green-700"
-                                      : batteryPower > 0
-                                        ? "border-orange-700"
+                                    : gridPower > 0
+                                      ? "border-red-700"
+                                      : gridPower < 0
+                                        ? "border-green-700"
                                         : "border-gray-700"
                                 }
                                 staleThresholdSeconds={getStaleThreshold(
                                   data.system.vendorType,
                                 )}
                                 measurementTime={
-                                  batteryPowerPoint?.measurementTime ??
-                                  undefined
+                                  gridPowerPoint?.measurementTime ?? undefined
                                 }
                                 extraInfo={
-                                  batteryPower === null
+                                  gridPower === null
                                     ? "—"
-                                    : batteryPower !== 0
-                                      ? `${batteryPower < 0 ? "Charging" : "Discharging"} ${formatPower(Math.abs(batteryPower))}`
-                                      : "Idle"
+                                    : gridPower > 0
+                                      ? "Importing"
+                                      : gridPower < 0
+                                        ? "Exporting"
+                                        : "Neutral"
                                 }
                               />
                             );
                           })()}
-                          {showGrid &&
-                            (() => {
-                              const gridPowerPoint = getPoint(
-                                data.latest,
-                                "bidi.grid/power",
-                              );
-                              const gridPower = gridPowerPoint?.value ?? null;
+                      </div>
+                    );
+                  })()}
+              </div>
+            )}
 
-                              return (
-                                <PowerCard
-                                  title="Grid"
-                                  value={
-                                    gridPower !== null
-                                      ? formatPower(gridPower)
-                                      : "—"
-                                  }
-                                  icon={<Zap className="w-6 h-6" />}
-                                  iconColor={
-                                    gridPower === null
-                                      ? "text-gray-400"
-                                      : gridPower > 0
-                                        ? "text-red-400"
-                                        : gridPower < 0
-                                          ? "text-green-400"
-                                          : "text-gray-400"
-                                  }
-                                  bgColor={
-                                    gridPower === null
-                                      ? "bg-gray-900/20"
-                                      : gridPower > 0
-                                        ? "bg-red-900/20"
-                                        : gridPower < 0
-                                          ? "bg-green-900/20"
-                                          : "bg-gray-900/20"
-                                  }
-                                  borderColor={
-                                    gridPower === null
-                                      ? "border-gray-700"
-                                      : gridPower > 0
-                                        ? "border-red-700"
-                                        : gridPower < 0
-                                          ? "border-green-700"
-                                          : "border-gray-700"
-                                  }
-                                  staleThresholdSeconds={getStaleThreshold(
-                                    data.system.vendorType,
-                                  )}
-                                  measurementTime={
-                                    gridPowerPoint?.measurementTime ?? undefined
-                                  }
-                                  extraInfo={
-                                    gridPower === null
-                                      ? "—"
-                                      : gridPower > 0
-                                        ? "Importing"
-                                        : gridPower < 0
-                                          ? "Exporting"
-                                          : "Neutral"
-                                  }
-                                />
-                              );
-                            })()}
-                        </div>
-                      );
-                    })()}
-                </div>
-              )}
-
-            {/* Energy Panel - Only show for admin or non-removed systems
+          {/* Energy Panel - Only show for admin or non-removed systems
                 TEMPORARILY DISABLED - Needs composite points implementation
 
                 Previously displayed energy data from data.latest.energy with structure:
@@ -1823,87 +1682,15 @@ export default function DashboardClient({
                    - etc.
                 2. Pass constructed energy object to EnergyPanel
             */}
-            {/* {(isAdmin || system?.status !== "removed") && data.latest && (
+          {/* {(isAdmin || system?.status !== "removed") && data.latest && (
               <EnergyPanel
                 energy={data.latest.energy}
                 historical={data.historical}
                 showGrid={showGrid}
               />
             )} */}
-          </div>
-        )}
-      </main>
-
-      {/* Test Connection Modal */}
-      {showTestConnection && systemId && (
-        <TestConnectionModal
-          systemId={parseInt(systemId)}
-          displayName={data?.system.displayName || systemDisplayName}
-          vendorType={data?.system.vendorType}
-          onClose={() => setShowTestConnection(false)}
-        />
+        </div>
       )}
-
-      {/* Poll Now Modal */}
-      {showPollNow.isOpen && systemId && (
-        <PollNowModal
-          systemId={parseInt(systemId)}
-          displayName={data?.system.displayName || systemDisplayName}
-          vendorType={data?.system.vendorType}
-          dryRun={showPollNow.dryRun}
-          onClose={() => setShowPollNow({ isOpen: false, dryRun: false })}
-        />
-      )}
-
-      {/* Add System Dialog */}
-      <AddSystemDialog
-        open={showAddSystemDialog}
-        onOpenChange={setShowAddSystemDialog}
-      />
-
-      <ServerErrorModal
-        isOpen={serverError.type !== null}
-        onClose={() => setServerError({ type: null })}
-        errorType={serverError.type}
-        errorDetails={serverError.details}
-      />
-
-      <SessionTimeoutModal
-        isOpen={showSessionTimeout}
-        onReconnect={() => {
-          setShowSessionTimeout(false);
-          window.location.reload();
-        }}
-      />
-
-      {/* View Data Modal for point_readings systems */}
-      {showViewDataModal && systemId && system && (
-        <ViewDataModal
-          isOpen={showViewDataModal}
-          onClose={() => setShowViewDataModal(false)}
-          systemId={parseInt(systemId)}
-          systemName={
-            data?.system.displayName || currentDisplayName || "System"
-          }
-          vendorType={data?.system.vendorType || system.vendorType}
-          vendorSiteId={data?.system.vendorSiteId || system.vendorSiteId || ""}
-          timezoneOffsetMin={
-            data?.system.timezoneOffsetMin ?? system.timezoneOffsetMin ?? 600
-          }
-        />
-      )}
-
-      {/* System Settings Dialog */}
-      <SystemSettingsDialog
-        isOpen={showSystemSettingsDialog}
-        onClose={() => setShowSystemSettingsDialog(false)}
-        systemId={system?.id ?? null}
-        vendorType={system?.vendorType}
-        metadata={system?.metadata}
-        ownerClerkUserId={system?.ownerClerkUserId}
-        isAdmin={isAdmin}
-        onUpdate={handleUpdateSystemSettings}
-      />
-    </div>
+    </main>
   );
 } // Test comment

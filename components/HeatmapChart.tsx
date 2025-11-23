@@ -23,6 +23,7 @@ import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/chart-colors";
 import ServerErrorModal from "./ServerErrorModal";
 import { formatTimeAEST } from "@/lib/date-utils";
 import { formatTime, formatDate } from "@/lib/fe-date-format";
+import { PointInfo } from "@/lib/point/point-info";
 
 // Custom plugin to render y-axis labels with mixed colors
 const customYAxisPlugin = {
@@ -194,8 +195,9 @@ export default function HeatmapChart({
         const endTimeEncoded = encodeI18nToUrlSafeString(fetchEndTime, true);
 
         // Fetch 30 days of data at 30-minute intervals
-        // Use .delta for energy metrics, .avg for others
-        const seriesSuffix = metricType === "energy" ? "delta" : "avg";
+        // Use preferred aggregation based on metric type (energy: delta, soc: last, others: avg)
+        const seriesSuffix =
+          PointInfo.getPreferredAggregationForMetricType(metricType);
         const url = `/api/history?interval=30m&startTime=${startTimeEncoded}&endTime=${endTimeEncoded}&systemId=${systemId}&series=${pointPath}.${seriesSuffix}`;
         console.log("[HeatmapChart] Fetching:", url);
         console.log(
@@ -387,8 +389,33 @@ export default function HeatmapChart({
     }
   }
 
+  // Get normalized value with special handling for load and source power metrics
+  const getNormalizedValue = (
+    value: number,
+    min: number,
+    max: number,
+  ): number => {
+    // Special case: load and source power metrics use black for 0-50W
+    if (
+      (pointPath.startsWith("load") || pointPath.startsWith("source")) &&
+      pointPath.endsWith("/power")
+    ) {
+      if (value <= 50) {
+        return -1; // Special value to indicate "use black"
+      }
+      // Map 50W+ to 0-1 range
+      return (value - 50) / Math.max(max - 50, 1);
+    }
+
+    // Default linear normalization
+    return (value - min) / Math.max(max - min, 1);
+  };
+
   // Get color for a normalized value (0-1)
   const getColor = (normalizedValue: number): string => {
+    if (normalizedValue === -1) {
+      return "#111827"; // gray-900 (dashboard background) for load power 0-50W
+    }
     const paletteConfig = HEATMAP_PALETTES[palette];
     return paletteConfig.fn(normalizedValue);
   };
@@ -505,9 +532,11 @@ export default function HeatmapChart({
             if (dataPoint.v === null || dataPoint.v === undefined) {
               cellColor = "rgba(55, 65, 81, 0.3)"; // gray-700 for null values
             } else {
-              const normalized =
-                (dataPoint.v - (heatmapData?.min || 0)) /
-                ((heatmapData?.max || 1) - (heatmapData?.min || 0));
+              const normalized = getNormalizedValue(
+                dataPoint.v,
+                heatmapData?.min || 0,
+                heatmapData?.max || 1,
+              );
               cellColor = getColor(normalized);
             }
 
@@ -673,9 +702,11 @@ export default function HeatmapChart({
             return "rgba(55, 65, 81, 0.3)"; // gray-700 for null values
           }
 
-          const normalized =
-            (value - (heatmapData?.min || 0)) /
-            ((heatmapData?.max || 1) - (heatmapData?.min || 0));
+          const normalized = getNormalizedValue(
+            value,
+            heatmapData?.min || 0,
+            heatmapData?.max || 1,
+          );
           return getColor(normalized);
         },
         borderColor: "rgba(0, 0, 0, 0.1)",
@@ -773,7 +804,34 @@ export default function HeatmapChart({
             className="h-4 rounded"
             style={{
               width: "200px",
-              background: `linear-gradient(to right, ${getColor(0)}, ${getColor(0.25)}, ${getColor(0.5)}, ${getColor(0.75)}, ${getColor(1)})`,
+              background: (() => {
+                // Special gradient for load and source power: gray-900 baseline (0-50W) then color gradient
+                if (
+                  (pointPath.startsWith("load") ||
+                    pointPath.startsWith("source")) &&
+                  pointPath.endsWith("/power")
+                ) {
+                  const baselineThreshold = 50; // watts
+                  const range = heatmapData.max - heatmapData.min;
+                  const baselinePercentage = Math.min(
+                    ((baselineThreshold - heatmapData.min) / range) * 100,
+                    100,
+                  );
+
+                  if (baselinePercentage >= 100) {
+                    // All values are below threshold
+                    return "#111827";
+                  } else if (baselinePercentage <= 0) {
+                    // All values are above threshold, use normal gradient
+                    return `linear-gradient(to right, ${getColor(0)}, ${getColor(0.25)}, ${getColor(0.5)}, ${getColor(0.75)}, ${getColor(1)})`;
+                  } else {
+                    // Mixed: gray-900 for 0-50W portion, then color gradient
+                    return `linear-gradient(to right, #111827 0%, #111827 ${baselinePercentage}%, ${getColor(0)} ${baselinePercentage}%, ${getColor(0.25)} ${baselinePercentage + (100 - baselinePercentage) * 0.25}%, ${getColor(0.5)} ${baselinePercentage + (100 - baselinePercentage) * 0.5}%, ${getColor(0.75)} ${baselinePercentage + (100 - baselinePercentage) * 0.75}%, ${getColor(1)} 100%)`;
+                  }
+                }
+                // Standard gradient for other metrics
+                return `linear-gradient(to right, ${getColor(0)}, ${getColor(0.25)}, ${getColor(0.5)}, ${getColor(0.75)}, ${getColor(1)})`;
+              })(),
             }}
           />
           <span className="text-xs text-gray-400">
