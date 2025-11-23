@@ -117,8 +117,11 @@ export class PointReadingsProvider implements HistoryDataProvider {
     ];
 
     // Fetch PointInfo for these points
-    const allPoints = await pointManager.getPointsForSystem(system.id);
-    const allPointsMap = new Map(allPoints.map((p) => [p.index, p]));
+    const allPoints = await pointManager.getActivePointsForSystem(
+      system.id,
+      false,
+    );
+    const allPointsMap = new Map(allPoints.map((p: PointInfo) => [p.index, p]));
 
     // Build map of point IDs to their PointInfo objects (only for points we need)
     const pointMap = new Map<number, PointInfo>();
@@ -253,8 +256,11 @@ export class PointReadingsProvider implements HistoryDataProvider {
     }
 
     // Fetch PointInfo for these points
-    const allPoints = await pointManager.getPointsForSystem(system.id);
-    const allPointsMap = new Map(allPoints.map((p) => [p.index, p]));
+    const allPoints = await pointManager.getActivePointsForSystem(
+      system.id,
+      false,
+    );
+    const allPointsMap = new Map(allPoints.map((p: PointInfo) => [p.index, p]));
 
     // Build map of point IDs to their PointInfo objects (only for points we need)
     const pointMap = new Map<number, PointInfo>();

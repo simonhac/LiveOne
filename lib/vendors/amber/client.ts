@@ -272,7 +272,10 @@ async function loadLocalRecords(
 
     // 1. Get all points using PointManager
     const pointManager = PointManager.getInstance();
-    const allPoints = await pointManager.getPointsForSystem(systemId);
+    const allPoints = await pointManager.getActivePointsForSystem(
+      systemId,
+      false,
+    );
 
     // Apply point filter if provided (e.g., usage vs pricing points)
     const filteredPoints = pointFilter
@@ -298,7 +301,7 @@ async function loadLocalRecords(
     const expectedIntervals = generateIntervalsAEST(firstDay, numberOfDays);
 
     // 3. Fetch readings for filtered points only
-    const pointIds = filteredPoints.map((p) => p.index);
+    const pointIds = filteredPoints.map((p: PointInfo) => p.index);
     const readings = await db
       .select()
       .from(pointReadingsAgg5m)

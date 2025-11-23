@@ -13,7 +13,7 @@ import {
   getSeriesPath,
 } from "@/lib/point/series-info";
 import { SystemIdentifier, PointReference } from "@/lib/identifiers";
-import { SystemWithPolling } from "@/lib/systems-manager";
+import { SystemWithPolling, SystemsManager } from "@/lib/systems-manager";
 import micromatch from "micromatch";
 
 /**
@@ -66,28 +66,18 @@ export class PointManager {
   }
 
   /**
-   * Get all points for a system
+   * Load points directly from database for non-composite systems
+   * PRIVATE: External callers should use getActivePointsForSystem instead
    */
-  async getPointsForSystem(systemId: number): Promise<PointInfo[]> {
+  private async _loadPointsForNonCompositeSystem(
+    systemId: number,
+  ): Promise<PointInfo[]> {
     const rows = await db
       .select()
       .from(pointInfoTable)
       .where(eq(pointInfoTable.systemId, systemId));
 
     return rows.map((row) => PointInfo.from(row));
-  }
-
-  /**
-   * Get a specific point by system ID and point ID
-   */
-  async getPoint(systemId: number, pointId: number): Promise<PointInfo | null> {
-    const rows = await db
-      .select()
-      .from(pointInfoTable)
-      .where(eq(pointInfoTable.systemId, systemId));
-
-    const point = rows.find((row) => row.index === pointId);
-    return point ? PointInfo.from(point) : null;
   }
 
   /**
@@ -107,7 +97,7 @@ export class PointManager {
     }
 
     // Get all points for this system (handles both composite and non-composite)
-    const allPoints = await this.getPointsForSystemInternal(system);
+    const allPoints = await this._loadPointsWithCompositeSupport(system);
     const systemIdentifier = SystemIdentifier.fromId(system.id);
 
     const seriesInfos: SeriesInfo[] = [];
@@ -142,24 +132,26 @@ export class PointManager {
   }
 
   /**
-   * Get points for a system - handles both composite and non-composite systems
+   * Load points for a system - handles both composite and non-composite systems
    * For composite: resolves point references from metadata.mappings
-   * For non-composite: gets points directly for the system
+   * For non-composite: loads points directly from database
+   * PRIVATE: External callers should use getActivePointsForSystem instead
    */
-  private async getPointsForSystemInternal(
+  private async _loadPointsWithCompositeSupport(
     system: SystemWithPolling,
   ): Promise<PointInfo[]> {
     if (system.vendorType === "composite") {
-      return this.getPointsForCompositeSystem(system);
+      return this._resolveCompositeSystemPoints(system);
     } else {
-      return this.getPointsForSystem(system.id);
+      return this._loadPointsForNonCompositeSystem(system.id);
     }
   }
 
   /**
-   * Get points for a composite system by resolving metadata.mappings
+   * Resolve points for a composite system by looking up references in metadata.mappings
+   * PRIVATE: External callers should use getActivePointsForSystem instead
    */
-  private async getPointsForCompositeSystem(
+  private async _resolveCompositeSystemPoints(
     system: SystemWithPolling,
   ): Promise<PointInfo[]> {
     const metadata = system.metadata as any;
@@ -259,8 +251,8 @@ export class PointManager {
   }
 
   /**
-   * Get all active points for a system
-   * This is a convenience method for APIs that need point information without series details
+   * Get all active points for a system (handles both composite and non-composite systems)
+   * This is the primary public API for getting point information
    *
    * @param systemId - The system ID
    * @param typedOnly - If true, only includes points with type hierarchy. Default: false
@@ -270,9 +262,16 @@ export class PointManager {
     systemId: number,
     typedOnly: boolean = false,
   ): Promise<PointInfo[]> {
-    // We need the system object to use getAllSeriesForSystem
-    // For now, we'll use the old getPointsForSystem method directly
-    const allPoints = await this.getPointsForSystem(systemId);
+    // Look up the system object (needed for composite system handling)
+    const systemsManager = SystemsManager.getInstance();
+    const system = await systemsManager.getSystem(systemId);
+
+    if (!system) {
+      throw new Error(`System not found: ${systemId}`);
+    }
+
+    // Load points (handles both composite and non-composite)
+    const allPoints = await this._loadPointsWithCompositeSupport(system);
 
     // Filter active and optionally by typedOnly
     return allPoints.filter((point) => {
