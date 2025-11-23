@@ -35,6 +35,8 @@ A modern, multi-user solar monitoring platform with flexible point-based monitor
 - 📊 **Energy statistics** - Today, yesterday, and all-time summaries
 - 🔀 **Power/Energy toggle** - Switch between kW and kWh views
 - 🎯 **Point filtering** - View by subsystem, type, or custom groupings
+- 🗺️ **Heatmap visualization** - View daily patterns and trends for any metric over time
+- ⚡ **Amber pricing** - Real-time electricity pricing data synced every 30 minutes
 
 ### Admin Capabilities
 
@@ -70,7 +72,7 @@ LiveOne supports multiple data sources through a flexible point-based monitoring
 - **Frontend**: Next.js 15 (App Router), TypeScript, Tailwind CSS
 - **Backend**: Vercel Serverless Functions, Node.js
 - **Database**: Turso (Distributed SQLite), Drizzle ORM
-- **Cache**: Vercel KV (Redis) for real-time point values
+- **Cache**: Upstash Redis (via Vercel KV) for real-time point values
 - **Authentication**: Clerk (Multi-user support)
 - **Hosting**: Vercel (Global CDN)
 - **Charts**: Chart.js with interactive features
@@ -101,12 +103,12 @@ LiveOne supports multiple data sources through a flexible point-based monitoring
                │          LiveOne Core (Next.js App)          │
                └────────┬─────────────────────────────────────┘
                         │
-         ┌──────────────┴──────────────┐
-         │                             │
-┌────────▼────────┐          ┌─────────▼─────────┐
-│ Turso Database  │          │   Vercel KV       │
-│ (Time-series)   │          │ (Latest values)   │
-└─────────────────┘          └───────────────────┘
+         ┌──────────────┼──────────────┬──────────────────────┐
+         │              │              │                      │
+┌────────▼────────┐ ┌───▼──────────┐ ┌▼──────────────┐ ┌─────▼─────────┐
+│ Turso Database  │ │ Upstash Redis│ │ Clerk Auth    │ │ Vercel Cron   │
+│ (Time-series)   │ │(Latest values)│ │(Multi-user)   │ │(Data polling) │
+└─────────────────┘ └──────────────┘ └───────────────┘ └───────────────┘
 ```
 
 ## 📦 Installation
@@ -116,7 +118,7 @@ LiveOne supports multiple data sources through a flexible point-based monitoring
 - Node.js 18+ and npm
 - Clerk account (free tier works)
 - Turso database account (free tier available)
-- Vercel KV for caching (optional but recommended)
+- Upstash Redis (via Vercel KV integration) for caching (optional but recommended)
 - Vercel account for deployment (free tier works)
 - Access credentials for your inverter/energy system
 
@@ -154,7 +156,7 @@ TURSO_AUTH_TOKEN=your-auth-token
 # Optional: Keep empty in development
 DATABASE_URL=file:./dev.db
 
-# Vercel KV Cache (Optional but recommended)
+# Upstash Redis Cache via Vercel KV (Optional but recommended)
 KV_REST_API_URL=https://your-kv-instance.kv.vercel-storage.com
 KV_REST_API_TOKEN=your-token-here
 
@@ -192,9 +194,9 @@ git push origin main
 - Import your GitHub repository
 - Configure environment variables (same as `.env.local`)
 
-3. **Set up Vercel KV** (recommended)
+3. **Set up Upstash Redis (via Vercel KV)** (recommended)
 
-- Create KV database in Vercel dashboard
+- Create KV database in Vercel dashboard (uses Upstash Redis)
 - Copy `KV_REST_API_URL` and `KV_REST_API_TOKEN` to environment variables
 - After first deployment, build the subscription registry:
   ```bash
@@ -344,11 +346,11 @@ No database schema changes required - all metrics are stored as generic points.
 ## 📈 Performance
 
 - **Response times**: < 100ms for cached point values, < 1s for historical queries
-- **Data freshness**: 1-minute polling for real-time systems, vendor-dependent for others
+- **Data freshness**: 1-minute polling for real-time systems, 30-minute for Amber pricing
 - **Storage efficiency**: ~50-200 KB/day per system (depends on point count)
 - **Global CDN**: Vercel edge network with automatic caching
 - **Database**: Turso with edge replicas for low-latency global access
-- **Cache**: Vercel KV (Redis) for sub-10ms latest value retrieval
+- **Cache**: Upstash Redis (via Vercel KV) for sub-10ms latest value retrieval
 
 ## 🔒 Security
 
