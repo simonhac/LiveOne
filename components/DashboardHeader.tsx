@@ -2,7 +2,14 @@
 
 import { useState, useRef, useEffect } from "react";
 import { UserButton } from "@clerk/nextjs";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+
+// Map subpage slugs to display titles
+const SUBPAGE_TITLES: Record<string, string> = {
+  heatmap: "Heatmap",
+  generator: "Generator",
+  amber: "Amber",
+};
 import Link from "next/link";
 import {
   ChevronDown,
@@ -32,6 +39,7 @@ interface AvailableSystem {
   id: number;
   displayName: string;
   vendorSiteId: string;
+  vendorType: string;
   ownerClerkUserId?: string | null;
   alias?: string | null;
   ownerUsername?: string | null;
@@ -92,6 +100,15 @@ export default function DashboardHeader({
   shiftKeyDown = false,
 }: DashboardHeaderProps) {
   const router = useRouter();
+  const pathname = usePathname();
+
+  // Compute full title with subpage suffix (e.g., "Amber Test — Heatmap")
+  const subpageSlug = pathname?.split("/").pop() || "";
+  const subpageTitle = SUBPAGE_TITLES[subpageSlug];
+  const fullTitle = subpageTitle
+    ? `${displayName} — ${subpageTitle}`
+    : displayName;
+
   const [showSystemDropdown, setShowSystemDropdown] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -130,11 +147,23 @@ export default function DashboardHeader({
   // Handle system selection in mobile dropdown
   const handleMobileSystemSelect = (systemId: number) => {
     const system = availableSystems.find((s) => s.id === systemId);
-    const path =
+    const basePath =
       system?.ownerUsername && system?.alias
         ? `/dashboard/${system.ownerUsername}/${system.alias}`
         : `/dashboard/${systemId}`;
-    router.push(path);
+
+    // Preserve current subpage (e.g., /heatmap, /generator, /amber)
+    // Only preserve /amber if target system is amber vendorType
+    const knownSubpages = ["heatmap", "generator", "amber"];
+    const pathParts = window.location.pathname.split("/").filter(Boolean);
+    const lastPart = pathParts[pathParts.length - 1];
+    const subpage = knownSubpages.includes(lastPart)
+      ? lastPart === "amber" && system?.vendorType !== "amber"
+        ? ""
+        : `/${lastPart}`
+      : "";
+
+    router.push(`${basePath}${subpage}`);
     setIsMobileSystemDropdownOpen(false);
   };
 
@@ -199,14 +228,14 @@ export default function DashboardHeader({
                   }
                   className="flex items-center gap-1 text-base font-bold text-white hover:text-blue-400 transition-colors"
                 >
-                  {displayName || "Select System"}
+                  {fullTitle || "Select System"}
                   <ChevronDown
                     className={`w-4 h-4 transition-transform ${isMobileSystemDropdownOpen ? "rotate-180" : ""}`}
                   />
                 </button>
               ) : (
                 <h1 className="text-base font-bold text-white">
-                  {displayName || "LiveOne"}
+                  {fullTitle || "LiveOne"}
                 </h1>
               )}
 
@@ -295,9 +324,7 @@ export default function DashboardHeader({
                   onClick={() => setShowSystemDropdown(!showSystemDropdown)}
                   className="flex items-center gap-2 hover:bg-gray-700 rounded-lg px-3 py-2 transition-colors"
                 >
-                  <h1 className="text-2xl font-bold text-white">
-                    {displayName}
-                  </h1>
+                  <h1 className="text-2xl font-bold text-white">{fullTitle}</h1>
                   <ChevronDown
                     className={`w-5 h-5 text-gray-400 transition-transform ${showSystemDropdown ? "rotate-180" : ""}`}
                   />
@@ -318,7 +345,7 @@ export default function DashboardHeader({
                 )}
               </>
             ) : (
-              <h1 className="text-2xl font-bold text-white">{displayName}</h1>
+              <h1 className="text-2xl font-bold text-white">{fullTitle}</h1>
             )}
           </div>
           <div className="flex items-center gap-4">

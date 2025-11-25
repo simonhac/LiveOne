@@ -173,6 +173,14 @@ export default async function DashboardPage({ params }: PageProps) {
           </DashboardLayout>
         );
       case "amber":
+        // Only amber vendorTypes can access /amber subpage
+        if (system.vendorType !== "amber") {
+          const basePath =
+            system.alias && currentUsername
+              ? `/dashboard/${currentUsername}/${system.alias}`
+              : `/dashboard/${system.id}`;
+          redirect(basePath);
+        }
         return (
           <DashboardLayout
             system={system}

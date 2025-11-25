@@ -6,6 +6,7 @@ interface AvailableSystem {
   id: number;
   displayName: string;
   vendorSiteId: string;
+  vendorType: string;
   ownerClerkUserId?: string | null;
   alias?: string | null;
   ownerUsername?: string | null;
@@ -71,24 +72,42 @@ export default function SystemsMenu({
     }
 
     // Desktop version uses Link
-    // Use search params from the URL if available
-    const queryString =
+    // Use search params from the URL if available, and preserve subpage path
+    const { queryString, subpage } =
       typeof window !== "undefined"
         ? (() => {
             const searchParams = new URLSearchParams(window.location.search);
-            return preserveQueryParams
+            const qs = preserveQueryParams
               .filter((param) => searchParams.has(param))
               .map((param) => `${param}=${searchParams.get(param)}`)
               .join("&");
+
+            // Extract subpage from current path (e.g., /heatmap from /dashboard/user/system/heatmap)
+            const pathParts = window.location.pathname
+              .split("/")
+              .filter(Boolean);
+            // Path structure: dashboard / [identifier...] / [subpage]
+            // Subpages are: heatmap, generator, amber
+            const knownSubpages = ["heatmap", "generator", "amber"];
+            const lastPart = pathParts[pathParts.length - 1];
+            // Only preserve /amber subpage if target system is amber vendorType
+            const sp = knownSubpages.includes(lastPart)
+              ? lastPart === "amber" && system.vendorType !== "amber"
+                ? ""
+                : `/${lastPart}`
+              : "";
+
+            return { queryString: qs, subpage: sp };
           })()
-        : "";
+        : { queryString: "", subpage: "" };
 
     // Prefer username/shortname path if available, otherwise use system ID
     const basePath =
       system.ownerUsername && system.alias
         ? `/dashboard/${system.ownerUsername}/${system.alias}`
         : `/dashboard/${system.id}`;
-    const href = queryString ? `${basePath}?${queryString}` : basePath;
+    const fullPath = `${basePath}${subpage}`;
+    const href = queryString ? `${fullPath}?${queryString}` : fullPath;
 
     return (
       <Link

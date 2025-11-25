@@ -24,6 +24,7 @@ interface AvailableSystem {
   id: number;
   displayName: string;
   vendorSiteId: string;
+  vendorType: string;
   ownerClerkUserId?: string | null;
   alias?: string | null;
   ownerUsername?: string | null;
