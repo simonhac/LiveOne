@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { triggerDashboardRefresh } from "@/hooks/useDashboardRefresh";
 
 interface AvailableSystem {
   id: number;
@@ -163,6 +164,8 @@ export default function AmberSync({
       ]);
     } finally {
       setIsRunning(false);
+      // Notify dashboard cards that new data may be available
+      triggerDashboardRefresh();
     }
   };
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useModalContext } from "@/contexts/ModalContext";
+import { triggerDashboardRefresh } from "@/hooks/useDashboardRefresh";
 import {
   X,
   Check,
@@ -126,6 +127,10 @@ export default function PollNowModal({
     } finally {
       setLoading(false);
       setIsRefreshing(false);
+      // Notify dashboard cards that new data may be available
+      if (!dryRun) {
+        triggerDashboardRefresh();
+      }
     }
   };
 
