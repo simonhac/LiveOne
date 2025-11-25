@@ -429,13 +429,13 @@ export default function AmberSync({
             bottom: 0;
             background: repeating-linear-gradient(
               0deg,
-              rgba(0, 0, 0, 0.4) 0px,
-              rgba(0, 0, 0, 0.4) 1px,
+              rgba(0, 0, 0, 0.55) 0px,
+              rgba(0, 0, 0, 0.55) 1px,
               transparent 1px,
               transparent 2px
             );
             pointer-events: none;
-            z-index: 1;
+            z-index: 3;
           }
 
           .cursor {
