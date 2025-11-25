@@ -18,12 +18,18 @@ export async function GET() {
     }
 
     // Get unique values for each filterable column using SQL DISTINCT
-    // This is much more efficient than fetching all sessions
+    // Join with systems table to get vendorType and displayName (removed from sessions in migration 0054)
     const systemNamesResult = await rawClient.execute(
-      "SELECT DISTINCT system_name FROM sessions ORDER BY system_name",
+      `SELECT DISTINCT sys.display_name as system_name
+       FROM sessions sess
+       INNER JOIN systems sys ON sess.system_id = sys.id
+       ORDER BY sys.display_name`,
     );
     const vendorTypesResult = await rawClient.execute(
-      "SELECT DISTINCT vendor_type FROM sessions ORDER BY vendor_type",
+      `SELECT DISTINCT sys.vendor_type
+       FROM sessions sess
+       INNER JOIN systems sys ON sess.system_id = sys.id
+       ORDER BY sys.vendor_type`,
     );
     const causesResult = await rawClient.execute(
       "SELECT DISTINCT cause FROM sessions ORDER BY cause",

@@ -11,11 +11,12 @@ export type SessionCause =
   | "USER-TEST"
   | "ADMIN-DRYRUN";
 
+/**
+ * Input data for creating/recording a session
+ */
 export interface SessionData {
   sessionLabel?: string | null;
   systemId: number;
-  vendorType: string;
-  systemName: string;
   cause: SessionCause;
   started: Date;
   duration: number; // milliseconds
@@ -25,6 +26,33 @@ export interface SessionData {
   response?: any | null; // Will be stored as JSON
   numRows: number;
 }
+
+/**
+ * Full session record with system info (from JOIN with systems table)
+ * Used by: getSessions, getLastSessions, getSessionsByLabel, getSessionById
+ */
+export interface SessionWithSystem {
+  id: number;
+  sessionLabel: string | null;
+  systemId: number;
+  vendorType: string; // from systems.vendorType
+  systemName: string; // from systems.displayName
+  cause: string;
+  started: Date;
+  duration: number;
+  successful: boolean;
+  errorCode: string | null;
+  error: string | null;
+  response: any | null;
+  numRows: number;
+  createdAt: Date;
+}
+
+/**
+ * Session summary without response field (for list views)
+ * Used by: querySessions
+ */
+export type SessionSummary = Omit<SessionWithSystem, "response">;
 
 export class SessionManager {
   private static instance: SessionManager | null = null;
@@ -40,12 +68,11 @@ export class SessionManager {
 
   /**
    * Create a new session record and return its ID
+   * Note: vendorType and systemName are no longer stored - they're retrieved via JOIN with systems table
    */
   async createSession(data: {
     sessionLabel?: string | null;
     systemId: number;
-    vendorType: string;
-    systemName: string;
     cause: SessionCause;
     started: Date;
   }): Promise<number> {
@@ -62,8 +89,6 @@ export class SessionManager {
       const sessionRecord: NewSession = {
         sessionLabel,
         systemId: data.systemId,
-        vendorType: data.vendorType,
-        systemName: data.systemName,
         cause: data.cause,
         started: data.started,
         duration: 0, // Will be updated when session completes
@@ -163,8 +188,6 @@ export class SessionManager {
       const sessionRecord: NewSession = {
         sessionLabel,
         systemId: data.systemId,
-        vendorType: data.vendorType,
-        systemName: data.systemName,
         cause: data.cause,
         started: data.started,
         duration: data.duration,
@@ -255,25 +278,7 @@ export class SessionManager {
   async getSessions(
     start: number,
     count: number,
-  ): Promise<{
-    sessions: Array<{
-      id: number;
-      sessionLabel: string | null;
-      systemId: number;
-      vendorType: string;
-      systemName: string;
-      cause: string;
-      started: Date;
-      duration: number;
-      successful: boolean;
-      errorCode: string | null;
-      error: string | null;
-      response: any | null;
-      numRows: number;
-      createdAt: Date;
-    }>;
-    count: number;
-  }> {
+  ): Promise<{ sessions: SessionWithSystem[]; count: number }> {
     try {
       const { gte, desc } = await import("drizzle-orm");
 
@@ -282,13 +287,21 @@ export class SessionManager {
       const results = await db
         .select()
         .from(sessions)
+        .innerJoin(systems, eq(sessions.systemId, systems.id))
         .where(gte(sessions.id, start))
         .orderBy(desc(sessions.id))
         .limit(limit);
 
+      // Map joined results to flat structure with vendorType and systemName from systems
+      const mappedResults = results.map((r) => ({
+        ...r.sessions,
+        vendorType: r.systems.vendorType,
+        systemName: r.systems.displayName,
+      }));
+
       return {
-        sessions: results,
-        count: results.length,
+        sessions: mappedResults,
+        count: mappedResults.length,
       };
     } catch (error) {
       console.error("[SessionManager] Failed to fetch sessions:", error);
@@ -302,25 +315,9 @@ export class SessionManager {
   /**
    * Get the last N sessions (most recent)
    */
-  async getLastSessions(count: number): Promise<{
-    sessions: Array<{
-      id: number;
-      sessionLabel: string | null;
-      systemId: number;
-      vendorType: string;
-      systemName: string;
-      cause: string;
-      started: Date;
-      duration: number;
-      successful: boolean;
-      errorCode: string | null;
-      error: string | null;
-      response: any | null;
-      numRows: number;
-      createdAt: Date;
-    }>;
-    count: number;
-  }> {
+  async getLastSessions(
+    count: number,
+  ): Promise<{ sessions: SessionWithSystem[]; count: number }> {
     try {
       const { desc } = await import("drizzle-orm");
 
@@ -329,12 +326,20 @@ export class SessionManager {
       const results = await db
         .select()
         .from(sessions)
+        .innerJoin(systems, eq(sessions.systemId, systems.id))
         .orderBy(desc(sessions.id))
         .limit(limit);
 
+      // Map joined results to flat structure
+      const mappedResults = results.map((r) => ({
+        ...r.sessions,
+        vendorType: r.systems.vendorType,
+        systemName: r.systems.displayName,
+      }));
+
       return {
-        sessions: results,
-        count: results.length,
+        sessions: mappedResults,
+        count: mappedResults.length,
       };
     } catch (error) {
       console.error("[SessionManager] Failed to fetch last sessions:", error);
@@ -348,35 +353,27 @@ export class SessionManager {
   /**
    * Get sessions by label
    */
-  async getSessionsByLabel(label: string): Promise<{
-    sessions: Array<{
-      id: number;
-      sessionLabel: string | null;
-      systemId: number;
-      vendorType: string;
-      systemName: string;
-      cause: string;
-      started: Date;
-      duration: number;
-      successful: boolean;
-      errorCode: string | null;
-      error: string | null;
-      response: any | null;
-      numRows: number;
-      createdAt: Date;
-    }>;
-    count: number;
-  }> {
+  async getSessionsByLabel(
+    label: string,
+  ): Promise<{ sessions: SessionWithSystem[]; count: number }> {
     try {
       const results = await db
         .select()
         .from(sessions)
+        .innerJoin(systems, eq(sessions.systemId, systems.id))
         .where(eq(sessions.sessionLabel, label))
         .limit(100); // Cap at 100 results per label
 
+      // Map joined results to flat structure
+      const mappedResults = results.map((r) => ({
+        ...r.sessions,
+        vendorType: r.systems.vendorType,
+        systemName: r.systems.displayName,
+      }));
+
       return {
-        sessions: results,
-        count: results.length,
+        sessions: mappedResults,
+        count: mappedResults.length,
       };
     } catch (error) {
       console.error(
@@ -393,30 +390,24 @@ export class SessionManager {
   /**
    * Get a single session by ID
    */
-  async getSessionById(sessionId: number): Promise<{
-    id: number;
-    sessionLabel: string | null;
-    systemId: number;
-    vendorType: string;
-    systemName: string;
-    cause: string;
-    started: Date;
-    duration: number;
-    successful: boolean;
-    errorCode: string | null;
-    error: string | null;
-    response: any | null;
-    numRows: number;
-    createdAt: Date;
-  } | null> {
+  async getSessionById(sessionId: number): Promise<SessionWithSystem | null> {
     try {
       const results = await db
         .select()
         .from(sessions)
+        .innerJoin(systems, eq(sessions.systemId, systems.id))
         .where(eq(sessions.id, sessionId))
         .limit(1);
 
-      return results.length > 0 ? results[0] : null;
+      if (results.length === 0) return null;
+
+      // Map joined result to flat structure
+      const r = results[0];
+      return {
+        ...r.sessions,
+        vendorType: r.systems.vendorType,
+        systemName: r.systems.displayName,
+      };
     } catch (error) {
       console.error("[SessionManager] Failed to fetch session:", error);
       return null;
@@ -451,21 +442,7 @@ export class SessionManager {
     // Total count (for pagination UI)
     includeTotalCount?: boolean;
   }): Promise<{
-    sessions: Array<{
-      id: number;
-      sessionLabel: string | null;
-      systemId: number;
-      vendorType: string;
-      systemName: string;
-      cause: string;
-      started: Date;
-      duration: number;
-      successful: boolean;
-      errorCode: string | null;
-      error: string | null;
-      numRows: number;
-      createdAt: Date;
-    }>;
+    sessions: SessionSummary[];
     totalCount?: number;
     page: number;
     pageSize: number;
@@ -483,7 +460,8 @@ export class SessionManager {
       }
 
       if (params.vendorTypes && params.vendorTypes.length > 0) {
-        conditions.push(inArray(sessions.vendorType, params.vendorTypes));
+        // Filter on systems.vendorType (joined table)
+        conditions.push(inArray(systems.vendorType, params.vendorTypes));
       }
 
       if (params.causes && params.causes.length > 0) {
@@ -517,10 +495,12 @@ export class SessionManager {
           orderByClause = sortOrder(sessions.duration);
           break;
         case "systemName":
-          orderByClause = sortOrder(sessions.systemName);
+          // Sort by systems.displayName (joined table)
+          orderByClause = sortOrder(systems.displayName);
           break;
         case "vendorType":
-          orderByClause = sortOrder(sessions.vendorType);
+          // Sort by systems.vendorType (joined table)
+          orderByClause = sortOrder(systems.vendorType);
           break;
         case "cause":
           orderByClause = sortOrder(sessions.cause);
@@ -548,31 +528,32 @@ export class SessionManager {
         totalCount = undefined;
       }
 
-      // Execute main query - fetch all fields including response
-      // Response field will be excluded in the API route mapping
+      // Execute main query with JOIN to systems table
+      // Response field will be excluded in the mapping below for performance
       const results = await db
         .select()
         .from(sessions)
+        .innerJoin(systems, eq(sessions.systemId, systems.id))
         .where(whereClause)
         .orderBy(orderByClause)
         .limit(pageSize)
         .offset(offset);
 
-      // Map results to exclude response field for performance
-      const sessionsWithoutResponse = results.map((session) => ({
-        id: session.id,
-        sessionLabel: session.sessionLabel,
-        systemId: session.systemId,
-        vendorType: session.vendorType,
-        systemName: session.systemName,
-        cause: session.cause,
-        started: session.started,
-        duration: session.duration,
-        successful: session.successful,
-        errorCode: session.errorCode,
-        error: session.error,
-        numRows: session.numRows,
-        createdAt: session.createdAt,
+      // Map joined results to flat structure, excluding response field for performance
+      const sessionsWithoutResponse = results.map((r) => ({
+        id: r.sessions.id,
+        sessionLabel: r.sessions.sessionLabel,
+        systemId: r.sessions.systemId,
+        vendorType: r.systems.vendorType,
+        systemName: r.systems.displayName,
+        cause: r.sessions.cause,
+        started: r.sessions.started,
+        duration: r.sessions.duration,
+        successful: r.sessions.successful,
+        errorCode: r.sessions.errorCode,
+        error: r.sessions.error,
+        numRows: r.sessions.numRows,
+        createdAt: r.sessions.createdAt,
       }));
 
       return {

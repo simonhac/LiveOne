@@ -109,8 +109,6 @@ export async function POST(request: NextRequest) {
           dbSessionId = await sessionManager.createSession({
             sessionLabel,
             systemId,
-            vendorType: systemInfo.vendorType,
-            systemName: systemInfo.systemName,
             cause: dryRun ? "ADMIN-DRYRUN" : "ADMIN",
             started: new Date(),
           });

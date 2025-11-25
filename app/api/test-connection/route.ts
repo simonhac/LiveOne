@@ -167,27 +167,24 @@ export async function POST(request: NextRequest) {
       error: result.error,
     });
 
-    // Record session - determine cause based on who initiated
-    const sessionCause =
-      isAdmin && system?.ownerClerkUserId !== userId ? "ADMIN" : "USER";
-    const systemName =
-      system?.displayName ||
-      tempSystem.displayName ||
-      `${finalVendorType} System`;
+    // Record session only if we have a valid system (required for JOIN with systems table)
+    // Skip recording for new system tests (no systemId)
+    if (systemId) {
+      const sessionCause =
+        isAdmin && system?.ownerClerkUserId !== userId ? "ADMIN" : "USER";
 
-    await sessionManager.recordSession({
-      systemId: systemId || 0, // Use 0 for new systems being tested
-      vendorType: finalVendorType,
-      systemName,
-      cause: sessionCause,
-      started: sessionStart,
-      duration,
-      successful: result.success,
-      errorCode: result.errorCode || null,
-      error: result.success ? null : result.error || null,
-      response: result.vendorResponse,
-      numRows: result.latestData ? 1 : 0,
-    });
+      await sessionManager.recordSession({
+        systemId,
+        cause: sessionCause,
+        started: sessionStart,
+        duration,
+        successful: result.success,
+        errorCode: result.errorCode || null,
+        error: result.success ? null : result.error || null,
+        response: result.vendorResponse,
+        numRows: result.latestData ? 1 : 0,
+      });
+    }
 
     if (!result.success) {
       console.log(`[Test Connection] Test failed:`, result.error);

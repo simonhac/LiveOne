@@ -127,8 +127,6 @@ async function pollAllSystems(params: {
     const dbSessionId = await sessionManager.createSession({
       sessionLabel,
       systemId: system.id,
-      vendorType: system.vendorType,
-      systemName: system.displayName || `System ${system.id}`,
       cause: sessionCause,
       started: sessionStart,
     });

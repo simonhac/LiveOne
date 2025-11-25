@@ -360,8 +360,6 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       const sessionManager = SessionManager.getInstance();
       const sessionId = await sessionManager.createSession({
         systemId: system.id,
-        vendorType: system.vendorType,
-        systemName: system.displayName,
         cause: "USER-TEST",
         started: new Date(),
       });

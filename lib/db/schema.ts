@@ -309,6 +309,7 @@ export const userSystems = sqliteTable(
 );
 
 // Sessions table - tracks all communication sessions with energy systems
+// Note: vendorType and systemName removed in migration 0054 - use JOIN with systems table instead
 export const sessions = sqliteTable(
   "sessions",
   {
@@ -317,8 +318,6 @@ export const sessions = sqliteTable(
     systemId: integer("system_id")
       .notNull()
       .references(() => systems.id, { onDelete: "cascade" }),
-    vendorType: text("vendor_type").notNull(), // e.g., 'selectronic', 'fronius', 'mondo', 'enphase'
-    systemName: text("system_name").notNull(),
     cause: text("cause").notNull(), // 'POLL', 'ADMIN', 'USER', etc.
     started: integer("started", { mode: "timestamp" }).notNull(),
     duration: integer("duration").notNull(), // milliseconds

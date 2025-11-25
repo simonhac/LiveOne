@@ -8,7 +8,7 @@ import {
   updatePollingStatusError,
 } from "@/lib/polling-utils";
 import { sessionManager } from "@/lib/session-manager";
-import { insertPointReadingsBatch } from "@/lib/monitoring-points-manager";
+import { PointManager } from "@/lib/point/point-manager";
 import { FRONIUS_POINTS } from "@/lib/vendors/fronius/point-metadata";
 
 /**
@@ -55,8 +55,6 @@ export interface FroniusPushData {
 async function recordFailedSession(
   sessionStart: Date,
   systemId: number,
-  vendorType: string,
-  systemName: string,
   errorCode: string | null,
   error: string,
   requestData: any,
@@ -66,8 +64,6 @@ async function recordFailedSession(
   await sessionManager.recordSession({
     sessionLabel,
     systemId,
-    vendorType,
-    systemName,
     cause: "PUSH",
     started: sessionStart,
     duration,
@@ -125,17 +121,7 @@ export async function POST(request: NextRequest) {
       console.error(
         `[Fronius Push] System not found for apiKey: ${data.apiKey}`,
       );
-
-      await recordFailedSession(
-        sessionStart,
-        0, // Unknown system
-        "fronius",
-        `Unknown (apiKey: ${data.apiKey})`,
-        "404",
-        "System not found",
-        { action: data.action, apiKey: data.apiKey },
-      );
-
+      // Note: Cannot record session without valid system (requires JOIN with systems table)
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
@@ -148,8 +134,6 @@ export async function POST(request: NextRequest) {
       await recordFailedSession(
         sessionStart,
         system.id,
-        system.vendorType,
-        system.displayName || `System ${system.id}`,
         "400",
         `System is configured as ${system.vendorType}, not fronius`,
         { action: data.action, apiKey: data.apiKey },
@@ -171,8 +155,6 @@ export async function POST(request: NextRequest) {
       const duration = Date.now() - sessionStart.getTime();
       await sessionManager.recordSession({
         systemId: system.id,
-        vendorType: system.vendorType,
-        systemName: system.displayName || `System ${system.id}`,
         cause: "PUSH",
         started: sessionStart,
         duration,
@@ -215,8 +197,6 @@ export async function POST(request: NextRequest) {
       sessionId = await sessionManager.createSession({
         sessionLabel: data.sequence,
         systemId: system.id,
-        vendorType: system.vendorType,
-        systemName: system.displayName || `System ${system.id}`,
         cause: "PUSH",
         started: sessionStart,
       });
@@ -316,7 +296,10 @@ export async function POST(request: NextRequest) {
 
       // Batch insert all readings - this will automatically ensure point_info entries exist
       if (readingsToInsert.length > 0) {
-        await insertPointReadingsBatch(system.id, readingsToInsert);
+        await PointManager.getInstance().insertPointReadingsBatch(
+          system.id,
+          readingsToInsert,
+        );
         console.log(
           `[Fronius Push] Inserted ${readingsToInsert.length} point readings for system ${system.id}`,
         );
