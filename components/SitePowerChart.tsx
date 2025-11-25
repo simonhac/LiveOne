@@ -24,7 +24,10 @@ import "chartjs-adapter-date-fns";
 import annotationPlugin from "chartjs-plugin-annotation";
 import { CalendarX2 } from "lucide-react";
 import { CHART_COLORS, LOAD_LABELS, getLoadColor } from "@/lib/chart-colors";
-import { PointPath } from "@/lib/identifiers";
+import {
+  parsePointPath,
+  ParsedPointPath,
+} from "@/lib/identifiers/point-path-utils";
 import micromatch from "micromatch";
 
 // Register Chart.js components
@@ -84,11 +87,13 @@ interface SeriesConfig {
   order?: number;
 }
 
-// Parse path using PointPath typed object
-// Returns the parsed PointPath or null if not parseable
-export function parsePath(path: string | null | undefined): PointPath | null {
+// Parse path using parsePointPath utility
+// Returns the parsed point path or null if not parseable
+export function parsePath(
+  path: string | null | undefined,
+): ParsedPointPath | null {
   if (!path) return null;
-  return PointPath.parse(path) || null;
+  return parsePointPath(path);
 }
 
 // Filter series by point identifier pattern (glob-style)

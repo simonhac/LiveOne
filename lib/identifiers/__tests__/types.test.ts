@@ -1,10 +1,13 @@
 import { describe, it, expect } from "@jest/globals";
+import { SystemIdentifier, PointReference, SeriesPath } from "../types";
 import {
-  SystemIdentifier,
-  PointReference,
-  PointPath,
-  SeriesPath,
-} from "../types";
+  buildPointPath,
+  buildFallbackPointPath,
+  parsePointPath,
+  getPointIdentifier,
+  getMetricType,
+  matchesPointPath,
+} from "../point-path-utils";
 
 describe("SystemIdentifier", () => {
   describe("parse()", () => {
@@ -189,10 +192,10 @@ describe("PointReference", () => {
   });
 });
 
-describe("PointPath", () => {
-  describe("parse()", () => {
+describe("Point Path Utilities", () => {
+  describe("parsePointPath()", () => {
     it("should parse full type.subtype.extension/metric format", () => {
-      const result = PointPath.parse("bidi.battery.charge/power");
+      const result = parsePointPath("bidi.battery.charge/power");
       expect(result).not.toBeNull();
       expect(result?.type).toBe("bidi");
       expect(result?.subtype).toBe("battery");
@@ -202,7 +205,7 @@ describe("PointPath", () => {
     });
 
     it("should parse type.subtype/metric format", () => {
-      const result = PointPath.parse("load.hvac/power");
+      const result = parsePointPath("load.hvac/power");
       expect(result).not.toBeNull();
       expect(result?.type).toBe("load");
       expect(result?.subtype).toBe("hvac");
@@ -211,7 +214,7 @@ describe("PointPath", () => {
     });
 
     it("should parse type/metric format", () => {
-      const result = PointPath.parse("load/power");
+      const result = parsePointPath("load/power");
       expect(result).not.toBeNull();
       expect(result?.type).toBe("load");
       expect(result?.subtype).toBeNull();
@@ -220,7 +223,7 @@ describe("PointPath", () => {
     });
 
     it("should parse fallback pointIndex/metric format", () => {
-      const result = PointPath.parse("5/power");
+      const result = parsePointPath("5/power");
       expect(result).not.toBeNull();
       expect(result?.type).toBe("5");
       expect(result?.metricType).toBe("power");
@@ -229,124 +232,118 @@ describe("PointPath", () => {
     });
 
     it("should reject invalid formats", () => {
-      expect(PointPath.parse("")).toBeNull();
-      expect(PointPath.parse("no-slash")).toBeNull();
-      expect(PointPath.parse("/power")).toBeNull(); // Empty type
-      expect(PointPath.parse("load/")).toBeNull(); // Empty metric
-      expect(PointPath.parse("a/b/c")).toBeNull(); // Too many slashes
-      expect(PointPath.parse("0/power")).toBeNull(); // Zero pointIndex in fallback
-      expect(PointPath.parse("load..sub/power")).toBeNull(); // Empty part
-      expect(PointPath.parse("a.b.c.d/power")).toBeNull(); // Too many dots
+      expect(parsePointPath("")).toBeNull();
+      expect(parsePointPath("no-slash")).toBeNull();
+      expect(parsePointPath("/power")).toBeNull(); // Empty type
+      expect(parsePointPath("load/")).toBeNull(); // Empty metric
+      expect(parsePointPath("a/b/c")).toBeNull(); // Too many slashes
+      expect(parsePointPath("0/power")).toBeNull(); // Zero pointIndex in fallback
+      expect(parsePointPath("load..sub/power")).toBeNull(); // Empty part
+      expect(parsePointPath("a.b.c.d/power")).toBeNull(); // Too many dots
     });
   });
 
-  describe("fromComponents()", () => {
-    it("should create from valid components", () => {
-      const result = PointPath.fromComponents(
-        "source",
-        "solar",
-        null,
-        "energy",
-      );
-      expect(result.type).toBe("source");
-      expect(result.subtype).toBe("solar");
-      expect(result.extension).toBeNull();
-      expect(result.metricType).toBe("energy");
-      expect(result.isFallback).toBe(false);
+  describe("buildPointPath()", () => {
+    it("should build full path", () => {
+      const path = buildPointPath("bidi", "battery", "discharge", "power");
+      expect(path).toBe("bidi.battery.discharge/power");
     });
 
-    it("should reject invalid components", () => {
-      expect(() =>
-        PointPath.fromComponents("", "sub", null, "power"),
-      ).toThrow();
-      expect(() => PointPath.fromComponents("type", "sub", null, "")).toThrow();
-      expect(() =>
-        PointPath.fromComponents("type", "", null, "power"),
-      ).toThrow();
-      expect(() =>
-        PointPath.fromComponents("type", null, "", "power"),
-      ).toThrow();
+    it("should build partial path", () => {
+      const path = buildPointPath("load", "hvac", null, "power");
+      expect(path).toBe("load.hvac/power");
+    });
+
+    it("should build simple path", () => {
+      const path = buildPointPath("grid", null, null, "frequency");
+      expect(path).toBe("grid/frequency");
     });
   });
 
-  describe("createFallback()", () => {
-    it("should create fallback path", () => {
-      const result = PointPath.createFallback(42, "voltage");
-      expect(result.type).toBe("42");
-      expect(result.metricType).toBe("voltage");
-      expect(result.isFallback).toBe(true);
-      expect(result.pointIndex).toBe(42);
-    });
-
-    it("should reject invalid parameters", () => {
-      expect(() => PointPath.createFallback(0, "power")).toThrow();
-      expect(() => PointPath.createFallback(-5, "power")).toThrow();
-      expect(() => PointPath.createFallback(1.5, "power")).toThrow();
-      expect(() => PointPath.createFallback(5, "")).toThrow();
-    });
-  });
-
-  describe("toString()", () => {
-    it("should serialize full path", () => {
-      const path = PointPath.fromComponents(
-        "bidi",
-        "battery",
-        "discharge",
-        "power",
-      );
-      expect(path.toString()).toBe("bidi.battery.discharge/power");
-    });
-
-    it("should serialize partial path", () => {
-      const path = PointPath.fromComponents("load", "hvac", null, "power");
-      expect(path.toString()).toBe("load.hvac/power");
-    });
-
-    it("should serialize simple path", () => {
-      const path = PointPath.fromComponents("grid", null, null, "frequency");
-      expect(path.toString()).toBe("grid/frequency");
-    });
-
-    it("should serialize fallback path", () => {
-      const path = PointPath.createFallback(8, "code");
-      expect(path.toString()).toBe("8/code");
+  describe("buildFallbackPointPath()", () => {
+    it("should build fallback path", () => {
+      const path = buildFallbackPointPath(8, "code");
+      expect(path).toBe("8/code");
     });
   });
 
   describe("getPointIdentifier()", () => {
     it("should return identifier without metric type", () => {
-      const path = PointPath.parse("load.hvac/power");
-      expect(path?.getPointIdentifier()).toBe("load.hvac");
+      const identifier = getPointIdentifier("load.hvac/power");
+      expect(identifier).toBe("load.hvac");
     });
 
     it("should handle fallback format", () => {
-      const path = PointPath.parse("5/power");
-      expect(path?.getPointIdentifier()).toBe("5");
+      const identifier = getPointIdentifier("5/power");
+      expect(identifier).toBe("5");
+    });
+
+    it("should return null for invalid format", () => {
+      expect(getPointIdentifier("no-slash")).toBeNull();
     });
   });
 
-  describe("pointIndex getter", () => {
-    it("should return pointIndex for fallback paths", () => {
-      const path = PointPath.createFallback(99, "power");
-      expect(path.pointIndex).toBe(99);
+  describe("getMetricType()", () => {
+    it("should return metric type", () => {
+      expect(getMetricType("load.hvac/power")).toBe("power");
+      expect(getMetricType("5/energy")).toBe("energy");
     });
 
-    it("should return null for non-fallback paths", () => {
-      const path = PointPath.fromComponents("load", null, null, "power");
-      expect(path.pointIndex).toBeNull();
+    it("should return null for invalid format", () => {
+      expect(getMetricType("no-slash")).toBeNull();
     });
   });
 
-  describe("equals()", () => {
-    it("should compare paths correctly", () => {
-      const path1 = PointPath.parse("load.hvac/power");
-      const path2 = PointPath.parse("load.hvac/power");
-      const path3 = PointPath.parse("load.pool/power");
-      const path4 = PointPath.parse("load.hvac/energy");
+  describe("matchesPointPath()", () => {
+    it("should match exact path", () => {
+      expect(matchesPointPath("load.hvac/power", "load.hvac", "power")).toBe(
+        true,
+      );
+    });
 
-      expect(path1?.equals(path2!)).toBe(true);
-      expect(path1?.equals(path3!)).toBe(false);
-      expect(path1?.equals(path4!)).toBe(false);
+    it("should match with extension", () => {
+      expect(
+        matchesPointPath("bidi.battery.charge/soc", "bidi.battery", "soc"),
+      ).toBe(true);
+    });
+
+    it("should not match different metric type", () => {
+      expect(matchesPointPath("load.hvac/power", "load.hvac", "energy")).toBe(
+        false,
+      );
+    });
+
+    it("should not match different type", () => {
+      expect(matchesPointPath("source.solar/power", "load.hvac", "power")).toBe(
+        false,
+      );
+    });
+  });
+
+  describe("round-trip parsing", () => {
+    it("should round-trip typed paths", () => {
+      const original = "source.solar/energy";
+      const parsed = parsePointPath(original);
+      expect(parsed).not.toBeNull();
+      const rebuilt = buildPointPath(
+        parsed!.type,
+        parsed!.subtype,
+        parsed!.extension,
+        parsed!.metricType,
+      );
+      expect(rebuilt).toBe(original);
+    });
+
+    it("should round-trip fallback paths", () => {
+      const original = "42/power";
+      const parsed = parsePointPath(original);
+      expect(parsed).not.toBeNull();
+      expect(parsed?.isFallback).toBe(true);
+      const rebuilt = buildFallbackPointPath(
+        parsed!.pointIndex!,
+        parsed!.metricType,
+      );
+      expect(rebuilt).toBe(original);
     });
   });
 });
@@ -358,9 +355,7 @@ describe("SeriesPath", () => {
       expect(result).not.toBeNull();
       expect(result?.systemIdentifier.type).toBe("id");
       expect(result?.systemIdentifier.id).toBe(1);
-      expect(result?.pointPath.type).toBe("load");
-      expect(result?.pointPath.subtype).toBe("hvac");
-      expect(result?.pointPath.metricType).toBe("power");
+      expect(result?.pointPath).toBe("load.hvac/power");
       expect(result?.aggregationField).toBe("avg");
     });
 
@@ -370,7 +365,7 @@ describe("SeriesPath", () => {
       expect(result?.systemIdentifier.type).toBe("shortname");
       expect(result?.systemIdentifier.username).toBe("simon");
       expect(result?.systemIdentifier.shortname).toBe("kinkora");
-      expect(result?.pointPath.type).toBe("source");
+      expect(result?.pointPath).toBe("source.solar/power");
       expect(result?.aggregationField).toBe("avg");
     });
 
@@ -378,9 +373,7 @@ describe("SeriesPath", () => {
       const result = SeriesPath.parse("1/5/power.last");
       expect(result).not.toBeNull();
       expect(result?.systemIdentifier.id).toBe(1);
-      expect(result?.pointPath.isFallback).toBe(true);
-      expect(result?.pointPath.pointIndex).toBe(5);
-      expect(result?.pointPath.metricType).toBe("power");
+      expect(result?.pointPath).toBe("5/power");
       expect(result?.aggregationField).toBe("last");
     });
 
@@ -397,36 +390,32 @@ describe("SeriesPath", () => {
   describe("fromComponents()", () => {
     it("should create from components", () => {
       const sysId = SystemIdentifier.fromId(10);
-      const pointPath = PointPath.fromComponents(
-        "bidi",
-        "battery",
-        null,
-        "soc",
-      );
+      const pointPath = buildPointPath("bidi", "battery", null, "soc");
       const result = SeriesPath.fromComponents(sysId, pointPath, "last");
 
       expect(result.systemIdentifier.id).toBe(10);
-      expect(result.pointPath.type).toBe("bidi");
+      expect(result.pointPath).toBe("bidi.battery/soc");
       expect(result.aggregationField).toBe("last");
     });
 
     it("should reject empty aggregation field", () => {
       const sysId = SystemIdentifier.fromId(1);
-      const pointPath = PointPath.fromComponents("load", null, null, "power");
+      const pointPath = buildPointPath("load", null, null, "power");
 
       expect(() => SeriesPath.fromComponents(sysId, pointPath, "")).toThrow();
+    });
+
+    it("should reject empty pointPath", () => {
+      const sysId = SystemIdentifier.fromId(1);
+
+      expect(() => SeriesPath.fromComponents(sysId, "", "avg")).toThrow();
     });
   });
 
   describe("toString()", () => {
     it("should serialize with numeric system ID", () => {
       const sysId = SystemIdentifier.fromId(5);
-      const pointPath = PointPath.fromComponents(
-        "source",
-        "solar",
-        null,
-        "energy",
-      );
+      const pointPath = buildPointPath("source", "solar", null, "energy");
       const series = SeriesPath.fromComponents(sysId, pointPath, "delta");
 
       expect(series.toString()).toBe("5/source.solar/energy.delta");
@@ -434,7 +423,7 @@ describe("SeriesPath", () => {
 
     it("should serialize with user.shortname", () => {
       const sysId = SystemIdentifier.fromShortname("alice", "home");
-      const pointPath = PointPath.fromComponents("load", null, null, "power");
+      const pointPath = buildPointPath("load", null, null, "power");
       const series = SeriesPath.fromComponents(sysId, pointPath, "avg");
 
       expect(series.toString()).toBe("alice.home/load/power.avg");
@@ -442,7 +431,7 @@ describe("SeriesPath", () => {
 
     it("should serialize with fallback point path", () => {
       const sysId = SystemIdentifier.fromId(1);
-      const pointPath = PointPath.createFallback(8, "code");
+      const pointPath = buildFallbackPointPath(8, "code");
       const series = SeriesPath.fromComponents(sysId, pointPath, "last");
 
       expect(series.toString()).toBe("1/8/code.last");

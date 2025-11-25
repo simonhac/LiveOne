@@ -3,7 +3,7 @@
  */
 
 import type { CalendarDate } from "@internationalized/date";
-import type { PointMetadata } from "@/lib/monitoring-points-manager";
+import type { PointMetadata } from "@/lib/point/point-manager";
 
 export interface AmberCredentials {
   apiKey: string;

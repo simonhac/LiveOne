@@ -21,7 +21,7 @@ import type {
   PointReading,
   BatchInfo,
 } from "./types";
-import type { PointMetadata } from "@/lib/monitoring-points-manager";
+import { PointManager, type PointMetadata } from "@/lib/point/point-manager";
 import { formatDateAEST } from "@/lib/date-utils";
 import { AmberReadingsBatch } from "./amber-readings-batch";
 import {
@@ -30,7 +30,6 @@ import {
   createSpotPricePoint,
   getChannelMetadata,
 } from "./point-metadata";
-import { insertPointReadingsDirectTo5m } from "@/lib/monitoring-points-manager";
 import type { PointInfo } from "@/lib/point/point-info";
 
 /**
@@ -856,7 +855,11 @@ async function storeRecordsLocally(
   }
 
   // Batch insert to point_readings_agg_5m
-  await insertPointReadingsDirectTo5m(systemId, sessionId, readingsToInsert);
+  await PointManager.getInstance().insertPointReadingsDirectTo5m(
+    systemId,
+    sessionId,
+    readingsToInsert,
+  );
 
   // Return stage result
   return {

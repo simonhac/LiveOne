@@ -5,6 +5,10 @@ import {
 } from "@/components/SitePowerChart";
 import { getColorForPath } from "@/lib/chart-colors";
 import { SeriesPath } from "@/lib/identifiers";
+import {
+  matchesPointPath,
+  parsePointPath,
+} from "@/lib/identifiers/point-path-utils";
 import { parseAbsolute, parseDate, toZoned } from "@internationalized/date";
 import { encodeI18nToUrlSafeString } from "@/lib/url-date";
 
@@ -135,7 +139,7 @@ interface FetchedSiteData {
  */
 function splitBatteryPower(powerSeries: ParsedSeries[]): ParsedSeries[] {
   const batteryPowerIndex = powerSeries.findIndex((s) =>
-    s.seriesPath!.pointPath.matches("bidi.battery", "power"),
+    matchesPointPath(s.seriesPath!.pointPath, "bidi.battery", "power"),
   );
 
   if (batteryPowerIndex === -1) {
@@ -344,7 +348,7 @@ async function fetchSiteData(
 
   // Extract SoC series
   const socSeries = allSeries.filter((d) =>
-    d.seriesPath!.pointPath.matches("bidi.battery", "soc"),
+    matchesPointPath(d.seriesPath!.pointPath, "bidi.battery", "soc"),
   );
   console.log(
     "[Site Processor] Found SoC series:",
@@ -597,7 +601,10 @@ function trackLoadValues(
   config: any,
   tracker: LoadTracker,
 ): void {
-  const pointPath = dataSeries.seriesPath!.pointPath;
+  const pointPathStr = dataSeries.seriesPath!.pointPath;
+  const pointPath = parsePointPath(pointPathStr);
+
+  if (!pointPath) return;
 
   if (pointPath.type === "load") {
     if (!pointPath.subtype) {
@@ -617,10 +624,10 @@ function trackLoadValues(
       });
       console.log(`[Site Processor] Added child load: ${config.label}`);
     }
-  } else if (pointPath.matches("bidi.battery", "power")) {
+  } else if (matchesPointPath(pointPathStr, "bidi.battery", "power")) {
     tracker.batteryChargeValues = seriesValues;
     console.log(`[Site Processor] Found battery charge: ${config.label}`);
-  } else if (pointPath.matches("bidi.grid", "power")) {
+  } else if (matchesPointPath(pointPathStr, "bidi.grid", "power")) {
     tracker.gridExportValues = seriesValues;
     console.log(`[Site Processor] Found grid export: ${config.label}`);
   }

@@ -2,7 +2,11 @@
  * Point Info - Frontend-safe point information with helper methods
  */
 
-import { PointPath, PointReference } from "@/lib/identifiers";
+import { PointReference } from "@/lib/identifiers";
+import {
+  buildPointPath,
+  buildFallbackPointPath,
+} from "@/lib/identifiers/point-path-utils";
 
 /**
  * Point information with helper methods
@@ -35,21 +39,20 @@ export class PointInfo {
   }
 
   /**
-   * Get the PointPath for this point
-   * Returns a PointPath object that includes the metric type
+   * Get the point path as a string
    *
    * For points with type: "type.subtype.extension/metricType"
    * For points without type: "{pointIndex}/metricType" (fallback)
    *
    * Examples:
-   * - type="source", subtype="solar", metricType="power" → PointPath("source.solar/power")
-   * - type="bidi", subtype="battery", extension="charge", metricType="power" → PointPath("bidi.battery.charge/power")
-   * - type="load", metricType="power" → PointPath("load/power")
-   * - type=null, index=4, metricType="power" → PointPath("4/power")
+   * - type="source", subtype="solar", metricType="power" → "source.solar/power"
+   * - type="bidi", subtype="battery", extension="charge", metricType="power" → "bidi.battery.charge/power"
+   * - type="load", metricType="power" → "load/power"
+   * - type=null, index=4, metricType="power" → "4/power"
    */
-  getPath(): PointPath {
+  getPath(): string {
     if (this.type) {
-      return PointPath.fromComponents(
+      return buildPointPath(
         this.type,
         this.subtype,
         this.extension,
@@ -57,17 +60,14 @@ export class PointInfo {
       );
     } else {
       // Fallback for points without type
-      return PointPath.createFallback(this.index, this.metricType);
+      return buildFallbackPointPath(this.index, this.metricType);
     }
   }
 
   /**
    * Get the logical path for typed points only
    * Returns "type.subtype.extension/metricType" for points with type != null
-   * Returns null for points without type
-   *
-   * This is a convenience method that wraps getPath().toString() but returns
-   * null for untyped points (instead of the fallback "{index}/metricType" format)
+   * Returns null for points without type (excludes fallback format)
    *
    * Examples:
    * - type="load", subtype="hvac", metricType="power" → "load.hvac/power"
@@ -78,7 +78,7 @@ export class PointInfo {
     if (!this.type) {
       return null;
     }
-    return this.getPath().toString();
+    return this.getPath();
   }
 
   /**

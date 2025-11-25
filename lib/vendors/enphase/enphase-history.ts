@@ -11,7 +11,7 @@ import {
   fromUnixTimestamp,
   formatTimeAEST,
 } from "@/lib/date-utils";
-import { insertPointReadingsDirectTo5m } from "@/lib/monitoring-points-manager";
+import { PointManager } from "@/lib/point/point-manager";
 import { ENPHASE_POINTS } from "./point-metadata";
 
 interface EnphaseInterval {
@@ -380,7 +380,11 @@ export async function fetchEnphaseDay(
 
   // Insert directly to point_readings_agg_5m table (bypassing point_readings since Enphase already provides 5m data)
   if (!dryRun && pointReadings.length > 0) {
-    await insertPointReadingsDirectTo5m(systemId, sessionId, pointReadings);
+    await PointManager.getInstance().insertPointReadingsDirectTo5m(
+      systemId,
+      sessionId,
+      pointReadings,
+    );
     console.log(
       `[Enphase] Inserted ${pointReadings.length} pre-aggregated 5m point readings`,
     );

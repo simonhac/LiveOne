@@ -214,239 +214,6 @@ export class PointReference {
 }
 
 /**
- * Point Path - Unique identifier for a point within its system
- *
- * Format with type: "{type}.{subtype}.{extension}/{metricType}"
- * Format without type: "{pointIndex}/{metricType}"
- *
- * Examples:
- * - "load.hvac/power"
- * - "source.solar/energy"
- * - "bidi.battery.charge/power"
- * - "load/power" (no subtype/extension)
- * - "5/power" (fallback for points without type - just the pointIndex)
- */
-export class PointPath {
-  private constructor(
-    public readonly type: string,
-    public readonly subtype: string | null,
-    public readonly extension: string | null,
-    public readonly metricType: string,
-    public readonly isFallback: boolean = false,
-  ) {}
-
-  /**
-   * Get the point index if this is a fallback path, null otherwise
-   */
-  get pointIndex(): number | null {
-    if (this.isFallback) {
-      const idx = parseInt(this.type, 10);
-      return isNaN(idx) ? null : idx;
-    }
-    return null;
-  }
-
-  /**
-   * Parse a point path string
-   * Returns null if format is invalid
-   *
-   * @example
-   * PointPath.parse("load.hvac/power") // PointPath { type: "load", subtype: "hvac", ... }
-   * PointPath.parse("5/power") // PointPath { isFallback: true, type: "5", metricType: "power" }
-   * PointPath.parse("invalid") // null
-   */
-  static parse(str: string): PointPath | null {
-    // Must contain exactly one slash
-    const slashIndex = str.indexOf("/");
-    if (slashIndex === -1 || str.indexOf("/", slashIndex + 1) !== -1) {
-      return null;
-    }
-
-    const pointIdentifier = str.substring(0, slashIndex);
-    const metricType = str.substring(slashIndex + 1);
-
-    // Validate metric type is non-empty
-    if (!metricType) {
-      return null;
-    }
-
-    // Check if this is a numeric-only point index (fallback format)
-    if (/^\d+$/.test(pointIdentifier)) {
-      const pointIndex = parseInt(pointIdentifier, 10);
-      if (pointIndex > 0) {
-        // Fallback format: just pointIndex/metricType
-        return new PointPath(pointIdentifier, null, null, metricType, true);
-      }
-      return null;
-    }
-
-    // Parse point identifier (type.subtype.extension)
-    const parts = pointIdentifier.split(".");
-
-    if (parts.length === 0 || parts.length > 3) {
-      return null;
-    }
-
-    // Validate no empty parts
-    if (parts.some((p) => !p)) {
-      return null;
-    }
-
-    const type = parts[0];
-    const subtype = parts.length > 1 ? parts[1] : null;
-    const extension = parts.length > 2 ? parts[2] : null;
-
-    return new PointPath(type, subtype, extension, metricType, false);
-  }
-
-  /**
-   * Create a point path from a string, throwing on invalid format
-   */
-  static from(str: string): PointPath {
-    const result = PointPath.parse(str);
-    if (!result) {
-      throw new Error(`Invalid PointPath format: ${str}`);
-    }
-    return result;
-  }
-
-  /**
-   * Create a point path from components
-   */
-  static fromComponents(
-    type: string,
-    subtype: string | null,
-    extension: string | null,
-    metricType: string,
-  ): PointPath {
-    if (!type || !metricType) {
-      throw new Error("type and metricType are required");
-    }
-
-    // Validate no empty strings (null is ok)
-    if (subtype === "" || extension === "") {
-      throw new Error("subtype and extension must be non-empty or null");
-    }
-
-    return new PointPath(type, subtype, extension, metricType, false);
-  }
-
-  /**
-   * Create a fallback point path for points without type
-   * Format: "{pointId}/{metricType}"
-   * Example: "5/power"
-   */
-  static createFallback(pointId: number, metricType: string): PointPath {
-    if (pointId <= 0 || !Number.isInteger(pointId)) {
-      throw new Error(`Invalid pointId: ${pointId}`);
-    }
-    if (!metricType) {
-      throw new Error("metricType is required");
-    }
-    return new PointPath(pointId.toString(), null, null, metricType, true);
-  }
-
-  /**
-   * Serialize to string format
-   */
-  toString(): string {
-    if (this.isFallback) {
-      // Fallback format: just pointIndex/metricType
-      return `${this.type}/${this.metricType}`;
-    }
-
-    let path = this.type;
-    if (this.subtype) {
-      path += `.${this.subtype}`;
-      if (this.extension) {
-        path += `.${this.extension}`;
-      }
-    }
-    return `${path}/${this.metricType}`;
-  }
-
-  /**
-   * Get just the point identifier part (without metric type)
-   * Useful for display purposes
-   */
-  getPointIdentifier(): string {
-    let path = this.type;
-    if (this.subtype) {
-      path += `.${this.subtype}`;
-      if (this.extension) {
-        path += `.${this.extension}`;
-      }
-    }
-    return path;
-  }
-
-  /**
-   * Check equality with another PointPath
-   */
-  equals(other: PointPath): boolean {
-    return (
-      this.type === other.type &&
-      this.subtype === other.subtype &&
-      this.extension === other.extension &&
-      this.metricType === other.metricType
-    );
-  }
-
-  /**
-   * Create a hash key for use in Maps/Sets
-   */
-  toHashKey(): string {
-    return this.toString();
-  }
-
-  /**
-   * Check if this point path matches the given point identifier and metric type
-   * @param pointIdentifier - Point identifier in format "type.subtype.extension" or "type.subtype" or "type"
-   * @param metricType - Metric type to match (e.g., "power", "soc", "energy")
-   * @returns true if the point path matches
-   *
-   * @example
-   * path.matches("bidi.battery", "soc") // true if path is "bidi.battery/soc"
-   * path.matches("load.hvac", "power") // true if path is "load.hvac/power" or "load.hvac.xyz/power"
-   * path.matches("source.solar", "energy") // true if path is "source.solar/energy" or "source.solar.remote/energy"
-   */
-  matches(pointIdentifier: string, metricType: string): boolean {
-    // Check metric type
-    if (this.metricType !== metricType) {
-      return false;
-    }
-
-    // Parse the point identifier
-    const parts = pointIdentifier.split(".");
-
-    if (parts.length === 0 || parts.length > 3) {
-      return false;
-    }
-
-    const type = parts[0];
-    const subtype = parts.length > 1 ? parts[1] : null;
-    const extension = parts.length > 2 ? parts[2] : null;
-
-    // Check type
-    if (this.type !== type) {
-      return false;
-    }
-
-    // Check subtype if specified
-    if (subtype !== null && this.subtype !== subtype) {
-      return false;
-    }
-
-    // Check extension if specified
-    if (extension !== null && this.extension !== extension) {
-      return false;
-    }
-
-    return true;
-  }
-}
-
-/**
  * Series Path - Full identifier for a queryable data series
  *
  * Format: "{systemIdentifier}/{pointPath}.{aggregationField}"
@@ -462,7 +229,7 @@ export class PointPath {
 export class SeriesPath {
   private constructor(
     public readonly systemIdentifier: SystemIdentifier,
-    public readonly pointPath: PointPath,
+    public readonly pointPath: string,
     public readonly aggregationField: string,
   ) {}
 
@@ -474,7 +241,7 @@ export class SeriesPath {
    * SeriesPath.parse("1/load.hvac/power.avg")
    * // SeriesPath {
    * //   systemIdentifier: SystemIdentifier { type: "id", id: 1 },
-   * //   pointPath: PointPath { type: "load", subtype: "hvac", metricType: "power" },
+   * //   pointPath: "load.hvac/power",
    * //   aggregationField: "avg"
    * // }
    */
@@ -507,13 +274,12 @@ export class SeriesPath {
       return null;
     }
 
-    // Parse point path
-    const pointPath = PointPath.parse(pointPathStr);
-    if (!pointPath) {
+    // Validate point path format (must contain a slash for metric type)
+    if (!pointPathStr.includes("/")) {
       return null;
     }
 
-    return new SeriesPath(systemIdentifier, pointPath, aggregationField);
+    return new SeriesPath(systemIdentifier, pointPathStr, aggregationField);
   }
 
   /**
@@ -532,9 +298,12 @@ export class SeriesPath {
    */
   static fromComponents(
     systemIdentifier: SystemIdentifier,
-    pointPath: PointPath,
+    pointPath: string,
     aggregationField: string,
   ): SeriesPath {
+    if (!pointPath) {
+      throw new Error("pointPath is required");
+    }
     if (!aggregationField) {
       throw new Error("aggregationField is required");
     }
@@ -546,7 +315,7 @@ export class SeriesPath {
    * Serialize to string format
    */
   toString(): string {
-    return `${this.systemIdentifier.toString()}/${this.pointPath.toString()}.${this.aggregationField}`;
+    return `${this.systemIdentifier.toString()}/${this.pointPath}.${this.aggregationField}`;
   }
 
   /**
@@ -555,7 +324,7 @@ export class SeriesPath {
   equals(other: SeriesPath): boolean {
     return (
       this.systemIdentifier.equals(other.systemIdentifier) &&
-      this.pointPath.equals(other.pointPath) &&
+      this.pointPath === other.pointPath &&
       this.aggregationField === other.aggregationField
     );
   }

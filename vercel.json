@@ -11,7 +11,7 @@
     },
     {
       "path": "/api/cron/db-stats",
-      "schedule": "0 0 * * *"
+      "schedule": "0 2,14 * * *"
     }
   ],
   "functions": {

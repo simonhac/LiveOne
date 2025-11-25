@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Plus, X, Sun, Home, Battery, Zap } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useUser } from "@clerk/nextjs";
-import { PointPath } from "@/lib/identifiers";
+import { parsePointPath } from "@/lib/identifiers/point-path-utils";
 
 interface CompositeMapping {
   [key: string]: string[]; // Allow any category keys
@@ -275,9 +275,9 @@ export default function CompositeTab({
     }));
   };
 
-  // Helper to check if a path matches a pattern using PointPath
+  // Helper to check if a path matches a pattern using parsePointPath
   const matchesPattern = (path: string, pattern: string): boolean => {
-    const pointPath = PointPath.parse(path);
+    const pointPath = parsePointPath(path);
     if (!pointPath) return false;
 
     // Parse the pattern to get type and subtype

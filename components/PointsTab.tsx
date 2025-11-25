@@ -1,10 +1,14 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Sun, Battery, Zap, Home, Activity } from "lucide-react";
-import { PointPath } from "@/lib/identifiers";
+import {
+  parsePointPath,
+  ParsedPointPath,
+  getIdentifierFromParsed,
+} from "@/lib/identifiers/point-path-utils";
 import micromatch from "micromatch";
 
 interface ParsedPoint {
-  pointPath: PointPath;
+  pointPath: ParsedPointPath;
   name: string;
   metricType: string;
   metricUnit: string;
@@ -88,7 +92,7 @@ export default function PointsTab({
         // Parse paths at serialization boundary
         const parsedPoints: ParsedPoint[] = data.points
           .map((p: any) => {
-            const pointPath = PointPath.parse(p.logicalPath);
+            const pointPath = parsePointPath(p.logicalPath);
             if (!pointPath) return null;
             return {
               pointPath,
@@ -120,7 +124,7 @@ export default function PointsTab({
   const filterPoints = useCallback(
     (pattern: string) =>
       points.filter((p) =>
-        micromatch.isMatch(p.pointPath.getPointIdentifier(), pattern),
+        micromatch.isMatch(getIdentifierFromParsed(p.pointPath), pattern),
       ),
     [points],
   );
@@ -142,11 +146,11 @@ export default function PointsTab({
       ...loadPoints,
       ...inverterPoints,
     ].forEach((p) =>
-      categorizedIdentifiers.add(p.pointPath.getPointIdentifier()),
+      categorizedIdentifiers.add(getIdentifierFromParsed(p.pointPath)),
     );
 
     const otherPoints = points.filter(
-      (p) => !categorizedIdentifiers.has(p.pointPath.getPointIdentifier()),
+      (p) => !categorizedIdentifiers.has(getIdentifierFromParsed(p.pointPath)),
     );
 
     // Group each subsystem's points by identifier to show all metric types together
@@ -157,7 +161,7 @@ export default function PointsTab({
       >();
 
       points.forEach((point) => {
-        const identifier = point.pointPath.getPointIdentifier();
+        const identifier = getIdentifierFromParsed(point.pointPath);
         if (!grouped.has(identifier)) {
           grouped.set(identifier, {
             name: point.name,

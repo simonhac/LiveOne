@@ -124,12 +124,12 @@ export async function GET(
     // Step 7: Serialize based on mode
     if (shortMode) {
       // Return just the paths as an array of strings
-      const paths = points.map((point) => point.getPath().toString());
+      const paths = points.map((point) => point.getPath());
       return NextResponse.json(paths);
     } else {
       // Return detailed point information
       const pointsData = points.map((point) => ({
-        logicalPath: point.getPath().toString(),
+        logicalPath: point.getPath(),
         physicalPath: point.originSubId
           ? `${point.originId}.${point.originSubId}`
           : point.originId,

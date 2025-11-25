@@ -7,7 +7,7 @@
  * Based on system ID 1 (Daylesford) - Selectronic SP PRO
  */
 
-import type { PointMetadata } from "@/lib/monitoring-points-manager";
+import type { PointMetadata } from "@/lib/point/point-manager";
 
 export interface SelectronicPointConfig {
   // Field name from SelectronicData interface

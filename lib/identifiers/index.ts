@@ -5,12 +5,7 @@
  * replacing string-based parsing with structured objects.
  */
 
-export {
-  SystemIdentifier,
-  PointReference,
-  PointPath,
-  SeriesPath,
-} from "./types";
+export { SystemIdentifier, PointReference, SeriesPath } from "./types";
 
 export {
   PointType,
@@ -22,3 +17,16 @@ export {
   isMetricType,
   isAggregationField,
 } from "./enums";
+
+// Point path utilities - simple string-based functions replacing PointPath class
+export type { ParsedPointPath } from "./point-path-utils";
+export {
+  buildPointPath,
+  buildFallbackPointPath,
+  parsePointPath,
+  buildPointIdentifier,
+  getIdentifierFromParsed,
+  getPointIdentifier,
+  getMetricType,
+  matchesPointPath,
+} from "./point-path-utils";

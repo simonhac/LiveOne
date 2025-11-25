@@ -3,7 +3,7 @@
  * Ensures consistent colors across SitePowerChart, EnergyChart, Sankey, and other visualizations
  */
 
-import { PointPath } from "@/lib/identifiers";
+import { parsePointPath } from "@/lib/identifiers/point-path-utils";
 import {
   interpolateViridis,
   interpolatePlasma,
@@ -114,8 +114,8 @@ export function getColorForPath(path: string, label?: string): string {
     return CHART_COLORS.restOfHouse;
   }
 
-  // Parse the path using PointPath utility
-  const pointPath = PointPath.parse(path);
+  // Parse the path using parsePointPath utility
+  const pointPath = parsePointPath(path);
   if (!pointPath) {
     // If parsing fails, return default color
     return "rgb(156, 163, 175)"; // gray-400

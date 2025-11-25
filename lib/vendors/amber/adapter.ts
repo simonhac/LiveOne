@@ -11,7 +11,7 @@ import {
   getYesterdayInTimezone,
   getTodayInTimezone,
 } from "@/lib/date-utils";
-import { insertPointReadingsDirectTo5m } from "@/lib/monitoring-points-manager";
+import { PointManager } from "@/lib/point/point-manager";
 import {
   createChannelPoints,
   getChannelMetadata,
@@ -315,7 +315,11 @@ export class AmberAdapter extends BaseVendorAdapter {
     }
 
     // Insert all readings directly to 5m aggregates
-    await insertPointReadingsDirectTo5m(system.id, sessionId, readingsToInsert);
+    await PointManager.getInstance().insertPointReadingsDirectTo5m(
+      system.id,
+      sessionId,
+      readingsToInsert,
+    );
 
     console.log(
       `[Amber] Inserted ${readingsToInsert.length} usage readings (${grouped.size} timestamps)`,
@@ -443,7 +447,11 @@ export class AmberAdapter extends BaseVendorAdapter {
     }
 
     // Insert all price data directly to 5m aggregates
-    await insertPointReadingsDirectTo5m(system.id, sessionId, readingsToInsert);
+    await PointManager.getInstance().insertPointReadingsDirectTo5m(
+      system.id,
+      sessionId,
+      readingsToInsert,
+    );
 
     console.log(
       `[Amber] Inserted ${actualIntervals.length} actual + ${forecastIntervals.length} forecast price records`,

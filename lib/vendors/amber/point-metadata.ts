@@ -5,7 +5,7 @@
  * Amber provides grid import/export data with energy, cost/revenue, and pricing.
  */
 
-import type { PointMetadata } from "@/lib/monitoring-points-manager";
+import type { PointMetadata } from "@/lib/point/point-manager";
 import type { AmberChannelMetadata } from "./types";
 
 /**

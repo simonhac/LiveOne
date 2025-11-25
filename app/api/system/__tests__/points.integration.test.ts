@@ -12,7 +12,7 @@
 
 import { describe, it, expect, beforeAll } from "@jest/globals";
 import { SystemsManager } from "@/lib/systems-manager";
-import { PointPath } from "@/lib/identifiers";
+import { parsePointPath } from "@/lib/identifiers/point-path-utils";
 
 const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3000";
 
@@ -195,13 +195,10 @@ describe("GET /api/system/[systemIdentifier]/points", () => {
       expect(status).toBe(200);
       expect(Array.isArray(data)).toBe(true);
 
-      // All returned paths should be parseable by PointPath.parse()
+      // All returned paths should be parseable by parsePointPath()
       data.forEach((pathStr: string) => {
-        const parsed = PointPath.parse(pathStr);
+        const parsed = parsePointPath(pathStr);
         expect(parsed).not.toBeNull();
-
-        // Round-trip should match
-        expect(parsed?.toString()).toBe(pathStr);
       });
     });
 
@@ -212,13 +209,13 @@ describe("GET /api/system/[systemIdentifier]/points", () => {
 
       // Find a point with full type hierarchy (if exists)
       const typedPaths = data.filter((path: string) => {
-        const parsed = PointPath.parse(path);
+        const parsed = parsePointPath(path);
         return parsed && !parsed.isFallback;
       });
 
       if (typedPaths.length > 0) {
         typedPaths.forEach((pathStr: string) => {
-          const parsed = PointPath.parse(pathStr);
+          const parsed = parsePointPath(pathStr);
           expect(parsed).not.toBeNull();
           expect(parsed?.isFallback).toBe(false);
           expect(parsed?.type).toBeTruthy();
@@ -237,13 +234,13 @@ describe("GET /api/system/[systemIdentifier]/points", () => {
 
       // Find fallback paths (numeric-only point identifier)
       const fallbackPaths = data.filter((path: string) => {
-        const parsed = PointPath.parse(path);
+        const parsed = parsePointPath(path);
         return parsed && parsed.isFallback;
       });
 
       if (fallbackPaths.length > 0) {
         fallbackPaths.forEach((pathStr: string) => {
-          const parsed = PointPath.parse(pathStr);
+          const parsed = parsePointPath(pathStr);
           expect(parsed).not.toBeNull();
           expect(parsed?.isFallback).toBe(true);
           expect(parsed?.pointIndex).toBeGreaterThan(0);

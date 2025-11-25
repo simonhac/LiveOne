@@ -8,10 +8,7 @@ import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { CommonPollingData } from "@/lib/types/common";
 import type { LatestReadingData } from "@/lib/types/readings";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
-import {
-  insertPointReadingsBatch,
-  type PointMetadata,
-} from "@/lib/monitoring-points-manager";
+import { PointManager, type PointMetadata } from "@/lib/point/point-manager";
 
 interface MondoCredentials {
   email: string;
@@ -311,7 +308,10 @@ export class MondoAdapter extends BaseVendorAdapter {
         }
 
         // Batch insert all readings - this will automatically ensure point_info entries exist
-        await insertPointReadingsBatch(systemId, readingsToInsert);
+        await PointManager.getInstance().insertPointReadingsBatch(
+          systemId,
+          readingsToInsert,
+        );
         recordsProcessed = readingsToInsert.length;
 
         console.log(

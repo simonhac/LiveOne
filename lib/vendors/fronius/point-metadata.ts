@@ -7,7 +7,7 @@
  * Fronius systems push data to /api/push/fronius endpoint
  */
 
-import type { PointMetadata } from "@/lib/monitoring-points-manager";
+import type { PointMetadata } from "@/lib/point/point-manager";
 
 export interface FroniusPointConfig {
   // Field name from FroniusPushData interface

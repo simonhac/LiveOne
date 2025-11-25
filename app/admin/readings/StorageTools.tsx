@@ -39,7 +39,7 @@ interface TableStat {
 interface CacheInfo {
   systemsManagerLoadedTime: string | null;
   pointManagerLoadedTime: string | null;
-  dbSizesCachedTime?: string | null;
+  statsComputedTime?: string | null;
 }
 
 interface DatabaseInfo {
@@ -1139,16 +1139,21 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
               </table>
             </div>
           </div>
-          {/* Note for 30-day window - outside table card */}
+          {/* Note for growth calculation period - outside table card */}
           {(() => {
-            const hasWindow = databaseInfo.stats?.tableStats.some(
-              (t) => t.growth?.using30DayWindow,
-            );
-            return hasWindow ? (
+            // Find the most common daysInPeriod across tables with growth data
+            const periods = databaseInfo.stats?.tableStats
+              .filter(
+                (t) => t.growth?.daysInPeriod && t.growth.daysInPeriod > 0,
+              )
+              .map((t) => t.growth!.daysInPeriod);
+            if (!periods?.length) return null;
+            const maxPeriod = Math.max(...periods);
+            return (
               <div className="px-2 sm:px-0 pt-1 text-xs text-gray-500">
-                * Based on last 30 days
+                * Based on last {maxPeriod} {maxPeriod === 1 ? "day" : "days"}
               </div>
-            ) : null;
+            );
           })()}
         </div>
       )}
@@ -1321,19 +1326,19 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                 </span>
               </div>
               <div>
-                <span className="text-gray-400">DB Sizes Cache:</span>
+                <span className="text-gray-400">Stats Computed:</span>
                 <span className="ml-2">
-                  {cacheInfo.dbSizesCachedTime ? (
+                  {cacheInfo.statsComputedTime ? (
                     <>
                       <span className="text-white">
-                        {formatDateTime(cacheInfo.dbSizesCachedTime).display}
+                        {formatDateTime(cacheInfo.statsComputedTime).display}
                       </span>
                       {(() => {
                         const cacheAge =
                           Date.now() -
-                          new Date(cacheInfo.dbSizesCachedTime).getTime();
+                          new Date(cacheInfo.statsComputedTime).getTime();
                         const hoursOld = cacheAge / (1000 * 60 * 60);
-                        if (hoursOld > 25) {
+                        if (hoursOld > 13) {
                           return (
                             <span className="ml-2 px-2 py-0.5 text-xs bg-yellow-600/20 text-yellow-400 border border-yellow-600/30 rounded">
                               Stale
@@ -1344,7 +1349,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                       })()}
                     </>
                   ) : (
-                    <span className="text-gray-500 italic">empty</span>
+                    <span className="text-gray-500 italic">not computed</span>
                   )}
                 </span>
               </div>

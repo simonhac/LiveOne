@@ -720,7 +720,7 @@ async function getSystemHistoryInOpenNEMFormat(
 
     // Build path for the series (e.g., "bidi.battery/power.avg")
     const pointPath = series.point.getPath();
-    const fullPath = `${pointPath.toString()}.${series.aggregationField}`;
+    const fullPath = `${pointPath}.${series.aggregationField}`;
 
     // Format timestamps
     const timezoneOffsetMin = system.timezoneOffsetMin ?? 600;

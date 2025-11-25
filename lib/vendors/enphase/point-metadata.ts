@@ -8,7 +8,7 @@
  * with up to 288 intervals per day (one every 5 minutes).
  */
 
-import type { PointMetadata } from "@/lib/monitoring-points-manager";
+import type { PointMetadata } from "@/lib/point/point-manager";
 
 /**
  * Enphase interval data structure from production_micro endpoint

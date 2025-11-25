@@ -11,10 +11,7 @@ import {
   type SelectronicData,
 } from "./selectronic-client";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
-import {
-  insertPointReadingsBatch,
-  type PointMetadata,
-} from "@/lib/monitoring-points-manager";
+import { PointManager, type PointMetadata } from "@/lib/point/point-manager";
 import { SELECTRONIC_POINTS } from "./point-metadata";
 
 /**
@@ -143,7 +140,10 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       }
 
       // Batch insert all readings - this will automatically ensure point_info entries exist
-      await insertPointReadingsBatch(system.id, readingsToInsert);
+      await PointManager.getInstance().insertPointReadingsBatch(
+        system.id,
+        readingsToInsert,
+      );
 
       console.log(
         `[Selectronic] Poll successful -`,

@@ -3,7 +3,7 @@
  *
  * This combines:
  * - Which system (SystemIdentifier)
- * - Which point (PointInfo with PointPath)
+ * - Which point (PointInfo)
  * - Which aggregation (e.g., "avg", "min", "max", "last", "delta")
  * - Which intervals are supported ("5m", "1d")
  */

@@ -226,7 +226,7 @@ export async function GET(
     // Transform SeriesInfo[] to response format
     // (keeping same response structure for backward compatibility)
     const series = seriesInfos.map((seriesInfo) => {
-      const seriesPath = `${seriesInfo.systemIdentifier.toString()}/${seriesInfo.point.getPath().toString()}.${seriesInfo.aggregationField}`;
+      const seriesPath = `${seriesInfo.systemIdentifier.toString()}/${seriesInfo.point.getPath()}.${seriesInfo.aggregationField}`;
 
       return {
         id: seriesPath,
