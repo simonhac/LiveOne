@@ -52,8 +52,13 @@ export async function GET(request: NextRequest) {
         : undefined;
       const vendorTypes = vendorParam ? vendorParam.split(",") : undefined;
       const causes = causeParam ? causeParam.split(",") : undefined;
+      // Parse status filter: "success" → true, "error" → false, "pending" → null
       const successful = statusParam
-        ? statusParam.split(",").map((s) => s === "success")
+        ? statusParam.split(",").map((s) => {
+            if (s === "success") return true;
+            if (s === "pending") return null;
+            return false; // "error" or any other value
+          })
         : undefined;
 
       // Parse time range (24h, 3d, 7d, 30d)

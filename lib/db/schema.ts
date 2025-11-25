@@ -321,7 +321,7 @@ export const sessions = sqliteTable(
     cause: text("cause").notNull(), // 'POLL', 'ADMIN', 'USER', etc.
     started: integer("started", { mode: "timestamp" }).notNull(),
     duration: integer("duration").notNull(), // milliseconds
-    successful: integer("successful", { mode: "boolean" }).notNull(),
+    successful: integer("successful", { mode: "boolean" }), // Nullable: NULL=pending, true=success, false=failed
     errorCode: text("error_code"), // nullable - short error code/number
     error: text("error"), // nullable - detailed error message
     response: text("response", { mode: "json" }), // nullable - full server response as JSON

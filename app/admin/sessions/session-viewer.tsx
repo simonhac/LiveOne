@@ -42,7 +42,7 @@ interface Session {
   cause: string;
   started: string;
   duration: number;
-  successful: boolean;
+  successful: boolean | null; // null = pending/in-progress
   errorCode?: string;
   error?: string;
   numRows: number;
@@ -68,11 +68,11 @@ function HeaderFilter({
   // Use provided options (from database), already sorted
   const sortedUniqueValues = availableOptions;
 
-  // Helper to display boolean values as Success/Failed
+  // Helper to display status values as Success/Failed/In Progress
   const getDisplayValue = (value: any): string => {
-    if (typeof value === "boolean") {
-      return value ? "Success" : "Failed";
-    }
+    if (value === null) return "In Progress";
+    if (value === true) return "Success";
+    if (value === false) return "Failed";
     return String(value);
   };
 
@@ -343,7 +343,14 @@ export default function ActivityViewer() {
     }
   };
 
-  const getStatusBadge = (successful: boolean, errorCode?: string) => {
+  const getStatusBadge = (successful: boolean | null, errorCode?: string) => {
+    if (successful === null) {
+      return (
+        <span className="px-2 py-0.5 text-xs rounded bg-blue-500/20 text-blue-400">
+          In Progress
+        </span>
+      );
+    }
     if (successful) {
       return (
         <span className="px-2 py-0.5 text-xs rounded bg-green-500/20 text-green-400">

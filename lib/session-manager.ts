@@ -40,7 +40,7 @@ export interface SessionWithSystem {
   cause: string;
   started: Date;
   duration: number;
-  successful: boolean;
+  successful: boolean | null; // null = pending/in-progress
   errorCode: string | null;
   error: string | null;
   response: any | null;
@@ -92,7 +92,7 @@ export class SessionManager {
         cause: data.cause,
         started: data.started,
         duration: 0, // Will be updated when session completes
-        successful: false, // Will be updated when session completes
+        // successful left as NULL (pending) - will be updated when session completes
         errorCode: null,
         error: null,
         response: null,
@@ -422,7 +422,7 @@ export class SessionManager {
     systemIds?: number[];
     vendorTypes?: string[];
     causes?: string[];
-    successful?: boolean[];
+    successful?: (boolean | null)[]; // null = pending/in-progress
     timeRangeHours?: number; // e.g., 24, 72, 168, 720 for 24h, 3d, 7d, 30d
 
     // Sorting
@@ -469,9 +469,11 @@ export class SessionManager {
       }
 
       if (params.successful && params.successful.length > 0) {
-        // Handle boolean array - convert to OR conditions
+        // Handle boolean/null array - convert to OR conditions
+        // null = pending (in-progress), true = success, false = failed
+        const { isNull } = await import("drizzle-orm");
         const successConditions = params.successful.map((s) =>
-          eq(sessions.successful, s),
+          s === null ? isNull(sessions.successful) : eq(sessions.successful, s),
         );
         conditions.push(or(...successConditions)!);
       }

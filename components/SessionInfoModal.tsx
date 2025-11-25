@@ -14,7 +14,7 @@ interface Session {
   cause: string;
   started: string;
   duration: number;
-  successful: boolean;
+  successful: boolean | null; // null = pending/in-progress
   errorCode?: string;
   error?: string;
   response?: any;
@@ -175,9 +175,19 @@ export default function SessionInfoModal({
                   <div>
                     <p className="text-sm text-gray-400 mb-1">Status</p>
                     <p
-                      className={`text-lg font-bold ${session.successful ? "text-green-400" : "text-red-400"}`}
+                      className={`text-lg font-bold ${
+                        session.successful === null
+                          ? "text-blue-400"
+                          : session.successful
+                            ? "text-green-400"
+                            : "text-red-400"
+                      }`}
                     >
-                      {session.successful ? "Success" : "Failed"}
+                      {session.successful === null
+                        ? "In Progress"
+                        : session.successful
+                          ? "Success"
+                          : "Failed"}
                       {session.errorCode && ` (${session.errorCode})`}
                     </p>
                     {session.numRows > 0 && (

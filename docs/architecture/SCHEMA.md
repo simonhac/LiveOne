@@ -473,22 +473,20 @@ Manages many-to-many relationships between users and systems.
 
 Tracks all communication sessions with energy systems for debugging and monitoring.
 
-| Column          | Type                | Description                                 |
-| --------------- | ------------------- | ------------------------------------------- |
-| `id`            | INTEGER PRIMARY KEY | Auto-incrementing unique ID                 |
-| `session_label` | TEXT                | Label from remote system (if available)     |
-| `system_id`     | INTEGER NOT NULL    | Foreign key to systems.id                   |
-| `vendor_type`   | TEXT NOT NULL       | Vendor type: 'selectronic', 'enphase', etc. |
-| `system_name`   | TEXT NOT NULL       | System name at time of session              |
-| `cause`         | TEXT NOT NULL       | 'POLL', 'ADMIN', 'USER', etc.               |
-| `started`       | INTEGER (timestamp) | Session start time                          |
-| `duration`      | INTEGER NOT NULL    | Duration in milliseconds                    |
-| `successful`    | BOOLEAN NOT NULL    | Whether session succeeded                   |
-| `error_code`    | TEXT                | Short error code/number (if failed)         |
-| `error`         | TEXT                | Detailed error message (if failed)          |
-| `response`      | TEXT (JSON)         | Full server response as JSON                |
-| `num_rows`      | INTEGER NOT NULL    | Number of data rows received (0 if none)    |
-| `created_at`    | INTEGER (timestamp) | Record creation timestamp                   |
+| Column          | Type                | Description                              |
+| --------------- | ------------------- | ---------------------------------------- |
+| `id`            | INTEGER PRIMARY KEY | Auto-incrementing unique ID              |
+| `session_label` | TEXT                | Label from remote system (if available)  |
+| `system_id`     | INTEGER NOT NULL    | Foreign key to systems.id                |
+| `cause`         | TEXT NOT NULL       | 'POLL', 'ADMIN', 'USER', etc.            |
+| `started`       | INTEGER (timestamp) | Session start time                       |
+| `duration`      | INTEGER NOT NULL    | Duration in milliseconds                 |
+| `successful`    | BOOLEAN             | NULL=pending, 1=success, 0=failed        |
+| `error_code`    | TEXT                | Short error code/number (if failed)      |
+| `error`         | TEXT                | Detailed error message (if failed)       |
+| `response`      | TEXT (JSON)         | Full server response as JSON             |
+| `num_rows`      | INTEGER NOT NULL    | Number of data rows received (0 if none) |
+| `created_at`    | INTEGER (timestamp) | Record creation timestamp                |
 
 **Indexes:**
 
