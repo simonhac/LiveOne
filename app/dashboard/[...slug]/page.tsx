@@ -217,6 +217,7 @@ export default async function DashboardPage({ params }: PageProps) {
       availableSystems={systemsWithUsernames}
       lastUpdate={null}
       systemInfo={null}
+      supportsPolling={VendorRegistry.supportsPolling(system.vendorType)}
     >
       <DashboardClient
         systemId={systemId}
