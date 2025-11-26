@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { requireAuth } from "@/lib/api-auth";
 import { db } from "@/lib/db";
 import { systems } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
@@ -10,12 +10,10 @@ import { uuidv7 } from "uuidv7";
 
 export async function POST(request: NextRequest) {
   try {
-    // Check if user is authenticated
-    const { userId } = await auth();
-
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // Authenticate user
+    const authResult = await requireAuth(request);
+    if (authResult instanceof NextResponse) return authResult;
+    const { userId } = authResult;
 
     // Get request data
     const { vendorType, credentials, systemInfo, displayName, metadata } =
@@ -154,12 +152,10 @@ export async function POST(request: NextRequest) {
 // GET endpoint to list user's systems
 export async function GET(request: NextRequest) {
   try {
-    // Check if user is authenticated
-    const { userId } = await auth();
-
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // Authenticate user
+    const authResult = await requireAuth(request);
+    if (authResult instanceof NextResponse) return authResult;
+    const { userId } = authResult;
 
     // Get all systems for this user
     const userSystems = await db

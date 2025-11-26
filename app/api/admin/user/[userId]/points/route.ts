@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { pointInfo } from "@/lib/db/schema-monitoring-points";
 import { eq, and } from "drizzle-orm";
-import { isUserAdmin } from "@/lib/auth-utils";
+import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
 
 export async function GET(
@@ -11,22 +10,8 @@ export async function GET(
   { params }: { params: Promise<{ userId: string }> },
 ) {
   try {
-    // Check if user is authenticated
-    const { userId: currentUserId } = await auth();
-
-    if (!currentUserId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check if user is admin
-    const isAdmin = await isUserAdmin();
-
-    if (!isAdmin) {
-      return NextResponse.json(
-        { error: "Admin access required" },
-        { status: 403 },
-      );
-    }
+    const authResult = await requireAdmin(request);
+    if (authResult instanceof NextResponse) return authResult;
 
     const { userId } = await params;
 

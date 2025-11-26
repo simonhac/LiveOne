@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { requireSystemAccess } from "@/lib/api-auth";
 import { PointManager } from "@/lib/point/point-manager";
-import { resolveSystemFromIdentifier } from "@/lib/series-path-utils";
-import { isUserAdmin } from "@/lib/auth-utils";
 import { splitBraceAware } from "@/lib/series-filter-utils";
 
 /**
@@ -113,26 +111,7 @@ export async function GET(
   { params }: { params: Promise<{ systemId: string }> },
 ) {
   try {
-    // Step 1: Authenticate
-    let userId: string;
-    let isAdmin = false;
-
-    if (
-      process.env.NODE_ENV === "development" &&
-      request.headers.get("x-claude") === "true"
-    ) {
-      userId = "claude-dev";
-      isAdmin = true;
-    } else {
-      const authResult = await auth();
-      if (!authResult.userId) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-      userId = authResult.userId;
-      isAdmin = await isUserAdmin(userId);
-    }
-
-    // Step 2: Parse systemId
+    // Parse and validate systemId
     const { systemId: systemIdStr } = await params;
     const systemId = parseInt(systemIdStr, 10);
 
@@ -143,25 +122,12 @@ export async function GET(
       );
     }
 
-    // Step 3: Resolve system and check it exists
-    const system = await resolveSystemFromIdentifier(systemIdStr);
+    // Authenticate and authorize
+    const authResult = await requireSystemAccess(request, systemId);
+    if (authResult instanceof NextResponse) return authResult;
+    const { system } = authResult;
 
-    if (!system) {
-      return NextResponse.json(
-        { error: `System not found: ${systemId}` },
-        { status: 404 },
-      );
-    }
-
-    // Step 4: Check authorization
-    if (!isAdmin && system.ownerClerkUserId !== userId) {
-      return NextResponse.json(
-        { error: "Forbidden: You do not have access to this system" },
-        { status: 403 },
-      );
-    }
-
-    // Step 5: Parse and validate query parameters
+    // Parse and validate query parameters
     const { searchParams } = new URL(request.url);
     const filterParam = searchParams.get("filter");
     const intervalParam = searchParams.get("interval");
@@ -216,7 +182,7 @@ export async function GET(
       filter = rawPatterns;
     }
 
-    // Step 6: Get filtered series for the system
+    // Get filtered series for the system
     const pointManager = PointManager.getInstance();
     const seriesInfos = await pointManager.getSeriesForSystem(
       system,

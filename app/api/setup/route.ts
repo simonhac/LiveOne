@@ -1,24 +1,16 @@
-import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuth } from "@/lib/api-auth";
 import { db } from "@/lib/db";
 import { systems, userSystems } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { SystemsManager } from "@/lib/systems-manager";
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    // Get the authenticated user's Clerk ID
-    const { userId } = await auth();
-
-    if (!userId) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Unauthorized",
-        },
-        { status: 401 },
-      );
-    }
+    // Authenticate user
+    const authResult = await requireAuth(request);
+    if (authResult instanceof NextResponse) return authResult;
+    const { userId } = authResult;
 
     const body = await request.json();
     const { systemNumber } = body;
@@ -124,19 +116,12 @@ export async function POST(request: Request) {
 }
 
 // GET endpoint to list all systems the user has access to
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
-    const { userId } = await auth();
-
-    if (!userId) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Unauthorized",
-        },
-        { status: 401 },
-      );
-    }
+    // Authenticate user
+    const authResult = await requireAuth(request);
+    if (authResult instanceof NextResponse) return authResult;
+    const { userId } = authResult;
 
     // Get all systems this user has access to
     const userSystemRecords = await db

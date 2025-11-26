@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { systems } from "@/lib/db/schema";
 import { eq, and, ne } from "drizzle-orm";
-import { isUserAdmin } from "@/lib/auth-utils";
+import { requireAdmin, requireSystemAccess } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
 import { isValidTimezone } from "@/lib/timezones";
 
@@ -13,12 +12,6 @@ export async function GET(
   { params }: { params: Promise<{ systemId: string }> },
 ) {
   try {
-    const { userId } = await auth();
-
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { systemId: systemIdStr } = await params;
     const systemId = parseInt(systemIdStr);
 
@@ -26,27 +19,15 @@ export async function GET(
       return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
     }
 
-    // Check if user has access to this system
-    const systemsManager = SystemsManager.getInstance();
-    const system = await systemsManager.getSystem(systemId);
-
-    if (!system) {
-      return NextResponse.json({ error: "System not found" }, { status: 404 });
-    }
-
-    const isAdmin = await isUserAdmin();
-    const hasAccess = isAdmin || system.ownerClerkUserId === userId;
-
-    if (!hasAccess) {
-      return NextResponse.json({ error: "Access denied" }, { status: 403 });
-    }
+    const authResult = await requireSystemAccess(request, systemId);
+    if (authResult instanceof NextResponse) return authResult;
 
     return NextResponse.json({
       success: true,
       settings: {
-        displayName: system.displayName,
-        alias: system.alias,
-        displayTimezone: system.displayTimezone,
+        displayName: authResult.system.displayName,
+        alias: authResult.system.alias,
+        displayTimezone: authResult.system.displayTimezone,
       },
     });
   } catch (error) {
@@ -66,22 +47,8 @@ export async function PATCH(
   { params }: { params: Promise<{ systemId: string }> },
 ) {
   try {
-    // Check if user is authenticated
-    const { userId } = await auth();
-
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check if user is admin
-    const isAdmin = await isUserAdmin();
-
-    if (!isAdmin) {
-      return NextResponse.json(
-        { error: "Admin access required" },
-        { status: 403 },
-      );
-    }
+    const authResult = await requireAdmin(request);
+    if (authResult instanceof NextResponse) return authResult;
 
     const { systemId: systemIdStr } = await params;
     const systemId = parseInt(systemIdStr);

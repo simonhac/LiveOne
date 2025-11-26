@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { deleteRange, aggregateRange } from "@/lib/db/aggregate-daily-points";
-import { validateCronRequest } from "@/lib/cron-utils";
+import { requireCronOrAdmin } from "@/lib/api-auth";
 import { parseDate, CalendarDate } from "@internationalized/date";
 import { getNowFormattedAEST, getYesterdayInTimezone } from "@/lib/date-utils";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -130,9 +130,8 @@ function parseDateParams(
 async function handleAggregation(request: NextRequest) {
   try {
     // Validate cron request or admin user
-    if (!(await validateCronRequest(request))) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const authResult = await requireCronOrAdmin(request);
+    if (authResult instanceof NextResponse) return authResult;
 
     // Extract parameters from query params (GET) or body (POST)
     const { searchParams } = new URL(request.url);

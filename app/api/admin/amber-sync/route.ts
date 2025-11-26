@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { updateUsage, updateForecasts } from "@/lib/vendors/amber/client";
 import { parseDateISO } from "@/lib/date-utils";
 import type { AmberSyncResult } from "@/lib/vendors/amber/types";
@@ -9,6 +9,7 @@ import {
 import { toZoned, fromDate } from "@internationalized/date";
 import { sessionManager } from "@/lib/session-manager";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
+import { requireSystemAccess } from "@/lib/api-auth";
 
 /**
  * Format timestamp as AEST (UTC+10) time string (HH:MM)
@@ -30,14 +31,26 @@ function formatAESTDateTime(timestampMs: number): string {
 
 export async function POST(request: NextRequest) {
   try {
+    // Clone request to read body twice (once for auth, once for processing)
     const body = await request.json();
     const { systemIdentifier, action, startDate, days, dryRun, showSample } =
       body;
 
-    // Validate inputs
+    // Validate inputs before auth check
     if (!systemIdentifier || !action || !startDate || !days) {
       return new Response("Missing required parameters", { status: 400 });
     }
+
+    const systemId = parseInt(systemIdentifier, 10);
+    if (isNaN(systemId)) {
+      return new Response("Invalid system identifier", { status: 400 });
+    }
+
+    // Check system access (owner or admin can sync)
+    const authResult = await requireSystemAccess(request, systemId, {
+      requireWrite: true,
+    });
+    if (authResult instanceof NextResponse) return authResult;
 
     if (!["usage", "pricing", "both"].includes(action)) {
       return new Response("Invalid action", { status: 400 });
@@ -49,16 +62,6 @@ export async function POST(request: NextRequest) {
     }
 
     const firstDay = parseDateISO(startDate);
-    const systemId = parseInt(systemIdentifier, 10);
-    if (isNaN(systemId)) {
-      return new Response("Invalid system identifier", { status: 400 });
-    }
-
-    // Get system info for session
-    const systemInfo = await sessionManager.getSystemInfo(systemId);
-    if (!systemInfo) {
-      return new Response("System not found", { status: 404 });
-    }
 
     // Credentials from environment
     const credentials = {

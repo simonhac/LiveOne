@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
-import { resolveSystemFromIdentifier } from "@/lib/series-path-utils";
-import { isUserAdmin } from "@/lib/auth-utils";
+import { requireSystemAccess } from "@/lib/api-auth";
 import { PointManager } from "@/lib/point/point-manager";
 
 /**
@@ -41,26 +39,7 @@ export async function GET(
   { params }: { params: Promise<{ systemId: string }> },
 ) {
   try {
-    // Step 1: Authenticate
-    let userId: string;
-    let isAdmin = false;
-
-    if (
-      process.env.NODE_ENV === "development" &&
-      request.headers.get("x-claude") === "true"
-    ) {
-      userId = "claude-dev";
-      isAdmin = true;
-    } else {
-      const authResult = await auth();
-      if (!authResult.userId) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-      userId = authResult.userId;
-      isAdmin = await isUserAdmin(userId);
-    }
-
-    // Step 2: Parse systemId
+    // Parse and validate systemId
     const { systemId: systemIdStr } = await params;
     const systemId = parseInt(systemIdStr, 10);
 
@@ -71,36 +50,22 @@ export async function GET(
       );
     }
 
-    // Step 3: Resolve system and check it exists
-    const system = await resolveSystemFromIdentifier(systemIdStr);
+    // Authenticate and authorize
+    const authResult = await requireSystemAccess(request, systemId);
+    if (authResult instanceof NextResponse) return authResult;
 
-    if (!system) {
-      return NextResponse.json(
-        { error: `System not found: ${systemId}` },
-        { status: 404 },
-      );
-    }
-
-    // Step 4: Check authorization
-    if (!isAdmin && system.ownerClerkUserId !== userId) {
-      return NextResponse.json(
-        { error: "Forbidden: You do not have access to this system" },
-        { status: 403 },
-      );
-    }
-
-    // Step 5: Parse query parameters
+    // Parse query parameters
     const { searchParams } = new URL(request.url);
     const shortMode = searchParams.get("short") === "true";
 
-    // Step 6: Get all active points for the system using PointManager
+    // Get all active points for the system using PointManager
     const pointManager = PointManager.getInstance();
     const points = await pointManager.getActivePointsForSystem(
       systemId,
       false, // typedOnly = false means include fallback paths
     );
 
-    // Step 7: Serialize based on mode
+    // Serialize based on mode
     if (shortMode) {
       // Return just the paths as an array of strings
       const paths = points.map((point) => point.getPath());

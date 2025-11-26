@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server";
-import { auth, clerkClient } from "@clerk/nextjs/server";
+import { NextRequest, NextResponse } from "next/server";
+import { clerkClient } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { pointInfo } from "@/lib/db/schema-monitoring-points";
 import { eq, sql } from "drizzle-orm";
-import { isUserAdmin } from "@/lib/auth-utils";
+import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
 import { PointInfo } from "@/lib/point/point-info";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
@@ -24,30 +24,12 @@ function applyTransform(
 }
 
 export async function GET(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ systemId: string }> },
 ) {
   try {
-    // In development, skip auth checks
-    const isDev = process.env.NODE_ENV === "development";
-
-    if (!isDev) {
-      const { userId } = await auth();
-
-      if (!userId) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-
-      // Check if user is admin
-      const isAdmin = await isUserAdmin(userId);
-
-      if (!isAdmin) {
-        return NextResponse.json(
-          { error: "Admin access required" },
-          { status: 403 },
-        );
-      }
-    }
+    const authResult = await requireAdmin(request);
+    if (authResult instanceof NextResponse) return authResult;
 
     const { systemId: systemIdStr } = await params;
     const systemId = parseInt(systemIdStr);

@@ -1,31 +1,17 @@
-import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
-import { isUserAdmin } from "@/lib/auth-utils";
+import { requireAdmin } from "@/lib/api-auth";
 import { decodeUrlDateToEpoch, decodeUrlOffset } from "@/lib/url-date";
 import { formatDateYYYYMMDD, parseDateYYYYMMDD } from "@/lib/date-utils";
 
 export async function GET(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ systemIdDotPointId: string }> },
 ) {
   try {
-    const { userId } = await auth();
-
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check if user is admin
-    const isAdmin = await isUserAdmin(userId);
-
-    if (!isAdmin) {
-      return NextResponse.json(
-        { error: "Admin access required" },
-        { status: 403 },
-      );
-    }
+    const authResult = await requireAdmin(request);
+    if (authResult instanceof NextResponse) return authResult;
 
     const { systemIdDotPointId } = await params;
     const { searchParams } = new URL(request.url);

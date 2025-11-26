@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
-import { isUserAdmin } from "@/lib/auth-utils";
+import { requireAdmin } from "@/lib/api-auth";
 import { kv, kvKey } from "@/lib/kv";
 import {
   SubscriptionRegistryEntry,
   buildSubscriptionRegistry,
 } from "@/lib/kv-cache-manager";
 import { jsonResponse } from "@/lib/json";
-import { isDevelopment, getEnvironment } from "@/lib/env";
+import { getEnvironment } from "@/lib/env";
 
 /**
  * GET /api/systems/subscriptions
@@ -42,31 +41,11 @@ import { isDevelopment, getEnvironment } from "@/lib/env";
  */
 export async function GET(request: NextRequest) {
   try {
-    // Step 1: Authenticate
-    let userId: string;
-    let isAdmin = false;
+    // Authenticate and require admin access
+    const authResult = await requireAdmin(request);
+    if (authResult instanceof NextResponse) return authResult;
 
-    if (isDevelopment() && request.headers.get("x-claude") === "true") {
-      userId = "claude-dev";
-      isAdmin = true;
-    } else {
-      const authResult = await auth();
-      if (!authResult.userId) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-      userId = authResult.userId;
-      isAdmin = await isUserAdmin(userId);
-    }
-
-    // Step 2: Check admin access (subscriptions are system-wide admin data)
-    if (!isAdmin) {
-      return NextResponse.json(
-        { error: "Forbidden: Admin access required" },
-        { status: 403 },
-      );
-    }
-
-    // Step 3: Check if rebuild is requested
+    // Check if rebuild is requested
     const searchParams = request.nextUrl.searchParams;
     const action = searchParams.get("action");
 
@@ -77,12 +56,12 @@ export async function GET(request: NextRequest) {
       await buildSubscriptionRegistry();
     }
 
-    // Step 4: Scan KV for all subscription keys
+    // Scan KV for all subscription keys
     // Pattern: {namespace}:subscriptions:system:*
     const pattern = kvKey("subscriptions:system:*");
     const keys = await kv.keys(pattern);
 
-    // Step 5: Fetch all subscription lists with timestamps
+    // Fetch all subscription lists with timestamps
     const subscriptions: Record<
       string,
       { pointSubscribers: Record<string, string[]>; lastUpdatedTimeMs: number }

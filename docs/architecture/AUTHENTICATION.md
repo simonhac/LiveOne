@@ -300,32 +300,149 @@ export function DashboardHeader() {
 - Inactivity timeout: 30 minutes
 - Multi-session: Enabled
 
-### Cron Job Protection
+### API Authorization Functions
+
+LiveOne uses centralized authorization functions in `lib/api-auth.ts` for consistent access control across all API endpoints.
+
+### Available Functions
+
+```typescript
+import {
+  requireAuth,
+  requireAdmin,
+  requireCronOrAdmin,
+  requireSystemAccess,
+} from "@/lib/api-auth";
+```
+
+| Function              | Returns                | Use Case                          |
+| --------------------- | ---------------------- | --------------------------------- |
+| `requireAuth`         | `AuthenticatedContext` | Basic user authentication         |
+| `requireAdmin`        | `AuthenticatedContext` | Admin-only endpoints              |
+| `requireCronOrAdmin`  | `AuthContext`          | Cron jobs (Bearer token) or admin |
+| `requireSystemAccess` | `SystemAuthContext`    | System-level access checks        |
+
+### Context Types
+
+```typescript
+// Basic auth context
+interface AuthContext {
+  userId: string | null;
+  isAdmin: boolean;
+  isCron: boolean;
+  isClaudeDev: boolean;
+}
+
+// Successful auth (userId guaranteed)
+interface AuthenticatedContext extends AuthContext {
+  userId: string;
+}
+
+// System access context
+interface SystemAuthContext extends AuthenticatedContext {
+  system: SystemWithPolling;
+  isOwner: boolean;
+  isViewer: boolean;
+  canRead: boolean;
+  canWrite: boolean;
+}
+```
+
+### Usage Pattern
+
+All auth functions return either the context object or a `NextResponse` error. Use this pattern:
+
+```typescript
+import { requireAdmin } from "@/lib/api-auth";
+
+export async function GET(request: NextRequest) {
+  // Check authorization
+  const authResult = await requireAdmin(request);
+  if (authResult instanceof NextResponse) return authResult;
+
+  // authResult.userId is now guaranteed to be a string
+  const { userId, isAdmin } = authResult;
+
+  // Process request...
+}
+```
+
+### Authentication Methods
+
+The auth functions support multiple authentication methods:
+
+1. **Clerk Authentication** - Standard user login via Clerk
+2. **Bearer Token** - For cron jobs using `CRON_SECRET`
+3. **Claude Dev Header** - Development bypass with `x-claude: true` header
+
+### System Access Checks
+
+For endpoints that access system data, use `requireSystemAccess`:
+
+```typescript
+import { requireSystemAccess } from "@/lib/api-auth";
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ systemId: string }> },
+) {
+  const { systemId } = await params;
+
+  // Checks: user auth, system exists, user has read access
+  const authResult = await requireSystemAccess(request, parseInt(systemId));
+  if (authResult instanceof NextResponse) return authResult;
+
+  const { system, isOwner, canWrite } = authResult;
+
+  // Use system data...
+}
+```
+
+For write operations, specify `requireWrite`:
+
+```typescript
+const authResult = await requireSystemAccess(request, systemId, {
+  requireWrite: true,
+});
+```
+
+### Access Levels
+
+`requireSystemAccess` checks these access levels:
+
+| Level  | canRead | canWrite | Description                            |
+| ------ | ------- | -------- | -------------------------------------- |
+| Admin  | ✅      | ✅       | Platform admin                         |
+| Owner  | ✅      | ✅       | System owner (`ownerClerkUserId`)      |
+| Viewer | ✅      | ❌       | Granted access via `userSystems` table |
+
+## Cron Job Protection
+
+Cron endpoints use `requireCronOrAdmin` for authentication:
 
 ```typescript
 // app/api/cron/minutely/route.ts
-import { headers } from "next/headers";
-import { isUserAdmin } from "@/lib/auth-utils";
+import { requireCronOrAdmin } from "@/lib/api-auth";
 
-export async function POST(request: Request) {
-  const headersList = await headers();
-  const authHeader = headersList.get("authorization");
+export async function GET(request: NextRequest) {
+  const authResult = await requireCronOrAdmin(request);
+  if (authResult instanceof NextResponse) return authResult;
 
-  // Check Bearer token OR admin user
-  if (authHeader?.startsWith("Bearer ")) {
-    const token = authHeader.substring(7);
-    if (token !== process.env.CRON_SECRET) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-  } else {
-    // Allow admin users to trigger manually
-    const isAdmin = await isUserAdmin();
-    if (!isAdmin) {
-      return new Response("Forbidden", { status: 403 });
-    }
-  }
+  const sessionCause = authResult.isCron ? "CRON" : "ADMIN";
 
   // Execute cron job...
+}
+```
+
+**Vercel Cron Configuration:**
+
+```json
+// vercel.json
+{
+  "crons": [
+    { "path": "/api/cron/minutely", "schedule": "* * * * *" },
+    { "path": "/api/cron/daily", "schedule": "5 0 * * *" }
+  ]
 }
 ```
 

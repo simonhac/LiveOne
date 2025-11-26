@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { validateCronRequest } from "@/lib/cron-utils";
+import { requireCronOrAdmin } from "@/lib/api-auth";
 import { rawClient } from "@/lib/db";
 
 // Force Node.js runtime (required for long-running operations)
@@ -21,16 +21,8 @@ async function handleRequest(request: NextRequest) {
   const startTime = Date.now();
 
   // Validate authorization (cron secret, admin, or x-claude in dev)
-  const isValid = await validateCronRequest(request);
-  if (!isValid) {
-    // In dev, also allow x-claude header
-    const isDev = process.env.NODE_ENV === "development";
-    const claudeHeader = request.headers.get("x-claude");
-
-    if (!(isDev && claudeHeader === "true")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+  const authResult = await requireCronOrAdmin(request);
+  if (authResult instanceof NextResponse) return authResult;
 
   console.log("[DB Stats Cron] Starting database statistics calculation...");
 
@@ -368,15 +360,8 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now();
 
   // Validate authorization
-  const isValid = await validateCronRequest(request);
-  if (!isValid) {
-    const isDev = process.env.NODE_ENV === "development";
-    const claudeHeader = request.headers.get("x-claude");
-
-    if (!(isDev && claudeHeader === "true")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+  const authResult = await requireCronOrAdmin(request);
+  if (authResult instanceof NextResponse) return authResult;
 
   try {
     const body = await request.json().catch(() => ({}));

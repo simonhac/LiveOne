@@ -1,20 +1,20 @@
-import { auth } from '@clerk/nextjs/server'
-import { redirect } from 'next/navigation'
-import { isUserAdmin } from '@/lib/auth-utils'
-import UsersPageClient from './UsersPageClient'
+import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
+import { isUserAdmin } from "@/lib/auth-utils";
+import UsersPageClient from "./UsersPageClient";
 
 export default async function UsersPage() {
-  const { userId } = await auth()
-  
-  if (!userId) {
-    redirect('/sign-in')
+  const authResult = await auth();
+
+  if (!authResult.userId) {
+    redirect("/sign-in");
   }
-  
-  const isAdmin = await isUserAdmin()
-  
+
+  const isAdmin = await isUserAdmin(authResult);
+
   if (!isAdmin) {
-    redirect('/dashboard')
+    redirect("/dashboard");
   }
-  
-  return <UsersPageClient />
+
+  return <UsersPageClient />;
 }

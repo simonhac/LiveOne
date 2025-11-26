@@ -5,13 +5,13 @@ import StorageTools from "./StorageTools";
 import { syncStages } from "@/app/api/admin/sync-database/stages";
 
 export default async function StoragePage() {
-  const { userId } = await auth();
+  const authResult = await auth();
 
-  if (!userId) {
+  if (!authResult.userId) {
     redirect("/sign-in");
   }
 
-  const isAdmin = await isUserAdmin();
+  const isAdmin = await isUserAdmin(authResult);
 
   if (!isAdmin) {
     redirect("/dashboard");

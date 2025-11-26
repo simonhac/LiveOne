@@ -1,31 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth, clerkClient } from "@clerk/nextjs/server";
+import { clerkClient } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { systems, userSystems } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { isUserAdmin } from "@/lib/auth-utils";
+import { requireAdmin } from "@/lib/api-auth";
 
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ systemId: string }> },
 ) {
   try {
-    // Check if user is authenticated
-    const { userId } = await auth();
-
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check if user is admin
-    const isAdmin = await isUserAdmin();
-
-    if (!isAdmin) {
-      return NextResponse.json(
-        { error: "Admin access required" },
-        { status: 403 },
-      );
-    }
+    const authResult = await requireAdmin(request);
+    if (authResult instanceof NextResponse) return authResult;
 
     const params = await context.params;
     const systemId = parseInt(params.systemId);
@@ -104,22 +90,8 @@ export async function PATCH(
   context: { params: Promise<{ systemId: string }> },
 ) {
   try {
-    // Check if user is authenticated
-    const { userId } = await auth();
-
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check if user is admin
-    const isAdmin = await isUserAdmin();
-
-    if (!isAdmin) {
-      return NextResponse.json(
-        { error: "Admin access required" },
-        { status: 403 },
-      );
-    }
+    const authResult = await requireAdmin(request);
+    if (authResult instanceof NextResponse) return authResult;
 
     const params = await context.params;
     const systemId = parseInt(params.systemId);

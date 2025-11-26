@@ -743,53 +743,61 @@ export default clerkMiddleware((auth, req) => {
 
 ### Authorization Model
 
-**User Roles**:
+**Centralized Auth**: All API authorization is handled by `/lib/api-auth.ts`. See [AUTHENTICATION.md](./AUTHENTICATION.md) for full details.
 
-- **User** - Standard user (owns systems, views own data)
-- **Admin** - Administrator (manages all systems, views all data)
+**User Roles & Access Levels**:
 
-**Access Control**:
+| Role   | Description                             |
+| ------ | --------------------------------------- |
+| User   | Standard user (owns systems, views own) |
+| Viewer | Shared access to specific systems       |
+| Admin  | Full access to all systems and data     |
 
-1. **System Ownership**: Users can only access their own systems
+**API Authorization Functions**:
 
-   ```typescript
-   const system = await SystemsManager.getSystem(systemId);
-   if (system.ownerClerkUserId !== userId && !isAdmin) {
-     return NextResponse.json({ error: "Access denied" }, { status: 403 });
-   }
-   ```
+| Function              | Use Case                       |
+| --------------------- | ------------------------------ |
+| `requireAuth`         | Any authenticated user         |
+| `requireAdmin`        | Admin-only endpoints           |
+| `requireCronOrAdmin`  | Cron jobs or admin access      |
+| `requireSystemAccess` | System-specific with ownership |
 
-2. **Admin Check**: `isUserAdmin()` helper from `/lib/auth-utils.ts`
+**Access Control Pattern**:
 
-   ```typescript
-   export async function isUserAdmin(): Promise<boolean> {
-     const { userId } = await auth();
-     if (!userId) return false;
+```typescript
+import { requireSystemAccess } from "@/lib/api-auth";
 
-     const user = await clerkClient.users.getUser(userId);
-     return user.publicMetadata.role === "admin";
-   }
-   ```
+export async function GET(request: NextRequest) {
+  const authResult = await requireSystemAccess(request, systemId);
+  if (authResult instanceof NextResponse) return authResult;
 
-3. **API Route Protection**:
-   - `/api/admin/*` - Admin only
-   - `/api/data/*` - Own systems only (unless admin)
-   - `/api/setup` - Authenticated users
-   - `/api/cron/*` - Cron secret header required
+  const { system, canRead, canWrite, isOwner } = authResult;
+  // Access granted - use context
+}
+```
+
+**API Route Protection**:
+
+- `/api/admin/*` - Uses `requireAdmin`
+- `/api/data/*` - Uses `requireSystemAccess`
+- `/api/setup` - Uses `requireAuth`
+- `/api/cron/*` - Uses `requireCronOrAdmin`
 
 **Cron Job Authentication**:
 
-Cron endpoints check for secret header:
+Cron endpoints use `requireCronOrAdmin` which accepts either:
+
+- Bearer token: `Authorization: Bearer <CRON_SECRET>`
+- Admin user session
 
 ```typescript
-export async function POST(request: Request) {
-  const authHeader = request.headers.get("authorization");
+import { requireCronOrAdmin } from "@/lib/api-auth";
 
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export async function POST(request: NextRequest) {
+  const authResult = await requireCronOrAdmin(request);
+  if (authResult instanceof NextResponse) return authResult;
 
-  // ... cron logic
+  // Cron logic - authResult.isCron indicates cron vs admin
 }
 ```
 

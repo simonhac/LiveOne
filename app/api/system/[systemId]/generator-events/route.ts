@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
-import { resolveSystemFromIdentifier } from "@/lib/series-path-utils";
-import { isUserAdmin } from "@/lib/auth-utils";
+import { requireSystemAccess } from "@/lib/api-auth";
 import { rawClient } from "@/lib/db";
 
 interface GeneratorEvent {
@@ -28,26 +26,7 @@ export async function GET(
   { params }: { params: Promise<{ systemId: string }> },
 ) {
   try {
-    // Step 1: Authenticate
-    let userId: string;
-    let isAdmin = false;
-
-    if (
-      process.env.NODE_ENV === "development" &&
-      request.headers.get("x-claude") === "true"
-    ) {
-      userId = "claude-dev";
-      isAdmin = true;
-    } else {
-      const authResult = await auth();
-      if (!authResult.userId) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-      userId = authResult.userId;
-      isAdmin = await isUserAdmin(userId);
-    }
-
-    // Step 2: Parse systemId
+    // Parse and validate systemId
     const { systemId: systemIdStr } = await params;
     const systemId = parseInt(systemIdStr, 10);
 
@@ -58,25 +37,11 @@ export async function GET(
       );
     }
 
-    // Step 3: Resolve system and check it exists
-    const system = await resolveSystemFromIdentifier(systemIdStr);
+    // Authenticate and authorize
+    const authResult = await requireSystemAccess(request, systemId);
+    if (authResult instanceof NextResponse) return authResult;
 
-    if (!system) {
-      return NextResponse.json(
-        { error: `System not found: ${systemId}` },
-        { status: 404 },
-      );
-    }
-
-    // Step 4: Check authorization
-    if (!isAdmin && system.ownerClerkUserId !== userId) {
-      return NextResponse.json(
-        { error: "Forbidden: You do not have access to this system" },
-        { status: 403 },
-      );
-    }
-
-    // Step 5: Find the grid power point ID for this system
+    // Find the grid power point ID for this system
     const pointResult = await rawClient.execute({
       sql: `
         SELECT id
@@ -98,7 +63,7 @@ export async function GET(
 
     const gridPowerPointId = Number(pointResult.rows[0].id);
 
-    // Step 6: Query generator events from point_readings
+    // Query generator events from point_readings
     // Note: measurement_time is in milliseconds, value is grid power in W
     const result = await rawClient.execute({
       sql: `
@@ -114,7 +79,7 @@ export async function GET(
       args: [systemId, gridPowerPointId],
     });
 
-    // Step 7: Group readings into events
+    // Group readings into events
     const events: GeneratorEvent[] = [];
     let currentEvent: {
       startTime: number;
@@ -154,7 +119,7 @@ export async function GET(
       events.push(formatEvent(currentEvent));
     }
 
-    // Step 8: Calculate energy for each event
+    // Calculate energy for each event
     // Get Import energy point for energy calculations
     const importPointResult = await rawClient.execute({
       sql: `
@@ -201,7 +166,7 @@ export async function GET(
       }
     }
 
-    // Step 9: Calculate total energy
+    // Calculate total energy
     const totalEnergyKwh = events.reduce(
       (sum, event) => sum + event.energyKwh,
       0,

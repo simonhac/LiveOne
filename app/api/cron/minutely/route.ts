@@ -9,7 +9,7 @@ import {
   updatePollingStatusSuccess,
   updatePollingStatusError,
 } from "@/lib/polling-utils";
-import { validateCronRequest } from "@/lib/cron-utils";
+import { requireCronOrAdmin } from "@/lib/api-auth";
 import { fromDate } from "@internationalized/date";
 import { formatTimeAEST } from "@/lib/date-utils";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
@@ -510,14 +510,10 @@ export async function GET(request: NextRequest) {
   const sessionId = getNextSessionId(); // Get session ID for this API invocation
 
   try {
-    // Validate cron request or admin user
-    if (!(await validateCronRequest(request))) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const authResult = await requireCronOrAdmin(request);
+    if (authResult instanceof NextResponse) return authResult;
 
     // Determine session cause: CRON (scheduled) vs ADMIN (manual trigger) vs ADMIN-DRYRUN (dry run)
-    const authHeader = request.headers.get("authorization");
-    const isCronRequest = authHeader === `Bearer ${process.env.CRON_SECRET}`;
 
     // In development, allow testing specific systems with isUserOriginated flag
     const searchParams = request.nextUrl.searchParams;
@@ -526,7 +522,7 @@ export async function GET(request: NextRequest) {
     const includeRaw = searchParams.get("includeRaw") === "true";
     const dryRun = searchParams.get("dryRun") === "true";
 
-    const sessionCause = isCronRequest
+    const sessionCause = authResult.isCron
       ? "CRON"
       : dryRun
         ? "ADMIN-DRYRUN"

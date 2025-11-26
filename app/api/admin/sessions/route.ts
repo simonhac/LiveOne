@@ -1,21 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
-import { isUserAdmin } from "@/lib/auth-utils";
+import { requireAdmin } from "@/lib/api-auth";
 import { sessionManager } from "@/lib/session-manager";
 
 export async function GET(request: NextRequest) {
   try {
-    // Check if user is authenticated
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check if user is an admin
-    const isAdmin = await isUserAdmin();
-    if (!isAdmin) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const authResult = await requireAdmin(request);
+    if (authResult instanceof NextResponse) return authResult;
 
     // Parse query parameters
     const searchParams = request.nextUrl.searchParams;

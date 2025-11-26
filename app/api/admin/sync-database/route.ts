@@ -2,8 +2,7 @@
 // In production builds, route.production.ts will be used instead
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
-import { isUserAdmin } from "@/lib/auth-utils";
+import { requireAdmin } from "@/lib/api-auth";
 import { db } from "@/lib/db";
 import { clerkIdMapping } from "@/lib/db/schema";
 import { syncStages, type SyncContext, type StageDefinition } from "./stages";
@@ -69,21 +68,8 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // Check if user is authenticated and admin
-    const { userId } = await auth();
-
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const isAdmin = await isUserAdmin();
-
-    if (!isAdmin) {
-      return NextResponse.json(
-        { error: "Admin access required" },
-        { status: 403 },
-      );
-    }
+    const authResult = await requireAdmin(request);
+    if (authResult instanceof NextResponse) return authResult;
 
     const tursoUrl = process.env.TURSO_DATABASE_URL;
     const tursoToken = process.env.TURSO_AUTH_TOKEN;

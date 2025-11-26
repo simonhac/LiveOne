@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
-import { resolveSystemFromIdentifier } from "@/lib/series-path-utils";
-import { isUserAdmin } from "@/lib/auth-utils";
+import { requireSystemAccess } from "@/lib/api-auth";
 import { getLatestValues, LatestValue } from "@/lib/latest-values-store";
 
 /**
@@ -33,26 +31,7 @@ export async function GET(
   { params }: { params: Promise<{ systemId: string }> },
 ) {
   try {
-    // Step 1: Authenticate
-    let userId: string;
-    let isAdmin = false;
-
-    if (
-      process.env.NODE_ENV === "development" &&
-      request.headers.get("x-claude") === "true"
-    ) {
-      userId = "claude-dev";
-      isAdmin = true;
-    } else {
-      const authResult = await auth();
-      if (!authResult.userId) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-      userId = authResult.userId;
-      isAdmin = await isUserAdmin(userId);
-    }
-
-    // Step 2: Parse systemId
+    // Parse and validate systemId
     const { systemId: systemIdStr } = await params;
     const systemId = parseInt(systemIdStr, 10);
 
@@ -63,28 +42,14 @@ export async function GET(
       );
     }
 
-    // Step 3: Resolve system and check it exists
-    const system = await resolveSystemFromIdentifier(systemIdStr);
+    // Authenticate and authorize
+    const authResult = await requireSystemAccess(request, systemId);
+    if (authResult instanceof NextResponse) return authResult;
 
-    if (!system) {
-      return NextResponse.json(
-        { error: `System not found: ${systemId}` },
-        { status: 404 },
-      );
-    }
-
-    // Step 4: Check authorization
-    if (!isAdmin && system.ownerClerkUserId !== userId) {
-      return NextResponse.json(
-        { error: "Forbidden: You do not have access to this system" },
-        { status: 403 },
-      );
-    }
-
-    // Step 5: Get latest values from KV cache
+    // Get latest values from KV cache
     const latestValuesMap = await getLatestValues(systemId);
 
-    // Step 6: Convert to array and sort by displayName, then logicalPath
+    // Convert to array and sort by displayName, then logicalPath
     const values: LatestValue[] = Object.values(latestValuesMap).sort(
       (a, b) =>
         (a.displayName || "").localeCompare(b.displayName || "") ||

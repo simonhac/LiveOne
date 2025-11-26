@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { requireSystemAccess } from "@/lib/api-auth";
 import { SystemsManager, SystemWithPolling } from "@/lib/systems-manager";
 import { OpenNEMDataSeries } from "@/types/opennem";
 import { formatOpenNEMResponse } from "@/lib/history/format-opennem";
@@ -13,7 +13,6 @@ import {
 } from "@/lib/date-utils";
 import { decodeUrlSafeStringToI18n } from "@/lib/url-date";
 import { CalendarDate, ZonedDateTime, now } from "@internationalized/date";
-import { isUserAdmin } from "@/lib/auth-utils";
 import { splitBraceAware } from "@/lib/series-filter-utils";
 import { HistoryDebugInfo, registerSeries } from "@/lib/history/history-debug";
 import { PointManager } from "@/lib/point/point-manager";
@@ -76,78 +75,10 @@ function validateSeriesPatterns(patterns: string[]): {
 // Types and Interfaces
 // ============================================================================
 
-interface AuthResult {
-  userId: string;
-  isAdmin: boolean;
-}
-
-interface SystemAccess {
-  system: SystemWithPolling;
-  hasAccess: boolean;
-}
-
 interface ValidationResult {
   isValid: boolean;
   error?: string;
   statusCode?: number;
-}
-
-// ============================================================================
-// Authentication & Access Control
-// ============================================================================
-
-async function authenticateUser(
-  request?: NextRequest,
-): Promise<AuthResult | NextResponse> {
-  // In development, allow using X-CLAUDE header to bypass auth
-  if (
-    process.env.NODE_ENV === "development" &&
-    request?.headers.get("x-claude") === "true"
-  ) {
-    return { userId: "claude-dev", isAdmin: true };
-  }
-
-  const { userId } = await auth();
-
-  if (!userId) {
-    return NextResponse.json(
-      { error: "Unauthorized - Authentication required" },
-      { status: 401 },
-    );
-  }
-
-  const isAdmin = await isUserAdmin();
-  return { userId, isAdmin };
-}
-
-async function checkSystemAccess(
-  systemId: number,
-  userId: string,
-  isAdmin: boolean,
-): Promise<SystemAccess | NextResponse> {
-  const systemsManager = SystemsManager.getInstance();
-
-  try {
-    const system = await systemsManager.getSystem(systemId);
-
-    if (!system) {
-      return NextResponse.json({ error: "System not found" }, { status: 404 });
-    }
-
-    // Admin can access all systems, regular users can only access their own
-    const hasAccess = isAdmin || system.ownerClerkUserId === userId;
-
-    if (!hasAccess) {
-      return NextResponse.json(
-        { error: "Access denied to system" },
-        { status: 403 },
-      );
-    }
-
-    return { system, hasAccess };
-  } catch (error) {
-    return NextResponse.json({ error: "System not found" }, { status: 404 });
-  }
 }
 
 // ============================================================================
@@ -844,13 +775,7 @@ function buildResponse(
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
   try {
-    // Step 1: Authentication
-    const authResult = await authenticateUser(request);
-    if (authResult instanceof NextResponse) {
-      return authResult;
-    }
-
-    // Step 2: Parse basic parameters (no fields parameter needed)
+    // Parse basic parameters (systemId, interval, debug)
     const searchParams = request.nextUrl.searchParams;
     const basicParams = parseBasicParams(searchParams);
     if (!basicParams.isValid) {
@@ -860,19 +785,15 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Step 3: Check system access
-    const systemAccess = await checkSystemAccess(
+    // Authenticate and check system access
+    const authResult = await requireSystemAccess(
+      request,
       basicParams.systemId!,
-      authResult.userId,
-      authResult.isAdmin,
     );
-    if (systemAccess instanceof NextResponse) {
-      return systemAccess;
-    }
+    if (authResult instanceof NextResponse) return authResult;
+    const { system } = authResult;
 
-    const { system } = systemAccess;
-
-    // Step 4: Parse time range
+    // Parse time range
     const timeRange = parseTimeRangeParams(
       searchParams,
       basicParams.interval as "5m" | "30m" | "1d",
@@ -885,7 +806,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Step 5: Validate time range
+    // Validate time range
     const validation = validateTimeRange(
       timeRange.startTime!,
       timeRange.endTime!,
@@ -898,7 +819,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Step 6: Parse series patterns (comma-separated with brace expansion support)
+    // Parse series patterns (comma-separated with brace expansion support)
     // series parameter allows glob-based filtering of which series to fetch
     // Format: ?series=pattern1,pattern2,pattern3
     // Supports brace expansion: ?series=bidi.battery/soc.{avg,min,max}
@@ -912,7 +833,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Step 7: Fetch data using point readings provider
+    // Fetch data using point readings provider
     const {
       series: dataSeries,
       dataSource,
@@ -927,7 +848,7 @@ export async function GET(request: NextRequest) {
       basicParams.enableDebug,
     );
 
-    // Step 8: Build and return response
+    // Build and return response
     const durationMs = Date.now() - startTime;
     return buildResponse(
       dataSeries,

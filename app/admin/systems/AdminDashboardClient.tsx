@@ -21,6 +21,7 @@ import PollNowModal from "@/components/PollNowModal";
 import ViewDataModal from "@/components/ViewDataModal";
 import { PollAllModal } from "@/components/PollAllModal";
 import { formatDateTime, formatTime } from "@/lib/fe-date-format";
+import type { SystemData as ServerSystemData } from "@/lib/admin/get-systems-data";
 
 interface SystemInfo {
   model?: string;
@@ -101,10 +102,24 @@ function formatCompositeSourceSystems(
   return `(drawn from ${allButLast} and ${last})`;
 }
 
-export default function AdminDashboardClient() {
-  const [systems, setSystems] = useState<SystemData[]>([]);
-  const [loading, setLoading] = useState(true);
+interface AdminDashboardClientProps {
+  initialSystems: ServerSystemData[];
+  latestValuesIncluded: boolean;
+}
+
+export default function AdminDashboardClient({
+  initialSystems,
+  latestValuesIncluded,
+}: AdminDashboardClientProps) {
+  // Initialize with server-side data - no loading state needed
+  const [systems, setSystems] = useState<SystemData[]>(
+    initialSystems as unknown as SystemData[],
+  );
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Track if we need to fetch latest values
+  const [needsLatestValues, setNeedsLatestValues] =
+    useState(!latestValuesIncluded);
   const [activeTab, setActiveTab] = useState<"active" | "removed">("active");
   const [testModal, setTestModal] = useState<{
     isOpen: boolean;
@@ -477,17 +492,28 @@ export default function AdminDashboardClient() {
 
   // Use ref to store interval ID so we can access it in cleanup
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const hasFetchedLatestValues = useRef(false);
 
   useEffect(() => {
-    fetchSystems();
-    intervalRef.current = setInterval(fetchSystems, 30000); // Refresh every 30 seconds
+    // If we have initial data but need latest values, fetch them once
+    if (needsLatestValues && !hasFetchedLatestValues.current) {
+      hasFetchedLatestValues.current = true;
+      console.log(
+        "[AdminDashboard] Fetching latest values (server-side timed out)",
+      );
+      fetchSystems();
+      setNeedsLatestValues(false);
+    }
+
+    // Set up periodic refresh (every 30 seconds)
+    intervalRef.current = setInterval(fetchSystems, 30000);
 
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
     };
-  }, [fetchSystems]);
+  }, [fetchSystems, needsLatestValues]);
 
   // Pause/resume fetching based on modal state
   useEffect(() => {
@@ -809,8 +835,9 @@ export default function AdminDashboardClient() {
                                         const pollDate = new Date(
                                           system.polling.lastPollTime,
                                         );
+                                        // Use fixed locale to avoid SSR hydration mismatch
                                         return pollDate.toLocaleDateString(
-                                          undefined,
+                                          "en-AU",
                                           { month: "short", day: "numeric" },
                                         );
                                       }

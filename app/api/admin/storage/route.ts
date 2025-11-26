@@ -1,39 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
 import { rawClient } from "@/lib/db";
-import { isUserAdmin } from "@/lib/auth-utils";
+import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
 import { PointManager } from "@/lib/point/point-manager";
 import { jsonResponse } from "@/lib/json";
 
 export async function GET(request: NextRequest) {
   try {
-    // In development, allow bypass with X-Claude header
-    const isDev = process.env.NODE_ENV === "development";
-    const claudeHeader = request.headers.get("x-claude");
-    const bypassAuth = isDev && claudeHeader === "true";
-
-    let userId: string | null = null;
-
-    if (!bypassAuth) {
-      // Check if user is authenticated
-      const auth_result = await auth();
-      userId = auth_result.userId;
-
-      if (!userId) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-
-      // Check if user is admin - pass userId to avoid duplicate auth() call
-      const isAdmin = await isUserAdmin(userId);
-
-      if (!isAdmin) {
-        return NextResponse.json(
-          { error: "Admin access required" },
-          { status: 403 },
-        );
-      }
-    }
+    const authResult = await requireAdmin(request);
+    if (authResult instanceof NextResponse) return authResult;
 
     // Determine database type based on environment variables
     const isProduction = process.env.NODE_ENV === "production";
@@ -386,30 +361,8 @@ async function calculateGrowthFromSnapshots(tableName: string) {
 
 export async function POST(request: NextRequest) {
   try {
-    // In development, allow bypass with X-Claude header
-    const isDev = process.env.NODE_ENV === "development";
-    const claudeHeader = request.headers.get("x-claude");
-    const bypassAuth = isDev && claudeHeader === "true";
-
-    if (!bypassAuth) {
-      // Check if user is authenticated
-      const auth_result = await auth();
-      const userId = auth_result.userId;
-
-      if (!userId) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-
-      // Check if user is admin
-      const isAdmin = await isUserAdmin(userId);
-
-      if (!isAdmin) {
-        return NextResponse.json(
-          { error: "Admin access required" },
-          { status: 403 },
-        );
-      }
-    }
+    const authResult = await requireAdmin(request);
+    if (authResult instanceof NextResponse) return authResult;
 
     // Parse request body
     const body = await request.json();

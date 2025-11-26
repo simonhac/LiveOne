@@ -4,13 +4,13 @@ import { isUserAdmin } from "@/lib/auth-utils";
 import SessionViewer from "./session-viewer";
 
 export default async function SessionsPage() {
-  const { userId } = await auth();
+  const authResult = await auth();
 
-  if (!userId) {
+  if (!authResult.userId) {
     redirect("/sign-in");
   }
 
-  const isAdmin = await isUserAdmin();
+  const isAdmin = await isUserAdmin(authResult);
 
   if (!isAdmin) {
     redirect("/dashboard");

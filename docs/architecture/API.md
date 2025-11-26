@@ -9,7 +9,14 @@ LiveOne provides a RESTful API for accessing solar inverter data, managing syste
 - Development: `http://localhost:3000`
 - Production: `https://your-app.vercel.app`
 
-**Authentication:** Most endpoints require Clerk authentication. Cron endpoints require Bearer token with `CRON_SECRET` or admin privileges.
+**Authentication:** Most endpoints require Clerk authentication via centralized auth functions in `lib/api-auth.ts`. See [AUTHENTICATION.md](AUTHENTICATION.md) for details.
+
+**Auth Functions:**
+
+- `requireAuth` - Basic user authentication
+- `requireAdmin` - Admin-only endpoints
+- `requireCronOrAdmin` - Cron jobs (Bearer token) or admin
+- `requireSystemAccess(request, systemId)` - System-level access checks
 
 **Timestamps:** All timestamps are Unix epoch (seconds or milliseconds as specified) in UTC.
 
@@ -434,7 +441,7 @@ Returns comprehensive current and historical energy data (legacy format for Sele
 
 ## Administration
 
-All admin endpoints require authentication and admin role.
+All admin endpoints use `requireAdmin(request)` from `lib/api-auth.ts`.
 
 ### GET /api/admin/systems
 
@@ -828,11 +835,13 @@ Returns details for a specific session.
 
 ## Cron Jobs
 
+All cron endpoints use `requireCronOrAdmin(request)` from `lib/api-auth.ts`.
+
 ### GET /api/cron/minutely
 
 Polls all active systems for new data.
 
-**Authentication:** Bearer token (`CRON_SECRET`) OR admin user
+**Authentication:** Bearer token (`CRON_SECRET`) OR admin user (via `requireCronOrAdmin`)
 
 **Headers (production):**
 
@@ -885,7 +894,7 @@ Authorization: Bearer ${CRON_SECRET}
 
 Runs daily data aggregation (designed for 00:05 daily).
 
-**Authentication:** Bearer token (`CRON_SECRET`) OR admin user
+**Authentication:** Bearer token (`CRON_SECRET`) OR admin user (via `requireCronOrAdmin`)
 
 **Response:**
 
