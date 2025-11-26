@@ -17,7 +17,7 @@ export const maxDuration = 180; // 3 minutes
  * Runs: Twice daily at 02:00 and 14:00 UTC (12pm/12am AEST)
  * Duration: ~2 minutes (scans entire database via dbstat)
  */
-export async function POST(request: NextRequest) {
+async function handleRequest(request: NextRequest) {
   const startTime = Date.now();
 
   // Validate authorization (cron secret, admin, or x-claude in dev)
@@ -190,10 +190,14 @@ export async function POST(request: NextRequest) {
 
     // 3. Calculate growth rates for each table
     console.log("[DB Stats Cron] Calculating growth rates...");
-    const today = new Date().toISOString().split("T")[0];
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .split("T")[0];
+    const now = new Date();
+    const today = now.toISOString().split("T")[0];
+    const snapshotHour = now.getUTCHours();
+
+    // Target: 30 days ago at the same hour
+    const targetDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const targetDateStr = targetDate.toISOString().split("T")[0];
+    const targetHour = targetDate.getUTCHours();
 
     const growthData: Record<
       string,
@@ -207,40 +211,37 @@ export async function POST(request: NextRequest) {
     > = {};
 
     for (const tableName of Object.keys(tableStats)) {
-      // Try to find snapshot from exactly 30 days ago
-      let oldSnapshot = await rawClient.execute({
-        sql: `SELECT record_count, data_mb, index_mb, snapshot_date
+      // Find snapshot closest to exactly 30 days ago (using julianday for precise distance)
+      const oldSnapshot = await rawClient.execute({
+        sql: `SELECT record_count, data_mb, index_mb, snapshot_date, snapshot_hour,
+                ABS(
+                  (julianday(snapshot_date) + COALESCE(snapshot_hour, 0)/24.0) -
+                  (julianday(?) + ?/24.0)
+                ) as distance
               FROM db_growth_snapshots
-              WHERE table_name = ? AND snapshot_date = ?`,
-        args: [tableName, thirtyDaysAgo],
+              WHERE table_name = ?
+              ORDER BY distance ASC
+              LIMIT 1`,
+        args: [targetDateStr, targetHour, tableName],
       });
-
-      // If not found, get nearest snapshot (at least 25 days ago for reasonable growth calc)
-      if (oldSnapshot.rows.length === 0) {
-        oldSnapshot = await rawClient.execute({
-          sql: `SELECT record_count, data_mb, index_mb, snapshot_date
-                FROM db_growth_snapshots
-                WHERE table_name = ? AND snapshot_date <= ?
-                ORDER BY snapshot_date DESC
-                LIMIT 1`,
-          args: [tableName, thirtyDaysAgo],
-        });
-      }
 
       if (oldSnapshot.rows.length > 0) {
         const old = oldSnapshot.rows[0] as any;
         const current = tableStats[tableName];
         const sizes = sizeMap[tableName];
 
-        // Calculate days between snapshots
-        const oldDate = new Date(old.snapshot_date);
-        const todayDate = new Date(today);
-        const daysDiff = Math.max(
-          1,
-          Math.round(
-            (todayDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24),
-          ),
+        // Calculate precise time difference in hours, then convert to days
+        const oldHour = old.snapshot_hour ?? 0;
+        const oldTime = new Date(
+          `${old.snapshot_date}T${oldHour.toString().padStart(2, "0")}:00:00Z`,
         );
+        const currentTime = new Date(
+          `${today}T${snapshotHour.toString().padStart(2, "0")}:00:00Z`,
+        );
+
+        const hoursDiff =
+          (currentTime.getTime() - oldTime.getTime()) / (1000 * 60 * 60);
+        const daysDiff = Math.max(0.5, hoursDiff / 24); // Minimum 0.5 days (12 hours)
 
         // Calculate deltas
         const recordsDelta = current.count - (old.record_count as number);
@@ -253,7 +254,7 @@ export async function POST(request: NextRequest) {
           indexMbPerDay: Math.round((indexMbDelta / daysDiff) * 1000) / 1000,
           totalMbPerDay:
             Math.round(((dataMbDelta + indexMbDelta) / daysDiff) * 1000) / 1000,
-          growthDays: daysDiff,
+          growthDays: Math.round(daysDiff * 10) / 10, // Round to 1 decimal place
         };
       } else {
         // No historical data available
@@ -279,17 +280,20 @@ export async function POST(request: NextRequest) {
       const growth = growthData[tableName];
 
       if (sizes && stats.count > 0) {
-        // Determine if this is an exact 30-day calculation
-        const isEstimated = growth.growthDays !== 30 ? 1 : 0;
+        // Determine if this is an exact 30-day calculation (within 0.5 day tolerance)
+        const isEstimated =
+          growth.growthDays === null || Math.abs(growth.growthDays - 30) > 0.5
+            ? 1
+            : 0;
 
         await rawClient.execute({
           sql: `
             INSERT INTO db_growth_snapshots
-              (snapshot_date, table_name, record_count, data_mb, index_mb, is_estimated, created_at,
+              (snapshot_date, snapshot_hour, table_name, record_count, data_mb, index_mb, is_estimated, created_at,
                created_at_min, created_at_max, updated_at_min, updated_at_max,
                records_per_day, data_mb_per_day, index_mb_per_day, total_mb_per_day, growth_days)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (snapshot_date, table_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (snapshot_date, snapshot_hour, table_name)
             DO UPDATE SET
               record_count = excluded.record_count,
               data_mb = excluded.data_mb,
@@ -308,6 +312,7 @@ export async function POST(request: NextRequest) {
           `,
           args: [
             today,
+            snapshotHour,
             tableName,
             stats.count,
             sizes.dataMb,
@@ -353,3 +358,7 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+// Allow both GET and POST for convenience (GET works in browser address bar)
+export const GET = handleRequest;
+export const POST = handleRequest;

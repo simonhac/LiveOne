@@ -60,9 +60,15 @@ export async function GET(request: NextRequest) {
     let statsComputedTimeMs: number | null = null;
 
     try {
+      // Get the latest snapshot (most recent date + hour)
       const snapshotResult = await rawClient.execute(`
         SELECT * FROM db_growth_snapshots
-        WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM db_growth_snapshots)
+        WHERE (snapshot_date, COALESCE(snapshot_hour, 0)) = (
+          SELECT snapshot_date, COALESCE(snapshot_hour, 0)
+          FROM db_growth_snapshots
+          ORDER BY snapshot_date DESC, COALESCE(snapshot_hour, 0) DESC
+          LIMIT 1
+        )
         ORDER BY table_name
       `);
 
@@ -305,37 +311,35 @@ async function calculateStatsAtRuntime() {
  * Calculate growth rate from historical snapshots (fallback when not pre-computed)
  */
 async function calculateGrowthFromSnapshots(tableName: string) {
-  const today = new Date().toISOString().split("T")[0];
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .split("T")[0];
+  const now = new Date();
+  const today = now.toISOString().split("T")[0];
+  const currentHour = now.getUTCHours();
 
-  // Try to find snapshot from exactly 30 days ago
-  let oldSnapshot = await rawClient.execute({
-    sql: `SELECT record_count, data_mb, index_mb, snapshot_date
-          FROM db_growth_snapshots
-          WHERE table_name = ? AND snapshot_date = ?`,
-    args: [tableName, thirtyDaysAgo],
-  });
+  // Target: 30 days ago at the same hour
+  const targetDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const targetDateStr = targetDate.toISOString().split("T")[0];
+  const targetHour = targetDate.getUTCHours();
 
-  // If not found, get nearest snapshot
-  if (oldSnapshot.rows.length === 0) {
-    oldSnapshot = await rawClient.execute({
-      sql: `SELECT record_count, data_mb, index_mb, snapshot_date
-            FROM db_growth_snapshots
-            WHERE table_name = ? AND snapshot_date <= ?
-            ORDER BY snapshot_date DESC
-            LIMIT 1`,
-      args: [tableName, thirtyDaysAgo],
-    });
-  }
-
-  // Get today's snapshot
-  const todaySnapshot = await rawClient.execute({
-    sql: `SELECT record_count, data_mb, index_mb
+  // Find snapshot closest to exactly 30 days ago
+  const oldSnapshot = await rawClient.execute({
+    sql: `SELECT record_count, data_mb, index_mb, snapshot_date, snapshot_hour,
+            ABS(
+              (julianday(snapshot_date) + COALESCE(snapshot_hour, 0)/24.0) -
+              (julianday(?) + ?/24.0)
+            ) as distance
           FROM db_growth_snapshots
           WHERE table_name = ?
-          ORDER BY snapshot_date DESC
+          ORDER BY distance ASC
+          LIMIT 1`,
+    args: [targetDateStr, targetHour, tableName],
+  });
+
+  // Get today's/latest snapshot
+  const todaySnapshot = await rawClient.execute({
+    sql: `SELECT record_count, data_mb, index_mb, snapshot_date, snapshot_hour
+          FROM db_growth_snapshots
+          WHERE table_name = ?
+          ORDER BY snapshot_date DESC, COALESCE(snapshot_hour, 0) DESC
           LIMIT 1`,
     args: [tableName],
   });
@@ -344,15 +348,19 @@ async function calculateGrowthFromSnapshots(tableName: string) {
     const old = oldSnapshot.rows[0] as any;
     const current = todaySnapshot.rows[0] as any;
 
-    // Calculate days between snapshots
-    const oldDate = new Date(old.snapshot_date);
-    const todayDate = new Date(today);
-    const daysDiff = Math.max(
-      1,
-      Math.round(
-        (todayDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24),
-      ),
+    // Calculate precise time difference
+    const oldHour = old.snapshot_hour ?? 0;
+    const currentSnapshotHour = current.snapshot_hour ?? currentHour;
+    const oldTime = new Date(
+      `${old.snapshot_date}T${oldHour.toString().padStart(2, "0")}:00:00Z`,
     );
+    const currentTime = new Date(
+      `${current.snapshot_date}T${currentSnapshotHour.toString().padStart(2, "0")}:00:00Z`,
+    );
+
+    const hoursDiff =
+      (currentTime.getTime() - oldTime.getTime()) / (1000 * 60 * 60);
+    const daysDiff = Math.max(0.5, hoursDiff / 24);
 
     // Calculate deltas
     const recordsDelta = current.record_count - old.record_count;
@@ -365,8 +373,8 @@ async function calculateGrowthFromSnapshots(tableName: string) {
       indexMbPerDay: Math.round((indexMbDelta / daysDiff) * 1000) / 1000,
       totalMbPerDay:
         Math.round(((dataMbDelta + indexMbDelta) / daysDiff) * 1000) / 1000,
-      daysInPeriod: daysDiff,
-      using30DayWindow: daysDiff === 30,
+      daysInPeriod: Math.round(daysDiff * 10) / 10,
+      using30DayWindow: Math.abs(daysDiff - 30) <= 0.5,
     };
   }
 
