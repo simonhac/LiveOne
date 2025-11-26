@@ -304,6 +304,9 @@ async function calculateStatsAtRuntime() {
     }
   }
 
+  // Sort by record count descending
+  tableStats.sort((a, b) => b.count - a.count);
+
   return { tableStats };
 }
 
