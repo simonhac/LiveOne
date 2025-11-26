@@ -10,6 +10,7 @@ import { formatInTimezone } from "@/lib/date-utils";
 import { fromDate, toZoned } from "@internationalized/date";
 import { encodeI18nToUrlSafeString } from "@/lib/url-date";
 import { useDashboardRefresh } from "@/hooks/useDashboardRefresh";
+import { ttInterphases } from "@/lib/fonts/amber";
 
 interface AmberCardProps {
   systemId: number;
@@ -185,9 +186,12 @@ export default function AmberCard({
 
   if (loading) {
     return (
-      <div className="w-full p-4 md:p-6 bg-gray-900/50 border border-gray-700 rounded-lg">
+      <div
+        className={`w-full p-4 md:p-6 ${ttInterphases.className}`}
+        style={{ backgroundColor: "rgb(40, 49, 66)" }}
+      >
         <h2 className="text-lg font-bold text-white mb-4">
-          AMBER ELECTRIC - 48 HOUR TIMELINE
+          30 MIN FORECAST — GENERAL USAGE
         </h2>
         <div className="text-gray-400">Loading...</div>
       </div>
@@ -196,9 +200,12 @@ export default function AmberCard({
 
   if (error) {
     return (
-      <div className="w-full p-4 md:p-6 bg-gray-900/50 border border-gray-700 rounded-lg">
+      <div
+        className={`w-full p-4 md:p-6 ${ttInterphases.className}`}
+        style={{ backgroundColor: "rgb(40, 49, 66)" }}
+      >
         <h2 className="text-lg font-bold text-white mb-4">
-          AMBER ELECTRIC - 48 HOUR TIMELINE
+          30 MIN FORECAST — GENERAL USAGE
         </h2>
         <div className="text-red-400">Error: {error}</div>
       </div>
@@ -206,9 +213,12 @@ export default function AmberCard({
   }
 
   return (
-    <div className="w-full p-4 md:p-6 bg-gray-900/50 border border-yellow-700 rounded-lg">
+    <div
+      className={`w-full p-4 md:p-6 ${ttInterphases.className}`}
+      style={{ backgroundColor: "rgb(40, 49, 66)" }}
+    >
       <h2 className="text-lg font-bold text-white mb-4">
-        AMBER ELECTRIC - 48 HOUR TIMELINE
+        30 MIN FORECAST — GENERAL USAGE
       </h2>
 
       <div

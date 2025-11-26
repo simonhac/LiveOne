@@ -11,23 +11,15 @@ import {
   getYesterdayInTimezone,
   getTodayInTimezone,
 } from "@/lib/date-utils";
-import { PointManager } from "@/lib/point/point-manager";
-import {
-  createChannelPoints,
-  getChannelMetadata,
-  createRenewablesPoint,
-  createSpotPricePoint,
-  createTariffPeriodPoint,
-  abbreviateTariffPeriod,
-} from "./point-metadata";
+import { abbreviateTariffPeriod } from "./point-metadata";
 import type {
   AmberCredentials,
   AmberSite,
   AmberUsageRecord,
   AmberPriceRecord,
-  AmberChannelMetadata,
 } from "./types";
 import { updateUsage, updateForecasts } from "./client";
+import { setLatestValues, type LatestValue } from "@/lib/latest-values-store";
 
 export class AmberAdapter extends BaseVendorAdapter {
   readonly vendorType = "amber";
@@ -160,15 +152,6 @@ export class AmberAdapter extends BaseVendorAdapter {
   }
 
   /**
-   * Get channel metadata for all channels in a site
-   */
-  private getChannelMetadataList(site: AmberSite): AmberChannelMetadata[] {
-    return site.channels.map((channel) =>
-      getChannelMetadata(channel.identifier, channel.type),
-    );
-  }
-
-  /**
    * Group usage records by timestamp
    */
   private groupByTimestamp(
@@ -187,277 +170,109 @@ export class AmberAdapter extends BaseVendorAdapter {
   }
 
   /**
-   * Poll usage data (energy, cost, price actuals)
-   * Fetches yesterday + today to catch quality upgrades (estimated → billable)
+   * Store current period data in KV cache for live dashboard display
    */
-  private async pollUsageData(
-    system: SystemWithPolling,
-    credentials: AmberCredentials,
-    sessionId: number,
-  ): Promise<number> {
-    const siteId = system.vendorSiteId || (await this.getSiteId(credentials));
-    const site = await this.getSite(credentials);
-
-    // Fetch yesterday + today to catch quality upgrades
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-
-    const startDate = yesterday.toISOString().split("T")[0];
-    const endDate = today.toISOString().split("T")[0];
-
-    console.log(`[Amber] Fetching usage data from ${startDate} to ${endDate}`);
-
-    // Fetch usage data
-    const usageData: AmberUsageRecord[] = await this.fetchWithAuth(
-      `${this.baseUrl}/sites/${siteId}/usage?startDate=${startDate}&endDate=${endDate}`,
-      credentials.apiKey,
+  private async storeCurrentPeriodInKV(
+    systemId: number,
+    currentIntervals: AmberPriceRecord[],
+  ): Promise<void> {
+    // Find import (general) and export (feedIn) channels
+    const importRecord = currentIntervals.find(
+      (r) => r.channelType === "general",
+    );
+    const exportRecord = currentIntervals.find(
+      (r) => r.channelType === "feedIn",
     );
 
-    if (!usageData || usageData.length === 0) {
-      console.log("[Amber] No usage data returned");
-      return 0;
+    if (!importRecord) {
+      console.warn("[Amber] No import channel in current interval");
+      return;
     }
 
-    // Group by timestamp
-    const grouped = this.groupByTimestamp(usageData);
+    // Use the import record's interval timing
+    const measurementTimeMs = new Date(importRecord.endTime).getTime();
+    const periodStartMs = new Date(importRecord.startTime).getTime();
+    const periodEndMs = measurementTimeMs;
 
-    // Get channel metadata
-    const channels = this.getChannelMetadataList(site);
+    const values: LatestValue[] = [
+      // Import rate
+      {
+        value: importRecord.perKwh,
+        logicalPath: "bidi.grid.import/rate",
+        measurementTimeMs,
+        metricUnit: "c/kWh",
+        displayName: "Import Price",
+      },
+      // Renewables proportion
+      {
+        value: importRecord.renewables,
+        logicalPath: "bidi.grid.renewables/proportion",
+        measurementTimeMs,
+        metricUnit: "%",
+        displayName: "Renewables",
+      },
+      // Price descriptor
+      {
+        value: importRecord.descriptor,
+        logicalPath: "bidi.grid.import/descriptor",
+        measurementTimeMs,
+        metricUnit: "text",
+        displayName: "Price Level",
+      },
+      // Spike status
+      {
+        value: importRecord.spikeStatus,
+        logicalPath: "bidi.grid.import/spikeStatus",
+        measurementTimeMs,
+        metricUnit: "text",
+        displayName: "Spike Status",
+      },
+      // Tariff period (if available)
+      ...(importRecord.tariffInformation?.period
+        ? [
+            {
+              value:
+                abbreviateTariffPeriod(importRecord.tariffInformation.period) ||
+                importRecord.tariffInformation.period,
+              logicalPath: "bidi.grid.tariff/code",
+              measurementTimeMs,
+              metricUnit: "text",
+              displayName: "Tariff Period",
+            },
+          ]
+        : []),
+      // Interval timing
+      {
+        value: periodStartMs,
+        logicalPath: "bidi.grid.interval/start",
+        measurementTimeMs,
+        metricUnit: "ms",
+        displayName: "Period Start",
+      },
+      {
+        value: periodEndMs,
+        logicalPath: "bidi.grid.interval/end",
+        measurementTimeMs,
+        metricUnit: "ms",
+        displayName: "Period End",
+      },
+    ];
 
-    // Convert to point readings for 5m aggregates
-    const readingsToInsert = [];
-
-    for (const [endTime, records] of grouped.entries()) {
-      // Parse endTime to milliseconds (endTime is ISO 8601 UTC string)
-      const intervalEndMs = new Date(endTime).getTime();
-
-      // Extract grid market data from first record (same across all channels)
-      const firstRecord = records[0];
-      const quality = firstRecord.quality;
-
-      // Add system-level grid market data points (once per timestamp)
-      readingsToInsert.push({
-        pointMetadata: createRenewablesPoint(),
-        rawValue: firstRecord.renewables, // percentage
-        intervalEndMs,
-        dataQuality: quality,
+    // Add export rate if available
+    if (exportRecord) {
+      values.push({
+        value: exportRecord.perKwh,
+        logicalPath: "bidi.grid.export/rate",
+        measurementTimeMs,
+        metricUnit: "c/kWh",
+        displayName: "Feed-in Price",
       });
-
-      readingsToInsert.push({
-        pointMetadata: createSpotPricePoint(),
-        rawValue: firstRecord.spotPerKwh, // cents/kWh
-        intervalEndMs,
-        dataQuality: quality,
-      });
-
-      // Add tariff period from general (import) channel
-      // Note: tariffInformation only exists on general channel, not feedIn
-      const generalRecord = records.find((r) => r.channelType === "general");
-      if (generalRecord?.tariffInformation?.period) {
-        const abbreviatedPeriod = abbreviateTariffPeriod(
-          generalRecord.tariffInformation.period,
-        );
-        if (abbreviatedPeriod) {
-          readingsToInsert.push({
-            pointMetadata: createTariffPeriodPoint(),
-            rawValue: abbreviatedPeriod, // "pk", "op", "sh", or "ss"
-            intervalEndMs,
-            dataQuality: quality,
-          });
-        }
-      }
-
-      // Process each channel's data
-      for (const record of records) {
-        // Find matching channel metadata
-        const channel = channels.find(
-          (c) => c.channelId === record.channelIdentifier,
-        );
-
-        if (!channel) {
-          console.warn(
-            `[Amber] Unknown channel: ${record.channelIdentifier} (${record.channelType})`,
-          );
-          continue;
-        }
-
-        // Create all three points for this channel: energy, cost/revenue, price
-        const points = createChannelPoints(channel);
-
-        // Each record has its own quality flag - use it for all three points from this record
-        const recordQuality = record.quality;
-
-        // Energy point
-        readingsToInsert.push({
-          pointMetadata: points[0], // energy
-          rawValue: record.kwh * 1000, // kWh → Wh
-          intervalEndMs,
-          dataQuality: recordQuality,
-        });
-
-        // Cost/Revenue point
-        readingsToInsert.push({
-          pointMetadata: points[1], // cost or revenue
-          rawValue: record.cost, // cents (keep sign: negative for export = revenue credit)
-          intervalEndMs,
-          dataQuality: recordQuality,
-        });
-
-        // Price point
-        readingsToInsert.push({
-          pointMetadata: points[2], // price
-          rawValue: record.perKwh, // c/kWh (keep sign: negative for export = feed-in credit rate)
-          intervalEndMs,
-          dataQuality: recordQuality,
-        });
-      }
     }
 
-    // Insert all readings directly to 5m aggregates
-    await PointManager.getInstance().insertPointReadingsDirectTo5m(
-      system.id,
-      sessionId,
-      readingsToInsert,
-    );
-
+    await setLatestValues(systemId, values);
     console.log(
-      `[Amber] Inserted ${readingsToInsert.length} usage readings (${grouped.size} timestamps)`,
+      `[Amber] Stored ${values.length} current period values in KV cache`,
     );
-
-    return readingsToInsert.length;
-  }
-
-  /**
-   * Poll price forecast data
-   * Stores future prices with quality="forecast"
-   */
-  private async pollPriceForecast(
-    system: SystemWithPolling,
-    credentials: AmberCredentials,
-    sessionId: number,
-  ): Promise<number> {
-    const siteId = system.vendorSiteId || (await this.getSiteId(credentials));
-    const site = await this.getSite(credentials);
-
-    console.log("[Amber] Fetching price data (actual + forecasts)");
-
-    // Fetch price data (includes historical + current + forecast)
-    const priceData: AmberPriceRecord[] = await this.fetchWithAuth(
-      `${this.baseUrl}/sites/${siteId}/prices`,
-      credentials.apiKey,
-    );
-
-    if (!priceData || priceData.length === 0) {
-      console.log("[Amber] No price data returned");
-      return 0;
-    }
-
-    // Separate actual and forecast intervals
-    const actualIntervals = priceData.filter(
-      (record) =>
-        record.type === "ActualInterval" || record.type === "CurrentInterval",
-    );
-    const forecastIntervals = priceData.filter(
-      (record) => record.type === "ForecastInterval",
-    );
-
-    console.log(
-      `[Amber] Price data: ${actualIntervals.length} actual, ${forecastIntervals.length} forecast`,
-    );
-
-    // Get channel metadata
-    const channels = this.getChannelMetadataList(site);
-
-    // Convert to point readings
-    const readingsToInsert = [];
-
-    // Process actual intervals (recent actual prices)
-    for (const record of actualIntervals) {
-      // Find matching channel metadata
-      const channel = channels.find(
-        (c) => c.channelType === record.channelType,
-      );
-
-      if (!channel) {
-        console.warn(
-          `[Amber] Unknown channel type in actual: ${record.channelType}`,
-        );
-        continue;
-      }
-
-      // Parse endTime to milliseconds (endTime is ISO 8601 UTC string)
-      const intervalEndMs = new Date(record.endTime).getTime();
-
-      // Create price point for this actual price
-      const points = createChannelPoints(channel);
-      const pricePoint = points[2]; // price is the third point
-
-      readingsToInsert.push({
-        pointMetadata: pricePoint,
-        rawValue: record.perKwh, // c/kWh (keep sign - important for feed-in credits)
-        intervalEndMs,
-        dataQuality: "actual",
-      });
-
-      // Store renewables proportion
-      readingsToInsert.push({
-        pointMetadata: createRenewablesPoint(),
-        rawValue: record.renewables, // percentage (0-1)
-        intervalEndMs,
-        dataQuality: "actual",
-      });
-    }
-
-    // Process forecast intervals (future predictions)
-    for (const record of forecastIntervals) {
-      // Find matching channel metadata
-      const channel = channels.find(
-        (c) => c.channelType === record.channelType,
-      );
-
-      if (!channel) {
-        console.warn(
-          `[Amber] Unknown channel type in forecast: ${record.channelType}`,
-        );
-        continue;
-      }
-
-      // Parse endTime to milliseconds (endTime is ISO 8601 UTC string)
-      const intervalEndMs = new Date(record.endTime).getTime();
-
-      // Create price point for this forecast
-      const points = createChannelPoints(channel);
-      const pricePoint = points[2]; // price is the third point
-
-      readingsToInsert.push({
-        pointMetadata: pricePoint,
-        rawValue: record.perKwh, // c/kWh (keep sign - important for feed-in credits)
-        intervalEndMs,
-        dataQuality: "forecast",
-      });
-
-      // Store renewables proportion
-      readingsToInsert.push({
-        pointMetadata: createRenewablesPoint(),
-        rawValue: record.renewables, // percentage (0-1)
-        intervalEndMs,
-        dataQuality: "forecast",
-      });
-    }
-
-    // Insert all price data directly to 5m aggregates
-    await PointManager.getInstance().insertPointReadingsDirectTo5m(
-      system.id,
-      sessionId,
-      readingsToInsert,
-    );
-
-    console.log(
-      `[Amber] Inserted ${actualIntervals.length} actual + ${forecastIntervals.length} forecast price records`,
-    );
-
-    return readingsToInsert.length;
   }
 
   /**
@@ -552,6 +367,30 @@ export class AmberAdapter extends BaseVendorAdapter {
           console.error(
             `[Amber] Forecast sync failed: ${forecastAudit.summary.error}`,
           );
+        } else {
+          // Forecast sync succeeded - fetch and store current period in KV for live dashboard
+          try {
+            const siteId =
+              system.vendorSiteId || (await this.getSiteId(credentials));
+            const priceData: AmberPriceRecord[] = await this.fetchWithAuth(
+              `${this.baseUrl}/sites/${siteId}/prices/current`,
+              credentials.apiKey,
+            );
+
+            // Find CurrentInterval records and store in KV
+            const currentIntervals = priceData.filter(
+              (record) => record.type === "CurrentInterval",
+            );
+            if (currentIntervals.length > 0) {
+              await this.storeCurrentPeriodInKV(system.id, currentIntervals);
+            }
+          } catch (kvError) {
+            // Don't fail the poll if KV update fails - just log it
+            console.error(
+              "[Amber] Failed to store current period in KV:",
+              kvError,
+            );
+          }
         }
       } else {
         console.log(`[Amber] Skipping forecast sync because usage sync failed`);

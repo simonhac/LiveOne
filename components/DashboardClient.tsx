@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useModalContext } from "@/contexts/ModalContext";
 import EnergyChart from "@/components/EnergyChart";
 import AmberCard from "@/components/AmberCard";
+import AmberNow from "@/components/AmberNow";
 import PowerCard from "@/components/PowerCard";
 import SitePowerChart, { type ChartData } from "@/components/SitePowerChart";
 import EnergyTable from "@/components/EnergyTable";
@@ -992,13 +993,16 @@ export default function DashboardClient({
               </div>
             )}
 
-          {/* Amber Electric Dashboard - Show only Amber card */}
+          {/* Amber Electric Dashboard - Live price + 48 hour timeline */}
           {data?.system.vendorType === "amber" && systemId && (
-            <AmberCard
-              systemId={parseInt(systemId)}
-              timezoneOffsetMin={data?.system.timezoneOffsetMin ?? 600}
-              displayTimezone={data?.system.displayTimezone}
-            />
+            <>
+              <AmberNow latest={data.latest} />
+              <AmberCard
+                systemId={parseInt(systemId)}
+                timezoneOffsetMin={data?.system.timezoneOffsetMin ?? 600}
+                displayTimezone={data?.system.displayTimezone}
+              />
+            </>
           )}
 
           {/* Main Dashboard Grid - Only show for admin or non-removed systems and non-Amber systems */}
