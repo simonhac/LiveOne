@@ -407,6 +407,7 @@ export default function ActivityViewer() {
           <div>
             <a
               href={`/dashboard/${row.original.systemId}`}
+              onClick={(e) => e.stopPropagation()}
               className="text-gray-300 hover:text-blue-400 hover:underline cursor-pointer transition-colors"
             >
               {row.original.systemName}
