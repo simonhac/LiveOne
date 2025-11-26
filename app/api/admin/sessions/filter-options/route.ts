@@ -17,40 +17,24 @@ export async function GET() {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Get unique values for each filterable column using SQL DISTINCT
-    // Join with systems table to get vendorType and displayName (removed from sessions in migration 0054)
+    // Query systems table directly (9 rows) instead of scanning 118K sessions
     const systemNamesResult = await rawClient.execute(
-      `SELECT DISTINCT sys.display_name as system_name
-       FROM sessions sess
-       INNER JOIN systems sys ON sess.system_id = sys.id
-       ORDER BY sys.display_name`,
+      "SELECT display_name FROM systems ORDER BY display_name",
     );
     const vendorTypesResult = await rawClient.execute(
-      `SELECT DISTINCT sys.vendor_type
-       FROM sessions sess
-       INNER JOIN systems sys ON sess.system_id = sys.id
-       ORDER BY sys.vendor_type`,
-    );
-    const causesResult = await rawClient.execute(
-      "SELECT DISTINCT cause FROM sessions ORDER BY cause",
-    );
-    const statusesResult = await rawClient.execute(
-      "SELECT DISTINCT successful FROM sessions ORDER BY successful",
+      "SELECT DISTINCT vendor_type FROM systems ORDER BY vendor_type",
     );
 
     const systemNames = systemNamesResult.rows.map(
-      (r: any) => r.system_name as string,
+      (r: any) => r.display_name as string,
     );
     const vendorTypes = vendorTypesResult.rows.map(
       (r: any) => r.vendor_type as string,
     );
-    const causes = causesResult.rows.map((r: any) => r.cause as string);
-    // SQLite stores booleans as 0/1/NULL, convert properly
-    // NULL = pending, 1 = success (true), 0 = failed (false)
-    const statuses = statusesResult.rows.map((r: any) => {
-      if (r.successful === null) return null;
-      return Boolean(r.successful);
-    });
+    // Hardcoded - these are finite values defined in code
+    const causes = ["ADMIN", "CRON", "POLL", "PUSH", "USER", "USER-TEST"];
+    // Hardcoded - only 3 possible states: null=pending, true=success, false=failed
+    const statuses: (boolean | null)[] = [null, true, false];
 
     return NextResponse.json({
       success: true,
