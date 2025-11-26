@@ -186,21 +186,35 @@ export function PollAllModal({
     const StatusContent = ({
       children,
       className,
+      onMouseEnter,
+      onMouseLeave,
     }: {
       children: React.ReactNode;
       className: string;
+      onMouseEnter?: (e: React.MouseEvent) => void;
+      onMouseLeave?: () => void;
     }) => {
       if (result.sessionLabel && result.sessionId) {
         return (
           <button
             onClick={() => handleSessionClick(result.sessionId!)}
+            onMouseEnter={onMouseEnter}
+            onMouseLeave={onMouseLeave}
             className={`${className} session-col-narrow-link`}
           >
             {children}
           </button>
         );
       }
-      return <span className={className}>{children}</span>;
+      return (
+        <span
+          className={className}
+          onMouseEnter={onMouseEnter}
+          onMouseLeave={onMouseLeave}
+        >
+          {children}
+        </span>
+      );
     };
 
     switch (result.action) {
@@ -215,24 +229,22 @@ export function PollAllModal({
         );
       case "ERROR":
         return (
-          <StatusContent className="inline-flex items-center gap-1 text-red-400 cursor-help">
-            <span
-              className="inline-flex items-center gap-1"
-              onMouseEnter={(e) => {
-                if (result.error) {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  setErrorTooltip({
-                    error: result.error,
-                    x: rect.left,
-                    y: rect.bottom + 4,
-                  });
-                }
-              }}
-              onMouseLeave={() => setErrorTooltip(null)}
-            >
-              <X className="w-4 h-4" />
-              <span className="status-text">error</span>
-            </span>
+          <StatusContent
+            className="inline-flex items-center gap-1 text-red-400 cursor-help"
+            onMouseEnter={(e) => {
+              if (result.error) {
+                const rect = e.currentTarget.getBoundingClientRect();
+                setErrorTooltip({
+                  error: result.error,
+                  x: rect.left,
+                  y: rect.bottom + 4,
+                });
+              }
+            }}
+            onMouseLeave={() => setErrorTooltip(null)}
+          >
+            <X className="w-4 h-4" />
+            <span className="status-text">error</span>
           </StatusContent>
         );
       case "SKIPPED":
