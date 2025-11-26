@@ -52,7 +52,12 @@ export const systems = sqliteTable(
   }),
 );
 
-// Readings table - stores time-series inverter data
+/**
+ * @deprecated LEGACY TABLE - No longer written to as of Nov 2025
+ * Use point_readings table instead (see schema-monitoring-points.ts)
+ * Kept for historical data access - do not add new writes
+ * See docs/DEPRECATED_SCHEMA.md for details
+ */
 export const readings = sqliteTable(
   "readings",
   {
@@ -149,7 +154,12 @@ export const pollingStatus = sqliteTable(
   }),
 );
 
-// 5-minute aggregated readings for fast queries (up to 30 days)
+/**
+ * @deprecated LEGACY TABLE - No longer written to as of Nov 2025
+ * Use point_readings_agg_5m table instead (see schema-monitoring-points.ts)
+ * Kept for historical data access - do not add new writes
+ * See docs/DEPRECATED_SCHEMA.md for details
+ */
 export const readingsAgg5m = sqliteTable(
   "readings_agg_5m",
   {
@@ -209,7 +219,12 @@ export const readingsAgg5m = sqliteTable(
   }),
 );
 
-// Daily aggregated readings for long-term queries (unlimited retention)
+/**
+ * @deprecated LEGACY TABLE - No longer written to as of Nov 2025
+ * Use point_readings_agg_1d table instead (see schema-monitoring-points.ts)
+ * Kept for historical data access - do not add new writes
+ * See docs/DEPRECATED_SCHEMA.md for details
+ */
 export const readingsAgg1d = sqliteTable(
   "readings_agg_1d",
   {

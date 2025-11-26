@@ -39,6 +39,49 @@ interface ErrorTooltipState {
   y: number;
 }
 
+/**
+ * TimeCell component that shows live elapsed time during polling
+ * and final duration when complete. Prevents flashing by computing
+ * elapsed time inline on first render.
+ */
+function TimeCell({ result }: { result: PollingResult }) {
+  const [tick, setTick] = useState(0);
+
+  // Check if this system is in progress (has stages but not complete)
+  const isInProgress =
+    result.stages &&
+    result.stages.length > 0 &&
+    result.stages.length < 3 &&
+    result.action === "POLLED";
+
+  // Get the start time from first stage
+  const startMs = result.stages?.[0]?.startMs;
+
+  // Trigger re-renders while in progress (tick is just a counter to force updates)
+  useEffect(() => {
+    if (!isInProgress || !startMs) return;
+
+    const interval = setInterval(() => {
+      setTick((t) => t + 1);
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [isInProgress, startMs]);
+
+  // Show final duration if available
+  if (result.durationMs !== undefined) {
+    return <>{formatDuration(result.durationMs)}</>;
+  }
+
+  // Show live elapsed time if in progress - compute inline to avoid flash
+  if (isInProgress && startMs) {
+    return <>{formatDuration(Date.now() - startMs)}</>;
+  }
+
+  // Not started yet
+  return <>-</>;
+}
+
 export function PollAllModal({
   isOpen,
   onClose,
@@ -366,9 +409,7 @@ export function PollAllModal({
                         : "-"}
                     </td>
                     <td className="px-4 py-2.5 text-sm text-gray-300 text-right">
-                      {result.durationMs !== undefined
-                        ? formatDuration(result.durationMs)
-                        : "-"}
+                      <TimeCell result={result} />
                     </td>
                     <td className="px-4 py-2.5 text-sm h-12">
                       <div className="h-6">

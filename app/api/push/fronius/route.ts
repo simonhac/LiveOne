@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { readings } from "@/lib/db/schema";
 import { SystemsManager } from "@/lib/systems-manager";
-import { updateAggregatedData } from "@/lib/aggregation-helper";
 import {
   updatePollingStatusSuccess,
   updatePollingStatusError,
@@ -208,60 +205,6 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      // Insert reading into database (old format for backward compatibility)
-      await db.insert(readings).values({
-        systemId: system.id,
-        inverterTime,
-        sequence: data.sequence,
-        receivedTime,
-        delaySeconds,
-        solarW: data.solarW ?? null,
-        solarLocalW: data.solarLocalW ?? null,
-        solarRemoteW: data.solarRemoteW ?? null,
-        loadW: data.loadW ?? null,
-        batteryW: data.batteryW ?? null,
-        gridW: data.gridW ?? null,
-        batterySOC:
-          data.batterySOC != null
-            ? Math.round(data.batterySOC * 10) / 10
-            : null,
-        faultCode: data.faultCode ?? null,
-        faultTimestamp: data.faultTimestamp
-          ? Math.floor(new Date(data.faultTimestamp).getTime() / 1000)
-          : null,
-        generatorStatus: data.generatorStatus || null,
-        // Energy interval counters (Wh) - integers
-        solarWhInterval:
-          data.solarWhInterval != null
-            ? Math.round(data.solarWhInterval)
-            : null,
-        loadWhInterval:
-          data.loadWhInterval != null ? Math.round(data.loadWhInterval) : null,
-        batteryInWhInterval:
-          data.batteryInWhInterval != null
-            ? Math.round(data.batteryInWhInterval)
-            : null,
-        batteryOutWhInterval:
-          data.batteryOutWhInterval != null
-            ? Math.round(data.batteryOutWhInterval)
-            : null,
-        gridInWhInterval:
-          data.gridInWhInterval != null
-            ? Math.round(data.gridInWhInterval)
-            : null,
-        gridOutWhInterval:
-          data.gridOutWhInterval != null
-            ? Math.round(data.gridOutWhInterval)
-            : null,
-        // No totals provided in push data
-        solarKwhTotal: null,
-        loadKwhTotal: null,
-        batteryInKwhTotal: null,
-        batteryOutKwhTotal: null,
-        gridInKwhTotal: null,
-        gridOutKwhTotal: null,
-      });
-
       // Insert into point_readings table
       const measurementTime = inverterTime.getTime();
       const receivedTimeMs = receivedTime.getTime();
@@ -304,9 +247,6 @@ export async function POST(request: NextRequest) {
           `[Fronius Push] Inserted ${readingsToInsert.length} point readings for system ${system.id}`,
         );
       }
-
-      // Update 5-minute aggregated data
-      await updateAggregatedData(system.id, inverterTime);
 
       // Update polling status to show successful data receipt
       // Store the parsed JSON object

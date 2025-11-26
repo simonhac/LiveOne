@@ -2,19 +2,12 @@ import type {
   VendorAdapter,
   PollingResult,
   TestConnectionResult,
-  Capability,
 } from "./types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { CommonPollingData } from "@/lib/types/common";
 import type { LatestReadingData } from "@/lib/types/readings";
 import type { ZonedDateTime } from "@internationalized/date";
-import { fromDate } from "@internationalized/date";
-import { db } from "@/lib/db";
-import { readings } from "@/lib/db/schema";
-import { pointInfo } from "@/lib/db/schema-monitoring-points";
-import { eq, desc } from "drizzle-orm";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
-import { GENERIC_READINGS_CAPABILITIES } from "@/lib/readings/generic-readings-capabilities";
 
 /**
  * Base adapter class that provides common functionality
@@ -33,7 +26,6 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   abstract readonly vendorType: string;
   abstract readonly displayName: string;
   abstract readonly dataSource: "poll" | "push" | "combined";
-  readonly dataStore: "readings" | "point_readings" = "readings"; // Default to readings table
 
   // Polling schedule configuration
   protected pollIntervalMinutes = 1; // Default to 1 minute
@@ -206,114 +198,29 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
 
   /**
    * Get the latest reading for this system.
-   * Default implementation reads from the readings table.
-   * Adapters can override for custom behavior (e.g., CraigHack combines systems).
+   * Default implementation returns null - adapters should override this
+   * to provide their own implementation using point_readings data.
    */
   async getLastReading(systemId: number): Promise<LatestReadingData | null> {
-    const [latestReading] = await db
-      .select()
-      .from(readings)
-      .where(eq(readings.systemId, systemId))
-      .orderBy(desc(readings.inverterTime))
-      .limit(1);
-
-    if (!latestReading) {
-      return null;
-    }
-
-    return {
-      timestamp: latestReading.inverterTime,
-      receivedTime: latestReading.createdAt,
-
-      solar: {
-        powerW: latestReading.solarW,
-        localW: latestReading.solarLocalW,
-        remoteW: latestReading.solarRemoteW,
-      },
-
-      battery: {
-        powerW: latestReading.batteryW,
-        soc: latestReading.batterySOC,
-      },
-
-      load: {
-        powerW: latestReading.loadW,
-      },
-
-      grid: {
-        powerW: latestReading.gridW,
-        generatorStatus: latestReading.generatorStatus,
-      },
-
-      connection: {
-        faultCode:
-          latestReading.faultCode != null
-            ? String(latestReading.faultCode)
-            : null,
-        faultTimestamp: latestReading.faultTimestamp,
-      },
-    };
+    // Default returns null - adapters override with their own implementation
+    return null;
   }
 
   /**
-   * Test connection with vendor. Push-only systems return an error by default.
+   * Test connection with vendor. Only poll-based systems can test connections.
    */
   async testConnection(
     system: SystemWithPolling,
     credentials: any,
   ): Promise<TestConnectionResult> {
-    if (this.dataSource === "push") {
+    if (this.dataSource !== "poll") {
       return {
         success: false,
-        error: `${this.displayName} systems are push-only and cannot test outgoing connections`,
+        error: `${this.displayName} systems do not support connection testing`,
       };
     }
     // Polling adapters must override this method
     throw new Error(`testConnection() not implemented for ${this.vendorType}`);
-  }
-
-  /**
-   * Get all possible capabilities for this system (what it could support).
-   * Default implementation returns capabilities based on data store type.
-   * Returns array of capability strings in format: type.subtype.extension (subtype and extension optional)
-   */
-  async getPossibleCapabilities(systemId: number): Promise<string[]> {
-    if (this.dataStore === "readings") {
-      // Return standard capabilities for generic readings table
-      return GENERIC_READINGS_CAPABILITIES;
-    } else {
-      // Query point_info table for point_readings systems
-      const points = await db
-        .select()
-        .from(pointInfo)
-        .where(eq(pointInfo.systemId, systemId));
-
-      // Extract unique capabilities as strings
-      const capabilitySet = new Set<string>();
-
-      for (const point of points) {
-        if (point.type) {
-          // Build capability string: type.subtype.extension (omitting nulls)
-          const parts = [point.type];
-          if (point.subtype) parts.push(point.subtype);
-          if (point.extension) parts.push(point.extension);
-          capabilitySet.add(parts.join("."));
-        }
-      }
-
-      return Array.from(capabilitySet).sort();
-    }
-  }
-
-  /**
-   * Get enabled capabilities for this system (what is currently enabled).
-   * Note: This method is deprecated. Capabilities are now managed at the point level via point_info.active.
-   * For backwards compatibility, this now always returns all possible capabilities.
-   * Returns array of capability strings in format: type.subtype.extension (subtype and extension optional)
-   */
-  async getEnabledCapabilities(systemId: number): Promise<string[]> {
-    // Always return all possible capabilities (filtering is now done at point level)
-    return this.getPossibleCapabilities(systemId);
   }
 
   /**

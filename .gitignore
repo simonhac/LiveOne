@@ -58,6 +58,9 @@ USER_SECRETS.ts
 /backups/
 /db-backups/
 
+# Legacy code (kept for reference but not tracked)
+/legacy/
+
 # Temporary scripts
 /scripts/temp/
 /scripts/sandbox/
@@ -85,3 +88,4 @@ log/*.log
 log/*-migration.log
 log/*-validation.log
 *.corrupt
+daylesford_grid_readings_*.csv

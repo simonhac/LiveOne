@@ -124,11 +124,6 @@ export default async function DashboardPage({ params }: PageProps) {
     ownerUsername: sys.ownerClerkUserId === userId ? currentUsername : null,
   }));
 
-  // Get the dataStore type for this system's vendor (only if system exists)
-  const dataStore = system
-    ? VendorRegistry.getDataStore(system.vendorType)
-    : undefined;
-
   // Render special routes based on last segment
   if (systemIdentifier && system && subPageRoute) {
     // Check access
@@ -231,7 +226,6 @@ export default async function DashboardPage({ params }: PageProps) {
         isAdmin={isAdmin}
         availableSystems={systemsWithUsernames}
         userId={userId}
-        dataStore={dataStore}
       />
     );
   }
@@ -254,7 +248,6 @@ export default async function DashboardPage({ params }: PageProps) {
         isAdmin={isAdmin}
         availableSystems={systemsWithUsernames}
         userId={userId}
-        dataStore={dataStore}
       />
     </DashboardLayout>
   );

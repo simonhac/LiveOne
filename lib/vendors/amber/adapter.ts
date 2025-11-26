@@ -25,7 +25,6 @@ export class AmberAdapter extends BaseVendorAdapter {
   readonly vendorType = "amber";
   readonly displayName = "Amber Electric";
   readonly dataSource = "poll" as const;
-  readonly dataStore = "point_readings" as const;
   readonly supportsAddSystem = true;
 
   // Amber usage data: poll every 5 minutes

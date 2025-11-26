@@ -38,7 +38,6 @@ export class MondoAdapter extends BaseVendorAdapter {
   readonly displayName = "Mondo Power";
   readonly dataSource = "poll" as const;
   readonly supportsAddSystem = true;
-  readonly dataStore = "point_readings" as const; // Uses monitoring points
 
   // Mondo polls every 2 minutes
   protected pollIntervalMinutes = 2;

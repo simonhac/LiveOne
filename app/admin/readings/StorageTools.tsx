@@ -1151,7 +1151,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
             const maxPeriod = Math.round(Math.max(...periods));
             return (
               <div className="px-2 sm:px-0 pt-1 text-xs text-gray-500">
-                * Based on last {maxPeriod} {maxPeriod === 1 ? "day" : "days"}
+                *Based on last {maxPeriod} {maxPeriod === 1 ? "day" : "days"}
               </div>
             );
           })()}

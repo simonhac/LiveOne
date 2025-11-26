@@ -1,5 +1,5 @@
 import { BaseVendorAdapter } from "../base-adapter";
-import type { PollingResult, TestConnectionResult, Capability } from "../types";
+import type { PollingResult, TestConnectionResult } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { LatestReadingData } from "@/lib/types/readings";
 import { VendorRegistry } from "@/lib/vendors/registry";
@@ -42,7 +42,6 @@ export class CompositeAdapter extends BaseVendorAdapter {
   readonly vendorType = "composite";
   readonly displayName = "Composite System";
   readonly dataSource = "push" as const;
-  readonly dataStore = "point_readings" as const;
 
   /**
    * Determine which system to pull each metric from
@@ -229,83 +228,4 @@ export class CompositeAdapter extends BaseVendorAdapter {
       return null;
     }
   }
-
-  /**
-   * Get possible capabilities for composite system.
-   * For composite, this returns capabilities derived from the composite configuration.
-   */
-  async getPossibleCapabilities(systemId: number): Promise<string[]> {
-    return this.getCapabilitiesFromConfig(systemId);
-  }
-
-  /**
-   * Get enabled capabilities for composite system.
-   * For composite, this returns the same as possible capabilities since
-   * the configuration defines what's available.
-   */
-  async getEnabledCapabilities(systemId: number): Promise<string[]> {
-    return this.getCapabilitiesFromConfig(systemId);
-  }
-
-  /**
-   * Extract capabilities from composite configuration mappings
-   */
-  private async getCapabilitiesFromConfig(systemId: number): Promise<string[]> {
-    try {
-      const { SystemsManager } = await import("@/lib/systems-manager");
-      const systemsManager = SystemsManager.getInstance();
-      const system = await systemsManager.getSystem(systemId);
-
-      if (!system || !system.metadata) {
-        return [];
-      }
-
-      const metadata = system.metadata as any;
-
-      // Check if it's the new format with mappings
-      if (metadata.version === 1 && metadata.mappings) {
-        const capabilities = new Set<string>();
-
-        // Process each category (solar, battery, load, grid)
-        for (const [category, paths] of Object.entries(metadata.mappings)) {
-          if (Array.isArray(paths)) {
-            for (const fullPath of paths as string[]) {
-              // Parse path: liveone.{systemPath}.{seriesId}
-              // Example: liveone.system.10.source.solar or liveone.fronius.bidi.battery
-              const parts = fullPath.split(".");
-              if (parts.length >= 3 && parts[0] === "liveone") {
-                // Extract seriesId (everything after system path)
-                let seriesIdStartIndex: number;
-                if (parts[1] === "system") {
-                  // Format: liveone.system.{id}.{seriesId}
-                  seriesIdStartIndex = 3;
-                } else {
-                  // Format: liveone.{shortname}.{seriesId}
-                  seriesIdStartIndex = 2;
-                }
-
-                // The seriesId is the remaining parts joined
-                const seriesId = parts.slice(seriesIdStartIndex).join(".");
-                capabilities.add(seriesId);
-              }
-            }
-          }
-        }
-
-        // Return capability strings
-        return Array.from(capabilities).sort();
-      }
-
-      // For legacy format, return empty (capabilities not supported)
-      return [];
-    } catch (error) {
-      console.error(
-        "[Composite] Error extracting capabilities from config:",
-        error,
-      );
-      return [];
-    }
-  }
-
-  // Composite doesn't support test connection - it's a virtual system that aggregates data
 }

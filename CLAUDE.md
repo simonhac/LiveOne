@@ -165,46 +165,50 @@ echo 'export PATH="$HOME/.turso:$PATH"' >> ~/.zshrc
 #### Check Recent Data
 
 ```sql
--- Latest readings
-SELECT datetime(inverter_time, 'unixepoch') as time,
-       solar_w, load_w, battery_w, battery_soc
-FROM readings
-ORDER BY inverter_time DESC
-LIMIT 5;
-
--- Check aggregation status
+-- Latest point readings (timestamps in milliseconds)
 SELECT
-  datetime(MAX(interval_end), 'unixepoch') as latest_agg,
-  (strftime('%s', 'now') - MAX(interval_end)) / 60 as minutes_behind
-FROM readings_agg_5m;
+  datetime(pr.measurement_time / 1000, 'unixepoch') as time,
+  pi.display_name,
+  pr.value
+FROM point_readings pr
+JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
+WHERE pr.system_id = 1
+ORDER BY pr.measurement_time DESC
+LIMIT 10;
+
+-- Check 5-min aggregation status
+SELECT
+  datetime(MAX(interval_end) / 1000, 'unixepoch') as latest_agg,
+  (strftime('%s', 'now') * 1000 - MAX(interval_end)) / 60000 as minutes_behind
+FROM point_readings_agg_5m;
 ```
 
 #### Data Health Checks
 
 ```sql
--- Check for duplicate timestamps
-SELECT inverter_time, COUNT(*) as count
-FROM readings
-WHERE system_id = 1586
-GROUP BY inverter_time
+-- Check for duplicate timestamps in point_readings
+SELECT measurement_time, COUNT(*) as count
+FROM point_readings
+WHERE system_id = 1 AND point_id = 0
+GROUP BY measurement_time
 HAVING COUNT(*) > 1;
 
--- Find data gaps > 2 minutes
+-- Find data gaps > 10 minutes (point_readings uses ms)
 WITH time_diffs AS (
   SELECT
-    inverter_time,
-    LAG(inverter_time) OVER (ORDER BY inverter_time) as prev_time,
-    inverter_time - LAG(inverter_time) OVER (ORDER BY inverter_time) as diff
-  FROM readings
-  WHERE system_id = 1586
+    measurement_time,
+    LAG(measurement_time) OVER (ORDER BY measurement_time) as prev_time,
+    measurement_time - LAG(measurement_time) OVER (ORDER BY measurement_time) as diff_ms
+  FROM point_readings
+  WHERE system_id = 1 AND point_id = 0
 )
 SELECT
-  datetime(prev_time, 'unixepoch') as gap_start,
-  datetime(inverter_time, 'unixepoch') as gap_end,
-  diff / 60 as gap_minutes
+  datetime(prev_time / 1000, 'unixepoch') as gap_start,
+  datetime(measurement_time / 1000, 'unixepoch') as gap_end,
+  diff_ms / 60000 as gap_minutes
 FROM time_diffs
-WHERE diff > 120
-ORDER BY inverter_time DESC
+WHERE diff_ms > 600000
+ORDER BY measurement_time DESC
 LIMIT 20;
 ```
 
@@ -480,16 +484,16 @@ vercel ls
 
 - **Raw SQL queries (`rawClient`)**: Use for direct SQL execution (e.g., complex queries, migrations)
   - Import: `import { rawClient } from '@/lib/db'`
-  - Example: `await rawClient.execute('SELECT COUNT(*) FROM readings')`
+  - Example: `await rawClient.execute('SELECT COUNT(*) FROM point_readings')`
   - Returns `{ rows: [...], columns: [...] }` format
   - Use this when you need to run raw SQL queries that can't be expressed with Drizzle query builder
 
 ## Data Pipeline
 
-1. **Collection**: Cron job polls vendor APIs every minute
-2. **Storage**: Raw data → `readings` table
-3. **5-Min Aggregation**: Real-time as data arrives
-4. **Daily Aggregation**: Runs at 00:05 daily
+1. **Collection**: Cron job polls vendor APIs (minutely or smart schedule)
+2. **Storage**: Raw data → `point_readings` table
+3. **5-Min Aggregation**: Real-time as data arrives → `point_readings_agg_5m`
+4. **Daily Aggregation**: Runs at 00:05 daily → `point_readings_agg_1d`
 5. **API**: Queries use pre-aggregated data (< 1s response)
 
 ### Manual Operations

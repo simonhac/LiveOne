@@ -1,33 +1,15 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { SELECTLIVE_CONFIG } from "@/config";
 import { db } from "@/lib/db";
-import {
-  systems,
-  readings,
-  pollingStatus,
-  readingsAgg1d,
-  userSystems,
-} from "@/lib/db/schema";
-import { eq, and, desc, or } from "drizzle-orm";
-import {
-  formatTimeAEST,
-  formatTime_fromJSDate,
-  getYesterdayDate,
-  fromUnixTimestamp,
-} from "@/lib/date-utils";
-import { roundToThree } from "@/lib/history/format-opennem";
+import { systems, pollingStatus, userSystems } from "@/lib/db/schema";
+import { eq, and } from "drizzle-orm";
+import { formatTime_fromJSDate } from "@/lib/date-utils";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { getLatestPointValues } from "@/lib/kv-cache-manager";
 import { jsonResponse } from "@/lib/json";
 import { SystemsManager } from "@/lib/systems-manager";
 import { clerkClient } from "@clerk/nextjs/server";
-
-// Helper function to ensure values are null instead of undefined
-function nullifyUndefined<T>(value: T | undefined): T | null {
-  return value === undefined ? null : value;
-}
 
 export async function GET(request: Request) {
   try {
@@ -116,20 +98,6 @@ export async function GET(request: Request) {
       .where(eq(pollingStatus.systemId, system.id))
       .limit(1);
 
-    // Get yesterday's aggregated data using system's timezone
-    const systemTimezoneOffsetMinutes = system.timezoneOffsetMin;
-    const yesterdayDate = getYesterdayDate(systemTimezoneOffsetMinutes);
-    const [yesterdayData] = await db
-      .select()
-      .from(readingsAgg1d)
-      .where(
-        and(
-          eq(readingsAgg1d.systemId, String(system.id)),
-          eq(readingsAgg1d.day, yesterdayDate),
-        ),
-      )
-      .limit(1);
-
     // Build the system object with full SystemWithPolling data
     const systemData = {
       id: system.id,
@@ -183,62 +151,6 @@ export async function GET(request: Request) {
     // Get latest point values from KV cache (composite points system)
     const latest = await getLatestPointValues(system.id);
 
-    // Build historical section
-    const historical = {
-      yesterday: yesterdayData
-        ? {
-            date: yesterdayData.day,
-            energy: {
-              solarKwh: roundToThree(yesterdayData.solarKwh),
-              loadKwh: roundToThree(yesterdayData.loadKwh),
-              batteryChargeKwh: roundToThree(yesterdayData.batteryChargeKwh),
-              batteryDischargeKwh: roundToThree(
-                yesterdayData.batteryDischargeKwh,
-              ),
-              gridImportKwh: roundToThree(yesterdayData.gridImportKwh),
-              gridExportKwh: roundToThree(yesterdayData.gridExportKwh),
-            },
-            power: {
-              solar: {
-                minW: nullifyUndefined(yesterdayData.solarWMin),
-                avgW: nullifyUndefined(yesterdayData.solarWAvg),
-                maxW: nullifyUndefined(yesterdayData.solarWMax),
-              },
-              load: {
-                minW: nullifyUndefined(yesterdayData.loadWMin),
-                avgW: nullifyUndefined(yesterdayData.loadWAvg),
-                maxW: nullifyUndefined(yesterdayData.loadWMax),
-              },
-              battery: {
-                minW: nullifyUndefined(yesterdayData.batteryWMin),
-                avgW: nullifyUndefined(yesterdayData.batteryWAvg),
-                maxW: nullifyUndefined(yesterdayData.batteryWMax),
-              },
-              grid: {
-                minW: nullifyUndefined(yesterdayData.gridWMin),
-                avgW: nullifyUndefined(yesterdayData.gridWAvg),
-                maxW: nullifyUndefined(yesterdayData.gridWMax),
-              },
-            },
-            soc: {
-              minBattery: roundToThree(yesterdayData.batterySocMin),
-              avgBattery: roundToThree(yesterdayData.batterySocAvg),
-              maxBattery: roundToThree(yesterdayData.batterySocMax),
-              endBattery: roundToThree(yesterdayData.batterySocEnd),
-            },
-            dataQuality: {
-              intervalCount: nullifyUndefined(yesterdayData.intervalCount),
-              coverage: yesterdayData.intervalCount
-                ? `${Math.round((yesterdayData.intervalCount / 288) * 100)}%`
-                : null,
-            },
-          }
-        : null,
-      // Placeholder for future periods
-      // lastWeek: null,
-      // lastMonth: null,
-    };
-
     // Fetch available systems for the user
     const systemsManager = SystemsManager.getInstance();
     const availableSystems = await systemsManager.getSystemsVisibleByUser(
@@ -263,7 +175,6 @@ export async function GET(request: Request) {
       {
         system: systemData,
         latest: latest,
-        historical: historical,
         availableSystems: systemsWithUsernames,
       },
       system.timezoneOffsetMin,

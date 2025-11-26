@@ -6,8 +6,43 @@ import {
 } from "@/lib/db/schema-monitoring-points";
 import { eq, and, gte, lte, asc, inArray, sql } from "drizzle-orm";
 import { getYesterdayInTimezone, getTodayInTimezone } from "@/lib/date-utils";
-import { dayToUnixRangeForAggregation } from "@/lib/db/aggregate-daily";
 import { CalendarDate } from "@internationalized/date";
+
+/**
+ * Convert a CalendarDate to Unix timestamp range for daily aggregation
+ * Returns timestamps for 00:05 of the given day to 00:00 of the next day (inclusive)
+ * This gives us 288 5-minute intervals (00:05, 00:10, ..., 23:55, 00:00)
+ * @param day - The day as CalendarDate
+ * @param timezoneOffsetMin - Timezone offset in minutes
+ * @returns [startUnix, endUnix] in seconds
+ */
+export function dayToUnixRangeForAggregation(
+  day: CalendarDate,
+  timezoneOffsetMin: number,
+): [number, number] {
+  const offsetMinutes = timezoneOffsetMin;
+  const offsetHours = Math.floor(offsetMinutes / 60);
+  const offsetMins = Math.abs(offsetMinutes % 60);
+  const offsetString =
+    offsetMinutes >= 0
+      ? `+${String(offsetHours).padStart(2, "0")}:${String(offsetMins).padStart(2, "0")}`
+      : `-${String(Math.abs(offsetHours)).padStart(2, "0")}:${String(offsetMins).padStart(2, "0")}`;
+
+  // Format day as YYYY-MM-DD
+  const dayStr = `${day.year}-${String(day.month).padStart(2, "0")}-${String(day.day).padStart(2, "0")}`;
+
+  // Start at 00:05 of the given day
+  const dayStart = new Date(`${dayStr}T00:05:00${offsetString}`);
+  // End at 00:00 of the next day (inclusive)
+  const nextDay = new Date(`${dayStr}T00:00:00${offsetString}`);
+  nextDay.setDate(nextDay.getDate() + 1);
+  const dayEnd = nextDay;
+
+  return [
+    Math.floor(dayStart.getTime() / 1000),
+    Math.floor(dayEnd.getTime() / 1000),
+  ];
+}
 
 // Earliest date for point data aggregation (when point data collection began)
 const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);

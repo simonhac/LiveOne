@@ -1,11 +1,13 @@
 import { BaseVendorAdapter, type ScheduleEvaluation } from "../base-adapter";
 import type { PollingResult, TestConnectionResult } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
-import type { CommonPollingData } from "@/lib/types/common";
 import type { LatestReadingData } from "@/lib/types/readings";
 import { db } from "@/lib/db";
-import { readingsAgg5m } from "@/lib/db/schema";
-import { eq, desc } from "drizzle-orm";
+import {
+  pointReadingsAgg5m,
+  pointInfo,
+} from "@/lib/db/schema-monitoring-points";
+import { eq, and, desc } from "drizzle-orm";
 import {
   checkAndFetchYesterdayIfNeeded,
   fetchEnphaseDay,
@@ -38,45 +40,70 @@ export class EnphaseAdapter extends BaseVendorAdapter {
   protected toleranceSeconds = 60;
 
   /**
-   * Override getLastReading to read from readings_agg_5m table
+   * Override getLastReading to read from point_readings_agg_5m table
    */
   async getLastReading(systemId: number): Promise<LatestReadingData | null> {
+    // Find the Enphase solar power point for this system
+    const [solarPoint] = await db
+      .select()
+      .from(pointInfo)
+      .where(
+        and(
+          eq(pointInfo.systemId, systemId),
+          eq(pointInfo.originId, "enphase"),
+          eq(pointInfo.originSubId, "solar_w"),
+        ),
+      )
+      .limit(1);
+
+    if (!solarPoint) {
+      return null;
+    }
+
+    // Get the latest 5-minute aggregate for this point
     const [latestAgg] = await db
       .select()
-      .from(readingsAgg5m)
-      .where(eq(readingsAgg5m.systemId, systemId))
-      .orderBy(desc(readingsAgg5m.intervalEnd))
+      .from(pointReadingsAgg5m)
+      .where(
+        and(
+          eq(pointReadingsAgg5m.systemId, systemId),
+          eq(pointReadingsAgg5m.pointId, solarPoint.index),
+        ),
+      )
+      .orderBy(desc(pointReadingsAgg5m.intervalEnd))
       .limit(1);
 
     if (!latestAgg) {
       return null;
     }
 
-    // Convert Unix timestamp to Date
-    const timestamp = new Date(latestAgg.intervalEnd * 1000);
+    // Convert Unix milliseconds to Date
+    const timestamp = new Date(latestAgg.intervalEnd);
 
     return {
       timestamp: timestamp,
-      receivedTime: latestAgg.createdAt,
+      receivedTime: latestAgg.createdAt
+        ? new Date(latestAgg.createdAt)
+        : timestamp, // Fall back to timestamp if createdAt is null
 
       solar: {
-        powerW: latestAgg.solarWAvg,
-        localW: latestAgg.solarWAvg, // Enphase measures at the panels
+        powerW: latestAgg.avg,
+        localW: latestAgg.avg, // Enphase measures at the panels
         remoteW: null, // Enphase doesn't have remote solar
       },
 
       battery: {
-        powerW: latestAgg.batteryWAvg,
-        soc: latestAgg.batterySOCLast,
+        powerW: null, // Enphase production endpoint doesn't provide battery data
+        soc: null,
       },
 
       load: {
-        powerW: latestAgg.loadWAvg,
+        powerW: null, // Enphase production endpoint doesn't provide load data
       },
 
       grid: {
-        powerW: latestAgg.gridWAvg,
-        generatorStatus: null, // Enphase doesn't have generator status
+        powerW: null, // Enphase production endpoint doesn't provide grid data
+        generatorStatus: null,
       },
 
       connection: {

@@ -398,15 +398,13 @@ Built with:
 
 ## 📝 Notes
 
-### Deprecated Database Tables
+### Database Architecture
 
-The project includes a set of older time-series tables (`readings`, `readings_agg_5m`, `readings_agg_1d`) that were used before the point-based monitoring architecture was implemented. These tables are still present for backward compatibility with early Selectronic installations but are considered deprecated.
+The project uses a flexible point-based architecture (`point_info`, `point_readings`, `point_readings_agg_5m`, `point_readings_agg_1d`) where all metrics are stored as generic "points" with flexible metadata. This enables:
 
-**Why deprecated?** The original schema was designed specifically for Selectronic inverters with a fixed set of metrics (solar_w, battery_w, load_w, etc.). This rigid structure made it difficult to:
+- Support for any vendor with arbitrary metric sets
+- Adding new metrics without schema changes
+- Tracking multiple devices in a single system
+- Creating composite virtual systems
 
-- Support vendors with different metric sets (e.g., Enphase microinverters)
-- Add new metrics without schema changes
-- Track multiple devices in a single system
-- Create composite virtual systems
-
-The current point-based architecture (`point_info`, `point_readings`, `point_readings_agg_*`) solves these limitations by treating all metrics as generic "points" with flexible metadata. New systems should use the point-based tables exclusively.
+See [docs/architecture/SCHEMA.md](docs/architecture/SCHEMA.md) for detailed schema documentation.

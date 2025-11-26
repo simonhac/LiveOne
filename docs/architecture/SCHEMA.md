@@ -120,7 +120,9 @@ Tracks health and status of data collection for each system.
 
 ## Legacy Time-Series Tables
 
-**Note:** These tables are used for older Selectronic systems. Newer systems use the point-based monitoring tables.
+> **DEPRECATED (November 2025)**: These tables are no longer written to.
+> All new data goes to the point-based tables (`point_readings`, `point_readings_agg_5m`, `point_readings_agg_1d`).
+> The tables remain for historical data access. See [DEPRECATED_SCHEMA.md](../DEPRECATED_SCHEMA.md) for details.
 
 ### `readings` - Raw Inverter Data
 
@@ -543,24 +545,20 @@ Tracks last synced timestamps for automatic sync from production to development.
 ### Data Flow
 
 1. **Collection**: Cron job polls vendor APIs (minutely for Selectronic, smart schedule for Enphase)
-2. **Storage**: Raw data → `readings` (legacy) or `point_readings` (modern)
-3. **5-Min Aggregation**: Real-time as data arrives
-4. **Daily Aggregation**: Runs at 00:05 daily via cron job
+2. **Storage**: Raw data → `point_readings` table
+3. **5-Min Aggregation**: Real-time as data arrives → `point_readings_agg_5m`
+4. **Daily Aggregation**: Runs at 00:05 daily via cron job → `point_readings_agg_1d`
 5. **API**: Queries use pre-aggregated data for fast response (< 1s)
 
 ### System Types
 
-#### Legacy Systems (Selectronic)
-
-- Use `readings`, `readings_agg_5m`, `readings_agg_1d` tables
-- Minute-by-minute polling
-- Fixed schema for standard metrics
-
-#### Modern Systems (Enphase, Fronius, Mondo, Amber)
+#### All Systems (Selectronic, Enphase, Fronius, Mondo, Amber)
 
 - Use `point_info`, `point_readings`, `point_readings_agg_5m`, `point_readings_agg_1d` tables
-- Flexible schema supports arbitrary metrics
+- Flexible schema supports arbitrary metrics per point
 - Smart polling schedules
+
+> **Note**: Legacy tables (`readings`, `readings_agg_5m`, `readings_agg_1d`) exist for historical data but are no longer written to.
 
 #### Composite Systems
 

@@ -23,7 +23,6 @@ export interface VendorAdapter {
   readonly vendorType: string;
   readonly displayName: string;
   readonly dataSource: "poll" | "push" | "combined";
-  readonly dataStore: "readings" | "point_readings"; // Where data is stored
 
   // Credential requirements for this vendor
   readonly credentialFields?: CredentialField[];
@@ -58,23 +57,6 @@ export interface VendorAdapter {
     system: SystemWithPolling,
     credentials: any,
   ): Promise<TestConnectionResult>;
-
-  // Get all possible capabilities for this system (what it could support)
-  // Returns array of capability strings in format: type.subtype.extension (subtype and extension optional)
-  getPossibleCapabilities(systemId: number): Promise<string[]>;
-
-  // Get enabled capabilities for this system (what is currently enabled)
-  // Returns array of capability strings in format: type.subtype.extension (subtype and extension optional)
-  getEnabledCapabilities(systemId: number): Promise<string[]>;
-}
-
-/**
- * Capability definition
- */
-export interface Capability {
-  type: string;
-  subtype: string | null;
-  extension: string | null;
 }
 
 /**

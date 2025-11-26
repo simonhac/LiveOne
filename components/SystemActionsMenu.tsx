@@ -20,7 +20,6 @@ interface SystemActionsMenuProps {
   status: "active" | "disabled" | "removed";
   vendorType?: string;
   supportsPolling?: boolean;
-  dataStore?: "readings" | "point_readings";
   onTest: () => void;
   onPollNow?: (dryRun?: boolean) => void;
   onStatusChange: (status: "active" | "disabled" | "removed") => void;
@@ -35,7 +34,6 @@ export default function SystemActionsMenu({
   status,
   vendorType,
   supportsPolling = false,
-  dataStore,
   onTest,
   onPollNow,
   onStatusChange,

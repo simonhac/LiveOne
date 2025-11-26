@@ -1,20 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { readings } from "@/lib/db/schema";
 import { SystemsManager } from "@/lib/systems-manager";
-import { updateAggregatedData } from "@/lib/aggregation-helper";
 import { formatSystemId } from "@/lib/system-utils";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { getSystemCredentials } from "@/lib/secure-credentials";
 import { sessionManager } from "@/lib/session-manager";
-import type { CommonPollingData } from "@/lib/types/common";
 import type { PollingResult } from "@/lib/vendors/types";
 import {
   updatePollingStatusSuccess,
   updatePollingStatusError,
 } from "@/lib/polling-utils";
 import { validateCronRequest } from "@/lib/cron-utils";
-import { and } from "drizzle-orm";
 import { fromDate } from "@internationalized/date";
 import { formatTimeAEST } from "@/lib/date-utils";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
@@ -352,100 +347,8 @@ async function pollAllSystems(params: {
             }, 200);
           }
 
-          // Store the data if provided
-          if (result.data) {
-            const dataArray = Array.isArray(result.data)
-              ? result.data
-              : [result.data];
-
-            for (const data of dataArray) {
-              // Calculate delay (timestamp should be a Date object from adapters)
-              const inverterTime = data.timestamp;
-              const receivedTime = new Date();
-              const delaySeconds = Math.floor(
-                (receivedTime.getTime() - inverterTime.getTime()) / 1000,
-              );
-
-              // Insert reading into database (Drizzle handles Date -> Unix conversion)
-              // Skip database write in dry run mode
-              if (!dryRun) {
-                await db.insert(readings).values({
-                  systemId: system.id,
-                  inverterTime, // Pass Date directly - Drizzle converts to Unix timestamp
-                  receivedTime,
-                  delaySeconds,
-                  solarW: data.solarW ?? null, // Preserve null, don't convert to 0
-                  solarLocalW: data.solarLocalW ?? null,
-                  solarRemoteW: data.solarRemoteW ?? null,
-                  loadW: data.loadW ?? null,
-                  batteryW: data.batteryW ?? null,
-                  gridW: data.gridW ?? null,
-                  batterySOC:
-                    data.batterySOC != null
-                      ? Math.round(data.batterySOC * 10) / 10
-                      : null,
-                  faultCode: data.faultCode ?? null,
-                  faultTimestamp: data.faultTimestamp
-                    ? Math.floor(data.faultTimestamp.getTime() / 1000)
-                    : null,
-                  generatorStatus: data.generatorStatus ?? null,
-                  // Energy interval counters (Wh) - integers, preserve nulls
-                  solarWhInterval:
-                    data.solarWhInterval != null
-                      ? Math.round(data.solarWhInterval)
-                      : null,
-                  loadWhInterval:
-                    data.loadWhInterval != null
-                      ? Math.round(data.loadWhInterval)
-                      : null,
-                  batteryInWhInterval:
-                    data.batteryInWhInterval != null
-                      ? Math.round(data.batteryInWhInterval)
-                      : null,
-                  batteryOutWhInterval:
-                    data.batteryOutWhInterval != null
-                      ? Math.round(data.batteryOutWhInterval)
-                      : null,
-                  gridInWhInterval:
-                    data.gridInWhInterval != null
-                      ? Math.round(data.gridInWhInterval)
-                      : null,
-                  gridOutWhInterval:
-                    data.gridOutWhInterval != null
-                      ? Math.round(data.gridOutWhInterval)
-                      : null,
-                  // Energy counters (kWh) - rounded to 3 decimal places, preserve nulls
-                  solarKwhTotal:
-                    data.solarKwhTotal != null
-                      ? Math.round(data.solarKwhTotal * 1000) / 1000
-                      : null,
-                  loadKwhTotal:
-                    data.loadKwhTotal != null
-                      ? Math.round(data.loadKwhTotal * 1000) / 1000
-                      : null,
-                  batteryInKwhTotal:
-                    data.batteryInKwhTotal != null
-                      ? Math.round(data.batteryInKwhTotal * 1000) / 1000
-                      : null,
-                  batteryOutKwhTotal:
-                    data.batteryOutKwhTotal != null
-                      ? Math.round(data.batteryOutKwhTotal * 1000) / 1000
-                      : null,
-                  gridInKwhTotal:
-                    data.gridInKwhTotal != null
-                      ? Math.round(data.gridInKwhTotal * 1000) / 1000
-                      : null,
-                  gridOutKwhTotal:
-                    data.gridOutKwhTotal != null
-                      ? Math.round(data.gridOutKwhTotal * 1000) / 1000
-                      : null,
-                });
-
-                // Update 5-minute aggregated data
-                await updateAggregatedData(system.id, inverterTime);
-              }
-            }
-          }
+          // Note: Data storage is now handled by vendor adapters directly via point_readings
+          // The legacy readings table write has been removed
 
           // Update polling status with raw response
           // Note: We update polling status even in dry run mode to track that the poll happened

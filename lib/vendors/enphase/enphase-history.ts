@@ -1,5 +1,9 @@
 import { db } from "@/lib/db";
-import { readingsAgg5m, systems } from "@/lib/db/schema";
+import { systems } from "@/lib/db/schema";
+import {
+  pointReadingsAgg5m,
+  pointInfo,
+} from "@/lib/db/schema-monitoring-points";
 import { eq, and, gte, lte } from "drizzle-orm";
 import { fetchWithEnphaseAuth } from "./enphase-auth";
 import { CalendarDate } from "@internationalized/date";
@@ -100,71 +104,6 @@ async function fetchEnphaseProductionData(
 }
 
 /**
- * Process Enphase production data and prepare records for readings_agg_5m table
- * @param productionData - Raw Enphase production response
- * @param systemId - System ID for the records
- * @param startUnix - Start of time range (optional, for filtering)
- * @param endUnix - End of time range (optional, for filtering)
- * @returns Array of records ready for readings_agg_5m insertion
- */
-function processEnphaseDataForAgg5m(
-  productionData: EnphaseProductionResponse,
-  systemId: number,
-  startUnix?: number,
-  endUnix?: number,
-) {
-  const records = [];
-
-  for (const interval of productionData.intervals) {
-    // Filter by time range if provided
-    // Note: end_at represents the END of the interval, so:
-    // - An interval ending at 00:00 belongs to the previous day (23:55-00:00)
-    // - We should include intervals where end_at <= endUnix (not < endUnix)
-    if (startUnix && interval.end_at < startUnix) continue;
-    if (endUnix && interval.end_at > endUnix) continue;
-
-    records.push({
-      systemId: systemId,
-      intervalEnd: interval.end_at,
-
-      // For Enphase, we only have production (solar) data
-      solarWAvg: interval.powr,
-      solarWMin: interval.powr,
-      solarWMax: interval.powr,
-      solarIntervalWh: interval.enwh, // Energy produced in this 5-minute interval
-
-      // No load, battery, or grid data from this endpoint
-      loadWAvg: null,
-      loadWMin: null,
-      loadWMax: null,
-
-      batteryWAvg: null,
-      batteryWMin: null,
-      batteryWMax: null,
-
-      gridWAvg: null,
-      gridWMin: null,
-      gridWMax: null,
-
-      batterySOCLast: null,
-
-      // Energy counters - convert Wh to kWh
-      solarKwhTotalLast: interval.enwh ? interval.enwh / 1000 : null,
-      loadKwhTotalLast: null,
-      batteryInKwhTotalLast: null,
-      batteryOutKwhTotalLast: null,
-      gridInKwhTotalLast: null,
-      gridOutKwhTotalLast: null,
-
-      sampleCount: 1,
-      createdAt: new Date(),
-    });
-  }
-
-  return records;
-}
-
-/**
  * Process Enphase production data and prepare point readings for direct 5m aggregation
  * @param productionData - Raw Enphase production response
  * @param systemId - System ID for the records
@@ -205,65 +144,6 @@ function processEnphaseDataForPointReadings(
   }
 
   return pointReadings;
-}
-
-/**
- * Upsert records to the database in batches
- * @param records - Records to upsert
- * @param dryRun - If true, don't actually insert/update data
- * @returns Counts of upserted and error records
- */
-async function upsertEnphaseRecords(records: any[], dryRun: boolean) {
-  if (dryRun) {
-    console.log("[Enphase] Dry run - not upserting data");
-    if (records.length > 0) {
-      console.log(
-        "[Enphase] Sample record:",
-        JSON.stringify(records[0], null, 2),
-      );
-    }
-    return { upsertedCount: 0, errorCount: 0 };
-  }
-
-  // Upsert records in batches
-  const batchSize = 300;
-  let upsertedCount = 0;
-  let errorCount = 0;
-
-  for (let i = 0; i < records.length; i += batchSize) {
-    const batch = records.slice(i, i + batchSize);
-
-    try {
-      // Upsert each record individually to handle conflicts properly
-      for (const record of batch) {
-        await db
-          .insert(readingsAgg5m)
-          .values(record)
-          .onConflictDoUpdate({
-            target: [readingsAgg5m.systemId, readingsAgg5m.intervalEnd],
-            set: {
-              solarWAvg: record.solarWAvg,
-              solarWMin: record.solarWMin,
-              solarWMax: record.solarWMax,
-              solarIntervalWh: record.solarIntervalWh,
-              solarKwhTotalLast: record.solarKwhTotalLast,
-              sampleCount: record.sampleCount,
-              createdAt: record.createdAt,
-            },
-          });
-        upsertedCount++;
-      }
-
-      console.log(
-        `[Enphase] Upserted batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(records.length / batchSize)} (${batch.length} records)`,
-      );
-    } catch (error) {
-      console.error(`[Enphase] Error upserting batch:`, error);
-      errorCount += batch.length;
-    }
-  }
-
-  return { upsertedCount, errorCount };
 }
 
 /**
@@ -347,17 +227,7 @@ export async function fetchEnphaseDay(
     `[Enphase] Received ${productionData.intervals.length} intervals`,
   );
 
-  // Process the data for readings_agg_5m table
-  // For today, don't pass date filters; for historical dates, use the range
-  const agg5mRecords = isToday
-    ? processEnphaseDataForAgg5m(productionData, systemId)
-    : processEnphaseDataForAgg5m(productionData, systemId, startUnix, endUnix);
-
-  console.log(
-    `[Enphase] Prepared ${agg5mRecords.length} records for readings_agg_5m`,
-  );
-
-  // Process the data for point_readings table
+  // Process the data for point_readings_agg_5m table
   const pointReadings = isToday
     ? processEnphaseDataForPointReadings(productionData, systemId, sessionId)
     : processEnphaseDataForPointReadings(
@@ -369,13 +239,7 @@ export async function fetchEnphaseDay(
       );
 
   console.log(
-    `[Enphase] Prepared ${pointReadings.length} point readings for point_readings`,
-  );
-
-  // Upsert to readings_agg_5m table
-  const { upsertedCount, errorCount } = await upsertEnphaseRecords(
-    agg5mRecords,
-    dryRun,
+    `[Enphase] Prepared ${pointReadings.length} point readings for point_readings_agg_5m`,
   );
 
   // Insert directly to point_readings_agg_5m table (bypassing point_readings since Enphase already provides 5m data)
@@ -393,9 +257,9 @@ export async function fetchEnphaseDay(
   // Complete - details logged in polling.ts
 
   return {
-    intervalCount: agg5mRecords.length,
-    upsertedCount,
-    errorCount,
+    intervalCount: productionData.intervals.length,
+    upsertedCount: pointReadings.length,
+    errorCount: 0,
     dryRun,
     rawResponse: productionData, // Include raw Enphase response
   };
@@ -413,6 +277,24 @@ export async function hasCompleteEveningData(
   date: CalendarDate,
   timezoneOffsetMin: number,
 ): Promise<boolean> {
+  // Find the Enphase solar power point for this system
+  const [solarPoint] = await db
+    .select()
+    .from(pointInfo)
+    .where(
+      and(
+        eq(pointInfo.systemId, systemId),
+        eq(pointInfo.originId, "enphase"),
+        eq(pointInfo.originSubId, "solar_w"),
+      ),
+    )
+    .limit(1);
+
+  if (!solarPoint) {
+    console.log(`[Enphase] No solar point found for system ${systemId}`);
+    return false; // No point data exists yet
+  }
+
   // Get Unix timestamps for the day in the system's timezone
   const [dayStartUnix, dayEndUnix] = calendarDateToUnixRange(
     date,
@@ -422,18 +304,20 @@ export async function hasCompleteEveningData(
   // Calculate 18:00 and 23:55 (inclusive) - these are 5-minute interval END times
   // 18:00 interval ends at 18:00:00
   // 23:55 interval ends at 23:55:00
-  const eveningStartUnix = dayStartUnix + 18 * 3600; // 18:00 (6pm)
-  const eveningEndUnix = dayEndUnix - 300; // 23:55 (5 minutes before midnight)
+  // Note: pointReadingsAgg5m uses milliseconds, not seconds
+  const eveningStartMs = (dayStartUnix + 18 * 3600) * 1000; // 18:00 (6pm)
+  const eveningEndMs = (dayEndUnix - 300) * 1000; // 23:55 (5 minutes before midnight)
 
-  // Query for existing data in this range
+  // Query for existing data in this range for the solar power point
   const existingData = await db
     .select()
-    .from(readingsAgg5m)
+    .from(pointReadingsAgg5m)
     .where(
       and(
-        eq(readingsAgg5m.systemId, systemId),
-        gte(readingsAgg5m.intervalEnd, eveningStartUnix),
-        lte(readingsAgg5m.intervalEnd, eveningEndUnix),
+        eq(pointReadingsAgg5m.systemId, systemId),
+        eq(pointReadingsAgg5m.pointId, solarPoint.index),
+        gte(pointReadingsAgg5m.intervalEnd, eveningStartMs),
+        lte(pointReadingsAgg5m.intervalEnd, eveningEndMs),
       ),
     );
 

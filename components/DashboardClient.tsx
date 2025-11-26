@@ -133,7 +133,6 @@ interface DashboardClientProps {
   isAdmin: boolean;
   availableSystems?: AvailableSystem[];
   userId?: string;
-  dataStore?: "readings" | "point_readings";
 }
 
 // Helper function to get stale threshold based on vendor type
@@ -150,7 +149,6 @@ export default function DashboardClient({
   isAdmin: isAdminProp,
   availableSystems = [],
   userId,
-  dataStore,
 }: DashboardClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -375,12 +373,7 @@ export default function DashboardClient({
         setSystemInfo(result.systemInfo || null);
         // Don't show error for removed systems
         if (system?.status !== "removed") {
-          // Show different message for point_readings systems
-          if (dataStore === "point_readings") {
-            setError("POINT_READINGS_NO_CHARTS"); // Special marker for point_readings systems
-          } else {
-            setError("Real-time readings not available.");
-          }
+          setError("POINT_READINGS_NO_CHARTS"); // Special marker for point_readings systems
         }
         setLoading(false);
       }
@@ -402,7 +395,7 @@ export default function DashboardClient({
       }
       setLoading(false);
     }
-  }, [systemId, system?.status, dataStore]);
+  }, [systemId, system?.status]);
 
   // Sync local state with data when loaded (unless user has manually updated)
   useEffect(() => {

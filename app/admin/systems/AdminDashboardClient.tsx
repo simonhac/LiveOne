@@ -46,7 +46,6 @@ interface SystemData {
     siteId: string; // Vendor's identifier
     userId: string | null; // Vendor-specific user ID
     supportsPolling?: boolean;
-    dataStore?: "readings" | "point_readings";
   };
   status: "active" | "disabled" | "removed"; // System status
   location?: any; // Location data
@@ -626,7 +625,6 @@ export default function AdminDashboardClient() {
                             status={system.status}
                             vendorType={system.vendor.type}
                             supportsPolling={system.vendor.supportsPolling}
-                            dataStore={system.vendor.dataStore}
                             onTest={() => openTestModal(system)}
                             onPollNow={(dryRun) =>
                               openPollNowModal(system, dryRun)
