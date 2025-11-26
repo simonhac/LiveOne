@@ -14,6 +14,7 @@ export interface LatestValue {
   value: number | string; // Can be numeric or string (e.g., tariff period "pk")
   logicalPath: string; // Format: "path/metricType" (e.g., "bidi.grid.import/rate")
   measurementTimeMs: number; // When the value was measured
+  receivedTimeMs: number; // When the value was received/cached (Unix timestamp)
   metricUnit: string; // Unit of measurement (e.g., "c/kWh", "%", "text")
   displayName: string; // Human-readable name
 }

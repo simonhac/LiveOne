@@ -100,13 +100,13 @@ describe("GET /api/system/[systemId]/points", () => {
     it("should reject invalid system identifier format", async () => {
       const { status, data } = await getPointsEndpoint("invalid-format");
       expect(status).toBe(400);
-      expect(data.error).toContain("Invalid system identifier");
+      expect(data.error).toContain("Invalid system ID");
     });
 
     it("should reject user.shortname format (not yet implemented)", async () => {
       const { status, data } = await getPointsEndpoint("user.system");
       expect(status).toBe(400);
-      expect(data.error).toContain("User-scoped identifiers not yet supported");
+      expect(data.error).toContain("Invalid system ID");
     });
   });
 
@@ -146,6 +146,34 @@ describe("GET /api/system/[systemId]/points", () => {
       expect(data.points.every((p: any) => p.active === true)).toBe(true);
     });
 
+    it("should return only points with non-null logicalPath", async () => {
+      const { status, data } = await getPointsEndpoint(testSystemId);
+
+      expect(status).toBe(200);
+      expect(data.points.length).toBeGreaterThan(0);
+
+      // All points must have a non-null logicalPath
+      data.points.forEach((p: any) => {
+        expect(p.logicalPath).not.toBeNull();
+        expect(p.logicalPath).toBeDefined();
+        expect(typeof p.logicalPath).toBe("string");
+        expect(p.logicalPath.length).toBeGreaterThan(0);
+      });
+    });
+
+    it("should return only points with non-null physicalPath", async () => {
+      const { status, data } = await getPointsEndpoint(testSystemId);
+
+      expect(status).toBe(200);
+
+      // All points must have a non-null physicalPath
+      data.points.forEach((p: any) => {
+        expect(p.physicalPath).not.toBeNull();
+        expect(p.physicalPath).toBeDefined();
+        expect(typeof p.physicalPath).toBe("string");
+      });
+    });
+
     it("should have valid PointReference format (systemId.pointId)", async () => {
       const { status, data } = await getPointsEndpoint(testSystemId);
 
@@ -172,6 +200,21 @@ describe("GET /api/system/[systemId]/points", () => {
       // All items should be strings
       data.forEach((path: any) => {
         expect(typeof path).toBe("string");
+      });
+    });
+
+    it("should not include null or empty paths in short mode", async () => {
+      const { status, data } = await getPointsEndpoint(testSystemId, true);
+
+      expect(status).toBe(200);
+      expect(Array.isArray(data)).toBe(true);
+
+      // Ensure no null, undefined, or empty string paths
+      data.forEach((path: any) => {
+        expect(path).not.toBeNull();
+        expect(path).toBeDefined();
+        expect(path).not.toBe("");
+        expect(path.length).toBeGreaterThan(0);
       });
     });
 
@@ -309,15 +352,17 @@ describe("GET /api/system/[systemId]/points", () => {
       }
     });
 
-    it("should reject zero as system ID", async () => {
+    it("should return 404 for zero system ID", async () => {
       const { status, data } = await getPointsEndpoint(0);
-      expect(status).toBe(400);
+      // Zero is a valid numeric ID but no system exists with ID 0
+      expect(status).toBe(404);
       expect(data.error).toBeDefined();
     });
 
-    it("should reject negative system ID", async () => {
+    it("should return 404 for negative system ID", async () => {
       const { status, data } = await getPointsEndpoint(-1);
-      expect(status).toBe(400);
+      // Negative is a valid numeric ID but no system exists with negative ID
+      expect(status).toBe(404);
       expect(data.error).toBeDefined();
     });
   });

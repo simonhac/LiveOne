@@ -98,17 +98,21 @@ export async function GET(
       });
     }
 
-    // Sort points: series ID columns first (sorted by series ID), then by displayName
+    // Sort points: active series ID columns first, then inactive series ID, then no series ID
     const sortedPoints = [...points].sort((a, b) => {
       const aHasSeriesId = !!a.type;
       const bHasSeriesId = !!b.type;
 
-      // Points with series ID come first
+      // Active points with series ID come first
+      if (aHasSeriesId && a.active && !(bHasSeriesId && b.active)) return -1;
+      if (bHasSeriesId && b.active && !(aHasSeriesId && a.active)) return 1;
+
+      // Both are active with series ID, or both are not - compare further
       if (aHasSeriesId && !bHasSeriesId) return -1;
       if (!aHasSeriesId && bHasSeriesId) return 1;
 
       if (aHasSeriesId && bHasSeriesId) {
-        // Both have series ID, sort by the series ID string
+        // Within same active status, sort by the series ID string
         const aSeriesId = [a.type, a.subtype, a.extension, a.metricType]
           .filter(Boolean)
           .join(".");
@@ -175,6 +179,8 @@ export async function GET(
         p.metricUnit,
         p.transform,
         p.active,
+        p.logicalPath,
+        p.physicalPath,
       );
 
       headers[`point_${p.index}`] = pointInfo;

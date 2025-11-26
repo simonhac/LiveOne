@@ -125,6 +125,8 @@ export default function ViewDataModal({
     systemShortName?: string;
     ownerUsername: string;
     vendorType?: string;
+    logicalPath: string | null;
+    physicalPath: string;
   } | null>(null);
   const [isPointInfoModalOpen, setIsPointInfoModalOpen] = useState(false);
 
@@ -409,6 +411,8 @@ export default function ViewDataModal({
       systemShortName: metadata?.systemShortName || undefined,
       ownerUsername: metadata?.ownerUsername || "",
       vendorType: vendorType,
+      logicalPath: pointInfo.logicalPath,
+      physicalPath: pointInfo.physicalPath,
     });
     setIsPointInfoModalOpen(true);
   };
@@ -432,13 +436,14 @@ export default function ViewDataModal({
     },
   ) => {
     try {
-      // Use composite key format: systemId.pointId
-      const compositeKey = `${systemId}.${pointIndex}`;
-      const response = await fetch(`/api/admin/point/${compositeKey}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updates),
-      });
+      const response = await fetch(
+        `/api/system/${systemId}/point/${pointIndex}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        },
+      );
 
       if (!response.ok) throw new Error("Failed to update point info");
 

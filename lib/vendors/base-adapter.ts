@@ -8,6 +8,7 @@ import type { CommonPollingData } from "@/lib/types/common";
 import type { LatestReadingData } from "@/lib/types/readings";
 import type { ZonedDateTime } from "@internationalized/date";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
+import type { SessionInfo } from "@/lib/point/point-manager";
 
 /**
  * Base adapter class that provides common functionality
@@ -105,13 +106,13 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   /**
    * Check if system should be polled based on schedule
    * @param system - The system to check
-   * @param isUserOriginated - If true, always returns { shouldPoll: true }
+   * @param forcePollAll - If true, always returns { shouldPoll: true }
    * @param now - Current time
    * @returns Object with shouldPoll flag, reason if skipped, and nextPoll time
    */
   async shouldPoll(
     system: SystemWithPolling,
-    isUserOriginated: boolean,
+    forcePollAll: boolean,
     now: Date,
   ): Promise<{
     shouldPoll: boolean;
@@ -125,7 +126,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       };
     }
 
-    if (isUserOriginated) {
+    if (forcePollAll) {
       return { shouldPoll: true };
     }
 
@@ -144,34 +145,28 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * Push-only systems should not override this method.
    * @param system - The system to poll
    * @param credentials - Vendor credentials
-   * @param isUserOriginated - If true, bypass rate limiting and poll immediately
-   * @param now - Current time from cron job
-   * @param sessionId - The session ID to associate with this polling operation
+   * @param forcePollAll - If true, bypass rate limiting and poll immediately
+   * @param pollReason - Reason for the poll (e.g., "scheduled", "user_request", "catchup")
+   * @param session - Session info with id and started timestamp
    * @param dryRun - If true, skip database writes (for testing/debugging)
    */
   async poll(
     system: SystemWithPolling,
     credentials: any,
-    isUserOriginated: boolean,
-    now: Date,
-    sessionId: number,
+    forcePollAll: boolean,
+    pollReason: string,
+    session: SessionInfo,
     dryRun: boolean = false,
   ): Promise<PollingResult> {
-    const check = await this.shouldPoll(system, isUserOriginated, now);
+    const now = session.started;
+    const check = await this.shouldPoll(system, forcePollAll, now);
 
     if (!check.shouldPoll) {
       return this.skipped(check.reason || "Skipped", check.nextPoll);
     }
 
     // Delegate to the actual polling implementation
-    return this.doPoll(
-      system,
-      credentials,
-      now,
-      sessionId,
-      isUserOriginated,
-      dryRun,
-    );
+    return this.doPoll(system, credentials, session, pollReason, dryRun);
   }
 
   /**
@@ -179,17 +174,15 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * Push-only systems will never call this
    * @param system - The system to poll
    * @param credentials - Vendor credentials
-   * @param now - Current time from cron job
-   * @param sessionId - The session ID to associate with this polling operation
-   * @param isUserOriginated - If true, the poll was triggered manually by a user
+   * @param session - Session info with id and started timestamp
+   * @param pollReason - Reason for the poll
    * @param dryRun - If true, skip database writes (for testing/debugging)
    */
   protected async doPoll(
     system: SystemWithPolling,
     credentials: any,
-    now: Date,
-    sessionId: number,
-    isUserOriginated: boolean,
+    session: SessionInfo,
+    pollReason: string,
     dryRun: boolean = false,
   ): Promise<PollingResult> {
     // Default implementation for push-only systems (should never be called)

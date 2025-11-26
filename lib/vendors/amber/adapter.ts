@@ -6,6 +6,7 @@ import type {
 } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { LatestReadingData } from "@/lib/types/readings";
+import type { SessionInfo } from "@/lib/point/point-manager";
 import {
   getNextMinuteBoundary,
   getYesterdayInTimezone,
@@ -174,6 +175,7 @@ export class AmberAdapter extends BaseVendorAdapter {
   private async storeCurrentPeriodInKV(
     systemId: number,
     currentIntervals: AmberPriceRecord[],
+    session: SessionInfo,
   ): Promise<void> {
     // Find import (general) and export (feedIn) channels
     const importRecord = currentIntervals.find(
@@ -190,6 +192,7 @@ export class AmberAdapter extends BaseVendorAdapter {
 
     // Use the import record's interval timing
     const measurementTimeMs = new Date(importRecord.endTime).getTime();
+    const receivedTimeMs = session.started.getTime();
     const periodStartMs = new Date(importRecord.startTime).getTime();
     const periodEndMs = measurementTimeMs;
 
@@ -199,6 +202,7 @@ export class AmberAdapter extends BaseVendorAdapter {
         value: importRecord.perKwh,
         logicalPath: "bidi.grid.import/rate",
         measurementTimeMs,
+        receivedTimeMs,
         metricUnit: "c/kWh",
         displayName: "Import Price",
       },
@@ -207,6 +211,7 @@ export class AmberAdapter extends BaseVendorAdapter {
         value: importRecord.renewables,
         logicalPath: "bidi.grid.renewables/proportion",
         measurementTimeMs,
+        receivedTimeMs,
         metricUnit: "%",
         displayName: "Renewables",
       },
@@ -215,6 +220,7 @@ export class AmberAdapter extends BaseVendorAdapter {
         value: importRecord.descriptor,
         logicalPath: "bidi.grid.import/descriptor",
         measurementTimeMs,
+        receivedTimeMs,
         metricUnit: "text",
         displayName: "Price Level",
       },
@@ -223,6 +229,7 @@ export class AmberAdapter extends BaseVendorAdapter {
         value: importRecord.spikeStatus,
         logicalPath: "bidi.grid.import/spikeStatus",
         measurementTimeMs,
+        receivedTimeMs,
         metricUnit: "text",
         displayName: "Spike Status",
       },
@@ -235,6 +242,7 @@ export class AmberAdapter extends BaseVendorAdapter {
                 importRecord.tariffInformation.period,
               logicalPath: "bidi.grid.tariff/code",
               measurementTimeMs,
+              receivedTimeMs,
               metricUnit: "text",
               displayName: "Tariff Period",
             },
@@ -245,6 +253,7 @@ export class AmberAdapter extends BaseVendorAdapter {
         value: periodStartMs,
         logicalPath: "bidi.grid.interval/start",
         measurementTimeMs,
+        receivedTimeMs,
         metricUnit: "ms",
         displayName: "Period Start",
       },
@@ -252,6 +261,7 @@ export class AmberAdapter extends BaseVendorAdapter {
         value: periodEndMs,
         logicalPath: "bidi.grid.interval/end",
         measurementTimeMs,
+        receivedTimeMs,
         metricUnit: "ms",
         displayName: "Period End",
       },
@@ -263,6 +273,7 @@ export class AmberAdapter extends BaseVendorAdapter {
         value: exportRecord.perKwh,
         logicalPath: "bidi.grid.export/rate",
         measurementTimeMs,
+        receivedTimeMs,
         metricUnit: "c/kWh",
         displayName: "Feed-in Price",
       });
@@ -277,20 +288,20 @@ export class AmberAdapter extends BaseVendorAdapter {
   /**
    * Perform the actual polling
    * Uses audit-based syncing with time-based logic:
-   * - Usage: hourly at :10 past or when user-originated
+   * - Usage: hourly at :10 past or when force poll
    * - Forecasts: every 5 minutes (always)
    */
   protected async doPoll(
     system: SystemWithPolling,
     credentials: AmberCredentials,
-    now: Date,
-    sessionId: number,
-    isUserOriginated: boolean,
+    session: SessionInfo,
+    pollReason: string,
     dryRun: boolean = false,
   ): Promise<PollingResult> {
     try {
+      const isForcePoll = pollReason === "ADMIN" || pollReason === "USER";
       console.log(
-        `[Amber] Starting poll for system ${system.id} (isUserOriginated=${isUserOriginated})`,
+        `[Amber] Starting poll for system ${system.id} (reason=${pollReason})`,
       );
 
       const audits = [];
@@ -299,8 +310,9 @@ export class AmberAdapter extends BaseVendorAdapter {
       let errorMessage: string | undefined;
 
       // Determine if we should run usage update
+      const now = new Date();
       const currentMinute = now.getMinutes();
-      const shouldRunUsage = isUserOriginated || currentMinute === 10;
+      const shouldRunUsage = isForcePoll || currentMinute === 10;
 
       if (shouldRunUsage) {
         // Run usage sync for yesterday (billable data becomes available)
@@ -318,7 +330,7 @@ export class AmberAdapter extends BaseVendorAdapter {
           yesterday,
           1,
           credentialsWithSite,
-          sessionId,
+          session,
           dryRun,
         );
         audits.push(usageAudit);
@@ -351,7 +363,7 @@ export class AmberAdapter extends BaseVendorAdapter {
           today,
           2,
           credentialsWithSite,
-          sessionId,
+          session,
           dryRun,
         );
         audits.push(forecastAudit);
@@ -381,7 +393,11 @@ export class AmberAdapter extends BaseVendorAdapter {
               (record) => record.type === "CurrentInterval",
             );
             if (currentIntervals.length > 0) {
-              await this.storeCurrentPeriodInKV(system.id, currentIntervals);
+              await this.storeCurrentPeriodInKV(
+                system.id,
+                currentIntervals,
+                session,
+              );
             }
           } catch (kvError) {
             // Don't fail the poll if KV update fails - just log it

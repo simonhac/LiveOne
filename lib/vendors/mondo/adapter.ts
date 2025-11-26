@@ -8,7 +8,7 @@ import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { CommonPollingData } from "@/lib/types/common";
 import type { LatestReadingData } from "@/lib/types/readings";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
-import { PointManager, type PointMetadata } from "@/lib/point/point-manager";
+import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 
 interface MondoCredentials {
   email: string;
@@ -201,9 +201,8 @@ export class MondoAdapter extends BaseVendorAdapter {
   protected async doPoll(
     system: SystemWithPolling,
     credentials: MondoCredentials,
-    now: Date,
-    sessionId: number,
-    isUserOriginated: boolean,
+    session: SessionInfo,
+    pollReason: string,
     dryRun: boolean = false,
   ): Promise<PollingResult> {
     try {
@@ -248,7 +247,6 @@ export class MondoAdapter extends BaseVendorAdapter {
         const rows: MondoMonitoringPoint[] = subcircuitData.rows || [];
 
         const measurementTime = Date.now();
-        const receivedTime = Date.now();
         const readingsToInsert = [];
 
         // Process each monitoring point
@@ -280,9 +278,7 @@ export class MondoAdapter extends BaseVendorAdapter {
             },
             rawValue: row.energyNowW,
             measurementTime,
-            receivedTime,
             dataQuality: "good" as const,
-            sessionId: sessionId,
             error: null,
           });
 
@@ -299,9 +295,7 @@ export class MondoAdapter extends BaseVendorAdapter {
             },
             rawValue: row.totalEnergyWh,
             measurementTime,
-            receivedTime,
             dataQuality: "good" as const,
-            sessionId: sessionId,
             error: null,
           });
         }
@@ -309,6 +303,7 @@ export class MondoAdapter extends BaseVendorAdapter {
         // Batch insert all readings - this will automatically ensure point_info entries exist
         await PointManager.getInstance().insertPointReadingsBatch(
           systemId,
+          session,
           readingsToInsert,
         );
         recordsProcessed = readingsToInsert.length;

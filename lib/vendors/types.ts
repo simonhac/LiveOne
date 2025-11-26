@@ -2,6 +2,7 @@ import type { CommonPollingData } from "@/lib/types/common";
 import type { LatestReadingData } from "@/lib/types/readings";
 import type { ZonedDateTime } from "@internationalized/date";
 import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { SessionInfo } from "@/lib/point/point-manager";
 
 /**
  * Field definition for credential requirements
@@ -31,7 +32,7 @@ export interface VendorAdapter {
   // Check if system should be polled based on schedule
   shouldPoll(
     system: SystemWithPolling,
-    force: boolean,
+    forcePollAll: boolean,
     now: Date,
   ): Promise<{
     shouldPoll: boolean;
@@ -43,9 +44,9 @@ export interface VendorAdapter {
   poll(
     system: SystemWithPolling,
     credentials: any,
-    force: boolean,
-    now: Date,
-    sessionId: number,
+    forcePollAll: boolean,
+    pollReason: string,
+    session: SessionInfo,
     dryRun?: boolean,
   ): Promise<PollingResult>;
 

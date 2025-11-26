@@ -779,33 +779,42 @@ export default function AdminDashboardClient({
                           </div>
                         </td>
                         <td className="px-2 md:px-6 py-4 whitespace-nowrap">
-                          {system.data ? (
+                          {system.data &&
+                          (system.data.solarPower != null ||
+                            system.data.loadPower != null ||
+                            system.data.batterySOC != null) ? (
                             <div className="text-sm">
                               <div className="flex flex-col items-start gap-1 xl:flex-row xl:items-center xl:gap-4">
-                                <div className="flex items-center gap-1.5">
-                                  <Sun className="w-3.5 h-3.5 text-yellow-400" />
-                                  <span className="text-yellow-400">
-                                    {system.data.solarPower != null
-                                      ? `${(system.data.solarPower / 1000).toFixed(1)} kW`
-                                      : "—"}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                  <Home className="w-3.5 h-3.5 text-blue-400" />
-                                  <span className="text-blue-400">
-                                    {system.data.loadPower != null
-                                      ? `${(system.data.loadPower / 1000).toFixed(1)} kW`
-                                      : "—"}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                  <Battery className="w-3.5 h-3.5 text-green-400" />
-                                  <span className="text-green-400">
-                                    {system.data.batterySOC != null
-                                      ? `${system.data.batterySOC.toFixed(1)}%`
-                                      : "—"}
-                                  </span>
-                                </div>
+                                {system.data.solarPower != null && (
+                                  <div className="flex items-center gap-1.5">
+                                    <Sun className="w-3.5 h-3.5 text-yellow-400" />
+                                    <span className="text-yellow-400">
+                                      {(system.data.solarPower / 1000).toFixed(
+                                        1,
+                                      )}{" "}
+                                      kW
+                                    </span>
+                                  </div>
+                                )}
+                                {system.data.loadPower != null && (
+                                  <div className="flex items-center gap-1.5">
+                                    <Home className="w-3.5 h-3.5 text-blue-400" />
+                                    <span className="text-blue-400">
+                                      {(system.data.loadPower / 1000).toFixed(
+                                        1,
+                                      )}{" "}
+                                      kW
+                                    </span>
+                                  </div>
+                                )}
+                                {system.data.batterySOC != null && (
+                                  <div className="flex items-center gap-1.5">
+                                    <Battery className="w-3.5 h-3.5 text-green-400" />
+                                    <span className="text-green-400">
+                                      {system.data.batterySOC.toFixed(1)}%
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           ) : (

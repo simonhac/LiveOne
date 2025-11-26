@@ -56,7 +56,10 @@ export function createSeriesInfos(
  * Get the SeriesPath for a SeriesInfo
  */
 export function getSeriesPath(series: SeriesInfo): SeriesPath {
-  const pointPath = series.point.getPath();
+  // Use stored logicalPath, with fallback for points without type
+  const pointPath =
+    series.point.logicalPath ||
+    `${series.point.index}/${series.point.metricType}`;
 
   return SeriesPath.fromComponents(
     series.systemIdentifier,

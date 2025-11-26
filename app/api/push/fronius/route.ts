@@ -5,7 +5,7 @@ import {
   updatePollingStatusError,
 } from "@/lib/polling-utils";
 import { sessionManager } from "@/lib/session-manager";
-import { PointManager } from "@/lib/point/point-manager";
+import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 import { FRONIUS_POINTS } from "@/lib/vendors/fronius/point-metadata";
 
 /**
@@ -188,26 +188,26 @@ export async function POST(request: NextRequest) {
       `[Fronius Push] Power - Solar: ${data.solarW}W (Local: ${data.solarLocalW}W, Remote: ${data.solarRemoteW}W), Load: ${data.loadW}W, Battery: ${data.batteryW}W, Grid: ${data.gridW}W`,
     );
 
-    // Create session record first so we can use its ID
-    let sessionId: number | null = null;
+    // Create session record - required for inserting readings
+    let session: SessionInfo;
     try {
-      sessionId = await sessionManager.createSession({
+      session = await sessionManager.createSession({
         sessionLabel: data.sequence,
         systemId: system.id,
         cause: "PUSH",
         started: sessionStart,
       });
     } catch (sessionError) {
-      console.error(
-        "[Fronius Push] Failed to create session, continuing without session ID:",
-        sessionError,
+      console.error("[Fronius Push] Failed to create session:", sessionError);
+      return NextResponse.json(
+        { error: "Failed to create session" },
+        { status: 500 },
       );
     }
 
     try {
       // Insert into point_readings table
       const measurementTime = inverterTime.getTime();
-      const receivedTimeMs = receivedTime.getTime();
       const readingsToInsert = [];
 
       // Build readings array from all configured points
@@ -230,9 +230,7 @@ export async function POST(request: NextRequest) {
           pointMetadata: pointConfig.metadata,
           rawValue,
           measurementTime,
-          receivedTime: receivedTimeMs,
           dataQuality: "good" as const,
-          sessionId: sessionId,
           error: null,
         });
       }
@@ -241,6 +239,7 @@ export async function POST(request: NextRequest) {
       if (readingsToInsert.length > 0) {
         await PointManager.getInstance().insertPointReadingsBatch(
           system.id,
+          session,
           readingsToInsert,
         );
         console.log(
@@ -254,14 +253,12 @@ export async function POST(request: NextRequest) {
 
       // Update session with success
       const duration = Date.now() - sessionStart.getTime();
-      if (sessionId !== null) {
-        await sessionManager.updateSessionResult(sessionId, {
-          duration,
-          successful: true,
-          response: data,
-          numRows: 1,
-        });
-      }
+      await sessionManager.updateSessionResult(session.id, {
+        duration,
+        successful: true,
+        response: data,
+        numRows: 1,
+      });
 
       console.log(
         `[Fronius Push] Successfully stored data for system ${system.id}`,
@@ -293,16 +290,14 @@ export async function POST(request: NextRequest) {
       const isDuplicate = errorMessage.includes("UNIQUE constraint failed");
       const duration = Date.now() - sessionStart.getTime();
 
-      if (sessionId !== null) {
-        await sessionManager.updateSessionResult(sessionId, {
-          duration,
-          successful: false,
-          errorCode: isDuplicate ? "409" : null,
-          error: errorMessage,
-          response: data,
-          numRows: 0,
-        });
-      }
+      await sessionManager.updateSessionResult(session.id, {
+        duration,
+        successful: false,
+        errorCode: isDuplicate ? "409" : null,
+        error: errorMessage,
+        response: data,
+        numRows: 0,
+      });
 
       // Check if it's a duplicate entry error
       if (isDuplicate) {

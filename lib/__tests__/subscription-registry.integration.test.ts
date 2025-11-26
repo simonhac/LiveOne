@@ -89,8 +89,8 @@ describeIfKV("Subscription Registry (integration)", () => {
         {
           systemId: testSourceSystemId,
           index: 1,
-          originId: "point1",
-          originSubId: null,
+          originId: "sungrow",
+          originSubId: "solar_w",
           defaultName: "Solar Power",
           displayName: "Solar Power",
           metricType: "power",
@@ -99,12 +99,14 @@ describeIfKV("Subscription Registry (integration)", () => {
           subtype: "solar",
           active: true,
           created: Date.now(),
+          physicalPath: "sungrow.solar_w",
+          logicalPath: "source.solar/power",
         },
         {
           systemId: testSourceSystemId,
           index: 2,
-          originId: "point2",
-          originSubId: null,
+          originId: "sungrow",
+          originSubId: "battery_soc",
           defaultName: "Battery SoC",
           displayName: "Battery SoC",
           metricType: "soc",
@@ -113,6 +115,8 @@ describeIfKV("Subscription Registry (integration)", () => {
           subtype: "battery",
           active: true,
           created: Date.now(),
+          physicalPath: "sungrow.battery_soc",
+          logicalPath: "bidi.battery/soc",
         },
       ]);
 
@@ -228,26 +232,28 @@ describeIfKV("Subscription Registry (integration)", () => {
         {
           systemId: testSourceSystemId,
           index: 1,
-          originId: "solar",
-          originSubId: null,
+          originId: "sungrow",
+          originSubId: "solar_w",
           defaultName: "Solar",
           displayName: "Solar",
           metricType: "power",
           metricUnit: "W",
           active: true,
           created: Date.now(),
+          physicalPath: "sungrow.solar_w",
         },
         {
           systemId: testSourceSystemId,
           index: 2,
-          originId: "battery",
-          originSubId: null,
+          originId: "sungrow",
+          originSubId: "battery_soc",
           defaultName: "Battery",
           displayName: "Battery",
           metricType: "soc",
           metricUnit: "%",
           active: true,
           created: Date.now(),
+          physicalPath: "sungrow.battery_soc",
         },
       ]);
 
@@ -292,6 +298,8 @@ describeIfKV("Subscription Registry (integration)", () => {
     it("should only cache subscribed points to composite systems", async () => {
       const pointPath1 = "source.solar/power";
       const pointPath2 = "bidi.battery/soc";
+      const sessionStart = new Date();
+      const receivedTimeMs = sessionStart.getTime();
 
       // Update point 1 (subscribed by both composites)
       await updateLatestPointValue(
@@ -300,6 +308,7 @@ describeIfKV("Subscription Registry (integration)", () => {
         pointPath1,
         5000,
         Date.now(),
+        receivedTimeMs,
         "W",
         "Solar",
       );
@@ -311,6 +320,7 @@ describeIfKV("Subscription Registry (integration)", () => {
         pointPath2,
         85,
         Date.now(),
+        receivedTimeMs,
         "%",
         "Battery",
       );
@@ -344,6 +354,8 @@ describeIfKV("Subscription Registry (integration)", () => {
       const pointPath1 = "source.solar/power";
       const pointPath2 = "bidi.battery/soc";
       const now = Date.now();
+      const sessionStart = new Date();
+      const receivedTimeMs = sessionStart.getTime();
 
       // Update both points quickly
       await Promise.all([
@@ -353,6 +365,7 @@ describeIfKV("Subscription Registry (integration)", () => {
           pointPath1,
           6000,
           now,
+          receivedTimeMs,
           "W",
           "Solar",
         ),
@@ -362,6 +375,7 @@ describeIfKV("Subscription Registry (integration)", () => {
           pointPath2,
           90,
           now,
+          receivedTimeMs,
           "%",
           "Battery",
         ),

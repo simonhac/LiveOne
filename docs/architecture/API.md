@@ -271,36 +271,46 @@ Tests connection to vendor system (used during setup wizard).
 
 ### GET /api/system/[systemIdentifier]/points
 
-Returns list of monitoring points for a system.
+Returns list of monitoring points for a system. Only returns active points with valid logical paths.
 
 **Authentication:** Required (Clerk)
 
 **Path Parameters:**
 
-- `systemIdentifier` - System ID or alias
+- `systemIdentifier` - Numeric system ID
 
 **Query Parameters:**
 
-- `active` (optional) - Filter by active status (true/false)
+- `short` (optional) - If "true", returns just an array of logicalPath strings instead of full point objects
 
-**Response:**
+**Response (default):**
 
 ```json
 {
   "points": [
     {
-      "systemId": 1,
-      "pointId": 2,
-      "displayName": "Solar Power",
-      "alias": "solar_power",
-      "subsystem": "solar",
+      "logicalPath": "source.solar/power",
+      "physicalPath": "selectronic.solar_w",
+      "name": "Solar Power",
       "metricType": "power",
       "metricUnit": "W",
+      "reference": "1.2",
       "active": true
     }
   ]
 }
 ```
+
+**Response (short=true):**
+
+```json
+["source.solar/power", "load.home/power", "bidi.battery/power"]
+```
+
+**Notes:**
+
+- Only returns points where `active=true` AND `logicalPath` is not null
+- Points without a configured type/subtype are excluded
 
 ---
 
@@ -330,6 +340,104 @@ Returns latest values for all points in a system.
   ]
 }
 ```
+
+---
+
+### GET /api/system/[systemId]/point/[pointId]
+
+Returns detailed information about a specific monitoring point.
+
+**Authentication:** Required (Clerk)
+
+**Path Parameters:**
+
+- `systemId` - Numeric system ID
+- `pointId` - Numeric point index
+
+**Response:**
+
+```json
+{
+  "systemId": 1,
+  "pointId": 2,
+  "originId": "selectronic",
+  "originSubId": "solar_w",
+  "defaultName": "Solar",
+  "subsystem": "solar",
+  "type": "source",
+  "subtype": "solar",
+  "extension": null,
+  "displayName": "Solar Power",
+  "alias": "solar_power",
+  "metricType": "power",
+  "metricUnit": "W",
+  "active": true,
+  "transform": null
+}
+```
+
+---
+
+### PATCH /api/system/[systemId]/point/[pointId]
+
+Updates user-modifiable fields on a point.
+
+**Authentication:** Required (Clerk)
+
+**Path Parameters:**
+
+- `systemId` - Numeric system ID
+- `pointId` - Numeric point index
+
+**Request Body:**
+
+```json
+{
+  "type": "source",
+  "subtype": "solar",
+  "extension": null,
+  "displayName": "Solar Power",
+  "alias": "solar_power",
+  "active": true,
+  "transform": "i"
+}
+```
+
+**Updatable Fields:**
+
+- `type` - Point type (e.g., "source", "load", "bidi")
+- `subtype` - Point subtype (e.g., "solar", "battery", "grid")
+- `extension` - Additional qualifier
+- `displayName` - User-friendly name
+- `alias` - Short name for API references (letters, digits, underscores only)
+- `active` - Whether point is enabled
+- `transform` - Value transform: `null`, `"i"` (invert), or `"d"` (differentiate)
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "point": {
+    "systemId": 1,
+    "pointId": 2,
+    "type": "source",
+    "subtype": "solar",
+    "extension": null,
+    "displayName": "Solar Power",
+    "alias": "solar_power",
+    "active": true,
+    "transform": "i",
+    "metricType": "power",
+    "metricUnit": "W"
+  }
+}
+```
+
+**Error Responses:**
+
+- `400` - Invalid alias format or transform value
+- `404` - Point not found
 
 ---
 

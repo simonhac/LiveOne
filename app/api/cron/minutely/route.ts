@@ -5,6 +5,7 @@ import { VendorRegistry } from "@/lib/vendors/registry";
 import { getSystemCredentials } from "@/lib/secure-credentials";
 import { sessionManager } from "@/lib/session-manager";
 import type { PollingResult } from "@/lib/vendors/types";
+import type { SessionInfo } from "@/lib/point/point-manager";
 import {
   updatePollingStatusSuccess,
   updatePollingStatusError,
@@ -23,8 +24,9 @@ import { jsonResponse } from "@/lib/json";
  */
 async function pollAllSystems(params: {
   activeSystems: any[];
-  sessionId: string;
-  isUserOriginated: boolean;
+  sessionLabelPrefix: string;
+  forcePollAll: boolean;
+  pollReason: string;
   includeRaw: boolean;
   dryRun: boolean;
   sessionCause: "CRON" | "ADMIN" | "ADMIN-DRYRUN";
@@ -32,8 +34,9 @@ async function pollAllSystems(params: {
 }): Promise<PollingResult[]> {
   const {
     activeSystems,
-    sessionId,
-    isUserOriginated,
+    sessionLabelPrefix,
+    forcePollAll,
+    pollReason,
     includeRaw,
     dryRun,
     sessionCause,
@@ -52,7 +55,7 @@ async function pollAllSystems(params: {
       endMs: number;
     }[] = [];
     subSequence++; // Increment for each system
-    const sessionLabel = formatSessionId(sessionId, subSequence);
+    const sessionLabel = formatSessionId(sessionLabelPrefix, subSequence);
     // Get the vendor adapter first to check if it supports polling
     const adapter = VendorRegistry.getAdapter(system.vendorType);
 
@@ -88,11 +91,7 @@ async function pollAllSystems(params: {
 
     // Check if we should poll - if not time yet, skip without creating session
     const now = new Date();
-    const shouldPollCheck = await adapter.shouldPoll(
-      system,
-      isUserOriginated,
-      now,
-    );
+    const shouldPollCheck = await adapter.shouldPoll(system, forcePollAll, now);
 
     if (!shouldPollCheck.shouldPoll) {
       const skipResult: PollingResult = {
@@ -119,7 +118,7 @@ async function pollAllSystems(params: {
 
     // We're going to attempt polling - create session now
     const sessionStart = new Date();
-    const dbSessionId = await sessionManager.createSession({
+    const session = await sessionManager.createSession({
       sessionLabel,
       systemId: system.id,
       cause: sessionCause,
@@ -130,7 +129,7 @@ async function pollAllSystems(params: {
       // Check if system has an owner
       if (!system.ownerClerkUserId) {
         const duration = Date.now() - sessionStart.getTime();
-        await sessionManager.updateSessionResult(dbSessionId, {
+        await sessionManager.updateSessionResult(session.id, {
           duration,
           successful: false,
           error: "No owner configured",
@@ -141,7 +140,7 @@ async function pollAllSystems(params: {
           systemId: system.id,
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
-          sessionId: dbSessionId,
+          sessionId: session.id,
           sessionLabel: sessionLabel || undefined,
           error: "No owner configured",
           durationMs: Date.now() - pollStartTime,
@@ -174,7 +173,7 @@ async function pollAllSystems(params: {
             systemId: system.id,
             displayName: system.displayName || undefined,
             vendorType: system.vendorType,
-            sessionId: dbSessionId,
+            sessionId: session.id,
             sessionLabel: sessionLabel || undefined,
             durationMs: Date.now() - pollStartTime,
             startMs: pollStartTime,
@@ -206,7 +205,7 @@ async function pollAllSystems(params: {
           systemId: system.id,
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
-          sessionId: dbSessionId,
+          sessionId: session.id,
           sessionLabel: sessionLabel || undefined,
           startMs: pollStartTime,
           endMs: Date.now(),
@@ -219,7 +218,7 @@ async function pollAllSystems(params: {
           `[Cron] No credentials found for ${system.vendorType} system ${system.id}`,
         );
         const duration = Date.now() - sessionStart.getTime();
-        await sessionManager.updateSessionResult(dbSessionId, {
+        await sessionManager.updateSessionResult(session.id, {
           duration,
           successful: false,
           error: "No credentials found",
@@ -230,7 +229,7 @@ async function pollAllSystems(params: {
           systemId: system.id,
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
-          sessionId: dbSessionId,
+          sessionId: session.id,
           sessionLabel: sessionLabel || undefined,
           error: "No credentials found",
           durationMs: Date.now() - pollStartTime,
@@ -267,7 +266,7 @@ async function pollAllSystems(params: {
             systemId: system.id,
             displayName: system.displayName || undefined,
             vendorType: system.vendorType,
-            sessionId: dbSessionId,
+            sessionId: session.id,
             sessionLabel: sessionLabel || undefined,
             durationMs: Date.now() - pollStartTime,
             startMs: pollStartTime,
@@ -281,9 +280,9 @@ async function pollAllSystems(params: {
       const result = await adapter.poll(
         system,
         credentials,
-        isUserOriginated,
-        now,
-        dbSessionId,
+        forcePollAll,
+        pollReason,
+        session,
         dryRun,
       );
       const downloadEnd = Date.now();
@@ -303,7 +302,7 @@ async function pollAllSystems(params: {
           systemId: system.id,
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
-          sessionId: dbSessionId,
+          sessionId: session.id,
           sessionLabel: sessionLabel || undefined,
           startMs: pollStartTime,
           endMs: Date.now(),
@@ -336,7 +335,7 @@ async function pollAllSystems(params: {
                 systemId: system.id,
                 displayName: system.displayName || undefined,
                 vendorType: system.vendorType,
-                sessionId: dbSessionId,
+                sessionId: session.id,
                 sessionLabel: sessionLabel || undefined,
                 durationMs: Date.now() - pollStartTime,
                 startMs: pollStartTime,
@@ -364,7 +363,7 @@ async function pollAllSystems(params: {
           stages[stages.length - 1].endMs = insertEnd;
 
           // Update session with successful result
-          await sessionManager.updateSessionResult(dbSessionId, {
+          await sessionManager.updateSessionResult(session.id, {
             duration,
             successful: true,
             response: result.rawResponse,
@@ -376,7 +375,7 @@ async function pollAllSystems(params: {
             systemId: system.id,
             displayName: system.displayName || undefined,
             vendorType: system.vendorType,
-            sessionId: dbSessionId,
+            sessionId: session.id,
             sessionLabel: sessionLabel || undefined,
             recordsProcessed: result.recordsProcessed,
             durationMs: Date.now() - pollStartTime,
@@ -416,7 +415,7 @@ async function pollAllSystems(params: {
           );
 
           // Update session with error result
-          await sessionManager.updateSessionResult(dbSessionId, {
+          await sessionManager.updateSessionResult(session.id, {
             duration,
             successful: false,
             errorCode: result.errorCode || null,
@@ -430,7 +429,7 @@ async function pollAllSystems(params: {
             systemId: system.id,
             displayName: system.displayName || undefined,
             vendorType: system.vendorType,
-            sessionId: dbSessionId,
+            sessionId: session.id,
             sessionLabel: sessionLabel || undefined,
             error: result.error,
             durationMs: Date.now() - pollStartTime,
@@ -467,7 +466,7 @@ async function pollAllSystems(params: {
       // Update session with unexpected error
       try {
         const duration = Date.now() - sessionStart.getTime();
-        await sessionManager.updateSessionResult(dbSessionId, {
+        await sessionManager.updateSessionResult(session.id, {
           duration,
           successful: false,
           error: error instanceof Error ? error.message : "Unknown error",
@@ -485,7 +484,7 @@ async function pollAllSystems(params: {
         systemId: system.id,
         displayName: system.displayName || undefined,
         vendorType: system.vendorType,
-        sessionId: dbSessionId,
+        sessionId: session.id,
         sessionLabel: sessionLabel || undefined,
         error: error instanceof Error ? error.message : "Unknown error",
         durationMs: Date.now() - pollStartTime,
@@ -515,10 +514,10 @@ export async function GET(request: NextRequest) {
 
     // Determine session cause: CRON (scheduled) vs ADMIN (manual trigger) vs ADMIN-DRYRUN (dry run)
 
-    // In development, allow testing specific systems with isUserOriginated flag
+    // In development, allow testing specific systems with force flag
     const searchParams = request.nextUrl.searchParams;
     const testSystemId = searchParams.get("systemId");
-    const isUserOriginated = searchParams.get("force") === "true"; // Keep "force" param name for backwards compatibility
+    const forcePollAll = searchParams.get("force") === "true"; // Keep "force" param name for backwards compatibility
     const includeRaw = searchParams.get("includeRaw") === "true";
     const dryRun = searchParams.get("dryRun") === "true";
 
@@ -528,9 +527,16 @@ export async function GET(request: NextRequest) {
         ? "ADMIN-DRYRUN"
         : "ADMIN";
 
-    if (testSystemId && isUserOriginated) {
+    // Determine poll reason for logging
+    const pollReason = authResult.isCron
+      ? "CRON"
+      : forcePollAll
+        ? "ADMIN-FORCE"
+        : "ADMIN";
+
+    if (testSystemId && forcePollAll) {
       console.log(
-        `[Cron] Testing system ${testSystemId} with isUserOriginated=true`,
+        `[Cron] Testing system ${testSystemId} with forcePollAll=true`,
       );
     }
 
@@ -610,8 +616,9 @@ export async function GET(request: NextRequest) {
             // Poll all systems with progress callbacks
             const results = await pollAllSystems({
               activeSystems,
-              sessionId,
-              isUserOriginated,
+              sessionLabelPrefix: sessionId,
+              forcePollAll,
+              pollReason,
               includeRaw,
               dryRun,
               sessionCause,
@@ -690,8 +697,9 @@ export async function GET(request: NextRequest) {
     // Normal JSON Response Mode
     const results = await pollAllSystems({
       activeSystems,
-      sessionId,
-      isUserOriginated,
+      sessionLabelPrefix: sessionId,
+      forcePollAll,
+      pollReason,
       includeRaw,
       dryRun,
       sessionCause,

@@ -59,6 +59,7 @@ function getSubscriptionsKey(systemId: number): string {
  * @param pointPath - Point path string (e.g., "source.solar.local/power")
  * @param value - Latest value
  * @param measurementTimeMs - Unix timestamp in milliseconds when value was measured
+ * @param receivedTimeMs - Unix timestamp in milliseconds when value was received from vendor
  * @param metricUnit - Unit of measurement (e.g., "W", "kWh", "%")
  * @param displayName - Display name from point_info
  */
@@ -68,6 +69,7 @@ export async function updateLatestPointValue(
   pointPath: string,
   value: number | string,
   measurementTimeMs: number,
+  receivedTimeMs: number,
   metricUnit: string,
   displayName: string,
 ): Promise<void> {
@@ -75,6 +77,7 @@ export async function updateLatestPointValue(
     value,
     logicalPath: pointPath,
     measurementTimeMs,
+    receivedTimeMs,
     metricUnit,
     displayName,
   };

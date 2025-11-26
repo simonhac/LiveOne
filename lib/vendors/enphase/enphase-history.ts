@@ -15,7 +15,7 @@ import {
   fromUnixTimestamp,
   formatTimeAEST,
 } from "@/lib/date-utils";
-import { PointManager } from "@/lib/point/point-manager";
+import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 import { ENPHASE_POINTS } from "./point-metadata";
 
 interface EnphaseInterval {
@@ -107,7 +107,6 @@ async function fetchEnphaseProductionData(
  * Process Enphase production data and prepare point readings for direct 5m aggregation
  * @param productionData - Raw Enphase production response
  * @param systemId - System ID for the records
- * @param sessionId - Session ID for this polling session
  * @param startUnix - Start of time range (optional, for filtering)
  * @param endUnix - End of time range (optional, for filtering)
  * @returns Array of point readings ready for direct point_readings_agg_5m insertion
@@ -115,7 +114,6 @@ async function fetchEnphaseProductionData(
 function processEnphaseDataForPointReadings(
   productionData: EnphaseProductionResponse,
   systemId: number,
-  sessionId: number,
   startUnix?: number,
   endUnix?: number,
 ) {
@@ -151,7 +149,7 @@ function processEnphaseDataForPointReadings(
  * @param systemId - The system ID in the database
  * @param date - The calendar date to fetch (null means today)
  * @param timezoneOffsetMin - Timezone offset in minutes from UTC
- * @param sessionId - Session ID for point_readings
+ * @param session - SessionInfo for point_readings
  * @param dryRun - If true, don't actually insert/update data
  * @returns Result object with counts
  */
@@ -159,7 +157,7 @@ export async function fetchEnphaseDay(
   systemId: number,
   date: CalendarDate | null,
   timezoneOffsetMin: number,
-  sessionId: number,
+  session: SessionInfo,
   dryRun = false,
 ) {
   // Get and validate system
@@ -229,11 +227,10 @@ export async function fetchEnphaseDay(
 
   // Process the data for point_readings_agg_5m table
   const pointReadings = isToday
-    ? processEnphaseDataForPointReadings(productionData, systemId, sessionId)
+    ? processEnphaseDataForPointReadings(productionData, systemId)
     : processEnphaseDataForPointReadings(
         productionData,
         systemId,
-        sessionId,
         startUnix,
         endUnix,
       );
@@ -246,7 +243,7 @@ export async function fetchEnphaseDay(
   if (!dryRun && pointReadings.length > 0) {
     await PointManager.getInstance().insertPointReadingsDirectTo5m(
       systemId,
-      sessionId,
+      session,
       pointReadings,
     );
     console.log(
@@ -341,7 +338,7 @@ export async function hasCompleteEveningData(
  */
 export async function checkAndFetchYesterdayIfNeeded(
   systemId: number,
-  sessionId: number,
+  session: SessionInfo,
   dryRun = false,
 ) {
   // Get and validate system
@@ -376,7 +373,7 @@ export async function checkAndFetchYesterdayIfNeeded(
     systemId,
     yesterday,
     system.timezoneOffsetMin,
-    sessionId,
+    session,
     dryRun,
   );
 

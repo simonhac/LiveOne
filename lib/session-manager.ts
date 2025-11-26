@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { sessions, systems, type NewSession } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { transformForStorage } from "@/lib/json";
+import type { SessionInfo } from "@/lib/point/point-manager";
 
 export type SessionCause =
   | "CRON"
@@ -67,7 +68,7 @@ export class SessionManager {
   }
 
   /**
-   * Create a new session record and return its ID
+   * Create a new session record and return SessionInfo
    * Note: vendorType and systemName are no longer stored - they're retrieved via JOIN with systems table
    */
   async createSession(data: {
@@ -75,7 +76,7 @@ export class SessionManager {
     systemId: number;
     cause: SessionCause;
     started: Date;
-  }): Promise<number> {
+  }): Promise<SessionInfo> {
     try {
       // Use sessionLabel if provided, otherwise fallback to last 4 chars of VERCEL_DEPLOYMENT_ID
       let sessionLabel = data.sessionLabel;
@@ -103,7 +104,8 @@ export class SessionManager {
         .insert(sessions)
         .values(sessionRecord)
         .returning();
-      return result[0].id;
+
+      return { id: result[0].id, started: data.started };
     } catch (error) {
       // Log the error but don't throw - we don't want session recording to break the main flow
       console.error("[SessionManager] Failed to create session:", error);

@@ -11,7 +11,7 @@ import {
   type SelectronicData,
 } from "./selectronic-client";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
-import { PointManager, type PointMetadata } from "@/lib/point/point-manager";
+import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 import { SELECTRONIC_POINTS } from "./point-metadata";
 
 /**
@@ -58,9 +58,8 @@ export class SelectronicAdapter extends BaseVendorAdapter {
   protected async doPoll(
     system: SystemWithPolling,
     credentials: any,
-    now: Date,
-    sessionId: number,
-    isUserOriginated: boolean,
+    session: SessionInfo,
+    pollReason: string,
     dryRun: boolean = false,
   ): Promise<PollingResult> {
     try {
@@ -102,7 +101,6 @@ export class SelectronicAdapter extends BaseVendorAdapter {
 
       // Insert into point_readings table
       const measurementTime = vendorData.timestamp.getTime();
-      const receivedTime = Date.now();
       const readingsToInsert = [];
 
       // Build readings array from all configured points
@@ -132,9 +130,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
           pointMetadata: pointConfig.metadata,
           rawValue,
           measurementTime,
-          receivedTime,
           dataQuality: "good" as const,
-          sessionId: sessionId,
           error: null,
         });
       }
@@ -142,6 +138,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       // Batch insert all readings - this will automatically ensure point_info entries exist
       await PointManager.getInstance().insertPointReadingsBatch(
         system.id,
+        session,
         readingsToInsert,
       );
 

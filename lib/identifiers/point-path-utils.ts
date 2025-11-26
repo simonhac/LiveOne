@@ -73,7 +73,12 @@ export function buildFallbackPointPath(
  * parsePointPath("5/power")
  * // { type: "5", subtype: null, extension: null, metricType: "power", isFallback: true, pointIndex: 5 }
  */
-export function parsePointPath(str: string): ParsedPointPath | null {
+export function parsePointPath(
+  str: string | null | undefined,
+): ParsedPointPath | null {
+  // Handle null/undefined input
+  if (!str) return null;
+
   // Must contain exactly one slash
   const slashIndex = str.indexOf("/");
   if (slashIndex === -1 || str.indexOf("/", slashIndex + 1) !== -1) {

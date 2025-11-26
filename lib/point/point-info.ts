@@ -3,10 +3,6 @@
  */
 
 import { PointReference } from "@/lib/identifiers";
-import {
-  buildPointPath,
-  buildFallbackPointPath,
-} from "@/lib/identifiers/point-path-utils";
 
 /**
  * Point information with helper methods
@@ -29,6 +25,8 @@ export class PointInfo {
     public readonly metricUnit: string,
     public readonly transform: string | null,
     public readonly active: boolean,
+    public readonly logicalPath: string | null,
+    public readonly physicalPath: string,
   ) {}
 
   /**
@@ -39,46 +37,23 @@ export class PointInfo {
   }
 
   /**
-   * Get the point path as a string
-   *
-   * For points with type: "type.subtype.extension/metricType"
-   * For points without type: "{pointIndex}/metricType" (fallback)
-   *
-   * Examples:
-   * - type="source", subtype="solar", metricType="power" → "source.solar/power"
-   * - type="bidi", subtype="battery", extension="charge", metricType="power" → "bidi.battery.charge/power"
-   * - type="load", metricType="power" → "load/power"
-   * - type=null, index=4, metricType="power" → "4/power"
+   * @deprecated Use logicalPath property instead. This method will be removed.
+   * Get the point path as a string (falls back to index-based path if type is null)
    */
   getPath(): string {
-    if (this.type) {
-      return buildPointPath(
-        this.type,
-        this.subtype,
-        this.extension,
-        this.metricType,
-      );
-    } else {
-      // Fallback for points without type
-      return buildFallbackPointPath(this.index, this.metricType);
+    if (this.logicalPath) {
+      return this.logicalPath;
     }
+    // Fallback for points without type
+    return `${this.index}/${this.metricType}`;
   }
 
   /**
+   * @deprecated Use logicalPath property instead. This method will be removed.
    * Get the logical path for typed points only
-   * Returns "type.subtype.extension/metricType" for points with type != null
-   * Returns null for points without type (excludes fallback format)
-   *
-   * Examples:
-   * - type="load", subtype="hvac", metricType="power" → "load.hvac/power"
-   * - type="source", subtype="solar", metricType="energy" → "source.solar/energy"
-   * - type=null → null
    */
   getLogicalPath(): string | null {
-    if (!this.type) {
-      return null;
-    }
-    return this.getPath();
+    return this.logicalPath;
   }
 
   /**
@@ -171,6 +146,8 @@ export class PointInfo {
     metricUnit: string;
     transform: string | null;
     active: boolean;
+    logicalPath: string | null;
+    physicalPath: string;
   }): PointInfo {
     return new PointInfo(
       data.index, // Database 'id' column exposed as 'index' property
@@ -188,6 +165,8 @@ export class PointInfo {
       data.metricUnit,
       data.transform,
       data.active,
+      data.logicalPath,
+      data.physicalPath,
     );
   }
 }

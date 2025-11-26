@@ -91,11 +91,11 @@ export async function updatePointAggregates5m(
       .where(
         and(
           eq(pointReadings.systemId, systemId),
-          gt(pointReadings.measurementTime, intervalStartMs),
-          lte(pointReadings.measurementTime, intervalEndMs),
+          gt(pointReadings.measurementTimeMs, intervalStartMs),
+          lte(pointReadings.measurementTimeMs, intervalEndMs),
         ),
       )
-      .orderBy(pointReadings.pointId, pointReadings.measurementTime);
+      .orderBy(pointReadings.pointId, pointReadings.measurementTimeMs);
 
     if (allReadings.length === 0) {
       return; // No readings to aggregate
@@ -105,7 +105,7 @@ export async function updatePointAggregates5m(
     const pointGroups = new Map<
       number,
       {
-        validReadings: Array<{ measurementTime: number; value: number }>;
+        validReadings: Array<{ measurementTimeMs: number; value: number }>;
         errorCount: number;
       }
     >();
@@ -122,7 +122,7 @@ export async function updatePointAggregates5m(
         group.errorCount++;
       } else {
         group.validReadings.push({
-          measurementTime: reading.measurementTime,
+          measurementTimeMs: reading.measurementTimeMs,
           value: reading.value,
         });
       }

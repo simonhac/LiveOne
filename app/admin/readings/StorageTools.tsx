@@ -79,6 +79,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
   const [error, setError] = useState<string | null>(null);
   const [isReloadingCaches, setIsReloadingCaches] = useState(false);
   const [isRefreshingDbStats, setIsRefreshingDbStats] = useState(false);
+  const [isClearingLatest, setIsClearingLatest] = useState(false);
   const [syncProgress, setSyncProgress] = useState<{
     isActive: boolean;
     message: string;
@@ -613,6 +614,42 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
     } finally {
       // This can take 2+ minutes, so we show wait state until complete
       setIsRefreshingDbStats(false);
+    }
+  };
+
+  const clearLatestReadings = async () => {
+    if (
+      !confirm(
+        "This will clear the latest readings cache for all systems. The cache will be repopulated on the next poll. Continue?",
+      )
+    ) {
+      return;
+    }
+
+    setIsClearingLatest(true);
+
+    try {
+      const response = await fetch("/api/admin/latest?action=clear", {
+        method: "POST",
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        alert(
+          `Cleared latest readings cache for ${data.systemsCleared} systems`,
+        );
+      } else {
+        console.error("Failed to clear latest readings:", data.error);
+        alert(
+          `Error: ${data.error || "Failed to clear latest readings cache"}`,
+        );
+      }
+    } catch (err) {
+      console.error("Error clearing latest readings:", err);
+      alert("Failed to clear latest readings cache");
+    } finally {
+      setIsClearingLatest(false);
     }
   };
 
@@ -1281,6 +1318,19 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
                     >
                       <RefreshCw className="w-4 h-4" />
                       Invalidate Caches
+                    </button>
+                    <button
+                      onClick={() => {
+                        clearLatestReadings();
+                        setIsToolboxOpen(false);
+                      }}
+                      disabled={isClearingLatest}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-white hover:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-colors text-left"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      {isClearingLatest
+                        ? "Clearing..."
+                        : "Clear Latest Readings"}
                     </button>
                   </div>
                 </div>

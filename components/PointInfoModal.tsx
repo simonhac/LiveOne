@@ -25,6 +25,8 @@ interface PointInfo {
   systemShortName?: string;
   ownerUsername: string;
   vendorType?: string;
+  logicalPath: string | null;
+  physicalPath: string;
 }
 
 interface PointInfoModalProps {
@@ -270,6 +272,15 @@ export default function PointInfoModal({
 
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
+                  Physical Path:
+                </label>
+                <div className="text-gray-300 font-mono text-sm flex-1">
+                  {pointInfo.physicalPath}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
                   Source:
                 </label>
                 <div className="text-gray-300 font-mono text-sm flex-1">
@@ -456,6 +467,18 @@ export default function PointInfoModal({
                       </tr>
                     </tbody>
                   </table>
+                </div>
+              </div>
+
+              {/* Logical Path - computed from taxonomy */}
+              <div className="flex items-center gap-3 mt-3">
+                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
+                  Logical Path:
+                </label>
+                <div className="text-gray-300 font-mono text-sm flex-1">
+                  {pointInfo.logicalPath || (
+                    <span className="text-gray-500">—</span>
+                  )}
                 </div>
               </div>
             </div>

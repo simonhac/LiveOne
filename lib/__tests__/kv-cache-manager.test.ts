@@ -71,7 +71,8 @@ describe("kv-cache-manager", () => {
         1, // point ID
         "source.solar.local/power",
         5234.5,
-        1731627600000,
+        1731627600000, // measurementTimeMs
+        1731627605000, // receivedTimeMs
         "W",
         "Test Point",
       );
@@ -83,6 +84,7 @@ describe("kv-cache-manager", () => {
           "source.solar.local/power": expect.objectContaining({
             value: 5234.5,
             measurementTimeMs: 1731627600000,
+            receivedTimeMs: 1731627605000,
             metricUnit: "W",
             displayName: "Test Point",
           }),
@@ -92,25 +94,23 @@ describe("kv-cache-manager", () => {
 
     it("should include receivedTimeMs in the cache entry", async () => {
       const { kv } = await import("../kv");
-      const beforeTime = Date.now();
+      const receivedTime = 1731627605000;
 
       await updateLatestPointValue(
         10,
         1, // point ID
         "source.solar.local/power",
         5234.5,
-        1731627600000,
+        1731627600000, // measurementTimeMs
+        receivedTime, // receivedTimeMs
         "W",
         "Test Point",
       );
 
-      const afterTime = Date.now();
-
       const call = (kv.hset as jest.MockedFunction<any>).mock.calls[0];
       const pointValue = call[1]["source.solar.local/power"];
 
-      expect(pointValue.receivedTimeMs).toBeGreaterThanOrEqual(beforeTime);
-      expect(pointValue.receivedTimeMs).toBeLessThanOrEqual(afterTime);
+      expect(pointValue.receivedTimeMs).toBe(receivedTime);
     });
 
     it("should update composite system caches when subscribers exist", async () => {
@@ -129,7 +129,8 @@ describe("kv-cache-manager", () => {
         1, // point ID
         "source.solar.local/power",
         5234.5,
-        1731627600000,
+        1731627600000, // measurementTimeMs
+        1731627605000, // receivedTimeMs
         "W",
         "Test Point",
       );

@@ -21,7 +21,11 @@ import {
   createSeriesInfos,
   getSeriesPath,
 } from "@/lib/point/series-info";
-import { SystemIdentifier, PointReference } from "@/lib/identifiers";
+import {
+  SystemIdentifier,
+  PointReference,
+  buildPointPath,
+} from "@/lib/identifiers";
 import { SystemWithPolling, SystemsManager } from "@/lib/systems-manager";
 import micromatch from "micromatch";
 import {
@@ -49,6 +53,14 @@ export interface PointMetadata {
   metricType: string;
   metricUnit: string;
   transform: string | null;
+}
+
+/**
+ * Session info for tracking when data was received
+ */
+export interface SessionInfo {
+  id: number;
+  started: Date;
 }
 
 /**
@@ -388,6 +400,17 @@ export class PointManager {
     active: boolean;
     transform: string | null;
   }): Promise<void> {
+    // Compute paths
+    const logicalPath = pointData.type
+      ? buildPointPath(
+          pointData.type,
+          pointData.subtype,
+          pointData.extension,
+          pointData.metricType,
+        )
+      : null;
+    const physicalPath = `${pointData.originId}.${pointData.originSubId ?? ""}`;
+
     await db.insert(pointInfoTable).values({
       systemId: pointData.systemId,
       index: pointData.index,
@@ -404,6 +427,8 @@ export class PointManager {
       alias: pointData.alias,
       active: pointData.active,
       transform: pointData.transform,
+      logicalPath,
+      physicalPath,
     });
 
     // Invalidate cache for this system
@@ -469,6 +494,17 @@ export class PointManager {
         : 0;
     const nextIndex = maxIndex + 1;
 
+    // Compute paths
+    const logicalPath = metadata.type
+      ? buildPointPath(
+          metadata.type,
+          metadata.subtype || null,
+          metadata.extension || null,
+          metadata.metricType,
+        )
+      : null;
+    const physicalPath = `${metadata.originId}.${metadata.originSubId || ""}`;
+
     // Create new point_info entry
     const [newPoint] = await db
       .insert(pointInfoTable)
@@ -487,6 +523,8 @@ export class PointManager {
         metricUnit: metadata.metricUnit,
         transform: metadata.transform,
         created: Date.now(),
+        logicalPath,
+        physicalPath,
       })
       .onConflictDoUpdate({
         target: [
@@ -523,8 +561,8 @@ export class PointManager {
     systemId: number,
     pointInfoId: number,
     value: number | null,
-    measurementTime: number,
-    receivedTime: number,
+    measurementTimeMs: number,
+    receivedTimeMs: number,
     dataQuality: "good" | "error" | "estimated" | "interpolated" = "good",
     sessionId?: number | null,
     error?: string | null,
@@ -536,8 +574,8 @@ export class PointManager {
         systemId,
         pointId: pointInfoId,
         sessionId: sessionId || null,
-        measurementTime,
-        receivedTime,
+        measurementTimeMs,
+        receivedTimeMs,
         value: value !== null ? value : null,
         valueStr: valueStr || null,
         error: error || null,
@@ -547,12 +585,12 @@ export class PointManager {
         target: [
           pointReadings.systemId,
           pointReadings.pointId,
-          pointReadings.measurementTime,
+          pointReadings.measurementTimeMs,
         ],
         set: {
           value: value !== null ? value : null,
           valueStr: valueStr || null,
-          receivedTime,
+          receivedTimeMs,
           error: error || null,
           dataQuality,
         },
@@ -562,16 +600,19 @@ export class PointManager {
   /**
    * Batch insert readings for multiple monitoring points
    * Automatically ensures point_info entries exist and converts values based on metadata
+   *
+   * @param systemId - The system ID
+   * @param session - Session info containing id and started timestamp
+   * @param readings - Array of readings to insert (receivedTimeMs comes from session.started)
    */
   async insertPointReadingsBatch(
     systemId: number,
+    session: SessionInfo,
     readings: Array<{
       pointMetadata: PointMetadata;
       rawValue: any; // Raw value from vendor (will be converted based on metadata)
       measurementTime: number;
-      receivedTime: number;
-      dataQuality?: "good" | "error" | "estimated" | "interpolated";
-      sessionId?: number | null;
+      dataQuality?: string;
       error?: string | null;
     }>,
   ): Promise<void> {
@@ -579,6 +620,9 @@ export class PointManager {
 
     // Load existing points for this system
     const pointMap = await this.loadPointInfoMap(systemId);
+
+    // Get receivedTimeMs from session start time
+    const receivedTimeMs = session.started.getTime();
 
     // Process each reading
     const valuesToInsert = [];
@@ -599,9 +643,9 @@ export class PointManager {
       valuesToInsert.push({
         systemId,
         pointId: point.index,
-        sessionId: reading.sessionId || null,
-        measurementTime: reading.measurementTime,
-        receivedTime: reading.receivedTime,
+        sessionId: session.id,
+        measurementTimeMs: reading.measurementTime,
+        receivedTimeMs,
         value,
         valueStr,
         error: reading.error || null,
@@ -619,11 +663,11 @@ export class PointManager {
           target: [
             pointReadings.systemId,
             pointReadings.pointId,
-            pointReadings.measurementTime,
+            pointReadings.measurementTimeMs,
           ],
           set: {
             value: val.value,
-            receivedTime: val.receivedTime,
+            receivedTimeMs: val.receivedTimeMs,
             error: val.error,
             dataQuality: val.dataQuality,
           },
@@ -690,10 +734,14 @@ export class PointManager {
    * 2. Everything else (power, SOC, etc.):
    *    - avg = min = max = last = value (single measurement per interval)
    *    - delta = null
+   *
+   * @param systemId - The system ID
+   * @param session - Session info (null for historical backfills without a session)
+   * @param readings - Array of readings to insert
    */
   async insertPointReadingsDirectTo5m(
     systemId: number,
-    sessionId: number,
+    session: SessionInfo | null,
     readings: Array<{
       pointMetadata: PointMetadata;
       rawValue: any; // Raw value from vendor (will be converted based on metadata)
@@ -738,7 +786,7 @@ export class PointManager {
       aggregatesToInsert.push({
         systemId,
         pointId: point.index,
-        sessionId,
+        sessionId: session?.id ?? null,
         intervalEnd: reading.intervalEndMs,
         avg: isError || isEnergyCounter || isEnergyDelta ? null : value,
         min: isError || isEnergyCounter || isEnergyDelta ? null : value,
@@ -843,7 +891,8 @@ export class PointManager {
     valuesToInsert: Array<{
       pointId: number;
       value: number | null;
-      measurementTime: number;
+      measurementTimeMs: number;
+      receivedTimeMs: number;
     }>,
   ): Promise<void> {
     try {
@@ -851,14 +900,15 @@ export class PointManager {
 
       const cacheUpdates = valuesToInsert.map((val) => {
         const point = points.find((p: PointInfo) => p.index === val.pointId);
-        if (point && val.value !== null) {
-          const pointPath = point.getPath();
+        // Only cache active points with a proper logicalPath
+        if (point && val.value !== null && point.logicalPath && point.active) {
           return updateLatestPointValue(
             systemId,
             val.pointId, // Pass point index for subscription lookup
-            pointPath,
+            point.logicalPath,
             val.value,
-            val.measurementTime,
+            val.measurementTimeMs,
+            val.receivedTimeMs,
             point.metricUnit,
             point.name, // displayName if set, otherwise defaultName
           );

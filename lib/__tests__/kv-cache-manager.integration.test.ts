@@ -67,6 +67,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         pointPath,
         value,
         measurementTimeMs,
+        Date.now(), // receivedTimeMs
         "W",
         "Test Point",
       );
@@ -94,6 +95,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         pointPath,
         firstValue,
         measurementTimeMs,
+        Date.now(), // receivedTimeMs
         "W",
         "Test Point",
       );
@@ -107,6 +109,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         pointPath,
         secondValue,
         measurementTimeMs + 60000,
+        Date.now(), // receivedTimeMs
         "W",
         "Test Point",
       );
@@ -124,6 +127,8 @@ describeIfKV("kv-cache-manager (integration)", () => {
         { path: "bidi.battery/soc", value: 85, unit: "%", id: 3 },
       ];
       const measurementTimeMs = Date.now();
+      const sessionStart = new Date();
+      const receivedTimeMs = sessionStart.getTime();
 
       // Update all points
       for (const point of points) {
@@ -133,6 +138,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
           point.path,
           point.value,
           measurementTimeMs,
+          receivedTimeMs,
           point.unit,
           "Test Point",
         );
@@ -159,6 +165,8 @@ describeIfKV("kv-cache-manager (integration)", () => {
       const pointPath1 = "source.solar.local/power";
       const pointPath2 = "load.hvac/power";
       const measurementTimeMs = Date.now();
+      const sessionStart = new Date();
+      const receivedTimeMs = sessionStart.getTime();
 
       await updateLatestPointValue(
         testSystemId,
@@ -166,6 +174,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         pointPath1,
         5000,
         measurementTimeMs,
+        receivedTimeMs,
         "W",
         "Test Point",
       );
@@ -175,6 +184,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         pointPath2,
         1200,
         measurementTimeMs,
+        receivedTimeMs,
         "W",
         "Test Point",
       );
@@ -212,6 +222,8 @@ describeIfKV("kv-cache-manager (integration)", () => {
       const pointPath = "source.solar.remote/power";
       const value = 3000;
       const measurementTimeMs = Date.now();
+      const sessionStart = new Date();
+      const receivedTimeMs = sessionStart.getTime();
 
       await updateLatestPointValue(
         testSystemId,
@@ -219,6 +231,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         pointPath,
         value,
         measurementTimeMs,
+        receivedTimeMs,
         "W",
         "Test Point",
       );
@@ -257,6 +270,8 @@ describeIfKV("kv-cache-manager (integration)", () => {
         { path: "bidi.battery/soc", value: 85, id: 3 },
       ];
       const measurementTimeMs = Date.now();
+      const sessionStart = new Date();
+      const receivedTimeMs = sessionStart.getTime();
 
       for (const point of points) {
         await updateLatestPointValue(
@@ -265,6 +280,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
           point.path,
           point.value,
           measurementTimeMs,
+          receivedTimeMs,
           "W",
           "Test Point",
         );
@@ -312,6 +328,8 @@ describeIfKV("kv-cache-manager (integration)", () => {
       const pointPath = "source.solar.local/power";
       const value = 4000;
       const measurementTimeMs = Date.now();
+      const sessionStart = new Date();
+      const receivedTimeMs = sessionStart.getTime();
 
       await updateLatestPointValue(
         testSystemId,
@@ -319,6 +337,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         pointPath,
         value,
         measurementTimeMs,
+        receivedTimeMs,
         "W",
         "Test Point",
       );
@@ -351,6 +370,8 @@ describeIfKV("kv-cache-manager (integration)", () => {
       const pointPath = "bidi.grid/power";
       const value = 2500;
       const measurementTimeMs = Date.now();
+      const sessionStart = new Date();
+      const receivedTimeMs = sessionStart.getTime();
 
       // Write
       await updateLatestPointValue(
@@ -359,6 +380,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         pointPath,
         value,
         measurementTimeMs,
+        receivedTimeMs,
         "W",
         "Test Point",
       );

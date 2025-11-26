@@ -2,6 +2,7 @@ import { BaseVendorAdapter, type ScheduleEvaluation } from "../base-adapter";
 import type { PollingResult, TestConnectionResult } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { LatestReadingData } from "@/lib/types/readings";
+import type { SessionInfo } from "@/lib/point/point-manager";
 import { db } from "@/lib/db";
 import {
   pointReadingsAgg5m,
@@ -19,7 +20,7 @@ import {
 } from "@/lib/date-utils";
 import { fromDate, type ZonedDateTime } from "@internationalized/date";
 import { getPollingStatus } from "@/lib/polling-utils";
-import { SessionManager } from "@/lib/session-manager";
+import { sessionManager } from "@/lib/session-manager";
 import * as SunCalc from "suncalc";
 
 /**
@@ -296,9 +297,8 @@ export class EnphaseAdapter extends BaseVendorAdapter {
   protected async doPoll(
     system: SystemWithPolling,
     credentials: any,
-    now: Date,
-    sessionId: number,
-    isUserOriginated: boolean,
+    session: SessionInfo,
+    pollReason: string,
     dryRun: boolean = false,
   ): Promise<PollingResult> {
     const startTime = Date.now();
@@ -320,8 +320,8 @@ export class EnphaseAdapter extends BaseVendorAdapter {
         );
         result = await checkAndFetchYesterdayIfNeeded(
           system.id,
-          sessionId,
-          false,
+          session,
+          dryRun,
         );
       } else {
         // Otherwise fetch current day's data
@@ -329,8 +329,8 @@ export class EnphaseAdapter extends BaseVendorAdapter {
           system.id,
           null,
           system.timezoneOffsetMin,
-          sessionId,
-          false,
+          session,
+          dryRun,
         );
       }
 
@@ -353,6 +353,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
         "rawResponse" in result ? result.rawResponse : undefined;
 
       // Calculate next poll time
+      const now = new Date();
       const evaluation = this.evaluateSchedule(
         system,
         system.pollingStatus?.lastPollTime || null,
@@ -384,8 +385,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       console.log(`[Enphase] Testing connection for system ${system.id}`);
 
       // Create a session for this test connection
-      const sessionManager = SessionManager.getInstance();
-      const sessionId = await sessionManager.createSession({
+      const session = await sessionManager.createSession({
         systemId: system.id,
         cause: "USER-TEST",
         started: new Date(),
@@ -396,7 +396,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
         system.id,
         null, // null means fetch today
         system.timezoneOffsetMin,
-        sessionId,
+        session,
         true, // dryRun - don't actually save to database during test
       );
 

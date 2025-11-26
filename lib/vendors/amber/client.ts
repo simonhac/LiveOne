@@ -21,7 +21,11 @@ import type {
   PointReading,
   BatchInfo,
 } from "./types";
-import { PointManager, type PointMetadata } from "@/lib/point/point-manager";
+import {
+  PointManager,
+  type PointMetadata,
+  type SessionInfo,
+} from "@/lib/point/point-manager";
 import { formatDateAEST } from "@/lib/date-utils";
 import { AmberReadingsBatch } from "./amber-readings-batch";
 import {
@@ -825,7 +829,7 @@ async function loadRemotePrices(
  */
 async function storeRecordsLocally(
   systemId: number,
-  sessionId: number,
+  session: SessionInfo,
   batch: AmberReadingsBatch,
   stageName: string,
 ): Promise<StageResult> {
@@ -857,7 +861,7 @@ async function storeRecordsLocally(
   // Batch insert to point_readings_agg_5m
   await PointManager.getInstance().insertPointReadingsDirectTo5m(
     systemId,
-    sessionId,
+    session,
     readingsToInsert,
   );
 
@@ -888,7 +892,7 @@ export async function updateUsage(
   firstDay: CalendarDate,
   numberOfDays: number = 1,
   credentials: AmberCredentials,
-  sessionId: number,
+  session: SessionInfo,
   dryRun: boolean = false,
 ): Promise<AmberSyncResult> {
   const tracker = new StageTracker();
@@ -988,7 +992,7 @@ export async function updateUsage(
               if (!dryRun) {
                 const storeResult = await storeRecordsLocally(
                   systemId,
-                  sessionId,
+                  session,
                   batch,
                   "usage stage 4: store superior usage records",
                 );
@@ -1060,7 +1064,7 @@ export async function updateForecasts(
   firstDay: CalendarDate,
   numberOfDays: number = 1,
   credentials: AmberCredentials,
-  sessionId: number,
+  session: SessionInfo,
   dryRun: boolean = false,
 ): Promise<AmberSyncResult> {
   const tracker = new StageTracker();
@@ -1151,7 +1155,7 @@ export async function updateForecasts(
                 if (!dryRun) {
                   const storeResult = await storeRecordsLocally(
                     systemId,
-                    sessionId,
+                    session,
                     batch,
                     "forecast stage 4: store superior price records",
                   );

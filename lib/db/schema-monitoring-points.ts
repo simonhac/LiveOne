@@ -47,6 +47,10 @@ export const pointInfo = sqliteTable(
     // Timestamps
     created: integer("created"), // Creation timestamp (Unix milliseconds)
     updatedAt: integer("updated_at").default(sql`(unixepoch() * 1000)`), // Last update timestamp (Unix milliseconds)
+
+    // Canonical paths (unique within system)
+    logicalPath: text("logical_path"), // eg. "source.solar/power" - null if type is null
+    physicalPath: text("physical_path").notNull(), // eg. "originId.originSubId"
   },
   (table) => ({
     pk: primaryKey({ columns: [table.systemId, table.index] }),
@@ -63,6 +67,16 @@ export const pointInfo = sqliteTable(
     systemShortNameUnique: uniqueIndex("pi_system_short_name_unique").on(
       table.systemId,
       table.alias,
+    ),
+    // Unique constraint for logical_path within a system
+    systemLogicalPathUnique: uniqueIndex("pi_system_logical_path_unique").on(
+      table.systemId,
+      table.logicalPath,
+    ),
+    // Unique constraint for physical_path within a system
+    systemPhysicalPathUnique: uniqueIndex("pi_system_physical_path_unique").on(
+      table.systemId,
+      table.physicalPath,
     ),
   }),
 );
@@ -82,8 +96,8 @@ export const pointReadings = sqliteTable(
     sessionId: integer("session_id"), // No longer references measurementSessions
 
     // Timestamps (milliseconds for sub-second precision)
-    measurementTime: integer("measurement_time").notNull(), // When device recorded
-    receivedTime: integer("received_time").notNull(), // When we fetched
+    measurementTimeMs: integer("measurement_time").notNull(), // When device recorded
+    receivedTimeMs: integer("received_time").notNull(), // When we fetched
 
     // Core measurements (flexible schema)
     value: real("value"), // Numeric value (e.g., power in Watts, timestamp in ms)
@@ -97,14 +111,14 @@ export const pointReadings = sqliteTable(
     pointTimeUnique: uniqueIndex("pr_point_time_unique").on(
       table.systemId,
       table.pointId,
-      table.measurementTime,
+      table.measurementTimeMs,
     ),
     systemTimeIdx: index("pr_system_time_idx").on(
       table.systemId,
-      table.measurementTime,
+      table.measurementTimeMs,
     ),
     measurementTimeIdx: index("pr_measurement_time_idx").on(
-      table.measurementTime,
+      table.measurementTimeMs,
     ),
     // Composite foreign key to point_info
     pointInfoFk: foreignKey({
