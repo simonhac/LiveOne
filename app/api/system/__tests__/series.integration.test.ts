@@ -1,9 +1,9 @@
 /**
- * Integration tests for /api/system/[systemIdentifier]/series endpoint
+ * Integration tests for /api/system/[systemId]/series endpoint
  *
  * Tests:
  * - Authentication and authorization
- * - System resolution (numeric ID vs identifier)
+ * - System resolution (numeric ID)
  * - Filter parameter validation and matching
  * - Interval parameter validation and filtering
  * - Combined filter + interval filtering
@@ -47,7 +47,7 @@ async function getSeriesEndpoint(
   };
 }
 
-describe("GET /api/system/[systemIdentifier]/series", () => {
+describe("GET /api/system/[systemId]/series", () => {
   let testSystemId: number;
   let testSystemIdentifier: string;
 

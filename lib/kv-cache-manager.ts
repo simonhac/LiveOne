@@ -4,23 +4,20 @@ import { systems as systemsTable } from "./db/schema";
 import { pointInfo as pointInfoTable } from "./db/schema-monitoring-points";
 import { eq } from "drizzle-orm";
 import { PointReference } from "./identifiers";
+import { LatestValue, LatestValuesMap } from "./latest-values-store";
+
+// Re-export canonical types for backwards compatibility
+export type { LatestValue, LatestValuesMap };
 
 /**
- * Latest point value entry in cache
+ * @deprecated Use LatestValue instead
  */
-export interface LatestPointValue {
-  value: number;
-  measurementTimeMs: number; // Unix timestamp in milliseconds
-  receivedTimeMs: number; // Unix timestamp in milliseconds
-  metricUnit: string; // Unit of measurement (e.g., "W", "kWh", "%")
-  displayName: string; // Display name from point_info
-}
+export type LatestPointValue = LatestValue;
 
 /**
- * Map of point paths to their latest values
- * Key format: "type.subtype.extension/metricType" (e.g., "source.solar.local/power")
+ * @deprecated Use LatestValuesMap instead
  */
-export type LatestPointValues = Record<string, LatestPointValue>;
+export type LatestPointValues = LatestValuesMap;
 
 /**
  * Subscription registry entry - maps source point to composite points that subscribe to it
@@ -69,17 +66,15 @@ export async function updateLatestPointValue(
   systemId: number,
   pointId: number,
   pointPath: string,
-  value: number,
+  value: number | string,
   measurementTimeMs: number,
   metricUnit: string,
   displayName: string,
 ): Promise<void> {
-  const receivedTimeMs = Date.now();
-
-  const pointValue: LatestPointValue = {
+  const pointValue: LatestValue = {
     value,
+    logicalPath: pointPath,
     measurementTimeMs,
-    receivedTimeMs,
     metricUnit,
     displayName,
   };
@@ -94,7 +89,7 @@ export async function updateLatestPointValue(
   // Update each composite system's cache (only for subscribed points)
   if (compositePointRefs && compositePointRefs.length > 0) {
     // Group by composite system ID for efficient batching
-    const updatesBySystem = new Map<number, Record<string, LatestPointValue>>();
+    const updatesBySystem = new Map<number, Record<string, LatestValue>>();
 
     for (const compositePointRef of compositePointRefs) {
       // Parse composite point reference (e.g., "100.0" → systemId=100, pointIndex=0)
@@ -129,11 +124,11 @@ export async function updateLatestPointValue(
  */
 export async function getLatestPointValues(
   systemId: number,
-): Promise<LatestPointValues> {
+): Promise<LatestValuesMap> {
   const key = getLatestValuesKey(systemId);
   const values = await kv.hgetall(key);
 
-  return (values as LatestPointValues) || {};
+  return (values as LatestValuesMap) || {};
 }
 
 /**

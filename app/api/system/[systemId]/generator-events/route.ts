@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { SystemIdentifier } from "@/lib/identifiers";
 import { resolveSystemFromIdentifier } from "@/lib/series-path-utils";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { rawClient } from "@/lib/db";
@@ -17,16 +16,16 @@ interface GeneratorEvent {
 }
 
 /**
- * GET /api/system/{systemIdentifier}/generator-events
+ * GET /api/system/{systemId}/generator-events
  *
  * Returns all generator events (times when grid import > 50W)
  * Groups consecutive readings within 120 seconds into events
  *
- * @param systemIdentifier - System identifier (numeric ID or user.shortname)
+ * @param systemId - Numeric system ID
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ systemIdentifier: string }> },
+  { params }: { params: Promise<{ systemId: string }> },
 ) {
   try {
     // Step 1: Authenticate
@@ -48,39 +47,23 @@ export async function GET(
       isAdmin = await isUserAdmin(userId);
     }
 
-    // Step 2: Parse and validate systemIdentifier
-    const { systemIdentifier: systemIdStr } = await params;
-    const systemIdentifier = SystemIdentifier.parse(systemIdStr);
+    // Step 2: Parse systemId
+    const { systemId: systemIdStr } = await params;
+    const systemId = parseInt(systemIdStr, 10);
 
-    if (!systemIdentifier) {
+    if (isNaN(systemId)) {
       return NextResponse.json(
-        {
-          error: "Invalid system identifier",
-          details: `System identifier must be a numeric ID or user.shortname format, got "${systemIdStr}"`,
-        },
+        { error: "Invalid system ID", details: "System ID must be numeric" },
         { status: 400 },
       );
     }
 
-    // For now, only support numeric IDs
-    if (systemIdentifier.type !== "id") {
-      return NextResponse.json(
-        {
-          error: "User-scoped identifiers not yet supported",
-          details: "Please use numeric system ID",
-        },
-        { status: 400 },
-      );
-    }
-
-    const systemId = systemIdentifier.id!;
-
-    // Step 3: Resolve systemId to system and check it exists
-    const system = await resolveSystemFromIdentifier(systemId.toString());
+    // Step 3: Resolve system and check it exists
+    const system = await resolveSystemFromIdentifier(systemIdStr);
 
     if (!system) {
       return NextResponse.json(
-        { error: `System not found: ${systemIdStr}` },
+        { error: `System not found: ${systemId}` },
         { status: 404 },
       );
     }

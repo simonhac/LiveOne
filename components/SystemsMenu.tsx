@@ -87,8 +87,8 @@ export default function SystemsMenu({
               .split("/")
               .filter(Boolean);
             // Path structure: dashboard / [identifier...] / [subpage]
-            // Subpages are: heatmap, generator, amber
-            const knownSubpages = ["heatmap", "generator", "amber"];
+            // Subpages are: heatmap, generator, amber, latest
+            const knownSubpages = ["heatmap", "generator", "amber", "latest"];
             const lastPart = pathParts[pathParts.length - 1];
             // Only preserve /amber subpage if target system is amber vendorType
             const sp = knownSubpages.includes(lastPart)

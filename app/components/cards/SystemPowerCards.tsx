@@ -37,7 +37,6 @@ function synthesizeRestOfHouse(
   const childLoads: {
     value: number;
     measurementTime: Date;
-    receivedTime: Date;
   }[] = [];
   for (const [path, point] of Object.entries(latest)) {
     if (
@@ -48,7 +47,6 @@ function synthesizeRestOfHouse(
       childLoads.push({
         value: point.value,
         measurementTime: point.measurementTime,
-        receivedTime: point.receivedTime,
       });
     }
   }
@@ -73,16 +71,10 @@ function synthesizeRestOfHouse(
     masterLoad.measurementTime,
   );
 
-  // Find most recent receivedTime from master and all child loads
-  const maxReceivedTime = childLoads.reduce(
-    (max, child) => (child.receivedTime > max ? child.receivedTime : max),
-    masterLoad.receivedTime,
-  );
-
   return {
     value: restOfHouseValue,
+    logicalPath: "load.OTHER/power",
     measurementTime: maxMeasurementTime,
-    receivedTime: maxReceivedTime,
     metricUnit: "W",
     displayName: "Other",
   };
@@ -156,8 +148,8 @@ function synthesizeMasterLoad(
 
   return {
     value: synthesizedValue,
+    logicalPath: "load/power",
     measurementTime: maxTime,
-    receivedTime: new Date(),
     metricUnit: "W",
     displayName: "Load",
   };

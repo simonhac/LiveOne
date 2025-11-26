@@ -1,9 +1,9 @@
 /**
- * Integration tests for /api/system/[systemIdentifier]/points endpoint
+ * Integration tests for /api/system/[systemId]/points endpoint
  *
  * Tests:
  * - Authentication and authorization
- * - System identifier validation (numeric ID)
+ * - System ID validation (numeric ID)
  * - Short mode (array of paths)
  * - Full mode (detailed point information)
  * - PointPath formats (typed paths vs fallback numeric paths)
@@ -41,7 +41,7 @@ async function getPointsEndpoint(
   };
 }
 
-describe("GET /api/system/[systemIdentifier]/points", () => {
+describe("GET /api/system/[systemId]/points", () => {
   let testSystemId: number;
 
   beforeAll(async () => {

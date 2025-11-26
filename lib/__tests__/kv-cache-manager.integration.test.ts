@@ -76,10 +76,8 @@ describeIfKV("kv-cache-manager (integration)", () => {
 
       expect(result[pointPath]).toBeDefined();
       expect(result[pointPath].value).toBe(value);
+      expect(result[pointPath].logicalPath).toBe(pointPath);
       expect(result[pointPath].measurementTimeMs).toBe(measurementTimeMs);
-      expect(result[pointPath].receivedTimeMs).toBeGreaterThan(
-        measurementTimeMs,
-      );
       expect(result[pointPath].metricUnit).toBe("W");
     });
 

@@ -4,6 +4,7 @@ import DashboardClient from "@/components/DashboardClient";
 import HeatmapClient from "@/components/HeatmapClient";
 import GeneratorClient from "@/components/GeneratorClient";
 import AmberSync from "@/components/AmberSync";
+import LatestReadingsClient from "@/components/LatestReadingsClient";
 import DashboardLayout from "@/components/DashboardLayout";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -28,7 +29,7 @@ export default async function DashboardPage({ params }: PageProps) {
 
   // Check route type based on last segment
   const lastSegment = slug[slug.length - 1];
-  const validSubPages = ["heatmap", "generator", "amber"] as const;
+  const validSubPages = ["heatmap", "generator", "amber", "latest"] as const;
   const subPageRoute = validSubPages.includes(lastSegment as any)
     ? (lastSegment as (typeof validSubPages)[number])
     : null;
@@ -190,6 +191,24 @@ export default async function DashboardPage({ params }: PageProps) {
             supportsPolling={VendorRegistry.supportsPolling(system.vendorType)}
           >
             <AmberSync
+              systemIdentifier={systemIdentifier}
+              system={system}
+              userId={userId}
+              isAdmin={isAdmin}
+              availableSystems={systemsWithUsernames}
+            />
+          </DashboardLayout>
+        );
+      case "latest":
+        return (
+          <DashboardLayout
+            system={system}
+            userId={userId}
+            isAdmin={isAdmin}
+            availableSystems={systemsWithUsernames}
+            supportsPolling={VendorRegistry.supportsPolling(system.vendorType)}
+          >
+            <LatestReadingsClient
               systemIdentifier={systemIdentifier}
               system={system}
               userId={userId}

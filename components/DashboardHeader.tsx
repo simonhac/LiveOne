@@ -9,6 +9,7 @@ const SUBPAGE_TITLES: Record<string, string> = {
   heatmap: "Heatmap",
   generator: "Generator",
   amber: "Amber",
+  latest: "Latest",
 };
 import Link from "next/link";
 import {

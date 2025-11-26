@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { SystemIdentifier } from "@/lib/identifiers";
 import { resolveSystemFromIdentifier } from "@/lib/series-path-utils";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { PointManager } from "@/lib/point/point-manager";
 
 /**
- * GET /api/system/{systemIdentifier}/points
+ * GET /api/system/{systemId}/points
  *
  * Returns all points for a system with their PointPath identifiers
  *
- * @param systemIdentifier - System identifier (numeric ID like "3" or user.shortname like "simon.kinkora")
+ * @param systemId - Numeric system ID
  * @param short - Optional boolean parameter. If "true", returns just an array of path strings
  *
  * Examples:
@@ -19,7 +18,7 @@ import { PointManager } from "@/lib/point/point-manager";
  *   {
  *     "points": [
  *       {
- *         "path": "source.solar/power",
+ *         "logicalPath": "source.solar/power",
  *         "name": "Solar Power",
  *         "metricType": "power",
  *         "metricUnit": "W",
@@ -39,11 +38,10 @@ import { PointManager } from "@/lib/point/point-manager";
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ systemIdentifier: string }> },
+  { params }: { params: Promise<{ systemId: string }> },
 ) {
   try {
     // Step 1: Authenticate
-    // In development, allow using X-CLAUDE header to bypass auth
     let userId: string;
     let isAdmin = false;
 
@@ -59,45 +57,26 @@ export async function GET(
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
       userId = authResult.userId;
-      // Check if user is admin using proper auth utils
       isAdmin = await isUserAdmin(userId);
     }
 
-    // Step 2: Parse and validate systemIdentifier
-    const { systemIdentifier: systemIdStr } = await params;
+    // Step 2: Parse systemId
+    const { systemId: systemIdStr } = await params;
+    const systemId = parseInt(systemIdStr, 10);
 
-    // Parse system identifier
-    const systemIdentifier = SystemIdentifier.parse(systemIdStr);
-
-    if (!systemIdentifier) {
+    if (isNaN(systemId)) {
       return NextResponse.json(
-        {
-          error: "Invalid system identifier",
-          details: `System identifier must be a numeric ID or user.shortname format, got "${systemIdStr}"`,
-        },
+        { error: "Invalid system ID", details: "System ID must be numeric" },
         { status: 400 },
       );
     }
 
-    // For now, only support numeric IDs (user.shortname requires additional lookup logic)
-    if (systemIdentifier.type !== "id") {
-      return NextResponse.json(
-        {
-          error: "User-scoped identifiers not yet supported",
-          details: "Please use numeric system ID",
-        },
-        { status: 400 },
-      );
-    }
-
-    const systemId = systemIdentifier.id!; // Safe because we checked type === "id"
-
-    // Step 3: Resolve systemId to system and check it exists
-    const system = await resolveSystemFromIdentifier(systemId.toString());
+    // Step 3: Resolve system and check it exists
+    const system = await resolveSystemFromIdentifier(systemIdStr);
 
     if (!system) {
       return NextResponse.json(
-        { error: `System not found: ${systemIdStr}` },
+        { error: `System not found: ${systemId}` },
         { status: 404 },
       );
     }

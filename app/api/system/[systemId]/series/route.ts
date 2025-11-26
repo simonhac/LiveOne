@@ -71,12 +71,12 @@ function validatePattern(pattern: string): {
 }
 
 /**
- * GET /api/system/{systemIdentifier}/series
+ * GET /api/system/{systemId}/series
  *
  * Returns all available series for a system with database mapping information
  * Supports optional filtering by glob patterns and interval
  *
- * @param systemIdentifier - Numeric system ID (e.g., "3")
+ * @param systemId - Numeric system ID
  * @param filter - Optional comma-separated glob patterns to filter series (e.g., "source.solar/*,bidi.battery/*")
  * @param interval - Optional interval to filter by ("5m" or "1d")
  *
@@ -107,21 +107,13 @@ function validatePattern(pattern: string): {
  *     }
  *   ]
  * }
- *
- * Error Response (400):
- * {
- *   "error": "Invalid filter pattern",
- *   "details": "Pattern contains invalid characters: \"$\". Only alphanumeric, dots, slashes, wildcards (*), braces ({}), commas, underscores, and hyphens are allowed.",
- *   "invalidPattern": "source.solar/$"
- * }
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ systemIdentifier: string }> },
+  { params }: { params: Promise<{ systemId: string }> },
 ) {
   try {
     // Step 1: Authenticate
-    // In development, allow using X-CLAUDE header to bypass auth
     let userId: string;
     let isAdmin = false;
 
@@ -137,22 +129,31 @@ export async function GET(
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
       userId = authResult.userId;
-      // Check if user is admin using proper auth utils
       isAdmin = await isUserAdmin(userId);
     }
 
-    // Step 2: Resolve systemIdentifier to system
-    const { systemIdentifier } = await params;
-    const system = await resolveSystemFromIdentifier(systemIdentifier);
+    // Step 2: Parse systemId
+    const { systemId: systemIdStr } = await params;
+    const systemId = parseInt(systemIdStr, 10);
+
+    if (isNaN(systemId)) {
+      return NextResponse.json(
+        { error: "Invalid system ID", details: "System ID must be numeric" },
+        { status: 400 },
+      );
+    }
+
+    // Step 3: Resolve system and check it exists
+    const system = await resolveSystemFromIdentifier(systemIdStr);
 
     if (!system) {
       return NextResponse.json(
-        { error: `System not found: ${systemIdentifier}` },
+        { error: `System not found: ${systemId}` },
         { status: 404 },
       );
     }
 
-    // Step 3: Check authorization
+    // Step 4: Check authorization
     if (!isAdmin && system.ownerClerkUserId !== userId) {
       return NextResponse.json(
         { error: "Forbidden: You do not have access to this system" },
@@ -160,7 +161,7 @@ export async function GET(
       );
     }
 
-    // Step 4: Parse and validate query parameters
+    // Step 5: Parse and validate query parameters
     const { searchParams } = new URL(request.url);
     const filterParam = searchParams.get("filter");
     const intervalParam = searchParams.get("interval");
@@ -215,7 +216,7 @@ export async function GET(
       filter = rawPatterns;
     }
 
-    // Step 5: Get filtered series for the system
+    // Step 6: Get filtered series for the system
     const pointManager = PointManager.getInstance();
     const seriesInfos = await pointManager.getSeriesForSystem(
       system,
@@ -224,7 +225,6 @@ export async function GET(
     );
 
     // Transform SeriesInfo[] to response format
-    // (keeping same response structure for backward compatibility)
     const series = seriesInfos.map((seriesInfo) => {
       const seriesPath = `${seriesInfo.systemIdentifier.toString()}/${seriesInfo.point.getPath()}.${seriesInfo.aggregationField}`;
 
