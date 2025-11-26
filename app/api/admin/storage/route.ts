@@ -168,32 +168,18 @@ export async function GET(request: NextRequest) {
  * This is slower but ensures the page works even before the cron job runs.
  */
 async function calculateStatsAtRuntime() {
-  // Get record counts and timestamp ranges for all tables
+  // Get record counts and timestamp ranges for all active tables
+  // Note: Legacy tables (readings, readings_agg_5m, readings_agg_1d) are deprecated and excluded
   const result = await rawClient.execute(`
     SELECT 'systems' as table_name, COUNT(*) as count,
       MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
       MIN(updated_at) as updated_at_min, MAX(updated_at) as updated_at_max
     FROM systems
     UNION ALL
-    SELECT 'readings' as table_name, COUNT(*) as count,
-      MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
-      NULL as updated_at_min, NULL as updated_at_max
-    FROM readings
-    UNION ALL
     SELECT 'polling_status' as table_name, COUNT(*) as count,
       NULL as created_at_min, NULL as created_at_max,
       MIN(updated_at) as updated_at_min, MAX(updated_at) as updated_at_max
     FROM polling_status
-    UNION ALL
-    SELECT 'readings_agg_5m' as table_name, COUNT(*) as count,
-      MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
-      NULL as updated_at_min, NULL as updated_at_max
-    FROM readings_agg_5m
-    UNION ALL
-    SELECT 'readings_agg_1d' as table_name, COUNT(*) as count,
-      MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
-      MIN(updated_at) as updated_at_min, MAX(updated_at) as updated_at_max
-    FROM readings_agg_1d
     UNION ALL
     SELECT 'user_systems' as table_name, COUNT(*) as count,
       MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
@@ -219,6 +205,11 @@ async function calculateStatsAtRuntime() {
       MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
       MIN(updated_at) as updated_at_min, MAX(updated_at) as updated_at_max
     FROM point_readings_agg_5m
+    UNION ALL
+    SELECT 'point_readings_agg_1d' as table_name, COUNT(*) as count,
+      MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
+      MIN(updated_at) as updated_at_min, MAX(updated_at) as updated_at_max
+    FROM point_readings_agg_1d
   `);
 
   interface TableStat {
@@ -239,7 +230,8 @@ async function calculateStatsAtRuntime() {
     if (
       tableName === "point_info" ||
       tableName === "point_readings" ||
-      tableName === "point_readings_agg_5m"
+      tableName === "point_readings_agg_5m" ||
+      tableName === "point_readings_agg_1d"
     ) {
       return val;
     }

@@ -759,21 +759,25 @@ export default function AdminDashboardClient() {
                                 <div className="flex items-center gap-1.5">
                                   <Sun className="w-3.5 h-3.5 text-yellow-400" />
                                   <span className="text-yellow-400">
-                                    {(system.data.solarPower / 1000).toFixed(1)}{" "}
-                                    kW
+                                    {system.data.solarPower != null
+                                      ? `${(system.data.solarPower / 1000).toFixed(1)} kW`
+                                      : "—"}
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-1.5">
                                   <Home className="w-3.5 h-3.5 text-blue-400" />
                                   <span className="text-blue-400">
-                                    {(system.data.loadPower / 1000).toFixed(1)}{" "}
-                                    kW
+                                    {system.data.loadPower != null
+                                      ? `${(system.data.loadPower / 1000).toFixed(1)} kW`
+                                      : "—"}
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-1.5">
                                   <Battery className="w-3.5 h-3.5 text-green-400" />
                                   <span className="text-green-400">
-                                    {system.data.batterySOC.toFixed(1)}%
+                                    {system.data.batterySOC != null
+                                      ? `${system.data.batterySOC.toFixed(1)}%`
+                                      : "—"}
                                   </span>
                                 </div>
                               </div>

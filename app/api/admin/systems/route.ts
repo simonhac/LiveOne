@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { db } from "@/lib/db";
-import { systems, readings, pollingStatus, userSystems } from "@/lib/db/schema";
-import { eq, desc, or } from "drizzle-orm";
-import { formatTimeAEST, fromUnixTimestamp } from "@/lib/date-utils";
+import { formatTimeAEST } from "@/lib/date-utils";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { fromDate } from "@internationalized/date";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { SystemsManager } from "@/lib/systems-manager";
+import { getLatestValues, LatestValuesMap } from "@/lib/latest-values-store";
 
 /**
  * Extract all source systems referenced in composite metadata (version 2 format)
@@ -50,6 +48,66 @@ async function getCompositeSourceSystems(
   return Array.from(systemsMap.values()).sort((a, b) => a.id - b.id);
 }
 
+/**
+ * Extract power values from KV cache latest values
+ * For solar and load: prefer exact path, otherwise sum subpaths
+ */
+function extractPowerValues(latestValues: LatestValuesMap) {
+  // Filter out any entries without valid logicalPath
+  const entries = Object.values(latestValues).filter(
+    (v) => v && typeof v.logicalPath === "string",
+  );
+
+  if (entries.length === 0) {
+    return {
+      solarPower: null,
+      loadPower: null,
+      batteryPower: null,
+      gridPower: null,
+      batterySOC: null,
+      timestampMs: null,
+    };
+  }
+
+  const findValue = (pathPrefix: string, metric: string) => {
+    const entry = entries.find(
+      (v) =>
+        v.logicalPath.startsWith(pathPrefix) &&
+        v.logicalPath.includes(`/${metric}`),
+    );
+    return (entry?.value as number) ?? null;
+  };
+
+  // Helper: prefer exact path, otherwise sum subpaths
+  const getPowerWithFallback = (basePath: string) => {
+    const exact = entries.find((v) => v.logicalPath === `${basePath}/power`);
+    if (exact) return exact.value as number;
+
+    // Sum all basePath.*/power values
+    const parts = entries.filter(
+      (v) =>
+        v.logicalPath.startsWith(`${basePath}.`) &&
+        v.logicalPath.endsWith("/power"),
+    );
+    if (parts.length === 0) return null;
+    return parts.reduce((sum, v) => sum + (v.value as number), 0);
+  };
+
+  const findTimestamp = () => {
+    const first = entries[0];
+    return first?.measurementTimeMs ?? null;
+  };
+
+  return {
+    solarPower: getPowerWithFallback("source.solar"),
+    loadPower: getPowerWithFallback("load"),
+    batteryPower: findValue("bidi.battery", "power"),
+    gridPower: findValue("bidi.grid", "power"),
+    batterySOC: findValue("bidi.battery", "soc"),
+    timestampMs: findTimestamp(),
+  };
+}
+
 export async function GET(request: NextRequest) {
   try {
     // Check if user is authenticated
@@ -69,8 +127,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get all systems with their latest data
-    const allSystems = await db.select().from(systems);
+    // Get all systems with polling status from cache (already JOINed)
+    const systemsManager = SystemsManager.getInstance();
+    const allSystems = await systemsManager.getAllSystems();
     const systemsData = [];
 
     // Get unique owner user IDs to fetch user info in batch
@@ -81,51 +140,63 @@ export async function GET(request: NextRequest) {
           .filter((id): id is string => Boolean(id)),
       ),
     ];
-    const userCache = new Map();
+    const userCache = new Map<
+      string,
+      {
+        email: string | null;
+        userName: string | null;
+        firstName: string | null;
+        lastName: string | null;
+      }
+    >();
 
-    // Batch fetch user information from Clerk
-    const clerk = await clerkClient();
-    for (const userId of ownerUserIds) {
-      try {
-        const user = await clerk.users.getUser(userId);
-        userCache.set(userId, {
-          email: user.emailAddresses[0]?.emailAddress || null,
-          userName: user.username || null,
-          firstName: user.firstName || null,
-          lastName: user.lastName || null,
-        });
-      } catch (error) {
-        console.warn(`Failed to fetch user ${userId}:`, error);
-        userCache.set(userId, {
-          email: null,
-          userName: null,
-          firstName: null,
-          lastName: null,
+    // Fetch user information from Clerk (parallel calls)
+    if (ownerUserIds.length > 0) {
+      const clerk = await clerkClient();
+      const userPromises = ownerUserIds.map(async (id) => {
+        try {
+          const user = await clerk.users.getUser(id);
+          return {
+            id: user.id,
+            email: user.emailAddresses[0]?.emailAddress || null,
+            userName: user.username || null,
+            firstName: user.firstName || null,
+            lastName: user.lastName || null,
+          };
+        } catch (error) {
+          console.warn(`Failed to fetch user ${id}:`, error);
+          return {
+            id,
+            email: null,
+            userName: null,
+            firstName: null,
+            lastName: null,
+          };
+        }
+      });
+      const users = await Promise.all(userPromises);
+      for (const user of users) {
+        userCache.set(user.id, {
+          email: user.email,
+          userName: user.userName,
+          firstName: user.firstName,
+          lastName: user.lastName,
         });
       }
     }
 
     for (const system of allSystems) {
-      // Get latest reading
-      const latestReading = await db
-        .select()
-        .from(readings)
-        .where(eq(readings.systemId, system.id))
-        .orderBy(desc(readings.inverterTime))
-        .limit(1);
+      // Get latest values from KV cache (fast)
+      const latestValuesMap = await getLatestValues(system.id);
+      const powerValues = extractPowerValues(latestValuesMap);
 
-      // Get polling status
-      const status = await db
-        .select()
-        .from(pollingStatus)
-        .where(eq(pollingStatus.systemId, system.id))
-        .limit(1);
-
-      const reading = latestReading[0];
-      const pollStatus = status[0];
+      // Polling status is already included from SystemsManager
+      const pollStatus = system.pollingStatus;
 
       // Get user info from cache
-      const userInfo = userCache.get(system.ownerClerkUserId);
+      const userInfo = system.ownerClerkUserId
+        ? userCache.get(system.ownerClerkUserId)
+        : null;
 
       // Extract composite source systems if this is a composite system
       const compositeSourceSystems =
@@ -193,15 +264,18 @@ export async function GET(request: NextRequest) {
               )
             : 0,
         },
-        data: reading
+        data: powerValues.timestampMs
           ? {
-              solarPower: reading.solarW,
-              loadPower: reading.loadW,
-              batteryPower: reading.batteryW,
-              batterySOC: reading.batterySOC,
-              gridPower: reading.gridW,
+              solarPower: powerValues.solarPower,
+              loadPower: powerValues.loadPower,
+              batteryPower: powerValues.batteryPower,
+              batterySOC: powerValues.batterySOC,
+              gridPower: powerValues.gridPower,
               timestamp: formatTimeAEST(
-                fromDate(reading.inverterTime, "Australia/Brisbane"),
+                fromDate(
+                  new Date(powerValues.timestampMs),
+                  "Australia/Brisbane",
+                ),
               ),
             }
           : null,
@@ -220,6 +294,7 @@ export async function GET(request: NextRequest) {
       {
         success: false,
         error: "Failed to fetch systems data",
+        details: error instanceof Error ? error.message : String(error),
       },
       { status: 500 },
     );
