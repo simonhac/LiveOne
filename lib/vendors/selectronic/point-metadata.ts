@@ -159,7 +159,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
       subtype: null,
       extension: null,
       metricType: "code",
-      metricUnit: "text",
+      metricUnit: "number",
       transform: null,
     },
   },
