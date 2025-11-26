@@ -1148,7 +1148,7 @@ export default function StorageTools({ initialStages }: StorageToolsProps) {
               )
               .map((t) => t.growth!.daysInPeriod);
             if (!periods?.length) return null;
-            const maxPeriod = Math.max(...periods);
+            const maxPeriod = Math.round(Math.max(...periods));
             return (
               <div className="px-2 sm:px-0 pt-1 text-xs text-gray-500">
                 * Based on last {maxPeriod} {maxPeriod === 1 ? "day" : "days"}

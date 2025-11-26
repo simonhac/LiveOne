@@ -312,18 +312,19 @@ async function calculateStatsAtRuntime() {
 
 /**
  * Calculate growth rate from historical snapshots (fallback when not pre-computed)
+ * Finds the snapshot closest to 30 days ago and calculates growth from there.
  */
 async function calculateGrowthFromSnapshots(tableName: string) {
   const now = new Date();
   const today = now.toISOString().split("T")[0];
   const currentHour = now.getUTCHours();
 
-  // Target: 30 days ago at the same hour
-  const targetDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  const targetDateStr = targetDate.toISOString().split("T")[0];
-  const targetHour = targetDate.getUTCHours();
+  // Target: 30 days ago
+  const target30DaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const targetDateStr = target30DaysAgo.toISOString().split("T")[0];
+  const targetHour = target30DaysAgo.getUTCHours();
 
-  // Find snapshot closest to exactly 30 days ago
+  // Find snapshot closest to 30 days ago
   const oldSnapshot = await rawClient.execute({
     sql: `SELECT record_count, data_mb, index_mb, snapshot_date, snapshot_hour,
             ABS(
@@ -337,8 +338,8 @@ async function calculateGrowthFromSnapshots(tableName: string) {
     args: [targetDateStr, targetHour, tableName],
   });
 
-  // Get today's/latest snapshot
-  const todaySnapshot = await rawClient.execute({
+  // Get latest snapshot
+  const latestSnapshot = await rawClient.execute({
     sql: `SELECT record_count, data_mb, index_mb, snapshot_date, snapshot_hour
           FROM db_growth_snapshots
           WHERE table_name = ?
@@ -347,47 +348,47 @@ async function calculateGrowthFromSnapshots(tableName: string) {
     args: [tableName],
   });
 
-  if (oldSnapshot.rows.length > 0 && todaySnapshot.rows.length > 0) {
-    const old = oldSnapshot.rows[0] as any;
-    const current = todaySnapshot.rows[0] as any;
-
-    // Calculate precise time difference
-    const oldHour = old.snapshot_hour ?? 0;
-    const currentSnapshotHour = current.snapshot_hour ?? currentHour;
-    const oldTime = new Date(
-      `${old.snapshot_date}T${oldHour.toString().padStart(2, "0")}:00:00Z`,
-    );
-    const currentTime = new Date(
-      `${current.snapshot_date}T${currentSnapshotHour.toString().padStart(2, "0")}:00:00Z`,
-    );
-
-    const hoursDiff =
-      (currentTime.getTime() - oldTime.getTime()) / (1000 * 60 * 60);
-    const daysDiff = Math.max(0.5, hoursDiff / 24);
-
-    // Calculate deltas
-    const recordsDelta = current.record_count - old.record_count;
-    const dataMbDelta = current.data_mb - old.data_mb;
-    const indexMbDelta = current.index_mb - old.index_mb;
-
+  if (oldSnapshot.rows.length === 0 || latestSnapshot.rows.length === 0) {
     return {
-      recordsPerDay: Math.round((recordsDelta / daysDiff) * 10) / 10,
-      dataMbPerDay: Math.round((dataMbDelta / daysDiff) * 1000) / 1000,
-      indexMbPerDay: Math.round((indexMbDelta / daysDiff) * 1000) / 1000,
-      totalMbPerDay:
-        Math.round(((dataMbDelta + indexMbDelta) / daysDiff) * 1000) / 1000,
-      daysInPeriod: Math.round(daysDiff * 10) / 10,
-      using30DayWindow: Math.abs(daysDiff - 30) <= 0.5,
+      recordsPerDay: null,
+      dataMbPerDay: null,
+      indexMbPerDay: null,
+      totalMbPerDay: null,
+      daysInPeriod: 0,
+      using30DayWindow: false,
     };
   }
 
+  const old = oldSnapshot.rows[0] as any;
+  const current = latestSnapshot.rows[0] as any;
+
+  // Calculate precise days difference
+  const oldHour = old.snapshot_hour ?? 0;
+  const currentSnapshotHour = current.snapshot_hour ?? currentHour;
+  const oldTime = new Date(
+    `${old.snapshot_date}T${oldHour.toString().padStart(2, "0")}:00:00Z`,
+  );
+  const currentTime = new Date(
+    `${current.snapshot_date}T${currentSnapshotHour.toString().padStart(2, "0")}:00:00Z`,
+  );
+  const daysDiff = Math.max(
+    1,
+    (currentTime.getTime() - oldTime.getTime()) / (1000 * 60 * 60 * 24),
+  );
+
+  // Calculate deltas
+  const recordsDelta = current.record_count - old.record_count;
+  const dataMbDelta = current.data_mb - old.data_mb;
+  const indexMbDelta = current.index_mb - old.index_mb;
+
   return {
-    recordsPerDay: null,
-    dataMbPerDay: null,
-    indexMbPerDay: null,
-    totalMbPerDay: null,
-    daysInPeriod: 0,
-    using30DayWindow: false,
+    recordsPerDay: Math.round((recordsDelta / daysDiff) * 10) / 10,
+    dataMbPerDay: Math.round((dataMbDelta / daysDiff) * 1000) / 1000,
+    indexMbPerDay: Math.round((indexMbDelta / daysDiff) * 1000) / 1000,
+    totalMbPerDay:
+      Math.round(((dataMbDelta + indexMbDelta) / daysDiff) * 1000) / 1000,
+    daysInPeriod: Math.round(daysDiff * 10) / 10,
+    using30DayWindow: Math.abs(daysDiff - 30) <= 0.5,
   };
 }
 

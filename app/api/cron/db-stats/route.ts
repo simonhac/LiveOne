@@ -188,16 +188,16 @@ async function handleRequest(request: NextRequest) {
       };
     }
 
-    // 3. Calculate growth rates for each table
+    // 3. Calculate growth rates by finding snapshot closest to 30 days ago
     console.log("[DB Stats Cron] Calculating growth rates...");
     const now = new Date();
     const today = now.toISOString().split("T")[0];
     const snapshotHour = now.getUTCHours();
 
-    // Target: 30 days ago at the same hour
-    const targetDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const targetDateStr = targetDate.toISOString().split("T")[0];
-    const targetHour = targetDate.getUTCHours();
+    // Target: 30 days ago
+    const target30DaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const targetDateStr = target30DaysAgo.toISOString().split("T")[0];
+    const targetHour = target30DaysAgo.getUTCHours();
 
     const growthData: Record<
       string,
@@ -211,7 +211,10 @@ async function handleRequest(request: NextRequest) {
     > = {};
 
     for (const tableName of Object.keys(tableStats)) {
-      // Find snapshot closest to exactly 30 days ago (using julianday for precise distance)
+      const current = tableStats[tableName];
+      const sizes = sizeMap[tableName];
+
+      // Find snapshot closest to 30 days ago (using julianday for precise distance)
       const oldSnapshot = await rawClient.execute({
         sql: `SELECT record_count, data_mb, index_mb, snapshot_date, snapshot_hour,
                 ABS(
@@ -225,39 +228,7 @@ async function handleRequest(request: NextRequest) {
         args: [targetDateStr, targetHour, tableName],
       });
 
-      if (oldSnapshot.rows.length > 0) {
-        const old = oldSnapshot.rows[0] as any;
-        const current = tableStats[tableName];
-        const sizes = sizeMap[tableName];
-
-        // Calculate precise time difference in hours, then convert to days
-        const oldHour = old.snapshot_hour ?? 0;
-        const oldTime = new Date(
-          `${old.snapshot_date}T${oldHour.toString().padStart(2, "0")}:00:00Z`,
-        );
-        const currentTime = new Date(
-          `${today}T${snapshotHour.toString().padStart(2, "0")}:00:00Z`,
-        );
-
-        const hoursDiff =
-          (currentTime.getTime() - oldTime.getTime()) / (1000 * 60 * 60);
-        const daysDiff = Math.max(0.5, hoursDiff / 24); // Minimum 0.5 days (12 hours)
-
-        // Calculate deltas
-        const recordsDelta = current.count - (old.record_count as number);
-        const dataMbDelta = (sizes?.dataMb ?? 0) - (old.data_mb as number);
-        const indexMbDelta = (sizes?.indexesMb ?? 0) - (old.index_mb as number);
-
-        growthData[tableName] = {
-          recordsPerDay: Math.round((recordsDelta / daysDiff) * 10) / 10,
-          dataMbPerDay: Math.round((dataMbDelta / daysDiff) * 1000) / 1000,
-          indexMbPerDay: Math.round((indexMbDelta / daysDiff) * 1000) / 1000,
-          totalMbPerDay:
-            Math.round(((dataMbDelta + indexMbDelta) / daysDiff) * 1000) / 1000,
-          growthDays: Math.round(daysDiff * 10) / 10, // Round to 1 decimal place
-        };
-      } else {
-        // No historical data available
+      if (oldSnapshot.rows.length === 0) {
         growthData[tableName] = {
           recordsPerDay: null,
           dataMbPerDay: null,
@@ -265,7 +236,37 @@ async function handleRequest(request: NextRequest) {
           totalMbPerDay: null,
           growthDays: null,
         };
+        continue;
       }
+
+      const old = oldSnapshot.rows[0] as any;
+
+      // Calculate precise days difference
+      const oldHour = old.snapshot_hour ?? 0;
+      const oldTime = new Date(
+        `${old.snapshot_date}T${oldHour.toString().padStart(2, "0")}:00:00Z`,
+      );
+      const currentTime = new Date(
+        `${today}T${snapshotHour.toString().padStart(2, "0")}:00:00Z`,
+      );
+      const daysDiff = Math.max(
+        1,
+        (currentTime.getTime() - oldTime.getTime()) / (1000 * 60 * 60 * 24),
+      );
+
+      // Calculate deltas
+      const recordsDelta = current.count - (old.record_count as number);
+      const dataMbDelta = (sizes?.dataMb ?? 0) - (old.data_mb as number);
+      const indexMbDelta = (sizes?.indexesMb ?? 0) - (old.index_mb as number);
+
+      growthData[tableName] = {
+        recordsPerDay: Math.round((recordsDelta / daysDiff) * 10) / 10,
+        dataMbPerDay: Math.round((dataMbDelta / daysDiff) * 1000) / 1000,
+        indexMbPerDay: Math.round((indexMbDelta / daysDiff) * 1000) / 1000,
+        totalMbPerDay:
+          Math.round(((dataMbDelta + indexMbDelta) / daysDiff) * 1000) / 1000,
+        growthDays: Math.round(daysDiff * 10) / 10,
+      };
     }
 
     // 4. Store snapshots with all computed values
@@ -280,7 +281,7 @@ async function handleRequest(request: NextRequest) {
       const growth = growthData[tableName];
 
       if (sizes && stats.count > 0) {
-        // Determine if this is an exact 30-day calculation (within 0.5 day tolerance)
+        // is_estimated = 1 if not exactly 30 days, 0 if within 0.5 days of 30
         const isEstimated =
           growth.growthDays === null || Math.abs(growth.growthDays - 30) > 0.5
             ? 1
@@ -361,4 +362,257 @@ async function handleRequest(request: NextRequest) {
 
 // Allow both GET and POST for convenience (GET works in browser address bar)
 export const GET = handleRequest;
-export const POST = handleRequest;
+
+// POST supports action parameter for backfill
+export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+
+  // Validate authorization
+  const isValid = await validateCronRequest(request);
+  if (!isValid) {
+    const isDev = process.env.NODE_ENV === "development";
+    const claudeHeader = request.headers.get("x-claude");
+
+    if (!(isDev && claudeHeader === "true")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+  }
+
+  try {
+    const body = await request.json().catch(() => ({}));
+
+    if (body.action === "backfill") {
+      const result = await backfillHistoricalSnapshots();
+      return NextResponse.json({
+        success: true,
+        action: "backfill",
+        durationMs: Date.now() - startTime,
+        ...result,
+      });
+    }
+
+    // Default: run normal stats calculation
+    return handleRequest(request);
+  } catch (error) {
+    console.error("[DB Stats] Error:", error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    );
+  }
+}
+
+/**
+ * Backfill historical snapshots by counting records at each checkpoint time.
+ * Uses actual created_at timestamps to get exact record counts.
+ */
+async function backfillHistoricalSnapshots(): Promise<{
+  tablesProcessed: number;
+  snapshotsInserted: number;
+}> {
+  console.log("[DB Stats Backfill] Starting historical snapshot backfill...");
+
+  // Table configurations with timestamp column info
+  // Uses indexed columns for efficient COUNT queries on all tables:
+  // - readings: inverter_time (indexed)
+  // - point_readings: measurement_time (indexed)
+  // - readings_agg_5m: interval_end (indexed)
+  // - point_readings_agg_5m: interval_end (indexed)
+  // - sessions: started (indexed)
+  // - Small tables (<1K rows): full scan OK
+  const tableConfigs: {
+    name: string;
+    timestampColumn: string;
+    isMilliseconds: boolean;
+  }[] = [
+    // Large tables - use indexed columns for efficiency
+    {
+      name: "readings",
+      timestampColumn: "inverter_time", // indexed: inverter_time_idx
+      isMilliseconds: false,
+    },
+    {
+      name: "point_readings",
+      timestampColumn: "measurement_time", // indexed: pr_measurement_time_idx
+      isMilliseconds: true,
+    },
+    // Medium tables - use indexed columns
+    {
+      name: "readings_agg_5m",
+      timestampColumn: "interval_end", // indexed: readings_agg_5m_interval_end_idx
+      isMilliseconds: false,
+    },
+    {
+      name: "point_readings_agg_5m",
+      timestampColumn: "interval_end", // indexed: pr5m_interval_end_idx (1.1M rows)
+      isMilliseconds: true,
+    },
+    {
+      name: "sessions",
+      timestampColumn: "started", // indexed: sessions_started_idx (117K rows)
+      isMilliseconds: false,
+    },
+    // Small tables (<1K rows) - full scan OK
+    {
+      name: "readings_agg_1d",
+      timestampColumn: "created_at",
+      isMilliseconds: false,
+    },
+    { name: "systems", timestampColumn: "created_at", isMilliseconds: false },
+    {
+      name: "user_systems",
+      timestampColumn: "created_at",
+      isMilliseconds: false,
+    },
+    { name: "point_info", timestampColumn: "created", isMilliseconds: true },
+  ];
+
+  // Get current sizes for all tables (for bytes-per-record calculation)
+  const sizeResult = await rawClient.execute(`
+    WITH table_data AS (
+      SELECT
+        name as table_name,
+        ROUND(SUM(pgsize) / 1024.0 / 1024.0, 4) as data_mb
+      FROM dbstat
+      WHERE name NOT LIKE 'sqlite_%'
+        AND name NOT LIKE '%_idx'
+        AND name NOT LIKE '%_index'
+        AND name NOT LIKE 'idx_%'
+        AND name NOT LIKE '%unique%'
+      GROUP BY name
+    ),
+    index_data AS (
+      SELECT
+        m.tbl_name as table_name,
+        ROUND(SUM(d.pgsize) / 1024.0 / 1024.0, 4) as indexes_mb
+      FROM sqlite_master m
+      JOIN dbstat d ON d.name = m.name
+      WHERE m.type = 'index'
+        AND m.name NOT LIKE 'sqlite_%'
+      GROUP BY m.tbl_name
+    )
+    SELECT
+      COALESCE(t.table_name, i.table_name) as table_name,
+      COALESCE(t.data_mb, 0) as data_mb,
+      COALESCE(i.indexes_mb, 0) as indexes_mb
+    FROM table_data t
+    LEFT JOIN index_data i ON t.table_name = i.table_name
+  `);
+
+  const sizeMap: Record<string, { dataMb: number; indexMb: number }> = {};
+  for (const row of sizeResult.rows as any[]) {
+    sizeMap[row.table_name] = {
+      dataMb: row.data_mb,
+      indexMb: row.indexes_mb,
+    };
+  }
+
+  // Generate checkpoint times: 60 days × 2 checkpoints (02:00 and 14:00 UTC)
+  const checkpoints: { date: string; hour: number; timestampSec: number }[] =
+    [];
+  const now = new Date();
+
+  for (let daysAgo = 1; daysAgo <= 60; daysAgo++) {
+    for (const hour of [2, 14]) {
+      const checkpointDate = new Date(now);
+      checkpointDate.setUTCDate(checkpointDate.getUTCDate() - daysAgo);
+      checkpointDate.setUTCHours(hour, 0, 0, 0);
+
+      checkpoints.push({
+        date: checkpointDate.toISOString().split("T")[0],
+        hour,
+        timestampSec: Math.floor(checkpointDate.getTime() / 1000),
+      });
+    }
+  }
+
+  let snapshotsInserted = 0;
+
+  for (const config of tableConfigs) {
+    const sizes = sizeMap[config.name];
+    if (!sizes) {
+      console.log(`[DB Stats Backfill] Skipping ${config.name} - no size data`);
+      continue;
+    }
+
+    // Get current record count
+    const countResult = await rawClient.execute(
+      `SELECT COUNT(*) as count FROM ${config.name}`,
+    );
+    const currentCount = (countResult.rows[0] as any).count as number;
+
+    if (currentCount === 0) {
+      console.log(`[DB Stats Backfill] Skipping ${config.name} - empty table`);
+      continue;
+    }
+
+    // Calculate bytes per record (for size estimation)
+    const bytesPerRecord =
+      ((sizes.dataMb + sizes.indexMb) * 1024 * 1024) / currentCount;
+
+    console.log(
+      `[DB Stats Backfill] Processing ${config.name}: ${currentCount} records, ${bytesPerRecord.toFixed(0)} bytes/record`,
+    );
+
+    for (const checkpoint of checkpoints) {
+      // Check if snapshot already exists
+      const existingResult = await rawClient.execute({
+        sql: `SELECT 1 FROM db_growth_snapshots
+              WHERE snapshot_date = ? AND snapshot_hour = ? AND table_name = ?`,
+        args: [checkpoint.date, checkpoint.hour, config.name],
+      });
+
+      if (existingResult.rows.length > 0) {
+        continue; // Don't overwrite existing snapshots
+      }
+
+      // Count records at this checkpoint time
+      const timestampValue = config.isMilliseconds
+        ? checkpoint.timestampSec * 1000
+        : checkpoint.timestampSec;
+
+      const historicalCount = await rawClient.execute({
+        sql: `SELECT COUNT(*) as count FROM ${config.name} WHERE ${config.timestampColumn} < ?`,
+        args: [timestampValue],
+      });
+
+      const recordCount = (historicalCount.rows[0] as any).count as number;
+
+      // Estimate sizes proportionally
+      const ratio = recordCount / currentCount;
+      const estimatedDataMb = Math.round(sizes.dataMb * ratio * 1000) / 1000;
+      const estimatedIndexMb = Math.round(sizes.indexMb * ratio * 1000) / 1000;
+
+      // Insert historical snapshot
+      await rawClient.execute({
+        sql: `INSERT INTO db_growth_snapshots
+                (snapshot_date, snapshot_hour, table_name, record_count, data_mb, index_mb,
+                 is_estimated, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+        args: [
+          checkpoint.date,
+          checkpoint.hour,
+          config.name,
+          recordCount,
+          estimatedDataMb,
+          estimatedIndexMb,
+          Date.now(),
+        ],
+      });
+
+      snapshotsInserted++;
+    }
+  }
+
+  console.log(
+    `[DB Stats Backfill] Completed. Inserted ${snapshotsInserted} historical snapshots.`,
+  );
+
+  return {
+    tablesProcessed: tableConfigs.length,
+    snapshotsInserted,
+  };
+}
