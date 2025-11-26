@@ -166,7 +166,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       // Still insert into readings table for backward compatibility
       return this.polled(
         transformed,
-        1,
+        readingsToInsert.length,
         nextPollTime,
         response.rawResponse, // Pass the raw response object
       );

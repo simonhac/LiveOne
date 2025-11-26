@@ -257,7 +257,7 @@ export async function POST(request: NextRequest) {
         duration,
         successful: true,
         response: data,
-        numRows: 1,
+        numRows: readingsToInsert.length,
       });
 
       console.log(
