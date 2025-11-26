@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
           ORDER BY snapshot_date DESC, COALESCE(snapshot_hour, 0) DESC
           LIMIT 1
         )
-        ORDER BY table_name
+        ORDER BY record_count DESC
       `);
 
       if (snapshotResult.rows.length > 0) {
