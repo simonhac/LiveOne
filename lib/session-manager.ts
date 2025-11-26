@@ -521,14 +521,8 @@ export class SessionManager {
       const pageSize = Math.min(params.pageSize ?? 100, 100); // Cap at 100
       const offset = page * pageSize;
 
-      // Get total count if requested
-      // TODO: Fix count query - Drizzle count() has type issues
-      // For now, we return the page size as an estimate
-      let totalCount: number | undefined;
-      if (params.includeTotalCount) {
-        // Temporary workaround: return undefined to indicate unknown total
-        totalCount = undefined;
-      }
+      // Count query is skipped for performance - "go to last" unavailable
+      const totalCount: number | undefined = undefined;
 
       // Execute main query with JOIN to systems table
       // Response field will be excluded in the mapping below for performance

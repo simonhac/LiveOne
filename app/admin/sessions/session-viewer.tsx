@@ -10,9 +10,10 @@ import {
   ArrowDown,
   X,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Check,
   ChevronsLeft,
-  ChevronsRight,
 } from "lucide-react";
 import SessionInfoModal from "@/components/SessionInfoModal";
 import {
@@ -275,6 +276,28 @@ export default function ActivityViewer() {
   const [currentPage, setCurrentPage] = useState(0);
   const [totalCount, setTotalCount] = useState<number | null>(null);
   const pageSize = 100;
+
+  // Track modifier key for pagination jump behavior
+  const [modifierHeld, setModifierHeld] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey || e.shiftKey) {
+        setModifierHeld(true);
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (!e.metaKey && !e.shiftKey) {
+        setModifierHeld(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, []);
 
   // Update URL when sorting, filters, or time range change
   useEffect(() => {
@@ -686,14 +709,33 @@ export default function ActivityViewer() {
               : currentPage > 0 || hasMorePages) && (
               <>
                 <button
-                  onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
+                  onClick={(e) => {
+                    if (e.metaKey || e.shiftKey || modifierHeld) {
+                      setCurrentPage(0);
+                    } else {
+                      setCurrentPage((p) => Math.max(0, p - 1));
+                    }
+                  }}
                   disabled={currentPage === 0}
                   className="p-1 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-gray-400 hover:text-gray-200 hover:bg-gray-700"
-                  title="Previous page"
+                  title={
+                    modifierHeld
+                      ? "First page"
+                      : "Previous page (hold ⇧/⌘ for first)"
+                  }
                 >
-                  <ChevronsLeft className="h-4 w-4" />
+                  {modifierHeld ? (
+                    <ChevronsLeft className="h-4 w-4" />
+                  ) : (
+                    <ChevronLeft className="h-4 w-4" />
+                  )}
                 </button>
-                <span className="text-xs text-gray-400">
+                <button
+                  onClick={() => setCurrentPage(0)}
+                  disabled={currentPage === 0}
+                  className="text-xs text-gray-400 hover:text-gray-200 disabled:hover:text-gray-400 transition-colors"
+                  title="Go to first page"
+                >
                   {totalPages !== undefined ? (
                     <>
                       Page {currentPage + 1} of {totalPages}
@@ -701,15 +743,15 @@ export default function ActivityViewer() {
                   ) : (
                     <>Page {currentPage + 1}</>
                   )}
-                </span>
+                </button>
                 <button
-                  onClick={() =>
+                  onClick={() => {
                     setCurrentPage((p) =>
                       totalPages !== undefined
                         ? Math.min(totalPages - 1, p + 1)
                         : p + 1,
-                    )
-                  }
+                    );
+                  }}
                   disabled={
                     totalPages !== undefined
                       ? currentPage >= totalPages - 1
@@ -718,7 +760,7 @@ export default function ActivityViewer() {
                   className="p-1 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-gray-400 hover:text-gray-200 hover:bg-gray-700"
                   title="Next page"
                 >
-                  <ChevronsRight className="h-4 w-4" />
+                  <ChevronRight className="h-4 w-4" />
                 </button>
               </>
             )}
