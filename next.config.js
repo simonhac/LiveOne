@@ -1,4 +1,6 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {}
+const nextConfig = {
+  distDir: process.env.BUILD_DIR || ".next",
+};
 
-module.exports = nextConfig
+module.exports = nextConfig;
