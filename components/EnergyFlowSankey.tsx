@@ -425,7 +425,11 @@ export default function EnergyFlowSankey({
         // Add label box with background
         const labelBoxWidth = 80;
         const labelBoxX = centerX - labelBoxWidth / 2;
-        const labelBoxY = topY;
+        // When only showing label (no value), center the label box vertically
+        const labelBoxY =
+          boxHeight < minHeightForValue
+            ? node.y0 + (boxHeight - labelBoxHeight) / 2
+            : topY;
 
         const labelBox = document.createElementNS(
           "http://www.w3.org/2000/svg",
