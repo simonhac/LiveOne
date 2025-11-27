@@ -524,37 +524,39 @@ export default function SystemPowerCards({
         {showGrid && getPointValue("bidi.grid/power") !== null && (
           <PowerCard
             title="Grid"
-            value={formatPower(gridPower)}
+            value={
+              Math.abs(gridPower) < 100 ? "Neutral" : formatPower(gridPower)
+            }
             icon={<Zap className="w-6 h-6" />}
             iconColor={
-              gridPower > 0
+              gridPower >= 100
                 ? "text-red-400"
-                : gridPower < 0
+                : gridPower <= -100
                   ? "text-green-400"
                   : "text-gray-400"
             }
             bgColor={
-              gridPower > 0
+              gridPower >= 100
                 ? "bg-red-900/20"
-                : gridPower < 0
+                : gridPower <= -100
                   ? "bg-green-900/20"
                   : "bg-gray-900/20"
             }
             borderColor={
-              gridPower > 0
+              gridPower >= 100
                 ? "border-red-700"
-                : gridPower < 0
+                : gridPower <= -100
                   ? "border-green-700"
                   : "border-gray-700"
             }
             staleThresholdSeconds={getStaleThreshold(vendorType)}
             measurementTime={getMeasurementTime("bidi.grid/power") || undefined}
             extraInfo={
-              gridPower > 0
+              gridPower >= 100
                 ? "Importing"
-                : gridPower < 0
+                : gridPower <= -100
                   ? "Exporting"
-                  : "Neutral"
+                  : undefined
             }
           />
         )}
