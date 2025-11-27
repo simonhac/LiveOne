@@ -868,17 +868,16 @@ export default function ViewDataModal({
                         <span className="text-gray-300">Physical Path</span>
                       ) : key === "sessionLabel" ? (
                         <div></div>
-                      ) : getSeriesIdSuffix(key, pointInfo) ? (
+                      ) : pointInfo?.physicalPath ? (
                         <span
                           className={`text-xs text-gray-500 font-mono ${
                             !pointInfo?.active ? "line-through" : ""
                           }`}
                           dangerouslySetInnerHTML={{
-                            __html:
-                              getSeriesIdSuffix(key, pointInfo)?.replace(
-                                /\./g,
-                                ".<wbr>",
-                              ) || "",
+                            __html: pointInfo.physicalPath.replace(
+                              /\//g,
+                              "/<wbr>",
+                            ),
                           }}
                         />
                       ) : (
