@@ -654,6 +654,131 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 - **HeatmapChart**: Time-based pattern visualization
 - **AmberCard**: Price display component
 
+## 23–25 November 2025
+
+### Dashboard Routing Refactor
+
+- **Catch-all route**: Consolidated `/dashboard/[...slug]` handles all dashboard routes
+- **Sub-pages**: heatmap, generator, amber, latest - accessible via `/dashboard/{id}/{subpage}`
+- **URL patterns**: Support both numeric IDs and username/alias paths
+- **Header refactor**: Unified navigation across all sub-pages
+- **Redundant API elimination**: Sub-page components share data fetching
+- **Menu visibility fixes**: Dashboard menu and layout improvements
+
+### New Sub-Pages
+
+- **/dashboard/{id}/generator**: Generator events and runtime tracking
+- **/dashboard/{id}/latest**: Latest readings inspection with real-time data
+- **/dashboard/{id}/amber**: Amber price sync (restricted to amber vendorTypes)
+- **Generator events API**: `/api/system/[systemId]/generator-events`
+
+### API Route Restructure
+
+- **New `/api/system/[systemId]/` namespace**:
+  - `generator-events/` - Generator runtime events
+  - `latest/` - Latest point values
+  - `point/[pointId]/` - Individual point data
+  - `points/` - All points for system
+  - `series/` - Available data series
+- **Migrated from**: `/api/system/[systemIdentifier]/` to numeric `[systemId]`
+
+### User Preferences
+
+- **Default system**: Users can set a preferred default system
+- **Per-user storage**: `/api/user/preferences` endpoint
+- **Automatic redirect**: Dashboard redirects to default system
+
+### Database Growth Monitoring
+
+- **Daily snapshots**: Track database size over time via cron job
+- **Hourly snapshots**: Fine-grained size tracking
+- **30-day growth calculation**: Find closest historical snapshot for comparison
+- **Backfill support**: Historical db snapshot restoration with indexed queries
+- **Admin storage page**: Reorganized display with growth metrics
+- **Table sorting**: Descending by record count
+
+### PointManager Refactoring
+
+- **Composite system support**: Fixed points API for composite systems
+- **Centralized filtering**: PointManager handles all series extraction
+- **PointPath class removed**: Replaced with utility functions
+
+## 26 November 2025
+
+### Amber Live Price Display
+
+- **Real-time price**: Live electricity price shown on dashboard
+- **TT Interphases font**: CRT-style retro monospace aesthetic
+- **Period highlighting**: Visual indicator for current tariff period
+- **Scanline effects**: CRT monitor simulation overlay
+- **Dashboard refresh pattern**: Auto-refresh for live data updates
+- **Amber subpage restriction**: Only show for amber vendorTypes
+
+### Sessions Page Improvements
+
+- **17s → <100ms**: Optimized filter-options endpoint dramatically
+- **SQL DISTINCT**: Replaced fetch-all with database-level distinct queries
+- **Session tri-state**: `successful` field now nullable (success/fail/unknown)
+- **Pagination shortcuts**: Quick navigation for large session lists
+- **Modal flash fix**: Eliminated UI flash when clicking system links
+- **Denormalization removal**: Removed system_name and vendor_type from sessions table
+
+### Legacy Code Removal
+
+- **Removed `readings` table**: Deprecated original data storage
+- **Removed `readings_agg_5m`**: Legacy aggregation (replaced by point_readings_agg_5m)
+- **dataStore elimination**: Removed legacy data access layer
+- **Admin API cleanup**: Removed references to deprecated tables
+- **Schema cleanup**: Removed unused table definitions
+
+## 27 November 2025
+
+### Point Path Architecture
+
+- **logicalPath/physicalPath split**: Clear separation of concerns
+  - `physicalPath`: Vendor-specific raw path (e.g., `meter1/power`)
+  - `logicalPath`: Normalized semantic path (e.g., `load.hws/power`)
+  - `logicalPathStem`: Path without metric suffix (e.g., `load.hws`)
+- **Schema simplification**: point_info now uses physicalPath and logicalPathStem
+- **KV cache filtering**: Improved subscription filtering with logical paths
+- **ViewDataModal fix**: Physical path display correction
+
+### Path Utilities Refactor
+
+- **stemSplit() utility**: Parse path stems for flexible matching
+- **Logical path module**: `lib/path-utils/logical.ts`
+- **Physical path module**: `lib/path-utils/physical.ts`
+- **PointPath class removed**: Replaced with pure functions
+
+### Bug Fixes
+
+- **Selectronic adapter**: Report actual records count (was always 0)
+- **PollAllModal**: Error tooltip and flash fixes
+- **Zero records display**: Show "0" instead of dash in sessions table
+- **Subscriber summary**: Fix startsWith error on undefined logicalPath
+
+## 28 November 2025
+
+### Sankey Diagram Polish
+
+- **GPU-accelerated animation**: scaleX transform for smooth timeline transitions
+- **Connector gap fix**: Extended connectors into boxes to fill rounded corner gaps
+- **Label positioning**: Centered vertically in small nodes
+- **Data value alignment**: Label box moved 2px higher when showing data values
+- **"Other Loads" rename**: Changed from "Rest of House", shortened to "Other" in diagram
+
+### UI/UX Refinements
+
+- **"Neutral" grid state**: Show "Neutral" when grid power under 100W (instead of tiny import/export)
+- **Poll Now button**: Fixed disabled state for main dashboard view
+- **fault_code metricUnit**: Changed from text to number type
+
+### Developer Experience
+
+- **build:local script**: Separate `.next-build` directory to avoid killing dev server
+- **README updates**: Expanded architecture docs, heatmap and Amber features
+- **Admin/systems optimization**: Page load performance improvements
+
 ---
 
 # Major Architectural Milestones
@@ -666,6 +791,8 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 4. **Point readings** (4 October): Multi-point system support
 5. **Composite primary keys** (3 November): Point table restructuring
 6. **Upstash Redis KV** (14 November): Real-time caching layer
+7. **Legacy table removal** (26 November): Removed deprecated readings tables
+8. **Database growth tracking** (23 November): Hourly/daily size snapshots
 
 ## Vendor Integration Timeline
 
@@ -689,6 +816,7 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 3. **History refactor** (12 October): MeasurementSeries
 4. **Series filtering** (11 November): Glob patterns
 5. **KV subscriptions** (14 November): Real-time cache
+6. **Route restructure** (23 November): `/api/system/[systemId]/` namespace
 
 ## Key UI Components
 
@@ -698,6 +826,10 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 4. **EnergyFlowSankey** (7 November): Energy flow diagrams
 5. **Point Inspector** (9 November): Deep data inspection
 6. **HeatmapChart** (22 November): Pattern visualization
+7. **Generator page** (23 November): Generator runtime tracking
+8. **Amber live display** (26 November): CRT-style price display
+9. **Latest readings page** (26 November): Real-time point inspection
+10. **Dashboard routing** (23 November): Catch-all `[...slug]` consolidation
 
 ## Critical Incidents
 
