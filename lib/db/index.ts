@@ -4,6 +4,7 @@ import Database from "better-sqlite3";
 import { drizzle as drizzleSqlite } from "drizzle-orm/better-sqlite3";
 import { DATABASE_CONFIG } from "@/config";
 import * as schema from "./schema";
+import { pointReadings } from "./schema-monitoring-points";
 
 // Determine database type based on config
 const isProduction = process.env.NODE_ENV === "production";
@@ -120,17 +121,19 @@ export const dbUtils = {
    */
   async getStats() {
     const systemCount = await db.select().from(schema.systems);
-    const readingCount = await db.select().from(schema.readings);
+    const readingCount = await db.select().from(pointReadings);
     const latestReading = await db
       .select()
-      .from(schema.readings)
-      .orderBy(desc(schema.readings.inverterTime))
+      .from(pointReadings)
+      .orderBy(desc(pointReadings.measurementTimeMs))
       .limit(1);
 
     return {
       systems: systemCount.length,
       readings: readingCount.length,
-      latestReading: latestReading[0]?.inverterTime || null,
+      latestReading: latestReading[0]?.measurementTimeMs
+        ? new Date(latestReading[0].measurementTimeMs)
+        : null,
     };
   },
 
@@ -143,10 +146,10 @@ export const dbUtils = {
     cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
 
     try {
-      // Delete old raw readings
+      // Delete old point readings
       await db
-        .delete(schema.readings)
-        .where(lt(schema.readings.inverterTime, cutoffDate));
+        .delete(pointReadings)
+        .where(lt(pointReadings.measurementTimeMs, cutoffDate.getTime()));
 
       console.log(`[DB] Cleaned up data older than ${retentionDays} days`);
     } catch (error) {

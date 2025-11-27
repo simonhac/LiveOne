@@ -1,12 +1,9 @@
 import { sql, and, eq, gte, lte } from "drizzle-orm";
 import {
   systems,
-  readings,
   userSystems,
   clerkIdMapping,
   pollingStatus,
-  readingsAgg5m,
-  readingsAgg1d,
   sessions,
   syncStatus,
 } from "@/lib/db/schema";
@@ -482,25 +479,6 @@ export interface StageDefinition {
   }>;
 }
 
-// Stage 1: Check local database
-async function checkLocalDatabase(ctx: SyncContext) {
-  const latestReading = await ctx.db
-    .select()
-    .from(readings)
-    .orderBy(sql`inverter_time DESC`)
-    .limit(1);
-
-  const localLatestTime = latestReading[0]?.inverterTime || new Date(0);
-
-  const systemCount = await ctx.db.select().from(systems);
-  const readingCount = await ctx.db.select().from(readings);
-
-  return {
-    detail: `${systemCount.length} systems, ${readingCount.length.toLocaleString()} readings`,
-    context: { localLatestTime },
-  };
-}
-
 // Stage 2: Connect to production
 async function connectToProduction(ctx: SyncContext) {
   // IMPORTANT: For security, use a read-only Turso auth token for sync operations.
@@ -762,64 +740,46 @@ async function countRecordsToSync(ctx: SyncContext) {
     syncFromTimestampMs = syncFromTime.getTime();
   }
 
-  // Count local records in all tables
+  // Count local records in point tables
   const localCountResult = await rawClient.execute(
     `SELECT
-      (SELECT COUNT(*) FROM readings) as readings_count,
       (SELECT COUNT(*) FROM point_readings) as point_readings_count,
-      (SELECT COUNT(*) FROM readings_agg_5m) as readings_agg_5m_count,
       (SELECT COUNT(*) FROM point_readings_agg_5m) as point_readings_agg_5m_count,
-      (SELECT COUNT(*) FROM readings_agg_1d) as readings_agg_1d_count,
       (SELECT COUNT(*) FROM point_readings_agg_1d) as point_readings_agg_1d_count,
       (SELECT COUNT(*) FROM sessions) as sessions_count`,
   );
 
   const localRow = localCountResult.rows[0];
   const localCounts = {
-    readings: (localRow?.readings_count as number) || 0,
     point_readings: (localRow?.point_readings_count as number) || 0,
-    readings_agg_5m: (localRow?.readings_agg_5m_count as number) || 0,
     point_readings_agg_5m:
       (localRow?.point_readings_agg_5m_count as number) || 0,
-    readings_agg_1d: (localRow?.readings_agg_1d_count as number) || 0,
     point_readings_agg_1d:
       (localRow?.point_readings_agg_1d_count as number) || 0,
     sessions: (localRow?.sessions_count as number) || 0,
   };
 
-  // Count production records from all tables (only records to sync)
+  // Count production records from point tables (only records to sync)
   const prodCountResult = await ctx.prodDb.execute(
     `SELECT
-      (SELECT COUNT(*) FROM readings WHERE inverter_time > ?) as readings_count,
       (SELECT COUNT(*) FROM point_readings WHERE measurement_time > ?) as point_readings_count,
-      (SELECT COUNT(*) FROM readings_agg_5m WHERE interval_end > ?) as readings_agg_5m_count,
       (SELECT COUNT(*) FROM point_readings_agg_5m WHERE interval_end > ?) as point_readings_agg_5m_count,
-      (SELECT COUNT(*) FROM readings_agg_1d) as readings_agg_1d_count,
       (SELECT COUNT(*) FROM point_readings_agg_1d) as point_readings_agg_1d_count,
       (SELECT COUNT(*) FROM sessions WHERE started > ?) as sessions_count`,
-    [
-      syncFromTimestampSec,
-      syncFromTimestampMs,
-      syncFromTimestampSec,
-      syncFromTimestampMs,
-      syncFromTimestampSec,
-    ],
+    [syncFromTimestampMs, syncFromTimestampMs, syncFromTimestampSec],
   );
 
   const prodRow = prodCountResult.rows[0];
   const counts = {
-    "sync-readings": (prodRow?.readings_count as number) || 0,
     "sync-point-readings": (prodRow?.point_readings_count as number) || 0,
-    "sync-5min-agg": (prodRow?.readings_agg_5m_count as number) || 0,
     "sync-point-5min-agg":
       (prodRow?.point_readings_agg_5m_count as number) || 0,
-    "sync-daily-agg": (prodRow?.readings_agg_1d_count as number) || 0,
     "sync-point-daily-agg":
       (prodRow?.point_readings_agg_1d_count as number) || 0,
     "sync-sessions": (prodRow?.sessions_count as number) || 0,
   };
 
-  const totalToSync = counts["sync-readings"]; // Use readings count for overall progress
+  const totalToSync = counts["sync-point-readings"]; // Use point_readings count for overall progress
 
   // Store the sync time and counts in context
   const context = {
@@ -829,71 +789,8 @@ async function countRecordsToSync(ctx: SyncContext) {
   };
 
   return {
-    detail: `Local: ${localCounts.readings.toLocaleString()} readings, ${localCounts.point_readings.toLocaleString()} point readings`,
+    detail: `Local: ${localCounts.point_readings.toLocaleString()} point readings`,
     context,
-  };
-}
-
-// Stage 6: Sync readings
-async function syncReadings(ctx: SyncContext) {
-  // Use syncFromTime if available (from countNewData), otherwise fall back to localLatestTime
-  const syncFromTime = ctx.syncFromTime || ctx.localLatestTime!;
-  const syncFromTimestamp = Math.floor(syncFromTime.getTime() / 1000);
-
-  // Get stage-specific total from recordCounts
-  const stageTotal = ctx.recordCounts?.["sync-readings"] || 0;
-
-  console.log(
-    `[SYNC] Starting readings sync: ${stageTotal} readings to download from ${syncFromTime.toISOString()}`,
-  );
-  console.log(`[SYNC] recordCounts:`, ctx.recordCounts);
-  console.log(`[SYNC] stageTotal for sync-readings:`, stageTotal);
-
-  // Use generic sync function with progress tracking
-  const result = await syncTableData(ctx, "readings", "readings", {
-    query: `SELECT * FROM readings WHERE inverter_time > ? ORDER BY inverter_time, id`,
-    queryParams: [syncFromTimestamp],
-    mapRow: (row) => {
-      // Map system IDs
-      const mappedSystemId = ctx.mapSystemId(row.system_id as number);
-      if (!mappedSystemId) {
-        console.warn(`Skipping reading for unmapped system ${row.system_id}`);
-        return null;
-      }
-      return {
-        ...row,
-        system_id: mappedSystemId,
-      };
-    },
-    timestampField: "inverter_time",
-    idField: "id",
-    onProgress: createProgressCallback(ctx, "sync-readings"),
-    onComplete: (synced, firstTime, lastTime) => {
-      // Format the date range if we have data
-      let dateRangeStr = "";
-      if (firstTime && lastTime) {
-        const firstZoned = fromUnixTimestamp(
-          Math.floor(firstTime.getTime() / 1000),
-          600,
-        );
-        const lastZoned = fromUnixTimestamp(
-          Math.floor(lastTime.getTime() / 1000),
-          600,
-        );
-        dateRangeStr = ` (${formatDateTimeRange(firstZoned, lastZoned, true)})`;
-      }
-      return `Synced ${synced.toLocaleString()} readings${dateRangeStr}`;
-    },
-  });
-
-  // Update sync_status with the last synced timestamp
-  if (result.lastBatchTime) {
-    await updateSyncStatus(ctx, "readings", result.lastBatchTime);
-  }
-
-  return {
-    detail: result.detail,
-    context: { synced: result.synced },
   };
 }
 
@@ -1038,65 +935,6 @@ async function syncSessions(ctx: SyncContext) {
   };
 }
 
-// Stage: Sync 5-minute aggregations from production
-async function sync5MinAggregations(ctx: SyncContext) {
-  const syncFromTime = ctx.syncFromTime!;
-
-  // Get stage-specific total from recordCounts
-  const stageTotal = ctx.recordCounts?.["sync-5min-agg"] || 0;
-
-  console.log(
-    `[SYNC] Syncing ${stageTotal} 5-minute aggregations from ${syncFromTime.toISOString()}`,
-  );
-
-  if (stageTotal === 0) {
-    return { detail: "No 5-minute aggregations to sync" };
-  }
-
-  // Clear existing aggregations in the sync range
-  const syncFromTimestamp = Math.floor(syncFromTime.getTime() / 1000);
-  const deleteResult = await ctx.db
-    .delete(readingsAgg5m)
-    .where(gte(readingsAgg5m.intervalEnd, syncFromTimestamp));
-
-  // Use generic sync function
-  const result = await syncTableData(
-    ctx,
-    "readings_agg_5m",
-    "readings_agg_5m",
-    {
-      query: `SELECT * FROM readings_agg_5m WHERE interval_end > ? ORDER BY interval_end, system_id`,
-      queryParams: [Math.floor(syncFromTime.getTime() / 1000)],
-      mapRow: (row) => {
-        // Map system IDs
-        const mappedSystemId = ctx.mapSystemId(row.system_id as number);
-        if (!mappedSystemId) {
-          console.warn(
-            `Skipping 5-min aggregation for unmapped system ${row.system_id}`,
-          );
-          return null;
-        }
-        return {
-          ...row,
-          system_id: mappedSystemId,
-        };
-      },
-      timestampField: "interval_end", // 5-min aggregations use interval_end for timestamps
-      idField: "system_id", // Use system_id as secondary cursor (part of composite PK)
-      onProgress: createProgressCallback(ctx, "sync-5min-agg"),
-    },
-  );
-
-  // Update sync_status with the last synced timestamp
-  if (result.lastBatchTime) {
-    await updateSyncStatus(ctx, "readings_agg_5m", result.lastBatchTime);
-  }
-
-  return {
-    detail: `Synced ${result.synced.toLocaleString()} 5-minute aggregations`,
-  };
-}
-
 // Stage: Sync point_readings_agg_5m (5-minute aggregations for monitoring points)
 async function syncPointReadings5MinAggregations(ctx: SyncContext) {
   const syncFromTime = ctx.syncFromTime!;
@@ -1199,92 +1037,6 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
 
   return {
     detail: `Synced ${result.synced.toLocaleString()} point_readings 5-minute aggregations`,
-  };
-}
-
-// Stage 9: Sync ALL daily aggregations from production
-async function syncDailyAggregations(ctx: SyncContext) {
-  const totalToSync = ctx.recordCounts?.["sync-daily-agg"] || 0;
-
-  if (totalToSync === 0) {
-    return { detail: "No daily aggregations to sync" };
-  }
-
-  console.log(`[SYNC] Syncing ${totalToSync} daily aggregations`);
-
-  // Clear ALL existing daily aggregations to replace with production data
-  await ctx.db.delete(readingsAgg1d);
-
-  // Fetch all daily aggregations from production (no pagination needed for small dataset)
-  const prodData = await ctx.prodDb.execute(
-    `SELECT * FROM readings_agg_1d ORDER BY system_id, day`,
-  );
-
-  let synced = 0;
-  let skipped = 0;
-
-  // Map and insert records
-  const mappedData = [];
-  for (const row of prodData.rows) {
-    const prodSystemId = parseInt(row.system_id as string);
-    const mappedSystemId = ctx.mapSystemId(prodSystemId);
-    if (!mappedSystemId) {
-      console.warn(
-        `Skipping daily aggregation for unmapped system ${prodSystemId}`,
-      );
-      skipped++;
-      continue;
-    }
-    mappedData.push({
-      ...row,
-      system_id: mappedSystemId.toString(), // Convert back to string for TEXT column
-    });
-  }
-
-  // Update progress
-  const stageTotal = ctx.recordCounts?.["sync-daily-agg"] || 0;
-  if (stageTotal > 0) {
-    const overallProgress = calculateOverallProgress(ctx, mappedData.length);
-    ctx.updateStage("sync-daily-agg", {
-      detail: `Syncing: ${mappedData.length.toLocaleString()} of ${stageTotal.toLocaleString()} (${Math.round(overallProgress * 100)}%)`,
-      progress: overallProgress,
-    });
-  }
-
-  if (mappedData.length > 0) {
-    // Get column names from first row
-    const columns = Object.keys(mappedData[0]);
-
-    // Build multi-row insert statement
-    const values = mappedData
-      .map(
-        (row) =>
-          `(${columns
-            .map((col) => {
-              const val = row[col];
-              if (val === null || val === undefined) return "NULL";
-              if (typeof val === "string")
-                return `'${val.replace(/'/g, "''")}'`;
-              return val;
-            })
-            .join(",")})`,
-      )
-      .join(",");
-
-    // Execute raw SQL insert
-    const insertQuery = sql`INSERT OR IGNORE INTO ${sql.raw("readings_agg_1d")} (${sql.raw(columns.join(","))}) VALUES ${sql.raw(values)}`;
-    await ctx.db.run(insertQuery);
-    synced = mappedData.length;
-
-    // Update sync_status with the last synced date
-    const lastDay = prodData.rows[prodData.rows.length - 1]?.day as string;
-    if (lastDay) {
-      await updateSyncStatus(ctx, "readings_agg_1d", undefined, lastDay);
-    }
-  }
-
-  return {
-    detail: `Synced ${synced.toLocaleString()} daily aggregations${skipped > 0 ? ` (${skipped} skipped)` : ""}`,
   };
 }
 
@@ -1396,11 +1148,13 @@ async function prepareForSync(ctx: SyncContext) {
   // Step 1: Check local database
   const latestReading = await ctx.db
     .select()
-    .from(readings)
-    .orderBy(sql`inverter_time DESC`)
+    .from(pointReadings)
+    .orderBy(sql`measurement_time DESC`)
     .limit(1);
 
-  const localLatestTime = latestReading[0]?.inverterTime || new Date(0);
+  const localLatestTime = latestReading[0]?.measurementTime
+    ? new Date(latestReading[0].measurementTime)
+    : new Date(0);
 
   const systemCount = await ctx.db.select().from(systems);
 
@@ -1736,24 +1490,6 @@ export const syncStages: StageDefinition[] = [
     name: "Sync sessions",
     modifiesMetadata: false,
     execute: syncSessions,
-  },
-  {
-    id: "sync-readings",
-    name: "Sync solar system readings",
-    modifiesMetadata: false,
-    execute: syncReadings,
-  },
-  {
-    id: "sync-5min-agg",
-    name: "Sync 5-min solar systems reading aggregations",
-    modifiesMetadata: false,
-    execute: sync5MinAggregations,
-  },
-  {
-    id: "sync-daily-agg",
-    name: "Sync daily solar systems reading aggregations",
-    modifiesMetadata: false,
-    execute: syncDailyAggregations,
   },
   {
     id: "sync-point-readings",

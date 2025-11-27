@@ -86,25 +86,10 @@ async function handleRequest(request: NextRequest) {
         MIN(updated_at) as updated_at_min, MAX(updated_at) as updated_at_max
       FROM systems
       UNION ALL
-      SELECT 'readings' as table_name, COUNT(*) as count,
-        MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
-        NULL as updated_at_min, NULL as updated_at_max
-      FROM readings
-      UNION ALL
       SELECT 'polling_status' as table_name, COUNT(*) as count,
         NULL as created_at_min, NULL as created_at_max,
         MIN(updated_at) as updated_at_min, MAX(updated_at) as updated_at_max
       FROM polling_status
-      UNION ALL
-      SELECT 'readings_agg_5m' as table_name, COUNT(*) as count,
-        MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
-        NULL as updated_at_min, NULL as updated_at_max
-      FROM readings_agg_5m
-      UNION ALL
-      SELECT 'readings_agg_1d' as table_name, COUNT(*) as count,
-        MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
-        MIN(updated_at) as updated_at_min, MAX(updated_at) as updated_at_max
-      FROM readings_agg_1d
       UNION ALL
       SELECT 'user_systems' as table_name, COUNT(*) as count,
         MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
@@ -130,6 +115,11 @@ async function handleRequest(request: NextRequest) {
         MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
         MIN(updated_at) as updated_at_min, MAX(updated_at) as updated_at_max
       FROM point_readings_agg_5m
+      UNION ALL
+      SELECT 'point_readings_agg_1d' as table_name, COUNT(*) as count,
+        MIN(created_at) as created_at_min, MAX(created_at) as created_at_max,
+        NULL as updated_at_min, NULL as updated_at_max
+      FROM point_readings_agg_1d
     `);
 
     interface TableStat {
@@ -151,7 +141,8 @@ async function handleRequest(request: NextRequest) {
       if (
         tableName === "point_info" ||
         tableName === "point_readings" ||
-        tableName === "point_readings_agg_5m"
+        tableName === "point_readings_agg_5m" ||
+        tableName === "point_readings_agg_1d"
       ) {
         return val;
       }
@@ -402,9 +393,7 @@ async function backfillHistoricalSnapshots(): Promise<{
 
   // Table configurations with timestamp column info
   // Uses indexed columns for efficient COUNT queries on all tables:
-  // - readings: inverter_time (indexed)
   // - point_readings: measurement_time (indexed)
-  // - readings_agg_5m: interval_end (indexed)
   // - point_readings_agg_5m: interval_end (indexed)
   // - sessions: started (indexed)
   // - Small tables (<1K rows): full scan OK
@@ -415,24 +404,19 @@ async function backfillHistoricalSnapshots(): Promise<{
   }[] = [
     // Large tables - use indexed columns for efficiency
     {
-      name: "readings",
-      timestampColumn: "inverter_time", // indexed: inverter_time_idx
-      isMilliseconds: false,
-    },
-    {
       name: "point_readings",
       timestampColumn: "measurement_time", // indexed: pr_measurement_time_idx
       isMilliseconds: true,
     },
     // Medium tables - use indexed columns
     {
-      name: "readings_agg_5m",
-      timestampColumn: "interval_end", // indexed: readings_agg_5m_interval_end_idx
-      isMilliseconds: false,
-    },
-    {
       name: "point_readings_agg_5m",
       timestampColumn: "interval_end", // indexed: pr5m_interval_end_idx (1.1M rows)
+      isMilliseconds: true,
+    },
+    {
+      name: "point_readings_agg_1d",
+      timestampColumn: "created_at",
       isMilliseconds: true,
     },
     {
@@ -441,11 +425,6 @@ async function backfillHistoricalSnapshots(): Promise<{
       isMilliseconds: false,
     },
     // Small tables (<1K rows) - full scan OK
-    {
-      name: "readings_agg_1d",
-      timestampColumn: "created_at",
-      isMilliseconds: false,
-    },
     { name: "systems", timestampColumn: "created_at", isMilliseconds: false },
     {
       name: "user_systems",

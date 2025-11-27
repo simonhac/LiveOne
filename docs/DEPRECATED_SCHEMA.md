@@ -226,6 +226,7 @@ ORDER BY interval_end;
 - **August 2024**: Initial schema created
 - **August 2025**: Point-based tables added (`point_*`)
 - **November 2025**: Stopped writing to legacy tables, deprecated
+- **November 2025**: Drizzle ORM definitions removed from codebase (tables remain in database for historical queries via raw SQL)
 
 ## Files Moved to /legacy
 

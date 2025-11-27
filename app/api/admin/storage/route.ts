@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
 
     try {
       // Get the latest snapshot (most recent date + hour)
+      // Exclude deprecated legacy tables (readings, readings_agg_5m, readings_agg_1d)
       const snapshotResult = await rawClient.execute(`
         SELECT * FROM db_growth_snapshots
         WHERE (snapshot_date, COALESCE(snapshot_hour, 0)) = (
@@ -44,6 +45,7 @@ export async function GET(request: NextRequest) {
           ORDER BY snapshot_date DESC, COALESCE(snapshot_hour, 0) DESC
           LIMIT 1
         )
+        AND table_name NOT IN ('readings', 'readings_agg_5m', 'readings_agg_1d')
         ORDER BY record_count DESC
       `);
 

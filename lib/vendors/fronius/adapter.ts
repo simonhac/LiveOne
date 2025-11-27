@@ -1,10 +1,4 @@
-import { BaseVendorAdapter } from '../base-adapter';
-import type { PollingResult, TestConnectionResult } from '../types';
-import type { SystemWithPolling } from '@/lib/systems-manager';
-import type { CommonPollingData } from '@/lib/types/common';
-import { db } from '@/lib/db';
-import { readings } from '@/lib/db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { BaseVendorAdapter } from "../base-adapter";
 
 /**
  * Vendor adapter for Fronius systems
@@ -12,7 +6,7 @@ import { eq, desc } from 'drizzle-orm';
  * The inverter pushes data to our endpoint, we queue it, and process it here
  */
 export class FroniusAdapter extends BaseVendorAdapter {
-  readonly vendorType = 'fronius';
-  readonly displayName = 'Fronius';
-  readonly dataSource = 'push' as const;
+  readonly vendorType = "fronius";
+  readonly displayName = "Fronius";
+  readonly dataSource = "push" as const;
 }

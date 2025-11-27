@@ -91,11 +91,17 @@ function transformDates(obj: any, timezoneOffsetMin: number): any {
 
     for (const [key, value] of Object.entries(obj)) {
       // Check if this is a Unix timestamp field that needs conversion
-      if (key.endsWith("TimeMs") && typeof value === "number") {
-        // Convert to date and rename field (remove "Ms" suffix)
+      if (key.endsWith("TimeMs")) {
+        // Rename field (remove "Ms" suffix)
         const newKey = key.slice(0, -2); // Remove "Ms" from end
-        const date = new Date(value);
-        transformed[newKey] = formatTime_fromJSDate(date, timezoneOffsetMin);
+        if (typeof value === "number") {
+          // Convert timestamp to ISO8601 date string
+          const date = new Date(value);
+          transformed[newKey] = formatTime_fromJSDate(date, timezoneOffsetMin);
+        } else {
+          // Keep null/undefined values as-is, just rename the field
+          transformed[newKey] = value;
+        }
       } else {
         // Recursively transform nested objects
         transformed[key] = transformDates(value, timezoneOffsetMin);

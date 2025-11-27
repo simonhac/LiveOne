@@ -133,16 +133,19 @@ The project has utility scripts in `/scripts`:
 - `/scripts/temp/` - Temporary scripts for one-off tasks
 - `/scripts/utils/` - Reusable utility scripts
 
-#### Authentication for Testing
+#### Development API Authentication
+
+In development mode, you can bypass Clerk authentication for API testing by using the `x-claude` header:
 
 ```bash
-# Generate a test session token for API testing (development only)
-# Requires CLERK_SECRET_KEY in .env.local
-npx tsx scripts/utils/get-test-token.ts
+# Use x-claude header to authenticate as admin (development only)
+curl -H "x-claude: true" http://localhost:3000/api/admin/storage
 
-# This generates a Bearer token that authenticates as simon (admin)
-# Use it with: curl -H "Authorization: Bearer <token>" http://localhost:3000/api/...
+# Example: trigger db-stats cron job
+curl -H "x-claude: true" http://localhost:3000/api/cron/db-stats
 ```
+
+**Note**: The value must be exactly `"true"` (not `"1"` or other truthy values). This header only works in development mode.
 
 ## Turso Database Management
 
