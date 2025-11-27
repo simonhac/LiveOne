@@ -476,7 +476,7 @@ export default function ActivityViewer() {
         cell: ({ getValue }) => {
           const numRows = getValue<number>();
           return (
-            <div className="text-right">{numRows > 0 ? numRows : "-"}</div>
+            <div className="text-right">{numRows != null ? numRows : "-"}</div>
           );
         },
         sortingFn: "basic",
