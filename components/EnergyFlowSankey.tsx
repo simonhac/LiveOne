@@ -429,7 +429,7 @@ export default function EnergyFlowSankey({
         const labelBoxY =
           boxHeight < minHeightForValue
             ? node.y0 + (boxHeight - labelBoxHeight) / 2
-            : topY;
+            : topY - 2;
 
         const labelBox = document.createElementNS(
           "http://www.w3.org/2000/svg",
