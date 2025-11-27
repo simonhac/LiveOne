@@ -275,6 +275,9 @@ export default function EnergyFlowSankey({
     // Create SVG container
     const svgElement = svg as any;
 
+    // Border radius for node rectangles - links extend by this amount to fill gaps
+    const nodeRadius = 4;
+
     // Add gradient definitions
     const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
 
@@ -285,12 +288,13 @@ export default function EnergyFlowSankey({
       );
       gradient.setAttribute("id", `gradient-${i}`);
       gradient.setAttribute("gradientUnits", "userSpaceOnUse");
-      gradient.setAttribute("x1", String(link.source.x1));
+      // Use extended coordinates to match path (extend INTO boxes)
+      gradient.setAttribute("x1", String(link.source.x1 - nodeRadius));
       gradient.setAttribute(
         "y1",
         String(link.source.y0 + (link.source.y1 - link.source.y0) / 2),
       );
-      gradient.setAttribute("x2", String(link.target.x0));
+      gradient.setAttribute("x2", String(link.target.x0 + nodeRadius));
       gradient.setAttribute(
         "y2",
         String(link.target.y0 + (link.target.y1 - link.target.y0) / 2),
@@ -319,13 +323,20 @@ export default function EnergyFlowSankey({
 
     svgElement.appendChild(defs);
 
-    // Draw links with gradients
+    // Draw links with gradients (extended to overlap with rounded rect corners)
     graph.links.forEach((link: any, i: number) => {
+      // Create extended link coordinates to fill gap from rounded corners (extend INTO boxes)
+      const extendedLink = {
+        ...link,
+        source: { ...link.source, x1: link.source.x1 - nodeRadius },
+        target: { ...link.target, x0: link.target.x0 + nodeRadius },
+      };
+
       const path = document.createElementNS(
         "http://www.w3.org/2000/svg",
         "path",
       );
-      path.setAttribute("d", sankeyLinkHorizontal()(link) || "");
+      path.setAttribute("d", sankeyLinkHorizontal()(extendedLink) || "");
       path.setAttribute("fill", "none");
       path.setAttribute("stroke", `url(#gradient-${i})`);
       path.setAttribute("stroke-width", String(Math.max(1, link.width)));
