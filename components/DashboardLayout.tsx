@@ -91,6 +91,26 @@ export default function DashboardLayout({
   const [showSessionTimeout, setShowSessionTimeout] = useState(false);
   const [showViewDataModal, setShowViewDataModal] = useState(false);
   const [shiftKeyDown, setShiftKeyDown] = useState(false);
+  const [defaultSystemId, setDefaultSystemId] = useState<number | null>(null);
+
+  // Fetch user's default system preference
+  const fetchDefaultSystem = async () => {
+    try {
+      const response = await fetch("/api/user/preferences");
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.preferences) {
+          setDefaultSystemId(data.preferences.defaultSystemId);
+        }
+      }
+    } catch (error) {
+      console.error("Error fetching default system preference:", error);
+    }
+  };
+
+  useEffect(() => {
+    fetchDefaultSystem();
+  }, []);
 
   // Shift key detection for dry run mode
   useEffect(() => {
@@ -126,6 +146,10 @@ export default function DashboardLayout({
     if (onSystemUpdate) {
       await onSystemUpdate(updates);
     }
+    // Refresh default system preference (in case it was changed)
+    await fetchDefaultSystem();
+    // Refresh server components to update systems list (e.g., if display name changed)
+    router.refresh();
   };
 
   return (
@@ -146,6 +170,7 @@ export default function DashboardLayout({
         isAdmin={isAdmin}
         userId={userId}
         availableSystems={availableSystems}
+        defaultSystemId={defaultSystemId}
         onLogout={handleLogout}
         onTestConnection={() => setShowTestConnection(true)}
         onViewData={() => setShowViewDataModal(true)}

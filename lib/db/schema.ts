@@ -27,7 +27,6 @@ export const systems = sqliteTable(
     metadata: text("metadata", { mode: "json" }), // JSON object for vendor-specific config (e.g., composite system sources)
     timezoneOffsetMin: integer("timezone_offset_min").notNull(), // Standard timezone offset in minutes (e.g., 600 for AEST/UTC+10, DST calculated separately) - set by code at creation
     displayTimezone: text("display_timezone").notNull(), // IANA timezone string for display (e.g., 'Australia/Melbourne') - observes DST
-    isDefault: integer("is_default").notNull().default(0).$type<0 | 1>(), // User's default system (0 or 1) - enforced by partial unique index
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
       .default(sql`(unixepoch())`),
@@ -44,10 +43,6 @@ export const systems = sqliteTable(
       table.ownerClerkUserId,
       table.alias,
     ),
-    // Partial unique index: only one default system per owner
-    isDefaultUnique: uniqueIndex("is_default_unique")
-      .on(table.ownerClerkUserId)
-      .where(sql`${table.isDefault} = 1`),
   }),
 );
 
@@ -103,6 +98,28 @@ export const userSystems = sqliteTable(
     ),
     userIdx: index("user_systems_user_idx").on(table.clerkUserId),
     systemIdx: index("user_systems_system_idx").on(table.systemId),
+  }),
+);
+
+// Users table - stores user preferences (complements Clerk, not replaces it)
+export const users = sqliteTable(
+  "users",
+  {
+    clerkUserId: text("clerk_user_id").primaryKey(),
+    defaultSystemId: integer("default_system_id").references(() => systems.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (table) => ({
+    defaultSystemIdx: index("users_default_system_idx").on(
+      table.defaultSystemId,
+    ),
   }),
 );
 
@@ -168,6 +185,8 @@ export const syncStatus = sqliteTable("sync_status", {
 export type PollingStatus = typeof pollingStatus.$inferSelect;
 export type UserSystem = typeof userSystems.$inferSelect;
 export type NewUserSystem = typeof userSystems.$inferInsert;
+export type User = typeof users.$inferSelect;
+export type NewUser = typeof users.$inferInsert;
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
 export type ClerkIdMapping = typeof clerkIdMapping.$inferSelect;

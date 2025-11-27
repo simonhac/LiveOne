@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Star } from "lucide-react";
 
 interface AvailableSystem {
   id: number;
@@ -17,6 +18,7 @@ interface SystemsMenuProps {
   currentSystemId?: string;
   userId?: string;
   isAdmin?: boolean;
+  defaultSystemId?: number | null;
   onSystemSelect?: (systemId: number) => void;
   preserveQueryParams?: string[];
   className?: string;
@@ -30,6 +32,7 @@ export default function SystemsMenu({
   currentSystemId,
   userId,
   isAdmin = false,
+  defaultSystemId,
   onSystemSelect,
   preserveQueryParams = ["period"],
   className = "",
@@ -54,6 +57,8 @@ export default function SystemsMenu({
 
   const renderSystemItem = (system: AvailableSystem) => {
     const isActive = currentSystemId && system.id === parseInt(currentSystemId);
+    const isDefault = defaultSystemId === system.id;
+    const displayText = system.displayName || `System ${system.vendorSiteId}`;
 
     if (isMobile) {
       return (
@@ -64,9 +69,12 @@ export default function SystemsMenu({
             system.id.toString() === currentSystemId
               ? "text-blue-400 bg-gray-700/50"
               : ""
-          }`}
+          } flex items-center gap-2`}
         >
-          {system.displayName || `System ${system.vendorSiteId}`}
+          <span>{displayText}</span>
+          {isDefault && (
+            <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400 flex-shrink-0" />
+          )}
         </button>
       );
     }
@@ -113,10 +121,13 @@ export default function SystemsMenu({
       <Link
         key={system.id}
         href={href}
-        className={`${itemClassName} ${isActive ? activeItemClassName : ""}`}
+        className={`${itemClassName} ${isActive ? activeItemClassName : ""} flex items-center gap-2`}
         onClick={() => handleClick(system.id)}
       >
-        {system.displayName || `System ${system.vendorSiteId}`}
+        <span>{displayText}</span>
+        {isDefault && (
+          <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400 flex-shrink-0" />
+        )}
       </Link>
     );
   };

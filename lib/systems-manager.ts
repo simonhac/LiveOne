@@ -312,7 +312,6 @@ export class SystemsManager {
     metadata?: any;
     timezoneOffsetMin?: number;
     displayTimezone?: string;
-    isDefault?: boolean;
   }): Promise<System> {
     await this.loadPromise;
 
@@ -320,19 +319,6 @@ export class SystemsManager {
     const systemId = !isProduction
       ? await dbUtils.getNextDevSystemId()
       : undefined;
-
-    // If this should be the default system, unset existing default for this owner
-    if (systemData.isDefault) {
-      await db
-        .update(systems)
-        .set({ isDefault: 0 })
-        .where(
-          and(
-            eq(systems.ownerClerkUserId, systemData.ownerClerkUserId),
-            eq(systems.isDefault, 1),
-          ),
-        );
-    }
 
     // Create the system in the database
     const [newSystem] = await db
@@ -354,7 +340,6 @@ export class SystemsManager {
         metadata: systemData.metadata,
         timezoneOffsetMin: systemData.timezoneOffsetMin ?? 600, // Default to AEST
         displayTimezone: systemData.displayTimezone ?? "Australia/Melbourne", // Default timezone
-        isDefault: systemData.isDefault ? 1 : 0,
         createdAt: new Date(),
         updatedAt: new Date(),
       })

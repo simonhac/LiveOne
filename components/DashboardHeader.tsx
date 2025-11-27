@@ -67,6 +67,7 @@ export interface DashboardHeaderProps {
 
   // Available systems for switching
   availableSystems?: AvailableSystem[];
+  defaultSystemId?: number | null;
 
   // Callbacks
   onLogout: () => void;
@@ -92,6 +93,7 @@ export default function DashboardHeader({
   isAdmin,
   userId,
   availableSystems = [],
+  defaultSystemId,
   onLogout,
   onTestConnection,
   onViewData,
@@ -248,6 +250,7 @@ export default function DashboardHeader({
                     currentSystemId={systemId}
                     userId={userId}
                     isAdmin={isAdmin}
+                    defaultSystemId={defaultSystemId}
                     onSystemSelect={(systemId) => {
                       handleMobileSystemSelect(systemId);
                       setIsMobileSystemDropdownOpen(false);
@@ -339,6 +342,7 @@ export default function DashboardHeader({
                         currentSystemId={systemId}
                         userId={userId}
                         isAdmin={isAdmin}
+                        defaultSystemId={defaultSystemId}
                         onSystemSelect={() => setShowSystemDropdown(false)}
                       />
                     </div>

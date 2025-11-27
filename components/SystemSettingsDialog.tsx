@@ -48,6 +48,10 @@ export default function SystemSettingsDialog({
   const [isCompositeDirty, setIsCompositeDirty] = useState(false);
   const [isAdminDirty, setIsAdminDirty] = useState(false);
   const [aliasError, setAliasError] = useState<string | null>(null);
+  // Default system state
+  const [isDefaultSystem, setIsDefaultSystem] = useState(false);
+  const [originalIsDefault, setOriginalIsDefault] = useState(false);
+  const [isDefaultDirty, setIsDefaultDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<
     "general" | "points" | "composite" | "admin"
@@ -110,6 +114,19 @@ export default function SystemSettingsDialog({
           setIsAdminDirty(false);
           setAliasError(null);
         }
+
+        // Fetch user preferences to check if this is the default system
+        const prefsResponse = await fetch("/api/user/preferences");
+        if (prefsResponse.ok) {
+          const prefsData = await prefsResponse.json();
+          if (prefsData.success && prefsData.preferences) {
+            const isCurrentDefault =
+              prefsData.preferences.defaultSystemId === systemId;
+            setIsDefaultSystem(isCurrentDefault);
+            setOriginalIsDefault(isCurrentDefault);
+            setIsDefaultDirty(false);
+          }
+        }
       } catch (error) {
         console.error("Error fetching system settings:", error);
       } finally {
@@ -152,9 +169,10 @@ export default function SystemSettingsDialog({
     isAliasDirty ||
     isTimezoneDirty ||
     isCompositeDirty ||
-    isAdminDirty;
+    isAdminDirty ||
+    isDefaultDirty;
   const hasGeneralChanges =
-    isDisplayNameDirty || isAliasDirty || isTimezoneDirty;
+    isDisplayNameDirty || isAliasDirty || isTimezoneDirty || isDefaultDirty;
 
   const handleSave = useCallback(async () => {
     if (!hasChanges || !systemId || aliasError) return;
@@ -243,6 +261,24 @@ export default function SystemSettingsDialog({
         }
       }
 
+      // Save default system preference
+      if (isDefaultDirty) {
+        const response = await fetch("/api/user/preferences", {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            defaultSystemId: isDefaultSystem ? systemId : null,
+          }),
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || "Failed to update default system");
+        }
+      }
+
       // Prepare updates to pass to dashboard (before resetting dirty flags)
       const updates: { displayName?: string; alias?: string | null } = {};
       if (isDisplayNameDirty) updates.displayName = editedDisplayName;
@@ -254,6 +290,8 @@ export default function SystemSettingsDialog({
       setIsTimezoneDirty(false);
       setIsCompositeDirty(false);
       setIsAdminDirty(false);
+      setIsDefaultDirty(false);
+      setOriginalIsDefault(isDefaultSystem);
 
       // Close modal
       onClose();
@@ -284,6 +322,8 @@ export default function SystemSettingsDialog({
     onUpdate,
     isCompositeDirty,
     isAdminDirty,
+    isDefaultDirty,
+    isDefaultSystem,
     onClose,
   ]);
 
@@ -503,6 +543,33 @@ export default function SystemSettingsDialog({
                         </optgroup>
                       ))}
                     </select>
+                  </div>
+
+                  {/* Default System Toggle */}
+                  <div className="mt-6 pt-4 border-t border-gray-700">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isDefaultSystem}
+                        onChange={(e) => {
+                          setIsDefaultSystem(e.target.checked);
+                          setIsDefaultDirty(
+                            e.target.checked !== originalIsDefault,
+                          );
+                        }}
+                        className="w-5 h-5 rounded border-gray-600 bg-gray-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-800"
+                        disabled={isSaving}
+                      />
+                      <div>
+                        <span className="text-sm font-medium text-gray-300">
+                          Set as my default system
+                        </span>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          This system will open automatically when you visit the
+                          dashboard
+                        </p>
+                      </div>
+                    </label>
                   </div>
                 </div>
 

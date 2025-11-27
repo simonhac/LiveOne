@@ -137,7 +137,6 @@ export async function POST(request: NextRequest) {
       metadata: null,
       timezoneOffsetMin: 600, // Default to AEST, adapter can override
       displayTimezone: "Australia/Melbourne", // Default timezone for test system
-      isDefault: 0, // Not a default system
       createdAt: new Date(),
       updatedAt: new Date(),
       pollingStatus: null, // No polling status for test

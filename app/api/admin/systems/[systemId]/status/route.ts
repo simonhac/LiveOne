@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { systems } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
+import { clearDefaultForAllUsers } from "@/lib/user-preferences";
 
 export async function PATCH(
   request: NextRequest,
@@ -43,6 +44,11 @@ export async function PATCH(
 
     if (updated.length === 0) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
+    }
+
+    // Clear default system preference for all users if system is being removed
+    if (status === "removed") {
+      await clearDefaultForAllUsers(systemId);
     }
 
     console.log(
