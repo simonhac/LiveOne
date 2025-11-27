@@ -114,8 +114,8 @@ export class SelectronicAdapter extends BaseVendorAdapter {
 
         // Replace 0 with null for fault_code and fault_ts (no fault = null)
         if (
-          (pointConfig.metadata.originSubId === "fault_code" ||
-            pointConfig.metadata.originSubId === "fault_ts") &&
+          (pointConfig.metadata.physicalPath.endsWith("/fault_code") ||
+            pointConfig.metadata.physicalPath.endsWith("/fault_ts")) &&
           rawValue === 0
         ) {
           continue;

@@ -651,7 +651,7 @@ async function getSystemHistoryInOpenNEMFormat(
 
     // Build path for the series (e.g., "bidi.battery/power.avg")
     const pointPath =
-      series.point.logicalPath ||
+      series.point.getLogicalPath() ||
       `${series.point.index}/${series.point.metricType}`;
     const fullPath = `${pointPath}.${series.aggregationField}`;
 

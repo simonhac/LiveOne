@@ -21,63 +21,48 @@ export const pointInfo = sqliteTable(
       .references(() => systems.id, { onDelete: "cascade" }),
     index: integer("id").notNull(), // Sequential per system, not auto-increment (database column "id", TS property "index")
 
-    // Identification (original IDs from vendor system)
-    originId: text("origin_id").notNull(), // eg. "5ecacac2-3cc3-447a-b3b5-423e333031e6"
-    originSubId: text("origin_sub_id"), // eg. "energyNowW"
+    // Paths
+    // physicalPath: vendor-specific identifier using "/" separator (MQTT-friendly)
+    // e.g., "selectronic/solar_w", "E1/kwh"
+    physicalPath: text("physical_path").notNull(),
 
-    // default display name
-    defaultName: text("point_name").notNull(), // from device eg. "Battery"
+    // logicalPathStem: semantic classification using "." separator (nullable)
+    // e.g., "source.solar", "bidi.battery.charge", "load"
+    // Combined with metricType to form full logical path: "source.solar/power"
+    logicalPathStem: text("logical_path_stem"),
 
-    // user modifiable
-    subsystem: text("subsystem"), // eg. nullable, "solar", "battery", "location", "meter" - set at init, not editable
-    type: text("type"), // eg. "source", "load", "bidi" - user settable dropdown
-    subtype: text("subtype"), // eg. "pool", "ev", "solar1" - user settable free text
-    extension: text("extension"), // eg. additional qualifier - user settable free text
-    displayName: text("display_name").notNull(), // user settable, will generally be the same as pointName
-    alias: text("short_name"), // Optional short name (letters, digits, underscore only) - used in history API IDs
-
-    // Type and unit
+    // Metric info
     metricType: text("metric_type").notNull(), // eg. 'power', 'energy', 'soc'
     metricUnit: text("metric_unit").notNull(), // eg. 'W', 'Wh', '%'
 
+    // Display
+    defaultName: text("point_name").notNull(), // from device eg. "Battery"
+    displayName: text("display_name").notNull(), // user settable, will generally be the same as pointName
+    subsystem: text("subsystem"), // eg. nullable, "solar", "battery", "location", "meter" - for UI color coding
+
     // Flags
-    active: integer("active", { mode: "boolean" }).notNull().default(true), // Whether this point is active (enabled)
     transform: text("transform"), // Optional transform: null = no transform, 'i' = invert, 'd' = differentiate
+    active: integer("active", { mode: "boolean" }).notNull().default(true), // Whether this point is active (enabled)
 
-    // Timestamps
-    created: integer("created"), // Creation timestamp (Unix milliseconds)
-    updatedAt: integer("updated_at").default(sql`(unixepoch() * 1000)`), // Last update timestamp (Unix milliseconds)
-
-    // Canonical paths (unique within system)
-    logicalPath: text("logical_path"), // eg. "source.solar/power" - null if type is null
-    physicalPath: text("physical_path").notNull(), // eg. "originId.originSubId"
+    // Timestamps (in milliseconds)
+    createdAtMs: integer("created_at_ms").notNull().default(0),
+    updatedAtMs: integer("updated_at_ms").default(sql`(unixepoch() * 1000)`),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.systemId, table.index] }),
-    // Unique constraint on origin point (system + origin_id + origin_sub_id)
-    systemPointUnique: uniqueIndex("pi_system_point_unique").on(
-      table.systemId,
-      table.originId,
-      table.originSubId,
-    ),
-    systemIdx: index("pi_system_idx").on(table.systemId),
-    subsystemIdx: index("pi_subsystem_idx").on(table.subsystem),
-    metricTypeIdx: index("pi_metric_type_idx").on(table.metricType),
-    // Unique constraint for short_name within a system (only when short_name is not null)
-    systemShortNameUnique: uniqueIndex("pi_system_short_name_unique").on(
-      table.systemId,
-      table.alias,
-    ),
-    // Unique constraint for logical_path within a system
-    systemLogicalPathUnique: uniqueIndex("pi_system_logical_path_unique").on(
-      table.systemId,
-      table.logicalPath,
-    ),
     // Unique constraint for physical_path within a system
     systemPhysicalPathUnique: uniqueIndex("pi_system_physical_path_unique").on(
       table.systemId,
       table.physicalPath,
     ),
+    // Unique constraint on stem + metric_type (the full logical path must be unique)
+    systemStemMetricUnique: uniqueIndex("pi_system_stem_metric_unique").on(
+      table.systemId,
+      table.logicalPathStem,
+      table.metricType,
+    ),
+    systemIdx: index("pi_system_idx").on(table.systemId),
+    subsystemIdx: index("pi_subsystem_idx").on(table.subsystem),
   }),
 );
 

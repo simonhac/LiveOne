@@ -98,31 +98,27 @@ export async function GET(
       });
     }
 
-    // Sort points: active series ID columns first, then inactive series ID, then no series ID
+    // Sort points: active points with logical path first, then inactive, then no logical path
     const sortedPoints = [...points].sort((a, b) => {
-      const aHasSeriesId = !!a.type;
-      const bHasSeriesId = !!b.type;
+      const aHasPath = !!a.logicalPathStem;
+      const bHasPath = !!b.logicalPathStem;
 
-      // Active points with series ID come first
-      if (aHasSeriesId && a.active && !(bHasSeriesId && b.active)) return -1;
-      if (bHasSeriesId && b.active && !(aHasSeriesId && a.active)) return 1;
+      // Active points with logical path come first
+      if (aHasPath && a.active && !(bHasPath && b.active)) return -1;
+      if (bHasPath && b.active && !(aHasPath && a.active)) return 1;
 
-      // Both are active with series ID, or both are not - compare further
-      if (aHasSeriesId && !bHasSeriesId) return -1;
-      if (!aHasSeriesId && bHasSeriesId) return 1;
+      // Both are active with logical path, or both are not - compare further
+      if (aHasPath && !bHasPath) return -1;
+      if (!aHasPath && bHasPath) return 1;
 
-      if (aHasSeriesId && bHasSeriesId) {
-        // Within same active status, sort by the series ID string
-        const aSeriesId = [a.type, a.subtype, a.extension, a.metricType]
-          .filter(Boolean)
-          .join(".");
-        const bSeriesId = [b.type, b.subtype, b.extension, b.metricType]
-          .filter(Boolean)
-          .join(".");
-        return aSeriesId.localeCompare(bSeriesId);
+      if (aHasPath && bHasPath) {
+        // Within same active status, sort by the full logical path (stem + metricType)
+        const aPath = `${a.logicalPathStem}/${a.metricType}`;
+        const bPath = `${b.logicalPathStem}/${b.metricType}`;
+        return aPath.localeCompare(bPath);
       }
 
-      // Neither has series ID, sort by displayName
+      // Neither has logical path, sort by displayName
       const aName = a.displayName || a.defaultName;
       const bName = b.displayName || b.defaultName;
       return aName.localeCompare(bName);
@@ -162,28 +158,24 @@ export async function GET(
     headers.sessionLabel = null; // Special column, no point info
 
     sortedPoints.forEach((p) => {
-      // Create PointInfo with actual extension (not modified with aggColumn)
-      const pointInfo = new PointInfo(
+      // Create PointInfo for the header
+      const pointInfoObj = new PointInfo(
         p.index,
         systemId,
-        p.originId,
-        p.originSubId,
-        p.alias,
+        p.physicalPath,
+        p.logicalPathStem,
+        p.metricType,
+        p.metricUnit,
         p.defaultName,
         p.displayName,
         p.subsystem,
-        p.type,
-        p.subtype,
-        p.extension, // Keep actual extension, don't append aggColumn
-        p.metricType,
-        p.metricUnit,
         p.transform,
         p.active,
-        p.logicalPath,
-        p.physicalPath,
+        p.createdAtMs,
+        p.updatedAtMs,
       );
 
-      headers[`point_${p.index}`] = pointInfo;
+      headers[`point_${p.index}`] = pointInfoObj;
     });
 
     // Build dynamic SQL for pivot query based on data source

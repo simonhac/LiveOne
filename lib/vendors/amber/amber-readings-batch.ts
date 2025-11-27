@@ -46,6 +46,19 @@ export function abbreviateQuality(quality: string | null | undefined): string {
   return quality.charAt(0).toLowerCase();
 }
 
+/**
+ * Derives a point key from physicalPath for internal grouping
+ * e.g., "amber/E1/perKwh" -> "E1.perKwh"
+ * e.g., "amber/grid/spotPerKwh" -> "grid.spotPerKwh"
+ */
+function derivePointKey(physicalPath: string): string {
+  // physicalPath format: "vendor/segments..." -> we want everything after vendor joined with "."
+  const segments = physicalPath.split("/");
+  if (segments.length <= 1) return physicalPath;
+  // Skip the first segment (vendor) and join rest with "."
+  return segments.slice(1).join(".");
+}
+
 export class AmberReadingsBatch {
   private records: Map<string, Map<string, PointReading>>;
   private firstDay: CalendarDate;
@@ -74,14 +87,12 @@ export class AmberReadingsBatch {
       30 * 60 * 1000) as Milliseconds;
     const rangeEnd = this.intervalEndTimes[this.intervalEndTimes.length - 1];
 
+    const pointKey = derivePointKey(reading.pointMetadata.physicalPath);
+
     if (
       reading.measurementTimeMs < rangeStart ||
       reading.measurementTimeMs > rangeEnd
     ) {
-      const pointKey = reading.pointMetadata.originSubId
-        ? `${reading.pointMetadata.originId}.${reading.pointMetadata.originSubId}`
-        : reading.pointMetadata.originId;
-
       throw new Error(
         `Cannot add reading for ${pointKey} with timestamp ${reading.measurementTimeMs} ` +
           `(${new Date(reading.measurementTimeMs).toISOString()}) - ` +
@@ -92,9 +103,6 @@ export class AmberReadingsBatch {
     }
 
     const timeKey = String(reading.measurementTimeMs);
-    const pointKey = reading.pointMetadata.originSubId
-      ? `${reading.pointMetadata.originId}.${reading.pointMetadata.originSubId}`
-      : reading.pointMetadata.originId;
 
     if (!this.records.has(timeKey)) {
       // This shouldn't happen if we prepopulated correctly, but handle gracefully

@@ -107,15 +107,9 @@ export default function ViewDataModal({
   const [selectedPointInfo, setSelectedPointInfo] = useState<{
     pointIndex: number;
     systemId: number;
-    originId: string;
-    originSubId: string | null;
     subsystem: string | null;
-    type: string | null;
-    subtype: string | null;
-    extension: string | null;
     originName: string;
     displayName: string | null;
-    alias: string | null;
     active: boolean;
     transform: string | null;
     metricType: string;
@@ -126,6 +120,7 @@ export default function ViewDataModal({
     ownerUsername: string;
     vendorType?: string;
     logicalPath: string | null;
+    logicalPathStem: string | null;
     physicalPath: string;
   } | null>(null);
   const [isPointInfoModalOpen, setIsPointInfoModalOpen] = useState(false);
@@ -393,15 +388,9 @@ export default function ViewDataModal({
     setSelectedPointInfo({
       pointIndex: pointInfo.index,
       systemId: pointInfo.systemId,
-      originId: pointInfo.originId,
-      originSubId: pointInfo.originSubId,
       subsystem: pointInfo.subsystem,
-      type: pointInfo.type,
-      subtype: pointInfo.subtype,
-      extension: pointInfo.extension,
       originName: pointInfo.defaultName,
       displayName: pointInfo.displayName,
-      alias: pointInfo.alias,
       active: pointInfo.active,
       transform: pointInfo.transform,
       metricType: pointInfo.metricType,
@@ -411,8 +400,9 @@ export default function ViewDataModal({
       systemShortName: metadata?.systemShortName || undefined,
       ownerUsername: metadata?.ownerUsername || "",
       vendorType: vendorType,
-      logicalPath: pointInfo.logicalPath,
+      logicalPath: pointInfo.getLogicalPath(),
       physicalPath: pointInfo.physicalPath,
+      logicalPathStem: pointInfo.logicalPathStem,
     });
     setIsPointInfoModalOpen(true);
   };
@@ -426,11 +416,7 @@ export default function ViewDataModal({
   const handleUpdatePointInfo = async (
     pointIndex: number,
     updates: {
-      type?: string | null;
-      subtype?: string | null;
-      extension?: string | null;
       displayName?: string | null;
-      alias?: string | null;
       active: boolean;
       transform?: string | null;
     },
@@ -562,25 +548,19 @@ export default function ViewDataModal({
 
   // Get series ID suffix (without the liveone.mondo.{system} prefix)
   const getSeriesIdSuffix = (key: string, pointInfo: PointInfo | null) => {
-    // Must have pointType to be a valid series
-    if (!pointInfo?.type) {
+    // Must have logicalPath to be a valid series
+    const logicalPath = pointInfo?.getLogicalPath();
+    if (!logicalPath) {
       console.log(
-        `[ViewData] ${getHeaderLabel(key, pointInfo)}: NO pointType - skipping (subtype=${pointInfo?.subtype}, ext=${pointInfo?.extension}, metricType=${pointInfo?.metricType})`,
+        `[ViewData] ${getHeaderLabel(key, pointInfo)}: NO logicalPath - skipping (metricType=${pointInfo?.metricType})`,
       );
       return null;
     }
 
-    const parts = [];
-    if (pointInfo.type) parts.push(pointInfo.type);
-    if (pointInfo.subtype) parts.push(pointInfo.subtype);
-    if (pointInfo.extension) parts.push(pointInfo.extension);
-    if (pointInfo.metricType) parts.push(pointInfo.metricType); // metricType
-
-    const seriesId = parts.join(".");
     console.log(
-      `[ViewData] ${getHeaderLabel(key, pointInfo)}: pointType=${pointInfo.type}, subtype=${pointInfo.subtype}, ext=${pointInfo.extension}, metricType=${pointInfo.metricType} => seriesId=${seriesId || "NULL"}`,
+      `[ViewData] ${getHeaderLabel(key, pointInfo)}: logicalPath=${logicalPath}`,
     );
-    return seriesId || null;
+    return logicalPath;
   };
 
   // Group data by timestamp and combine session labels
@@ -883,9 +863,9 @@ export default function ViewDataModal({
                       rowKey="row2"
                     >
                       {key === "time" ? (
-                        <span className="text-gray-300">Series</span>
+                        <span className="text-gray-300">Physical Path</span>
                       ) : key === "date" ? (
-                        <span className="text-gray-300">Series</span>
+                        <span className="text-gray-300">Physical Path</span>
                       ) : key === "sessionLabel" ? (
                         <div></div>
                       ) : getSeriesIdSuffix(key, pointInfo) ? (
@@ -897,7 +877,7 @@ export default function ViewDataModal({
                             __html:
                               getSeriesIdSuffix(key, pointInfo)?.replace(
                                 /\./g,
-                                ".<wbr />",
+                                ".<wbr>",
                               ) || "",
                           }}
                         />
@@ -907,7 +887,7 @@ export default function ViewDataModal({
                     </HeaderCell>
                   ))}
                 </tr>
-                {/* Row 3: Short name */}
+                {/* Row 3: Logical Path */}
                 <tr className="bg-gray-900">
                   {filteredHeaders.map(([key, pointInfo], colIndex) => (
                     <HeaderCell
@@ -918,19 +898,24 @@ export default function ViewDataModal({
                       rowKey="row3"
                     >
                       {key === "time" ? (
-                        <span className="text-gray-300">Alias</span>
+                        <span className="text-gray-300">Logical Path</span>
                       ) : key === "date" ? (
-                        <span className="text-gray-300">Alias</span>
+                        <span className="text-gray-300">Logical Path</span>
                       ) : key === "sessionLabel" ? (
                         <div></div>
-                      ) : pointInfo?.alias ? (
+                      ) : pointInfo?.getLogicalPath() ? (
                         <span
                           className={`text-xs ${getSubsystemColor(pointInfo?.subsystem || null)} ${
                             !pointInfo?.active ? "line-through" : ""
                           }`}
-                        >
-                          {pointInfo.alias}
-                        </span>
+                          dangerouslySetInnerHTML={{
+                            __html:
+                              pointInfo
+                                .getLogicalPath()
+                                ?.replace(/\./g, ".<wbr>")
+                                .replace(/\//g, "/<wbr>") || "",
+                          }}
+                        />
                       ) : (
                         <div></div>
                       )}

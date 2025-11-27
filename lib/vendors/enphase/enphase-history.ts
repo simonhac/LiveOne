@@ -1,9 +1,6 @@
 import { db } from "@/lib/db";
 import { systems } from "@/lib/db/schema";
-import {
-  pointReadingsAgg5m,
-  pointInfo,
-} from "@/lib/db/schema-monitoring-points";
+import { pointReadingsAgg5m } from "@/lib/db/schema-monitoring-points";
 import { eq, and, gte, lte } from "drizzle-orm";
 import { fetchWithEnphaseAuth } from "./enphase-auth";
 import { CalendarDate } from "@internationalized/date";
@@ -275,17 +272,10 @@ export async function hasCompleteEveningData(
   timezoneOffsetMin: number,
 ): Promise<boolean> {
   // Find the Enphase solar power point for this system
-  const [solarPoint] = await db
-    .select()
-    .from(pointInfo)
-    .where(
-      and(
-        eq(pointInfo.systemId, systemId),
-        eq(pointInfo.originId, "enphase"),
-        eq(pointInfo.originSubId, "solar_w"),
-      ),
-    )
-    .limit(1);
+  const solarPoint = await PointManager.getInstance().getPointByPhysicalPath(
+    systemId,
+    "enphase/solar_w",
+  );
 
   if (!solarPoint) {
     console.log(`[Enphase] No solar point found for system ${systemId}`);

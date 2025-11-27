@@ -3,19 +3,14 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { isValidLogicalPathStem } from "@/lib/identifiers/point-path-utils";
 
 interface PointInfo {
   pointIndex: number;
   systemId: number;
-  originId: string;
-  originSubId: string | null;
   subsystem: string | null;
-  type: string | null;
-  subtype: string | null;
-  extension: string | null;
   originName: string;
   displayName: string | null;
-  alias: string | null;
   active: boolean;
   transform: string | null;
   metricType: string;
@@ -26,6 +21,7 @@ interface PointInfo {
   ownerUsername: string;
   vendorType?: string;
   logicalPath: string | null;
+  logicalPathStem: string | null;
   physicalPath: string;
 }
 
@@ -36,13 +32,10 @@ interface PointInfoModalProps {
   onUpdate: (
     pointIndex: number,
     updates: {
-      type?: string | null;
-      subtype?: string | null;
-      extension?: string | null;
       displayName?: string | null;
-      alias?: string | null;
       active: boolean;
       transform?: string | null;
+      logicalPathStem?: string | null;
     },
   ) => Promise<void>;
 }
@@ -53,47 +46,35 @@ export default function PointInfoModal({
   pointInfo,
   onUpdate,
 }: PointInfoModalProps) {
-  const [editedType, setEditedType] = useState(pointInfo?.type || "");
-  const [editedSubtype, setEditedSubtype] = useState(pointInfo?.subtype || "");
-  const [editedExtension, setEditedExtension] = useState(
-    pointInfo?.extension || "",
-  );
   const [editedDisplayName, setEditedDisplayName] = useState(
     pointInfo?.displayName || "",
-  );
-  const [editedShortName, setEditedShortName] = useState(
-    pointInfo?.alias || "",
   );
   const [editedActive, setEditedActive] = useState(!!pointInfo?.active);
   const [editedTransform, setEditedTransform] = useState(
     pointInfo?.transform || "n",
   );
-  const [isTypeDirty, setIsTypeDirty] = useState(false);
-  const [isSubtypeDirty, setIsSubtypeDirty] = useState(false);
-  const [isExtensionDirty, setIsExtensionDirty] = useState(false);
+  const [editedLogicalPathStem, setEditedLogicalPathStem] = useState(
+    pointInfo?.logicalPathStem || "",
+  );
   const [isDisplayNameDirty, setIsDisplayNameDirty] = useState(false);
-  const [isShortNameDirty, setIsShortNameDirty] = useState(false);
   const [isActiveDirty, setIsActiveDirty] = useState(false);
   const [isTransformDirty, setIsTransformDirty] = useState(false);
-  const [aliasError, setShortNameError] = useState<string | null>(null);
+  const [isLogicalPathStemDirty, setIsLogicalPathStemDirty] = useState(false);
+  const [logicalPathStemError, setLogicalPathStemError] = useState<
+    string | null
+  >(null);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    setEditedType(pointInfo?.type || "");
-    setEditedSubtype(pointInfo?.subtype || "");
-    setEditedExtension(pointInfo?.extension || "");
     setEditedDisplayName(pointInfo?.displayName || "");
-    setEditedShortName(pointInfo?.alias || "");
     setEditedActive(!!pointInfo?.active);
     setEditedTransform(pointInfo?.transform || "n");
-    setIsTypeDirty(false);
-    setIsSubtypeDirty(false);
-    setIsExtensionDirty(false);
+    setEditedLogicalPathStem(pointInfo?.logicalPathStem || "");
     setIsDisplayNameDirty(false);
-    setIsShortNameDirty(false);
     setIsActiveDirty(false);
     setIsTransformDirty(false);
-    setShortNameError(null);
+    setIsLogicalPathStemDirty(false);
+    setLogicalPathStemError(null);
   }, [pointInfo, isOpen]);
 
   // Handle escape key to close modal
@@ -108,38 +89,9 @@ export default function PointInfoModal({
     return () => document.removeEventListener("keydown", handleEscape);
   }, [isOpen, onClose]);
 
-  const validateShortName = (value: string): string | null => {
-    if (!value) return null; // Empty is valid (optional field)
-    if (!/^[a-zA-Z0-9_]+$/.test(value)) {
-      return "Only letters, digits, and underscores are allowed";
-    }
-    return null;
-  };
-
-  const handleTypeChange = (value: string) => {
-    setEditedType(value);
-    setIsTypeDirty(value !== (pointInfo?.type || ""));
-  };
-
-  const handleSubtypeChange = (value: string) => {
-    setEditedSubtype(value);
-    setIsSubtypeDirty(value !== (pointInfo?.subtype || ""));
-  };
-
-  const handleExtensionChange = (value: string) => {
-    setEditedExtension(value);
-    setIsExtensionDirty(value !== (pointInfo?.extension || ""));
-  };
-
   const handleDisplayNameChange = (value: string) => {
     setEditedDisplayName(value);
     setIsDisplayNameDirty(value !== (pointInfo?.displayName || ""));
-  };
-
-  const handleShortNameChange = (value: string) => {
-    setEditedShortName(value);
-    setIsShortNameDirty(value !== (pointInfo?.alias || ""));
-    setShortNameError(validateShortName(value));
   };
 
   const handleActiveChange = (value: boolean) => {
@@ -152,53 +104,53 @@ export default function PointInfoModal({
     setIsTransformDirty(value !== (pointInfo?.transform || "n"));
   };
 
+  const handleLogicalPathStemChange = (value: string) => {
+    setEditedLogicalPathStem(value);
+    setIsLogicalPathStemDirty(value !== (pointInfo?.logicalPathStem || ""));
+
+    // Validate the stem
+    if (value === "") {
+      setLogicalPathStemError(null); // Empty is allowed (nullable)
+    } else if (!isValidLogicalPathStem(value)) {
+      setLogicalPathStemError(
+        "Use letters, numbers, underscores, hyphens. Separate segments with dots (e.g., source.solar)",
+      );
+    } else {
+      setLogicalPathStemError(null);
+    }
+  };
+
   const hasChanges =
-    isTypeDirty ||
-    isSubtypeDirty ||
-    isExtensionDirty ||
     isDisplayNameDirty ||
-    isShortNameDirty ||
     isActiveDirty ||
-    isTransformDirty;
+    isTransformDirty ||
+    isLogicalPathStemDirty;
+  const hasErrors = logicalPathStemError !== null;
 
   const handleSave = async () => {
-    if (!pointInfo || aliasError) return;
+    if (!pointInfo || hasErrors) return;
 
     setIsSaving(true);
     try {
       const updates: any = { active: editedActive };
-      if (isTypeDirty) updates.type = editedType || null;
-      if (isSubtypeDirty) updates.subtype = editedSubtype || null;
-      if (isExtensionDirty) updates.extension = editedExtension || null;
       if (isDisplayNameDirty) updates.displayName = editedDisplayName || null;
-      if (isShortNameDirty) updates.alias = editedShortName || null;
       if (isTransformDirty)
         updates.transform = editedTransform === "n" ? null : editedTransform;
+      if (isLogicalPathStemDirty)
+        updates.logicalPathStem = editedLogicalPathStem || null;
 
       await onUpdate(pointInfo.pointIndex, updates);
 
       // Reset dirty flags
-      setIsTypeDirty(false);
-      setIsSubtypeDirty(false);
-      setIsExtensionDirty(false);
       setIsDisplayNameDirty(false);
-      setIsShortNameDirty(false);
       setIsActiveDirty(false);
       setIsTransformDirty(false);
+      setIsLogicalPathStemDirty(false);
 
       // Close modal on successful save
       onClose();
     } catch (error) {
       console.error("Failed to update point info:", error);
-      // Check if it's a uniqueness error
-      if (
-        error instanceof Error &&
-        error.message.includes("UNIQUE constraint failed")
-      ) {
-        setShortNameError(
-          `Short name "${editedShortName}" is already in use for this system`,
-        );
-      }
     } finally {
       setIsSaving(false);
     }
@@ -208,11 +160,16 @@ export default function PointInfoModal({
 
   // Handle Enter key to save
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && hasChanges && !isSaving && !aliasError) {
+    if (e.key === "Enter" && hasChanges && !hasErrors && !isSaving) {
       e.preventDefault();
       handleSave();
     }
   };
+
+  // Compute the full logical path from edited stem
+  const computedLogicalPath = editedLogicalPathStem
+    ? `${editedLogicalPathStem}/${pointInfo.metricType}`
+    : null;
 
   return createPortal(
     <>
@@ -220,7 +177,7 @@ export default function PointInfoModal({
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[10000]" />
 
       {/* Dialog */}
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[10001] w-full max-w-3xl">
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[10001] w-fit">
         <div
           className="bg-gray-800 border border-gray-700 rounded-lg shadow-xl"
           onKeyDown={handleKeyDown}
@@ -244,119 +201,53 @@ export default function PointInfoModal({
           {/* Content */}
           <div className="px-6 py-4 space-y-4">
             {/* Original Metadata - Non-editable fields */}
-            <div className="border border-gray-600 rounded-md p-3 bg-gray-800/30">
-              <div className="text-xs font-medium text-gray-400 mb-2">
-                Original Metadata
-              </div>
-
-              {pointInfo.systemShortName && (
-                <div className="flex items-center gap-3">
-                  <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                    System:
-                  </label>
-                  <div className="text-gray-300 font-mono text-sm flex-1">
-                    {pointInfo.ownerUsername}.{pointInfo.systemShortName}
-                  </div>
-                </div>
-              )}
-
+            <div className="space-y-2 text-sm">
               <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Vendor/ID:
-                </label>
-                <div className="text-gray-300 font-mono text-sm flex-1">
-                  {pointInfo.vendorType || "N/A"}/
-                  {pointInfo.vendorSiteId || "N/A"}
-                </div>
+                <span className="w-28 text-gray-400">Vendor/ID:</span>
+                <span className="text-gray-300 font-mono">
+                  {pointInfo.vendorType}/{pointInfo.vendorSiteId}
+                </span>
+                <span className="text-gray-400 ml-2">
+                  ID: {pointInfo.systemId}
+                  {pointInfo.systemShortName &&
+                    ` (${pointInfo.systemShortName})`}
+                </span>
               </div>
-
               <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Physical Path:
-                </label>
-                <div className="text-gray-300 font-mono text-sm flex-1">
+                <span className="w-28 text-gray-400">Physical Path:</span>
+                <span className="text-gray-300 font-mono">
                   {pointInfo.physicalPath}
-                </div>
+                </span>
               </div>
-
               <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Source:
-                </label>
-                <div className="text-gray-300 font-mono text-sm flex-1">
-                  {pointInfo.originId}
-                  {pointInfo.originSubId && `.${pointInfo.originSubId}`}{" "}
-                  <span className="text-gray-400">
-                    ({pointInfo.originName})
-                  </span>
-                </div>
+                <span className="w-28 text-gray-400">Original Name:</span>
+                <span className="text-gray-300">{pointInfo.originName}</span>
               </div>
-
               <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Type and unit:
-                </label>
-                <div className="text-gray-300 text-sm flex-1">
+                <span className="w-28 text-gray-400">Type and unit:</span>
+                <span className="text-gray-300">
                   {pointInfo.metricType}
-                  {pointInfo.metricUnit && ` (${pointInfo.metricUnit})`}
-                </div>
+                  {pointInfo.metricUnit && (
+                    <span className="text-gray-400">
+                      {" "}
+                      ({pointInfo.metricUnit})
+                    </span>
+                  )}
+                </span>
               </div>
-
               <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Subsystem:
-                </label>
-                <div className="text-gray-300 text-sm flex-1">
-                  {pointInfo.subsystem || "N/A"}
-                </div>
+                <span className="w-28 text-gray-400">Subsystem:</span>
+                <span className="text-gray-300">
+                  {pointInfo.subsystem || "-"}
+                </span>
               </div>
             </div>
 
-            {/* Configuration - Editable fields */}
-            <div className="border border-gray-600 rounded-md p-3 bg-gray-800/30 space-y-3">
-              <div className="text-xs font-medium text-gray-400 mb-1">
-                Configuration
-              </div>
-
-              {/* Editable: Active */}
+            {/* Editable Fields */}
+            <div className="space-y-3 pt-2">
+              {/* Display Name */}
               <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Active:
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={editedActive}
-                    onChange={(e) => handleActiveChange(e.target.checked)}
-                    className="w-4 h-4 rounded border-gray-600 bg-gray-900 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0"
-                    disabled={isSaving}
-                  />
-                  <span className="text-sm text-gray-400">
-                    {editedActive ? "Enabled" : "Disabled"}
-                  </span>
-                </div>
-              </div>
-
-              {/* Editable: Transform */}
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                  Transform:
-                </label>
-                <select
-                  value={editedTransform}
-                  onChange={(e) => handleTransformChange(e.target.value)}
-                  className="px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                  disabled={isSaving}
-                >
-                  <option value="n">none (unchanged)</option>
-                  <option value="i">invert (multiply by -1)</option>
-                  <option value="d">differentiate (delta from previous)</option>
-                </select>
-              </div>
-
-              {/* Editable: Display Name */}
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
+                <label className="w-28 text-sm text-gray-400">
                   Display Name:
                 </label>
                 <input
@@ -364,141 +255,102 @@ export default function PointInfoModal({
                   value={editedDisplayName}
                   onChange={(e) => handleDisplayNameChange(e.target.value)}
                   placeholder={pointInfo.originName}
-                  className="flex-1 px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                  disabled={isSaving}
+                  className={`w-[435px] px-3 py-1.5 bg-gray-700 border ${isDisplayNameDirty ? "border-blue-500" : "border-gray-600"} rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50`}
                 />
               </div>
 
-              {/* Editable: Alias (Short Name) */}
-              <div>
-                <div className="flex items-center gap-3">
-                  <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-                    Alias:
-                  </label>
-                  <div className="flex-1">
-                    <input
-                      type="text"
-                      value={editedShortName}
-                      onChange={(e) => handleShortNameChange(e.target.value)}
-                      placeholder="e.g., batt_main, solar_east"
-                      className={`w-full px-3 py-2 bg-gray-900 border ${
-                        aliasError ? "border-red-500" : "border-gray-700"
-                      } rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm font-mono`}
-                      disabled={isSaving}
-                    />
-                  </div>
-                </div>
-                <p className="text-xs text-gray-400 mt-1 ml-[8.5rem]">
-                  Optional. Only letters, digits, and underscores. Must be
-                  unique within this system.
-                </p>
-                {aliasError && (
-                  <p className="text-xs text-red-400 mt-1 ml-[8.5rem]">
-                    {aliasError}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Taxonomy - Classification fields */}
-            <div className="border border-gray-600 rounded-md p-3 bg-gray-800/30">
-              <div className="text-xs font-medium text-gray-400 mb-2">
-                Taxonomy
-              </div>
-
-              {/* 3x2 Table: Labels in first row, fields in second row */}
-              {/* Indented to align with field values above (w-32 label + gap-3) */}
-              <div className="flex gap-3">
-                <div className="w-32 flex-shrink-0"></div>
-                <div className="flex-1">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr>
-                        <th className="text-sm font-medium text-gray-300 text-left pb-2 pr-2">
-                          Type
-                        </th>
-                        <th className="text-sm font-medium text-gray-300 text-left pb-2 px-2">
-                          Subtype
-                        </th>
-                        <th className="text-sm font-medium text-gray-300 text-left pb-2 pl-2">
-                          Extension
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td className="pr-2">
-                          <select
-                            value={editedType}
-                            onChange={(e) => handleTypeChange(e.target.value)}
-                            className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                            disabled={isSaving}
-                          >
-                            <option value="">-- Select --</option>
-                            <option value="source">source</option>
-                            <option value="load">load</option>
-                            <option value="bidi">bidi</option>
-                          </select>
-                        </td>
-                        <td className="px-2">
-                          <input
-                            type="text"
-                            value={editedSubtype}
-                            onChange={(e) =>
-                              handleSubtypeChange(e.target.value)
-                            }
-                            placeholder="e.g., pool, ev"
-                            className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                            disabled={isSaving}
-                          />
-                        </td>
-                        <td className="pl-2">
-                          <input
-                            type="text"
-                            value={editedExtension}
-                            onChange={(e) =>
-                              handleExtensionChange(e.target.value)
-                            }
-                            placeholder="e.g., local, hws"
-                            className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                            disabled={isSaving}
-                          />
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Logical Path - computed from taxonomy */}
-              <div className="flex items-center gap-3 mt-3">
-                <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
+              {/* Logical Path Stem */}
+              <div className="flex items-start gap-3">
+                <label className="w-28 text-sm text-gray-400 pt-1.5">
                   Logical Path:
                 </label>
-                <div className="text-gray-300 font-mono text-sm flex-1">
-                  {pointInfo.logicalPath || (
-                    <span className="text-gray-500">—</span>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={editedLogicalPathStem}
+                      onChange={(e) =>
+                        handleLogicalPathStemChange(e.target.value)
+                      }
+                      placeholder="e.g., source.solar"
+                      className={`w-[300px] px-3 py-1.5 bg-gray-700 border ${
+                        logicalPathStemError
+                          ? "border-red-500"
+                          : isLogicalPathStemDirty
+                            ? "border-blue-500"
+                            : "border-gray-600"
+                      } rounded text-gray-200 text-sm font-mono focus:outline-none focus:ring-2 ${
+                        logicalPathStemError
+                          ? "focus:ring-red-500/50"
+                          : "focus:ring-blue-500/50"
+                      }`}
+                    />
+                    <span className="text-gray-500 text-sm">/</span>
+                    <span className="text-gray-400 text-sm font-mono">
+                      {pointInfo.metricType}
+                    </span>
+                  </div>
+                  {logicalPathStemError && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {logicalPathStemError}
+                    </p>
                   )}
                 </div>
+              </div>
+
+              {/* Transform */}
+              <div className="flex items-center gap-3">
+                <label className="w-28 text-sm text-gray-400">Transform:</label>
+                <select
+                  value={editedTransform}
+                  onChange={(e) => handleTransformChange(e.target.value)}
+                  className={`px-3 py-1.5 bg-gray-700 border ${isTransformDirty ? "border-blue-500" : "border-gray-600"} rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50`}
+                >
+                  <option value="n">None</option>
+                  <option value="i">Invert (negate)</option>
+                  <option value="d">Differentiate</option>
+                </select>
+              </div>
+
+              {/* Active */}
+              <div className="flex items-center gap-3">
+                <label className="w-28 text-sm text-gray-400">Active:</label>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editedActive}
+                    onChange={(e) => handleActiveChange(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div
+                    className={`w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all ${isActiveDirty ? "ring-2 ring-blue-500/50" : ""} peer-checked:bg-blue-600`}
+                  ></div>
+                  <span className="ml-3 text-sm text-gray-300">
+                    {editedActive ? "Enabled" : "Disabled"}
+                  </span>
+                </label>
               </div>
             </div>
           </div>
 
           {/* Footer */}
-          <div className="px-6 py-4 flex justify-end gap-3">
+          <div className="flex justify-end gap-3 px-6 py-4">
             <button
               onClick={onClose}
-              className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-gray-100 rounded-md transition-colors min-w-24"
-              disabled={isSaving}
+              className="w-[125px] px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
             >
               Cancel
             </button>
             <button
               onClick={handleSave}
-              disabled={!hasChanges || isSaving || !!aliasError}
-              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-w-24"
+              disabled={!hasChanges || hasErrors || isSaving}
+              className={`w-[125px] px-4 py-2 text-sm rounded-lg transition-colors ${
+                hasChanges && !hasErrors && !isSaving
+                  ? "bg-blue-600 hover:bg-blue-700 text-white"
+                  : "bg-gray-600 text-gray-400 cursor-not-allowed"
+              }`}
             >
-              {isSaving ? "Saving..." : "Save"}
+              {isSaving ? "Saving..." : "Save Changes"}
             </button>
           </div>
         </div>

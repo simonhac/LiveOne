@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { pointInfo } from "@/lib/db/schema-monitoring-points";
 import { eq, and } from "drizzle-orm";
 import { requireSystemAccess } from "@/lib/api-auth";
+import { isValidLogicalPathStem } from "@/lib/identifiers/point-path-utils";
 
 /**
  * PATCH /api/system/{systemId}/point/{pointId}
@@ -10,11 +11,8 @@ import { requireSystemAccess } from "@/lib/api-auth";
  * Updates user-modifiable fields on a point_info record.
  *
  * Updatable fields:
- * - type: string | null (eg. "source", "load", "bidi")
- * - subtype: string | null (eg. "pool", "ev", "solar1")
- * - extension: string | null (additional qualifier)
  * - displayName: string | null (user-friendly name)
- * - alias: string | null (short name for API references)
+ * - logicalPathStem: string | null (e.g., "source.solar", segments separated by ".")
  * - active: boolean (whether point is enabled)
  * - transform: string | null (null, 'i' for invert, 'd' for differentiate)
  */
@@ -61,32 +59,23 @@ export async function PATCH(
     // Build update object with only allowed fields
     const updateData: Record<string, any> = {};
 
-    if (body.type !== undefined) {
-      updateData.type = body.type;
-    }
-    if (body.subtype !== undefined) {
-      updateData.subtype = body.subtype;
-    }
-    if (body.extension !== undefined) {
-      updateData.extension = body.extension;
-    }
     if (body.displayName !== undefined) {
       updateData.displayName = body.displayName;
     }
-    if (body.alias !== undefined) {
-      // Validate alias format if provided (letters, digits, underscore only)
-      if (body.alias !== null && body.alias !== "") {
-        if (!/^[a-zA-Z0-9_]+$/.test(body.alias)) {
+    if (body.logicalPathStem !== undefined) {
+      // Validate logical path stem format if provided
+      if (body.logicalPathStem !== null && body.logicalPathStem !== "") {
+        if (!isValidLogicalPathStem(body.logicalPathStem)) {
           return NextResponse.json(
             {
               error:
-                "Invalid alias format. Use only letters, digits, and underscores.",
+                "Invalid logicalPathStem format. Use segments separated by dots (e.g., source.solar).",
             },
             { status: 400 },
           );
         }
       }
-      updateData.alias = body.alias || null;
+      updateData.logicalPathStem = body.logicalPathStem || null;
     }
     if (body.active !== undefined) {
       updateData.active = Boolean(body.active);
@@ -141,11 +130,9 @@ export async function PATCH(
       point: {
         systemId: updatedPoint.systemId,
         pointId: updatedPoint.index,
-        type: updatedPoint.type,
-        subtype: updatedPoint.subtype,
-        extension: updatedPoint.extension,
+        physicalPath: updatedPoint.physicalPath,
+        logicalPathStem: updatedPoint.logicalPathStem,
         displayName: updatedPoint.displayName,
-        alias: updatedPoint.alias,
         active: updatedPoint.active,
         transform: updatedPoint.transform,
         metricType: updatedPoint.metricType,
@@ -205,15 +192,11 @@ export async function GET(
     return NextResponse.json({
       systemId: point.systemId,
       pointId: point.index,
-      originId: point.originId,
-      originSubId: point.originSubId,
+      physicalPath: point.physicalPath,
+      logicalPathStem: point.logicalPathStem,
       defaultName: point.defaultName,
       subsystem: point.subsystem,
-      type: point.type,
-      subtype: point.subtype,
-      extension: point.extension,
       displayName: point.displayName,
-      alias: point.alias,
       metricType: point.metricType,
       metricUnit: point.metricUnit,
       active: point.active,

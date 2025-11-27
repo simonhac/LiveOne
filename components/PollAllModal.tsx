@@ -103,6 +103,13 @@ export function PollAllModal({
     return () => unregisterModal("poll-all");
   }, [registerModal, unregisterModal]);
 
+  // Clear error tooltip when polling starts (prevents orphaned tooltips)
+  useEffect(() => {
+    if (isPolling) {
+      setErrorTooltip(null);
+    }
+  }, [isPolling]);
+
   // Update elapsed time every 100ms when polling
   useEffect(() => {
     if (!isPolling || !data) return;

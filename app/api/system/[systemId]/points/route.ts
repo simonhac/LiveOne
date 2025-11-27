@@ -65,20 +65,20 @@ export async function GET(
       false, // typedOnly = false means include fallback paths
     );
 
-    // Filter to only include active points with non-null logicalPath
+    // Filter to only include active points with non-null logical path
     const validPoints = points.filter(
-      (point) => point.active && point.logicalPath != null,
+      (point) => point.active && point.getLogicalPath() != null,
     );
 
     // Serialize based on mode
     if (shortMode) {
       // Return just the paths as an array of strings
-      const paths = validPoints.map((point) => point.logicalPath!);
+      const paths = validPoints.map((point) => point.getLogicalPath()!);
       return NextResponse.json(paths);
     } else {
       // Return detailed point information using stored paths
       const pointsData = validPoints.map((point) => ({
-        logicalPath: point.logicalPath,
+        logicalPath: point.getLogicalPath(),
         physicalPath: point.physicalPath,
         name: point.name,
         metricType: point.metricType,

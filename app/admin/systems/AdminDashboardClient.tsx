@@ -784,37 +784,52 @@ export default function AdminDashboardClient({
                             system.data.loadPower != null ||
                             system.data.batterySOC != null) ? (
                             <div className="text-sm">
-                              <div className="flex flex-col items-start gap-1 xl:flex-row xl:items-center xl:gap-4">
-                                {system.data.solarPower != null && (
-                                  <div className="flex items-center gap-1.5">
-                                    <Sun className="w-3.5 h-3.5 text-yellow-400" />
-                                    <span className="text-yellow-400">
-                                      {(system.data.solarPower / 1000).toFixed(
-                                        1,
-                                      )}{" "}
-                                      kW
-                                    </span>
-                                  </div>
-                                )}
-                                {system.data.loadPower != null && (
-                                  <div className="flex items-center gap-1.5">
-                                    <Home className="w-3.5 h-3.5 text-blue-400" />
-                                    <span className="text-blue-400">
-                                      {(system.data.loadPower / 1000).toFixed(
-                                        1,
-                                      )}{" "}
-                                      kW
-                                    </span>
-                                  </div>
-                                )}
-                                {system.data.batterySOC != null && (
-                                  <div className="flex items-center gap-1.5">
-                                    <Battery className="w-3.5 h-3.5 text-green-400" />
-                                    <span className="text-green-400">
-                                      {system.data.batterySOC.toFixed(1)}%
-                                    </span>
-                                  </div>
-                                )}
+                              <div className="flex flex-col items-start gap-1 xl:flex-row xl:items-center xl:gap-0">
+                                {/* Solar - fixed width */}
+                                <div className="min-w-[70px] xl:min-w-[75px]">
+                                  {system.data.solarPower != null ? (
+                                    <div className="flex items-center gap-1.5">
+                                      <Sun className="w-3.5 h-3.5 text-yellow-400" />
+                                      <span className="text-yellow-400">
+                                        {(
+                                          system.data.solarPower / 1000
+                                        ).toFixed(1)}{" "}
+                                        kW
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <span />
+                                  )}
+                                </div>
+                                {/* Load - fixed width */}
+                                <div className="min-w-[70px] xl:min-w-[75px]">
+                                  {system.data.loadPower != null ? (
+                                    <div className="flex items-center gap-1.5">
+                                      <Home className="w-3.5 h-3.5 text-blue-400" />
+                                      <span className="text-blue-400">
+                                        {(system.data.loadPower / 1000).toFixed(
+                                          1,
+                                        )}{" "}
+                                        kW
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <span />
+                                  )}
+                                </div>
+                                {/* Battery SOC - fixed width */}
+                                <div className="min-w-[65px] xl:min-w-[70px]">
+                                  {system.data.batterySOC != null ? (
+                                    <div className="flex items-center gap-1.5">
+                                      <Battery className="w-3.5 h-3.5 text-green-400" />
+                                      <span className="text-green-400">
+                                        {system.data.batterySOC.toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <span />
+                                  )}
+                                </div>
                               </div>
                             </div>
                           ) : (

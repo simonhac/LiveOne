@@ -67,14 +67,9 @@ function generateSeriesPath(
   }
 
   // If type and subtype are set, use series ID with identifier
-  const pointIdentifier = point.getIdentifier();
-  if (pointIdentifier) {
-    return `${pointIdentifier}/${point.metricType}.${aggregationType}`;
-  }
-
-  // If alias is set, use it directly
-  if (point.alias) {
-    return point.alias;
+  const logicalPath = point.getLogicalPath();
+  if (logicalPath) {
+    return `${logicalPath}.${aggregationType}`;
   }
 
   // Otherwise, use the point's database index as pointPath

@@ -10,13 +10,13 @@ import type { AmberChannelMetadata } from "./types";
 
 /**
  * Create a channel point with specified metric type
- * Simplified - uses originId (E1/B1) to differentiate import/export
+ * Simplified - uses channelId (E1/B1) to differentiate import/export
  */
 export function createChannelPoint(
   channel: AmberChannelMetadata,
   metricType: "energy" | "value" | "rate",
 ): PointMetadata {
-  // Map metric type to originSubId and metricUnit
+  // Map metric type to physical path suffix and metricUnit
   const metricConfig = {
     energy: { subId: "kwh", unit: "Wh" },
     value: { subId: "cost", unit: "cents" },
@@ -25,14 +25,16 @@ export function createChannelPoint(
 
   const config = metricConfig[metricType];
 
+  // Build logicalPathStem from bidi.grid + extension
+  const logicalPathStem = channel.extension
+    ? `bidi.grid.${channel.extension}`
+    : "bidi.grid";
+
   return {
-    originId: channel.channelId,
-    originSubId: config.subId, // No prefix - differentiated by originId
+    physicalPath: `${channel.channelId}/${config.subId}`,
+    logicalPathStem,
     defaultName: channel.defaultName,
     subsystem: "grid",
-    type: "bidi", // All Amber points are bidirectional grid
-    subtype: "grid",
-    extension: channel.extension,
     metricType,
     metricUnit: config.unit,
     transform: null, // Interval values, not cumulative
@@ -68,13 +70,10 @@ export function getChannelMetadata(
  */
 export function createRenewablesPoint(): PointMetadata {
   return {
-    originId: "grid",
-    originSubId: "renewables",
+    physicalPath: "grid/renewables",
+    logicalPathStem: "bidi.grid.renewables",
     defaultName: "Grid renewables",
     subsystem: "grid",
-    type: "bidi",
-    subtype: "grid",
-    extension: "renewables",
     metricType: "proportion",
     metricUnit: "%",
     transform: null,
@@ -87,13 +86,10 @@ export function createRenewablesPoint(): PointMetadata {
  */
 export function createSpotPricePoint(): PointMetadata {
   return {
-    originId: "grid",
-    originSubId: "spotPerKwh",
+    physicalPath: "grid/spotPerKwh",
+    logicalPathStem: "bidi.grid.spot",
     defaultName: "Grid spot price",
     subsystem: "grid",
-    type: "bidi",
-    subtype: "grid",
-    extension: "spot",
     metricType: "rate",
     metricUnit: "cents_kWh",
     transform: null,
@@ -106,13 +102,10 @@ export function createSpotPricePoint(): PointMetadata {
  */
 export function createTariffPeriodPoint(): PointMetadata {
   return {
-    originId: "grid",
-    originSubId: "tariffPeriod",
+    physicalPath: "grid/tariffPeriod",
+    logicalPathStem: "bidi.grid.tariff",
     defaultName: "Tariff period",
     subsystem: "grid",
-    type: "bidi",
-    subtype: "grid",
-    extension: "tariff",
     metricType: "code",
     metricUnit: "text",
     transform: null,

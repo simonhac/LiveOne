@@ -161,11 +161,7 @@ describe("PATCH /api/system/[systemId]/point/[pointId]", () => {
 
     // Store original data to restore later
     originalPointData = {
-      type: point.type,
-      subtype: point.subtype,
-      extension: point.extension,
       displayName: point.displayName,
-      alias: point.alias,
       active: point.active,
       transform: point.transform,
     };
@@ -222,23 +218,6 @@ describe("PATCH /api/system/[systemId]/point/[pointId]", () => {
       });
     });
 
-    it("should update type, subtype, and extension", async () => {
-      const { status, data } = await patchPointEndpoint(
-        testSystemId,
-        testPointId,
-        {
-          type: "source",
-          subtype: "test_subtype",
-          extension: "test_ext",
-        },
-      );
-
-      expect(status).toBe(200);
-      expect(data.point.type).toBe("source");
-      expect(data.point.subtype).toBe("test_subtype");
-      expect(data.point.extension).toBe("test_ext");
-    });
-
     it("should update transform", async () => {
       const { status, data } = await patchPointEndpoint(
         testSystemId,
@@ -252,34 +231,9 @@ describe("PATCH /api/system/[systemId]/point/[pointId]", () => {
       // Reset transform
       await patchPointEndpoint(testSystemId, testPointId, { transform: null });
     });
-
-    it("should update alias with valid format", async () => {
-      const { status, data } = await patchPointEndpoint(
-        testSystemId,
-        testPointId,
-        { alias: "test_alias_123" },
-      );
-
-      expect(status).toBe(200);
-      expect(data.point.alias).toBe("test_alias_123");
-
-      // Clear alias
-      await patchPointEndpoint(testSystemId, testPointId, { alias: null });
-    });
   });
 
   describe("Validation", () => {
-    it("should reject invalid alias format", async () => {
-      const { status, data } = await patchPointEndpoint(
-        testSystemId,
-        testPointId,
-        { alias: "invalid-alias!" },
-      );
-
-      expect(status).toBe(400);
-      expect(data.error).toContain("Invalid alias");
-    });
-
     it("should reject invalid transform value", async () => {
       const { status, data } = await patchPointEndpoint(
         testSystemId,

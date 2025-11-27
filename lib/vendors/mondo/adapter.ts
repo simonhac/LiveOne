@@ -265,11 +265,23 @@ export class MondoAdapter extends BaseVendorAdapter {
             subsystem = "load";
           }
 
+          // Determine logical path stem based on subsystem
+          const logicalPathStem =
+            subsystem === "solar"
+              ? "source.solar"
+              : subsystem === "battery"
+                ? "bidi.battery"
+                : subsystem === "grid"
+                  ? "bidi.grid"
+                  : subsystem === "load"
+                    ? "load"
+                    : null;
+
           // Add power reading
           readingsToInsert.push({
             pointMetadata: {
-              originId: row.monitoringPointId,
-              originSubId: "energyNowW",
+              physicalPath: `${row.monitoringPointId}/energyNowW`,
+              logicalPathStem,
               defaultName: row.monitoringPointName,
               subsystem,
               metricType: "power",
@@ -285,8 +297,8 @@ export class MondoAdapter extends BaseVendorAdapter {
           // Add energy reading (monotonic total with differentiate transform)
           readingsToInsert.push({
             pointMetadata: {
-              originId: row.monitoringPointId,
-              originSubId: "totalEnergyWh",
+              physicalPath: `${row.monitoringPointId}/totalEnergyWh`,
+              logicalPathStem,
               defaultName: row.monitoringPointName,
               subsystem,
               metricType: "energy",

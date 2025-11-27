@@ -9,6 +9,11 @@ import { fromDate } from "@internationalized/date";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { SystemsManager } from "@/lib/systems-manager";
 import { getLatestValues, LatestValuesMap } from "@/lib/latest-values-store";
+import {
+  getAllSystemSummaries,
+  SystemSummary,
+  SystemSummariesMap,
+} from "@/lib/system-summary-store";
 
 export interface SystemData {
   systemId: number;
@@ -160,6 +165,31 @@ function extractPowerValues(latestValues: LatestValuesMap) {
   };
 }
 
+/**
+ * Extract power values from system summary (fast path - single KV call for all systems)
+ */
+function extractPowerValuesFromSummary(summary: SystemSummary | null) {
+  if (!summary) {
+    return {
+      solarPower: null,
+      loadPower: null,
+      batteryPower: null,
+      gridPower: null,
+      batterySOC: null,
+      timestampMs: null,
+    };
+  }
+
+  return {
+    solarPower: summary.readings["source.solar/power"] ?? null,
+    loadPower: summary.readings["load/power"] ?? null,
+    batteryPower: null, // Not included in summaries per user request
+    gridPower: summary.readings["bidi.grid/power"] ?? null,
+    batterySOC: summary.readings["bidi.battery/soc"] ?? null,
+    timestampMs: summary.measurementTimeMs,
+  };
+}
+
 interface GetAdminSystemsOptions {
   /** Timeout for fetching latest values (ms). If exceeded, returns without latest values. Default: 100 */
   latestValuesTimeoutMs?: number;
@@ -232,38 +262,31 @@ export async function getAdminSystemsData(
     }
   }
 
-  // Fetch latest values with timeout (parallel for all systems)
-  let latestValuesMap = new Map<number, LatestValuesMap>();
+  // Fetch system summaries with timeout (single KV call for all systems)
+  let summariesMap: SystemSummariesMap = {};
   let latestValuesIncluded = false;
 
   if (!skipLatestValues) {
     try {
-      const latestValuesPromise = Promise.all(
-        allSystems.map(async (system) => ({
-          systemId: system.id,
-          values: await getLatestValues(system.id),
-        })),
-      );
+      const summariesPromise = getAllSystemSummaries();
 
       const timeoutPromise = new Promise<null>((resolve) =>
         setTimeout(() => resolve(null), latestValuesTimeoutMs),
       );
 
-      const result = await Promise.race([latestValuesPromise, timeoutPromise]);
+      const result = await Promise.race([summariesPromise, timeoutPromise]);
 
       if (result !== null) {
-        for (const { systemId, values } of result) {
-          latestValuesMap.set(systemId, values);
-        }
+        summariesMap = result;
         latestValuesIncluded = true;
       } else {
         console.log(
-          `[getAdminSystemsData] Latest values fetch timed out after ${latestValuesTimeoutMs}ms`,
+          `[getAdminSystemsData] System summaries fetch timed out after ${latestValuesTimeoutMs}ms`,
         );
       }
     } catch (error) {
       console.warn(
-        "[getAdminSystemsData] Failed to fetch latest values:",
+        "[getAdminSystemsData] Failed to fetch system summaries:",
         error,
       );
     }
@@ -273,8 +296,8 @@ export async function getAdminSystemsData(
   const systemsData: SystemData[] = [];
 
   for (const system of allSystems) {
-    const latestValues = latestValuesMap.get(system.id) || {};
-    const powerValues = extractPowerValues(latestValues);
+    const summary = summariesMap[system.id.toString()] || null;
+    const powerValues = extractPowerValuesFromSummary(summary);
     const pollStatus = system.pollingStatus;
     const userInfo = system.ownerClerkUserId
       ? userCache.get(system.ownerClerkUserId)

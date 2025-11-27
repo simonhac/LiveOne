@@ -168,8 +168,8 @@ function generateIntervalsAEST(
  * These are channel-specific energy, cost, and rate values
  */
 function usagePointFilter(point: PointInfo): boolean {
-  const usageSubIds = ["kwh", "cost", "perKwh"];
-  return point.originSubId !== null && usageSubIds.includes(point.originSubId);
+  const usageSuffixes = ["/kwh", "/cost", "/perKwh"];
+  return usageSuffixes.some((suffix) => point.physicalPath.endsWith(suffix));
 }
 
 /**
@@ -177,10 +177,8 @@ function usagePointFilter(point: PointInfo): boolean {
  * These are grid-level renewables proportion, spot price, and channel-specific rates
  */
 function pricingPointFilter(point: PointInfo): boolean {
-  const pricingSubIds = ["renewables", "spotPerKwh", "perKwh"];
-  return (
-    point.originSubId !== null && pricingSubIds.includes(point.originSubId)
-  );
+  const pricingSuffixes = ["/renewables", "/spotPerKwh", "/perKwh"];
+  return pricingSuffixes.some((suffix) => point.physicalPath.endsWith(suffix));
 }
 
 /**
@@ -210,13 +208,10 @@ function buildRecordsMapFromLocal(
 
     const pointReading: PointReading = {
       pointMetadata: {
-        originId: point.originId,
-        originSubId: point.originSubId,
+        physicalPath: point.physicalPath,
+        logicalPathStem: point.logicalPathStem,
         defaultName: point.defaultName || point.displayName,
         subsystem: point.subsystem,
-        type: point.type,
-        subtype: point.subtype,
-        extension: point.extension,
         metricType: point.metricType,
         metricUnit: point.metricUnit,
         transform: point.transform,

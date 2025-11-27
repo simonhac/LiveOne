@@ -42,13 +42,10 @@ export const ENPHASE_POINTS: EnphasePointConfig[] = [
   {
     field: "powr",
     metadata: {
-      originId: "enphase",
-      originSubId: "solar_w",
+      physicalPath: "enphase/solar_w",
+      logicalPathStem: "source.solar",
       defaultName: "Solar",
       subsystem: "solar",
-      type: "source",
-      subtype: "solar",
-      extension: null,
       metricType: "power",
       metricUnit: "W",
       transform: null,
@@ -63,13 +60,10 @@ export const ENPHASE_POINTS: EnphasePointConfig[] = [
   {
     field: "enwh",
     metadata: {
-      originId: "enphase",
-      originSubId: "solar_interval_wh",
+      physicalPath: "enphase/solar_interval_wh",
+      logicalPathStem: "source.solar",
       defaultName: "Solar Interval",
       subsystem: "solar",
-      type: "source",
-      subtype: "solar",
-      extension: null,
       metricType: "energy",
       metricUnit: "Wh",
       transform: null,

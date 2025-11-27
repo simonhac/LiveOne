@@ -1,19 +1,218 @@
 /**
  * Point Path Utilities
  *
- * Utility functions for working with point path strings.
- * A point path has the format: "{type}.{subtype}.{extension}/{metricType}"
- * Or fallback format: "{pointIndex}/{metricType}"
+ * Utility functions for working with point paths.
  *
- * Examples:
- * - "source.solar/power"
- * - "bidi.battery.charge/energy"
- * - "load/power" (no subtype/extension)
- * - "5/power" (fallback for points without type)
+ * Grammar:
+ * - physicalPath: [A-Za-z0-9_-]+ segments separated by "/" (MQTT-friendly)
+ *   Examples: "selectronic/solar_w", "E1/kwh"
+ *
+ * - logicalPathStem: [A-Za-z0-9_-]+ segments separated by "." (nullable)
+ *   Examples: "source.solar", "bidi.battery.charge", "load"
+ *
+ * - metricType: [A-Za-z0-9_-]+
+ *   Examples: "power", "energy", "soc"
+ *
+ * - logicalPath (computed): logicalPathStem + "/" + metricType
+ *   Examples: "source.solar/power", "bidi.battery.charge/energy"
  */
 
+// Validation patterns
+const SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/;
+const PHYSICAL_PATH_PATTERN = /^[A-Za-z0-9_-]+(\/[A-Za-z0-9_-]+)*$/;
+const LOGICAL_PATH_STEM_PATTERN = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$/;
+
 /**
- * Parsed point path components
+ * Validate a physical path (segments separated by "/")
+ *
+ * @example
+ * isValidPhysicalPath("selectronic/solar_w") // true
+ * isValidPhysicalPath("E1/kwh") // true
+ * isValidPhysicalPath("selectronic") // true (single segment)
+ * isValidPhysicalPath("") // false
+ * isValidPhysicalPath("foo/") // false
+ */
+export function isValidPhysicalPath(path: string): boolean {
+  return PHYSICAL_PATH_PATTERN.test(path);
+}
+
+/**
+ * Validate a logical path stem (segments separated by ".")
+ *
+ * @example
+ * isValidLogicalPathStem("source.solar") // true
+ * isValidLogicalPathStem("bidi.battery.charge") // true
+ * isValidLogicalPathStem("load") // true (single segment)
+ * isValidLogicalPathStem("") // false
+ * isValidLogicalPathStem("foo.") // false
+ */
+export function isValidLogicalPathStem(stem: string): boolean {
+  return LOGICAL_PATH_STEM_PATTERN.test(stem);
+}
+
+/**
+ * Validate a metric type (single segment)
+ *
+ * @example
+ * isValidMetricType("power") // true
+ * isValidMetricType("energy") // true
+ * isValidMetricType("soc") // true
+ * isValidMetricType("") // false
+ * isValidMetricType("foo.bar") // false
+ */
+export function isValidMetricType(type: string): boolean {
+  return SEGMENT_PATTERN.test(type);
+}
+
+/**
+ * Validate a full logical path (stem + "/" + metricType)
+ *
+ * @example
+ * isValidLogicalPath("source.solar/power") // true
+ * isValidLogicalPath("load/power") // true
+ * isValidLogicalPath("power") // false (no slash)
+ */
+export function isValidLogicalPath(path: string): boolean {
+  const slashIndex = path.indexOf("/");
+  if (slashIndex === -1 || slashIndex === 0 || slashIndex === path.length - 1) {
+    return false;
+  }
+
+  const stem = path.substring(0, slashIndex);
+  const metricType = path.substring(slashIndex + 1);
+
+  // Must have exactly one slash
+  if (metricType.includes("/")) {
+    return false;
+  }
+
+  return isValidLogicalPathStem(stem) && isValidMetricType(metricType);
+}
+
+/**
+ * Get the logical path stem from a full logical path
+ *
+ * @example
+ * getLogicalPathStem("source.solar/power") // "source.solar"
+ * getLogicalPathStem("load/power") // "load"
+ * getLogicalPathStem("invalid") // null
+ */
+export function getLogicalPathStem(path: string): string | null {
+  const slashIndex = path.indexOf("/");
+  if (slashIndex === -1) {
+    return null;
+  }
+  return path.substring(0, slashIndex) || null;
+}
+
+/**
+ * Get the metric type from a full logical path
+ *
+ * @example
+ * getMetricType("source.solar/power") // "power"
+ * getMetricType("load/energy") // "energy"
+ * getMetricType("invalid") // null
+ */
+export function getMetricType(path: string | null | undefined): string | null {
+  if (!path) return null;
+  const slashIndex = path.indexOf("/");
+  if (slashIndex === -1) {
+    return null;
+  }
+  return path.substring(slashIndex + 1) || null;
+}
+
+/**
+ * Build a full logical path from stem and metric type
+ *
+ * @example
+ * buildLogicalPath("source.solar", "power") // "source.solar/power"
+ * buildLogicalPath(null, "power") // null
+ */
+export function buildLogicalPath(
+  stem: string | null,
+  metricType: string,
+): string | null {
+  if (!stem) return null;
+  return `${stem}/${metricType}`;
+}
+
+/**
+ * Check if a logical path matches a given stem pattern and metric type
+ *
+ * The pattern can be partial - e.g., "bidi.battery" will match both
+ * "bidi.battery/soc" and "bidi.battery.charge/soc"
+ *
+ * @param logicalPath - The full logical path to check (e.g., "bidi.battery.charge/power")
+ * @param stemPattern - The stem pattern to match (e.g., "bidi.battery")
+ * @param metricType - The metric type to match (e.g., "power")
+ * @returns true if the path matches
+ *
+ * @example
+ * matchesLogicalPath("bidi.battery/soc", "bidi.battery", "soc") // true
+ * matchesLogicalPath("bidi.battery.charge/power", "bidi.battery", "power") // true
+ * matchesLogicalPath("source.solar/power", "bidi.battery", "power") // false
+ */
+export function matchesLogicalPath(
+  logicalPath: string | null | undefined,
+  stemPattern: string,
+  metricType: string,
+): boolean {
+  if (!logicalPath) return false;
+
+  const pathMetricType = getMetricType(logicalPath);
+  if (pathMetricType !== metricType) {
+    return false;
+  }
+
+  const pathStem = getLogicalPathStem(logicalPath);
+  if (!pathStem) {
+    return false;
+  }
+
+  // Check if the path stem starts with the pattern
+  // The pattern can be a prefix (e.g., "bidi.battery" matches "bidi.battery.charge")
+  if (pathStem === stemPattern) {
+    return true;
+  }
+
+  // Check if pattern is a prefix of the stem (must be followed by ".")
+  if (pathStem.startsWith(stemPattern + ".")) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Split a physical path into segments
+ *
+ * @example
+ * splitPhysicalPath("selectronic/solar_w") // ["selectronic", "solar_w"]
+ * splitPhysicalPath("E1") // ["E1"]
+ */
+export function splitPhysicalPath(path: string): string[] {
+  return path.split("/");
+}
+
+/**
+ * Split a logical path stem into segments
+ *
+ * @example
+ * splitLogicalPathStem("source.solar") // ["source", "solar"]
+ * splitLogicalPathStem("bidi.battery.charge") // ["bidi", "battery", "charge"]
+ */
+export function splitLogicalPathStem(stem: string): string[] {
+  return stem.split(".");
+}
+
+// ============================================================================
+// DEPRECATED - These functions are kept for backward compatibility during
+// migration but should not be used in new code.
+// ============================================================================
+
+/**
+ * @deprecated Use logicalPathStem and metricType directly
  */
 export interface ParsedPointPath {
   type: string;
@@ -21,17 +220,11 @@ export interface ParsedPointPath {
   extension: string | null;
   metricType: string;
   isFallback: boolean;
-  /** Point index if this is a fallback path, null otherwise */
   pointIndex: number | null;
 }
 
 /**
- * Build a point path string from type hierarchy and metric type
- *
- * @example
- * buildPointPath("source", "solar", null, "power") // "source.solar/power"
- * buildPointPath("bidi", "battery", "charge", "energy") // "bidi.battery.charge/energy"
- * buildPointPath("load", null, null, "power") // "load/power"
+ * @deprecated Use buildLogicalPath() instead
  */
 export function buildPointPath(
   type: string,
@@ -50,10 +243,7 @@ export function buildPointPath(
 }
 
 /**
- * Build a fallback point path for points without type
- *
- * @example
- * buildFallbackPointPath(5, "power") // "5/power"
+ * @deprecated Use index-based fallback in point.getLogicalPath()
  */
 export function buildFallbackPointPath(
   pointIndex: number,
@@ -63,23 +253,13 @@ export function buildFallbackPointPath(
 }
 
 /**
- * Parse a point path string into components
- * Returns null if the format is invalid
- *
- * @example
- * parsePointPath("source.solar/power")
- * // { type: "source", subtype: "solar", extension: null, metricType: "power", isFallback: false, pointIndex: null }
- *
- * parsePointPath("5/power")
- * // { type: "5", subtype: null, extension: null, metricType: "power", isFallback: true, pointIndex: 5 }
+ * @deprecated Use getLogicalPathStem() and getMetricType() instead
  */
 export function parsePointPath(
   str: string | null | undefined,
 ): ParsedPointPath | null {
-  // Handle null/undefined input
   if (!str) return null;
 
-  // Must contain exactly one slash
   const slashIndex = str.indexOf("/");
   if (slashIndex === -1 || str.indexOf("/", slashIndex + 1) !== -1) {
     return null;
@@ -88,7 +268,6 @@ export function parsePointPath(
   const pointIdentifier = str.substring(0, slashIndex);
   const metricType = str.substring(slashIndex + 1);
 
-  // Validate metric type is non-empty
   if (!metricType) {
     return null;
   }
@@ -109,22 +288,17 @@ export function parsePointPath(
     return null;
   }
 
-  // Parse point identifier (type.subtype.extension)
+  // Parse point identifier - now supports unlimited segments
   const parts = pointIdentifier.split(".");
 
-  if (parts.length === 0 || parts.length > 3) {
-    return null;
-  }
-
-  // Validate no empty parts
-  if (parts.some((p) => !p)) {
+  if (parts.length === 0 || parts.some((p) => !p)) {
     return null;
   }
 
   return {
     type: parts[0],
     subtype: parts.length > 1 ? parts[1] : null,
-    extension: parts.length > 2 ? parts[2] : null,
+    extension: parts.length > 2 ? parts.slice(2).join(".") : null,
     metricType,
     isFallback: false,
     pointIndex: null,
@@ -132,12 +306,7 @@ export function parsePointPath(
 }
 
 /**
- * Build a point identifier from parsed components (without metric type)
- *
- * @example
- * buildPointIdentifier("source", "solar", null) // "source.solar"
- * buildPointIdentifier("bidi", "battery", "charge") // "bidi.battery.charge"
- * buildPointIdentifier("load", null, null) // "load"
+ * @deprecated Construct stems directly as strings
  */
 export function buildPointIdentifier(
   type: string,
@@ -155,101 +324,26 @@ export function buildPointIdentifier(
 }
 
 /**
- * Get the point identifier from a ParsedPointPath
- *
- * @example
- * getIdentifierFromParsed({ type: "source", subtype: "solar", ... }) // "source.solar"
+ * @deprecated Use getLogicalPathStem() instead
+ */
+export function getPointIdentifier(path: string): string | null {
+  return getLogicalPathStem(path);
+}
+
+/**
+ * @deprecated Use getLogicalPathStem() instead
  */
 export function getIdentifierFromParsed(parsed: ParsedPointPath): string {
   return buildPointIdentifier(parsed.type, parsed.subtype, parsed.extension);
 }
 
 /**
- * Get the point identifier part of a path (without the metric type)
- *
- * @example
- * getPointIdentifier("source.solar/power") // "source.solar"
- * getPointIdentifier("bidi.battery.charge/energy") // "bidi.battery.charge"
- * getPointIdentifier("5/power") // "5"
- */
-export function getPointIdentifier(path: string): string | null {
-  const slashIndex = path.indexOf("/");
-  if (slashIndex === -1) {
-    return null;
-  }
-  return path.substring(0, slashIndex);
-}
-
-/**
- * Get the metric type from a point path
- *
- * @example
- * getMetricType("source.solar/power") // "power"
- */
-export function getMetricType(path: string): string | null {
-  const slashIndex = path.indexOf("/");
-  if (slashIndex === -1) {
-    return null;
-  }
-  return path.substring(slashIndex + 1) || null;
-}
-
-/**
- * Check if a point path matches a given pattern and metric type
- *
- * The pattern can be partial - e.g., "bidi.battery" will match both
- * "bidi.battery/soc" and "bidi.battery.charge/soc"
- *
- * @param path - The full point path to check (e.g., "bidi.battery.charge/power")
- * @param pattern - The pattern to match (e.g., "bidi.battery")
- * @param metricType - The metric type to match (e.g., "power")
- * @returns true if the path matches
- *
- * @example
- * matchesPointPath("bidi.battery/soc", "bidi.battery", "soc") // true
- * matchesPointPath("bidi.battery.charge/power", "bidi.battery", "power") // true
- * matchesPointPath("source.solar/power", "bidi.battery", "power") // false
+ * @deprecated Use matchesLogicalPath() instead
  */
 export function matchesPointPath(
   path: string,
   pattern: string,
   metricType: string,
 ): boolean {
-  const parsed = parsePointPath(path);
-  if (!parsed) {
-    return false;
-  }
-
-  // Check metric type
-  if (parsed.metricType !== metricType) {
-    return false;
-  }
-
-  // Parse the pattern
-  const patternParts = pattern.split(".");
-
-  if (patternParts.length === 0 || patternParts.length > 3) {
-    return false;
-  }
-
-  const patternType = patternParts[0];
-  const patternSubtype = patternParts.length > 1 ? patternParts[1] : null;
-  const patternExtension = patternParts.length > 2 ? patternParts[2] : null;
-
-  // Check type
-  if (parsed.type !== patternType) {
-    return false;
-  }
-
-  // Check subtype if specified in pattern
-  if (patternSubtype !== null && parsed.subtype !== patternSubtype) {
-    return false;
-  }
-
-  // Check extension if specified in pattern
-  if (patternExtension !== null && parsed.extension !== patternExtension) {
-    return false;
-  }
-
-  return true;
+  return matchesLogicalPath(path, pattern, metricType);
 }

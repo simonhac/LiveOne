@@ -12,21 +12,17 @@ export class PointInfo {
   constructor(
     public readonly index: number,
     public readonly systemId: number,
-    public readonly originId: string,
-    public readonly originSubId: string | null,
-    public readonly alias: string | null,
-    public readonly defaultName: string,
-    public readonly displayName: string | null,
-    public readonly subsystem: string | null,
-    public readonly type: string | null,
-    public readonly subtype: string | null,
-    public readonly extension: string | null,
-    public readonly metricType: string,
-    public readonly metricUnit: string,
-    public readonly transform: string | null,
+    public readonly physicalPath: string, // "/" separated, e.g., "selectronic/solar_w"
+    public readonly logicalPathStem: string | null, // "." separated, e.g., "source.solar"
+    public readonly metricType: string, // e.g., "power", "energy", "soc"
+    public readonly metricUnit: string, // e.g., "W", "Wh", "%"
+    public readonly defaultName: string, // from vendor
+    public readonly displayName: string | null, // user-customizable
+    public readonly subsystem: string | null, // for UI color coding
+    public readonly transform: string | null, // null | 'i' | 'd'
     public readonly active: boolean,
-    public readonly logicalPath: string | null,
-    public readonly physicalPath: string,
+    public readonly createdAtMs: number,
+    public readonly updatedAtMs: number | null,
   ) {}
 
   /**
@@ -37,23 +33,29 @@ export class PointInfo {
   }
 
   /**
-   * @deprecated Use logicalPath property instead. This method will be removed.
-   * Get the point path as a string (falls back to index-based path if type is null)
+   * Get the full logical path (logicalPathStem + "/" + metricType)
+   * Returns null if logicalPathStem is null
+   *
+   * @example
+   * // logicalPathStem: "source.solar", metricType: "power"
+   * point.getLogicalPath() // "source.solar/power"
    */
-  getPath(): string {
-    if (this.logicalPath) {
-      return this.logicalPath;
-    }
-    // Fallback for points without type
-    return `${this.index}/${this.metricType}`;
+  getLogicalPath(): string | null {
+    if (!this.logicalPathStem) return null;
+    return `${this.logicalPathStem}/${this.metricType}`;
   }
 
   /**
-   * @deprecated Use logicalPath property instead. This method will be removed.
-   * Get the logical path for typed points only
+   * Get the point path as a string
+   * Uses logical path if available, falls back to index-based path
    */
-  getLogicalPath(): string | null {
-    return this.logicalPath;
+  getPath(): string {
+    const logicalPath = this.getLogicalPath();
+    if (logicalPath) {
+      return logicalPath;
+    }
+    // Fallback for points without logicalPathStem
+    return `${this.index}/${this.metricType}`;
   }
 
   /**
@@ -103,20 +105,11 @@ export class PointInfo {
   }
 
   /**
-   * @deprecated Use getPath().toString() instead
-   * Get the point identifier in format type.subtype.extension (omitting null parts)
-   * Returns null if type is null
+   * Get the point identifier (the logicalPathStem)
+   * Returns null if logicalPathStem is null
    */
   getIdentifier(): string | null {
-    if (!this.type) return null;
-    let path = this.type;
-    if (this.subtype) {
-      path += `.${this.subtype}`;
-      if (this.extension) {
-        path += `.${this.extension}`;
-      }
-    }
-    return path;
+    return this.logicalPathStem;
   }
 
   /**
@@ -133,40 +126,32 @@ export class PointInfo {
   static from(data: {
     index: number; // Database field name is 'id', exposed as 'index' in TypeScript
     systemId: number;
-    originId: string;
-    originSubId: string | null;
-    alias: string | null;
+    physicalPath: string;
+    logicalPathStem: string | null;
+    metricType: string;
+    metricUnit: string;
     defaultName: string;
     displayName: string | null;
     subsystem: string | null;
-    type: string | null;
-    subtype: string | null;
-    extension: string | null;
-    metricType: string;
-    metricUnit: string;
     transform: string | null;
     active: boolean;
-    logicalPath: string | null;
-    physicalPath: string;
+    createdAtMs: number;
+    updatedAtMs: number | null;
   }): PointInfo {
     return new PointInfo(
-      data.index, // Database 'id' column exposed as 'index' property
+      data.index,
       data.systemId,
-      data.originId,
-      data.originSubId,
-      data.alias,
+      data.physicalPath,
+      data.logicalPathStem,
+      data.metricType,
+      data.metricUnit,
       data.defaultName,
       data.displayName,
       data.subsystem,
-      data.type,
-      data.subtype,
-      data.extension,
-      data.metricType,
-      data.metricUnit,
       data.transform,
       data.active,
-      data.logicalPath,
-      data.physicalPath,
+      data.createdAtMs,
+      data.updatedAtMs,
     );
   }
 }

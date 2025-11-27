@@ -14,18 +14,14 @@ import {
   pointReadings,
   pointReadingsAgg5m,
 } from "@/lib/db/schema-monitoring-points";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { PointInfo } from "@/lib/point/point-info";
 import {
   SeriesInfo,
   createSeriesInfos,
   getSeriesPath,
 } from "@/lib/point/series-info";
-import {
-  SystemIdentifier,
-  PointReference,
-  buildPointPath,
-} from "@/lib/identifiers";
+import { SystemIdentifier, PointReference } from "@/lib/identifiers";
 import { SystemWithPolling, SystemsManager } from "@/lib/systems-manager";
 import micromatch from "micromatch";
 import {
@@ -33,6 +29,10 @@ import {
   getPointsLastValues5m,
 } from "../point-aggregation-helper";
 import { updateLatestPointValue } from "../kv-cache-manager";
+import {
+  updateSystemSummary,
+  updateSubscriberSummaries,
+} from "../system-summary-store";
 
 // ============================================================================
 // Types
@@ -43,15 +43,12 @@ export interface PointInfoMap {
 }
 
 export interface PointMetadata {
-  originId: string;
-  originSubId?: string;
-  defaultName: string;
-  subsystem?: string | null;
-  type?: string | null;
-  subtype?: string | null;
-  extension?: string | null;
+  physicalPath: string; // "/" separated, e.g., "selectronic/solar_w"
+  logicalPathStem: string | null; // "." separated, e.g., "source.solar"
   metricType: string;
   metricUnit: string;
+  defaultName: string;
+  subsystem?: string | null;
   transform: string | null;
 }
 
@@ -272,9 +269,11 @@ export class PointManager {
       );
     }
 
-    // Filter by typedOnly if requested
+    // Filter by typedOnly if requested (points with logicalPathStem)
     if (typedOnly) {
-      seriesInfos = seriesInfos.filter((series) => series.point.type !== null);
+      seriesInfos = seriesInfos.filter(
+        (series) => series.point.logicalPathStem !== null,
+      );
     }
 
     // Filter by patterns if provided
@@ -320,10 +319,10 @@ export class PointManager {
     // Load points (handles both composite and non-composite)
     const allPoints = await this._loadPointsWithCompositeSupport(system);
 
-    // Filter active and optionally by typedOnly
+    // Filter active and optionally by typedOnly (points with logicalPathStem)
     return allPoints.filter((point) => {
       if (!point.active) return false;
-      if (typedOnly && point.type === null) return false;
+      if (typedOnly && point.logicalPathStem === null) return false;
       return true;
     });
   }
@@ -358,12 +357,7 @@ export class PointManager {
     updates: Partial<{
       displayName: string;
       active: boolean;
-      type: string | null;
-      subtype: string | null;
-      extension: string | null;
-      metricType: string;
-      metricUnit: string;
-      alias: string | null;
+      logicalPathStem: string | null;
       transform: string | null;
     }>,
   ): Promise<void> {
@@ -371,7 +365,7 @@ export class PointManager {
       .update(pointInfoTable)
       .set({
         ...updates,
-        updatedAt: Date.now(), // Unix milliseconds
+        updatedAtMs: Date.now(), // Unix milliseconds
       })
       .where(eq(pointInfoTable.index, pointIndex));
 
@@ -386,49 +380,29 @@ export class PointManager {
   async createPoint(pointData: {
     systemId: number;
     index: number; // Database field is 'id', but we call it 'index' in TS code
-    originId: string;
-    originSubId?: string | null;
+    physicalPath: string;
+    logicalPathStem: string | null;
+    metricType: string;
+    metricUnit: string;
     defaultName: string;
     displayName: string;
     subsystem?: string | null;
-    type: string | null;
-    subtype: string | null;
-    extension: string | null;
-    metricType: string;
-    metricUnit: string;
-    alias: string | null;
     active: boolean;
     transform: string | null;
   }): Promise<void> {
-    // Compute paths
-    const logicalPath = pointData.type
-      ? buildPointPath(
-          pointData.type,
-          pointData.subtype,
-          pointData.extension,
-          pointData.metricType,
-        )
-      : null;
-    const physicalPath = `${pointData.originId}.${pointData.originSubId ?? ""}`;
-
     await db.insert(pointInfoTable).values({
       systemId: pointData.systemId,
       index: pointData.index,
-      originId: pointData.originId,
-      originSubId: pointData.originSubId ?? null,
+      physicalPath: pointData.physicalPath,
+      logicalPathStem: pointData.logicalPathStem,
+      metricType: pointData.metricType,
+      metricUnit: pointData.metricUnit,
       defaultName: pointData.defaultName,
       displayName: pointData.displayName,
       subsystem: pointData.subsystem ?? null,
-      type: pointData.type,
-      subtype: pointData.subtype,
-      extension: pointData.extension,
-      metricType: pointData.metricType,
-      metricUnit: pointData.metricUnit,
-      alias: pointData.alias,
       active: pointData.active,
       transform: pointData.transform,
-      logicalPath,
-      physicalPath,
+      createdAtMs: Date.now(),
     });
 
     // Invalidate cache for this system
@@ -441,6 +415,7 @@ export class PointManager {
 
   /**
    * Load all point_info entries for a system and create a lookup map
+   * Uses physicalPath as the key
    */
   async loadPointInfoMap(systemId: number): Promise<PointInfoMap> {
     const points = await db
@@ -450,14 +425,33 @@ export class PointManager {
 
     const pointMap: PointInfoMap = {};
     for (const point of points) {
-      // Create composite key: originId[:originSubId]
-      const key = point.originSubId
-        ? `${point.originId}:${point.originSubId}`
-        : point.originId;
-      pointMap[key] = point;
+      // Use physicalPath as the key
+      pointMap[point.physicalPath] = point;
     }
 
     return pointMap;
+  }
+
+  /**
+   * Get a single point by its physicalPath
+   * Returns null if the point doesn't exist
+   */
+  async getPointByPhysicalPath(
+    systemId: number,
+    physicalPath: string,
+  ): Promise<typeof pointInfoTable.$inferSelect | null> {
+    const [point] = await db
+      .select()
+      .from(pointInfoTable)
+      .where(
+        and(
+          eq(pointInfoTable.systemId, systemId),
+          eq(pointInfoTable.physicalPath, physicalPath),
+        ),
+      )
+      .limit(1);
+
+    return point || null;
   }
 
   /**
@@ -469,10 +463,8 @@ export class PointManager {
     pointMap: PointInfoMap,
     metadata: PointMetadata,
   ): Promise<typeof pointInfoTable.$inferSelect> {
-    // Create composite key: originId[:originSubId] - must match loadPointInfoMap
-    const key = metadata.originSubId
-      ? `${metadata.originId}:${metadata.originSubId}`
-      : metadata.originId;
+    // Use physicalPath as the key - must match loadPointInfoMap
+    const key = metadata.physicalPath;
 
     // Return existing if found
     if (pointMap[key]) {
@@ -480,7 +472,7 @@ export class PointManager {
     }
 
     console.log(
-      `[PointManager] Creating point_info for ${metadata.defaultName}${metadata.originSubId ? "." + metadata.originSubId : ""} (${metadata.metricType})`,
+      `[PointManager] Creating point_info for ${metadata.defaultName} (${metadata.metricType}) at ${metadata.physicalPath}`,
     );
 
     // Get the next available index for this system
@@ -494,49 +486,30 @@ export class PointManager {
         : 0;
     const nextIndex = maxIndex + 1;
 
-    // Compute paths
-    const logicalPath = metadata.type
-      ? buildPointPath(
-          metadata.type,
-          metadata.subtype || null,
-          metadata.extension || null,
-          metadata.metricType,
-        )
-      : null;
-    const physicalPath = `${metadata.originId}.${metadata.originSubId || ""}`;
-
     // Create new point_info entry
     const [newPoint] = await db
       .insert(pointInfoTable)
       .values({
         systemId,
         index: nextIndex,
-        originId: metadata.originId,
-        originSubId: metadata.originSubId || null,
+        physicalPath: metadata.physicalPath,
+        logicalPathStem: metadata.logicalPathStem,
+        metricType: metadata.metricType,
+        metricUnit: metadata.metricUnit,
         defaultName: metadata.defaultName,
         displayName: metadata.defaultName, // Initially same as defaultName
         subsystem: metadata.subsystem || null,
-        type: metadata.type || null,
-        subtype: metadata.subtype || null,
-        extension: metadata.extension || null,
-        metricType: metadata.metricType,
-        metricUnit: metadata.metricUnit,
         transform: metadata.transform,
-        created: Date.now(),
-        logicalPath,
-        physicalPath,
+        createdAtMs: Date.now(),
       })
       .onConflictDoUpdate({
-        target: [
-          pointInfoTable.systemId,
-          pointInfoTable.originId,
-          pointInfoTable.originSubId,
-        ],
+        target: [pointInfoTable.systemId, pointInfoTable.physicalPath],
         set: {
           // Update default name from source if it changed
           defaultName: metadata.defaultName,
           // Update transform if it changed
           transform: metadata.transform,
+          updatedAtMs: Date.now(),
         },
       })
       .returning();
@@ -898,14 +871,28 @@ export class PointManager {
     try {
       const points = await this.getActivePointsForSystem(systemId, false);
 
+      // Build summary values and cache updates together
+      const summaryValues: Array<{ logicalPath: string; value: number }> = [];
+      let maxMeasurementTimeMs = 0;
+
       const cacheUpdates = valuesToInsert.map((val) => {
         const point = points.find((p: PointInfo) => p.index === val.pointId);
+        const logicalPath = point?.getLogicalPath();
         // Only cache active points with a proper logicalPath
-        if (point && val.value !== null && point.logicalPath && point.active) {
+        if (point && val.value !== null && logicalPath && point.active) {
+          // Collect for system summary
+          summaryValues.push({
+            logicalPath,
+            value: val.value,
+          });
+          if (val.measurementTimeMs > maxMeasurementTimeMs) {
+            maxMeasurementTimeMs = val.measurementTimeMs;
+          }
+
           return updateLatestPointValue(
             systemId,
             val.pointId, // Pass point index for subscription lookup
-            point.logicalPath,
+            logicalPath,
             val.value,
             val.measurementTimeMs,
             val.receivedTimeMs,
@@ -916,6 +903,18 @@ export class PointManager {
         return Promise.resolve();
       });
       await Promise.all(cacheUpdates);
+
+      // Update system summary (fire-and-forget, don't block)
+      if (summaryValues.length > 0) {
+        updateSystemSummary(systemId, summaryValues, maxMeasurementTimeMs)
+          .then(() => {
+            // After updating source summary, update subscriber summaries
+            return updateSubscriberSummaries(systemId);
+          })
+          .catch((err) =>
+            console.error("Failed to update system summary:", err),
+          );
+      }
     } catch (error) {
       console.error("Failed to update KV cache:", error);
       // Don't throw - cache update failures shouldn't break reading insertion

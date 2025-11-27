@@ -953,15 +953,14 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
 
   // Get mapping of production point_info IDs to development point_info IDs
   const prodPointInfo = await ctx.prodDb.execute(
-    `SELECT id, system_id, origin_id, origin_sub_id FROM point_info`,
+    `SELECT id, system_id, physical_path FROM point_info`,
   );
 
   const devPointInfo = await ctx.db
     .select({
       id: pointInfo.index,
       systemId: pointInfo.systemId,
-      originId: pointInfo.originId,
-      originSubId: pointInfo.originSubId,
+      physicalPath: pointInfo.physicalPath,
     })
     .from(pointInfo);
 
@@ -976,12 +975,11 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
 
     if (!devSystemId) continue;
 
-    // Find matching dev point_info by system_id, origin_id, and origin_sub_id
+    // Find matching dev point_info by system_id and physical_path
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.originId === prodPoint.origin_id &&
-        p.originSubId === prodPoint.origin_sub_id,
+        p.physicalPath === prodPoint.physical_path,
     );
 
     if (devPoint) {
@@ -1055,15 +1053,14 @@ async function syncPointDailyAggregations(ctx: SyncContext) {
 
   // Get mapping of production point_info IDs to development point_info IDs
   const prodPointInfo = await ctx.prodDb.execute(
-    `SELECT id, system_id, origin_id, origin_sub_id FROM point_info`,
+    `SELECT id, system_id, physical_path FROM point_info`,
   );
 
   const devPointInfo = await ctx.db
     .select({
       id: pointInfo.index,
       systemId: pointInfo.systemId,
-      originId: pointInfo.originId,
-      originSubId: pointInfo.originSubId,
+      physicalPath: pointInfo.physicalPath,
     })
     .from(pointInfo);
 
@@ -1076,12 +1073,11 @@ async function syncPointDailyAggregations(ctx: SyncContext) {
 
     if (!devSystemId) continue;
 
-    // Find matching dev point_info by system_id, origin_id, and origin_sub_id
+    // Find matching dev point_info by system_id and physical_path
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.originId === prodPoint.origin_id &&
-        p.originSubId === prodPoint.origin_sub_id,
+        p.physicalPath === prodPoint.physical_path,
     );
 
     if (devPoint) {
@@ -1329,15 +1325,14 @@ async function syncPointReadings(ctx: SyncContext) {
 
   // First, get mapping of production point_info IDs to development point_info IDs
   const prodPointInfo = await ctx.prodDb.execute(
-    `SELECT id, system_id, origin_id, origin_sub_id FROM point_info`,
+    `SELECT id, system_id, physical_path FROM point_info`,
   );
 
   const devPointInfo = await ctx.db
     .select({
       id: pointInfo.index,
       systemId: pointInfo.systemId,
-      originId: pointInfo.originId,
-      originSubId: pointInfo.originSubId,
+      physicalPath: pointInfo.physicalPath,
     })
     .from(pointInfo);
 
@@ -1352,12 +1347,11 @@ async function syncPointReadings(ctx: SyncContext) {
 
     if (!devSystemId) continue;
 
-    // Find matching dev point_info by system_id, origin_id, and origin_sub_id
+    // Find matching dev point_info by system_id and physical_path
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.originId === prodPoint.origin_id &&
-        p.originSubId === prodPoint.origin_sub_id,
+        p.physicalPath === prodPoint.physical_path,
     );
 
     if (devPoint) {

@@ -57,16 +57,13 @@ export async function GET(
         continue;
       }
 
-      // Skip points without a series ID (type is required)
-      if (!point.type) {
+      // Skip points without a logical path
+      if (!point.logicalPathStem) {
         continue;
       }
 
-      // Build series ID path from type.subtype.extension
-      const pathParts = [point.type, point.subtype, point.extension].filter(
-        (p): p is string => Boolean(p),
-      );
-      const path = pathParts.join(".");
+      // Use logical path stem as the path
+      const path = point.logicalPathStem;
 
       // Find the system for this point
       const system = nonCompositeSystems.find((s) => s.id === point.systemId);

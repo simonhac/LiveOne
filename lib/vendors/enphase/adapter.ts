@@ -2,12 +2,9 @@ import { BaseVendorAdapter, type ScheduleEvaluation } from "../base-adapter";
 import type { PollingResult, TestConnectionResult } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { LatestReadingData } from "@/lib/types/readings";
-import type { SessionInfo } from "@/lib/point/point-manager";
+import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 import { db } from "@/lib/db";
-import {
-  pointReadingsAgg5m,
-  pointInfo,
-} from "@/lib/db/schema-monitoring-points";
+import { pointReadingsAgg5m } from "@/lib/db/schema-monitoring-points";
 import { eq, and, desc } from "drizzle-orm";
 import {
   checkAndFetchYesterdayIfNeeded,
@@ -45,17 +42,10 @@ export class EnphaseAdapter extends BaseVendorAdapter {
    */
   async getLastReading(systemId: number): Promise<LatestReadingData | null> {
     // Find the Enphase solar power point for this system
-    const [solarPoint] = await db
-      .select()
-      .from(pointInfo)
-      .where(
-        and(
-          eq(pointInfo.systemId, systemId),
-          eq(pointInfo.originId, "enphase"),
-          eq(pointInfo.originSubId, "solar_w"),
-        ),
-      )
-      .limit(1);
+    const solarPoint = await PointManager.getInstance().getPointByPhysicalPath(
+      systemId,
+      "enphase/solar_w",
+    );
 
     if (!solarPoint) {
       return null;

@@ -186,12 +186,9 @@ export async function PATCH(
       // Build map of "systemId.pointId" -> path
       const pointPaths = new Map<string, string>();
       for (const point of points) {
-        if (point.type) {
-          const pathParts = [point.type, point.subtype, point.extension].filter(
-            Boolean,
-          );
+        if (point.logicalPathStem) {
           const key = `${point.systemId}.${point.index}`;
-          pointPaths.set(key, pathParts.join("."));
+          pointPaths.set(key, point.logicalPathStem);
         }
       }
 
