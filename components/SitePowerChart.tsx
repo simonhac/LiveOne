@@ -143,7 +143,7 @@ export function generateSeriesConfig(
     // Add rest of house placeholder (after loads, at the bottom of the load stack)
     configs.push({
       id: "rest_of_house",
-      label: "Rest of House",
+      label: "Other Loads",
       color: CHART_COLORS.restOfHouse,
       order: loadSeries.length,
     });

@@ -434,7 +434,7 @@ function calculateRestOfHouse(
     );
     return {
       id: "rest_of_house",
-      description: "Rest of House",
+      description: "Other Loads",
       data: restOfHouse,
       color: getColorForPath("rest_of_house"),
     };
@@ -468,7 +468,7 @@ function calculateRestOfHouse(
     );
     return {
       id: "rest_of_house",
-      description: "Rest of House",
+      description: "Other Loads",
       data: restOfHouse,
       color: getColorForPath("rest_of_house"),
     };

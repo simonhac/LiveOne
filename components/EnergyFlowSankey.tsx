@@ -37,7 +37,7 @@ function shortenLabel(label: string): string {
   if (lower.includes("grid import")) return "Grid";
   if (lower.includes("grid export")) return "Grid";
   if (lower.includes("grid")) return "Grid";
-  if (lower.includes("rest of house")) return "House";
+  if (lower.includes("other loads")) return "Other";
 
   return label;
 }

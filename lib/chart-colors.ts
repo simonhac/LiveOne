@@ -59,6 +59,7 @@ export const LOAD_LABELS: Record<string, string> = {
   pool: "Pool",
   spa: "Spa",
   oven: "Oven",
+  OTHER: "Other Loads",
 } as const;
 
 // Special colors for specific load types (by load type identifier)
