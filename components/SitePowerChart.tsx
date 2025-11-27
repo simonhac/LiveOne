@@ -23,7 +23,7 @@ import { format } from "date-fns";
 import "chartjs-adapter-date-fns";
 import annotationPlugin from "chartjs-plugin-annotation";
 import { CalendarX2 } from "lucide-react";
-import { CHART_COLORS, LOAD_LABELS, getLoadColor } from "@/lib/chart-colors";
+import { CHART_COLORS, getLoadColor } from "@/lib/chart-colors";
 import { stemSplit } from "@/lib/identifiers/logical-path";
 import micromatch from "micromatch";
 
@@ -120,11 +120,9 @@ export function generateSeriesConfig(
     loadSeries.forEach((series, idx) => {
       // loadType is everything after "load." (e.g., "hvac", "pool", "hvac.upstairs")
       const loadType = series.segments.slice(1).join(".") || "";
-      // Use label from API if available, otherwise fallback to lookup table or capitalized load type
-      // If loadType is empty (just "load" with no subtype), use "Load" as default
+      // Use label from API if available, otherwise capitalize load type
       const label =
         series.label ||
-        (loadType ? LOAD_LABELS[loadType] : undefined) ||
         (loadType
           ? loadType.charAt(0).toUpperCase() + loadType.slice(1)
           : "Load");
@@ -141,10 +139,11 @@ export function generateSeriesConfig(
     });
 
     // Add rest of house placeholder (after loads, at the bottom of the load stack)
+    // Note: label and color are not used - site-data-processor provides full SeriesData
     configs.push({
       id: "rest_of_house",
-      label: "Other Loads",
-      color: CHART_COLORS.restOfHouse,
+      label: "", // Not used - comes from site-data-processor
+      color: "", // Not used - comes from site-data-processor
       order: loadSeries.length,
     });
 
@@ -189,9 +188,12 @@ export function generateSeriesConfig(
     solarSeries.forEach((series, idx) => {
       // Extension is 3rd+ segment (e.g., "local", "remote")
       const extension = series.segments.slice(2).join(".") || "";
-      const label = extension
-        ? `Solar ${extension.charAt(0).toUpperCase() + extension.slice(1)}`
-        : "Solar";
+      // Use label from API if available, otherwise derive from path
+      const label =
+        series.label ||
+        (extension
+          ? `Solar ${extension.charAt(0).toUpperCase() + extension.slice(1)}`
+          : "Solar");
       const color =
         idx === 0 ? CHART_COLORS.solar.primary : CHART_COLORS.solar.secondary;
 

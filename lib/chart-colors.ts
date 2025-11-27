@@ -51,17 +51,6 @@ export const LOAD_COLORS = [
   "rgb(20, 184, 166)", // teal-500
 ] as const;
 
-// Friendly labels for known load types
-export const LOAD_LABELS: Record<string, string> = {
-  hvac: "A/C",
-  ev: "EV Charger",
-  hws: "Hot Water",
-  pool: "Pool",
-  spa: "Spa",
-  oven: "Oven",
-  OTHER: "Other Loads",
-} as const;
-
 // Special colors for specific load types (by load type identifier)
 export const LOAD_TYPE_COLORS: Record<string, string> = {
   hws: CHART_COLORS.hotWater,
@@ -143,19 +132,11 @@ export function getColorForPath(path: string, label?: string): string {
     return CHART_COLORS.grid.main;
   }
 
-  // Loads
+  // Loads - match by logical path segments
   if (type === "load") {
-    // Check for special load types
+    // Check for special load types by path segment (e.g., "load.hws", "load.pool")
     if (subtype && LOAD_TYPE_COLORS[subtype]) {
       return LOAD_TYPE_COLORS[subtype];
-    }
-
-    // Check label-based colors
-    if (label === "Hot Water" || label === "HWS" || label === "Heat Pump") {
-      return CHART_COLORS.hotWater;
-    }
-    if (label === "Pool") {
-      return CHART_COLORS.pool;
     }
 
     // For other loads, use a consistent hash-based color selection

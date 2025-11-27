@@ -3,7 +3,6 @@
 import React from "react";
 import PowerCard from "@/components/PowerCard";
 import { stemSplit, getMetricType } from "@/lib/identifiers/logical-path";
-import { LOAD_LABELS } from "@/lib/chart-colors";
 import type { LatestPointValues, LatestPointValue } from "@/lib/types/api";
 import { Sun, Home, Battery, Zap } from "lucide-react";
 
@@ -200,11 +199,9 @@ function calculateAllLoads(latest: LatestPointValues): LoadPoint[] {
         // Child load has subtype (e.g., "load.hvac/power", "load.pool/power")
         // loadType is everything after "load." (e.g., "hvac", "pool", "hvac.upstairs")
         const loadType = segments.slice(1).join(".") || "";
-        const label =
-          LOAD_LABELS[loadType] ||
-          (loadType
-            ? loadType.charAt(0).toUpperCase() + loadType.slice(1)
-            : "Load");
+        const label = loadType
+          ? loadType.charAt(0).toUpperCase() + loadType.slice(1)
+          : "Load";
 
         childLoads.push({
           path: pointPath,

@@ -34,6 +34,9 @@ interface ParsedSeries {
   label?: string;
 }
 
+// Display label for rest of house / other loads synthetic series
+const REST_OF_HOUSE_LABEL = "Other";
+
 /**
  * Fetch data from the history API and parse all series IDs into SeriesPath objects
  */
@@ -434,7 +437,7 @@ function calculateRestOfHouse(
     );
     return {
       id: "rest_of_house",
-      description: "Other Loads",
+      description: REST_OF_HOUSE_LABEL,
       data: restOfHouse,
       color: getColorForPath("rest_of_house"),
     };
@@ -468,7 +471,7 @@ function calculateRestOfHouse(
     );
     return {
       id: "rest_of_house",
-      description: "Other Loads",
+      description: REST_OF_HOUSE_LABEL,
       data: restOfHouse,
       color: getColorForPath("rest_of_house"),
     };
