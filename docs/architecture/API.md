@@ -753,7 +753,7 @@ Returns readings for a specific point.
 
 ### GET /api/admin/user/[userId]/points
 
-Returns all points accessible by a user.
+Returns all active points with logical paths from a user's non-composite systems.
 
 **Path Parameters:**
 
@@ -763,21 +763,31 @@ Returns all points accessible by a user.
 
 ```json
 {
-  "systems": [
+  "success": true,
+  "availablePoints": [
     {
+      "id": "1.5",
+      "logicalPath": "source.solar/power",
+      "pointName": "Solar Power",
       "systemId": 1,
+      "systemName": "Home Solar"
+    }
+  ],
+  "referencedSystems": [
+    {
+      "id": 1,
       "displayName": "Home Solar",
-      "points": [
-        {
-          "pointId": 2,
-          "displayName": "Solar Power",
-          "metricUnit": "W"
-        }
-      ]
+      "alias": "home"
     }
   ]
 }
 ```
+
+- `id` - Point reference in format "systemId.pointIndex"
+- `logicalPath` - Full logical path (stem + "/" + metricType)
+- `pointName` - Display name (user-set or default)
+- `referencedSystems` - Systems that have at least one point in availablePoints
+- `alias` is only included if non-null
 
 ---
 

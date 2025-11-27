@@ -10,11 +10,10 @@ interface CompositeMapping {
 
 interface AvailablePoint {
   id: string; // Format: "systemId.pointId"
-  path: string; // Series ID path like "source.solar.local"
-  name: string; // Display name
+  logicalPath: string; // Full logical path like "source.solar.local/power"
+  pointName: string; // Display name
   systemId: number;
   systemName: string;
-  metricType: string; // e.g., "power", "energy", "soc"
 }
 
 interface CompositeTabProps {
@@ -209,29 +208,26 @@ export default function CompositeTab({
   ): {
     systemName: string;
     pointName: string;
-    path: string;
-    metricType: string;
+    logicalPath: string;
   } | null => {
     const point = availablePoints.find((p) => p.id === pointId);
 
     if (point) {
       return {
         systemName: point.systemName,
-        pointName: point.name,
-        path: point.path,
-        metricType: point.metricType,
+        pointName: point.pointName,
+        logicalPath: point.logicalPath,
       };
     }
 
-    // Fallback: parse the ID - but we don't have path/metricType info
+    // Fallback: parse the ID - but we don't have logicalPath info
     const parts = pointId.split(".");
     if (parts.length !== 2) return null;
 
     return {
       systemName: `System ${parts[0]}`,
       pointName: `Point ${parts[1]}`,
-      path: "",
-      metricType: "",
+      logicalPath: "",
     };
   };
 
@@ -311,7 +307,7 @@ export default function CompositeTab({
     return availablePoints.filter((point) => {
       // Check if it matches the category pattern (if pattern exists)
       const pattern = categoryPatterns[category];
-      if (pattern && !matchesPattern(point.path, pattern)) {
+      if (pattern && !matchesPattern(point.logicalPath, pattern)) {
         return false;
       }
 
@@ -451,7 +447,7 @@ export default function CompositeTab({
                         {group.systemName}
                       </div>
                       {group.points
-                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .sort((a, b) => a.pointName.localeCompare(b.pointName))
                         .map((point, idx) => (
                           <button
                             key={idx}
@@ -468,12 +464,9 @@ export default function CompositeTab({
                             }}
                             className="w-full text-left pl-6 pr-3 py-1.5 text-sm text-gray-300 hover:bg-gray-800 transition-colors border-b border-gray-800 last:border-b-0"
                           >
-                            <span>{point.name}</span>
+                            <span>{point.pointName}</span>
                             <span className="ml-2 text-gray-600">
-                              {point.path}
-                            </span>
-                            <span className="ml-2 text-gray-500">
-                              {point.metricType}
+                              {point.logicalPath}
                             </span>
                           </button>
                         ))}
@@ -565,10 +558,7 @@ export default function CompositeTab({
                                 {labelParts.pointName}
                               </span>
                               <span className="ml-2 text-gray-600">
-                                {labelParts.path}
-                              </span>
-                              <span className="ml-2 text-gray-500">
-                                {labelParts.metricType}
+                                {labelParts.logicalPath}
                               </span>
                             </>
                           ) : (

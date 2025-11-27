@@ -4,6 +4,7 @@ import { pointInfo } from "@/lib/db/schema-monitoring-points";
 import { eq, and } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
+import { PointInfo } from "@/lib/point/point-info";
 
 export async function GET(
   request: NextRequest,
@@ -42,45 +43,40 @@ export async function GET(
     // Filter to only points from the owner's systems and build the response
     const availablePoints: Array<{
       id: string;
-      path: string;
-      name: string;
+      logicalPath: string;
+      pointName: string;
       systemId: number;
       systemName: string;
-      metricType: string;
     }> = [];
 
     const referencedSystemIds = new Set<number>();
 
-    for (const point of points) {
+    for (const row of points) {
       // Skip points not from the owner's systems
-      if (!systemIds.includes(point.systemId)) {
+      if (!systemIds.includes(row.systemId)) {
         continue;
       }
 
       // Skip points without a logical path
-      if (!point.logicalPathStem) {
+      if (!row.logicalPathStem) {
         continue;
       }
 
-      // Use logical path stem as the path
-      const path = point.logicalPathStem;
-
       // Find the system for this point
-      const system = nonCompositeSystems.find((s) => s.id === point.systemId);
+      const system = nonCompositeSystems.find((s) => s.id === row.systemId);
       if (!system) {
         continue;
       }
 
-      // Build the point ID in format "systemId.pointId"
-      const id = `${point.systemId}.${point.index}`;
+      // Create PointInfo instance for accessing helper methods
+      const point = PointInfo.from(row);
 
       availablePoints.push({
-        id,
-        path,
-        name: point.displayName || point.defaultName,
+        id: point.getReference().toString(),
+        logicalPath: point.getLogicalPath()!,
+        pointName: point.name,
         systemId: point.systemId,
         systemName: system.displayName,
-        metricType: point.metricType,
       });
 
       referencedSystemIds.add(point.systemId);
@@ -92,7 +88,7 @@ export async function GET(
       .map((s) => ({
         id: s.id,
         displayName: s.displayName,
-        alias: s.alias,
+        ...(s.alias && { alias: s.alias }),
       }));
 
     return NextResponse.json({

@@ -42,78 +42,82 @@ The Points system provides:
 
 ### Terminology
 
-| Term              | Description                                    | Example                                 |
-| ----------------- | ---------------------------------------------- | --------------------------------------- |
-| **Point**         | A single measurable value from a system        | "Battery SOC"                           |
-| **System**        | A physical solar/battery installation          | "Daylesford Selectronic"                |
-| **Metric Type**   | The kind of measurement                        | `power`, `energy`, `soc`, `temperature` |
-| **Metric Unit**   | The unit of measurement                        | `W`, `Wh`, `%`, `°C`                    |
-| **Origin ID**     | Vendor's identifier for the measurement source | `"E1"` (Amber import channel)           |
-| **Origin Sub ID** | Vendor's identifier for the specific metric    | `"kwh"` (energy reading)                |
-| **Series Path**   | Hierarchical identifier for categorization     | `source.solar.local`                    |
-| **Subsystem**     | Functional grouping set at creation            | `solar`, `battery`, `grid`, `load`      |
+| Term                  | Description                                    | Example                                  |
+| --------------------- | ---------------------------------------------- | ---------------------------------------- |
+| **Point**             | A single measurable value from a system        | "Battery SOC"                            |
+| **System**            | A physical solar/battery installation          | "Daylesford Selectronic"                 |
+| **Physical Path**     | Vendor-specific identifier using "/" separator | `selectronic/solar_w`, `E1/kwh`          |
+| **Logical Path Stem** | Semantic classification using "." separator    | `source.solar`, `bidi.battery`           |
+| **Logical Path**      | Full path: stem + "/" + metricType             | `source.solar/power`, `bidi.battery/soc` |
+| **Metric Type**       | The kind of measurement                        | `power`, `energy`, `soc`, `temperature`  |
+| **Metric Unit**       | The unit of measurement                        | `W`, `Wh`, `%`, `°C`                     |
+| **Subsystem**         | Functional grouping for UI color coding        | `solar`, `battery`, `grid`, `load`       |
 
 ### Point Identity
 
 Each point has **multiple identifiers** used in different contexts:
 
 ```typescript
-// Database identity (unique within system)
+// Database identity (composite primary key)
 systemId: 1;
-id: 5; // Sequential per system
+index: 5; // Sequential per system (DB column "id", TS property "index")
 
-// Vendor identity (how vendor identifies this metric)
-originId: "E1"; // Vendor's source identifier
-originSubId: "kwh"; // Vendor's metric identifier
+// Physical path (vendor identity, unique within system)
+physicalPath: "selectronic/solar_w"; // Vendor-specific, "/" separator
 
-// User identity
-displayName: "Grid Import Energy"; // User-friendly name
-alias: "grid_import"; // Optional short identifier for URLs/APIs
+// Logical path (semantic identity)
+logicalPathStem: "source.solar"; // Semantic classification, "." separator
+metricType: "power"; // Measurement type
+// Full logicalPath = "source.solar/power"
 
-// Hierarchical identity (for categorization)
-subsystem: "grid"; // Functional group (set at creation, immutable)
-type: "bidi"; // User-editable category
-subtype: "grid"; // User-editable subcategory
-extension: "energy"; // User-editable qualifier
+// Display
+defaultName: "Solar"; // From vendor (immutable)
+displayName: "Main Solar Power"; // User-editable
+subsystem: "solar"; // For UI grouping/colors
 ```
 
-### Series Paths
+### Logical Paths
 
-Series paths are hierarchical identifiers built from configurable fields:
+Logical paths provide semantic identification for points, enabling categorization and composite system mappings.
+
+**Structure:**
 
 ```
-type.subtype.extension
+logicalPathStem / metricType
+└─────┬──────┘   └────┬────┘
+ "." separated    measurement
 ```
 
 **Examples:**
 
-```
-source.solar             // Total solar (no extension)
-source.solar.local       // Solar from local CT measurement
-source.solar.remote      // Solar from remote inverter
-bidi.battery             // Battery power (bidirectional)
-bidi.battery.soc         // Battery state of charge
-bidi.grid                // Grid power (bidirectional)
-load                     // Total load (no type, just subsystem)
-```
+| Logical Path Stem     | Metric Type | Full Logical Path            | Description             |
+| --------------------- | ----------- | ---------------------------- | ----------------------- |
+| `source.solar`        | `power`     | `source.solar/power`         | Total solar power       |
+| `source.solar.local`  | `power`     | `source.solar.local/power`   | Local solar CT          |
+| `source.solar.remote` | `energy`    | `source.solar.remote/energy` | Remote inverter energy  |
+| `bidi.battery`        | `power`     | `bidi.battery/power`         | Battery power           |
+| `bidi.battery`        | `soc`       | `bidi.battery/soc`           | Battery state of charge |
+| `bidi.grid`           | `power`     | `bidi.grid/power`            | Grid power              |
+| `load`                | `power`     | `load/power`                 | Total load              |
 
 **Path Rules:**
 
-- All segments are optional
-- Use dot notation for hierarchy
+- `logicalPathStem` uses "." as segment separator
+- Full logical path = `stem + "/" + metricType`
+- Stem can be null for points without semantic classification
 - Path determines composite category eligibility
-- User can modify to customize organization
 
-### Subsystem vs Type
+### Physical vs Logical Paths
 
-| Field         | Set By                           | Editable | Purpose                           |
-| ------------- | -------------------------------- | -------- | --------------------------------- |
-| **subsystem** | Vendor adapter at point creation | ❌ No    | Functional grouping for UI panels |
-| **type**      | User (via Point Info modal)      | ✅ Yes   | Top-level category in series path |
+| Field               | Separator | Set By         | Purpose                               | Example               |
+| ------------------- | --------- | -------------- | ------------------------------------- | --------------------- |
+| **physicalPath**    | `/`       | Vendor adapter | Vendor-specific identifier            | `selectronic/solar_w` |
+| **logicalPathStem** | `.`       | Vendor adapter | Semantic classification               | `source.solar`        |
+| **logicalPath**     | `.` + `/` | Computed       | Full semantic path for categorization | `source.solar/power`  |
 
-**Subsystem** groups points by function (solar, battery, grid, load, inverter, other) for display in UI panels.
+**Physical path** is the vendor's identifier - used internally for data collection and deduplication.
 
-**Type** is part of the user-editable series path hierarchy used for categorization and composite mappings.
+**Logical path** is the semantic identifier - used for UI categorization, composite mappings, and API queries.
 
 ### Metric Types and Transforms
 
@@ -149,45 +153,40 @@ Stores metadata and configuration for each point.
 CREATE TABLE point_info (
   -- Identity (composite primary key)
   system_id INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
-  id INTEGER NOT NULL,                -- Sequential per system (1, 2, 3...)
+  id INTEGER NOT NULL,                     -- Sequential per system (TS: "index")
 
-  -- Vendor identity
-  origin_id TEXT NOT NULL,            -- Vendor's source identifier
-  origin_sub_id TEXT,                 -- Vendor's metric identifier (optional)
-
-  -- Display information
-  point_name TEXT NOT NULL,           -- Canonical name (vendor default)
-  display_name TEXT NOT NULL,         -- User-editable display name
-  alias TEXT,                         -- Optional short identifier (alphanumeric + underscore)
-
-  -- Hierarchical classification
-  subsystem TEXT,                     -- Functional group: solar, battery, grid, load, inverter, other
-  type TEXT,                          -- Series path segment 1 (user editable)
-  subtype TEXT,                       -- Series path segment 2 (user editable)
-  extension TEXT,                     -- Series path segment 3 (user editable)
+  -- Paths
+  physical_path TEXT NOT NULL,             -- Vendor-specific, "/" separator
+  logical_path_stem TEXT,                  -- Semantic classification, "." separator (nullable)
 
   -- Metric information
-  metric_type TEXT NOT NULL,          -- power, energy, soc, etc.
-  metric_unit TEXT NOT NULL,          -- W, Wh, %, etc.
+  metric_type TEXT NOT NULL,               -- power, energy, soc, etc.
+  metric_unit TEXT NOT NULL,               -- W, Wh, %, etc.
+
+  -- Display information
+  point_name TEXT NOT NULL,                -- Default name from vendor
+  display_name TEXT NOT NULL,              -- User-editable display name
+  subsystem TEXT,                          -- For UI grouping: solar, battery, grid, load, etc.
 
   -- Configuration
-  active INTEGER NOT NULL DEFAULT 1,  -- Boolean: 1 = enabled, 0 = disabled
-  transform TEXT,                     -- 'd' = delta, 'n' or null = none
+  transform TEXT,                          -- null = none, 'i' = invert, 'd' = differentiate
+  active INTEGER NOT NULL DEFAULT 1,       -- Boolean: 1 = enabled, 0 = disabled
 
-  -- Metadata
-  created INTEGER NOT NULL DEFAULT 0, -- Unix timestamp (milliseconds)
+  -- Timestamps (milliseconds)
+  created_at_ms INTEGER NOT NULL DEFAULT 0,
+  updated_at_ms INTEGER,
 
   PRIMARY KEY (system_id, id),
-  UNIQUE (system_id, origin_id, origin_sub_id),
-  UNIQUE (system_id, alias) WHERE alias IS NOT NULL
+  UNIQUE (system_id, physical_path),
+  UNIQUE (system_id, logical_path_stem, metric_type)
 );
 ```
 
 **Key Constraints:**
 
 1. **Composite Primary Key**: `(system_id, id)` - Points are numbered sequentially per system
-2. **Vendor Uniqueness**: `(system_id, origin_id, origin_sub_id)` - Each vendor metric maps to one point
-3. **Alias Uniqueness**: `alias` must be unique within a system (when not null)
+2. **Physical Path Uniqueness**: `(system_id, physical_path)` - Each vendor path maps to one point
+3. **Logical Path Uniqueness**: `(system_id, logical_path_stem, metric_type)` - Full logical path is unique
 
 ### point_readings Table
 
@@ -259,27 +258,21 @@ Points are created by **vendor adapters** when they first receive data from a sy
 export function getSelectronicPoints(): PointMetadata[] {
   return [
     {
-      originId: "solar",
-      originSubId: null,
-      pointName: "Solar",
-      subsystem: "solar",
-      type: "source",
-      subtype: "solar",
-      extension: null,
+      physicalPath: "selectronic/solar_w",
+      logicalPathStem: "source.solar",
       metricType: "power",
       metricUnit: "W",
+      defaultName: "Solar",
+      subsystem: "solar",
       transform: null,
     },
     {
-      originId: "battery",
-      originSubId: "soc",
-      pointName: "Battery SOC",
-      subsystem: "battery",
-      type: "bidi",
-      subtype: "battery",
-      extension: "soc",
+      physicalPath: "selectronic/battery_soc",
+      logicalPathStem: "bidi.battery",
       metricType: "soc",
       metricUnit: "%",
+      defaultName: "Battery SOC",
+      subsystem: "battery",
       transform: null,
     },
     // ... more points
@@ -290,13 +283,13 @@ export function getSelectronicPoints(): PointMetadata[] {
 **Point Manager** creates points in the database:
 
 ```typescript
-// lib/point/monitoring-point-manager.ts
-await pointManager.ensurePoints(systemId, pointMetadataArray);
+// lib/point/point-manager.ts
+await pointManager.ensurePointInfo(systemId, pointMetadata);
 ```
 
 This:
 
-1. Checks if point exists by `(system_id, origin_id, origin_sub_id)`
+1. Checks if point exists by `(system_id, physical_path)`
 2. Creates point if not found, assigns sequential `id`
 3. Updates metadata if point exists but metadata changed
 
@@ -402,81 +395,39 @@ display_name TEXT NOT NULL
 - Consistent naming within system
 - Include units if helpful ("Battery SOC (%)")
 
-### Alias (Short Name)
+### Logical Path Stem
 
-Optional short identifier for URLs and APIs:
+The semantic classification of a point:
 
 ```sql
-alias TEXT,  -- Unique within system
-UNIQUE (system_id, alias) WHERE alias IS NOT NULL
+logical_path_stem TEXT  -- "." separated, nullable
 ```
 
 **Rules:**
 
-- Optional
-- Must be unique within system
-- Alphanumeric and underscore only (`/^[a-zA-Z0-9_]+$/`)
-- Max 200 characters
-
-**Use cases:**
-
-- URL-friendly identifiers: `/dashboard/user/solar_main`
-- API endpoints: `/api/points/grid_import`
-- Short references in scripts/tools
-
-**Examples:**
-
-```
-battery_soc
-solar_main
-grid_export
-load_total
-```
-
-### Series Path Fields
-
-Three user-editable fields build the hierarchical path:
-
-```sql
-type TEXT,       -- Top-level category
-subtype TEXT,    -- Subcategory
-extension TEXT   -- Additional qualifier
-```
-
-**Resulting path:** `type.subtype.extension`
+- Nullable (points without semantic classification)
+- Uses "." as segment separator
+- Combined with `metric_type` to form full logical path
+- Determines composite category eligibility
 
 **Common patterns:**
 
-| Type     | Subtype   | Extension | Series Path           | Description     |
-| -------- | --------- | --------- | --------------------- | --------------- |
-| `source` | `solar`   | null      | `source.solar`        | Total solar     |
-| `source` | `solar`   | `local`   | `source.solar.local`  | Local solar CT  |
-| `source` | `solar`   | `remote`  | `source.solar.remote` | Remote inverter |
-| `bidi`   | `battery` | null      | `bidi.battery`        | Battery power   |
-| `bidi`   | `battery` | `soc`     | `bidi.battery.soc`    | Battery SOC     |
-| `bidi`   | `grid`    | null      | `bidi.grid`           | Grid power      |
-| `load`   | null      | null      | `load`                | Total load      |
+| Logical Path Stem     | Description                   |
+| --------------------- | ----------------------------- |
+| `source.solar`        | Total solar                   |
+| `source.solar.local`  | Local solar CT measurement    |
+| `source.solar.remote` | Remote inverter               |
+| `bidi.battery`        | Battery (bidirectional)       |
+| `bidi.battery.charge` | Battery charging specifically |
+| `bidi.grid`           | Grid (bidirectional)          |
+| `load`                | Total load                    |
+| `load.critical`       | Critical loads                |
 
-**Type values:**
+**Stem segment conventions:**
 
-- `source` - Energy sources (solar)
-- `bidi` - Bidirectional (battery, grid)
-- `load` - Consumption
-- Custom values allowed
-
-**Subtype values:**
-
-- `solar`, `battery`, `grid` - Standard subsystems
-- Custom values allowed for specialized cases
-
-**Extension values:**
-
-- `power` - Power measurement
-- `energy` - Energy accumulation
-- `soc` - State of charge
-- `local` - Local measurement source
-- `remote` - Remote measurement source
-- Custom values allowed
+- First segment: flow type (`source`, `bidi`, `load`)
+- Second segment: equipment (`solar`, `battery`, `grid`)
+- Additional segments: qualifiers (`local`, `remote`, `charge`, etc.)
 
 ### Transform
 
@@ -513,24 +464,20 @@ Modal dialog for editing individual point configuration.
 
 **Editable Fields:**
 
-| Field        | Control    | Validation                                                |
-| ------------ | ---------- | --------------------------------------------------------- |
-| Active       | Checkbox   | Required boolean                                          |
-| Display Name | Text input | Required, non-empty                                       |
-| Alias        | Text input | Optional, alphanumeric + underscore, unique within system |
-| Type         | Dropdown   | Optional, predefined options + custom                     |
-| Subtype      | Text input | Optional, free text                                       |
-| Extension    | Text input | Optional, free text                                       |
-| Transform    | Dropdown   | `n` (none) or `d` (delta)                                 |
+| Field        | Control    | Validation                            |
+| ------------ | ---------- | ------------------------------------- |
+| Active       | Checkbox   | Required boolean                      |
+| Display Name | Text input | Required, non-empty                   |
+| Transform    | Dropdown   | `n` (none), `d` (delta), `i` (invert) |
 
 **Read-Only Fields:**
 
-- Point Name (vendor default)
+- Default Name (from vendor)
+- Physical Path
+- Logical Path (stem + "/" + metricType)
 - Subsystem
 - Metric Type
 - Metric Unit
-- Origin ID
-- Origin Sub ID
 
 **UI Features:**
 
@@ -549,18 +496,18 @@ Read-only view of all points grouped by subsystem.
 
 ```
 ┌─ Solar ─────────────────────────────────┐
-│ source.solar                             │
+│ source.solar/power                       │
 │   • Solar Power (2500 W)                 │
-│ source.solar.local                       │
+│ source.solar.local/power                 │
 │   • Local Solar (1500 W)                 │
-│ source.solar.remote                      │
+│ source.solar.remote/power                │
 │   • Remote Solar (1000 W)                │
 └──────────────────────────────────────────┘
 
 ┌─ Battery ───────────────────────────────┐
-│ bidi.battery                             │
+│ bidi.battery/power                       │
 │   • Battery Power (-700 W)               │
-│ bidi.battery.soc                         │
+│ bidi.battery/soc                         │
 │   • Battery SOC (85.5 %)                 │
 └──────────────────────────────────────────┘
 ```
@@ -569,7 +516,7 @@ Read-only view of all points grouped by subsystem.
 
 - Grouped by subsystem (solar, battery, grid, load, inverter, other)
 - Color-coded subsystem panels
-- Hierarchical tree structure
+- Shows full logical path (stem/metricType)
 - Shows active/inactive status:
   - Active: Normal text
   - Inactive: Strikethrough, reduced opacity
@@ -595,7 +542,6 @@ Shows current/historical data with point configuration awareness.
 
 **Features:**
 
-- Shows point alias if available
 - Inactive points shown with strikethrough
 - Click point name to open Point Info modal
 - Real-time data updates
@@ -626,7 +572,7 @@ Main dialog for system configuration with multiple tabs.
 
 **Endpoint:** `GET /api/admin/user/[userId]/points`
 
-Returns all points from user's non-composite systems, grouped by system.
+Returns all active points with logical paths from a user's non-composite systems.
 
 **Parameters:**
 
@@ -637,26 +583,16 @@ Returns all points from user's non-composite systems, grouped by system.
 ```json
 {
   "success": true,
-  "points": [
+  "availablePoints": [
     {
+      "id": "1.5",
+      "logicalPath": "bidi.battery/soc",
+      "pointName": "Battery SOC",
       "systemId": 1,
-      "pointId": 5,
-      "originId": "battery",
-      "originSubId": "soc",
-      "pointName": "Battery",
-      "displayName": "Battery SOC",
-      "alias": "batt_soc",
-      "subsystem": "battery",
-      "type": "bidi",
-      "subtype": "battery",
-      "extension": "soc",
-      "metricType": "soc",
-      "metricUnit": "%",
-      "active": true,
-      "transform": null
+      "systemName": "Daylesford Selectronic"
     }
   ],
-  "systems": [
+  "referencedSystems": [
     {
       "id": 1,
       "displayName": "Daylesford Selectronic",
@@ -665,6 +601,12 @@ Returns all points from user's non-composite systems, grouped by system.
   ]
 }
 ```
+
+- `id` - Point reference in format "systemId.pointIndex"
+- `logicalPath` - Full logical path (stem + "/" + metricType)
+- `pointName` - Display name (user-set or default)
+- `referencedSystems` - Systems that have at least one point in availablePoints
+- `alias` is only included if non-null
 
 ### Update Point Configuration
 
@@ -858,7 +800,7 @@ Vendor adapters create and manage points for their systems.
 
 **Key responsibilities:**
 
-1. **Define point metadata** - Specify originId, subsystem, metric type, etc.
+1. **Define point metadata** - Specify physicalPath, logicalPathStem, metric type, etc.
 2. **Create points** - Ensure points exist before writing data
 3. **Write readings** - Store measurements in point_readings
 4. **Handle errors** - Track and report collection failures
@@ -870,15 +812,12 @@ Vendor adapters create and manage points for their systems.
 export function getAmberPoints(): PointMetadata[] {
   return [
     {
-      originId: "E1", // Import channel
-      originSubId: "kwh", // Energy reading
-      pointName: "Grid Import",
-      subsystem: "grid",
-      type: "bidi",
-      subtype: "grid",
-      extension: "energy",
+      physicalPath: "E1/kwh", // Vendor-specific path
+      logicalPathStem: "bidi.grid", // Semantic classification
       metricType: "energy",
       metricUnit: "Wh",
+      defaultName: "Grid Import",
+      subsystem: "grid",
       transform: "d", // Delta for cumulative energy
     },
     // ... more points
@@ -938,45 +877,43 @@ GET /api/history?seriesPattern=source.solar*&interval=5m&period=1d
 **✅ Do:**
 
 - Use descriptive display names ("Battery State of Charge" not "Batt SOC")
-- Set type/subtype/extension consistently across similar systems
-- Use aliases for frequently accessed points
+- Use consistent logical path stem conventions across similar systems
 - Only activate points you actually use
-- Document any custom series path conventions
+- Document any custom path conventions
 
 **❌ Don't:**
 
 - Use generic names like "Point 1" or "Metric A"
 - Mix naming conventions within a system
-- Create aliases that conflict across systems
 - Activate every possible point "just in case"
-- Change subsystem (it's immutable for a reason)
 
-### Series Path Design
+### Logical Path Design
 
 **Hierarchical organization:**
 
 ```
-source            ← Generic source
-  .solar          ← Specific source type
-    .local        ← Measurement location
-      .power      ← Metric type
+source            ← Flow type (generation)
+  .solar          ← Equipment type
+    .local        ← Qualifier
 ```
+
+Full logical path adds metric type: `source.solar.local/power`
 
 **Consistency patterns:**
 
 ```
-source.solar.local.power     ← Local solar power measurement
-source.solar.local.energy    ← Local solar energy accumulation
-source.solar.remote.power    ← Remote solar power measurement
-source.solar.remote.energy   ← Remote solar energy accumulation
+source.solar.local/power     ← Local solar power measurement
+source.solar.local/energy    ← Local solar energy accumulation
+source.solar.remote/power    ← Remote solar power measurement
+source.solar.remote/energy   ← Remote solar energy accumulation
 ```
 
 **Keep it simple:**
 
 ```
-✅ bidi.battery           ← Clear and simple
-✅ bidi.battery.soc       ← Adds necessary detail
-❌ bidi.battery.main.soc  ← Unnecessary nesting
+✅ bidi.battery/power     ← Clear and simple
+✅ bidi.battery/soc       ← Different metric type
+❌ bidi.battery.main/soc  ← Unnecessary nesting
 ```
 
 ### Composite Systems
@@ -984,7 +921,7 @@ source.solar.remote.energy   ← Remote solar energy accumulation
 **Planning:**
 
 1. **Identify categories** - What do you want to aggregate? (solar, battery, load, grid)
-2. **Find compatible points** - Use series path filtering
+2. **Find compatible points** - Use logical path filtering
 3. **Verify units** - All mapped points should use same units
 4. **Test aggregation** - Ensure totals make sense
 5. **Document mappings** - Record why points were grouped
@@ -1035,7 +972,7 @@ source.solar.remote.energy   ← Remote solar energy accumulation
 **Checks:**
 
 1. Verify `active = 1`: `SELECT active FROM point_info WHERE system_id = X AND id = Y`
-2. Check series path is not null: `SELECT type, subtype FROM point_info WHERE ...`
+2. Check logical path stem is not null: `SELECT logical_path_stem FROM point_info WHERE system_id = X AND id = Y`
 3. Verify system is active: `SELECT status FROM systems WHERE id = X`
 4. Clear cache and refresh page
 
@@ -1053,22 +990,22 @@ UPDATE point_info SET active = 1 WHERE system_id = X AND id = Y;
 **Checks:**
 
 1. Verify point is active
-2. Check series path matches category requirements:
+2. Check logical path stem matches category requirements:
 
 ```sql
-SELECT type, subtype, extension
+SELECT logical_path_stem, metric_type
 FROM point_info
 WHERE system_id = X AND id = Y;
 
--- For solar category: type should be 'source', subtype 'solar'
--- For battery: type 'bidi', subtype 'battery'
--- For load: type should be null or 'load'
--- For grid: type 'bidi', subtype 'grid'
+-- For solar category: logical_path_stem should start with 'source.solar'
+-- For battery: logical_path_stem should start with 'bidi.battery'
+-- For load: logical_path_stem should be 'load' or start with 'load.'
+-- For grid: logical_path_stem should start with 'bidi.grid'
 ```
 
 **Solution:**
 
-Edit point in Point Info modal to set correct type/subtype.
+Edit point in Point Info modal to set the correct logical path stem.
 
 ### Composite Validation Fails
 
@@ -1083,8 +1020,8 @@ Edit point in Point Info modal to set correct type/subtype.
 "Point not found"
 → Check: Point exists in database and is active
 
-"Incompatible series path"
-→ Check: Point's type/subtype matches category requirements
+"Incompatible logical path"
+→ Check: Point's logical path stem matches category requirements
 
 "Point already mapped in another category"
 → Check: Remove point from other category first
@@ -1097,9 +1034,8 @@ Edit point in Point Info modal to set correct type/subtype.
 SELECT
   p.system_id,
   p.id,
-  p.type,
-  p.subtype,
-  p.extension,
+  p.logical_path_stem,
+  p.metric_type,
   p.active,
   p.display_name
 FROM point_info p
@@ -1154,24 +1090,6 @@ SET transform = 'd'
 WHERE system_id = X AND id = Y AND metric_type = 'energy';
 ```
 
-### Alias Conflicts
-
-**Symptom:** Cannot save alias, get uniqueness error
-
-**Check:**
-
-```sql
--- Find existing point with that alias
-SELECT system_id, id, display_name, alias
-FROM point_info
-WHERE system_id = X AND alias = 'your_alias';
-```
-
-**Solution:**
-
-- Choose a different alias
-- Or update the other point's alias first
-
 ### Missing Historical Data
 
 **Symptom:** Point shows current value but no history
@@ -1190,7 +1108,7 @@ WHERE system_id = X AND point_id = Y;
 2. Check if point was recently created:
 
 ```sql
-SELECT created FROM point_info WHERE system_id = X AND id = Y;
+SELECT created_at_ms FROM point_info WHERE system_id = X AND id = Y;
 ```
 
 3. Verify raw readings exist:
