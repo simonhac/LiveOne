@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import type { PollStage } from "@/lib/vendors/types";
 
@@ -11,10 +11,17 @@ interface PollTimelineProps {
   isLive?: boolean; // Whether bars are still growing
 }
 
+// Animation duration in ms for each stage type
+const ANIMATION_DURATION = {
+  login: 200,
+  download: 200,
+  insert: 500,
+};
+
 /**
  * Gantt chart-style timeline showing poll stages (login, download, insert)
  * Similar to Chrome DevTools Network panel timeline
- * Server sends updates every 200ms, client animates smoothly between updates
+ * Uses GPU-accelerated transforms for smooth 60fps animation
  */
 export function PollTimeline({
   stages,
@@ -25,15 +32,138 @@ export function PollTimeline({
     null,
   );
 
+  // Refs to DOM elements for direct manipulation
+  const barRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  // Animation state stored in ref to avoid re-renders
+  // We animate scaleX from 0 to 1, where 1 = target width
+  const animationState = useRef<
+    Map<
+      string,
+      {
+        currentScale: number; // 0 to 1
+        targetScale: number; // 0 to 1
+        startScale: number;
+        startTime: number;
+        duration: number;
+        targetWidthPercent: number; // The actual width we're scaling to
+      }
+    >
+  >(new Map());
+
+  const rafRef = useRef<number | null>(null);
+
   // Minimum timeline width of 20 seconds (20000ms)
   const minTimelineWidth = 20000;
   const actualDuration = sessionEndMs - sessionStartMs;
   const sessionDuration = Math.max(actualDuration, minTimelineWidth);
 
-  // Minimum bar width in pixels for visibility
-  const getMinBarWidth = (stageName: PollStage["name"]) => {
-    return stageName === "insert" ? 5 : 10;
+  // Easing function (ease-out cubic for smooth deceleration)
+  const easeOutCubic = (t: number): number => {
+    return 1 - Math.pow(1 - t, 3);
   };
+
+  // Animation loop - updates transforms directly (GPU accelerated)
+  const animate = useCallback(() => {
+    const now = performance.now();
+    let stillAnimating = false;
+
+    animationState.current.forEach((state, key) => {
+      const elapsed = now - state.startTime;
+      const progress = Math.min(elapsed / state.duration, 1);
+      const easedProgress = easeOutCubic(progress);
+
+      const newScale =
+        state.startScale +
+        (state.targetScale - state.startScale) * easedProgress;
+      state.currentScale = newScale;
+
+      // Update transform directly (GPU accelerated)
+      const el = barRefs.current.get(key);
+      if (el) {
+        el.style.transform = `scaleX(${newScale})`;
+      }
+
+      if (progress < 1) {
+        stillAnimating = true;
+      }
+    });
+
+    if (stillAnimating) {
+      rafRef.current = requestAnimationFrame(animate);
+    } else {
+      rafRef.current = null;
+    }
+  }, []);
+
+  // Update targets when stages change
+  useEffect(() => {
+    const now = performance.now();
+
+    stages.forEach((stage) => {
+      const key = `${stage.name}-${stage.startMs}`;
+      const targetWidthPercent =
+        ((stage.endMs - stage.startMs) / sessionDuration) * 100;
+      // Insert has minimum width
+      const minWidth = stage.name === "insert" ? 0.25 : 0;
+      const finalWidthPercent = Math.max(targetWidthPercent, minWidth);
+
+      const existing = animationState.current.get(key);
+
+      if (!existing) {
+        // New stage - start from scale 0
+        animationState.current.set(key, {
+          currentScale: 0,
+          targetScale: 1,
+          startScale: 0,
+          startTime: now,
+          duration: ANIMATION_DURATION[stage.name],
+          targetWidthPercent: finalWidthPercent,
+        });
+
+        // Set initial width on element (will be scaled by transform)
+        const el = barRefs.current.get(key);
+        if (el) {
+          el.style.width = `${finalWidthPercent}%`;
+          el.style.transform = "scaleX(0)";
+        }
+      } else if (
+        Math.abs(existing.targetWidthPercent - finalWidthPercent) > 0.01
+      ) {
+        // Width target changed - update width and continue scaling
+        const el = barRefs.current.get(key);
+        if (el) {
+          // Calculate what the current visual width is
+          const currentVisualWidth =
+            existing.targetWidthPercent * existing.currentScale;
+          // Set new width and adjust scale to maintain visual continuity
+          el.style.width = `${finalWidthPercent}%`;
+          const newCurrentScale = currentVisualWidth / finalWidthPercent;
+
+          existing.targetWidthPercent = finalWidthPercent;
+          existing.startScale = newCurrentScale;
+          existing.currentScale = newCurrentScale;
+          existing.targetScale = 1;
+          existing.startTime = now;
+          existing.duration = ANIMATION_DURATION[stage.name];
+
+          el.style.transform = `scaleX(${newCurrentScale})`;
+        }
+      }
+    });
+
+    // Start animation if not running
+    if (!rafRef.current) {
+      rafRef.current = requestAnimationFrame(animate);
+    }
+
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [stages, sessionDuration, animate]);
 
   // Format duration as #,##0 ms
   const formatMs = (ms: number): string => {
@@ -41,10 +171,10 @@ export function PollTimeline({
   };
 
   // Stage colors - emerald, purple, orange palette
-  const stageColors: Record<PollStage["name"], { bg: string }> = {
-    login: { bg: "bg-emerald-600" }, // Emerald green
-    download: { bg: "bg-purple-600" }, // Purple
-    insert: { bg: "bg-orange-600" }, // Orange
+  const stageColors: Record<PollStage["name"], string> = {
+    login: "bg-emerald-600",
+    download: "bg-purple-600",
+    insert: "bg-orange-600",
   };
 
   return (
@@ -63,21 +193,35 @@ export function PollTimeline({
         {/* Timeline container */}
         <div className="absolute inset-0 flex items-center">
           {stages.map((stage, index) => {
-            // Calculate position and width as percentages of session duration
             const startOffset =
               ((stage.startMs - sessionStartMs) / sessionDuration) * 100;
-            const width =
+            const stageKey = `${stage.name}-${stage.startMs}`;
+            const targetWidth =
               ((stage.endMs - stage.startMs) / sessionDuration) * 100;
-            const duration = stage.endMs - stage.startMs;
+            const minWidth = stage.name === "insert" ? 0.25 : 0;
+            const finalWidth = Math.max(targetWidth, minWidth);
 
             return (
               <div
                 key={`${stage.name}-${index}`}
-                className={`absolute ${stageColors[stage.name].bg} transition-all duration-200 ease-linear`}
+                ref={(el) => {
+                  if (el) {
+                    barRefs.current.set(stageKey, el);
+                    // Initialize width if not set
+                    if (!el.style.width) {
+                      el.style.width = `${finalWidth}%`;
+                      el.style.transform = "scaleX(0)";
+                    }
+                  } else {
+                    barRefs.current.delete(stageKey);
+                  }
+                }}
+                className={`absolute ${stageColors[stage.name]}`}
                 style={{
                   left: `${startOffset}%`,
-                  width: `max(${Math.max(width, 0)}%, ${getMinBarWidth(stage.name)}px)`,
-                  height: "16px", // Fixed height to ensure consistency
+                  height: "16px",
+                  transformOrigin: "left",
+                  willChange: "transform",
                 }}
               />
             );
