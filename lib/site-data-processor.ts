@@ -5,10 +5,7 @@ import {
 } from "@/components/SitePowerChart";
 import { getColorForPath } from "@/lib/chart-colors";
 import { SeriesPath } from "@/lib/identifiers";
-import {
-  matchesPointPath,
-  parsePointPath,
-} from "@/lib/identifiers/point-path-utils";
+import { matchesLogicalPath, stemSplit } from "@/lib/identifiers/logical-path";
 import { parseAbsolute, parseDate, toZoned } from "@internationalized/date";
 import { encodeI18nToUrlSafeString } from "@/lib/url-date";
 
@@ -139,7 +136,7 @@ interface FetchedSiteData {
  */
 function splitBatteryPower(powerSeries: ParsedSeries[]): ParsedSeries[] {
   const batteryPowerIndex = powerSeries.findIndex((s) =>
-    matchesPointPath(s.seriesPath!.pointPath, "bidi.battery", "power"),
+    matchesLogicalPath(s.seriesPath!.pointPath, "bidi.battery", "power"),
   );
 
   if (batteryPowerIndex === -1) {
@@ -348,7 +345,7 @@ async function fetchSiteData(
 
   // Extract SoC series
   const socSeries = allSeries.filter((d) =>
-    matchesPointPath(d.seriesPath!.pointPath, "bidi.battery", "soc"),
+    matchesLogicalPath(d.seriesPath!.pointPath, "bidi.battery", "soc"),
   );
   console.log(
     "[Site Processor] Found SoC series:",
@@ -602,12 +599,12 @@ function trackLoadValues(
   tracker: LoadTracker,
 ): void {
   const pointPathStr = dataSeries.seriesPath!.pointPath;
-  const pointPath = parsePointPath(pointPathStr);
+  const segments = stemSplit(pointPathStr);
 
-  if (!pointPath) return;
+  if (segments.length === 0) return;
 
-  if (pointPath.type === "load") {
-    if (!pointPath.subtype) {
+  if (segments[0] === "load") {
+    if (segments.length === 1) {
       tracker.masterLoadValues = seriesValues;
       console.log(`[Site Processor] Found master load: ${config.label}`);
     } else {
@@ -624,10 +621,10 @@ function trackLoadValues(
       });
       console.log(`[Site Processor] Added child load: ${config.label}`);
     }
-  } else if (matchesPointPath(pointPathStr, "bidi.battery", "power")) {
+  } else if (matchesLogicalPath(pointPathStr, "bidi.battery", "power")) {
     tracker.batteryChargeValues = seriesValues;
     console.log(`[Site Processor] Found battery charge: ${config.label}`);
-  } else if (matchesPointPath(pointPathStr, "bidi.grid", "power")) {
+  } else if (matchesLogicalPath(pointPathStr, "bidi.grid", "power")) {
     tracker.gridExportValues = seriesValues;
     console.log(`[Site Processor] Found grid export: ${config.label}`);
   }

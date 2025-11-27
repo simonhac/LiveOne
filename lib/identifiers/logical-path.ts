@@ -1,12 +1,9 @@
 /**
- * Point Path Utilities
+ * Logical Path Utilities
  *
- * Utility functions for working with point paths.
+ * Functions for working with logical paths (the semantic representation of points).
  *
  * Grammar:
- * - physicalPath: [A-Za-z0-9_-]+ segments separated by "/" (MQTT-friendly)
- *   Examples: "selectronic/solar_w", "E1/kwh"
- *
  * - logicalPathStem: [A-Za-z0-9_-]+ segments separated by "." (nullable)
  *   Examples: "source.solar", "bidi.battery.charge", "load"
  *
@@ -19,22 +16,7 @@
 
 // Validation patterns
 const SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/;
-const PHYSICAL_PATH_PATTERN = /^[A-Za-z0-9_-]+(\/[A-Za-z0-9_-]+)*$/;
 const LOGICAL_PATH_STEM_PATTERN = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$/;
-
-/**
- * Validate a physical path (segments separated by "/")
- *
- * @example
- * isValidPhysicalPath("selectronic/solar_w") // true
- * isValidPhysicalPath("E1/kwh") // true
- * isValidPhysicalPath("selectronic") // true (single segment)
- * isValidPhysicalPath("") // false
- * isValidPhysicalPath("foo/") // false
- */
-export function isValidPhysicalPath(path: string): boolean {
-  return PHYSICAL_PATH_PATTERN.test(path);
-}
 
 /**
  * Validate a logical path stem (segments separated by ".")
@@ -123,6 +105,26 @@ export function getMetricType(path: string | null | undefined): string | null {
 }
 
 /**
+ * Split a logical path into its stem segments
+ *
+ * Combines getLogicalPathStem() and split(".") into one call.
+ * Returns empty array for invalid paths (safe to index).
+ *
+ * @example
+ * stemSplit("source.solar/power") // ["source", "solar"]
+ * stemSplit("bidi.battery.charge/soc") // ["bidi", "battery", "charge"]
+ * stemSplit("load/power") // ["load"]
+ * stemSplit("invalid") // []
+ * stemSplit(null) // []
+ */
+export function stemSplit(path: string | null | undefined): string[] {
+  if (!path) return [];
+  const stem = getLogicalPathStem(path);
+  if (!stem) return [];
+  return stem.split(".");
+}
+
+/**
  * Build a full logical path from stem and metric type
  *
  * @example
@@ -182,168 +184,4 @@ export function matchesLogicalPath(
   }
 
   return false;
-}
-
-/**
- * Split a physical path into segments
- *
- * @example
- * splitPhysicalPath("selectronic/solar_w") // ["selectronic", "solar_w"]
- * splitPhysicalPath("E1") // ["E1"]
- */
-export function splitPhysicalPath(path: string): string[] {
-  return path.split("/");
-}
-
-/**
- * Split a logical path stem into segments
- *
- * @example
- * splitLogicalPathStem("source.solar") // ["source", "solar"]
- * splitLogicalPathStem("bidi.battery.charge") // ["bidi", "battery", "charge"]
- */
-export function splitLogicalPathStem(stem: string): string[] {
-  return stem.split(".");
-}
-
-// ============================================================================
-// DEPRECATED - These functions are kept for backward compatibility during
-// migration but should not be used in new code.
-// ============================================================================
-
-/**
- * @deprecated Use logicalPathStem and metricType directly
- */
-export interface ParsedPointPath {
-  type: string;
-  subtype: string | null;
-  extension: string | null;
-  metricType: string;
-  isFallback: boolean;
-  pointIndex: number | null;
-}
-
-/**
- * @deprecated Use buildLogicalPath() instead
- */
-export function buildPointPath(
-  type: string,
-  subtype: string | null,
-  extension: string | null,
-  metricType: string,
-): string {
-  let path = type;
-  if (subtype) {
-    path += `.${subtype}`;
-    if (extension) {
-      path += `.${extension}`;
-    }
-  }
-  return `${path}/${metricType}`;
-}
-
-/**
- * @deprecated Use index-based fallback in point.getLogicalPath()
- */
-export function buildFallbackPointPath(
-  pointIndex: number,
-  metricType: string,
-): string {
-  return `${pointIndex}/${metricType}`;
-}
-
-/**
- * @deprecated Use getLogicalPathStem() and getMetricType() instead
- */
-export function parsePointPath(
-  str: string | null | undefined,
-): ParsedPointPath | null {
-  if (!str) return null;
-
-  const slashIndex = str.indexOf("/");
-  if (slashIndex === -1 || str.indexOf("/", slashIndex + 1) !== -1) {
-    return null;
-  }
-
-  const pointIdentifier = str.substring(0, slashIndex);
-  const metricType = str.substring(slashIndex + 1);
-
-  if (!metricType) {
-    return null;
-  }
-
-  // Check if this is a numeric-only point index (fallback format)
-  if (/^\d+$/.test(pointIdentifier)) {
-    const pointIndex = parseInt(pointIdentifier, 10);
-    if (pointIndex > 0) {
-      return {
-        type: pointIdentifier,
-        subtype: null,
-        extension: null,
-        metricType,
-        isFallback: true,
-        pointIndex,
-      };
-    }
-    return null;
-  }
-
-  // Parse point identifier - now supports unlimited segments
-  const parts = pointIdentifier.split(".");
-
-  if (parts.length === 0 || parts.some((p) => !p)) {
-    return null;
-  }
-
-  return {
-    type: parts[0],
-    subtype: parts.length > 1 ? parts[1] : null,
-    extension: parts.length > 2 ? parts.slice(2).join(".") : null,
-    metricType,
-    isFallback: false,
-    pointIndex: null,
-  };
-}
-
-/**
- * @deprecated Construct stems directly as strings
- */
-export function buildPointIdentifier(
-  type: string,
-  subtype: string | null,
-  extension: string | null,
-): string {
-  let path = type;
-  if (subtype) {
-    path += `.${subtype}`;
-    if (extension) {
-      path += `.${extension}`;
-    }
-  }
-  return path;
-}
-
-/**
- * @deprecated Use getLogicalPathStem() instead
- */
-export function getPointIdentifier(path: string): string | null {
-  return getLogicalPathStem(path);
-}
-
-/**
- * @deprecated Use getLogicalPathStem() instead
- */
-export function getIdentifierFromParsed(parsed: ParsedPointPath): string {
-  return buildPointIdentifier(parsed.type, parsed.subtype, parsed.extension);
-}
-
-/**
- * @deprecated Use matchesLogicalPath() instead
- */
-export function matchesPointPath(
-  path: string,
-  pattern: string,
-  metricType: string,
-): boolean {
-  return matchesLogicalPath(path, pattern, metricType);
 }

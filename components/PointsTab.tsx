@@ -1,14 +1,10 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Sun, Battery, Zap, Home, Activity } from "lucide-react";
-import {
-  parsePointPath,
-  ParsedPointPath,
-  getIdentifierFromParsed,
-} from "@/lib/identifiers/point-path-utils";
+import { getLogicalPathStem } from "@/lib/identifiers/logical-path";
 import micromatch from "micromatch";
 
 interface ParsedPoint {
-  pointPath: ParsedPointPath;
+  stem: string; // The logical path stem (e.g., "source.solar", "bidi.battery")
   name: string;
   metricType: string;
   metricUnit: string;
@@ -89,13 +85,13 @@ export default function PointsTab({
       const data = await response.json();
 
       if (data.points && Array.isArray(data.points)) {
-        // Parse paths at serialization boundary
+        // Extract stems at serialization boundary
         const parsedPoints: ParsedPoint[] = data.points
           .map((p: any) => {
-            const pointPath = parsePointPath(p.logicalPath);
-            if (!pointPath) return null;
+            const stem = getLogicalPathStem(p.logicalPath);
+            if (!stem) return null;
             return {
-              pointPath,
+              stem,
               name: p.name,
               metricType: p.metricType,
               metricUnit: p.metricUnit,
@@ -123,9 +119,7 @@ export default function PointsTab({
   // Filter points by pattern
   const filterPoints = useCallback(
     (pattern: string) =>
-      points.filter((p) =>
-        micromatch.isMatch(getIdentifierFromParsed(p.pointPath), pattern),
-      ),
+      points.filter((p) => micromatch.isMatch(p.stem, pattern)),
     [points],
   );
 
@@ -138,38 +132,33 @@ export default function PointsTab({
     const inverterPoints = filterPoints("inverter*");
 
     // Collect points that didn't match any subsystem
-    const categorizedIdentifiers = new Set<string>();
+    const categorizedStems = new Set<string>();
     [
       ...solarPoints,
       ...batteryPoints,
       ...gridPoints,
       ...loadPoints,
       ...inverterPoints,
-    ].forEach((p) =>
-      categorizedIdentifiers.add(getIdentifierFromParsed(p.pointPath)),
-    );
+    ].forEach((p) => categorizedStems.add(p.stem));
 
-    const otherPoints = points.filter(
-      (p) => !categorizedIdentifiers.has(getIdentifierFromParsed(p.pointPath)),
-    );
+    const otherPoints = points.filter((p) => !categorizedStems.has(p.stem));
 
-    // Group each subsystem's points by identifier to show all metric types together
-    const groupByIdentifier = (points: ParsedPoint[]) => {
+    // Group each subsystem's points by stem to show all metric types together
+    const groupByStem = (points: ParsedPoint[]) => {
       const grouped = new Map<
         string,
         { name: string; identifier: string; metricTypes: string[] }
       >();
 
       points.forEach((point) => {
-        const identifier = getIdentifierFromParsed(point.pointPath);
-        if (!grouped.has(identifier)) {
-          grouped.set(identifier, {
+        if (!grouped.has(point.stem)) {
+          grouped.set(point.stem, {
             name: point.name,
-            identifier,
+            identifier: point.stem,
             metricTypes: [],
           });
         }
-        grouped.get(identifier)!.metricTypes.push(point.metricType);
+        grouped.get(point.stem)!.metricTypes.push(point.metricType);
       });
 
       return Array.from(grouped.values()).map((item) => ({
@@ -179,12 +168,12 @@ export default function PointsTab({
     };
 
     return {
-      solar: groupByIdentifier(solarPoints),
-      battery: groupByIdentifier(batteryPoints),
-      grid: groupByIdentifier(gridPoints),
-      load: groupByIdentifier(loadPoints),
-      inverter: groupByIdentifier(inverterPoints),
-      other: groupByIdentifier(otherPoints),
+      solar: groupByStem(solarPoints),
+      battery: groupByStem(batteryPoints),
+      grid: groupByStem(gridPoints),
+      load: groupByStem(loadPoints),
+      inverter: groupByStem(inverterPoints),
+      other: groupByStem(otherPoints),
     };
   }, [filterPoints, points]);
 

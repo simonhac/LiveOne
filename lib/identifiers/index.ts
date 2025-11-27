@@ -18,15 +18,17 @@ export {
   isAggregationField,
 } from "./enums";
 
-// Point path utilities - simple string-based functions replacing PointPath class
-export type { ParsedPointPath } from "./point-path-utils";
+// Logical path utilities
 export {
-  buildPointPath,
-  buildFallbackPointPath,
-  parsePointPath,
-  buildPointIdentifier,
-  getIdentifierFromParsed,
-  getPointIdentifier,
+  isValidLogicalPathStem,
+  isValidMetricType,
+  isValidLogicalPath,
+  getLogicalPathStem,
   getMetricType,
-  matchesPointPath,
-} from "./point-path-utils";
+  stemSplit,
+  buildLogicalPath,
+  matchesLogicalPath,
+} from "./logical-path";
+
+// Physical path utilities
+export { isValidPhysicalPath, splitPhysicalPath } from "./physical-path";

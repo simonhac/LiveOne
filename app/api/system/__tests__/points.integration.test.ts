@@ -12,7 +12,10 @@
 
 import { describe, it, expect, beforeAll } from "@jest/globals";
 import { SystemsManager } from "@/lib/systems-manager";
-import { parsePointPath } from "@/lib/identifiers/point-path-utils";
+import {
+  getLogicalPathStem,
+  getMetricType,
+} from "@/lib/identifiers/logical-path";
 
 const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3000";
 
@@ -238,10 +241,12 @@ describe("GET /api/system/[systemId]/points", () => {
       expect(status).toBe(200);
       expect(Array.isArray(data)).toBe(true);
 
-      // All returned paths should be parseable by parsePointPath()
+      // All returned paths should have a valid stem and metric type
       data.forEach((pathStr: string) => {
-        const parsed = parsePointPath(pathStr);
-        expect(parsed).not.toBeNull();
+        const stem = getLogicalPathStem(pathStr);
+        const metricType = getMetricType(pathStr);
+        expect(stem).not.toBeNull();
+        expect(metricType).not.toBeNull();
       });
     });
 
@@ -250,19 +255,18 @@ describe("GET /api/system/[systemId]/points", () => {
 
       expect(status).toBe(200);
 
-      // Find a point with full type hierarchy (if exists)
+      // Find typed paths (stem is NOT a number)
       const typedPaths = data.filter((path: string) => {
-        const parsed = parsePointPath(path);
-        return parsed && !parsed.isFallback;
+        const stem = getLogicalPathStem(path);
+        return stem && !/^\d+$/.test(stem);
       });
 
       if (typedPaths.length > 0) {
         typedPaths.forEach((pathStr: string) => {
-          const parsed = parsePointPath(pathStr);
-          expect(parsed).not.toBeNull();
-          expect(parsed?.isFallback).toBe(false);
-          expect(parsed?.type).toBeTruthy();
-          expect(parsed?.metricType).toBeTruthy();
+          const stem = getLogicalPathStem(pathStr);
+          const metricType = getMetricType(pathStr);
+          expect(stem).not.toBeNull();
+          expect(metricType).toBeTruthy();
 
           // Should match format: type[.subtype[.extension]]/metricType
           expect(pathStr).toMatch(/^[a-z]+(\.[a-z_]+)*\/[a-z]+$/);
@@ -275,19 +279,19 @@ describe("GET /api/system/[systemId]/points", () => {
 
       expect(status).toBe(200);
 
-      // Find fallback paths (numeric-only point identifier)
+      // Find fallback paths (stem is a number)
       const fallbackPaths = data.filter((path: string) => {
-        const parsed = parsePointPath(path);
-        return parsed && parsed.isFallback;
+        const stem = getLogicalPathStem(path);
+        return stem && /^\d+$/.test(stem);
       });
 
       if (fallbackPaths.length > 0) {
         fallbackPaths.forEach((pathStr: string) => {
-          const parsed = parsePointPath(pathStr);
-          expect(parsed).not.toBeNull();
-          expect(parsed?.isFallback).toBe(true);
-          expect(parsed?.pointIndex).toBeGreaterThan(0);
-          expect(parsed?.metricType).toBeTruthy();
+          const stem = getLogicalPathStem(pathStr);
+          const metricType = getMetricType(pathStr);
+          expect(stem).not.toBeNull();
+          expect(parseInt(stem!, 10)).toBeGreaterThan(0);
+          expect(metricType).toBeTruthy();
 
           // Should match format: number/metricType
           expect(pathStr).toMatch(/^\d+\/[a-z]+$/);
@@ -303,9 +307,9 @@ describe("GET /api/system/[systemId]/points", () => {
       // All paths must contain a slash and metric type
       data.forEach((pathStr: string) => {
         expect(pathStr).toContain("/");
-        const [, metricType] = pathStr.split("/");
+        const metricType = getMetricType(pathStr);
         expect(metricType).toBeTruthy();
-        expect(metricType.length).toBeGreaterThan(0);
+        expect(metricType!.length).toBeGreaterThan(0);
       });
     });
   });

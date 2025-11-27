@@ -3,7 +3,7 @@
  * Ensures consistent colors across SitePowerChart, EnergyChart, Sankey, and other visualizations
  */
 
-import { parsePointPath } from "@/lib/identifiers/point-path-utils";
+import { stemSplit } from "@/lib/identifiers/logical-path";
 import {
   interpolateViridis,
   interpolatePlasma,
@@ -114,16 +114,16 @@ export function getColorForPath(path: string, label?: string): string {
     return CHART_COLORS.restOfHouse;
   }
 
-  // Parse the path using parsePointPath utility
-  const pointPath = parsePointPath(path);
-  if (!pointPath) {
+  // Parse the path using stemSplit utility
+  const segments = stemSplit(path);
+  if (segments.length === 0) {
     // If parsing fails, return default color
     return "rgb(156, 163, 175)"; // gray-400
   }
 
-  const type = pointPath.type;
-  const subtype = pointPath.subtype || "";
-  const extension = pointPath.extension;
+  const type = segments[0];
+  const subtype = segments[1] || "";
+  const extension = segments.length > 2 ? segments.slice(2).join(".") : null;
 
   // Solar
   if (type === "source" && subtype === "solar") {

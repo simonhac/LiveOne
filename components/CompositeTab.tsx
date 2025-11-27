@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Plus, X, Sun, Home, Battery, Zap } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useUser } from "@clerk/nextjs";
-import { parsePointPath } from "@/lib/identifiers/point-path-utils";
+import { stemSplit } from "@/lib/identifiers/logical-path";
 
 interface CompositeMapping {
   [key: string]: string[]; // Allow any category keys
@@ -275,21 +275,21 @@ export default function CompositeTab({
     }));
   };
 
-  // Helper to check if a path matches a pattern using parsePointPath
+  // Helper to check if a path matches a pattern
   const matchesPattern = (path: string, pattern: string): boolean => {
-    const pointPath = parsePointPath(path);
-    if (!pointPath) return false;
+    const segments = stemSplit(path);
+    if (segments.length === 0) return false;
 
     // Parse the pattern to get type and subtype
-    const parts = pattern.split(".");
-    const type = parts[0];
-    const subtype = parts.length > 1 ? parts[1] : null;
+    const patternParts = pattern.split(".");
+    const patternType = patternParts[0];
+    const patternSubtype = patternParts.length > 1 ? patternParts[1] : null;
 
     // Match type
-    if (pointPath.type !== type) return false;
+    if (segments[0] !== patternType) return false;
 
     // If pattern has subtype, match it (but ignore extension)
-    if (subtype && pointPath.subtype !== subtype) return false;
+    if (patternSubtype && segments[1] !== patternSubtype) return false;
 
     // If pattern only has type, any subtype matches
     return true;

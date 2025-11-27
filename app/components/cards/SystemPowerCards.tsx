@@ -2,7 +2,7 @@
 
 import React from "react";
 import PowerCard from "@/components/PowerCard";
-import { parsePath } from "@/components/SitePowerChart";
+import { stemSplit, getMetricType } from "@/lib/identifiers/logical-path";
 import { LOAD_LABELS } from "@/lib/chart-colors";
 import type { LatestPointValues, LatestPointValue } from "@/lib/types/api";
 import { Sun, Home, Battery, Zap } from "lucide-react";
@@ -182,29 +182,24 @@ function calculateAllLoads(latest: LatestPointValues): LoadPoint[] {
 
   // Iterate through all points in latest to find loads
   Object.entries(latest).forEach(([pointPath, pointData]) => {
-    const parsed = (() => {
-      try {
-        return parsePath(pointPath);
-      } catch {
-        return null;
-      }
-    })();
+    const segments = stemSplit(pointPath);
+    const metricType = getMetricType(pointPath);
 
     // Filter for load-type points with power metric
     if (
-      parsed &&
-      parsed.type === "load" &&
-      parsed.metricType === "power" &&
+      segments[0] === "load" &&
+      metricType === "power" &&
       pointData.value !== null
     ) {
       const value = pointData.value;
 
       // Master load has no subtype (e.g., "load/power")
-      if (!parsed.subtype) {
+      if (segments.length === 1) {
         masterLoad = value;
       } else {
         // Child load has subtype (e.g., "load.hvac/power", "load.pool/power")
-        const loadType = parsed.extension || parsed.subtype || "";
+        // loadType is everything after "load." (e.g., "hvac", "pool", "hvac.upstairs")
+        const loadType = segments.slice(1).join(".") || "";
         const label =
           LOAD_LABELS[loadType] ||
           (loadType

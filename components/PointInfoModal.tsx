@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
-import { isValidLogicalPathStem } from "@/lib/identifiers/point-path-utils";
+import { isValidLogicalPathStem } from "@/lib/identifiers/logical-path";
 
 interface PointInfo {
   pointIndex: number;

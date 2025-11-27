@@ -24,10 +24,7 @@ import "chartjs-adapter-date-fns";
 import annotationPlugin from "chartjs-plugin-annotation";
 import { CalendarX2 } from "lucide-react";
 import { CHART_COLORS, LOAD_LABELS, getLoadColor } from "@/lib/chart-colors";
-import {
-  parsePointPath,
-  ParsedPointPath,
-} from "@/lib/identifiers/point-path-utils";
+import { stemSplit } from "@/lib/identifiers/logical-path";
 import micromatch from "micromatch";
 
 // Register Chart.js components
@@ -87,15 +84,6 @@ interface SeriesConfig {
   order?: number;
 }
 
-// Parse path using parsePointPath utility
-// Returns the parsed point path or null if not parseable
-export function parsePath(
-  path: string | null | undefined,
-): ParsedPointPath | null {
-  if (!path) return null;
-  return parsePointPath(path);
-}
-
 // Filter series by point identifier pattern (glob-style)
 // Pattern format: "bidi.battery.charge/power" or "source.solar*/power"
 function filterByPointId(
@@ -125,13 +113,13 @@ export function generateSeriesConfig(
   if (mode === "load") {
     // Find all load series
     const loadSeries = availableSeries
-      .map((s) => ({ ...s, parsed: parsePath(s.path) }))
-      .filter((s) => s.parsed?.type === "load");
+      .map((s) => ({ ...s, segments: stemSplit(s.path) }))
+      .filter((s) => s.segments[0] === "load");
 
     // Create config for each load
     loadSeries.forEach((series, idx) => {
-      const pointPath = series.parsed!;
-      const loadType = pointPath.extension || pointPath.subtype || "";
+      // loadType is everything after "load." (e.g., "hvac", "pool", "hvac.upstairs")
+      const loadType = series.segments.slice(1).join(".") || "";
       // Use label from API if available, otherwise fallback to lookup table or capitalized load type
       // If loadType is empty (just "load" with no subtype), use "Load" as default
       const label =
@@ -190,16 +178,17 @@ export function generateSeriesConfig(
     // generation mode
     // Find solar series (matches source.solar, source.solar.local, source.solar.remote, etc.)
     const solarSeries = filterByPointId(availableSeries, "source.solar*/power*")
-      .map((s) => ({ ...s, parsed: parsePath(s.path) }))
+      .map((s) => ({ ...s, segments: stemSplit(s.path) }))
       .sort((a, b) => {
-        // Sort by extension: local first, then remote
-        const aExt = a.parsed?.extension || "";
-        const bExt = b.parsed?.extension || "";
+        // Sort by extension (3rd+ segment): local first, then remote
+        const aExt = a.segments.slice(2).join(".") || "";
+        const bExt = b.segments.slice(2).join(".") || "";
         return aExt.localeCompare(bExt);
       });
 
     solarSeries.forEach((series, idx) => {
-      const extension = series.parsed?.extension || "";
+      // Extension is 3rd+ segment (e.g., "local", "remote")
+      const extension = series.segments.slice(2).join(".") || "";
       const label = extension
         ? `Solar ${extension.charAt(0).toUpperCase() + extension.slice(1)}`
         : "Solar";

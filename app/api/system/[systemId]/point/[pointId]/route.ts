@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { pointInfo } from "@/lib/db/schema-monitoring-points";
 import { eq, and } from "drizzle-orm";
 import { requireSystemAccess } from "@/lib/api-auth";
-import { isValidLogicalPathStem } from "@/lib/identifiers/point-path-utils";
+import { isValidLogicalPathStem } from "@/lib/identifiers/logical-path";
 
 /**
  * PATCH /api/system/{systemId}/point/{pointId}
