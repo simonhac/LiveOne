@@ -269,7 +269,8 @@ export async function updateSubscriberSummary(
   let maxTimestamp = 0;
 
   for (const entry of Object.values(latestValues)) {
-    if (entry && typeof entry.value === "number") {
+    // Skip entries without logicalPath (stale cache data)
+    if (entry && typeof entry.value === "number" && entry.logicalPath) {
       values.push({
         logicalPath: entry.logicalPath,
         value: entry.value,
