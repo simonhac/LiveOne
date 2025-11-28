@@ -62,6 +62,7 @@ function getSubscriptionsKey(systemId: number): string {
  * @param receivedTimeMs - Unix timestamp in milliseconds when value was received from vendor
  * @param metricUnit - Unit of measurement (e.g., "W", "kWh", "%")
  * @param displayName - Display name from point_info
+ * @param sourceSystemName - Display name of source system (stored at write time for composite tracking)
  */
 export async function updateLatestPointValue(
   systemId: number,
@@ -72,6 +73,7 @@ export async function updateLatestPointValue(
   receivedTimeMs: number,
   metricUnit: string,
   displayName: string,
+  sourceSystemName?: string,
 ): Promise<void> {
   const pointValue: LatestValue = {
     value,
@@ -80,6 +82,10 @@ export async function updateLatestPointValue(
     receivedTimeMs,
     metricUnit,
     displayName,
+    sourceSystemId: systemId,
+    sourcePointId: pointId,
+    reference: `${systemId}.${pointId}`,
+    ...(sourceSystemName && { sourceSystemName }),
   };
 
   // Update source system's cache

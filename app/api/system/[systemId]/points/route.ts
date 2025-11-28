@@ -9,10 +9,25 @@ import { PointManager } from "@/lib/point/point-manager";
  *
  * @param systemId - Numeric system ID
  * @param short - Optional boolean parameter. If "true", returns just an array of path strings
+ * @param showActive - Optional boolean. If "true", includes inactive points and adds "active" field
  *
  * Examples:
  * - GET /api/system/3/points
- *   Returns detailed point information:
+ *   Returns active points only (no "active" field):
+ *   {
+ *     "points": [
+ *       {
+ *         "logicalPath": "source.solar/power",
+ *         "name": "Solar Power",
+ *         "metricType": "power",
+ *         "metricUnit": "W",
+ *         "reference": "3.1"
+ *       }
+ *     ]
+ *   }
+ *
+ * - GET /api/system/3/points?showActive=true
+ *   Returns all points with "active" field:
  *   {
  *     "points": [
  *       {
@@ -27,7 +42,7 @@ import { PointManager } from "@/lib/point/point-manager";
  *   }
  *
  * - GET /api/system/3/points?short=true
- *   Returns just the paths:
+ *   Returns just the paths (active only):
  *   [
  *     "source.solar/power",
  *     "load.hvac/power",
@@ -57,17 +72,19 @@ export async function GET(
     // Parse query parameters
     const { searchParams } = new URL(request.url);
     const shortMode = searchParams.get("short") === "true";
+    const showActive = searchParams.get("showActive") === "true";
 
-    // Get all active points for the system using PointManager
+    // Get points for the system using PointManager
     const pointManager = PointManager.getInstance();
     const points = await pointManager.getActivePointsForSystem(
       systemId,
       false, // typedOnly = false means include fallback paths
+      showActive, // includeInactive = true when showActive is requested
     );
 
-    // Filter to only include active points with non-null logical path
+    // Filter to only include points with non-null logical path
     const validPoints = points.filter(
-      (point) => point.active && point.getLogicalPath() != null,
+      (point) => point.getLogicalPath() != null,
     );
 
     // Serialize based on mode
@@ -76,16 +93,19 @@ export async function GET(
       const paths = validPoints.map((point) => point.getLogicalPath()!);
       return NextResponse.json(paths);
     } else {
-      // Return detailed point information using stored paths
-      const pointsData = validPoints.map((point) => ({
-        logicalPath: point.getLogicalPath(),
-        physicalPath: point.physicalPath,
-        name: point.name,
-        metricType: point.metricType,
-        metricUnit: point.metricUnit,
-        reference: point.getReference().toString(),
-        active: point.active,
-      }));
+      // Return detailed point information
+      // Only include "active" field when showActive=true
+      const pointsData = validPoints.map((point) => {
+        const base = {
+          logicalPath: point.getLogicalPath(),
+          physicalPath: point.physicalPath,
+          name: point.name,
+          metricType: point.metricType,
+          metricUnit: point.metricUnit,
+          reference: point.getReference().toString(),
+        };
+        return showActive ? { ...base, active: point.active } : base;
+      });
 
       return NextResponse.json({ points: pointsData });
     }

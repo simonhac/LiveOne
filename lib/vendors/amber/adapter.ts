@@ -12,7 +12,6 @@ import {
   getYesterdayInTimezone,
   getTodayInTimezone,
 } from "@/lib/date-utils";
-import { abbreviateTariffPeriod } from "./point-metadata";
 import type {
   AmberCredentials,
   AmberSite,
@@ -20,7 +19,9 @@ import type {
   AmberPriceRecord,
 } from "./types";
 import { updateUsage, updateForecasts } from "./client";
-import { setLatestValues, type LatestValue } from "@/lib/latest-values-store";
+import { updateLatestPointValue } from "@/lib/kv-cache-manager";
+import { PointManager } from "@/lib/point/point-manager";
+import type { PointInfo } from "@/lib/point/point-info";
 
 export class AmberAdapter extends BaseVendorAdapter {
   readonly vendorType = "amber";
@@ -170,12 +171,14 @@ export class AmberAdapter extends BaseVendorAdapter {
   }
 
   /**
-   * Store current period data in KV cache for live dashboard display
+   * Store current period data in KV cache for live dashboard display.
+   * Uses updateLatestPointValue to propagate to composite system subscribers.
    */
   private async storeCurrentPeriodInKV(
     systemId: number,
     currentIntervals: AmberPriceRecord[],
     session: SessionInfo,
+    sourceSystemName: string,
   ): Promise<void> {
     // Find import (general) and export (feedIn) channels
     const importRecord = currentIntervals.find(
@@ -190,98 +193,83 @@ export class AmberAdapter extends BaseVendorAdapter {
       return;
     }
 
-    // Use the import record's interval timing
-    const measurementTimeMs = new Date(importRecord.endTime).getTime();
-    const receivedTimeMs = session.started.getTime();
-    const periodStartMs = new Date(importRecord.startTime).getTime();
-    const periodEndMs = measurementTimeMs;
+    // Get active points for this system and build logicalPath → point map
+    const pointManager = PointManager.getInstance();
+    const activePoints = await pointManager.getActivePointsForSystem(systemId);
+    const pointsByLogicalPath = new Map<string, PointInfo>();
+    for (const point of activePoints) {
+      const logicalPath = point.getLogicalPath();
+      if (logicalPath) {
+        pointsByLogicalPath.set(logicalPath, point);
+      }
+    }
 
-    const values: LatestValue[] = [
-      // Import rate
+    // Use the import record's interval timing
+    // measurementTime = period START (when the interval began)
+    const measurementTimeMs = new Date(importRecord.startTime).getTime();
+    const receivedTimeMs = session.started.getTime();
+
+    // Define values to store (logicalPath → value info)
+    const valuesToStore: Array<{
+      logicalPath: string;
+      value: number | string;
+      metricUnit: string;
+      displayName: string;
+    }> = [
       {
-        value: importRecord.perKwh,
         logicalPath: "bidi.grid.import/rate",
-        measurementTimeMs,
-        receivedTimeMs,
+        value: importRecord.perKwh,
         metricUnit: "c/kWh",
         displayName: "Import Price",
       },
-      // Renewables proportion
       {
-        value: importRecord.renewables,
         logicalPath: "bidi.grid.renewables/proportion",
-        measurementTimeMs,
-        receivedTimeMs,
+        value: importRecord.renewables,
         metricUnit: "%",
         displayName: "Renewables",
-      },
-      // Price descriptor
-      {
-        value: importRecord.descriptor,
-        logicalPath: "bidi.grid.import/descriptor",
-        measurementTimeMs,
-        receivedTimeMs,
-        metricUnit: "text",
-        displayName: "Price Level",
-      },
-      // Spike status
-      {
-        value: importRecord.spikeStatus,
-        logicalPath: "bidi.grid.import/spikeStatus",
-        measurementTimeMs,
-        receivedTimeMs,
-        metricUnit: "text",
-        displayName: "Spike Status",
-      },
-      // Tariff period (if available)
-      ...(importRecord.tariffInformation?.period
-        ? [
-            {
-              value:
-                abbreviateTariffPeriod(importRecord.tariffInformation.period) ||
-                importRecord.tariffInformation.period,
-              logicalPath: "bidi.grid.tariff/code",
-              measurementTimeMs,
-              receivedTimeMs,
-              metricUnit: "text",
-              displayName: "Tariff Period",
-            },
-          ]
-        : []),
-      // Interval timing
-      {
-        value: periodStartMs,
-        logicalPath: "bidi.grid.interval/start",
-        measurementTimeMs,
-        receivedTimeMs,
-        metricUnit: "ms",
-        displayName: "Period Start",
-      },
-      {
-        value: periodEndMs,
-        logicalPath: "bidi.grid.interval/end",
-        measurementTimeMs,
-        receivedTimeMs,
-        metricUnit: "ms",
-        displayName: "Period End",
       },
     ];
 
     // Add export rate if available
     if (exportRecord) {
-      values.push({
-        value: exportRecord.perKwh,
+      valuesToStore.push({
         logicalPath: "bidi.grid.export/rate",
-        measurementTimeMs,
-        receivedTimeMs,
+        value: exportRecord.perKwh,
         metricUnit: "c/kWh",
         displayName: "Feed-in Price",
       });
     }
 
-    await setLatestValues(systemId, values);
+    // Store each value, looking up point info for proper propagation
+    let storedCount = 0;
+    let skippedCount = 0;
+
+    for (const item of valuesToStore) {
+      const point = pointsByLogicalPath.get(item.logicalPath);
+
+      if (point) {
+        // Point exists in point_info - use updateLatestPointValue for propagation
+        await updateLatestPointValue(
+          systemId,
+          point.index,
+          item.logicalPath,
+          item.value,
+          measurementTimeMs,
+          receivedTimeMs,
+          item.metricUnit,
+          point.name, // Use point's display name from DB
+          sourceSystemName,
+        );
+        storedCount++;
+      } else {
+        // Synthetic point not in point_info - skip (no propagation to composites)
+        skippedCount++;
+      }
+    }
+
     console.log(
-      `[Amber] Stored ${values.length} current period values in KV cache`,
+      `[Amber] Stored ${storedCount} current period values in KV cache` +
+        (skippedCount > 0 ? ` (${skippedCount} synthetic points skipped)` : ""),
     );
   }
 
@@ -397,6 +385,7 @@ export class AmberAdapter extends BaseVendorAdapter {
                 system.id,
                 currentIntervals,
                 session,
+                system.displayName,
               );
             }
           } catch (kvError) {

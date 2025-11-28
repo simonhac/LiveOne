@@ -1,6 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSystemAccess } from "@/lib/api-auth";
-import { getLatestValues, LatestValue } from "@/lib/latest-values-store";
+import { getLatestValues } from "@/lib/latest-values-store";
+import { PointManager } from "@/lib/point/point-manager";
+import { SystemsManager } from "@/lib/systems-manager";
+import { jsonResponse } from "@/lib/json";
+
+/**
+ * API response type - extends LatestValue with nullable fields for points without cached data
+ */
+interface LatestValueResponse {
+  value: number | string | null;
+  logicalPath: string | null;
+  measurementTimeMs: number | null;
+  receivedTimeMs: number | null;
+  metricUnit: string;
+  pointName: string;
+  reference: string | null; // Format: "systemId.pointId"
+}
 
 /**
  * GET /api/system/{systemId}/latest
@@ -46,21 +62,63 @@ export async function GET(
     const authResult = await requireSystemAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
 
-    // Get latest values from KV cache
+    // 1. Get system for timezone
+    const systemsManager = SystemsManager.getInstance();
+    const system = await systemsManager.getSystem(systemId);
+    const timezoneOffsetMin = system?.timezoneOffsetMin ?? 600; // Default to AEST
+
+    // 2. Get all active points for this system (via PointManager)
+    const pointManager = PointManager.getInstance();
+    const expectedPoints =
+      await pointManager.getActivePointsForSystem(systemId);
+
+    // 3. Get latest values from KV cache
     const latestValuesMap = await getLatestValues(systemId);
 
-    // Convert to array and sort by displayName, then logicalPath
-    const values: LatestValue[] = Object.values(latestValuesMap).sort(
+    // 4. Merge: use KV values where available, fall back to point info for missing
+    const values: LatestValueResponse[] = expectedPoints.map((point) => {
+      const logicalPath = point.getLogicalPath();
+      const cached = logicalPath ? latestValuesMap[logicalPath] : null;
+
+      if (cached) {
+        return {
+          value: cached.value,
+          logicalPath: cached.logicalPath,
+          measurementTimeMs: cached.measurementTimeMs,
+          receivedTimeMs: cached.receivedTimeMs,
+          metricUnit: cached.metricUnit,
+          pointName: cached.displayName,
+          reference: cached.reference ?? null,
+        };
+      }
+
+      // No cached value - no source info available
+      return {
+        value: null,
+        logicalPath: logicalPath,
+        measurementTimeMs: null,
+        receivedTimeMs: null,
+        metricUnit: point.metricUnit,
+        pointName: point.name,
+        reference: null,
+      };
+    });
+
+    // Sort by pointName, then logicalPath
+    values.sort(
       (a, b) =>
-        (a.displayName || "").localeCompare(b.displayName || "") ||
+        (a.pointName || "").localeCompare(b.pointName || "") ||
         (a.logicalPath || "").localeCompare(b.logicalPath || ""),
     );
 
-    return NextResponse.json({
-      systemId,
-      count: values.length,
-      values,
-    });
+    return jsonResponse(
+      {
+        systemId,
+        count: values.length,
+        values,
+      },
+      timezoneOffsetMin,
+    );
   } catch (error) {
     console.error("Error fetching latest values:", error);
     return NextResponse.json(

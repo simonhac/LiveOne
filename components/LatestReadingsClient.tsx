@@ -1,15 +1,18 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { formatRelativeTime } from "@/lib/fe-date-format";
+import { AlertTriangle } from "lucide-react";
+import { formatRelativeTime, formatDateTime } from "@/lib/fe-date-format";
 import { getUnitDisplay } from "@/lib/point/unit-display";
 
 interface LatestValue {
-  value: number | string;
-  logicalPath: string;
-  measurementTimeMs: number;
+  value: number | string | null;
+  logicalPath: string | null;
+  measurementTime: string | null; // ISO8601 datetime (from jsonResponse transform)
+  receivedTime: string | null; // ISO8601 datetime (from jsonResponse transform)
   metricUnit: string;
-  displayName: string;
+  pointName: string;
+  reference: string | null; // Format: "systemId.pointId"
 }
 
 interface AvailableSystem {
@@ -74,13 +77,20 @@ function formatValueWithUnit(
 
 export default function LatestReadingsClient({
   system,
+  availableSystems,
 }: LatestReadingsClientProps) {
   const systemId = system.id;
+
+  // Build lookup map for system names
+  const systemNameMap = new Map(
+    availableSystems.map((s) => [s.id, s.displayName]),
+  );
 
   const [values, setValues] = useState<LatestValue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastFetched, setLastFetched] = useState<Date | null>(null);
+  const [showSpinner, setShowSpinner] = useState(false);
 
   // Fetch latest values
   useEffect(() => {
@@ -111,12 +121,30 @@ export default function LatestReadingsClient({
     return () => clearInterval(interval);
   }, [systemId]);
 
+  // Delay showing spinner by 500ms to avoid flash on quick loads
+  useEffect(() => {
+    if (loading && values.length === 0) {
+      const timeout = setTimeout(() => {
+        setShowSpinner(true);
+      }, 500);
+      return () => clearTimeout(timeout);
+    } else {
+      setShowSpinner(false);
+    }
+  }, [loading, values.length]);
+
+  // Initial loading state - show spinner after 500ms delay
   if (loading && values.length === 0) {
-    return (
-      <div className="p-4">
-        <div className="text-muted-foreground">Loading latest values...</div>
-      </div>
-    );
+    if (showSpinner) {
+      return (
+        <div className="flex flex-1 flex-col items-center justify-center min-h-[400px]">
+          <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          <div className="mt-4 text-gray-400">Loading latest values...</div>
+        </div>
+      );
+    }
+    // Still loading but spinner delay hasn't elapsed - show nothing
+    return <div className="flex-1 min-h-[400px]" />;
   }
 
   if (error) {
@@ -166,13 +194,19 @@ export default function LatestReadingsClient({
                 Name
               </th>
               <th className="px-3 py-2 text-left font-medium text-gray-300">
+                Ref
+              </th>
+              <th className="px-3 py-2 text-left font-medium text-gray-300">
                 Logical Path
               </th>
               <th className="px-3 py-2 text-right font-medium text-gray-300">
-                Value
+                Time
               </th>
               <th className="px-3 py-2 text-right font-medium text-gray-300">
-                Last Updated
+                Received
+              </th>
+              <th className="px-3 py-2 text-right font-medium text-gray-300">
+                Value
               </th>
             </tr>
           </thead>
@@ -180,8 +214,7 @@ export default function LatestReadingsClient({
             {validValues.map((item, index) => {
               // Check if this row has the same name as the previous row
               const prevItem = index > 0 ? validValues[index - 1] : null;
-              const isSameNameAsPrev =
-                prevItem?.displayName === item.displayName;
+              const isSameNameAsPrev = prevItem?.pointName === item.pointName;
 
               return (
                 <tr
@@ -191,16 +224,72 @@ export default function LatestReadingsClient({
                   }`}
                 >
                   <td className="px-3 py-2 text-white">
-                    {isSameNameAsPrev ? "" : item.displayName}
+                    {isSameNameAsPrev ? "" : item.pointName}
+                  </td>
+                  <td className="px-3 py-2 text-sm">
+                    {item.reference ? (
+                      (() => {
+                        const refSystemId = parseInt(
+                          item.reference.split(".")[0],
+                        );
+                        const systemName = systemNameMap.get(refSystemId);
+                        return (
+                          <span>
+                            <span className="text-gray-400">
+                              {systemName ?? "Unknown"}
+                            </span>
+                            <span className="text-gray-600">
+                              {" "}
+                              ID: {item.reference}
+                            </span>
+                          </span>
+                        );
+                      })()
+                    ) : (
+                      <span
+                        className="text-yellow-500"
+                        title="No source reference in cache"
+                      >
+                        <AlertTriangle className="w-4 h-4 inline" />
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-gray-400">
                     {item.logicalPath}
                   </td>
-                  <td className="px-3 py-2 text-right font-mono text-white">
-                    {formatValueWithUnit(item.value, item.metricUnit)}
+                  <td className="px-3 py-2 text-right text-gray-400">
+                    {item.measurementTime != null ? (
+                      <span className="group relative cursor-default">
+                        {formatRelativeTime(new Date(item.measurementTime))}
+                        <span className="pointer-events-none absolute bottom-full right-0 mb-1 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-gray-200 opacity-0 transition-opacity delay-200 group-hover:opacity-100">
+                          {
+                            formatDateTime(new Date(item.measurementTime))
+                              .display
+                          }
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-gray-600">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right text-gray-400">
-                    {formatRelativeTime(new Date(item.measurementTimeMs))}
+                    {item.receivedTime != null ? (
+                      <span className="group relative cursor-default">
+                        {formatRelativeTime(new Date(item.receivedTime))}
+                        <span className="pointer-events-none absolute bottom-full right-0 mb-1 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-gray-200 opacity-0 transition-opacity delay-200 group-hover:opacity-100">
+                          {formatDateTime(new Date(item.receivedTime)).display}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-gray-600">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono text-white">
+                    {item.value != null ? (
+                      formatValueWithUnit(item.value, item.metricUnit)
+                    ) : (
+                      <span className="text-gray-600">—</span>
+                    )}
                   </td>
                 </tr>
               );
@@ -210,13 +299,17 @@ export default function LatestReadingsClient({
       </div>
 
       <div className="mt-4 text-xs text-gray-500">
-        {validValues.length} value{validValues.length !== 1 ? "s" : ""} cached
+        {validValues.length} point{validValues.length !== 1 ? "s" : ""}
+        {(() => {
+          const cachedCount = validValues.filter((v) => v.value != null).length;
+          const uncachedCount = validValues.length - cachedCount;
+          if (uncachedCount > 0) {
+            return ` (${cachedCount} cached, ${uncachedCount} pending)`;
+          }
+          return "";
+        })()}
         {omittedCount > 0 && (
-          <span>
-            {" "}
-            ({omittedCount} {omittedCount === 1 ? "entry" : "entries"} without a
-            logical path omitted)
-          </span>
+          <span> — {omittedCount} without logical path omitted</span>
         )}
       </div>
     </div>

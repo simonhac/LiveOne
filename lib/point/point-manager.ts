@@ -307,6 +307,7 @@ export class PointManager {
   async getActivePointsForSystem(
     systemId: number,
     typedOnly: boolean = false,
+    includeInactive: boolean = false,
   ): Promise<PointInfo[]> {
     // Look up the system object (needed for composite system handling)
     const systemsManager = SystemsManager.getInstance();
@@ -319,9 +320,9 @@ export class PointManager {
     // Load points (handles both composite and non-composite)
     const allPoints = await this._loadPointsWithCompositeSupport(system);
 
-    // Filter active and optionally by typedOnly (points with logicalPathStem)
+    // Filter by active status (unless includeInactive) and optionally by typedOnly
     return allPoints.filter((point) => {
-      if (!point.active) return false;
+      if (!includeInactive && !point.active) return false;
       if (typedOnly && point.logicalPathStem === null) return false;
       return true;
     });
@@ -871,6 +872,11 @@ export class PointManager {
     try {
       const points = await this.getActivePointsForSystem(systemId, false);
 
+      // Get system name for sourceSystemName in KV cache
+      const systemsManager = SystemsManager.getInstance();
+      const system = await systemsManager.getSystem(systemId);
+      const sourceSystemName = system?.displayName;
+
       // Build summary values and cache updates together
       const summaryValues: Array<{ logicalPath: string; value: number }> = [];
       let maxMeasurementTimeMs = 0;
@@ -898,6 +904,7 @@ export class PointManager {
             val.receivedTimeMs,
             point.metricUnit,
             point.name, // displayName if set, otherwise defaultName
+            sourceSystemName,
           );
         }
         return Promise.resolve();
