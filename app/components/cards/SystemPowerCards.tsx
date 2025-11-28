@@ -4,7 +4,16 @@ import React from "react";
 import PowerCard from "@/components/PowerCard";
 import { stemSplit, getMetricType } from "@/lib/identifiers/logical-path";
 import type { LatestPointValues, LatestPointValue } from "@/lib/types/api";
-import { Sun, Home, Battery, Zap } from "lucide-react";
+import {
+  Sun,
+  Home,
+  Battery,
+  Zap,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+} from "lucide-react";
 
 interface SystemPowerCardsProps {
   latest: LatestPointValues;
@@ -21,6 +30,77 @@ interface LoadPoint {
   path: string;
   value: number;
   label: string;
+}
+
+/**
+ * Generate flow direction chevron for bidirectional power sources
+ * @param powerWatts - Power value in watts (sign determines direction)
+ * @param isIntoSource - true if power flows INTO the source (charge/export)
+ * @param colorClass - Tailwind color class to match the icon
+ * @returns React node with chevron(s) or null if |power| < 100W
+ */
+function getFlowChevron(
+  powerWatts: number,
+  isIntoSource: boolean,
+  colorClass: string,
+): React.ReactNode {
+  const absPower = Math.abs(powerWatts);
+
+  // No chevron for < 100W
+  if (absPower < 100) {
+    return null;
+  }
+
+  const isDouble = absPower > 5000;
+
+  // Desktop: chevrons left of icon, so INTO = right arrow, OUT = left arrow
+  // Mobile: chevrons right of icon, so INTO = left arrow, OUT = right arrow (reversed)
+
+  if (isIntoSource) {
+    // Power flowing INTO the source (charge battery / export to grid)
+    return (
+      <>
+        {/* Mobile: chevrons on right of icon, point left (into icon on left) */}
+        <span className={`${colorClass} md:hidden`}>
+          {isDouble ? (
+            <ChevronsLeft className="w-4 h-4" />
+          ) : (
+            <ChevronLeft className="w-4 h-4" />
+          )}
+        </span>
+        {/* Desktop: chevrons on left of icon, point right (into icon on right) */}
+        <span className={`${colorClass} hidden md:block`}>
+          {isDouble ? (
+            <ChevronsRight className="w-5 h-5" />
+          ) : (
+            <ChevronRight className="w-5 h-5" />
+          )}
+        </span>
+      </>
+    );
+  } else {
+    // Power flowing OUT of the source (discharge battery / import from grid)
+    return (
+      <>
+        {/* Mobile: chevrons on right of icon, point right (away from icon on left) */}
+        <span className={`${colorClass} md:hidden`}>
+          {isDouble ? (
+            <ChevronsRight className="w-4 h-4" />
+          ) : (
+            <ChevronRight className="w-4 h-4" />
+          )}
+        </span>
+        {/* Desktop: chevrons on left of icon, point left (away from icon on right) */}
+        <span className={`${colorClass} hidden md:block`}>
+          {isDouble ? (
+            <ChevronsLeft className="w-5 h-5" />
+          ) : (
+            <ChevronLeft className="w-5 h-5" />
+          )}
+        </span>
+      </>
+    );
+  }
 }
 
 /**
@@ -517,7 +597,20 @@ export default function SystemPowerCards({
             title="Battery"
             value={batterySoc.toFixed(1)}
             unit="%"
-            icon={<Battery className="w-6 h-6" />}
+            icon={
+              <span className="inline-flex items-center">
+                {getFlowChevron(
+                  batteryPower,
+                  batteryPower < 0, // negative = charging = into battery
+                  batteryPower < 0
+                    ? "text-green-400"
+                    : batteryPower > 0
+                      ? "text-orange-400"
+                      : "text-gray-400",
+                )}
+                <Battery className="w-6 h-6" />
+              </span>
+            }
             iconColor={
               batteryPower < 0
                 ? "text-green-400"
@@ -566,7 +659,20 @@ export default function SystemPowerCards({
                 : formatPowerValue(Math.abs(gridPower))
             }
             unit={Math.abs(gridPower) < 100 ? undefined : "kW"}
-            icon={<Zap className="w-6 h-6" />}
+            icon={
+              <span className="inline-flex items-center">
+                {getFlowChevron(
+                  gridPower,
+                  gridPower < 0, // negative = exporting = into grid
+                  gridPower >= 100
+                    ? "text-red-400"
+                    : gridPower <= -100
+                      ? "text-green-400"
+                      : "text-gray-400",
+                )}
+                <Zap className="w-6 h-6" />
+              </span>
+            }
             iconColor={
               gridPower >= 100
                 ? "text-red-400"
