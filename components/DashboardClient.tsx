@@ -6,6 +6,7 @@ import { useModalContext } from "@/contexts/ModalContext";
 import EnergyChart from "@/components/EnergyChart";
 import AmberCard from "@/components/AmberCard";
 import AmberNow from "@/components/AmberNow";
+import AmberSmallCard from "@/components/AmberSmallCard";
 import SitePowerChart, { type ChartData } from "@/components/SitePowerChart";
 import EnergyTable from "@/components/EnergyTable";
 import { fetchAndProcessSiteData } from "@/lib/site-data-processor";
@@ -980,6 +981,9 @@ export default function DashboardClient({
           {/* Amber Electric Dashboard - Live price + 48 hour timeline */}
           {data?.system.vendorType === "amber" && systemId && (
             <>
+              <div className="px-1">
+                <AmberSmallCard latest={data.latest} />
+              </div>
               <AmberNow latest={data.latest} />
               <AmberCard
                 systemId={parseInt(systemId)}
