@@ -49,6 +49,28 @@ export function DiamondIcon({ className }: { className?: string }) {
 }
 
 /**
+ * Amber logo mark - just the "a" in a circle (no text)
+ */
+export function AmberLogoMark({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 32 32"
+      fill="none"
+      className={className}
+      aria-label="Amber Electric"
+    >
+      <path
+        fill="#00FFA8"
+        fillRule="evenodd"
+        d="M16 32c8.836 0 16-7.163 16-16-.002-8.837-7.164-16-16-16C7.162 0 0 7.163 0 16s7.162 16 16 16zm-.03-21.257c-2.893 0-5.238 2.354-5.238 5.256s2.346 5.256 5.238 5.256c2.893 0 5.298-2.354 5.298-5.256s-2.405-5.256-5.298-5.256zm0-2.743C20.373 8 24 11.58 24 15.999v7.785h-2.737v-1.89C19.863 23.122 17.976 24 15.97 24 11.568 24 8 20.42 8 16.001 8 11.581 11.568 8 15.97 8z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
+/**
  * Amber logo with text - official SVG from Amber Electric website
  */
 export function AmberLogo({ className }: { className?: string }) {

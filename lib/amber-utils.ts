@@ -93,6 +93,26 @@ export function getPriceLevelLabel(priceLevel: PriceLevel): string {
 }
 
 /**
+ * Short label for price level (for mobile/compact displays)
+ */
+export function getPriceLevelShortLabel(priceLevel: PriceLevel): string {
+  switch (priceLevel) {
+    case "extremelyLow":
+      return "EXTREME LOW";
+    case "veryLow":
+      return "VERY LOW";
+    case "low":
+      return "LOW";
+    case "neutral":
+      return "NEUTRAL";
+    case "high":
+      return "HIGH";
+    case "missing":
+      return "";
+  }
+}
+
+/**
  * Get gradient background for price level circle (matches Amber's exact gradients)
  */
 export function getPriceLevelGradient(priceLevel: PriceLevel): string {
