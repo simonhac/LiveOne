@@ -637,7 +637,7 @@ export default function SystemPowerCards({
               getMeasurementTime("bidi.battery/soc") || undefined
             }
             extra={
-              batteryPower !== 0 ? (
+              Math.abs(batteryPower) >= 100 ? (
                 <div className="text-xs text-gray-500">
                   {batteryPower < 0 ? "Charging" : "Discharging"}{" "}
                   {formatPowerSmallUnit(Math.abs(batteryPower))}
