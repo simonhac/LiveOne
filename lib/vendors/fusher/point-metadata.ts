@@ -1,25 +1,25 @@
 /**
- * Fronius Point Metadata Configuration
+ * Fusher (Fronius Pusher) Point Metadata Configuration
  *
- * This defines all metadata for the key monitoring points from Fronius systems.
- * Each entry maps a field from the FroniusPushData interface to point_info metadata.
+ * This defines all metadata for the key monitoring points from Fusher systems.
+ * Each entry maps a field from the FusherPushData interface to point_info metadata.
  *
- * Fronius systems push data to /api/push/fronius endpoint
+ * Fusher systems push data to /api/push/fusher endpoint
  */
 
 import type { PointMetadata } from "@/lib/point/point-manager";
 
-export interface FroniusPointConfig {
-  // Field name from FroniusPushData interface
-  field: keyof import("../../../app/api/push/fronius/route").FroniusPushData;
+export interface FusherPointConfig {
+  // Field name from FusherPushData interface
+  field: keyof import("../../../app/api/push/fusher/route").FusherPushData;
   // Metadata for point_info table
   metadata: PointMetadata;
 }
 
 /**
- * Monitoring points for Fronius systems
+ * Monitoring points for Fusher systems
  */
-export const FRONIUS_POINTS: FroniusPointConfig[] = [
+export const FUSHER_POINTS: FusherPointConfig[] = [
   // ============================================================================
   // POWER METRICS (W)
   // ============================================================================
@@ -28,7 +28,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "solarW",
     metadata: {
-      physicalPath: "fronius/solarW",
+      physicalPathTail: "solarW",
       logicalPathStem: "source.solar",
       defaultName: "Solar",
       subsystem: "solar",
@@ -42,7 +42,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "solarRemoteW",
     metadata: {
-      physicalPath: "fronius/solarRemoteW",
+      physicalPathTail: "solarRemoteW",
       logicalPathStem: "source.solar.remote",
       defaultName: "Solar Remote",
       subsystem: "solar",
@@ -56,7 +56,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "solarLocalW",
     metadata: {
-      physicalPath: "fronius/solarLocalW",
+      physicalPathTail: "solarLocalW",
       logicalPathStem: "source.solar.local",
       defaultName: "Solar Local",
       subsystem: "solar",
@@ -70,7 +70,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "loadW",
     metadata: {
-      physicalPath: "fronius/loadW",
+      physicalPathTail: "loadW",
       logicalPathStem: "load",
       defaultName: "Load",
       subsystem: "load",
@@ -84,7 +84,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "batteryW",
     metadata: {
-      physicalPath: "fronius/batteryW",
+      physicalPathTail: "batteryW",
       logicalPathStem: "bidi.battery",
       defaultName: "Battery",
       subsystem: "battery",
@@ -98,7 +98,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "gridW",
     metadata: {
-      physicalPath: "fronius/gridW",
+      physicalPathTail: "gridW",
       logicalPathStem: "bidi.grid",
       defaultName: "Grid",
       subsystem: "grid",
@@ -116,7 +116,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "batterySOC",
     metadata: {
-      physicalPath: "fronius/batterySOC",
+      physicalPathTail: "batterySOC",
       logicalPathStem: "bidi.battery",
       defaultName: "Battery",
       subsystem: "battery",
@@ -130,7 +130,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "faultCode",
     metadata: {
-      physicalPath: "fronius/faultCode",
+      physicalPathTail: "faultCode",
       logicalPathStem: null,
       defaultName: "Fault",
       subsystem: null,
@@ -144,7 +144,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "faultTimestamp",
     metadata: {
-      physicalPath: "fronius/faultTimestamp",
+      physicalPathTail: "faultTimestamp",
       logicalPathStem: null,
       defaultName: "Fault",
       subsystem: null,
@@ -158,7 +158,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "generatorStatus",
     metadata: {
-      physicalPath: "fronius/generatorStatus",
+      physicalPathTail: "generatorStatus",
       logicalPathStem: null,
       defaultName: "Generator",
       subsystem: null,
@@ -175,7 +175,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "solarWhInterval",
     metadata: {
-      physicalPath: "fronius/solarWhInterval",
+      physicalPathTail: "solarWhInterval",
       logicalPathStem: "source.solar",
       defaultName: "Solar",
       subsystem: "solar",
@@ -187,7 +187,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "loadWhInterval",
     metadata: {
-      physicalPath: "fronius/loadWhInterval",
+      physicalPathTail: "loadWhInterval",
       logicalPathStem: "load",
       defaultName: "Load",
       subsystem: "load",
@@ -199,7 +199,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "batteryInWhInterval",
     metadata: {
-      physicalPath: "fronius/batteryInWhInterval",
+      physicalPathTail: "batteryInWhInterval",
       logicalPathStem: "bidi.battery.charge",
       defaultName: "Battery Charge",
       subsystem: "battery",
@@ -211,7 +211,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "batteryOutWhInterval",
     metadata: {
-      physicalPath: "fronius/batteryOutWhInterval",
+      physicalPathTail: "batteryOutWhInterval",
       logicalPathStem: "bidi.battery.discharge",
       defaultName: "Battery Discharge",
       subsystem: "battery",
@@ -223,7 +223,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "gridInWhInterval",
     metadata: {
-      physicalPath: "fronius/gridInWhInterval",
+      physicalPathTail: "gridInWhInterval",
       logicalPathStem: "bidi.grid.import",
       defaultName: "Import",
       subsystem: "grid",
@@ -235,7 +235,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
   {
     field: "gridOutWhInterval",
     metadata: {
-      physicalPath: "fronius/gridOutWhInterval",
+      physicalPathTail: "gridOutWhInterval",
       logicalPathStem: "bidi.grid.export",
       defaultName: "Export",
       subsystem: "grid",
@@ -250,7 +250,7 @@ export const FRONIUS_POINTS: FroniusPointConfig[] = [
  * Helper to get metadata for a specific field
  */
 export function getPointMetadata(
-  field: keyof import("../../../app/api/push/fronius/route").FroniusPushData,
+  field: keyof import("../../../app/api/push/fusher/route").FusherPushData,
 ): PointMetadata | undefined {
-  return FRONIUS_POINTS.find((p) => p.field === field)?.metadata;
+  return FUSHER_POINTS.find((p) => p.field === field)?.metadata;
 }

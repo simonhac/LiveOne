@@ -1,7 +1,7 @@
 import type { VendorAdapter } from "./types";
 import { SelectronicAdapter } from "./selectronic/adapter";
 import { EnphaseAdapter } from "./enphase/adapter";
-import { FroniusAdapter } from "./fronius/adapter";
+import { FusherAdapter } from "./fusher/adapter";
 import { MondoAdapter } from "./mondo/adapter";
 import { AmberAdapter } from "./amber/adapter";
 import { CompositeAdapter } from "./composite/adapter";
@@ -25,7 +25,7 @@ export class VendorRegistry {
     this.adapters.set("selectronic", new SelectronicAdapter());
 
     this.adapters.set("enphase", new EnphaseAdapter());
-    this.adapters.set("fronius", new FroniusAdapter());
+    this.adapters.set("fusher", new FusherAdapter());
     this.adapters.set("mondo", new MondoAdapter());
     this.adapters.set("amber", new AmberAdapter());
     this.adapters.set("composite", new CompositeAdapter());

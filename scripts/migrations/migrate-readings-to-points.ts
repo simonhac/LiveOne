@@ -85,8 +85,8 @@ const SELECTRONIC_MAPPINGS: PointMapping[] = [
   },
 ];
 
-// Fronius systems (7) - uses camelCase
-const FRONIUS_MAPPINGS: PointMapping[] = [
+// Fusher systems (formerly fronius) - uses camelCase
+const FUSHER_MAPPINGS: PointMapping[] = [
   { readingsColumn: "solar_w", originSubId: "solarW" },
   { readingsColumn: "solar_inverter_w", originSubId: "solarRemoteW" },
   { readingsColumn: "shunt_w", originSubId: "solarLocalW" },
@@ -101,7 +101,7 @@ const FRONIUS_MAPPINGS: PointMapping[] = [
   },
   { readingsColumn: "fault_timestamp", originSubId: "faultTimestamp" },
   { readingsColumn: "generator_status", originSubId: "generatorStatus" },
-  // Skip energy totals for Fronius (uses interval energy in new system)
+  // Skip energy totals for Fusher (uses interval energy in new system)
 ];
 
 // ============================================================================
@@ -187,7 +187,10 @@ async function getVendorType(db: any, systemId: number): Promise<string> {
 }
 
 function getMappings(vendorType: string): PointMapping[] {
-  return vendorType === "fronius" ? FRONIUS_MAPPINGS : SELECTRONIC_MAPPINGS;
+  // Accept both "fusher" and legacy "fronius"
+  return vendorType === "fusher" || vendorType === "fronius"
+    ? FUSHER_MAPPINGS
+    : SELECTRONIC_MAPPINGS;
 }
 
 function extractValue(

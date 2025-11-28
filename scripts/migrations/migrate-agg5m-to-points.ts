@@ -43,7 +43,7 @@ interface AggMapping {
   transform?: "kwhToWh"; // Optional transformation
 }
 
-// Selectronic/Fronius aggregation mappings
+// Selectronic/Fusher aggregation mappings
 const STANDARD_AGG_MAPPINGS: AggMapping[] = [
   {
     readingsColumn: "solar_w",
@@ -125,8 +125,8 @@ const STANDARD_AGG_MAPPINGS: AggMapping[] = [
   },
 ];
 
-// Fronius-specific (camelCase originSubIds)
-const FRONIUS_AGG_MAPPINGS: AggMapping[] = [
+// Fusher-specific (camelCase originSubIds, formerly fronius)
+const FUSHER_AGG_MAPPINGS: AggMapping[] = [
   {
     readingsColumn: "solar_w",
     originSubId: "solarW",
@@ -269,7 +269,9 @@ async function getVendorType(db: any, systemId: number): Promise<string> {
 
 function getMappings(vendorType: string): AggMapping[] {
   if (vendorType === "enphase") return ENPHASE_AGG_MAPPINGS;
-  if (vendorType === "fronius") return FRONIUS_AGG_MAPPINGS;
+  // Accept both "fusher" and legacy "fronius"
+  if (vendorType === "fusher" || vendorType === "fronius")
+    return FUSHER_AGG_MAPPINGS;
   return STANDARD_AGG_MAPPINGS;
 }
 

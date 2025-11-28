@@ -213,7 +213,12 @@ async function pollAllSystems(params: {
         });
       }
 
-      if (!credentials && adapter.vendorType !== "fronius") {
+      // Fusher (formerly fronius) systems don't need credentials for polling - they use push
+      if (
+        !credentials &&
+        adapter.vendorType !== "fusher" &&
+        adapter.vendorType !== "fronius"
+      ) {
         console.error(
           `[Cron] No credentials found for ${system.vendorType} system ${system.id}`,
         );

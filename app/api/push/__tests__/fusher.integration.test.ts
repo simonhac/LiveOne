@@ -5,13 +5,13 @@ import * as dotenv from "dotenv";
 import * as path from "path";
 dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
 
-const API_URL = "http://localhost:3000/api/push/fronius";
+const API_URL = "http://localhost:3000/api/push/fusher";
 
 // Test credentials - must match what's stored in Clerk
 const VALID_API_KEY = "fr_abcd-1234-efgh-5678";
 const INVALID_API_KEY = "fr_invalid-key";
 
-describe("Fronius Push API Integration Tests", () => {
+describe("Fusher Push API Integration Tests", () => {
   beforeAll(async () => {
     // Check if dev server is running
     try {
@@ -191,7 +191,7 @@ describe("Fronius Push API Integration Tests", () => {
 
       const data = await response.json();
       expect(data.status).toBe("ready");
-      expect(data.endpoint).toBe("/api/push/fronius");
+      expect(data.endpoint).toBe("/api/push/fusher");
       expect(data.method).toBe("POST");
       expect(data.requiredFields.always).toContain("apiKey");
       expect(data.requiredFields.always).toContain("action");
