@@ -69,6 +69,9 @@ export async function GET(
     const authResult = await requireSystemAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
 
+    // Extract system info for constructing full physical path
+    const { system } = authResult;
+
     // Parse query parameters
     const { searchParams } = new URL(request.url);
     const shortMode = searchParams.get("short") === "true";
@@ -96,9 +99,11 @@ export async function GET(
       // Return detailed point information
       // Only include "active" field when showActive=true
       const pointsData = validPoints.map((point) => {
+        // Construct full physical path: liveone/{vendorType}/{vendorSiteId}/{physicalPathTail}
+        const fullPhysicalPath = `liveone/${system.vendorType}/${system.vendorSiteId}/${point.physicalPathTail}`;
         const base = {
           logicalPath: point.getLogicalPath(),
-          physicalPath: point.physicalPath,
+          physicalPath: fullPhysicalPath,
           name: point.name,
           metricType: point.metricType,
           metricUnit: point.metricUnit,

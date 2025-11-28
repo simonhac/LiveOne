@@ -36,6 +36,7 @@ export async function PATCH(
     // Authenticate and authorize
     const authResult = await requireSystemAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
+    const { system } = authResult;
 
     // Parse request body
     const body = await request.json();
@@ -125,12 +126,15 @@ export async function PATCH(
       JSON.stringify(updateData),
     );
 
+    // Construct full physical path: liveone/{vendorType}/{vendorSiteId}/{physicalPathTail}
+    const fullPhysicalPath = `liveone/${system.vendorType}/${system.vendorSiteId}/${updatedPoint.physicalPathTail}`;
+
     return NextResponse.json({
       success: true,
       point: {
         systemId: updatedPoint.systemId,
         pointId: updatedPoint.index,
-        physicalPath: updatedPoint.physicalPath,
+        physicalPath: fullPhysicalPath,
         logicalPathStem: updatedPoint.logicalPathStem,
         displayName: updatedPoint.displayName,
         active: updatedPoint.active,
@@ -173,6 +177,7 @@ export async function GET(
     // Authenticate and authorize
     const authResult = await requireSystemAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
+    const { system } = authResult;
 
     const [point] = await db
       .select()
@@ -189,10 +194,13 @@ export async function GET(
       );
     }
 
+    // Construct full physical path: liveone/{vendorType}/{vendorSiteId}/{physicalPathTail}
+    const fullPhysicalPath = `liveone/${system.vendorType}/${system.vendorSiteId}/${point.physicalPathTail}`;
+
     return NextResponse.json({
       systemId: point.systemId,
       pointId: point.index,
-      physicalPath: point.physicalPath,
+      physicalPath: fullPhysicalPath,
       logicalPathStem: point.logicalPathStem,
       defaultName: point.defaultName,
       subsystem: point.subsystem,
