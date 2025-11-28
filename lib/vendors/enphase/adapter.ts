@@ -42,10 +42,11 @@ export class EnphaseAdapter extends BaseVendorAdapter {
    */
   async getLastReading(systemId: number): Promise<LatestReadingData | null> {
     // Find the Enphase solar power point for this system
-    const solarPoint = await PointManager.getInstance().getPointByPhysicalPath(
-      systemId,
-      "enphase/solar_w",
-    );
+    const solarPoint =
+      await PointManager.getInstance().getPointByPhysicalPathTail(
+        systemId,
+        "solar_w",
+      );
 
     if (!solarPoint) {
       return null;

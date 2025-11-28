@@ -22,9 +22,10 @@ export const pointInfo = sqliteTable(
     index: integer("id").notNull(), // Sequential per system, not auto-increment (database column "id", TS property "index")
 
     // Paths
-    // physicalPath: vendor-specific identifier using "/" separator (MQTT-friendly)
-    // e.g., "selectronic/solar_w", "E1/kwh"
-    physicalPath: text("physical_path").notNull(),
+    // physicalPathTail: vendor-specific identifier suffix (MQTT-friendly)
+    // Full MQTT topic: liveone/{vendorType}/{vendorSiteId}/{physicalPathTail}
+    // e.g., "solar_w", "batterySOC", "B1/kwh"
+    physicalPathTail: text("physical_path_tail").notNull(),
 
     // logicalPathStem: semantic classification using "." separator (nullable)
     // e.g., "source.solar", "bidi.battery.charge", "load"
@@ -50,10 +51,10 @@ export const pointInfo = sqliteTable(
   },
   (table) => ({
     pk: primaryKey({ columns: [table.systemId, table.index] }),
-    // Unique constraint for physical_path within a system
+    // Unique constraint for physical_path_tail within a system
     systemPhysicalPathUnique: uniqueIndex("pi_system_physical_path_unique").on(
       table.systemId,
-      table.physicalPath,
+      table.physicalPathTail,
     ),
     // Unique constraint on stem + metric_type (the full logical path must be unique)
     systemStemMetricUnique: uniqueIndex("pi_system_stem_metric_unique").on(

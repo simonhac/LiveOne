@@ -111,7 +111,7 @@ export default function PowerCard({
 
   return (
     <div
-      className={`${bgColor} border ${borderColor} rounded-lg p-2 md:p-4 relative overflow-hidden ${isStale ? "opacity-75" : ""}`}
+      className={`${bgColor} border ${borderColor} rounded-lg p-2 md:p-4 relative overflow-hidden min-h-[110px] md:min-h-0 ${isStale ? "opacity-75" : ""}`}
     >
       {isStale && (
         <div
@@ -127,7 +127,7 @@ export default function PowerCard({
         <div className="flex items-start md:items-center md:justify-between mb-1 md:mb-2 gap-1.5">
           {/* Icon on left for mobile */}
           <div
-            className={`${iconColor} md:hidden flex-shrink-0 [&>svg]:w-4 [&>svg]:h-4`}
+            className={`${iconColor} md:hidden flex-shrink-0 [&_svg]:w-4 [&_svg]:h-4`}
           >
             {icon}
           </div>

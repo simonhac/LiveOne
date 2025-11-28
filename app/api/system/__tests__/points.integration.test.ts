@@ -134,7 +134,7 @@ describe("GET /api/system/[systemId]/points", () => {
 
       // Validate types
       expect(typeof firstPoint.logicalPath).toBe("string");
-      expect(typeof firstPoint.physicalPath).toBe("string");
+      expect(typeof firstPoint.physicalPathTail).toBe("string");
       expect(typeof firstPoint.name).toBe("string");
       expect(typeof firstPoint.metricType).toBe("string");
       expect(typeof firstPoint.metricUnit).toBe("string");
@@ -171,9 +171,9 @@ describe("GET /api/system/[systemId]/points", () => {
 
       // All points must have a non-null physicalPath
       data.points.forEach((p: any) => {
-        expect(p.physicalPath).not.toBeNull();
-        expect(p.physicalPath).toBeDefined();
-        expect(typeof p.physicalPath).toBe("string");
+        expect(p.physicalPathTail).not.toBeNull();
+        expect(p.physicalPathTail).toBeDefined();
+        expect(typeof p.physicalPathTail).toBe("string");
       });
     });
 

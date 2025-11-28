@@ -169,7 +169,9 @@ function generateIntervalsAEST(
  */
 function usagePointFilter(point: PointInfo): boolean {
   const usageSuffixes = ["/kwh", "/cost", "/perKwh"];
-  return usageSuffixes.some((suffix) => point.physicalPath.endsWith(suffix));
+  return usageSuffixes.some((suffix) =>
+    point.physicalPathTail.endsWith(suffix),
+  );
 }
 
 /**
@@ -178,7 +180,9 @@ function usagePointFilter(point: PointInfo): boolean {
  */
 function pricingPointFilter(point: PointInfo): boolean {
   const pricingSuffixes = ["/renewables", "/spotPerKwh", "/perKwh"];
-  return pricingSuffixes.some((suffix) => point.physicalPath.endsWith(suffix));
+  return pricingSuffixes.some((suffix) =>
+    point.physicalPathTail.endsWith(suffix),
+  );
 }
 
 /**
@@ -208,7 +212,7 @@ function buildRecordsMapFromLocal(
 
     const pointReading: PointReading = {
       pointMetadata: {
-        physicalPath: point.physicalPath,
+        physicalPathTail: point.physicalPathTail,
         logicalPathStem: point.logicalPathStem,
         defaultName: point.defaultName || point.displayName,
         subsystem: point.subsystem,

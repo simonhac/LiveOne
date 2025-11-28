@@ -42,7 +42,7 @@ describe("AmberReadingsBatch", () => {
             rawValue: 0.25 + i * 0.01,
             dataQuality: "Actual",
             pointMetadata: {
-              physicalPath: `amber/${pointKey.replace(".", "/")}`,
+              physicalPathTail: `amber/${pointKey.replace(".", "/")}`,
               logicalPathStem: `bidi.${pointKey.split(".")[0]}`,
               defaultName: "Price data",
               subsystem: "grid",
@@ -68,7 +68,7 @@ describe("AmberReadingsBatch", () => {
             rawValue: 0.25 + i * 0.01,
             dataQuality: "Actual",
             pointMetadata: {
-              physicalPath: `amber/${pointKey.replace(".", "/")}`,
+              physicalPathTail: `amber/${pointKey.replace(".", "/")}`,
               logicalPathStem: `bidi.${pointKey.split(".")[0]}`,
               defaultName: "Grid data",
               subsystem: "grid",
@@ -88,7 +88,7 @@ describe("AmberReadingsBatch", () => {
             rawValue: 0.25 + i * 0.01,
             dataQuality: "Billable",
             pointMetadata: {
-              physicalPath: `amber/${pointKey.replace(".", "/")}`,
+              physicalPathTail: `amber/${pointKey.replace(".", "/")}`,
               logicalPathStem: `bidi.${pointKey.split(".")[0]}`,
               defaultName: "Price data",
               subsystem: "grid",
@@ -198,7 +198,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25 + i * 0.01,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPath: "amber/grid/spotPerKwh",
+            physicalPathTail: "amber/grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -227,7 +227,7 @@ describe("AmberReadingsBatch", () => {
             rawValue: 0.25 + i * 0.01,
             dataQuality: "Actual",
             pointMetadata: {
-              physicalPath: `amber/${pointKey.replace(".", "/")}`,
+              physicalPathTail: `amber/${pointKey.replace(".", "/")}`,
               logicalPathStem: `bidi.${pointKey.split(".")[0]}`,
               defaultName: "Price data",
               subsystem: "grid",
@@ -251,7 +251,7 @@ describe("AmberReadingsBatch", () => {
             rawValue: 0.25 + i * 0.01,
             dataQuality: "Forecast",
             pointMetadata: {
-              physicalPath: `amber/${pointKey.replace(".", "/")}`,
+              physicalPathTail: `amber/${pointKey.replace(".", "/")}`,
               logicalPathStem: `bidi.${pointKey.split(".")[0]}`,
               defaultName: "Price data",
               subsystem: "grid",
@@ -354,7 +354,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPath: "amber/grid/spotPerKwh",
+            physicalPathTail: "amber/grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -375,7 +375,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPath: "amber/grid/spotPerKwh",
+            physicalPathTail: "amber/grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -396,7 +396,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPath: "amber/grid/spotPerKwh",
+            physicalPathTail: "amber/grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -430,7 +430,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25 + i * 0.01,
           dataQuality: "Billable",
           pointMetadata: {
-            physicalPath: "amber/grid/spotPerKwh",
+            physicalPathTail: "amber/grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -471,7 +471,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPath: "amber/grid/spotPerKwh",
+            physicalPathTail: "amber/grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -492,7 +492,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPath: "amber/grid/spotPerKwh",
+            physicalPathTail: "amber/grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -513,7 +513,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPath: "amber/grid/spotPerKwh",
+            physicalPathTail: "amber/grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -543,7 +543,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPath: "amber/grid/spotPerKwh",
+            physicalPathTail: "amber/grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -565,7 +565,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.3,
           dataQuality: "Forecast",
           pointMetadata: {
-            physicalPath: "amber/grid/spotPerKwh",
+            physicalPathTail: "amber/grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -614,7 +614,7 @@ describe("AmberReadingsBatch", () => {
       rawValue: 0.25,
       dataQuality: quality,
       pointMetadata: {
-        physicalPath: `amber/${pointKey.replace(".", "/")}`,
+        physicalPathTail: `amber/${pointKey.replace(".", "/")}`,
         logicalPathStem: `bidi.${pointKey.split(".")[0]}`,
         defaultName: "Test point",
         subsystem: "grid",

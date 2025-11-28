@@ -104,25 +104,14 @@ export default function ViewDataModal({
   const [loading, setLoading] = useState(true);
   const [initialLoad, setInitialLoad] = useState(true);
   const fetchingRef = useRef(false);
-  const [selectedPointInfo, setSelectedPointInfo] = useState<{
-    pointIndex: number;
-    systemId: number;
-    subsystem: string | null;
-    originName: string;
-    displayName: string | null;
-    active: boolean;
-    transform: string | null;
-    metricType: string;
-    metricUnit: string | null;
-    derived: boolean;
+  const [selectedSystem, setSelectedSystem] = useState<{
+    id: number;
+    vendorType: string;
     vendorSiteId: string;
-    systemShortName?: string;
-    ownerUsername: string;
-    vendorType?: string;
-    logicalPath: string | null;
-    logicalPathStem: string | null;
-    physicalPath: string;
+    displayName: string;
+    alias?: string;
   } | null>(null);
+  const [selectedPoint, setSelectedPoint] = useState<PointInfo | null>(null);
   const [isPointInfoModalOpen, setIsPointInfoModalOpen] = useState(false);
 
   // Point Reading Inspector state
@@ -385,25 +374,14 @@ export default function ViewDataModal({
     )
       return;
 
-    setSelectedPointInfo({
-      pointIndex: pointInfo.index,
-      systemId: pointInfo.systemId,
-      subsystem: pointInfo.subsystem,
-      originName: pointInfo.defaultName,
-      displayName: pointInfo.displayName,
-      active: pointInfo.active,
-      transform: pointInfo.transform,
-      metricType: pointInfo.metricType,
-      metricUnit: pointInfo.metricUnit,
-      derived: false,
-      vendorSiteId: vendorSiteId,
-      systemShortName: metadata?.systemShortName || undefined,
-      ownerUsername: metadata?.ownerUsername || "",
+    setSelectedSystem({
+      id: systemId,
       vendorType: vendorType,
-      logicalPath: pointInfo.getLogicalPath(),
-      physicalPath: pointInfo.physicalPath,
-      logicalPathStem: pointInfo.logicalPathStem,
+      vendorSiteId: vendorSiteId,
+      displayName: systemName,
+      alias: metadata?.systemShortName || undefined,
     });
+    setSelectedPoint(pointInfo);
     setIsPointInfoModalOpen(true);
   };
 
@@ -419,6 +397,7 @@ export default function ViewDataModal({
       displayName?: string | null;
       active: boolean;
       transform?: string | null;
+      logicalPathStem?: string | null;
     },
   ) => {
     try {
@@ -435,14 +414,6 @@ export default function ViewDataModal({
 
       // Refresh data to show updated values
       await fetchData();
-
-      // Update the selected point info to reflect changes
-      if (selectedPointInfo) {
-        setSelectedPointInfo({
-          ...selectedPointInfo,
-          ...updates,
-        });
-      }
     } catch (error) {
       console.error("Error updating point info:", error);
       throw error;
@@ -868,13 +839,13 @@ export default function ViewDataModal({
                         <span className="text-gray-300">Physical Path</span>
                       ) : key === "sessionLabel" ? (
                         <div></div>
-                      ) : pointInfo?.physicalPath ? (
+                      ) : pointInfo?.physicalPathTail ? (
                         <span
                           className={`text-xs text-gray-500 font-mono ${
                             !pointInfo?.active ? "line-through" : ""
                           }`}
                           dangerouslySetInnerHTML={{
-                            __html: pointInfo.physicalPath.replace(
+                            __html: pointInfo.physicalPathTail.replace(
                               /\//g,
                               "/<wbr>",
                             ),
@@ -1124,7 +1095,8 @@ export default function ViewDataModal({
       <PointInfoModal
         isOpen={isPointInfoModalOpen}
         onClose={() => setIsPointInfoModalOpen(false)}
-        pointInfo={selectedPointInfo}
+        system={selectedSystem}
+        point={selectedPoint}
         onUpdate={handleUpdatePointInfo}
       />
 

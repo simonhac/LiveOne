@@ -960,7 +960,7 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
     .select({
       id: pointInfo.index,
       systemId: pointInfo.systemId,
-      physicalPath: pointInfo.physicalPath,
+      physicalPath: pointInfo.physicalPathTail,
     })
     .from(pointInfo);
 
@@ -979,7 +979,7 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.physicalPath === prodPoint.physical_path,
+        p.physicalPathTail === prodPoint.physical_path,
     );
 
     if (devPoint) {
@@ -1060,7 +1060,7 @@ async function syncPointDailyAggregations(ctx: SyncContext) {
     .select({
       id: pointInfo.index,
       systemId: pointInfo.systemId,
-      physicalPath: pointInfo.physicalPath,
+      physicalPath: pointInfo.physicalPathTail,
     })
     .from(pointInfo);
 
@@ -1077,7 +1077,7 @@ async function syncPointDailyAggregations(ctx: SyncContext) {
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.physicalPath === prodPoint.physical_path,
+        p.physicalPathTail === prodPoint.physical_path,
     );
 
     if (devPoint) {
@@ -1332,7 +1332,7 @@ async function syncPointReadings(ctx: SyncContext) {
     .select({
       id: pointInfo.index,
       systemId: pointInfo.systemId,
-      physicalPath: pointInfo.physicalPath,
+      physicalPath: pointInfo.physicalPathTail,
     })
     .from(pointInfo);
 
@@ -1351,7 +1351,7 @@ async function syncPointReadings(ctx: SyncContext) {
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.physicalPath === prodPoint.physical_path,
+        p.physicalPathTail === prodPoint.physical_path,
     );
 
     if (devPoint) {

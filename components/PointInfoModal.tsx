@@ -4,31 +4,21 @@ import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { isValidLogicalPathStem } from "@/lib/identifiers/logical-path";
+import { PointInfo } from "@/lib/point/point-info";
 
-interface PointInfo {
-  pointIndex: number;
-  systemId: number;
-  subsystem: string | null;
-  originName: string;
-  displayName: string | null;
-  active: boolean;
-  transform: string | null;
-  metricType: string;
-  metricUnit: string | null;
-  derived: boolean;
-  vendorSiteId?: string;
-  systemShortName?: string;
-  ownerUsername: string;
-  vendorType?: string;
-  logicalPath: string | null;
-  logicalPathStem: string | null;
-  physicalPath: string;
+interface SystemInfo {
+  id: number;
+  vendorType: string;
+  vendorSiteId: string;
+  displayName: string;
+  alias?: string;
 }
 
 interface PointInfoModalProps {
   isOpen: boolean;
   onClose: () => void;
-  pointInfo: PointInfo | null;
+  system: SystemInfo | null;
+  point: PointInfo | null;
   onUpdate: (
     pointIndex: number,
     updates: {
@@ -43,18 +33,19 @@ interface PointInfoModalProps {
 export default function PointInfoModal({
   isOpen,
   onClose,
-  pointInfo,
+  system,
+  point,
   onUpdate,
 }: PointInfoModalProps) {
   const [editedDisplayName, setEditedDisplayName] = useState(
-    pointInfo?.displayName || "",
+    point?.displayName || "",
   );
-  const [editedActive, setEditedActive] = useState(!!pointInfo?.active);
+  const [editedActive, setEditedActive] = useState(!!point?.active);
   const [editedTransform, setEditedTransform] = useState(
-    pointInfo?.transform || "n",
+    point?.transform || "n",
   );
   const [editedLogicalPathStem, setEditedLogicalPathStem] = useState(
-    pointInfo?.logicalPathStem || "",
+    point?.logicalPathStem || "",
   );
   const [isDisplayNameDirty, setIsDisplayNameDirty] = useState(false);
   const [isActiveDirty, setIsActiveDirty] = useState(false);
@@ -66,16 +57,16 @@ export default function PointInfoModal({
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    setEditedDisplayName(pointInfo?.displayName || "");
-    setEditedActive(!!pointInfo?.active);
-    setEditedTransform(pointInfo?.transform || "n");
-    setEditedLogicalPathStem(pointInfo?.logicalPathStem || "");
+    setEditedDisplayName(point?.displayName || "");
+    setEditedActive(!!point?.active);
+    setEditedTransform(point?.transform || "n");
+    setEditedLogicalPathStem(point?.logicalPathStem || "");
     setIsDisplayNameDirty(false);
     setIsActiveDirty(false);
     setIsTransformDirty(false);
     setIsLogicalPathStemDirty(false);
     setLogicalPathStemError(null);
-  }, [pointInfo, isOpen]);
+  }, [point, isOpen]);
 
   // Handle escape key to close modal
   useEffect(() => {
@@ -91,22 +82,22 @@ export default function PointInfoModal({
 
   const handleDisplayNameChange = (value: string) => {
     setEditedDisplayName(value);
-    setIsDisplayNameDirty(value !== (pointInfo?.displayName || ""));
+    setIsDisplayNameDirty(value !== (point?.displayName || ""));
   };
 
   const handleActiveChange = (value: boolean) => {
     setEditedActive(value);
-    setIsActiveDirty(value !== !!pointInfo?.active);
+    setIsActiveDirty(value !== !!point?.active);
   };
 
   const handleTransformChange = (value: string) => {
     setEditedTransform(value);
-    setIsTransformDirty(value !== (pointInfo?.transform || "n"));
+    setIsTransformDirty(value !== (point?.transform || "n"));
   };
 
   const handleLogicalPathStemChange = (value: string) => {
     setEditedLogicalPathStem(value);
-    setIsLogicalPathStemDirty(value !== (pointInfo?.logicalPathStem || ""));
+    setIsLogicalPathStemDirty(value !== (point?.logicalPathStem || ""));
 
     // Validate the stem
     if (value === "") {
@@ -128,7 +119,7 @@ export default function PointInfoModal({
   const hasErrors = logicalPathStemError !== null;
 
   const handleSave = async () => {
-    if (!pointInfo || hasErrors) return;
+    if (!point || hasErrors) return;
 
     setIsSaving(true);
     try {
@@ -139,7 +130,7 @@ export default function PointInfoModal({
       if (isLogicalPathStemDirty)
         updates.logicalPathStem = editedLogicalPathStem || null;
 
-      await onUpdate(pointInfo.pointIndex, updates);
+      await onUpdate(point.index, updates);
 
       // Reset dirty flags
       setIsDisplayNameDirty(false);
@@ -156,7 +147,8 @@ export default function PointInfoModal({
     }
   };
 
-  if (!isOpen || !pointInfo || typeof document === "undefined") return null;
+  if (!isOpen || !point || !system || typeof document === "undefined")
+    return null;
 
   // Handle Enter key to save
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -168,7 +160,7 @@ export default function PointInfoModal({
 
   // Compute the full logical path from edited stem
   const computedLogicalPath = editedLogicalPathStem
-    ? `${editedLogicalPathStem}/${pointInfo.metricType}`
+    ? `${editedLogicalPathStem}/${point.metricType}`
     : null;
 
   return createPortal(
@@ -187,7 +179,7 @@ export default function PointInfoModal({
             <h2 className="text-lg font-medium text-gray-100">
               Point Information{" "}
               <span className="text-gray-500">
-                ID: {pointInfo.systemId}.{pointInfo.pointIndex}
+                ID: {system.id}.{point.index}
               </span>
             </h2>
             <button
@@ -202,66 +194,72 @@ export default function PointInfoModal({
           <div className="px-6 py-4 space-y-4">
             {/* Original Metadata - Non-editable fields */}
             <div className="space-y-2 text-sm">
-              <div className="flex items-center gap-3">
-                <span className="w-28 text-gray-400">Vendor/ID:</span>
-                <span className="text-gray-300 font-mono">
-                  {pointInfo.vendorType}/{pointInfo.vendorSiteId}
+              <div className="flex items-start gap-3">
+                <span className="w-28 shrink-0 text-gray-400">
+                  Original System:
                 </span>
-                <span className="text-gray-400 ml-2">
-                  ID: {pointInfo.systemId}
-                  {pointInfo.systemShortName &&
-                    ` (${pointInfo.systemShortName})`}
-                </span>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="w-28 text-gray-400">Physical Path:</span>
-                <span className="text-gray-300 font-mono">
-                  {pointInfo.physicalPath}
-                </span>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="w-28 text-gray-400">Original Name:</span>
-                <span className="text-gray-300">{pointInfo.originName}</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="w-28 text-gray-400">Type and unit:</span>
                 <span className="text-gray-300">
-                  {pointInfo.metricType}
-                  {pointInfo.metricUnit && (
-                    <span className="text-gray-400">
-                      {" "}
-                      ({pointInfo.metricUnit})
-                    </span>
+                  {system.displayName}
+                  <span className="text-gray-500">
+                    {system.alias && ` (${system.alias})`} ID: {system.id}
+                  </span>
+                </span>
+              </div>
+              <div className="flex items-start gap-3">
+                <span className="w-28 shrink-0 text-gray-400">
+                  Physical Path:
+                </span>
+                <span className="font-mono break-all">
+                  <span className="text-gray-500">
+                    liveone/{system.vendorType}/{system.vendorSiteId}/
+                  </span>
+                  <span className="text-gray-300">
+                    {point.physicalPathTail}
+                  </span>
+                </span>
+              </div>
+              <div className="flex items-start gap-3">
+                <span className="w-28 shrink-0 text-gray-400">
+                  Original Name:
+                </span>
+                <span className="text-gray-300">{point.defaultName}</span>
+              </div>
+              <div className="flex items-start gap-3">
+                <span className="w-28 shrink-0 text-gray-400">
+                  Type and unit:
+                </span>
+                <span className="text-gray-300">
+                  {point.metricType}
+                  {point.metricUnit && (
+                    <span className="text-gray-400"> ({point.metricUnit})</span>
                   )}
                 </span>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="w-28 text-gray-400">Subsystem:</span>
-                <span className="text-gray-300">
-                  {pointInfo.subsystem || "-"}
-                </span>
+              <div className="flex items-start gap-3">
+                <span className="w-28 shrink-0 text-gray-400">Subsystem:</span>
+                <span className="text-gray-300">{point.subsystem || "-"}</span>
               </div>
             </div>
 
             {/* Editable Fields */}
             <div className="space-y-3 pt-2">
               {/* Display Name */}
-              <div className="flex items-center gap-3">
-                <label className="w-28 text-sm text-gray-400">
+              <div className="flex items-start gap-3">
+                <label className="w-28 shrink-0 text-sm text-gray-400 pt-1.5">
                   Display Name:
                 </label>
                 <input
                   type="text"
                   value={editedDisplayName}
                   onChange={(e) => handleDisplayNameChange(e.target.value)}
-                  placeholder={pointInfo.originName}
+                  placeholder={point.defaultName}
                   className={`w-[435px] px-3 py-1.5 bg-gray-700 border ${isDisplayNameDirty ? "border-blue-500" : "border-gray-600"} rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50`}
                 />
               </div>
 
               {/* Logical Path Stem */}
               <div className="flex items-start gap-3">
-                <label className="w-28 text-sm text-gray-400 pt-1.5">
+                <label className="w-28 shrink-0 text-sm text-gray-400 pt-1.5">
                   Logical Path:
                 </label>
                 <div className="flex-1">
@@ -287,7 +285,7 @@ export default function PointInfoModal({
                     />
                     <span className="text-gray-500 text-sm">/</span>
                     <span className="text-gray-400 text-sm font-mono">
-                      {pointInfo.metricType}
+                      {point.metricType}
                     </span>
                   </div>
                   {logicalPathStemError && (
@@ -299,8 +297,10 @@ export default function PointInfoModal({
               </div>
 
               {/* Transform */}
-              <div className="flex items-center gap-3">
-                <label className="w-28 text-sm text-gray-400">Transform:</label>
+              <div className="flex items-start gap-3">
+                <label className="w-28 shrink-0 text-sm text-gray-400 pt-1.5">
+                  Transform:
+                </label>
                 <select
                   value={editedTransform}
                   onChange={(e) => handleTransformChange(e.target.value)}
@@ -313,8 +313,10 @@ export default function PointInfoModal({
               </div>
 
               {/* Active */}
-              <div className="flex items-center gap-3">
-                <label className="w-28 text-sm text-gray-400">Active:</label>
+              <div className="flex items-start gap-3">
+                <label className="w-28 shrink-0 text-sm text-gray-400 pt-1.5">
+                  Active:
+                </label>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
                     type="checkbox"
@@ -350,7 +352,7 @@ export default function PointInfoModal({
                   : "bg-gray-600 text-gray-400 cursor-not-allowed"
               }`}
             >
-              {isSaving ? "Saving..." : "Save Changes"}
+              {isSaving ? "Saving..." : "Save"}
             </button>
           </div>
         </div>

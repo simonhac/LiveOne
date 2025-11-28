@@ -43,7 +43,7 @@ export interface PointInfoMap {
 }
 
 export interface PointMetadata {
-  physicalPath: string; // "/" separated, e.g., "selectronic/solar_w"
+  physicalPathTail: string; // "/" separated suffix, e.g., "solar_w", "B1/kwh"
   logicalPathStem: string | null; // "." separated, e.g., "source.solar"
   metricType: string;
   metricUnit: string;
@@ -381,7 +381,7 @@ export class PointManager {
   async createPoint(pointData: {
     systemId: number;
     index: number; // Database field is 'id', but we call it 'index' in TS code
-    physicalPath: string;
+    physicalPathTail: string;
     logicalPathStem: string | null;
     metricType: string;
     metricUnit: string;
@@ -394,7 +394,7 @@ export class PointManager {
     await db.insert(pointInfoTable).values({
       systemId: pointData.systemId,
       index: pointData.index,
-      physicalPath: pointData.physicalPath,
+      physicalPathTail: pointData.physicalPathTail,
       logicalPathStem: pointData.logicalPathStem,
       metricType: pointData.metricType,
       metricUnit: pointData.metricUnit,
@@ -416,7 +416,7 @@ export class PointManager {
 
   /**
    * Load all point_info entries for a system and create a lookup map
-   * Uses physicalPath as the key
+   * Uses physicalPathTail as the key
    */
   async loadPointInfoMap(systemId: number): Promise<PointInfoMap> {
     const points = await db
@@ -426,20 +426,20 @@ export class PointManager {
 
     const pointMap: PointInfoMap = {};
     for (const point of points) {
-      // Use physicalPath as the key
-      pointMap[point.physicalPath] = point;
+      // Use physicalPathTail as the key
+      pointMap[point.physicalPathTail] = point;
     }
 
     return pointMap;
   }
 
   /**
-   * Get a single point by its physicalPath
+   * Get a single point by its physicalPathTail
    * Returns null if the point doesn't exist
    */
-  async getPointByPhysicalPath(
+  async getPointByPhysicalPathTail(
     systemId: number,
-    physicalPath: string,
+    physicalPathTail: string,
   ): Promise<typeof pointInfoTable.$inferSelect | null> {
     const [point] = await db
       .select()
@@ -447,7 +447,7 @@ export class PointManager {
       .where(
         and(
           eq(pointInfoTable.systemId, systemId),
-          eq(pointInfoTable.physicalPath, physicalPath),
+          eq(pointInfoTable.physicalPathTail, physicalPathTail),
         ),
       )
       .limit(1);
@@ -464,8 +464,8 @@ export class PointManager {
     pointMap: PointInfoMap,
     metadata: PointMetadata,
   ): Promise<typeof pointInfoTable.$inferSelect> {
-    // Use physicalPath as the key - must match loadPointInfoMap
-    const key = metadata.physicalPath;
+    // Use physicalPathTail as the key - must match loadPointInfoMap
+    const key = metadata.physicalPathTail;
 
     // Return existing if found
     if (pointMap[key]) {
@@ -473,7 +473,7 @@ export class PointManager {
     }
 
     console.log(
-      `[PointManager] Creating point_info for ${metadata.defaultName} (${metadata.metricType}) at ${metadata.physicalPath}`,
+      `[PointManager] Creating point_info for ${metadata.defaultName} (${metadata.metricType}) at ${metadata.physicalPathTail}`,
     );
 
     // Get the next available index for this system
@@ -493,7 +493,7 @@ export class PointManager {
       .values({
         systemId,
         index: nextIndex,
-        physicalPath: metadata.physicalPath,
+        physicalPathTail: metadata.physicalPathTail,
         logicalPathStem: metadata.logicalPathStem,
         metricType: metadata.metricType,
         metricUnit: metadata.metricUnit,
@@ -504,7 +504,7 @@ export class PointManager {
         createdAtMs: Date.now(),
       })
       .onConflictDoUpdate({
-        target: [pointInfoTable.systemId, pointInfoTable.physicalPath],
+        target: [pointInfoTable.systemId, pointInfoTable.physicalPathTail],
         set: {
           // Update default name from source if it changed
           defaultName: metadata.defaultName,
@@ -691,7 +691,7 @@ export class PointManager {
 
   /**
    * Batch insert pre-aggregated 5-minute readings directly to point_readings_agg_5m
-   * Use this when the vendor already provides 5-minute aggregated data (e.g., Enphase, Fronius)
+   * Use this when the vendor already provides 5-minute aggregated data (e.g., Enphase)
    * Bypasses the point_readings table to avoid redundant storage
    *
    * Value placement by metric type:

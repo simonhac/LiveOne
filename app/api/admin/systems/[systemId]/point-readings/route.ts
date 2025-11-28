@@ -162,7 +162,7 @@ export async function GET(
       const pointInfoObj = new PointInfo(
         p.index,
         systemId,
-        p.physicalPath,
+        p.physicalPathTail,
         p.logicalPathStem,
         p.metricType,
         p.metricUnit,

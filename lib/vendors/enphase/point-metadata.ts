@@ -42,7 +42,7 @@ export const ENPHASE_POINTS: EnphasePointConfig[] = [
   {
     field: "powr",
     metadata: {
-      physicalPath: "enphase/solar_w",
+      physicalPathTail: "solar_w",
       logicalPathStem: "source.solar",
       defaultName: "Solar",
       subsystem: "solar",
@@ -60,7 +60,7 @@ export const ENPHASE_POINTS: EnphasePointConfig[] = [
   {
     field: "enwh",
     metadata: {
-      physicalPath: "enphase/solar_interval_wh",
+      physicalPathTail: "solar_interval_wh",
       logicalPathStem: "source.solar",
       defaultName: "Solar Interval",
       subsystem: "solar",

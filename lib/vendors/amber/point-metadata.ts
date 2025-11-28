@@ -31,7 +31,7 @@ export function createChannelPoint(
     : "bidi.grid";
 
   return {
-    physicalPath: `${channel.channelId}/${config.subId}`,
+    physicalPathTail: `${channel.channelId}/${config.subId}`,
     logicalPathStem,
     defaultName: channel.defaultName,
     subsystem: "grid",
@@ -70,7 +70,7 @@ export function getChannelMetadata(
  */
 export function createRenewablesPoint(): PointMetadata {
   return {
-    physicalPath: "grid/renewables",
+    physicalPathTail: "grid/renewables",
     logicalPathStem: "bidi.grid.renewables",
     defaultName: "Grid renewables",
     subsystem: "grid",
@@ -86,7 +86,7 @@ export function createRenewablesPoint(): PointMetadata {
  */
 export function createSpotPricePoint(): PointMetadata {
   return {
-    physicalPath: "grid/spotPerKwh",
+    physicalPathTail: "grid/spotPerKwh",
     logicalPathStem: "bidi.grid.spot",
     defaultName: "Grid spot price",
     subsystem: "grid",
@@ -102,7 +102,7 @@ export function createSpotPricePoint(): PointMetadata {
  */
 export function createTariffPeriodPoint(): PointMetadata {
   return {
-    physicalPath: "grid/tariffPeriod",
+    physicalPathTail: "grid/tariffPeriod",
     logicalPathStem: "bidi.grid.tariff",
     defaultName: "Tariff period",
     subsystem: "grid",

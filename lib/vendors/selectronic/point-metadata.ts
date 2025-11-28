@@ -28,7 +28,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "solarW",
     metadata: {
-      physicalPath: "selectronic/solar_w",
+      physicalPathTail: "solar_w",
       logicalPathStem: "source.solar",
       defaultName: "Solar",
       subsystem: "solar",
@@ -42,7 +42,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "solarInverterW",
     metadata: {
-      physicalPath: "selectronic/solarinverter_w",
+      physicalPathTail: "solarinverter_w",
       logicalPathStem: "source.solar.remote",
       defaultName: "Solar Remote",
       subsystem: "solar",
@@ -56,7 +56,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "shuntW",
     metadata: {
-      physicalPath: "selectronic/shunt_w",
+      physicalPathTail: "shunt_w",
       logicalPathStem: "source.solar.local",
       defaultName: "Solar Local",
       subsystem: "solar",
@@ -70,7 +70,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "loadW",
     metadata: {
-      physicalPath: "selectronic/load_w",
+      physicalPathTail: "load_w",
       logicalPathStem: "load",
       defaultName: "Load",
       subsystem: "load",
@@ -84,7 +84,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "batteryW",
     metadata: {
-      physicalPath: "selectronic/battery_w",
+      physicalPathTail: "battery_w",
       logicalPathStem: "bidi.battery",
       defaultName: "Battery",
       subsystem: "battery",
@@ -98,7 +98,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "gridW",
     metadata: {
-      physicalPath: "selectronic/grid_w",
+      physicalPathTail: "grid_w",
       logicalPathStem: "bidi.grid",
       defaultName: "Grid",
       subsystem: "grid",
@@ -116,7 +116,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "batterySOC",
     metadata: {
-      physicalPath: "selectronic/battery_soc",
+      physicalPathTail: "battery_soc",
       logicalPathStem: "bidi.battery",
       defaultName: "Battery",
       subsystem: "battery",
@@ -130,7 +130,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "faultCode",
     metadata: {
-      physicalPath: "selectronic/fault_code",
+      physicalPathTail: "fault_code",
       logicalPathStem: null,
       defaultName: "Fault Code",
       subsystem: "system",
@@ -144,7 +144,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "faultTimestamp",
     metadata: {
-      physicalPath: "selectronic/fault_ts",
+      physicalPathTail: "fault_ts",
       logicalPathStem: null,
       defaultName: "Fault Time",
       subsystem: "system",
@@ -158,7 +158,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "generatorStatus",
     metadata: {
-      physicalPath: "selectronic/gen_status",
+      physicalPathTail: "gen_status",
       logicalPathStem: null,
       defaultName: "Generator Status",
       subsystem: "generator",
@@ -176,7 +176,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "solarKwhTotal",
     metadata: {
-      physicalPath: "selectronic/solar_wh_total",
+      physicalPathTail: "solar_wh_total",
       logicalPathStem: "source.solar",
       defaultName: "Solar",
       subsystem: "solar",
@@ -188,7 +188,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "loadKwhTotal",
     metadata: {
-      physicalPath: "selectronic/load_wh_total",
+      physicalPathTail: "load_wh_total",
       logicalPathStem: "load",
       defaultName: "Load",
       subsystem: "load",
@@ -200,7 +200,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "batteryInKwhTotal",
     metadata: {
-      physicalPath: "selectronic/battery_in_wh_total",
+      physicalPathTail: "battery_in_wh_total",
       logicalPathStem: "bidi.battery.charge",
       defaultName: "Battery Charge",
       subsystem: "battery",
@@ -212,7 +212,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "batteryOutKwhTotal",
     metadata: {
-      physicalPath: "selectronic/battery_out_wh_total",
+      physicalPathTail: "battery_out_wh_total",
       logicalPathStem: "bidi.battery.discharge",
       defaultName: "Battery Discharge",
       subsystem: "battery",
@@ -224,7 +224,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "gridInKwhTotal",
     metadata: {
-      physicalPath: "selectronic/grid_in_wh_total",
+      physicalPathTail: "grid_in_wh_total",
       logicalPathStem: "bidi.grid.import",
       defaultName: "Import",
       subsystem: "grid",
@@ -236,7 +236,7 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   {
     field: "gridOutKwhTotal",
     metadata: {
-      physicalPath: "selectronic/grid_out_wh_total",
+      physicalPathTail: "grid_out_wh_total",
       logicalPathStem: "bidi.grid.export",
       defaultName: "Export",
       subsystem: "grid",

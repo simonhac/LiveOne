@@ -12,7 +12,7 @@ export class PointInfo {
   constructor(
     public readonly index: number,
     public readonly systemId: number,
-    public readonly physicalPath: string, // "/" separated, e.g., "selectronic/solar_w"
+    public readonly physicalPathTail: string, // "/" separated suffix, e.g., "solar_w", "B1/kwh"
     public readonly logicalPathStem: string | null, // "." separated, e.g., "source.solar"
     public readonly metricType: string, // e.g., "power", "energy", "soc"
     public readonly metricUnit: string, // e.g., "W", "Wh", "%"
@@ -126,7 +126,7 @@ export class PointInfo {
   static from(data: {
     index: number; // Database field name is 'id', exposed as 'index' in TypeScript
     systemId: number;
-    physicalPath: string;
+    physicalPathTail: string;
     logicalPathStem: string | null;
     metricType: string;
     metricUnit: string;
@@ -141,7 +141,7 @@ export class PointInfo {
     return new PointInfo(
       data.index,
       data.systemId,
-      data.physicalPath,
+      data.physicalPathTail,
       data.logicalPathStem,
       data.metricType,
       data.metricUnit,

@@ -87,7 +87,7 @@ export class AmberReadingsBatch {
       30 * 60 * 1000) as Milliseconds;
     const rangeEnd = this.intervalEndTimes[this.intervalEndTimes.length - 1];
 
-    const pointKey = derivePointKey(reading.pointMetadata.physicalPath);
+    const pointKey = derivePointKey(reading.pointMetadata.physicalPathTail);
 
     if (
       reading.measurementTimeMs < rangeStart ||

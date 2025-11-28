@@ -280,7 +280,7 @@ export class MondoAdapter extends BaseVendorAdapter {
           // Add power reading
           readingsToInsert.push({
             pointMetadata: {
-              physicalPath: `${row.monitoringPointId}/energyNowW`,
+              physicalPathTail: `${row.monitoringPointId}/energyNowW`,
               logicalPathStem,
               defaultName: row.monitoringPointName,
               subsystem,
@@ -297,7 +297,7 @@ export class MondoAdapter extends BaseVendorAdapter {
           // Add energy reading (monotonic total with differentiate transform)
           readingsToInsert.push({
             pointMetadata: {
-              physicalPath: `${row.monitoringPointId}/totalEnergyWh`,
+              physicalPathTail: `${row.monitoringPointId}/totalEnergyWh`,
               logicalPathStem,
               defaultName: row.monitoringPointName,
               subsystem,

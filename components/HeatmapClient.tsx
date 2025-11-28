@@ -15,9 +15,9 @@ import type { ZonedDateTime } from "@internationalized/date";
 import { toZoned } from "@internationalized/date";
 import { getUnitDisplay } from "@/lib/point/unit-display";
 
-interface PointInfo {
+interface PointListItem {
   logicalPath: string;
-  physicalPath: string;
+  physicalPathTail: string;
   name: string;
   metricType: string;
   metricUnit: string;
@@ -56,7 +56,7 @@ export default function HeatmapClient({
   const systemId = system.id;
   const searchParams = useSearchParams();
 
-  const [points, setPoints] = useState<PointInfo[]>([]);
+  const [points, setPoints] = useState<PointListItem[]>([]);
   const [selectedPoint, setSelectedPoint] = useState<string | undefined>(
     undefined,
   );
@@ -351,7 +351,7 @@ export default function HeatmapClient({
               </tr>
               <tr>
                 <td className="pr-4 align-top">Physical Path:</td>
-                <td>{selectedPointInfo?.physicalPath}</td>
+                <td>{selectedPointInfo?.physicalPathTail}</td>
               </tr>
               <tr>
                 <td className="pr-4 align-top">Logical Path:</td>

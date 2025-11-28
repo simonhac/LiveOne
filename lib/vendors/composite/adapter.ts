@@ -19,7 +19,7 @@ import { VendorRegistry } from "@/lib/vendors/registry";
  * {
  *   "base_system": 10,     // Mondo for everything
  *   "overrides": {
- *     "battery_soc": 7     // Fronius for SOC only
+ *     "battery_soc": 7     // Fusher for SOC only
  *   }
  * }
  */

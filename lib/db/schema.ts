@@ -13,7 +13,7 @@ export const systems = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     ownerClerkUserId: text("owner_clerk_user_id"), // Clerk user ID of the owner who holds the vendor credentials
-    vendorType: text("vendor_type").notNull(), // Vendor type (e.g., 'selectronic', 'fronius', 'sma')
+    vendorType: text("vendor_type").notNull(), // Vendor type (e.g., 'selectronic', 'fusher', 'enphase')
     vendorSiteId: text("vendor_site_id").notNull(), // Vendor's site/system identifier
     status: text("status").notNull().default("active"), // 'active', 'disabled', or 'removed'
     displayName: text("display_name").notNull(),

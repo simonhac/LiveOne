@@ -272,10 +272,11 @@ export async function hasCompleteEveningData(
   timezoneOffsetMin: number,
 ): Promise<boolean> {
   // Find the Enphase solar power point for this system
-  const solarPoint = await PointManager.getInstance().getPointByPhysicalPath(
-    systemId,
-    "enphase/solar_w",
-  );
+  const solarPoint =
+    await PointManager.getInstance().getPointByPhysicalPathTail(
+      systemId,
+      "solar_w",
+    );
 
   if (!solarPoint) {
     console.log(`[Enphase] No solar point found for system ${systemId}`);

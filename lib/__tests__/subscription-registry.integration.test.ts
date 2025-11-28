@@ -89,7 +89,7 @@ describeIfKV("Subscription Registry (integration)", () => {
         {
           systemId: testSourceSystemId,
           index: 1,
-          physicalPath: "sungrow/solar_w",
+          physicalPathTail: "sungrow/solar_w",
           logicalPathStem: "source.solar",
           defaultName: "Solar Power",
           displayName: "Solar Power",
@@ -102,7 +102,7 @@ describeIfKV("Subscription Registry (integration)", () => {
         {
           systemId: testSourceSystemId,
           index: 2,
-          physicalPath: "sungrow/battery_soc",
+          physicalPathTail: "sungrow/battery_soc",
           logicalPathStem: "bidi.battery",
           defaultName: "Battery SoC",
           displayName: "Battery SoC",
@@ -226,7 +226,7 @@ describeIfKV("Subscription Registry (integration)", () => {
         {
           systemId: testSourceSystemId,
           index: 1,
-          physicalPath: "sungrow/solar_w",
+          physicalPathTail: "sungrow/solar_w",
           logicalPathStem: "source.solar",
           defaultName: "Solar",
           displayName: "Solar",
@@ -238,7 +238,7 @@ describeIfKV("Subscription Registry (integration)", () => {
         {
           systemId: testSourceSystemId,
           index: 2,
-          physicalPath: "sungrow/battery_soc",
+          physicalPathTail: "sungrow/battery_soc",
           logicalPathStem: "bidi.battery",
           defaultName: "Battery",
           displayName: "Battery",
