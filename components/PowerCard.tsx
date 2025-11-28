@@ -5,6 +5,8 @@ import { Clock } from "lucide-react";
 interface PowerCardProps {
   title: string;
   value: string;
+  /** Unit to display after value (e.g., "kW", "%"). Rendered smaller with appropriate spacing. */
+  unit?: string;
   icon: React.ReactNode;
   iconColor: string;
   bgColor: string;
@@ -18,6 +20,7 @@ interface PowerCardProps {
 export default function PowerCard({
   title,
   value,
+  unit,
   icon,
   iconColor,
   bgColor,
@@ -166,7 +169,15 @@ export default function PowerCard({
             {icon}
           </div>
         </div>
-        <p className="text-xl md:text-2xl font-bold text-white">{value}</p>
+        <p className="text-xl md:text-2xl font-bold text-white">
+          {value}
+          {unit && (
+            <>
+              {unit !== "%" && "\u202F"}
+              <span className="text-sm md:text-base font-semibold">{unit}</span>
+            </>
+          )}
+        </p>
         {extraInfo && (
           <p className="text-xs text-gray-500 mt-0.5 md:mt-1">{extraInfo}</p>
         )}

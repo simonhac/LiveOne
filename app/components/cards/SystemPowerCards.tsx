@@ -11,6 +11,10 @@ interface SystemPowerCardsProps {
   vendorType: string;
   getStaleThreshold: (vendorType: string) => number;
   showGrid: boolean;
+  /** Layout mode: "horizontal" for full-width row, "sidebar" for vertical stack on desktop */
+  layout?: "horizontal" | "sidebar";
+  /** Additional CSS classes for the outer container */
+  className?: string;
 }
 
 interface LoadPoint {
@@ -197,11 +201,13 @@ function calculateAllLoads(latest: LatestPointValues): LoadPoint[] {
         masterLoad = value;
       } else {
         // Child load has subtype (e.g., "load.hvac/power", "load.pool/power")
-        // loadType is everything after "load." (e.g., "hvac", "pool", "hvac.upstairs")
+        // Use displayName from point metadata, falling back to path-derived label
         const loadType = segments.slice(1).join(".") || "";
-        const label = loadType
-          ? loadType.charAt(0).toUpperCase() + loadType.slice(1)
-          : "Load";
+        const label =
+          pointData.displayName ||
+          (loadType
+            ? loadType.charAt(0).toUpperCase() + loadType.slice(1)
+            : "Load");
 
         childLoads.push({
           path: pointPath,
@@ -238,7 +244,7 @@ function calculateAllLoads(latest: LatestPointValues): LoadPoint[] {
       allLoads.push({
         path: "load.OTHER/power",
         value: restOfHouse,
-        label: "Rest of House",
+        label: "Other",
       });
     }
   } else if (masterLoad !== null && childLoads.length === 0) {
@@ -265,10 +271,23 @@ export default function SystemPowerCards({
   vendorType,
   getStaleThreshold,
   showGrid,
+  layout = "horizontal",
+  className,
 }: SystemPowerCardsProps) {
-  // Helper to format power values
-  const formatPower = (watts: number) => {
-    return `${(watts / 1000).toFixed(1)}\u00A0kW`;
+  // Helper to format power value (number only, no unit)
+  const formatPowerValue = (watts: number) => {
+    return (watts / 1000).toFixed(1);
+  };
+
+  // Helper to format power with smaller unit (JSX for secondary labels)
+  const formatPowerSmallUnit = (watts: number) => {
+    return (
+      <>
+        {formatPowerValue(watts)}
+        {"\u202F"}
+        <span className="text-[0.7em]">kW</span>
+      </>
+    );
   };
 
   // Helper to get point value
@@ -408,8 +427,16 @@ export default function SystemPowerCards({
     showGrid && getPointValue("bidi.grid/power") !== null,
   ].filter(Boolean).length;
 
-  // Determine grid columns - never more columns than cards
+  // Determine grid columns based on layout mode
   const getGridClass = () => {
+    if (layout === "sidebar") {
+      // Sidebar: horizontal on mobile, vertical stack on desktop
+      if (cardCount === 1) return "grid-cols-1";
+      if (cardCount === 2) return "grid-cols-2 lg:grid-cols-1";
+      if (cardCount === 3) return "grid-cols-3 lg:grid-cols-1";
+      return "grid-cols-4 lg:grid-cols-1";
+    }
+    // Horizontal: dynamic columns based on card count
     if (cardCount === 1) return "grid-cols-1";
     if (cardCount === 2) return "grid-cols-2";
     if (cardCount === 3) return "grid-cols-3";
@@ -420,13 +447,18 @@ export default function SystemPowerCards({
   };
 
   return (
-    <div className="mb-4 px-1">
-      <div className={`grid gap-2 lg:gap-4 ${getGridClass()}`}>
+    <div
+      className={`px-1 ${layout === "sidebar" ? "h-full" : "mb-4"} ${className || ""}`}
+    >
+      <div
+        className={`grid gap-2 lg:gap-4 ${getGridClass()} ${layout === "sidebar" ? "h-full lg:content-between" : ""}`}
+      >
         {/* Solar Card */}
         {solarValue !== null && (
           <PowerCard
             title="Solar"
-            value={formatPower(solarValue)}
+            value={formatPowerValue(solarValue)}
+            unit="kW"
             icon={<Sun className="w-6 h-6" />}
             iconColor="text-yellow-400"
             bgColor="bg-yellow-900/20"
@@ -442,10 +474,10 @@ export default function SystemPowerCards({
               showBreakdown ? (
                 <div className="text-xs text-gray-400 space-y-0.5">
                   {solarLocal !== null && (
-                    <div>Local: {formatPower(solarLocal)}</div>
+                    <div>Local: {formatPowerSmallUnit(solarLocal)}</div>
                   )}
                   {solarRemote !== null && (
-                    <div>Remote: {formatPower(solarRemote)}</div>
+                    <div>Remote: {formatPowerSmallUnit(solarRemote)}</div>
                   )}
                 </div>
               ) : undefined
@@ -457,7 +489,8 @@ export default function SystemPowerCards({
         {hasLoadData && (
           <PowerCard
             title="Load"
-            value={formatPower(totalLoad)}
+            value={formatPowerValue(totalLoad)}
+            unit="kW"
             icon={<Home className="w-6 h-6" />}
             iconColor="text-blue-400"
             bgColor="bg-blue-900/20"
@@ -469,7 +502,7 @@ export default function SystemPowerCards({
                 <div className="text-xs text-gray-400 space-y-0.5">
                   {top2Loads.map((load) => (
                     <div key={load.path}>
-                      {load.label}: {formatPower(load.value)}
+                      {load.label}: {formatPowerSmallUnit(load.value)}
                     </div>
                   ))}
                 </div>
@@ -482,7 +515,8 @@ export default function SystemPowerCards({
         {batterySoc !== null && (
           <PowerCard
             title="Battery"
-            value={`${batterySoc.toFixed(1)}%`}
+            value={batterySoc.toFixed(1)}
+            unit="%"
             icon={<Battery className="w-6 h-6" />}
             iconColor={
               batteryPower < 0
@@ -509,10 +543,15 @@ export default function SystemPowerCards({
             measurementTime={
               getMeasurementTime("bidi.battery/soc") || undefined
             }
-            extraInfo={
-              batteryPower !== 0
-                ? `${batteryPower < 0 ? "Charging" : "Discharging"} ${formatPower(Math.abs(batteryPower))}`
-                : "Idle"
+            extra={
+              batteryPower !== 0 ? (
+                <div className="text-xs text-gray-500">
+                  {batteryPower < 0 ? "Charging" : "Discharging"}{" "}
+                  {formatPowerSmallUnit(Math.abs(batteryPower))}
+                </div>
+              ) : (
+                <div className="text-xs text-gray-500">Idle</div>
+              )
             }
           />
         )}
@@ -522,8 +561,11 @@ export default function SystemPowerCards({
           <PowerCard
             title="Grid"
             value={
-              Math.abs(gridPower) < 100 ? "Neutral" : formatPower(gridPower)
+              Math.abs(gridPower) < 100
+                ? "Neutral"
+                : formatPowerValue(Math.abs(gridPower))
             }
+            unit={Math.abs(gridPower) < 100 ? undefined : "kW"}
             icon={<Zap className="w-6 h-6" />}
             iconColor={
               gridPower >= 100

@@ -27,7 +27,7 @@ export default function ChartTooltip({
         <span className="text-gray-400">Solar</span>
         <span
           style={{
-            minWidth: "3.5rem",
+            minWidth: "48px",
             display: "inline-flex",
             gap: "0.125rem",
             justifyContent: "flex-end",
@@ -53,7 +53,7 @@ export default function ChartTooltip({
         <span className="text-gray-400">Load</span>
         <span
           style={{
-            minWidth: "3.5rem",
+            minWidth: "48px",
             display: "inline-flex",
             gap: "0.125rem",
             justifyContent: "flex-end",
@@ -80,7 +80,7 @@ export default function ChartTooltip({
           <span className="text-gray-400">Battery</span>
           <span
             style={{
-              minWidth: "3.5rem",
+              minWidth: "48px",
               display: "inline-flex",
               gap: "0.125rem",
               justifyContent: "flex-end",
@@ -104,7 +104,7 @@ export default function ChartTooltip({
           <span className="text-gray-400">Grid</span>
           <span
             style={{
-              minWidth: "3.5rem",
+              minWidth: "48px",
               display: "inline-flex",
               gap: "0.125rem",
               justifyContent: "flex-end",
@@ -127,7 +127,7 @@ export default function ChartTooltip({
         <span className="text-gray-400">Battery</span>
         <span
           style={{
-            minWidth: "3.5rem",
+            minWidth: "48px",
             display: "inline-flex",
             gap: "0.125rem",
             justifyContent: "flex-end",
