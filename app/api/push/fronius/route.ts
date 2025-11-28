@@ -7,14 +7,16 @@ import {
 import { sessionManager } from "@/lib/session-manager";
 import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 import { FRONIUS_POINTS } from "@/lib/vendors/fronius/point-metadata";
+import { getSystemCredentials } from "@/lib/secure-credentials";
 
 /**
  * Expected request body for Fronius push data
  * Contains all CommonPollingData fields except totals
  */
 export interface FroniusPushData {
-  // Authentication and action
-  apiKey: string; // This is actually the site ID (vendorSiteId in database)
+  // Authentication and identification
+  apiKey: string; // API key for authentication (validated against Clerk credentials)
+  siteId?: string; // Site identifier (matches vendor_site_id in database). Defaults to "kinkora" if not provided.
   action: "test" | "store"; // Action to perform: 'test' for auth check, 'store' to save data
 
   // Timestamp and sequence (required for 'store' action)
@@ -111,13 +113,14 @@ export async function POST(request: NextRequest) {
     // Get SystemsManager instance
     const systemsManager = SystemsManager.getInstance();
 
-    // Find the system by vendorSiteId (using apiKey as the site identifier)
-    const system = await systemsManager.getSystemByVendorSiteId(data.apiKey);
+    // Use siteId to find system, defaulting to "kinkora" for backwards compatibility
+    const siteId = data.siteId || "kinkora";
+
+    // Find the system by vendorSiteId
+    const system = await systemsManager.getSystemByVendorSiteId(siteId);
 
     if (!system) {
-      console.error(
-        `[Fronius Push] System not found for apiKey: ${data.apiKey}`,
-      );
+      console.error(`[Fronius Push] System not found for siteId: ${siteId}`);
       // Note: Cannot record session without valid system (requires JOIN with systems table)
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
@@ -133,13 +136,60 @@ export async function POST(request: NextRequest) {
         system.id,
         "400",
         `System is configured as ${system.vendorType}, not fronius`,
-        { action: data.action, apiKey: data.apiKey },
+        { action: data.action, siteId },
       );
 
       return NextResponse.json(
         { error: "System is not configured as Fronius type" },
         { status: 400 },
       );
+    }
+
+    // Validate API key against Clerk credentials
+    if (!system.ownerClerkUserId) {
+      console.error(
+        `[Fronius Push] System ${system.id} has no owner - cannot validate credentials`,
+      );
+      return NextResponse.json(
+        { error: "System has no owner configured" },
+        { status: 500 },
+      );
+    }
+
+    const credentials = await getSystemCredentials(
+      system.ownerClerkUserId,
+      system.id,
+    );
+
+    if (!credentials || credentials.vendorType !== "fronius") {
+      console.error(
+        `[Fronius Push] No Fronius credentials found for system ${system.id}`,
+      );
+      await recordFailedSession(
+        sessionStart,
+        system.id,
+        "401",
+        "No credentials configured for this system",
+        { action: data.action, siteId },
+      );
+      return NextResponse.json(
+        { error: "No credentials configured for this system" },
+        { status: 401 },
+      );
+    }
+
+    if (credentials.apiKey !== data.apiKey) {
+      console.error(
+        `[Fronius Push] Invalid API key for system ${system.id} (${system.displayName})`,
+      );
+      await recordFailedSession(
+        sessionStart,
+        system.id,
+        "401",
+        "Invalid API key",
+        { action: data.action, siteId },
+      );
+      return NextResponse.json({ error: "Invalid API key" }, { status: 401 });
     }
 
     // If action is 'test', return success without storing data
@@ -156,7 +206,7 @@ export async function POST(request: NextRequest) {
         started: sessionStart,
         duration,
         successful: true,
-        response: { action: "test", apiKey: data.apiKey },
+        response: { action: "test", siteId },
         numRows: 0,
       });
 
@@ -326,15 +376,16 @@ export async function POST(request: NextRequest) {
 }
 
 // Also support GET for testing/health check
-export async function GET(request: NextRequest) {
+export async function GET() {
   return NextResponse.json({
     status: "ready",
     endpoint: "/api/push/fronius",
     method: "POST",
     requiredFields: {
-      always: ["apiKey", "action"], // apiKey is used as the site identifier, action is 'test' or 'store'
+      always: ["apiKey", "action"], // apiKey for authentication, action is 'test' or 'store'
       forStoreAction: ["timestamp", "sequence"],
       optional: [
+        "siteId", // Identifies the system (defaults to "kinkora" if not provided)
         "solarW",
         "solarLocalW",
         "solarRemoteW",
@@ -353,6 +404,6 @@ export async function GET(request: NextRequest) {
         "gridOutWhInterval",
       ],
     },
-    note: 'The apiKey field is used as the site identifier (vendorSiteId). Use action="test" to validate authentication, action="store" to save data.',
+    note: 'apiKey is validated against Clerk credentials. siteId identifies the system (matches vendor_site_id). Use action="test" to validate authentication, action="store" to save data.',
   });
 }

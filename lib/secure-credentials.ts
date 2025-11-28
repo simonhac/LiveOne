@@ -12,7 +12,7 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { auth } from "@clerk/nextjs/server";
 
-export type VendorType = "selectronic" | "enphase" | "mondo";
+export type VendorType = "selectronic" | "enphase" | "mondo" | "fronius";
 
 // Generic credentials interface - vendors define their own specific shapes
 export interface VendorCredentials {
