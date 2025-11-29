@@ -1,101 +1,79 @@
-import { BaseVendorAdapter, ScheduleEvaluation } from "../base-adapter";
-import type {
-  TestConnectionResult,
-  CredentialField,
-  FetchContext,
-  FetchResult,
-} from "../types";
+/**
+ * Tesla Vendor Adapter
+ *
+ * Polls Tesla vehicles for charging and location data.
+ * - Default: Poll every 15 minutes
+ * - When charging: Poll every 5 minutes
+ */
+
+import { BaseVendorAdapter, type ScheduleEvaluation } from "../base-adapter";
+import type { FetchContext, FetchResult, TestConnectionResult } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
-import type { LatestReadingData } from "@/lib/types/readings";
-import type { PointMetadata } from "@/lib/point/point-manager";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
-import { TeslaClient, TeslaApiError } from "./client";
-import type {
-  TeslaCredentials,
-  TeslaVehicleData,
-  TeslaPointKey,
-} from "./types";
-import { TESLA_POINTS } from "./types";
+import { getTeslaClient, type ITeslaClient } from "./tesla-client";
+import {
+  getTeslaOwnerClient,
+  type TeslaOwnerClient,
+} from "./tesla-owner-client";
+import { getValidTeslaToken } from "./tesla-auth";
+import { TESLA_POINTS } from "./point-metadata";
+import type { TeslaCredentials, TeslaVehicleData } from "./types";
+
+// Check if Fleet API is configured
+const hasFleetApiConfig = !!(
+  process.env.TESLA_CLIENT_ID &&
+  process.env.TESLA_CLIENT_SECRET &&
+  process.env.TESLA_REDIRECT_URI
+);
 
 /**
- * Tesla Vehicle Adapter
- *
- * Polls Tesla vehicles for telemetry data including:
- * - Battery state of charge
- * - Charging status and power
- * - Location (for home detection)
- * - Odometer
- * - Climate and temperature
- *
- * Polling interval is dynamic:
- * - 15 minutes normally
- * - 5 minutes when vehicle is charging
+ * Get the appropriate Tesla client based on configuration.
+ * Uses Fleet API client if credentials are configured, otherwise falls back to Owner API.
  */
+function getClient(): ITeslaClient | TeslaOwnerClient {
+  if (hasFleetApiConfig) {
+    return getTeslaClient();
+  }
+  console.log("[Tesla] Using Owner API client (Fleet API not configured)");
+  return getTeslaOwnerClient();
+}
+
+// Polling intervals in minutes
+const DEFAULT_POLL_INTERVAL = 15;
+const CHARGING_POLL_INTERVAL = 5;
+
 export class TeslaAdapter extends BaseVendorAdapter {
   readonly vendorType = "tesla";
-  readonly displayName = "Tesla Vehicle";
+  readonly displayName = "Tesla";
   readonly dataSource = "poll" as const;
-  readonly supportsAddSystem = true;
+  readonly supportsAddSystem = false; // Uses OAuth flow
 
-  // Default: poll every 15 minutes
-  protected pollIntervalMinutes = 15;
+  protected pollIntervalMinutes = DEFAULT_POLL_INTERVAL;
   protected toleranceSeconds = 60;
 
-  // When charging: poll every 5 minutes
-  private readonly chargingPollIntervalMinutes = 5;
-
-  // Track charging state per system for dynamic scheduling
-  private chargingStateCache = new Map<number, boolean>();
-
-  readonly credentialFields: CredentialField[] = [
-    {
-      name: "accessToken",
-      label: "Access Token",
-      type: "password",
-      placeholder: "eyJ...",
-      required: true,
-      helpText:
-        "Tesla API access token. Use a tool like TeslaMate or teslapy to obtain tokens.",
-    },
-    {
-      name: "refreshToken",
-      label: "Refresh Token",
-      type: "password",
-      placeholder: "eyJ...",
-      required: true,
-      helpText: "Tesla API refresh token for automatic token renewal.",
-    },
-    {
-      name: "vehicleId",
-      label: "Vehicle ID",
-      type: "text",
-      placeholder: "Leave empty to use first vehicle",
-      required: false,
-      helpText: "Optional: Specific vehicle ID if you have multiple Teslas.",
-    },
-  ];
+  // Track last known charging state per system (in-memory cache)
+  private chargingStates = new Map<number, boolean>();
 
   /**
-   * Override schedule evaluation to use dynamic interval based on charging state
+   * Override evaluateSchedule for Tesla-specific logic:
+   * - 15 min default
+   * - 5 min when charging (from previous poll)
    */
   protected evaluateSchedule(
     system: SystemWithPolling,
     lastPollTime: Date | null,
     now: Date,
   ): ScheduleEvaluation {
-    // Check if we know this vehicle is charging
-    const isCharging = this.chargingStateCache.get(system.id) ?? false;
-    const effectiveInterval = isCharging
-      ? this.chargingPollIntervalMinutes
-      : this.pollIntervalMinutes;
-
-    const targetIntervalMs = effectiveInterval * 60 * 1000;
-    const toleranceMs = this.toleranceSeconds * 1000;
+    // Determine interval based on last known charging state
+    const isCharging = this.chargingStates.get(system.id) || false;
+    const interval = isCharging
+      ? CHARGING_POLL_INTERVAL
+      : DEFAULT_POLL_INTERVAL;
 
     // If never polled, poll now
     if (!lastPollTime) {
       const nextPollTime = getNextMinuteBoundary(
-        effectiveInterval,
+        interval,
         system.timezoneOffsetMin,
       );
       return {
@@ -106,37 +84,32 @@ export class TeslaAdapter extends BaseVendorAdapter {
     }
 
     const msSinceLastPoll = now.getTime() - lastPollTime.getTime();
+    const targetIntervalMs = interval * 60 * 1000;
+    const toleranceMs = this.toleranceSeconds * 1000;
 
     if (msSinceLastPoll >= targetIntervalMs - toleranceMs) {
       const nextPollTime = getNextMinuteBoundary(
-        effectiveInterval,
+        interval,
         system.timezoneOffsetMin,
       );
       return {
         shouldPoll: true,
-        reason: `Interval reached (${effectiveInterval} min${isCharging ? " - charging" : ""})`,
+        reason: isCharging
+          ? `Charging interval (${interval} min)`
+          : `Default interval (${interval} min)`,
         nextPollTime,
       };
     }
 
     const nextPollTime = getNextMinuteBoundary(
-      effectiveInterval,
+      interval,
       system.timezoneOffsetMin,
     );
-
     return {
       shouldPoll: false,
-      reason: `Not due yet (polls every ${effectiveInterval} min${isCharging ? " - charging" : ""})`,
+      reason: `Not due yet (polls every ${interval} min${isCharging ? ", charging" : ""})`,
       nextPollTime,
     };
-  }
-
-  /**
-   * Get the last reading for this system
-   */
-  async getLastReading(systemId: number): Promise<LatestReadingData | null> {
-    // TODO: Implement reading from point_readings_agg_5m
-    return null;
   }
 
   /**
@@ -145,35 +118,96 @@ export class TeslaAdapter extends BaseVendorAdapter {
    */
   protected async fetchData(
     system: SystemWithPolling,
-    credentials: TeslaCredentials,
+    _credentials: any,
     context: FetchContext,
   ): Promise<FetchResult> {
     try {
-      console.log(`[Tesla] Fetching data for system ${system.id}`);
-
-      const client = new TeslaClient(credentials);
-
-      // Fetch vehicle data
-      const vehicleId = credentials.vehicleId || undefined;
-      const vehicleData = await client.getVehicleData(vehicleId);
-
       console.log(
-        `[Tesla] Got data for ${vehicleData.display_name} (${vehicleData.vin})`,
+        `[Tesla] Polling system ${system.id} (${system.displayName})`,
       );
 
-      // Update charging state cache for dynamic scheduling
-      const isCharging = client.isCharging(vehicleData);
-      this.chargingStateCache.set(system.id, isCharging);
+      if (!system.ownerClerkUserId) {
+        return { success: false, error: "System has no owner" };
+      }
 
-      // Extract readings
-      const readings = this.extractReadings(vehicleData, context.startedAt);
+      // Get valid access token (refreshes if needed)
+      const { accessToken, credentials: teslaCredentials } =
+        await getValidTeslaToken(system.ownerClerkUserId, system.id);
 
-      console.log(`[Tesla] Extracted ${readings.length} point readings`);
+      const vehicleId = (teslaCredentials as TeslaCredentials).vehicle_id;
+      const client = getClient();
+
+      // Check vehicle state and wake if needed
+      const vehicles = await client.getVehicles(accessToken);
+      const vehicle = vehicles.find((v) => String(v.id) === vehicleId);
+
+      if (!vehicle) {
+        return { success: false, error: `Vehicle ${vehicleId} not found` };
+      }
+
+      // Wake up vehicle if asleep
+      if (vehicle.state !== "online") {
+        console.log(
+          `[Tesla] Vehicle ${vehicleId} is ${vehicle.state}, waking up...`,
+        );
+        const awoke = await client.wakeUp(accessToken, vehicleId);
+        if (!awoke) {
+          // Vehicle didn't wake - return success with 0 readings
+          console.log(
+            `[Tesla] Vehicle ${vehicleId} did not wake, skipping poll`,
+          );
+          const nextPollTime = getNextMinuteBoundary(
+            DEFAULT_POLL_INTERVAL,
+            system.timezoneOffsetMin,
+          );
+          return {
+            success: true,
+            readings: [],
+            nextPollTime,
+            rawResponse: { skipped: true, reason: "Vehicle did not wake up" },
+          };
+        }
+      }
+
+      // Fetch vehicle data
+      const vehicleData = await client.getVehicleData(accessToken, vehicleId);
+
+      // Update charging state for next poll interval decision
+      const isCharging = vehicleData.charge_state.charging_state === "Charging";
+      this.chargingStates.set(system.id, isCharging);
+
+      // Transform data to point readings
+      const measurementTime = context.startedAt.getTime();
+      const readings: FetchResult["readings"] = [];
+
+      for (const pointConfig of TESLA_POINTS) {
+        try {
+          const rawValue = pointConfig.extract(vehicleData);
+          if (rawValue === null || rawValue === undefined) continue;
+
+          readings.push({
+            pointMetadata: pointConfig.metadata,
+            rawValue,
+            measurementTime,
+            dataQuality: "good" as const,
+            error: null,
+          });
+        } catch (e) {
+          console.warn(
+            `[Tesla] Failed to extract ${pointConfig.metadata.physicalPathTail}:`,
+            e,
+          );
+        }
+      }
+
+      console.log(
+        `[Tesla] System ${system.id}: Extracted ${readings.length} readings`,
+      );
 
       // Calculate next poll time based on current charging state
       const nextInterval = isCharging
-        ? this.chargingPollIntervalMinutes
-        : this.pollIntervalMinutes;
+        ? CHARGING_POLL_INTERVAL
+        : DEFAULT_POLL_INTERVAL;
       const nextPollTime = getNextMinuteBoundary(
         nextInterval,
         system.timezoneOffsetMin,
@@ -182,23 +216,11 @@ export class TeslaAdapter extends BaseVendorAdapter {
       return {
         success: true,
         readings,
-        recordsProcessed: readings.length,
         nextPollTime,
-        rawResponse: {
-          vehicleName: vehicleData.display_name,
-          vin: vehicleData.vin,
-          batteryLevel: vehicleData.charge_state.battery_level,
-          chargingState: vehicleData.charge_state.charging_state,
-          isCharging,
-          odometer: vehicleData.vehicle_state.odometer,
-          location: {
-            lat: vehicleData.drive_state.latitude,
-            lon: vehicleData.drive_state.longitude,
-          },
-        },
+        rawResponse: vehicleData,
       };
     } catch (error) {
-      console.error("[Tesla] Fetch error:", error);
+      console.error(`[Tesla] Error polling system ${system.id}:`, error);
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
@@ -207,180 +229,97 @@ export class TeslaAdapter extends BaseVendorAdapter {
   }
 
   /**
-   * Extract point readings from vehicle data
-   */
-  private extractReadings(
-    data: TeslaVehicleData,
-    measurementTime: Date,
-  ): Array<{
-    pointMetadata: PointMetadata;
-    rawValue: any;
-    measurementTime: number;
-    dataQuality?: string;
-  }> {
-    const measurementTimeMs = measurementTime.getTime();
-    const readings: Array<{
-      pointMetadata: PointMetadata;
-      rawValue: any;
-      measurementTime: number;
-      dataQuality?: string;
-    }> = [];
-
-    const addReading = (key: TeslaPointKey, value: any) => {
-      const meta = TESLA_POINTS[key];
-      readings.push({
-        pointMetadata: {
-          ...meta,
-          subsystem: null,
-          transform: null,
-        },
-        rawValue: value,
-        measurementTime: measurementTimeMs,
-        dataQuality: "good",
-      });
-    };
-
-    // Charge state
-    addReading("battery_soc", data.charge_state.battery_level);
-    addReading("usable_battery_soc", data.charge_state.usable_battery_level);
-    addReading("battery_range", data.charge_state.battery_range);
-    addReading("charge_limit", data.charge_state.charge_limit_soc);
-    addReading("charging_state", data.charge_state.charging_state);
-    addReading("charge_amps", data.charge_state.charge_amps);
-    addReading("charger_voltage", data.charge_state.charger_voltage);
-    addReading("charger_power", data.charge_state.charger_power);
-    addReading("charge_rate", data.charge_state.charge_rate);
-    addReading("time_to_full_charge", data.charge_state.time_to_full_charge);
-    addReading(
-      "plugged_in",
-      data.charge_state.charge_port_latch === "Engaged" ||
-        data.charge_state.charging_state !== "Disconnected"
-        ? 1
-        : 0,
-    );
-
-    // Drive state / Location
-    addReading("latitude", data.drive_state.latitude);
-    addReading("longitude", data.drive_state.longitude);
-    addReading("heading", data.drive_state.heading);
-    addReading("speed", data.drive_state.speed ?? 0);
-
-    // Vehicle state
-    addReading("odometer", data.vehicle_state.odometer);
-    addReading("locked", data.vehicle_state.locked ? 1 : 0);
-    addReading("sentry_mode", data.vehicle_state.sentry_mode ? 1 : 0);
-    addReading("car_version", data.vehicle_state.car_version);
-
-    // Climate state
-    if (data.climate_state.inside_temp !== null) {
-      addReading("inside_temp", data.climate_state.inside_temp);
-    }
-    if (data.climate_state.outside_temp !== null) {
-      addReading("outside_temp", data.climate_state.outside_temp);
-    }
-    addReading("climate_on", data.climate_state.is_climate_on ? 1 : 0);
-
-    return readings;
-  }
-
-  /**
-   * Test connection and discover vehicle
+   * Test connection with Tesla
    */
   async testConnection(
     system: SystemWithPolling,
-    credentials: TeslaCredentials,
+    _credentials: any,
   ): Promise<TestConnectionResult> {
     try {
-      console.log("[Tesla] Testing connection...");
+      console.log(`[Tesla] Testing connection for system ${system.id}`);
 
-      const client = new TeslaClient(credentials);
-
-      // Get vehicle list
-      const vehicles = await client.getVehicles();
-
-      if (vehicles.length === 0) {
+      if (!system.ownerClerkUserId) {
         return {
           success: false,
-          error: "No vehicles found on this Tesla account",
+          error: "System has no owner",
         };
       }
 
-      // Use specified vehicle or first one
-      const vehicle = credentials.vehicleId
-        ? vehicles.find((v) => v.id === credentials.vehicleId)
-        : vehicles[0];
+      // Get valid access token
+      const { accessToken, credentials: teslaCredentials } =
+        await getValidTeslaToken(system.ownerClerkUserId, system.id);
+
+      const vehicleId = (teslaCredentials as TeslaCredentials).vehicle_id;
+      const client = getClient();
+
+      // Get vehicles to verify connection
+      const vehicles = await client.getVehicles(accessToken);
+      const vehicle = vehicles.find((v) => String(v.id) === vehicleId);
 
       if (!vehicle) {
         return {
           success: false,
-          error: `Vehicle ${credentials.vehicleId} not found`,
+          error: `Vehicle ${vehicleId} not found`,
         };
       }
 
-      console.log(
-        `[Tesla] Found vehicle: ${vehicle.display_name} (${vehicle.vin})`,
-      );
-      console.log(`[Tesla] Vehicle state: ${vehicle.state}`);
-
-      // Try to get vehicle data
+      // Try to get vehicle data if online
       let vehicleData: TeslaVehicleData | null = null;
-      try {
-        vehicleData = await client.getVehicleData(vehicle.id);
-      } catch (error) {
-        console.log(
-          `[Tesla] Could not get vehicle data (vehicle may be asleep): ${error}`,
-        );
+      if (vehicle.state === "online") {
+        try {
+          vehicleData = await client.getVehicleData(accessToken, vehicleId);
+        } catch (e) {
+          // Vehicle might have gone to sleep, that's okay for test
+          console.log(
+            `[Tesla] Could not get vehicle data (vehicle may be asleep)`,
+          );
+        }
       }
 
-      // Get car type from VIN or config
-      const carType = vehicleData?.vehicle_config?.car_type ?? "Tesla";
+      const systemInfo = {
+        vendorSiteId: vehicleId,
+        displayName: vehicle.display_name,
+        model: vehicle.vin,
+        serial: vehicle.vin,
+      };
+
+      // Build latest data if we got vehicle data
+      const latestData = vehicleData
+        ? {
+            timestamp: new Date(),
+            batterySOC: vehicleData.charge_state.battery_level,
+            solarW: null,
+            solarLocalW: null,
+            loadW: null,
+            batteryW: null,
+            gridW: null,
+            faultCode: null,
+            faultTimestamp: null,
+            generatorStatus: null,
+            solarKwhTotal: null,
+            loadKwhTotal: null,
+            batteryInKwhTotal: null,
+            batteryOutKwhTotal: null,
+            gridInKwhTotal: null,
+            gridOutKwhTotal: null,
+          }
+        : undefined;
+
+      console.log(
+        `[Tesla] Test connection successful for vehicle ${vehicle.display_name}`,
+      );
 
       return {
         success: true,
-        systemInfo: {
-          vendorSiteId: vehicle.id,
-          displayName: `${vehicle.display_name}`,
-          model: carType,
-          serial: vehicle.vin,
-        },
-        latestData: vehicleData
-          ? {
-              timestamp: new Date(),
-              batterySOC: vehicleData.charge_state.battery_level,
-              gridW: null,
-              solarW: null,
-              loadW: null,
-              batteryW: vehicleData.charge_state.charger_power * 1000, // kW to W
-            }
-          : undefined,
-        vendorResponse: {
-          vehicle,
-          vehicleData: vehicleData
-            ? {
-                batteryLevel: vehicleData.charge_state.battery_level,
-                chargingState: vehicleData.charge_state.charging_state,
-                odometer: vehicleData.vehicle_state.odometer,
-                softwareVersion: vehicleData.vehicle_state.car_version,
-              }
-            : null,
-          allVehicles: vehicles.map((v) => ({
-            id: v.id,
-            name: v.display_name,
-            vin: v.vin,
-            state: v.state,
-          })),
-        },
+        systemInfo,
+        latestData,
+        vendorResponse: vehicleData || vehicle,
       };
     } catch (error) {
-      console.error("[Tesla] Test connection error:", error);
+      console.error("[Tesla] Error testing connection:", error);
       return {
         success: false,
-        error:
-          error instanceof TeslaApiError
-            ? error.message
-            : error instanceof Error
-              ? error.message
-              : "Connection failed",
+        error: error instanceof Error ? error.message : "Unknown error",
       };
     }
   }

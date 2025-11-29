@@ -534,19 +534,27 @@ export default function EnergyChart({
           gridData = findSeries("bidi.grid/power.avg");
         }
 
-        if (!solarData) {
-          throw new Error("Missing solar data series");
+        // Find a primary data series for timestamps (use first available)
+        // Solar, load, battery, or grid can all be used for timing
+        const primaryData =
+          solarData || loadData || batteryWData || batterySOCData || gridData;
+
+        if (!primaryData) {
+          // No chart data available for this system (e.g., Tesla-only systems)
+          setChartData(null);
+          setLoading(false);
+          fetchInProgressRef.current = false;
+          return;
         }
-        // Load and battery are optional (e.g., solar-only systems)
 
         // Parse the start time - the API returns timestamps like "2025-08-16T12:17:53+10:00"
-        const startTimeString = solarData.history.firstInterval;
+        const startTimeString = primaryData.history.firstInterval;
 
         // JavaScript Date constructor handles timezone offsets correctly
         const startTime = new Date(startTimeString);
 
         // Parse the interval from the response (e.g., "5m", "1m")
-        const interval = solarData.history.interval;
+        const interval = primaryData.history.interval;
         if (!interval) {
           throw new Error("No interval specified in API response");
         }
@@ -566,7 +574,7 @@ export default function EnergyChart({
         }
 
         // Calculate timestamps based on start time and actual interval
-        const timestamps = solarData.history.data.map(
+        const timestamps = primaryData.history.data.map(
           (_: any, index: number) =>
             new Date(startTime.getTime() + index * intervalMs),
         );
@@ -612,9 +620,11 @@ export default function EnergyChart({
 
         setChartData({
           timestamps: selectedIndices.map((i: number) => timestamps[i]),
-          solar: selectedIndices.map((i: number) =>
-            convertToKw(solarData.history.data[i], solarData.units),
-          ),
+          solar: solarData
+            ? selectedIndices.map((i: number) =>
+                convertToKw(solarData.history.data[i], solarData.units),
+              )
+            : selectedIndices.map(() => null),
           load: loadData
             ? selectedIndices.map((i: number) =>
                 convertToKw(loadData.history.data[i], loadData.units),
@@ -961,12 +971,18 @@ export default function EnergyChart({
       );
     }
 
-    if (error || !chartData) {
+    if (error) {
       return (
         <div className="flex-1 flex items-center justify-center min-h-0">
-          <div className="text-red-400">
-            Error: {error || "No data available"}
-          </div>
+          <div className="text-red-400">Error: {error}</div>
+        </div>
+      );
+    }
+
+    if (!chartData) {
+      return (
+        <div className="flex-1 flex items-center justify-center min-h-0">
+          <div className="text-gray-500">No chart data available</div>
         </div>
       );
     }

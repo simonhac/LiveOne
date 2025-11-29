@@ -31,6 +31,7 @@ export class VendorRegistry {
     this.adapters.set("amber", new AmberAdapter());
     this.adapters.set("tesla", new TeslaAdapter());
     this.adapters.set("composite", new CompositeAdapter());
+    this.adapters.set("tesla", new TeslaAdapter());
 
     this.initialized = true;
 

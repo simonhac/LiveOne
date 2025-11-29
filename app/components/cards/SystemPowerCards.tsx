@@ -3,6 +3,7 @@
 import React from "react";
 import PowerCard from "@/components/PowerCard";
 import AmberSmallCard from "@/components/AmberSmallCard";
+import TeslaSmallCard from "@/components/TeslaSmallCard";
 import { stemSplit, getMetricType } from "@/lib/identifiers/logical-path";
 import type { LatestPointValues, LatestPointValue } from "@/lib/types/api";
 import {
@@ -500,6 +501,9 @@ export default function SystemPowerCards({
   // Check if Amber pricing data is available
   const hasAmberData = getPointValue("bidi.grid.import/rate") !== null;
 
+  // Check if Tesla EV data is available
+  const hasTeslaData = getPointValue("ev.battery/soc") !== null;
+
   // Determine if we should show the load card
   const hasLoadData = allLoads.length > 0;
 
@@ -510,6 +514,7 @@ export default function SystemPowerCards({
     batterySoc !== null,
     showGrid && getPointValue("bidi.grid/power") !== null,
     hasAmberData,
+    hasTeslaData,
   ].filter(Boolean).length;
 
   // Determine grid columns based on layout mode
@@ -713,6 +718,9 @@ export default function SystemPowerCards({
 
         {/* Amber Pricing Card - only show if Amber data available */}
         {hasAmberData && <AmberSmallCard latest={latest} />}
+
+        {/* Tesla EV Card - only show if Tesla data available */}
+        {hasTeslaData && <TeslaSmallCard latest={latest} />}
       </div>
     </div>
   );

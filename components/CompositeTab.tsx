@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { Plus, X, Sun, Home, Battery, Zap } from "lucide-react";
+import { Plus, X, Sun, Home, Battery, Zap, Car } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useUser } from "@clerk/nextjs";
 import { stemSplit } from "@/lib/identifiers/logical-path";
@@ -53,6 +53,13 @@ const CATEGORY_CONFIG = {
     bgColor: "bg-green-500/10",
     borderColor: "border-green-500/30",
   },
+  ev: {
+    label: "EV",
+    icon: Car,
+    iconColor: "text-purple-400",
+    bgColor: "bg-purple-500/10",
+    borderColor: "border-purple-500/30",
+  },
 };
 
 export default function CompositeTab({
@@ -68,12 +75,14 @@ export default function CompositeTab({
     battery: [],
     load: [],
     grid: [],
+    ev: [],
   });
   const [initialMappings, setInitialMappings] = useState<CompositeMapping>({
     solar: [],
     battery: [],
     load: [],
     grid: [],
+    ev: [],
   });
   const [availablePoints, setAvailablePoints] = useState<AvailablePoint[]>([]);
   const [loading, setLoading] = useState(true);
@@ -142,6 +151,7 @@ export default function CompositeTab({
           battery: [],
           load: [],
           grid: [],
+          ev: [],
         };
 
         setMappings(emptyMappings);
@@ -162,6 +172,7 @@ export default function CompositeTab({
             battery: [],
             load: [],
             grid: [],
+            ev: [],
           };
 
           setMappings(currentMappings);
@@ -299,6 +310,7 @@ export default function CompositeTab({
       battery: "bidi.battery",
       load: "load",
       grid: "bidi.grid",
+      ev: "ev",
     };
 
     // Get already-added point IDs for this category

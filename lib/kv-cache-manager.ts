@@ -57,23 +57,27 @@ function getSubscriptionsKey(systemId: number): string {
  * @param systemId - Source system ID
  * @param pointId - Source point ID (database id/index)
  * @param pointPath - Point path string (e.g., "source.solar.local/power")
- * @param value - Latest value
+ * @param value - Latest value (numeric or string for text/json types)
  * @param measurementTimeMs - Unix timestamp in milliseconds when value was measured
  * @param receivedTimeMs - Unix timestamp in milliseconds when value was received from vendor
- * @param metricUnit - Unit of measurement (e.g., "W", "kWh", "%")
+ * @param metricUnit - Unit of measurement (e.g., "W", "kWh", "%", "text", "json")
  * @param displayName - Display name from point_info
- * @param sourceSystemName - Display name of source system (stored at write time for composite tracking)
+ * @param _sourceSystemName - DEPRECATED: No longer stored (pointReference encodes systemId)
+ * @param sessionId - Session ID that wrote this value
+ * @param sessionLabel - Session label/name for display
  */
 export async function updateLatestPointValue(
   systemId: number,
   pointId: number,
   pointPath: string,
-  value: number | string,
+  value: number | string | null,
   measurementTimeMs: number,
   receivedTimeMs: number,
   metricUnit: string,
   displayName: string,
-  sourceSystemName?: string,
+  _sourceSystemName?: string,
+  sessionId?: number,
+  sessionLabel?: string,
 ): Promise<void> {
   const pointValue: LatestValue = {
     value,
@@ -82,10 +86,9 @@ export async function updateLatestPointValue(
     receivedTimeMs,
     metricUnit,
     displayName,
-    sourceSystemId: systemId,
-    sourcePointId: pointId,
-    reference: `${systemId}.${pointId}`,
-    ...(sourceSystemName && { sourceSystemName }),
+    pointReference: `${systemId}.${pointId}`,
+    ...(sessionId && { sessionId }),
+    ...(sessionLabel && { sessionLabel }),
   };
 
   // Update source system's cache
@@ -232,6 +235,28 @@ export async function buildSubscriptionRegistry(): Promise<void> {
     }
   }
 
+  // First, scan for existing subscription keys and delete any that are no longer needed
+  const pattern = kvKey("subscriptions:system:*");
+  const existingKeys = await kv.keys(pattern);
+  const validSystemIds = new Set(subscriptions.keys());
+
+  // Delete stale subscription keys (systems that no longer have subscribers)
+  const deletions: Promise<any>[] = [];
+  for (const existingKey of existingKeys) {
+    // Extract system ID from key (e.g., "dev:subscriptions:system:10001" -> 10001)
+    const match = existingKey.match(/subscriptions:system:(\d+)$/);
+    if (match) {
+      const existingSystemId = parseInt(match[1], 10);
+      if (!validSystemIds.has(existingSystemId)) {
+        console.log(
+          `[SubscriptionRegistry] Deleting stale subscription key for system ${existingSystemId}`,
+        );
+        deletions.push(kv.del(existingKey));
+      }
+    }
+  }
+  await Promise.all(deletions);
+
   // Write subscriptions to KV with timestamp
   const updates: Promise<any>[] = [];
   const now = Date.now();
@@ -255,7 +280,7 @@ export async function buildSubscriptionRegistry(): Promise<void> {
   await Promise.all(updates);
 
   console.log(
-    `Built subscription registry for ${subscriptions.size} source systems`,
+    `Built subscription registry for ${subscriptions.size} source systems (deleted ${deletions.length} stale entries)`,
   );
 }
 

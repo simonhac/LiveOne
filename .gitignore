@@ -90,3 +90,6 @@ log/*-migration.log
 log/*-validation.log
 *.corrupt
 daylesford_grid_readings_*.csv
+
+# clerk configuration (can include secrets)
+/.clerk/

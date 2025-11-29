@@ -1,21 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSystemAccess } from "@/lib/api-auth";
-import { getLatestValues } from "@/lib/latest-values-store";
+import { getLatestValues, clearLatestValues } from "@/lib/latest-values-store";
 import { PointManager } from "@/lib/point/point-manager";
 import { SystemsManager } from "@/lib/systems-manager";
 import { jsonResponse } from "@/lib/json";
 
 /**
- * API response type - extends LatestValue with nullable fields for points without cached data
+ * API response type - extends LatestValue with optional fields for points without cached data
  */
 interface LatestValueResponse {
-  value: number | string | null;
+  value?: number | string | boolean;
+  physicalPath: string; // Physical path tail from point_info
   logicalPath: string | null;
-  measurementTimeMs: number | null;
-  receivedTimeMs: number | null;
+  pointReference?: string; // Format: "systemId.pointId"
+  measurementTimeMs?: number;
+  receivedTimeMs?: number;
   metricUnit: string;
   pointName: string;
-  reference: string | null; // Format: "systemId.pointId"
+  sessionId?: number; // Session that wrote this value
+  sessionLabel?: string; // Session label/name for display
 }
 
 /**
@@ -24,7 +27,10 @@ interface LatestValueResponse {
  * Returns all latest values from the KV cache for a system.
  * Values are returned as an array sorted by displayName.
  *
+ * Note: action=clear will empty the cache for this system
+ *
  * @param systemId - Numeric system ID
+ * @query action - Optional. If "clear", empties the cache and returns success message.
  *
  * Example response:
  * {
@@ -62,6 +68,17 @@ export async function GET(
     const authResult = await requireSystemAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
 
+    // Check for action=clear query parameter
+    const action = request.nextUrl.searchParams.get("action");
+    if (action === "clear") {
+      await clearLatestValues(systemId);
+      return NextResponse.json({
+        success: true,
+        systemId,
+        message: "Cache cleared for this system",
+      });
+    }
+
     // 1. Get system for timezone
     const systemsManager = SystemsManager.getInstance();
     const system = await systemsManager.getSystem(systemId);
@@ -81,26 +98,43 @@ export async function GET(
       const cached = logicalPath ? latestValuesMap[logicalPath] : null;
 
       if (cached) {
+        // Convert numeric values to boolean when unit is "boolean"
+        let displayValue: number | string | boolean | null = cached.value;
+        if (
+          cached.metricUnit === "boolean" &&
+          typeof cached.value === "number"
+        ) {
+          displayValue = cached.value !== 0;
+        }
+
         return {
-          value: cached.value,
+          ...(displayValue != null && { value: displayValue }),
+          physicalPath: point.physicalPathTail,
           logicalPath: cached.logicalPath,
-          measurementTimeMs: cached.measurementTimeMs,
-          receivedTimeMs: cached.receivedTimeMs,
+          ...(cached.pointReference != null && {
+            pointReference: cached.pointReference,
+          }),
+          ...(cached.measurementTimeMs != null && {
+            measurementTimeMs: cached.measurementTimeMs,
+          }),
+          ...(cached.receivedTimeMs != null && {
+            receivedTimeMs: cached.receivedTimeMs,
+          }),
           metricUnit: cached.metricUnit,
           pointName: cached.displayName,
-          reference: cached.reference ?? null,
+          ...(cached.sessionId != null && { sessionId: cached.sessionId }),
+          ...(cached.sessionLabel != null && {
+            sessionLabel: cached.sessionLabel,
+          }),
         };
       }
 
-      // No cached value - no source info available
+      // No cached value - only include non-null fields
       return {
-        value: null,
+        physicalPath: point.physicalPathTail,
         logicalPath: logicalPath,
-        measurementTimeMs: null,
-        receivedTimeMs: null,
         metricUnit: point.metricUnit,
         pointName: point.name,
-        reference: null,
       };
     });
 
