@@ -979,7 +979,7 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.physicalPathTail === prodPoint.physical_path_tail,
+        p.physicalPath === prodPoint.physical_path_tail,
     );
 
     if (devPoint) {
@@ -1077,7 +1077,7 @@ async function syncPointDailyAggregations(ctx: SyncContext) {
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.physicalPathTail === prodPoint.physical_path_tail,
+        p.physicalPath === prodPoint.physical_path_tail,
     );
 
     if (devPoint) {
@@ -1351,7 +1351,7 @@ async function syncPointReadings(ctx: SyncContext) {
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.physicalPathTail === prodPoint.physical_path_tail,
+        p.physicalPath === prodPoint.physical_path_tail,
     );
 
     if (devPoint) {
