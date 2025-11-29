@@ -18,7 +18,8 @@ export type VendorType =
   | "enphase"
   | "mondo"
   | "fusher"
-  | "fronius";
+  | "fronius"
+  | "tesla";
 
 // Generic credentials interface - vendors define their own specific shapes
 export interface VendorCredentials {
