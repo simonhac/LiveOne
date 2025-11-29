@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { isUserAdmin } from "./auth-utils";
 import { SystemsManager, SystemWithPolling } from "./systems-manager";
-import { db } from "./db";
-import { userSystems } from "./db/schema";
+import { db } from "./db/turso";
+import { userSystems } from "./db/turso/schema";
 import { eq, and } from "drizzle-orm";
 
 // Authorization result with context

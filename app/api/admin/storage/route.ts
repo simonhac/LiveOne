@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { rawClient } from "@/lib/db";
+import { rawClient } from "@/lib/db/turso";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
 import { PointManager } from "@/lib/point/point-manager";

@@ -13,7 +13,7 @@ import {
 import { Observation, QueueMessage } from "./types";
 import { SystemWithPolling } from "@/lib/systems-manager";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
-import { pointInfo as pointInfoTable } from "@/lib/db/schema-monitoring-points";
+import { pointInfo as pointInfoTable } from "@/lib/db/turso/schema-monitoring-points";
 import { PointReference } from "@/lib/identifiers";
 
 // Type for point info from the database

@@ -1,7 +1,7 @@
 import { kv, kvKey } from "./kv";
-import { db } from "./db";
-import { systems as systemsTable } from "./db/schema";
-import { pointInfo as pointInfoTable } from "./db/schema-monitoring-points";
+import { db } from "./db/turso";
+import { systems as systemsTable } from "./db/turso/schema";
+import { pointInfo as pointInfoTable } from "./db/turso/schema-monitoring-points";
 import { eq } from "drizzle-orm";
 import { PointReference } from "./identifiers";
 import { LatestValue, LatestValuesMap } from "./latest-values-store";

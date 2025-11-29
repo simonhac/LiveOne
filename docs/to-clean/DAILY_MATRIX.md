@@ -726,8 +726,8 @@ function generateLabel(path: string, pointName: string | null): string {
 
 ```typescript
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { systems as systemsTable } from "@/lib/db/schema";
+import { db } from "@/lib/db/turso";
+import { systems as systemsTable } from "@/lib/db/turso/schema";
 import { calculateDailyEnergyMatrix } from "@/lib/energy-flow-matrix-daily";
 
 export async function POST(request: NextRequest) {

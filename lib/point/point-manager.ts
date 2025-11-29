@@ -8,12 +8,12 @@
  * - Inserting point readings (insertPointReading, insertPointReadingsRaw, insertPointReadingsAgg5m)
  */
 
-import { db } from "@/lib/db";
+import { db } from "@/lib/db/turso";
 import {
   pointInfo as pointInfoTable,
   pointReadings,
   pointReadingsAgg5m,
-} from "@/lib/db/schema-monitoring-points";
+} from "@/lib/db/turso/schema-monitoring-points";
 import { and, eq, sql } from "drizzle-orm";
 import { PointInfo } from "@/lib/point/point-info";
 import {

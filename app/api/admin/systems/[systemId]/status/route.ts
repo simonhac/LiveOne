@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { systems } from "@/lib/db/schema";
+import { db } from "@/lib/db/turso";
+import { systems } from "@/lib/db/turso/schema";
 import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { clearDefaultForAllUsers } from "@/lib/user-preferences";

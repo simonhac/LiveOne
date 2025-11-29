@@ -1,8 +1,8 @@
-import { db } from "@/lib/db";
+import { db } from "@/lib/db/turso";
 import {
   pointReadingsAgg5m,
   pointReadingsAgg1d,
-} from "@/lib/db/schema-monitoring-points";
+} from "@/lib/db/turso/schema-monitoring-points";
 import { eq, and, gte, lte, inArray } from "drizzle-orm";
 import {
   CalendarDate,

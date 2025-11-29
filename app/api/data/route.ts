@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSystemAccess } from "@/lib/api-auth";
-import { db } from "@/lib/db";
-import { pollingStatus } from "@/lib/db/schema";
+import { db } from "@/lib/db/turso";
+import { pollingStatus } from "@/lib/db/turso/schema";
 import { eq } from "drizzle-orm";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 import { VendorRegistry } from "@/lib/vendors/registry";

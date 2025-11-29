@@ -141,6 +141,7 @@ export const sessions = sqliteTable(
     error: text("error"), // nullable - detailed error message
     response: text("response", { mode: "json" }), // nullable - full server response as JSON
     numRows: integer("num_rows").notNull(), // 0 if no data rows, otherwise count
+    // @deprecated Use `started` instead. Will be removed in future migration.
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
       .default(sql`(unixepoch())`),

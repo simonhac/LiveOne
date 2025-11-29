@@ -3,8 +3,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { db } from "@/lib/db";
-import { clerkIdMapping } from "@/lib/db/schema";
+import { db } from "@/lib/db/turso";
+import { clerkIdMapping } from "@/lib/db/turso/schema";
 import { syncStages, type SyncContext, type StageDefinition } from "./stages";
 
 // Helper to create a streaming response

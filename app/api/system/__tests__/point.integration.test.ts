@@ -10,8 +10,8 @@
 
 import { describe, it, expect, beforeAll } from "@jest/globals";
 import { SystemsManager } from "@/lib/systems-manager";
-import { db } from "@/lib/db";
-import { pointInfo } from "@/lib/db/schema-monitoring-points";
+import { db } from "@/lib/db/turso";
+import { pointInfo } from "@/lib/db/turso/schema-monitoring-points";
 import { eq, and } from "drizzle-orm";
 
 const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3000";

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getEnphaseClient } from "@/lib/vendors/enphase/enphase-client";
 import { storeEnphaseTokens } from "@/lib/vendors/enphase/enphase-auth";
-import { db } from "@/lib/db";
-import { systems } from "@/lib/db/schema";
+import { db } from "@/lib/db/turso";
+import { systems } from "@/lib/db/turso/schema";
 import { eq, and } from "drizzle-orm";
 import { clerkClient } from "@clerk/nextjs/server";
 import { SystemsManager } from "@/lib/systems-manager";

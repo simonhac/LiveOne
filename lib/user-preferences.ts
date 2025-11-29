@@ -1,5 +1,5 @@
-import { db } from "./db";
-import { users, systems, userSystems } from "./db/schema";
+import { db } from "./db/turso";
+import { users, systems, userSystems } from "./db/turso/schema";
 import { eq, and } from "drizzle-orm";
 
 export interface UserPreferences {

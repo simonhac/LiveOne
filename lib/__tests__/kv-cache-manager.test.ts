@@ -200,7 +200,7 @@ describe("kv-cache-manager", () => {
 
   describe("buildSubscriptionRegistry", () => {
     it("should build reverse mapping from source systems to composite systems", async () => {
-      const { db } = await import("../db");
+      const { db } = await import("../db/turso");
       const { kv } = await import("../kv");
 
       // Mock composite systems in database
@@ -262,7 +262,7 @@ describe("kv-cache-manager", () => {
     });
 
     it("should skip composite systems with invalid metadata", async () => {
-      const { db } = await import("../db");
+      const { db } = await import("../db/turso");
       const { kv } = await import("../kv");
 
       const mockCompositeSystems = [

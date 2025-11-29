@@ -1,9 +1,9 @@
-import { db, rawClient } from "@/lib/db";
-import { systems } from "@/lib/db/schema";
+import { db, rawClient } from "@/lib/db/turso";
+import { systems } from "@/lib/db/turso/schema";
 import {
   pointReadingsAgg5m,
   pointReadingsAgg1d,
-} from "@/lib/db/schema-monitoring-points";
+} from "@/lib/db/turso/schema-monitoring-points";
 import { eq, and, gte, lte, asc, inArray, sql } from "drizzle-orm";
 import { getYesterdayInTimezone, getTodayInTimezone } from "@/lib/date-utils";
 import { CalendarDate } from "@internationalized/date";

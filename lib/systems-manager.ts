@@ -1,5 +1,5 @@
-import { db, dbUtils, isProduction } from "@/lib/db";
-import { systems, userSystems, pollingStatus } from "@/lib/db/schema";
+import { db, dbUtils, isProduction } from "@/lib/db/turso";
+import { systems, userSystems, pollingStatus } from "@/lib/db/turso/schema";
 import { eq, and } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";

@@ -3,8 +3,8 @@ import type { PollingResult, TestConnectionResult } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { LatestReadingData } from "@/lib/types/readings";
 import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
-import { db } from "@/lib/db";
-import { pointReadingsAgg5m } from "@/lib/db/schema-monitoring-points";
+import { db } from "@/lib/db/turso";
+import { pointReadingsAgg5m } from "@/lib/db/turso/schema-monitoring-points";
 import { eq, and, desc } from "drizzle-orm";
 import {
   checkAndFetchYesterdayIfNeeded,

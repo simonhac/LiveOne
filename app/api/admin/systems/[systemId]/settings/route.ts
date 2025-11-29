@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
-import { systems } from "@/lib/db/schema";
+import { db } from "@/lib/db/turso";
+import { systems } from "@/lib/db/turso/schema";
 import { eq, and, ne } from "drizzle-orm";
 import { requireAdmin, requireSystemAccess } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";

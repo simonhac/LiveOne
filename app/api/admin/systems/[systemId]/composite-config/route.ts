@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { systems } from "@/lib/db/schema";
-import { pointInfo } from "@/lib/db/schema-monitoring-points";
+import { db } from "@/lib/db/turso";
+import { systems } from "@/lib/db/turso/schema";
+import { pointInfo } from "@/lib/db/turso/schema-monitoring-points";
 import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";

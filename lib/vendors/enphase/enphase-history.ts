@@ -1,6 +1,6 @@
-import { db } from "@/lib/db";
-import { systems } from "@/lib/db/schema";
-import { pointReadingsAgg5m } from "@/lib/db/schema-monitoring-points";
+import { db } from "@/lib/db/turso";
+import { systems } from "@/lib/db/turso/schema";
+import { pointReadingsAgg5m } from "@/lib/db/turso/schema-monitoring-points";
 import { eq, and, gte, lte } from "drizzle-orm";
 import { fetchWithEnphaseAuth } from "./enphase-auth";
 import { CalendarDate } from "@internationalized/date";

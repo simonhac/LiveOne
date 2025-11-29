@@ -326,7 +326,7 @@ async function getSystemHistoryInOpenNEMFormat(
   }
 
   // Setup database query
-  const { rawClient } = await import("@/lib/db");
+  const { rawClient } = await import("@/lib/db/turso");
   const aggTable =
     interval === "1d" ? "point_readings_agg_1d" : "point_readings_agg_5m";
   const firstEpoch =

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db } from "@/lib/db/turso";
 import { sql } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { decodeUrlDateToEpoch, decodeUrlOffset } from "@/lib/url-date";

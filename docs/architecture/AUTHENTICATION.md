@@ -208,8 +208,8 @@ export const userSystems = sqliteTable("user_systems", {
 
 ```typescript
 import { auth } from "@clerk/nextjs/server";
-import { db } from "@/lib/db";
-import { systems, userSystems } from "@/lib/db/schema";
+import { db } from "@/lib/db/turso";
+import { systems, userSystems } from "@/lib/db/turso/schema";
 import { eq, or } from "drizzle-orm";
 
 // Get systems user has access to

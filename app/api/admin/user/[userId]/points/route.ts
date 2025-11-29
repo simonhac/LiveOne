@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { pointInfo } from "@/lib/db/schema-monitoring-points";
+import { db } from "@/lib/db/turso";
+import { pointInfo } from "@/lib/db/turso/schema-monitoring-points";
 import { eq, and } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";

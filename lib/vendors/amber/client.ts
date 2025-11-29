@@ -252,9 +252,9 @@ async function loadLocalRecords(
   try {
     const { SystemsManager } = await import("@/lib/systems-manager");
     const { PointManager } = await import("@/lib/point/point-manager");
-    const { db } = await import("@/lib/db");
+    const { db } = await import("@/lib/db/turso");
     const { pointReadingsAgg5m } = await import(
-      "@/lib/db/schema-monitoring-points"
+      "@/lib/db/turso/schema-monitoring-points"
     );
     const { eq, and, inArray } = await import("drizzle-orm");
 

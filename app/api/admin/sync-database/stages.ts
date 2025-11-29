@@ -6,17 +6,17 @@ import {
   pollingStatus,
   sessions,
   syncStatus,
-} from "@/lib/db/schema";
+} from "@/lib/db/turso/schema";
 import {
   pointInfo,
   pointReadings,
   pointReadingsAgg5m,
   pointReadingsAgg1d,
-} from "@/lib/db/schema-monitoring-points";
+} from "@/lib/db/turso/schema-monitoring-points";
 import { createClient } from "@libsql/client";
 import { fromUnixTimestamp } from "@/lib/date-utils";
 import { formatDateTimeRange } from "@/lib/fe-date-format";
-import { rawClient } from "@/lib/db";
+import { rawClient } from "@/lib/db/turso";
 
 // Sync configuration constants
 const SYNC_BATCH_SIZE = 1000;

@@ -1,5 +1,5 @@
-import { db } from "@/lib/db";
-import { pollingStatus } from "@/lib/db/schema";
+import { db } from "@/lib/db/turso";
+import { pollingStatus } from "@/lib/db/turso/schema";
 import { eq } from "drizzle-orm";
 import { transformForStorage } from "@/lib/json";
 

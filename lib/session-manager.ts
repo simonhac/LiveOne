@@ -1,5 +1,5 @@
-import { db } from "@/lib/db";
-import { sessions, systems, type NewSession } from "@/lib/db/schema";
+import { db } from "@/lib/db/turso";
+import { sessions, systems, type NewSession } from "@/lib/db/turso/schema";
 import { eq } from "drizzle-orm";
 import { transformForStorage } from "@/lib/json";
 import type { SessionInfo } from "@/lib/point/point-manager";

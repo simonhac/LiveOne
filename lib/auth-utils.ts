@@ -1,6 +1,6 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { db } from "./db";
-import { userSystems } from "./db/schema";
+import { db } from "./db/turso";
+import { userSystems } from "./db/turso/schema";
 import { eq, or } from "drizzle-orm";
 
 type AuthResult = Awaited<ReturnType<typeof auth>>;

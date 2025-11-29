@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
-import { db } from "@/lib/db";
-import { systems } from "@/lib/db/schema";
+import { db } from "@/lib/db/turso";
+import { systems } from "@/lib/db/turso/schema";
 import { eq, desc } from "drizzle-orm";
 import { storeSystemCredentials } from "@/lib/secure-credentials";
 import { VendorRegistry } from "@/lib/vendors/registry";

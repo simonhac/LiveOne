@@ -151,7 +151,7 @@ if (flavouredPoints.length === 0) {
 ### Step 4: Build and Execute Single CTE Query
 
 ```typescript
-const { db } = await import("@/lib/db");
+const { db } = await import("@/lib/db/turso");
 const aggTable =
   interval === "1d" ? "point_readings_agg_1d" : "point_readings_agg_5m";
 const startEpoch =

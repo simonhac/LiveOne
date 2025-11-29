@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCronOrAdmin } from "@/lib/api-auth";
-import { rawClient } from "@/lib/db";
+import { rawClient } from "@/lib/db/turso";
 
 // Force Node.js runtime (required for long-running operations)
 export const runtime = "nodejs";

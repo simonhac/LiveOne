@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { systems, userSystems } from "@/lib/db/schema";
+import { db } from "@/lib/db/turso";
+import { systems, userSystems } from "@/lib/db/turso/schema";
 import { sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";

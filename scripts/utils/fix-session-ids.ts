@@ -11,7 +11,7 @@
  *   npx tsx scripts/utils/fix-session-ids.ts [--dry-run]
  */
 
-import { rawClient } from "@/lib/db";
+import { rawClient } from "@/lib/db/turso";
 
 async function main() {
   const isDryRun = process.argv.includes("--dry-run");

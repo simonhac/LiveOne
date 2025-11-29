@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSystemAccess } from "@/lib/api-auth";
-import { rawClient } from "@/lib/db";
+import { rawClient } from "@/lib/db/turso";
 
 interface GeneratorEvent {
   date: string;

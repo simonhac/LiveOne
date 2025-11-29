@@ -486,7 +486,7 @@ vercel ls
   - Does NOT have `.execute()` or `.all()` methods
 
 - **Raw SQL queries (`rawClient`)**: Use for direct SQL execution (e.g., complex queries, migrations)
-  - Import: `import { rawClient } from '@/lib/db'`
+  - Import: `import { rawClient } from '@/lib/db/turso'`
   - Example: `await rawClient.execute('SELECT COUNT(*) FROM point_readings')`
   - Returns `{ rows: [...], columns: [...] }` format
   - Use this when you need to run raw SQL queries that can't be expressed with Drizzle query builder

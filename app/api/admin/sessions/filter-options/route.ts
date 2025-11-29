@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { rawClient } from "@/lib/db";
+import { rawClient } from "@/lib/db/turso";
 
 export async function GET(request: NextRequest) {
   try {

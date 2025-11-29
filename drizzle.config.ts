@@ -5,7 +5,10 @@ import { DATABASE_CONFIG } from "./config";
 const isTurso = DATABASE_CONFIG.url.startsWith("libsql://");
 
 export default {
-  schema: ["./lib/db/schema.ts", "./lib/db/schema-monitoring-points.ts"],
+  schema: [
+    "./lib/db/turso/schema.ts",
+    "./lib/db/turso/schema-monitoring-points.ts",
+  ],
   out: "./drizzle",
   dialect: isTurso ? "turso" : "sqlite",
   dbCredentials: isTurso

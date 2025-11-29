@@ -1,9 +1,9 @@
-import { db } from "./db";
+import { db } from "./db/turso";
 import {
   pointReadingsAgg5m,
   pointReadings,
   pointInfo,
-} from "./db/schema-monitoring-points";
+} from "./db/turso/schema-monitoring-points";
 import { and, gt, lte, eq, sql, inArray } from "drizzle-orm";
 import { formatTimeAEST, fromUnixTimestamp } from "./date-utils";
 
