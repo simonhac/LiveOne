@@ -1,8 +1,17 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, Play, Pause, RotateCcw, Trash2 } from "lucide-react";
+import {
+  RefreshCw,
+  Play,
+  Pause,
+  RotateCcw,
+  Trash2,
+  Ticket,
+  Radio,
+} from "lucide-react";
 import { formatDateTime } from "@/lib/fe-date-format";
+import SessionInfoModal from "@/components/SessionInfoModal";
 
 interface QueueInfo {
   name: string;
@@ -46,6 +55,9 @@ export default function ObservationsViewer() {
   const [dlqError, setDlqError] = useState<string | null>(null);
 
   const [actionLoading, setActionLoading] = useState(false);
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(
+    null,
+  );
 
   const fetchQueueInfo = useCallback(async () => {
     setQueueLoading(true);
@@ -271,6 +283,24 @@ export default function ObservationsViewer() {
                     <td className="py-1.5 pr-4 text-gray-400 text-xs align-top">
                       {(() => {
                         const obs = msg.body?.observations || [];
+                        const session = msg.body?.session;
+                        // Session-only message
+                        if (obs.length === 0 && session) {
+                          return (
+                            <span className="inline-flex items-center gap-1">
+                              <Ticket className="w-3 h-3 text-gray-500" />
+                              <button
+                                onClick={() =>
+                                  setSelectedSessionId(session.sessionId)
+                                }
+                                className="font-mono hover:underline cursor-pointer"
+                              >
+                                {session.sessionLabel}
+                              </button>
+                            </span>
+                          );
+                        }
+                        // Normal observations message
                         const topicCounts: Record<string, number> = {};
                         for (const o of obs) {
                           const topicName = o.topic.split("/").slice(-1)[0];
@@ -280,17 +310,22 @@ export default function ObservationsViewer() {
                         const entries = Object.entries(topicCounts).slice(0, 5);
                         const remaining = Object.keys(topicCounts).length - 5;
                         return (
-                          entries
-                            .map(([name, count]) =>
-                              count > 1 ? `${name} (${count})` : name,
-                            )
-                            .join(", ") +
-                          (remaining > 0 ? ` +${remaining} more` : "")
+                          <span className="inline-flex items-center gap-1">
+                            <Radio className="w-3 h-3 text-gray-500" />
+                            {entries
+                              .map(([name, count]) =>
+                                count > 1 ? `${name} (${count})` : name,
+                              )
+                              .join(", ") +
+                              (remaining > 0 ? ` +${remaining} more` : "")}
+                          </span>
                         );
                       })()}
                     </td>
                     <td className="py-1.5 pr-4 text-right font-mono align-top">
-                      {msg.body?.observations?.length || 0}
+                      {msg.body?.observations?.length > 0
+                        ? msg.body.observations.length
+                        : ""}
                     </td>
                     <td className="py-1.5 pr-4 text-right font-mono text-gray-500 align-top">
                       {msg.retried || 0}
@@ -389,6 +424,12 @@ export default function ObservationsViewer() {
           </div>
         )}
       </div>
+
+      <SessionInfoModal
+        isOpen={selectedSessionId !== null}
+        onClose={() => setSelectedSessionId(null)}
+        sessionId={selectedSessionId}
+      />
     </div>
   );
 }

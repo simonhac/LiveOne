@@ -1,11 +1,11 @@
 /**
  * SessionId singleton for generating unique session identifiers
  *
- * Generates a random 24-bit (3-byte) base64-encoded prefix on first use,
+ * Generates a random 5-character alphanumeric prefix on first use,
  * then increments a sequence number for each subsequent call.
  *
- * Format: {base64_prefix}/{sequence}
- * Example: "sEfn/1", "sEfn/2", etc.
+ * Format: {prefix}/{sequence}
+ * Example: "aB3xZ/1", "aB3xZ/2", etc.
  *
  * The prefix persists for the lifetime of the serverless function instance
  * (up to ~15 minutes on Vercel), then resets with a new random prefix.
@@ -15,27 +15,38 @@ export class SessionId {
   private prefix: string;
   private sequence: number;
 
+  // Alphanumeric characters for prefix generation
+  private static readonly CHARS =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
   private constructor() {
-    // Generate a random 24-bit (3-byte) value
-    const bytes = new Uint8Array(3);
+    // Generate 5 random bytes for character selection
+    const bytes = new Uint8Array(5);
 
     // Use crypto.getRandomValues for secure random generation
-    if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
+    if (
+      typeof globalThis.crypto !== "undefined" &&
+      globalThis.crypto.getRandomValues
+    ) {
       globalThis.crypto.getRandomValues(bytes);
     } else {
       // Fallback for Node.js environments
-      const crypto = require('crypto');
-      const randomBytes = crypto.randomBytes(3);
-      bytes[0] = randomBytes[0];
-      bytes[1] = randomBytes[1];
-      bytes[2] = randomBytes[2];
+      const crypto = require("crypto");
+      const randomBytes = crypto.randomBytes(5);
+      for (let i = 0; i < 5; i++) {
+        bytes[i] = randomBytes[i];
+      }
     }
 
-    // Convert to base64 and remove padding (3 bytes = 4 base64 chars, no padding)
-    this.prefix = Buffer.from(bytes).toString('base64').replace(/=/g, '');
+    // Convert bytes to alphanumeric characters
+    this.prefix = Array.from(bytes)
+      .map((b) => SessionId.CHARS[b % SessionId.CHARS.length])
+      .join("");
     this.sequence = 0; // Will be incremented to 1 on first use
 
-    console.log(`[SessionId] New session initialized with prefix: ${this.prefix}`);
+    console.log(
+      `[SessionId] New session initialized with prefix: ${this.prefix}`,
+    );
   }
 
   /**
@@ -67,7 +78,7 @@ export class SessionId {
 
   /**
    * Get the session prefix
-   * @returns The base64-encoded prefix
+   * @returns The 5-character alphanumeric prefix
    */
   getPrefix(): string {
     return this.prefix;
@@ -75,9 +86,9 @@ export class SessionId {
 
   /**
    * Format a session ID with a sub-sequence
-   * @param sessionId The base session ID (e.g., "sEfn/3")
+   * @param sessionId The base session ID (e.g., "aB3xZ/3")
    * @param subSequence The sub-sequence number
-   * @returns Formatted session ID (e.g., "sEfn/3.1")
+   * @returns Formatted session ID (e.g., "aB3xZ/3.1")
    */
   static formatWithSubSequence(sessionId: string, subSequence: number): string {
     return `${sessionId}.${subSequence}`;
@@ -97,6 +108,9 @@ export function getNextSessionId(): string {
 }
 
 // Export a convenience function for formatting with sub-sequence
-export function formatSessionId(sessionId: string, subSequence: number): string {
+export function formatSessionId(
+  sessionId: string,
+  subSequence: number,
+): string {
   return SessionId.formatWithSubSequence(sessionId, subSequence);
 }
