@@ -896,7 +896,7 @@ export default function DashboardClient({
     : false;
 
   return (
-    <main className="max-w-7xl mx-auto px-0.5 sm:px-6 lg:px-8 py-4">
+    <main className="max-w-7xl mx-auto px-1 py-4">
       {/* Removed System Banner - Show regardless of data availability */}
       {system?.status === "removed" && (
         <div className="mb-4 p-4 bg-orange-900/50 border border-orange-700 text-orange-300 rounded-lg flex items-center gap-3">

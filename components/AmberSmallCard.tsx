@@ -26,28 +26,62 @@ interface AmberSmallCardProps {
  * similar to the power cards (Solar, Load, Battery, Grid)
  *
  * Container Query Breakpoints (all based on card width, no viewport breakpoints):
- * | Width    | Padding | Circle    | Logo      | Feed-in Pos | Sun  | Weight | /kWh    |
- * |----------|---------|-----------|-----------|-------------|------|--------|---------|
- * | 66px min | 8px     | 75×75px   | Hidden    | 6px edges   | Hide | Medium | Hidden  |
- * | 90px+    | 8px     | 75×75px   | LogoMark  | 6px edges   | Show | Medium | Hidden  |
- * | 120px+   | 8px     | 75×75px   | LogoMark  | 8px edges   | Show | Bold   | Hidden  |
- * | 180px+   | 16px    | 140×140px | Full logo | 12px edges  | Show | Bold   | Hidden  |
- * | 300px+   | 16px    | 140×140px | Full logo | 12px edges  | Show | Bold   | Visible |
+ * | Width    | Height | Padding | Circle D | Circle V | Logo      | Feed-in Pos | Sun  | Weight | /kWh    |
+ * |----------|--------|---------|----------|----------|-----------|-------------|------|--------|---------|
+ * | 66px min | 110px  | 8px     | 75       | Center   | Hidden    | 6px edges   | Hide | Medium | Hidden  |
+ * | 90px+    | 110px  | 8px     | 75       | Center   | LogoMark  | 6px edges   | Show | Medium | Hidden  |
+ * | 120px+   | 110px  | 8px     | 85       | Center   | LogoMark  | 8px edges   | Show | Bold   | Hidden  |
+ * | 180px+   | 180px  | 12px    | 140      | Centre+20| Full logo | 10px edges  | Show | Bold   | Hidden  |
+ * | 300px+   | 180px  | 12px    | 140      | Centre+20| Full logo | 10px edges  | Show | Bold   | Visible |
  */
 export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState<number>(0);
+  const [containerSize, setContainerSize] = useState<{
+    width: number;
+    height: number;
+  }>({ width: 0, height: 0 });
+  const [devToolsOpen, setDevToolsOpen] = useState(false);
 
-  // Track container width for debugging
+  // Detect if DevTools is open (works for docked DevTools)
+  useEffect(() => {
+    const checkDevTools = () => {
+      const threshold = 160;
+      const widthDiff = window.outerWidth - window.innerWidth > threshold;
+      const heightDiff = window.outerHeight - window.innerHeight > threshold;
+      setDevToolsOpen(widthDiff || heightDiff);
+    };
+    checkDevTools();
+    window.addEventListener("resize", checkDevTools);
+    return () => window.removeEventListener("resize", checkDevTools);
+  }, []);
+
+  // Track container size for debugging
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    // Set initial width
-    setContainerWidth(Math.round(el.getBoundingClientRect().width));
+    // Set initial size (content-box to match container queries)
+    const style = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    const paddingX =
+      parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    const paddingY =
+      parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+    const borderX =
+      parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
+    const borderY =
+      parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+    setContainerSize({
+      width: Math.round(rect.width - paddingX - borderX),
+      height: Math.round(rect.height - paddingY - borderY),
+    });
     // Watch for changes
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        setContainerWidth(Math.round(entry.contentRect.width));
+        // Use contentRect - this matches what container queries measure
+        setContainerSize({
+          width: Math.round(entry.contentRect.width),
+          height: Math.round(entry.contentRect.height),
+        });
       }
     });
     observer.observe(el);
@@ -76,24 +110,23 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
   return (
     <div
       ref={containerRef}
-      className={`@container relative bg-gray-800/50 border border-gray-700 rounded-lg p-2 @[180px]:p-4 min-h-[110px] @[180px]:min-h-0 min-w-[66px] ${ttInterphases.className}`}
+      className={`@container relative bg-gray-800/50 border border-gray-700 rounded-lg p-2 @[180px]:p-3 min-h-[110px] @[180px]:min-h-[180px] min-w-[66px] self-stretch ${ttInterphases.className}`}
     >
-      {/* DEBUG: Container width indicator - uncomment for testing
-      <div className="absolute top-0 right-0 bg-red-500 text-white text-[10px] px-1 rounded-bl z-50">
-        {containerWidth}px
-      </div>
-      */}
+      {/* DEBUG: Container size indicator - only shown when DevTools is open */}
+      {devToolsOpen && (
+        <div className="absolute top-0 right-0 bg-red-500 text-white text-[10px] px-1 rounded-bl z-50">
+          {containerSize.width}w {containerSize.height}h
+        </div>
+      )}
 
       {/* Compact layout - shown when card < 180px */}
-      <div className="@[180px]:hidden">
-        {/* Header row: logo mark on left (like PowerCard) */}
-        <div className="flex items-center gap-1.5 mb-1">
-          <AmberLogoMark className="h-4 w-4 flex-shrink-0 hidden @[90px]:block" />
-        </div>
-        {/* Price circle - centered via flex container */}
-        <div className="flex justify-center @[90px]:-mt-[15px]">
+      <div className="@[180px]:hidden h-full flex flex-col">
+        {/* Logo mark - absolute positioned top left */}
+        <AmberLogoMark className="absolute top-2 left-2 h-4 w-4 hidden @[90px]:block" />
+        {/* Price circle - centered horizontally and vertically */}
+        <div className="flex-1 flex items-center justify-center">
           <div
-            className="w-[75px] h-[75px] rounded-full flex flex-col items-center justify-center"
+            className="w-[75px] h-[75px] @[120px]:w-[85px] @[120px]:h-[85px] rounded-full flex flex-col items-center justify-center"
             style={{ background: circleGradient }}
           >
             <Zap
@@ -123,7 +156,7 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
       {/* Feed-in at bottom right - all screen sizes */}
       {/* Container query: show /kWh only when card is >= 300px wide */}
       {showFeedIn && (
-        <div className="absolute bottom-1.5 right-1.5 @[120px]:bottom-2 @[120px]:right-2 @[180px]:bottom-3 @[180px]:right-3 flex flex-col items-center">
+        <div className="absolute bottom-1.5 right-1.5 @[120px]:bottom-2 @[120px]:right-2 @[180px]:bottom-2.5 @[180px]:right-2.5 flex flex-col items-center">
           <SunIcon className="w-2.5 h-2.5 @[180px]:w-4 @[180px]:h-4 mb-0.5 hidden @[90px]:block" />
           <span className="text-white text-[10px] @[180px]:text-sm font-medium @[120px]:font-bold">
             {feedInPrice < 0 ? "" : "-"}
@@ -136,63 +169,63 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
       )}
 
       {/* Full layout - shown when card ≥ 180px */}
-      <div className="hidden @[180px]:block">
-        {/* Header with Amber logo */}
-        <div className="flex items-center gap-2 mb-3">
-          <AmberLogo className="h-5 w-auto" />
-        </div>
+      <div className="hidden @[180px]:flex h-full flex-col">
+        {/* Amber logo - absolute positioned top left */}
+        <AmberLogo className="absolute top-3 left-3 h-5 w-auto" />
 
-        {/* Price circle - centered */}
-        <div
-          className="w-[140px] h-[140px] rounded-full flex flex-col items-center justify-center mx-auto"
-          style={{ background: circleGradient }}
-        >
-          {/* Lightning icon */}
-          <Zap
-            className="w-4 h-4 mb-0.5"
-            style={{ color: "rgb(0, 11, 36)" }}
-            fill="rgb(0, 11, 36)"
-          />
-
-          {/* Price level label */}
+        {/* Price circle - centered horizontally and vertically */}
+        <div className="flex-1 flex items-center justify-center">
           <div
-            className="text-center text-[10px] font-bold mb-0.5"
-            style={{ color: "rgb(0, 0, 0)" }}
+            className="w-[140px] h-[140px] rounded-full flex flex-col items-center justify-center mt-5"
+            style={{ background: circleGradient }}
           >
-            {getPriceLevelShortLabel(priceLevel)}
-          </div>
+            {/* Lightning icon */}
+            <Zap
+              className="w-4 h-4 mb-0.5"
+              style={{ color: "rgb(0, 11, 36)" }}
+              fill="rgb(0, 11, 36)"
+            />
 
-          {/* Large price */}
-          <div
-            className="font-bold leading-none text-[36px]"
-            style={{ color: "rgb(0, 11, 36)" }}
-          >
-            {Math.round(importPrice)}¢
-          </div>
-          <div className="text-[10px]" style={{ color: "rgb(0, 0, 0)" }}>
-            /kWh
-          </div>
-
-          {/* Renewables percentage */}
-          {renewables !== null && (
-            <div className="text-center -mt-0.5">
-              <span
-                className="font-bold block mt-[6px]"
-                style={{
-                  color: "rgb(0, 0, 0)",
-                  fontSize: "16px",
-                }}
-              >
-                {Math.round(renewables)}%
-              </span>
-              <div
-                className="text-[8px] -mt-[4px]"
-                style={{ color: "rgb(0, 0, 0)" }}
-              >
-                renewables
-              </div>
+            {/* Price level label */}
+            <div
+              className="text-center text-[10px] font-bold mb-0.5"
+              style={{ color: "rgb(0, 0, 0)" }}
+            >
+              {getPriceLevelShortLabel(priceLevel)}
             </div>
-          )}
+
+            {/* Large price */}
+            <div
+              className="font-bold leading-none text-[36px]"
+              style={{ color: "rgb(0, 11, 36)" }}
+            >
+              {Math.round(importPrice)}¢
+            </div>
+            <div className="text-[10px]" style={{ color: "rgb(0, 0, 0)" }}>
+              /kWh
+            </div>
+
+            {/* Renewables percentage */}
+            {renewables !== null && (
+              <div className="text-center -mt-0.5">
+                <span
+                  className="font-bold block mt-[6px]"
+                  style={{
+                    color: "rgb(0, 0, 0)",
+                    fontSize: "16px",
+                  }}
+                >
+                  {Math.round(renewables)}%
+                </span>
+                <div
+                  className="text-[8px] -mt-[4px]"
+                  style={{ color: "rgb(0, 0, 0)" }}
+                >
+                  renewables
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

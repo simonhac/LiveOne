@@ -526,7 +526,7 @@ export default function SystemPowerCards({
     if (cardCount === 2) return "grid-cols-2";
     if (cardCount === 3) return "grid-cols-3";
     if (cardCount === 4) return "grid-cols-4";
-    if (cardCount === 5) return "grid-cols-4 lg:grid-cols-5";
+    if (cardCount === 5) return "grid-cols-3";
     // 6+ cards
     return "grid-cols-4 lg:grid-cols-6";
   };
