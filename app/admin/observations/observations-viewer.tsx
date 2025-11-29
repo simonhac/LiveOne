@@ -188,7 +188,9 @@ export default function ObservationsViewer() {
               <span className="text-white font-medium">{queueInfo.lag}</span>{" "}
               queued messages
               {queueInfo.paused && (
-                <span className="ml-2 text-yellow-500">(paused)</span>
+                <span className="ml-2 px-2 py-0.5 text-xs font-medium bg-orange-500/20 text-orange-400 rounded-full">
+                  paused
+                </span>
               )}
             </span>
           ) : null}
