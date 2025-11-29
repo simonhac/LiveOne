@@ -9,14 +9,19 @@ export const qstash = process.env.OBSERVATIONS_QSTASH_TOKEN
   : null;
 
 /**
- * Queue name for observation batches
+ * Queue name for observation batches.
+ * Uses environment-specific names to separate dev and prod messages.
  */
-export const OBSERVATIONS_QUEUE_NAME = "observations";
+export const OBSERVATIONS_QUEUE_NAME =
+  process.env.NODE_ENV === "production" ? "observations" : "observations-dev";
 
 /**
  * Get the receiver URL for the observations queue.
  * This is the endpoint that QStash will deliver messages to.
- * Returns null in development (QStash can't reach localhost).
+ *
+ * In production: uses the main receiver endpoint
+ * In development: uses the dev receiver endpoint at the production URL
+ *                 (since QStash can't reach localhost)
  */
 export function getObservationsReceiverUrl(): string | null {
   // Allow explicit override via env var
@@ -24,12 +29,13 @@ export function getObservationsReceiverUrl(): string | null {
     return process.env.OBSERVATIONS_QSTASH_RECEIVER_URL;
   }
 
-  // In production, use the Vercel URL
+  // In production, use the Vercel URL with the main receiver
   const baseUrl = process.env.VERCEL_URL || process.env.NEXT_PUBLIC_VERCEL_URL;
-  if (!baseUrl) {
-    // Development - QStash can't reach localhost
-    return null;
+  if (baseUrl) {
+    return `https://${baseUrl}/api/observations/receive`;
   }
 
-  return `https://${baseUrl}/api/observations/receive`;
+  // Development: use production URL with dev receiver endpoint
+  // This allows testing the queue pipeline from localhost
+  return "https://liveone.vercel.app/api/observations/receive-dev";
 }

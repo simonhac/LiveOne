@@ -2,13 +2,21 @@ import type {
   VendorAdapter,
   PollingResult,
   TestConnectionResult,
+  PollOptions,
+  FetchContext,
+  FetchResult,
+  PollStage,
 } from "./types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
-import type { CommonPollingData } from "@/lib/types/common";
 import type { LatestReadingData } from "@/lib/types/readings";
 import type { ZonedDateTime } from "@internationalized/date";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
-import type { SessionInfo } from "@/lib/point/point-manager";
+import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
+import { sessionManager } from "@/lib/session-manager";
+import {
+  updatePollingStatusSuccess,
+  updatePollingStatusError,
+} from "@/lib/polling-utils";
 
 /**
  * Base adapter class that provides common functionality
@@ -141,42 +149,149 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   }
 
   /**
-   * Poll for new data. Only applicable for poll-based systems.
-   * Push-only systems should not override this method.
+   * Poll for new data using template method pattern.
+   * Handles full lifecycle: check schedule → create session → fetch data → process → complete session
+   *
    * @param system - The system to poll
    * @param credentials - Vendor credentials
-   * @param forcePollAll - If true, bypass rate limiting and poll immediately
-   * @param pollReason - Reason for the poll (e.g., "scheduled", "user_request", "catchup")
-   * @param session - Session info with id and started timestamp
-   * @param dryRun - If true, skip database writes (for testing/debugging)
+   * @param options - Poll options including sessionLabel, cause, dryRun, and onProgress callback
    */
   async poll(
     system: SystemWithPolling,
     credentials: any,
-    forcePollAll: boolean,
-    pollReason: string,
-    session: SessionInfo,
-    dryRun: boolean = false,
+    options: PollOptions,
   ): Promise<PollingResult> {
-    const now = session.started;
-    const check = await this.shouldPoll(system, forcePollAll, now);
+    const {
+      forcePollAll,
+      pollReason,
+      sessionLabel,
+      sessionCause,
+      dryRun = false,
+      onProgress,
+    } = options;
+    const startedAt = new Date();
+    const stages: PollStage[] = [];
 
+    // Helper to send progress updates every 200ms during a stage
+    const withProgress = async <T>(
+      stageName: "fetch" | "process",
+      fn: () => Promise<T>,
+    ): Promise<T> => {
+      const stageStart = Date.now();
+      stages.push({ name: stageName, startMs: stageStart, endMs: stageStart });
+
+      let interval: NodeJS.Timeout | null = null;
+      if (onProgress) {
+        interval = setInterval(() => {
+          stages[stages.length - 1].endMs = Date.now();
+          onProgress({
+            action: "POLLED",
+            stages: [...stages],
+            inProgress: true,
+          });
+        }, 200);
+      }
+
+      try {
+        const result = await fn();
+        stages[stages.length - 1].endMs = Date.now();
+        return result;
+      } finally {
+        if (interval) clearInterval(interval);
+      }
+    };
+
+    // 1. Check shouldPoll
+    const check = await this.shouldPoll(system, forcePollAll, startedAt);
     if (!check.shouldPoll) {
-      return this.skipped(check.reason || "Skipped", check.nextPoll);
+      return this.skipped(check.reason, check.nextPoll);
     }
 
-    // Delegate to the actual polling implementation
-    return this.doPoll(system, credentials, session, pollReason, dryRun);
+    // 2. Create session
+    const session = await sessionManager.createSession({
+      sessionLabel,
+      systemId: system.id,
+      cause: sessionCause,
+      started: startedAt,
+    });
+
+    try {
+      // 3. Fetch data (vendor implementation) - track "fetch" stage with live updates
+      const result = await withProgress("fetch", () =>
+        this.fetchData(system, credentials, { startedAt, dryRun, session }),
+      );
+
+      if (!result.success) {
+        await this.completeSessionError(system.id, session, startedAt, result);
+        return this.error(
+          result.error || "Unknown error",
+          result.rawResponse,
+          stages,
+        );
+      }
+
+      // 4. Process: Insert readings + publish to queue - track "process" stage with live updates
+      const recordsProcessed = await withProgress("process", async () => {
+        if (dryRun) return result.recordsProcessed ?? 0;
+        const insertedCount = await this.insertAndPublishReadings(
+          system.id,
+          session,
+          result,
+        );
+        // If adapter reported recordsProcessed (handles own insertion), use that
+        // Otherwise use the count from insertAndPublishReadings
+        return result.recordsProcessed ?? insertedCount;
+      });
+
+      // 5. Complete session and update polling status
+      await this.completeSessionSuccess(
+        system.id,
+        session,
+        startedAt,
+        recordsProcessed,
+        result.rawResponse,
+      );
+
+      return this.polled(
+        recordsProcessed,
+        result.nextPollTime,
+        result.rawResponse,
+        stages,
+      );
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      await this.completeSessionError(system.id, session, startedAt, {
+        success: false,
+        error: errorMessage,
+      });
+      return this.error(errorMessage, undefined, stages);
+    }
   }
 
   /**
-   * Method that polling subclasses must implement for actual polling
-   * Push-only systems will never call this
+   * Fetch data from vendor API - vendors must implement this method.
+   * Push-only systems should not override this method.
+   *
    * @param system - The system to poll
    * @param credentials - Vendor credentials
-   * @param session - Session info with id and started timestamp
-   * @param pollReason - Reason for the poll
-   * @param dryRun - If true, skip database writes (for testing/debugging)
+   * @param context - Context including startedAt timestamp and dryRun flag
+   * @returns FetchResult with readings data or error
+   */
+  protected async fetchData(
+    system: SystemWithPolling,
+    credentials: any,
+    context: FetchContext,
+  ): Promise<FetchResult> {
+    // Default implementation for push-only systems (should never be called)
+    return {
+      success: false,
+      error: "This vendor does not support polling",
+    };
+  }
+
+  /**
+   * @deprecated Use fetchData() instead. This method will be removed after migration.
    */
   protected async doPoll(
     system: SystemWithPolling,
@@ -185,8 +300,84 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     pollReason: string,
     dryRun: boolean = false,
   ): Promise<PollingResult> {
-    // Default implementation for push-only systems (should never be called)
+    console.warn(
+      `[${this.vendorType}] doPoll is deprecated, implement fetchData instead`,
+    );
     return this.error("This vendor does not support polling");
+  }
+
+  /**
+   * Insert readings to Turso and publish to QStash queue
+   * Note: PointManager methods handle QStash publishing internally
+   */
+  private async insertAndPublishReadings(
+    systemId: number,
+    session: SessionInfo,
+    result: FetchResult,
+  ): Promise<number> {
+    const pm = PointManager.getInstance();
+    let count = 0;
+
+    // Insert raw readings (PointManager handles QStash publishing internally)
+    if (result.readings?.length) {
+      await pm.insertPointReadingsRaw(systemId, session, result.readings);
+      count += result.readings.length;
+    }
+
+    // Insert 5m aggregated readings (PointManager handles QStash publishing internally)
+    if (result.readingsAgg5m?.length) {
+      await pm.insertPointReadingsAgg5m(
+        systemId,
+        session,
+        result.readingsAgg5m,
+      );
+      count += result.readingsAgg5m.length;
+    }
+
+    return count;
+  }
+
+  /**
+   * Complete session with success status and update polling status
+   */
+  private async completeSessionSuccess(
+    systemId: number,
+    session: SessionInfo,
+    startedAt: Date,
+    numRows: number,
+    rawResponse?: any,
+  ): Promise<void> {
+    await sessionManager.updateSessionResult(session.id, {
+      duration: Date.now() - startedAt.getTime(),
+      successful: true,
+      response: rawResponse,
+      numRows,
+    });
+    await updatePollingStatusSuccess(systemId, rawResponse);
+  }
+
+  /**
+   * Complete session with error status and update polling status
+   */
+  private async completeSessionError(
+    systemId: number,
+    session: SessionInfo,
+    startedAt: Date,
+    result: FetchResult,
+  ): Promise<void> {
+    await sessionManager.updateSessionResult(session.id, {
+      duration: Date.now() - startedAt.getTime(),
+      successful: false,
+      errorCode: result.errorCode || null,
+      error: result.error || null,
+      response: result.rawResponse,
+      numRows: 0,
+    });
+    await updatePollingStatusError(
+      systemId,
+      result.error || "Unknown error",
+      result.rawResponse,
+    );
   }
 
   /**
@@ -219,22 +410,27 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   /**
    * Helper to create a SKIPPED result
    */
-  protected skipped(reason: string, nextPoll?: ZonedDateTime): PollingResult {
+  protected skipped(reason?: string, nextPoll?: ZonedDateTime): PollingResult {
     return {
       action: "SKIPPED",
       reason,
-      nextPoll,
+      nextPollTimeMs: nextPoll?.toDate().getTime(),
     };
   }
 
   /**
    * Helper to create an ERROR result
    */
-  protected error(error: string | Error, rawResponse?: any): PollingResult {
+  protected error(
+    error: string | Error,
+    rawResponse?: any,
+    stages?: PollStage[],
+  ): PollingResult {
     return {
       action: "ERROR",
       error: error instanceof Error ? error.message : error,
       rawResponse,
+      stages,
     };
   }
 
@@ -242,17 +438,17 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * Helper to create a POLLED result
    */
   protected polled(
-    data: CommonPollingData | CommonPollingData[],
     recordsProcessed: number,
     nextPoll?: ZonedDateTime,
     rawResponse?: any,
+    stages?: PollStage[],
   ): PollingResult {
     return {
       action: "POLLED",
-      data,
-      rawResponse,
       recordsProcessed,
-      nextPoll,
+      rawResponse,
+      nextPollTimeMs: nextPoll?.toDate().getTime(),
+      stages,
     };
   }
 }

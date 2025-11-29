@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, Play, Pause, RotateCcw } from "lucide-react";
+import { RefreshCw, Play, Pause, RotateCcw, Trash2 } from "lucide-react";
 import { formatDateTime } from "@/lib/fe-date-format";
 
 interface QueueInfo {
@@ -126,6 +126,23 @@ export default function ObservationsViewer() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "retry-all" }),
+      });
+      if (!response.ok) throw new Error(`Action failed: ${response.status}`);
+      await fetchDlq();
+    } catch (err) {
+      setDlqError(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const emptyDlq = async () => {
+    setActionLoading(true);
+    try {
+      const response = await fetch("/api/admin/observations/dlq", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete-all" }),
       });
       if (!response.ok) throw new Error(`Action failed: ${response.status}`);
       await fetchDlq();
@@ -304,14 +321,24 @@ export default function ObservationsViewer() {
             )}
           </h2>
           {dlqMessages.length > 0 && (
-            <button
-              onClick={retryDlq}
-              disabled={actionLoading}
-              className="flex items-center gap-2 px-3 py-1.5 bg-orange-700 hover:bg-orange-600 rounded text-sm disabled:opacity-50"
-            >
-              <RotateCcw className="w-4 h-4" />
-              Retry All
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={retryDlq}
+                disabled={actionLoading}
+                className="flex items-center justify-center gap-2 w-[160px] py-1.5 bg-blue-700 hover:bg-blue-600 rounded text-sm disabled:opacity-50"
+              >
+                <RotateCcw className="w-4 h-4" />
+                Retry All
+              </button>
+              <button
+                onClick={emptyDlq}
+                disabled={actionLoading}
+                className="flex items-center justify-center gap-2 w-[160px] py-1.5 bg-blue-700 hover:bg-blue-600 rounded text-sm disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                Empty DLQ
+              </button>
+            </div>
           )}
         </div>
 

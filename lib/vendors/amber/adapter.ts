@@ -1,8 +1,9 @@
 import { BaseVendorAdapter } from "../base-adapter";
 import type {
-  PollingResult,
   TestConnectionResult,
   CredentialField,
+  FetchContext,
+  FetchResult,
 } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { LatestReadingData } from "@/lib/types/readings";
@@ -274,23 +275,25 @@ export class AmberAdapter extends BaseVendorAdapter {
   }
 
   /**
-   * Perform the actual polling
+   * Fetch data from Amber API
    * Uses audit-based syncing with time-based logic:
    * - Usage: hourly at :10 past or when force poll
    * - Forecasts: every 5 minutes (always)
+   *
+   * Note: Amber uses its own client functions (updateUsage, updateForecasts) that
+   * handle data insertion internally. This fetchData returns empty readings array
+   * but sets recordsProcessed to the actual count.
    */
-  protected async doPoll(
+  protected async fetchData(
     system: SystemWithPolling,
     credentials: AmberCredentials,
-    session: SessionInfo,
-    pollReason: string,
-    dryRun: boolean = false,
-  ): Promise<PollingResult> {
+    context: FetchContext,
+  ): Promise<FetchResult> {
     try {
-      const isForcePoll = pollReason === "ADMIN" || pollReason === "USER";
-      console.log(
-        `[Amber] Starting poll for system ${system.id} (reason=${pollReason})`,
-      );
+      const { dryRun, session } = context;
+      // Determine if this is a force poll based on the cause
+      const isForcePoll = true; // We always run usage+forecasts since base adapter checks shouldPoll
+      console.log(`[Amber] Fetching data for system ${system.id}`);
 
       const audits = [];
       let totalRecords = 0;
@@ -408,20 +411,28 @@ export class AmberAdapter extends BaseVendorAdapter {
 
       // Return error if any sync failed
       if (hasError) {
-        return this.error(errorMessage || "Sync failed", audits); // Include audits in error response
+        return {
+          success: false,
+          error: errorMessage || "Sync failed",
+          rawResponse: audits,
+        };
       }
 
-      return this.polled(
-        null as any, // Amber doesn't use common readings table
-        totalRecords,
+      // Amber handles its own data insertion via updateUsage/updateForecasts
+      // Return empty readings array but set recordsProcessed
+      return {
+        success: true,
+        readings: [], // Empty - Amber client handles insertion
+        recordsProcessed: totalRecords,
         nextPollTime,
-        audits, // Return audit objects as rawResponse
-      );
+        rawResponse: audits,
+      };
     } catch (error) {
-      console.error("[Amber] Poll error:", error);
-      return this.error(
-        error instanceof Error ? error : new Error(String(error)),
-      );
+      console.error("[Amber] Fetch error:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 

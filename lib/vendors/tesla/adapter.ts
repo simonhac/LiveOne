@@ -1,13 +1,13 @@
 import { BaseVendorAdapter, ScheduleEvaluation } from "../base-adapter";
 import type {
-  PollingResult,
   TestConnectionResult,
   CredentialField,
+  FetchContext,
+  FetchResult,
 } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { LatestReadingData } from "@/lib/types/readings";
-import type { SessionInfo, PointMetadata } from "@/lib/point/point-manager";
-import { PointManager } from "@/lib/point/point-manager";
+import type { PointMetadata } from "@/lib/point/point-manager";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
 import { TeslaClient, TeslaApiError } from "./client";
 import type {
@@ -140,19 +140,16 @@ export class TeslaAdapter extends BaseVendorAdapter {
   }
 
   /**
-   * Perform the actual polling
+   * Fetch data from Tesla API
+   * Base adapter handles session creation, data insertion, and session completion
    */
-  protected async doPoll(
+  protected async fetchData(
     system: SystemWithPolling,
     credentials: TeslaCredentials,
-    session: SessionInfo,
-    pollReason: string,
-    dryRun: boolean = false,
-  ): Promise<PollingResult> {
+    context: FetchContext,
+  ): Promise<FetchResult> {
     try {
-      console.log(
-        `[Tesla] Starting poll for system ${system.id} (reason=${pollReason})`,
-      );
+      console.log(`[Tesla] Fetching data for system ${system.id}`);
 
       const client = new TeslaClient(credentials);
 
@@ -168,18 +165,10 @@ export class TeslaAdapter extends BaseVendorAdapter {
       const isCharging = client.isCharging(vehicleData);
       this.chargingStateCache.set(system.id, isCharging);
 
-      // Extract and store readings
-      const readings = this.extractReadings(vehicleData, session.started);
+      // Extract readings
+      const readings = this.extractReadings(vehicleData, context.startedAt);
 
-      if (!dryRun) {
-        const pointManager = PointManager.getInstance();
-        await pointManager.insertPointReadingsRaw(system.id, session, readings);
-        console.log(`[Tesla] Inserted ${readings.length} point readings`);
-      } else {
-        console.log(
-          `[Tesla] Dry run - would insert ${readings.length} readings`,
-        );
-      }
+      console.log(`[Tesla] Extracted ${readings.length} point readings`);
 
       // Calculate next poll time based on current charging state
       const nextInterval = isCharging
@@ -190,11 +179,12 @@ export class TeslaAdapter extends BaseVendorAdapter {
         system.timezoneOffsetMin,
       );
 
-      return this.polled(
-        null as any, // Tesla doesn't use CommonPollingData
-        readings.length,
+      return {
+        success: true,
+        readings,
+        recordsProcessed: readings.length,
         nextPollTime,
-        {
+        rawResponse: {
           vehicleName: vehicleData.display_name,
           vin: vehicleData.vin,
           batteryLevel: vehicleData.charge_state.battery_level,
@@ -206,12 +196,13 @@ export class TeslaAdapter extends BaseVendorAdapter {
             lon: vehicleData.drive_state.longitude,
           },
         },
-      );
+      };
     } catch (error) {
-      console.error("[Tesla] Poll error:", error);
-      return this.error(
-        error instanceof Error ? error : new Error(String(error)),
-      );
+      console.error("[Tesla] Fetch error:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 

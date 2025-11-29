@@ -168,6 +168,11 @@ export const sessions = pgTable(
     createdAt: timestamp("created_at").notNull(),
   },
   (table) => ({
+    // Unique constraint for dedup during queue processing
+    systemCreatedAtUnique: uniqueIndex("sessions_system_created_at_unique").on(
+      table.systemId,
+      table.createdAt,
+    ),
     systemIdx: index("sessions_system_idx").on(table.systemId),
     createdAtIdx: index("sessions_created_at_idx").on(table.createdAt),
     causeIdx: index("sessions_cause_idx").on(table.cause),

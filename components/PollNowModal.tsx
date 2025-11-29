@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useModalContext } from "@/contexts/ModalContext";
 import { triggerDashboardRefresh } from "@/hooks/useDashboardRefresh";
 import {
@@ -12,9 +12,12 @@ import {
   FileJson,
   Clock,
   Hash,
+  Tag,
 } from "lucide-react";
 import { formatDateTime, formatDuration } from "@/lib/fe-date-format";
 import JsonViewer from "@/components/JsonViewer";
+import { PollTimeline } from "@/components/PollTimeline";
+import type { PollStage } from "@/lib/vendors/types";
 
 interface PollNowModalProps {
   systemId: number;
@@ -28,12 +31,18 @@ interface PollResult {
   systemId: number;
   displayName?: string;
   vendorType?: string;
-  status: "polled" | "skipped" | "error";
+  status: "polled" | "skipped" | "error" | "polling";
   recordsProcessed?: number;
   skipReason?: string;
   error?: string;
   rawResponse?: any;
-  nextPoll?: string; // ISO string from server
+  nextPollTimeMs?: number;
+  sessionLabel?: string;
+  sessionId?: number;
+  stages?: PollStage[];
+  startMs?: number;
+  endMs?: number;
+  durationMs?: number;
 }
 
 export default function PollNowModal({
@@ -46,8 +55,10 @@ export default function PollNowModal({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<PollResult | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [pollDuration, setPollDuration] = useState<number | null>(null);
+  const [sessionStartMs, setSessionStartMs] = useState<number>(Date.now());
+  const [sessionEndMs, setSessionEndMs] = useState<number>(Date.now());
   const hasInitiatedPoll = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Register this modal with the global modal context
   const { registerModal, unregisterModal } = useModalContext();
@@ -66,6 +77,15 @@ export default function PollNowModal({
     return () => document.removeEventListener("keydown", handleEscape);
   }, [onClose]);
 
+  // Cleanup abort controller on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
   useEffect(() => {
     // Use ref to ensure poll only happens once, even in StrictMode
     if (!hasInitiatedPoll.current) {
@@ -75,64 +95,156 @@ export default function PollNowModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Empty dependency array means this runs once on mount
 
-  const pollNow = async (isRefresh: boolean = false) => {
-    if (isRefresh) {
-      setIsRefreshing(true);
-    } else {
-      setLoading(true);
-      setResult(null);
-    }
+  const pollNow = useCallback(
+    async (isRefresh: boolean = false) => {
+      // Abort any existing request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      abortControllerRef.current = new AbortController();
 
-    const startTime = Date.now();
-
-    try {
-      const dryRunParam = dryRun ? "&dryRun=true" : "";
-      const response = await fetch(
-        `/api/cron/minutely?systemId=${systemId}&force=true&includeRaw=true${dryRunParam}`,
-      );
-      const data = await response.json();
-
-      // Calculate duration
-      const duration = Date.now() - startTime;
-      setPollDuration(duration);
-
-      if (!response.ok) {
-        throw new Error(data.error || `Failed to poll: ${response.status}`);
+      if (isRefresh) {
+        setIsRefreshing(true);
+      } else {
+        setLoading(true);
+        setResult(null);
       }
 
-      // Extract the result for this specific system
-      const systemResult = data.results?.find(
-        (r: any) => r.systemId === systemId,
-      );
+      const startTime = Date.now();
+      setSessionStartMs(startTime);
+      setSessionEndMs(startTime);
 
-      // Map action to status (API returns "action", modal expects "status")
-      const mappedResult = systemResult
-        ? {
-            ...systemResult,
-            status: systemResult.action?.toLowerCase() || "error",
-          }
-        : data;
-
-      setResult(mappedResult);
-    } catch (err) {
-      console.error("Poll now error:", err);
-      // Create an error result object instead of setting separate error state
+      // Set initial polling state
       setResult({
         systemId,
         displayName: displayName ?? undefined,
         vendorType: vendorType ?? undefined,
-        status: "error",
-        error: err instanceof Error ? err.message : "Failed to poll system",
+        status: "polling",
+        startMs: startTime,
       });
-    } finally {
-      setLoading(false);
-      setIsRefreshing(false);
-      // Notify dashboard cards that new data may be available
-      if (!dryRun) {
-        triggerDashboardRefresh();
+
+      try {
+        const dryRunParam = dryRun ? "&dryRun=true" : "";
+        const response = await fetch(
+          `/api/cron/minutely?systemId=${systemId}&force=true&includeRaw=true&realTime=true${dryRunParam}`,
+          { signal: abortControllerRef.current.signal },
+        );
+
+        if (!response.ok) {
+          throw new Error(`Failed to poll: ${response.status}`);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error("No response body");
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // Process complete SSE messages
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const data = JSON.parse(line.slice(6));
+
+                if (data.type === "start") {
+                  // Update session start time
+                  setSessionStartMs(data.data.sessionStartMs);
+                } else if (data.type === "progress") {
+                  // Update with progress data
+                  const progressData = data.data;
+                  setSessionEndMs(Date.now());
+                  setResult((prev) => ({
+                    ...prev,
+                    systemId: progressData.systemId,
+                    displayName: progressData.displayName || prev?.displayName,
+                    vendorType: progressData.vendorType || prev?.vendorType,
+                    status: progressData.inProgress ? "polling" : "polled",
+                    sessionLabel: progressData.sessionLabel,
+                    sessionId: progressData.sessionId,
+                    stages: progressData.stages,
+                    startMs: progressData.startMs,
+                    endMs: progressData.endMs,
+                    recordsProcessed: progressData.recordsProcessed,
+                    durationMs: progressData.durationMs,
+                  }));
+                } else if (data.type === "complete") {
+                  // Final result
+                  const completeData = data.data;
+                  setSessionEndMs(completeData.sessionEndMs);
+
+                  // Find the result for our system
+                  const systemResult = completeData.results?.find(
+                    (r: any) => r.systemId === systemId,
+                  );
+
+                  if (systemResult) {
+                    setResult({
+                      systemId: systemResult.systemId,
+                      displayName: systemResult.displayName,
+                      vendorType: systemResult.vendorType,
+                      status: systemResult.action?.toLowerCase() || "error",
+                      sessionLabel: systemResult.sessionLabel,
+                      sessionId: systemResult.sessionId,
+                      stages: systemResult.stages,
+                      startMs: systemResult.startMs,
+                      endMs: systemResult.endMs,
+                      recordsProcessed: systemResult.recordsProcessed,
+                      durationMs: systemResult.durationMs,
+                      nextPollTimeMs: systemResult.nextPollTimeMs,
+                      rawResponse: systemResult.rawResponse,
+                      skipReason: systemResult.reason,
+                      error: systemResult.error,
+                    });
+                  }
+                } else if (data.type === "error") {
+                  setResult({
+                    systemId,
+                    displayName: displayName ?? undefined,
+                    vendorType: vendorType ?? undefined,
+                    status: "error",
+                    error: data.error,
+                  });
+                }
+              } catch (parseErr) {
+                console.error("Failed to parse SSE data:", parseErr);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if ((err as Error).name === "AbortError") {
+          return; // Ignore abort errors
+        }
+        console.error("Poll now error:", err);
+        setResult({
+          systemId,
+          displayName: displayName ?? undefined,
+          vendorType: vendorType ?? undefined,
+          status: "error",
+          error: err instanceof Error ? err.message : "Failed to poll system",
+        });
+      } finally {
+        setLoading(false);
+        setIsRefreshing(false);
+        // Notify dashboard cards that new data may be available
+        if (!dryRun) {
+          triggerDashboardRefresh();
+        }
       }
-    }
-  };
+    },
+    [systemId, displayName, vendorType, dryRun],
+  );
 
   const refreshPoll = () => {
     pollNow(true);
@@ -147,6 +259,8 @@ export default function PollNowModal({
         return "text-yellow-400";
       case "error":
         return "text-red-400";
+      case "polling":
+        return "text-blue-400";
       default:
         return "text-gray-400";
     }
@@ -161,10 +275,16 @@ export default function PollNowModal({
         return <AlertCircle className="w-6 h-6 text-yellow-500" />;
       case "error":
         return <AlertCircle className="w-6 h-6 text-red-500" />;
+      case "polling":
+        return (
+          <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        );
       default:
         return null;
     }
   };
+
+  const isPolling = result?.status === "polling";
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center z-50 overflow-y-auto">
@@ -175,6 +295,11 @@ export default function PollNowModal({
             Poll {displayName || "System"}{" "}
             <span className="text-gray-500">ID: {systemId}</span> —{" "}
             {vendorType || result?.vendorType || "System"}
+            {result?.sessionLabel && (
+              <span className="ml-2 text-gray-500 font-mono text-sm">
+                {result.sessionLabel}
+              </span>
+            )}
           </h3>
           <button
             onClick={onClose}
@@ -199,8 +324,31 @@ export default function PollNowModal({
           </div>
         )}
 
-        {/* Loading State - Initial */}
-        {loading && !result && (
+        {/* Timeline Section - Show during polling and after completion */}
+        {result?.stages && result.stages.length > 0 && (
+          <div className="mb-4 bg-gray-900 rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Activity className="w-4 h-4 text-gray-500" />
+              <span className="text-xs text-gray-500">Timeline</span>
+              {isPolling && (
+                <span className="text-xs text-blue-400 ml-auto">
+                  {formatDuration(Date.now() - sessionStartMs)}
+                </span>
+              )}
+            </div>
+            <div className="h-8">
+              <PollTimeline
+                stages={result.stages}
+                sessionStartMs={sessionStartMs}
+                sessionEndMs={isPolling ? Date.now() : sessionEndMs}
+                isLive={isPolling}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Loading State - Initial (before we have stages) */}
+        {loading && !result?.stages?.length && (
           <div className="text-center py-8">
             <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
             <p className="text-gray-400">Polling system...</p>
@@ -208,7 +356,7 @@ export default function PollNowModal({
         )}
 
         {/* Data Display */}
-        {result && (
+        {result && result.status !== "polling" && (
           <div className="relative">
             {/* Refreshing Overlay */}
             {isRefreshing && (
@@ -248,9 +396,9 @@ export default function PollNowModal({
                 </div>
               )}
 
-              {/* Poll Metrics - No title */}
+              {/* Poll Metrics */}
               <div className="bg-gray-900 rounded-lg p-4">
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                   <div className="flex items-start gap-2">
                     <FileJson className="w-4 h-4 text-gray-500 mt-0.5" />
                     <div>
@@ -266,7 +414,7 @@ export default function PollNowModal({
                   <div className="flex items-start gap-2">
                     <Hash className="w-4 h-4 text-gray-500 mt-0.5" />
                     <div>
-                      <p className="text-xs text-gray-500">Records Processed</p>
+                      <p className="text-xs text-gray-500">Records</p>
                       <p className="text-sm font-medium text-white">
                         {result.recordsProcessed !== undefined
                           ? result.recordsProcessed
@@ -280,8 +428,8 @@ export default function PollNowModal({
                     <div>
                       <p className="text-xs text-gray-500">Duration</p>
                       <p className="text-sm font-medium text-white">
-                        {pollDuration !== null
-                          ? formatDuration(pollDuration)
+                        {result.durationMs !== undefined
+                          ? formatDuration(result.durationMs)
                           : "—"}
                       </p>
                     </div>
@@ -292,8 +440,8 @@ export default function PollNowModal({
                     <div>
                       <p className="text-xs text-gray-500">Next Poll</p>
                       <p className="text-sm font-medium text-white">
-                        {result.nextPoll
-                          ? formatDateTime(result.nextPoll, {
+                        {result.nextPollTimeMs
+                          ? formatDateTime(new Date(result.nextPollTimeMs), {
                               includeSeconds: true,
                             }).time
                           : "—"}
@@ -311,7 +459,7 @@ export default function PollNowModal({
 
         {/* Action Buttons */}
         <div className="mt-6 flex gap-3 justify-end">
-          {result && (
+          {result && result.status !== "polling" && (
             <button
               onClick={refreshPoll}
               disabled={isRefreshing}

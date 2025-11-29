@@ -136,7 +136,7 @@ export interface PollingResult {
   error?: string;
   durationMs?: number;
   lastPoll?: string | null; // When the last successful poll occurred (AEST formatted)
-  nextPoll?: string; // When the next poll is scheduled (ISO string or AEST formatted)
+  nextPollTimeMs?: number; // When the next poll is scheduled (Unix timestamp in milliseconds)
   rawResponse?: any; // Raw vendor response for debugging
   data?: any; // Optional vendor-specific data
 }

@@ -3,13 +3,7 @@ import { SystemsManager } from "@/lib/systems-manager";
 import { formatSystemId } from "@/lib/system-utils";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { getSystemCredentials } from "@/lib/secure-credentials";
-import { sessionManager } from "@/lib/session-manager";
-import type { PollingResult } from "@/lib/vendors/types";
-import type { SessionInfo } from "@/lib/point/point-manager";
-import {
-  updatePollingStatusSuccess,
-  updatePollingStatusError,
-} from "@/lib/polling-utils";
+import type { PollingResult, PollStage } from "@/lib/vendors/types";
 import { requireCronOrAdmin } from "@/lib/api-auth";
 import { fromDate } from "@internationalized/date";
 import { formatTimeAEST } from "@/lib/date-utils";
@@ -18,9 +12,10 @@ import { jsonResponse } from "@/lib/json";
 
 /**
  * Helper function to poll all systems with optional progress callbacks.
- * This function is used by both the normal JSON response and SSE streaming modes.
+ * This function handles the login stage (credential fetch) and delegates
+ * the rest (session creation, fetch, insert, session update) to the adapter.
  *
- * @param onProgress - Callback called after each stage completes (login, download, insert)
+ * @param onProgress - Callback called after each stage completes (login, fetch, process)
  */
 async function pollAllSystems(params: {
   activeSystems: any[];
@@ -46,16 +41,13 @@ async function pollAllSystems(params: {
   const results: PollingResult[] = [];
   let subSequence = 0;
 
-  // Poll each system using the new vendor adapter architecture
+  // Poll each system using the vendor adapter architecture
   for (const system of activeSystems) {
-    const pollStartTime = Date.now(); // Track start time for this system poll
-    const stages: {
-      name: "login" | "download" | "insert";
-      startMs: number;
-      endMs: number;
-    }[] = [];
-    subSequence++; // Increment for each system
+    const pollStartTime = Date.now();
+    const loginStages: PollStage[] = [];
+    subSequence++;
     const sessionLabel = formatSessionId(sessionLabelPrefix, subSequence);
+
     // Get the vendor adapter first to check if it supports polling
     const adapter = VendorRegistry.getAdapter(system.vendorType);
 
@@ -82,24 +74,21 @@ async function pollAllSystems(params: {
 
     // Skip push-only systems (they don't need polling)
     if (adapter.dataSource === "push") {
-      continue; // Don't add to results at all, don't log
+      continue;
     }
 
     console.log(
       `[Cron] Processing systemId=${system.id} (${system.vendorType}/${system.vendorSiteId} '${system.displayName}') with session ${sessionLabel}`,
     );
 
-    // Check if we should poll - if not time yet, skip without creating session
-    const now = new Date();
-    const shouldPollCheck = await adapter.shouldPoll(system, forcePollAll, now);
-
-    if (!shouldPollCheck.shouldPoll) {
-      const skipResult: PollingResult = {
-        action: "SKIPPED",
+    // Check if system has an owner
+    if (!system.ownerClerkUserId) {
+      const errorResult: PollingResult = {
+        action: "ERROR",
         systemId: system.id,
         displayName: system.displayName || undefined,
         vendorType: system.vendorType,
-        reason: shouldPollCheck.reason,
+        error: "No owner configured",
         durationMs: Date.now() - pollStartTime,
         startMs: pollStartTime,
         endMs: Date.now(),
@@ -109,76 +98,33 @@ async function pollAllSystems(params: {
             )
           : null,
       };
-      results.push(skipResult);
-      console.log(
-        `[Cron] ${formatSystemId(system)} - Skipped: ${shouldPollCheck.reason}`,
-      );
-      continue; // Skip to next system
+      results.push(errorResult);
+      continue;
     }
 
-    // We're going to attempt polling - create session now
-    const sessionStart = new Date();
-    const session = await sessionManager.createSession({
-      sessionLabel,
-      systemId: system.id,
-      cause: sessionCause,
-      started: sessionStart,
-    });
-
     try {
-      // Check if system has an owner
-      if (!system.ownerClerkUserId) {
-        const duration = Date.now() - sessionStart.getTime();
-        await sessionManager.updateSessionResult(session.id, {
-          duration,
-          successful: false,
-          error: "No owner configured",
-          numRows: 0,
-        });
-        const errorResult: PollingResult = {
-          action: "ERROR",
-          systemId: system.id,
-          displayName: system.displayName || undefined,
-          vendorType: system.vendorType,
-          sessionId: session.id,
-          sessionLabel: sessionLabel || undefined,
-          error: "No owner configured",
-          durationMs: Date.now() - pollStartTime,
-          startMs: pollStartTime,
-          endMs: Date.now(),
-          lastPoll: system.pollingStatus?.lastPollTime
-            ? formatTimeAEST(
-                fromDate(
-                  system.pollingStatus.lastPollTime,
-                  "Australia/Brisbane",
-                ),
-              )
-            : null,
-        };
-        results.push(errorResult);
-        continue;
-      }
-
-      // Stage 1: Login (credentials fetch)
+      // Stage 1: Login (credentials fetch) - timed in cron route
       const loginStart = Date.now();
-      stages.push({ name: "login", startMs: loginStart, endMs: loginStart });
+      loginStages.push({
+        name: "login",
+        startMs: loginStart,
+        endMs: loginStart,
+      });
 
       // Start periodic progress updates for login stage
       let loginInterval: NodeJS.Timeout | null = null;
       if (onProgress) {
         loginInterval = setInterval(() => {
-          stages[stages.length - 1].endMs = Date.now();
+          loginStages[0].endMs = Date.now();
           onProgress({
             action: "POLLED",
             systemId: system.id,
             displayName: system.displayName || undefined,
             vendorType: system.vendorType,
-            sessionId: session.id,
-            sessionLabel: sessionLabel || undefined,
             durationMs: Date.now() - pollStartTime,
             startMs: pollStartTime,
             endMs: Date.now(),
-            stages: [...stages],
+            stages: [...loginStages],
             inProgress: true,
           });
         }, 200);
@@ -188,15 +134,10 @@ async function pollAllSystems(params: {
         system.ownerClerkUserId,
         system.id,
       );
-      const loginEnd = Date.now();
 
-      // Stop periodic updates
-      if (loginInterval) {
-        clearInterval(loginInterval);
-      }
-
-      // Update stage with actual end time
-      stages[stages.length - 1].endMs = loginEnd;
+      // Finalize login stage
+      if (loginInterval) clearInterval(loginInterval);
+      loginStages[0].endMs = Date.now();
 
       // Send progress after login stage completes
       if (onProgress) {
@@ -205,15 +146,13 @@ async function pollAllSystems(params: {
           systemId: system.id,
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
-          sessionId: session.id,
-          sessionLabel: sessionLabel || undefined,
           startMs: pollStartTime,
           endMs: Date.now(),
-          stages: [...stages],
+          stages: [...loginStages],
         });
       }
 
-      // Fusher (formerly fronius) systems don't need credentials for polling - they use push
+      // Fusher systems don't need credentials for polling - they use push
       if (
         !credentials &&
         adapter.vendorType !== "fusher" &&
@@ -222,24 +161,16 @@ async function pollAllSystems(params: {
         console.error(
           `[Cron] No credentials found for ${system.vendorType} system ${system.id}`,
         );
-        const duration = Date.now() - sessionStart.getTime();
-        await sessionManager.updateSessionResult(session.id, {
-          duration,
-          successful: false,
-          error: "No credentials found",
-          numRows: 0,
-        });
         const errorResult: PollingResult = {
           action: "ERROR",
           systemId: system.id,
           displayName: system.displayName || undefined,
           vendorType: system.vendorType,
-          sessionId: session.id,
-          sessionLabel: sessionLabel || undefined,
           error: "No credentials found",
           durationMs: Date.now() - pollStartTime,
           startMs: pollStartTime,
           endMs: Date.now(),
+          stages: loginStages,
           lastPoll: system.pollingStatus?.lastPollTime
             ? formatTimeAEST(
                 fromDate(
@@ -253,198 +184,51 @@ async function pollAllSystems(params: {
         continue;
       }
 
-      // Stage 2: Download (API call)
-      const downloadStart = Date.now();
-      stages.push({
-        name: "download",
-        startMs: downloadStart,
-        endMs: downloadStart,
-      });
-
-      // Start periodic progress updates for download stage
-      let downloadInterval: NodeJS.Timeout | null = null;
-      if (onProgress) {
-        downloadInterval = setInterval(() => {
-          stages[stages.length - 1].endMs = Date.now();
-          onProgress({
-            action: "POLLED",
-            systemId: system.id,
-            displayName: system.displayName || undefined,
-            vendorType: system.vendorType,
-            sessionId: session.id,
-            sessionLabel: sessionLabel || undefined,
-            durationMs: Date.now() - pollStartTime,
-            startMs: pollStartTime,
-            endMs: Date.now(),
-            stages: [...stages],
-            inProgress: true,
-          });
-        }, 200);
-      }
-
-      const result = await adapter.poll(
-        system,
-        credentials,
+      // Call adapter.poll() with new PollOptions - adapter handles session, fetch, insert
+      const result = await adapter.poll(system, credentials, {
         forcePollAll,
         pollReason,
-        session,
+        sessionLabel,
+        sessionCause,
         dryRun,
-      );
-      const downloadEnd = Date.now();
-
-      // Stop periodic updates
-      if (downloadInterval) {
-        clearInterval(downloadInterval);
-      }
-
-      // Update stage with actual end time
-      stages[stages.length - 1].endMs = downloadEnd;
-
-      // Send progress after download stage
-      if (onProgress) {
-        onProgress({
-          action: result.action === "POLLED" ? "POLLED" : "ERROR",
-          systemId: system.id,
-          displayName: system.displayName || undefined,
-          vendorType: system.vendorType,
-          sessionId: session.id,
-          sessionLabel: sessionLabel || undefined,
-          startMs: pollStartTime,
-          endMs: Date.now(),
-          stages: [...stages],
-          error: result.action === "ERROR" ? result.error : undefined,
-        });
-      }
-
-      // Calculate duration
-      const duration = Date.now() - sessionStart.getTime();
-
-      // Process the result
-      switch (result.action) {
-        case "POLLED":
-          // Stage 3: Insert (database write)
-          const insertStart = Date.now();
-          stages.push({
-            name: "insert",
-            startMs: insertStart,
-            endMs: insertStart,
-          });
-
-          // Start periodic progress updates for insert stage
-          let insertInterval: NodeJS.Timeout | null = null;
-          if (onProgress) {
-            insertInterval = setInterval(() => {
-              stages[stages.length - 1].endMs = Date.now();
+        onProgress: onProgress
+          ? (partial) => {
+              // Merge login stage with adapter's stages for progress updates
               onProgress({
-                action: "POLLED",
+                ...partial,
                 systemId: system.id,
                 displayName: system.displayName || undefined,
                 vendorType: system.vendorType,
-                sessionId: session.id,
-                sessionLabel: sessionLabel || undefined,
                 durationMs: Date.now() - pollStartTime,
                 startMs: pollStartTime,
                 endMs: Date.now(),
-                stages: [...stages],
-                inProgress: true,
+                stages: [...loginStages, ...(partial.stages || [])],
               });
-            }, 200);
-          }
+            }
+          : undefined,
+      });
 
-          // Note: Data storage is now handled by vendor adapters directly via point_readings
-          // The legacy readings table write has been removed
+      // Merge login stage with adapter's fetch + process stages
+      const allStages = [...loginStages, ...(result.stages || [])];
 
-          // Update polling status with raw response
-          // Note: We update polling status even in dry run mode to track that the poll happened
-          await updatePollingStatusSuccess(system.id, result.rawResponse);
-          const insertEnd = Date.now();
-
-          // Stop periodic updates
-          if (insertInterval) {
-            clearInterval(insertInterval);
-          }
-
-          // Update stage with actual end time
-          stages[stages.length - 1].endMs = insertEnd;
-
-          // Update session with successful result
-          await sessionManager.updateSessionResult(session.id, {
-            duration,
-            successful: true,
-            response: result.rawResponse,
-            numRows: result.recordsProcessed || 0,
-          });
-
-          const successResult: PollingResult = {
-            action: "POLLED",
-            systemId: system.id,
-            displayName: system.displayName || undefined,
-            vendorType: system.vendorType,
-            sessionId: session.id,
-            sessionLabel: sessionLabel || undefined,
-            recordsProcessed: result.recordsProcessed,
-            durationMs: Date.now() - pollStartTime,
-            startMs: pollStartTime,
-            endMs: Date.now(),
-            stages,
-            ...(includeRaw && result.rawResponse
-              ? { rawResponse: result.rawResponse }
-              : {}),
-            lastPoll: formatTimeAEST(fromDate(now, "Australia/Brisbane")),
-          };
-          results.push(successResult);
-
-          // Send final progress after insert stage
-          if (onProgress) {
-            onProgress(successResult);
-          }
-
-          console.log(
-            `[Cron] ${formatSystemId(system)} - Success (${result.recordsProcessed} records)`,
-          );
-          break;
-
-        case "SKIPPED":
-          // This case should never be reached since we check shouldPoll before creating session
-          console.warn(
-            `[Cron] ${formatSystemId(system)} - Unexpected SKIPPED result after shouldPoll check`,
-          );
-          break;
-
-        case "ERROR":
-          // Update error status with rawResponse for debugging
-          await updatePollingStatusError(
-            system.id,
-            result.error || "Unknown error",
-            result.rawResponse,
-          );
-
-          // Update session with error result
-          await sessionManager.updateSessionResult(session.id, {
-            duration,
-            successful: false,
-            errorCode: result.errorCode || null,
-            error: result.error || null,
-            response: result.rawResponse, // Include rawResponse even for errors
-            numRows: 0,
-          });
-
-          const errorResult: PollingResult = {
-            action: "ERROR",
-            systemId: system.id,
-            displayName: system.displayName || undefined,
-            vendorType: system.vendorType,
-            sessionId: session.id,
-            sessionLabel: sessionLabel || undefined,
-            error: result.error,
-            durationMs: Date.now() - pollStartTime,
-            startMs: pollStartTime,
-            endMs: Date.now(),
-            stages,
-            ...(includeRaw && result.rawResponse
-              ? { rawResponse: result.rawResponse }
-              : {}),
-            lastPoll: system.pollingStatus?.lastPollTime
+      // Build final result
+      const now = new Date();
+      const finalResult: PollingResult = {
+        ...result,
+        systemId: system.id,
+        displayName: system.displayName || undefined,
+        vendorType: system.vendorType,
+        durationMs: Date.now() - pollStartTime,
+        startMs: pollStartTime,
+        endMs: Date.now(),
+        stages: allStages,
+        ...(includeRaw && result.rawResponse
+          ? { rawResponse: result.rawResponse }
+          : {}),
+        lastPoll:
+          result.action === "POLLED"
+            ? formatTimeAEST(fromDate(now, "Australia/Brisbane"))
+            : system.pollingStatus?.lastPollTime
               ? formatTimeAEST(
                   fromDate(
                     system.pollingStatus.lastPollTime,
@@ -452,8 +236,28 @@ async function pollAllSystems(params: {
                   ),
                 )
               : null,
-          };
-          results.push(errorResult);
+      };
+
+      results.push(finalResult);
+
+      // Send final progress
+      if (onProgress) {
+        onProgress(finalResult);
+      }
+
+      // Log result
+      switch (result.action) {
+        case "POLLED":
+          console.log(
+            `[Cron] ${formatSystemId(system)} - Success (${result.recordsProcessed} records)`,
+          );
+          break;
+        case "SKIPPED":
+          console.log(
+            `[Cron] ${formatSystemId(system)} - Skipped: ${result.reason}`,
+          );
+          break;
+        case "ERROR":
           console.error(
             `[Cron] ${formatSystemId(system)} - Error: ${result.error}`,
           );
@@ -461,41 +265,16 @@ async function pollAllSystems(params: {
       }
     } catch (error) {
       console.error(`[Cron] Error polling ${system.id}:`, error);
-
-      // Update polling status with error
-      await updatePollingStatusError(
-        system.id,
-        error instanceof Error ? error : "Unknown error",
-      );
-
-      // Update session with unexpected error
-      try {
-        const duration = Date.now() - sessionStart.getTime();
-        await sessionManager.updateSessionResult(session.id, {
-          duration,
-          successful: false,
-          error: error instanceof Error ? error.message : "Unknown error",
-          numRows: 0,
-        });
-      } catch (sessionError) {
-        console.error(
-          `[Cron] Failed to update session for error:`,
-          sessionError,
-        );
-      }
-
       const errorResult: PollingResult = {
         action: "ERROR",
         systemId: system.id,
         displayName: system.displayName || undefined,
         vendorType: system.vendorType,
-        sessionId: session.id,
-        sessionLabel: sessionLabel || undefined,
         error: error instanceof Error ? error.message : "Unknown error",
         durationMs: Date.now() - pollStartTime,
         startMs: pollStartTime,
         endMs: Date.now(),
-        stages,
+        stages: loginStages,
         lastPoll: system.pollingStatus?.lastPollTime
           ? formatTimeAEST(
               fromDate(system.pollingStatus.lastPollTime, "Australia/Brisbane"),
@@ -510,19 +289,17 @@ async function pollAllSystems(params: {
 }
 
 export async function GET(request: NextRequest) {
-  const apiStartTime = Date.now(); // Track API call start time
-  const sessionId = getNextSessionId(); // Get session ID for this API invocation
+  const apiStartTime = Date.now();
+  const sessionId = getNextSessionId();
 
   try {
     const authResult = await requireCronOrAdmin(request);
     if (authResult instanceof NextResponse) return authResult;
 
-    // Determine session cause: CRON (scheduled) vs ADMIN (manual trigger) vs ADMIN-DRYRUN (dry run)
-
-    // In development, allow testing specific systems with force flag
+    // Parse query parameters
     const searchParams = request.nextUrl.searchParams;
     const testSystemId = searchParams.get("systemId");
-    const forcePollAll = searchParams.get("force") === "true"; // Keep "force" param name for backwards compatibility
+    const forcePollAll = searchParams.get("force") === "true";
     const includeRaw = searchParams.get("includeRaw") === "true";
     const dryRun = searchParams.get("dryRun") === "true";
 
@@ -532,7 +309,6 @@ export async function GET(request: NextRequest) {
         ? "ADMIN-DRYRUN"
         : "ADMIN";
 
-    // Determine poll reason for logging
     const pollReason = authResult.isCron
       ? "CRON"
       : forcePollAll
@@ -547,22 +323,17 @@ export async function GET(request: NextRequest) {
 
     console.log("[Cron] Starting system polling...");
 
-    // TEMPORARY: Clear SystemsManager cache to ensure fresh polling status data
-    // TODO: Implement proper request-scoped caching instead of global singleton
+    // Clear SystemsManager cache to ensure fresh polling status data
     SystemsManager.invalidateCache();
-
-    // Get SystemsManager with fresh data for this request
     const systemsManager = SystemsManager.getInstance();
 
     // Get systems to poll
     let activeSystems;
     if (testSystemId) {
-      // With systemId parameter, get just that system
       const system = await systemsManager.getSystem(parseInt(testSystemId));
       activeSystems = system ? [system] : [];
       console.log(`[Cron] Testing single system: ${testSystemId}`);
     } else {
-      // Normal operation - get only active systems
       activeSystems = await systemsManager.getActiveSystems();
     }
 
@@ -591,7 +362,6 @@ export async function GET(request: NextRequest) {
         async start(controller) {
           try {
             // Send initial metadata with list of systems to be polled
-            // Only include systems that actually support polling (not push-only)
             const systemsList = activeSystems
               .filter((sys) => {
                 const adapter = VendorRegistry.getAdapter(sys.vendorType);
@@ -628,7 +398,6 @@ export async function GET(request: NextRequest) {
               dryRun,
               sessionCause,
               onProgress: (result: PollingResult) => {
-                // Send progress event for each stage completion
                 controller.enqueue(
                   encoder.encode(
                     `data: ${JSON.stringify({ type: "progress", data: result })}\n\n`,
@@ -714,21 +483,18 @@ export async function GET(request: NextRequest) {
     const skippedCount = results.filter((r) => r.action === "SKIPPED").length;
     const failureCount = results.filter((r) => r.action === "ERROR").length;
 
-    // Create sanitized results for logging (truncate rawResponse if present)
+    // Create sanitized results for logging
     const resultsForLogging = results.map((r) => {
       const log: any = { ...r };
-      // Only include rawResponse in log if it exists
       if ("rawResponse" in r && r.rawResponse) {
         log.rawResponse =
           JSON.stringify(r.rawResponse).substring(0, 60) + "...";
       } else if ("rawResponse" in r) {
-        // Remove the field if it's explicitly undefined
         delete log.rawResponse;
       }
       return log;
     });
 
-    // Calculate total API call duration
     const durationMs = Date.now() - apiStartTime;
 
     console.log(
@@ -736,7 +502,6 @@ export async function GET(request: NextRequest) {
       resultsForLogging,
     );
 
-    // Format timestamp using AEST
     const nowZoned = fromDate(new Date(), "Australia/Brisbane");
     const timestamp = formatTimeAEST(nowZoned);
 
@@ -757,11 +522,9 @@ export async function GET(request: NextRequest) {
         results,
       },
       600,
-    ); // AEST timezone offset
+    );
   } catch (error) {
     console.error("[Cron] Fatal error:", error);
-
-    // Calculate duration even for errors
     const durationMs = Date.now() - apiStartTime;
 
     return NextResponse.json(

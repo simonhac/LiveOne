@@ -1,8 +1,9 @@
-import type { CommonPollingData } from "@/lib/types/common";
 import type { LatestReadingData } from "@/lib/types/readings";
 import type { ZonedDateTime } from "@internationalized/date";
 import type { SystemWithPolling } from "@/lib/systems-manager";
-import type { SessionInfo } from "@/lib/point/point-manager";
+import type { PointMetadata } from "@/lib/point/point-manager";
+import type { SessionCause } from "@/lib/session-manager";
+import type { CommonPollingData } from "@/lib/types/common";
 
 /**
  * Field definition for credential requirements
@@ -14,6 +15,70 @@ export interface CredentialField {
   placeholder?: string;
   required?: boolean;
   helpText?: string;
+}
+
+// ============================================================================
+// Polling Types - Used by base adapter and vendor implementations
+// ============================================================================
+
+/**
+ * Options passed to poll()
+ */
+export interface PollOptions {
+  forcePollAll: boolean;
+  pollReason: string;
+  sessionLabel: string; // Full label like "sEfn/3.1"
+  sessionCause: SessionCause;
+  dryRun?: boolean;
+  onProgress?: (result: PollingResult) => void; // For live updates during stages
+}
+
+/**
+ * Context passed to fetchData()
+ */
+export interface FetchContext {
+  startedAt: Date;
+  dryRun: boolean;
+  session: {
+    id: number;
+    started: Date;
+  };
+}
+
+/**
+ * What vendors return from fetchData()
+ */
+export interface FetchResult {
+  success: boolean;
+  readings?: PointReadingInput[]; // Raw readings
+  readingsAgg5m?: PointReadingAgg5mInput[]; // Pre-aggregated (Enphase, Amber)
+  recordsProcessed?: number; // For dry-run count
+  rawResponse?: any; // For session storage
+  nextPollTime?: ZonedDateTime;
+  error?: string;
+  errorCode?: string;
+}
+
+/**
+ * Input for raw point readings
+ */
+export interface PointReadingInput {
+  pointMetadata: PointMetadata;
+  rawValue: any;
+  measurementTime: number; // Unix ms
+  dataQuality?: string;
+  error?: string | null;
+}
+
+/**
+ * Input for pre-aggregated 5m readings
+ */
+export interface PointReadingAgg5mInput {
+  pointMetadata: PointMetadata;
+  rawValue: any;
+  intervalEndMs: number; // Unix ms - end of 5-minute interval
+  dataQuality?: string | null;
+  error?: string | null;
 }
 
 /**
@@ -44,10 +109,7 @@ export interface VendorAdapter {
   poll(
     system: SystemWithPolling,
     credentials: any,
-    forcePollAll: boolean,
-    pollReason: string,
-    session: SessionInfo,
-    dryRun?: boolean,
+    options: PollOptions,
   ): Promise<PollingResult>;
 
   // Get the latest reading for this system
@@ -62,9 +124,12 @@ export interface VendorAdapter {
 
 /**
  * Stage timing information for Poll All modal
+ * - login: Credential fetch (handled by cron route)
+ * - fetch: API call to vendor (handled by base adapter)
+ * - process: Insert to Turso + publish to QStash (handled by base adapter)
  */
 export interface PollStage {
-  name: "login" | "download" | "insert";
+  name: "login" | "fetch" | "process";
   startMs: number; // Absolute timestamp in milliseconds (Date.now())
   endMs: number; // Absolute timestamp in milliseconds (Date.now())
 }
@@ -75,13 +140,12 @@ export interface PollStage {
  */
 export interface PollingResult {
   action: "POLLED" | "SKIPPED" | "ERROR";
-  data?: CommonPollingData | CommonPollingData[]; // The transformed data
   rawResponse?: any; // Raw vendor response for storage
   recordsProcessed?: number; // For POLLED
   reason?: string; // For SKIPPED or ERROR
   error?: string; // For ERROR
   errorCode?: string; // HTTP status code or other error code for ERROR
-  nextPoll?: ZonedDateTime; // When to poll next
+  nextPollTimeMs?: number; // When to poll next (Unix timestamp in milliseconds)
 
   // Additional fields for cron API responses (populated by cron route, not adapters)
   systemId?: number;
@@ -93,7 +157,7 @@ export interface PollingResult {
   durationMs?: number; // Elapsed time for the poll operation in milliseconds
   startMs?: number; // Start time of this poll (absolute timestamp in milliseconds)
   endMs?: number; // End time of this poll (absolute timestamp in milliseconds)
-  stages?: PollStage[]; // Detailed stage timing (login, download, insert)
+  stages?: PollStage[]; // Detailed stage timing (login, fetch, process)
   inProgress?: boolean; // True when sending periodic updates during a stage
 }
 

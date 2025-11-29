@@ -1,14 +1,14 @@
 import { BaseVendorAdapter } from "../base-adapter";
 import type {
-  PollingResult,
   TestConnectionResult,
   CredentialField,
+  FetchContext,
+  FetchResult,
 } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { CommonPollingData } from "@/lib/types/common";
 import type { LatestReadingData } from "@/lib/types/readings";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
-import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 
 interface MondoCredentials {
   email: string;
@@ -196,154 +196,136 @@ export class MondoAdapter extends BaseVendorAdapter {
   }
 
   /**
-   * Perform the actual polling
+   * Fetch data from Mondo API
+   * Base adapter handles session creation, data insertion, and session completion
    */
-  protected async doPoll(
+  protected async fetchData(
     system: SystemWithPolling,
     credentials: MondoCredentials,
-    session: SessionInfo,
-    pollReason: string,
-    dryRun: boolean = false,
-  ): Promise<PollingResult> {
+    context: FetchContext,
+  ): Promise<FetchResult> {
     try {
-      console.log(`[Mondo] Starting poll for system ${system.id}`);
-
-      // Use the system ID directly (previously was the same as pointGroup.id)
-      const systemId = system.id;
+      console.log(`[Mondo] Fetching data for system ${system.id}`);
 
       // Authenticate
       const accessToken = await this.authenticate(credentials);
 
-      const sessionStartTime = Date.now();
-      let apiCallCount = 0;
-      let recordsProcessed = 0;
-
+      // Get subcircuit details
+      const subcircuitUrl = `${this.baseUrl}/subcircuit/${system.vendorSiteId}`;
+      let subcircuitResponse;
       try {
-        // Get subcircuit details
-        const subcircuitUrl = `${this.baseUrl}/subcircuit/${system.vendorSiteId}`;
-        let subcircuitResponse;
-        try {
-          subcircuitResponse = await fetch(subcircuitUrl, {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              Accept: "application/json",
-            },
-          });
-        } catch (fetchError) {
-          throw new Error(
-            `Failed to fetch subcircuit data from ${subcircuitUrl}: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`,
-          );
-        }
-        apiCallCount++;
-
-        if (!subcircuitResponse.ok) {
-          const errorText = await subcircuitResponse.text().catch(() => "");
-          throw new Error(
-            `Subcircuit API failed: ${subcircuitResponse.status} ${subcircuitResponse.statusText}${errorText ? ` - ${errorText}` : ""}`,
-          );
-        }
-
-        const subcircuitData = await subcircuitResponse.json();
-        const rows: MondoMonitoringPoint[] = subcircuitData.rows || [];
-
-        const measurementTime = Date.now();
-        const readingsToInsert = [];
-
-        // Process each monitoring point
-        for (const row of rows) {
-          // Determine subsystem based on loadType
-          let subsystem: string | null = null;
-          if (row.loadType === "PvInverter" || row.loadType === "HybridPv") {
-            subsystem = "solar";
-          } else if (row.loadType === "HybridBattery") {
-            subsystem = "battery";
-          } else if (row.loadType === "GateMeter") {
-            subsystem = "grid";
-          } else if (row.loadType === "Hybridinverter") {
-            subsystem = "inverter";
-          } else if (row.loadType === "Other") {
-            subsystem = "load";
-          }
-
-          // Determine logical path stem based on subsystem
-          const logicalPathStem =
-            subsystem === "solar"
-              ? "source.solar"
-              : subsystem === "battery"
-                ? "bidi.battery"
-                : subsystem === "grid"
-                  ? "bidi.grid"
-                  : subsystem === "load"
-                    ? "load"
-                    : null;
-
-          // Add power reading
-          readingsToInsert.push({
-            pointMetadata: {
-              physicalPathTail: `${row.monitoringPointId}/energyNowW`,
-              logicalPathStem,
-              defaultName: row.monitoringPointName,
-              subsystem,
-              metricType: "power",
-              metricUnit: "W",
-              transform: null,
-            },
-            rawValue: row.energyNowW,
-            measurementTime,
-            dataQuality: "good" as const,
-            error: null,
-          });
-
-          // Add energy reading (monotonic total with differentiate transform)
-          readingsToInsert.push({
-            pointMetadata: {
-              physicalPathTail: `${row.monitoringPointId}/totalEnergyWh`,
-              logicalPathStem,
-              defaultName: row.monitoringPointName,
-              subsystem,
-              metricType: "energy",
-              metricUnit: "Wh",
-              transform: "d",
-            },
-            rawValue: row.totalEnergyWh,
-            measurementTime,
-            dataQuality: "good" as const,
-            error: null,
-          });
-        }
-
-        // Batch insert all readings - this will automatically ensure point_info entries exist
-        await PointManager.getInstance().insertPointReadingsRaw(
-          systemId,
-          session,
-          readingsToInsert,
-        );
-        recordsProcessed = readingsToInsert.length;
-
-        console.log(
-          `[Mondo] Poll complete: ${recordsProcessed} records processed`,
-        );
-
-        // Calculate next poll time at the next boundary
-        const nextPollTime = getNextMinuteBoundary(
-          this.pollIntervalMinutes,
-          system.timezoneOffsetMin,
-        );
-
-        return this.polled(
-          null as any, // Mondo doesn't use the common readings table
-          recordsProcessed,
-          nextPollTime,
-          subcircuitData, // Pass raw vendor response for session storage
-        );
-      } catch (error) {
-        throw error;
+        subcircuitResponse = await fetch(subcircuitUrl, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: "application/json",
+          },
+        });
+      } catch (fetchError) {
+        return {
+          success: false,
+          error: `Failed to fetch subcircuit data from ${subcircuitUrl}: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`,
+        };
       }
-    } catch (error) {
-      console.error(`[Mondo] Poll error:`, error);
-      return this.error(
-        error instanceof Error ? error : new Error(String(error)),
+
+      if (!subcircuitResponse.ok) {
+        const errorText = await subcircuitResponse.text().catch(() => "");
+        return {
+          success: false,
+          error: `Subcircuit API failed: ${subcircuitResponse.status} ${subcircuitResponse.statusText}${errorText ? ` - ${errorText}` : ""}`,
+          errorCode: subcircuitResponse.status.toString(),
+        };
+      }
+
+      const subcircuitData = await subcircuitResponse.json();
+      const rows: MondoMonitoringPoint[] = subcircuitData.rows || [];
+
+      const measurementTime = Date.now();
+      const readings = [];
+
+      // Process each monitoring point
+      for (const row of rows) {
+        // Determine subsystem based on loadType
+        let subsystem: string | null = null;
+        if (row.loadType === "PvInverter" || row.loadType === "HybridPv") {
+          subsystem = "solar";
+        } else if (row.loadType === "HybridBattery") {
+          subsystem = "battery";
+        } else if (row.loadType === "GateMeter") {
+          subsystem = "grid";
+        } else if (row.loadType === "Hybridinverter") {
+          subsystem = "inverter";
+        } else if (row.loadType === "Other") {
+          subsystem = "load";
+        }
+
+        // Determine logical path stem based on subsystem
+        const logicalPathStem =
+          subsystem === "solar"
+            ? "source.solar"
+            : subsystem === "battery"
+              ? "bidi.battery"
+              : subsystem === "grid"
+                ? "bidi.grid"
+                : subsystem === "load"
+                  ? "load"
+                  : null;
+
+        // Add power reading
+        readings.push({
+          pointMetadata: {
+            physicalPathTail: `${row.monitoringPointId}/energyNowW`,
+            logicalPathStem,
+            defaultName: row.monitoringPointName,
+            subsystem,
+            metricType: "power",
+            metricUnit: "W",
+            transform: null,
+          },
+          rawValue: row.energyNowW,
+          measurementTime,
+          dataQuality: "good" as const,
+          error: null,
+        });
+
+        // Add energy reading (monotonic total with differentiate transform)
+        readings.push({
+          pointMetadata: {
+            physicalPathTail: `${row.monitoringPointId}/totalEnergyWh`,
+            logicalPathStem,
+            defaultName: row.monitoringPointName,
+            subsystem,
+            metricType: "energy",
+            metricUnit: "Wh",
+            transform: "d",
+          },
+          rawValue: row.totalEnergyWh,
+          measurementTime,
+          dataQuality: "good" as const,
+          error: null,
+        });
+      }
+
+      console.log(`[Mondo] Fetch complete: ${readings.length} readings`);
+
+      // Calculate next poll time at the next boundary
+      const nextPollTime = getNextMinuteBoundary(
+        this.pollIntervalMinutes,
+        system.timezoneOffsetMin,
       );
+
+      return {
+        success: true,
+        readings,
+        recordsProcessed: readings.length,
+        rawResponse: subcircuitData,
+        nextPollTime,
+      };
+    } catch (error) {
+      console.error(`[Mondo] Fetch error:`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 

@@ -1,8 +1,9 @@
 import { BaseVendorAdapter } from "../base-adapter";
 import type {
-  PollingResult,
   TestConnectionResult,
   CredentialField,
+  FetchContext,
+  FetchResult,
 } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { CommonPollingData } from "@/lib/types/common";
@@ -11,7 +12,6 @@ import {
   type SelectronicData,
 } from "./selectronic-client";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
-import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 import { SELECTRONIC_POINTS } from "./point-metadata";
 
 /**
@@ -53,15 +53,14 @@ export class SelectronicAdapter extends BaseVendorAdapter {
   >();
 
   /**
-   * Perform the actual polling
+   * Fetch data from Selectronic API
+   * Base adapter handles session creation, data insertion, and session completion
    */
-  protected async doPoll(
+  protected async fetchData(
     system: SystemWithPolling,
     credentials: any,
-    session: SessionInfo,
-    pollReason: string,
-    dryRun: boolean = false,
-  ): Promise<PollingResult> {
+    context: FetchContext,
+  ): Promise<FetchResult> {
     try {
       const client = new SelectronicFetchClient({
         email: credentials.email,
@@ -81,7 +80,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         const authResult = await client.authenticate();
 
         if (!authResult) {
-          return this.error("Authentication failed");
+          return { success: false, error: "Authentication failed" };
         }
 
         // Cache for 25 minutes (auth lasts 30 minutes)
@@ -93,17 +92,18 @@ export class SelectronicAdapter extends BaseVendorAdapter {
 
       const response = await client.fetchData();
       if (!response.success || !response.data) {
-        return this.error(response.error || "Failed to fetch data");
+        return {
+          success: false,
+          error: response.error || "Failed to fetch data",
+        };
       }
 
       const vendorData = response.data;
       const transformed = this.transformData(vendorData);
-
-      // Insert into point_readings table
       const measurementTime = vendorData.timestamp.getTime();
-      const readingsToInsert = [];
 
       // Build readings array from all configured points
+      const readings = [];
       for (const pointConfig of SELECTRONIC_POINTS) {
         let rawValue = vendorData[pointConfig.field];
 
@@ -126,7 +126,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
           rawValue = Math.round(Number(rawValue) * 1000);
         }
 
-        readingsToInsert.push({
+        readings.push({
           pointMetadata: pointConfig.metadata,
           rawValue,
           measurementTime,
@@ -135,15 +135,8 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         });
       }
 
-      // Batch insert all readings - this will automatically ensure point_info entries exist
-      await PointManager.getInstance().insertPointReadingsRaw(
-        system.id,
-        session,
-        readingsToInsert,
-      );
-
       console.log(
-        `[Selectronic] Poll successful -`,
+        `[Selectronic] Fetch successful -`,
         "Solar:",
         transformed.solarW,
         "W",
@@ -157,22 +150,28 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         transformed.batterySOC != null
           ? transformed.batterySOC.toFixed(1) + "%"
           : "N/A",
-        `- ${readingsToInsert.length} points inserted`,
+        `- ${readings.length} points`,
       );
 
       // Calculate next poll time at the beginning of the next minute
-      const nextPollTime = getNextMinuteBoundary(1, system.timezoneOffsetMin); // 1-minute interval
+      const nextPollTime = getNextMinuteBoundary(1, system.timezoneOffsetMin);
 
-      // Still insert into readings table for backward compatibility
-      return this.polled(
-        transformed,
-        readingsToInsert.length,
+      return {
+        success: true,
+        readings,
+        recordsProcessed: readings.length,
+        rawResponse: response.rawResponse,
         nextPollTime,
-        response.rawResponse, // Pass the raw response object
-      );
+      };
     } catch (error) {
-      console.error(`[Selectronic] Error polling system ${system.id}:`, error);
-      return this.error(error instanceof Error ? error : "Unknown error");
+      console.error(
+        `[Selectronic] Error fetching data for system ${system.id}:`,
+        error,
+      );
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
     }
   }
   async testConnection(

@@ -5,7 +5,7 @@
  * Returns last 50 DLQ messages
  *
  * POST /api/admin/observations/dlq
- * Actions: retry-all
+ * Actions: retry-all, delete-all
  */
 
 import { NextResponse } from "next/server";
@@ -76,39 +76,58 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { action } = body;
 
-    if (action !== "retry-all") {
-      return NextResponse.json(
-        { error: `Unknown action: ${action}` },
-        { status: 400 },
-      );
-    }
+    if (action === "retry-all") {
+      const queue = qstash.queue({ queueName: OBSERVATIONS_QUEUE_NAME });
+      const dlqMessages = await qstash.dlq.listMessages({ count: 1000 });
+      let retried = 0;
 
-    const queue = qstash.queue({ queueName: OBSERVATIONS_QUEUE_NAME });
-    const dlqMessages = await qstash.dlq.listMessages({ count: 1000 });
-    let retried = 0;
-
-    for (const msg of dlqMessages.messages ?? []) {
-      try {
-        await qstash.dlq.delete(msg.dlqId);
-        // Re-enqueue the message
-        await queue.enqueueJSON({
-          url: msg.url,
-          body: JSON.parse(msg.body || "{}"),
-        });
-        retried++;
-      } catch (error) {
-        console.error(
-          `[AdminObservations] Failed to retry DLQ message ${msg.dlqId}:`,
-          error,
-        );
+      for (const msg of dlqMessages.messages ?? []) {
+        try {
+          await qstash.dlq.delete(msg.dlqId);
+          // Re-enqueue the message
+          await queue.enqueueJSON({
+            url: msg.url,
+            body: JSON.parse(msg.body || "{}"),
+          });
+          retried++;
+        } catch (error) {
+          console.error(
+            `[AdminObservations] Failed to retry DLQ message ${msg.dlqId}:`,
+            error,
+          );
+        }
       }
+
+      return NextResponse.json({ status: "retried", count: retried });
     }
 
-    return NextResponse.json({ status: "retried", count: retried });
+    if (action === "delete-all") {
+      const dlqMessages = await qstash.dlq.listMessages({ count: 1000 });
+      let deleted = 0;
+
+      for (const msg of dlqMessages.messages ?? []) {
+        try {
+          await qstash.dlq.delete(msg.dlqId);
+          deleted++;
+        } catch (error) {
+          console.error(
+            `[AdminObservations] Failed to delete DLQ message ${msg.dlqId}:`,
+            error,
+          );
+        }
+      }
+
+      return NextResponse.json({ status: "deleted", count: deleted });
+    }
+
+    return NextResponse.json(
+      { error: `Unknown action: ${action}` },
+      { status: 400 },
+    );
   } catch (error) {
     console.error("[AdminObservations] POST dlq error:", error);
     return NextResponse.json(
-      { error: "Failed to retry DLQ messages" },
+      { error: "Failed to process DLQ action" },
       { status: 500 },
     );
   }

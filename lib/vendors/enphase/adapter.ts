@@ -1,8 +1,8 @@
 import { BaseVendorAdapter, type ScheduleEvaluation } from "../base-adapter";
-import type { PollingResult, TestConnectionResult } from "../types";
+import type { TestConnectionResult, FetchContext, FetchResult } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { LatestReadingData } from "@/lib/types/readings";
-import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
+import { PointManager } from "@/lib/point/point-manager";
 import { db } from "@/lib/db/turso";
 import { pointReadingsAgg5m } from "@/lib/db/turso/schema-monitoring-points";
 import { eq, and, desc } from "drizzle-orm";
@@ -15,8 +15,7 @@ import {
   formatJustTime_fromJSDate,
   getNextMinuteBoundary,
 } from "@/lib/date-utils";
-import { fromDate, type ZonedDateTime } from "@internationalized/date";
-import { getPollingStatus } from "@/lib/polling-utils";
+import type { ZonedDateTime } from "@internationalized/date";
 import { sessionManager } from "@/lib/session-manager";
 import * as SunCalc from "suncalc";
 
@@ -283,23 +282,22 @@ export class EnphaseAdapter extends BaseVendorAdapter {
   }
 
   /**
-   * Perform the actual polling
+   * Fetch data from Enphase API
+   * Uses fetchEnphaseDay which handles data insertion internally
    */
-  protected async doPoll(
+  protected async fetchData(
     system: SystemWithPolling,
     credentials: any,
-    session: SessionInfo,
-    pollReason: string,
-    dryRun: boolean = false,
-  ): Promise<PollingResult> {
-    const startTime = Date.now();
+    context: FetchContext,
+  ): Promise<FetchResult> {
+    const { dryRun, session } = context;
 
     try {
       console.log(
         `[Enphase] Polling system ${system.id} (${system.displayName})`,
       );
 
-      // Determine what to fetch
+      // Determine what to fetch based on time of day
       let result;
       const localTime = getZonedNow(system.timezoneOffsetMin);
       const localHour = localTime.hour;
@@ -326,17 +324,16 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       }
 
       // Determine records upserted
-      let recordsUpserted = 0;
+      let recordsProcessed = 0;
       if ("upsertedCount" in result) {
-        recordsUpserted = result.upsertedCount;
+        recordsProcessed = result.upsertedCount;
       } else if ("fetched" in result && !result.fetched) {
         // Yesterday's data was already complete
-        recordsUpserted = 0;
+        recordsProcessed = 0;
       }
 
-      const duration = Date.now() - startTime;
       console.log(
-        `[Enphase] System ${system.id}: Upserted ${recordsUpserted} records in ${duration}ms`,
+        `[Enphase] System ${system.id}: Upserted ${recordsProcessed} records`,
       );
 
       // Get raw response if available
@@ -350,19 +347,22 @@ export class EnphaseAdapter extends BaseVendorAdapter {
         system.pollingStatus?.lastPollTime || null,
         now,
       );
-      const nextPoll = evaluation.nextPollTime; // Already a ZonedDateTime
 
-      // Note: Enphase returns multiple records (5-minute intervals)
-      // The data is already stored by fetchEnphaseDay, so we don't return it here
-      return this.polled(
-        [], // Data already stored by fetchEnphaseDay
-        recordsUpserted,
-        nextPoll,
+      // Note: Enphase uses its own functions that handle insertion internally
+      // Return empty readings array but set recordsProcessed for count tracking
+      return {
+        success: true,
+        readings: [], // Data already stored by fetchEnphaseDay
+        recordsProcessed,
+        nextPollTime: evaluation.nextPollTime,
         rawResponse,
-      );
+      };
     } catch (error) {
       console.error(`[Enphase] Error polling system ${system.id}:`, error);
-      return this.error(error instanceof Error ? error : "Unknown error");
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 

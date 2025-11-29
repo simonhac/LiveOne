@@ -14,12 +14,12 @@ interface PollTimelineProps {
 // Animation duration in ms for each stage type
 const ANIMATION_DURATION = {
   login: 200,
-  download: 200,
-  insert: 500,
+  fetch: 200,
+  process: 500,
 };
 
 /**
- * Gantt chart-style timeline showing poll stages (login, download, insert)
+ * Gantt chart-style timeline showing poll stages (login, fetch, process)
  * Similar to Chrome DevTools Network panel timeline
  * Uses GPU-accelerated transforms for smooth 60fps animation
  */
@@ -104,8 +104,8 @@ export function PollTimeline({
       const key = `${stage.name}-${stage.startMs}`;
       const targetWidthPercent =
         ((stage.endMs - stage.startMs) / sessionDuration) * 100;
-      // Insert has minimum width
-      const minWidth = stage.name === "insert" ? 0.25 : 0;
+      // Process stage has minimum width for visibility
+      const minWidth = stage.name === "process" ? 0.25 : 0;
       const finalWidthPercent = Math.max(targetWidthPercent, minWidth);
 
       const existing = animationState.current.get(key);
@@ -173,8 +173,8 @@ export function PollTimeline({
   // Stage colors - emerald, purple, orange palette
   const stageColors: Record<PollStage["name"], string> = {
     login: "bg-emerald-600",
-    download: "bg-purple-600",
-    insert: "bg-orange-600",
+    fetch: "bg-purple-600",
+    process: "bg-orange-600",
   };
 
   return (
@@ -198,7 +198,7 @@ export function PollTimeline({
             const stageKey = `${stage.name}-${stage.startMs}`;
             const targetWidth =
               ((stage.endMs - stage.startMs) / sessionDuration) * 100;
-            const minWidth = stage.name === "insert" ? 0.25 : 0;
+            const minWidth = stage.name === "process" ? 0.25 : 0;
             const finalWidth = Math.max(targetWidth, minWidth);
 
             return (
