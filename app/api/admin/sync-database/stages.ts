@@ -953,7 +953,7 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
 
   // Get mapping of production point_info IDs to development point_info IDs
   const prodPointInfo = await ctx.prodDb.execute(
-    `SELECT id, system_id, physical_path FROM point_info`,
+    `SELECT id, system_id, physical_path_tail FROM point_info`,
   );
 
   const devPointInfo = await ctx.db
@@ -979,7 +979,7 @@ async function syncPointReadings5MinAggregations(ctx: SyncContext) {
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.physicalPathTail === prodPoint.physical_path,
+        p.physicalPathTail === prodPoint.physical_path_tail,
     );
 
     if (devPoint) {
@@ -1053,7 +1053,7 @@ async function syncPointDailyAggregations(ctx: SyncContext) {
 
   // Get mapping of production point_info IDs to development point_info IDs
   const prodPointInfo = await ctx.prodDb.execute(
-    `SELECT id, system_id, physical_path FROM point_info`,
+    `SELECT id, system_id, physical_path_tail FROM point_info`,
   );
 
   const devPointInfo = await ctx.db
@@ -1077,7 +1077,7 @@ async function syncPointDailyAggregations(ctx: SyncContext) {
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.physicalPathTail === prodPoint.physical_path,
+        p.physicalPathTail === prodPoint.physical_path_tail,
     );
 
     if (devPoint) {
@@ -1325,7 +1325,7 @@ async function syncPointReadings(ctx: SyncContext) {
 
   // First, get mapping of production point_info IDs to development point_info IDs
   const prodPointInfo = await ctx.prodDb.execute(
-    `SELECT id, system_id, physical_path FROM point_info`,
+    `SELECT id, system_id, physical_path_tail FROM point_info`,
   );
 
   const devPointInfo = await ctx.db
@@ -1351,7 +1351,7 @@ async function syncPointReadings(ctx: SyncContext) {
     const devPoint = devPointInfo.find(
       (p: any) =>
         p.systemId === devSystemId &&
-        p.physicalPathTail === prodPoint.physical_path,
+        p.physicalPathTail === prodPoint.physical_path_tail,
     );
 
     if (devPoint) {
