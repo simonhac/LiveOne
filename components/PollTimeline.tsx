@@ -3,12 +3,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import type { PollStage } from "@/lib/vendors/types";
+import type { PollingSessionState } from "@/lib/polling-state-manager";
 
 interface PollTimelineProps {
-  stages: PollStage[];
-  sessionStartMs: number;
-  sessionEndMs: number;
-  isLive?: boolean; // Whether bars are still growing
+  sessionState: PollingSessionState;
+  systemId: number;
 }
 
 // Animation duration in ms for each stage type
@@ -23,11 +22,12 @@ const ANIMATION_DURATION = {
  * Similar to Chrome DevTools Network panel timeline
  * Uses GPU-accelerated transforms for smooth 60fps animation
  */
-export function PollTimeline({
-  stages,
-  sessionStartMs,
-  sessionEndMs,
-}: PollTimelineProps) {
+export function PollTimeline({ sessionState, systemId }: PollTimelineProps) {
+  // Extract data from session state
+  const systemState = sessionState.systems.get(systemId);
+  const stages = systemState?.stages || [];
+  const sessionStartMs = sessionState.sessionStartTime?.getTime() || Date.now();
+  const sessionEndMs = sessionState.sessionEndTime?.getTime() || Date.now();
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(
     null,
   );

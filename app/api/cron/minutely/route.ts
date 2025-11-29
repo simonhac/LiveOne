@@ -8,7 +8,7 @@ import { requireCronOrAdmin } from "@/lib/api-auth";
 import { fromDate } from "@internationalized/date";
 import { formatTimeAEST } from "@/lib/date-utils";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
-import { jsonResponse } from "@/lib/json";
+import { jsonResponse, transformForStorage } from "@/lib/json";
 
 /**
  * Helper function to poll all systems with optional progress callbacks.
@@ -52,6 +52,7 @@ async function pollAllSystems(params: {
   for (const system of activeSystems) {
     const pollStartTime = Date.now();
     const loginStages: PollStage[] = [];
+    let capturedSessionId: number | undefined;
     subSequence++;
     const sessionLabel = formatSessionId(sessionLabelPrefix, subSequence);
 
@@ -157,6 +158,7 @@ async function pollAllSystems(params: {
           startMs: pollStartTime,
           endMs: Date.now(),
           stages: [...loginStages],
+          inProgress: true,
         });
       }
 
@@ -199,16 +201,18 @@ async function pollAllSystems(params: {
         sessionLabel,
         sessionCause,
         dryRun,
-        onSessionStart: onSessionStart
-          ? (data) => {
-              // Forward session-start with system metadata
-              onSessionStart({
-                systemId: data.systemId,
-                sessionLabel: data.sessionLabel,
-                sessionId: data.sessionId,
-              });
-            }
-          : undefined,
+        onSessionStart: (data) => {
+          // Capture sessionId for final result
+          capturedSessionId = data.sessionId;
+          // Forward session-start with system metadata if callback provided
+          if (onSessionStart) {
+            onSessionStart({
+              systemId: data.systemId,
+              sessionLabel: data.sessionLabel,
+              sessionId: data.sessionId,
+            });
+          }
+        },
         onProgress: onProgress
           ? (partial) => {
               // Merge login stage with adapter's stages for progress updates
@@ -236,6 +240,8 @@ async function pollAllSystems(params: {
         systemId: system.id,
         displayName: system.displayName || undefined,
         vendorType: system.vendorType,
+        sessionLabel,
+        sessionId: capturedSessionId,
         durationMs: Date.now() - pollStartTime,
         startMs: pollStartTime,
         endMs: Date.now(),
@@ -393,20 +399,18 @@ export async function GET(request: NextRequest) {
 
             const metadata = {
               sessionId,
-              timestamp: formatTimeAEST(
-                fromDate(new Date(), "Australia/Brisbane"),
-              ),
-              sessionStartMs: apiStartTime,
+              sessionStartTimeMs: apiStartTime,
               totalSystems: activeSystems.length,
               systems: systemsList,
             };
             controller.enqueue(
               encoder.encode(
-                `data: ${JSON.stringify({ type: "start", data: metadata })}\n\n`,
+                `data: ${JSON.stringify(transformForStorage({ type: "start", data: metadata }))}\n\n`,
               ),
             );
 
             // Poll all systems with progress callbacks
+            // Note: session-start is merged into progress events (first progress includes sessionLabel/sessionId)
             const results = await pollAllSystems({
               activeSystems,
               sessionLabelPrefix: sessionId,
@@ -415,17 +419,10 @@ export async function GET(request: NextRequest) {
               includeRaw,
               dryRun,
               sessionCause,
-              onSessionStart: (data) => {
-                controller.enqueue(
-                  encoder.encode(
-                    `data: ${JSON.stringify({ type: "session-start", data })}\n\n`,
-                  ),
-                );
-              },
               onProgress: (result: PollingResult) => {
                 controller.enqueue(
                   encoder.encode(
-                    `data: ${JSON.stringify({ type: "progress", data: result })}\n\n`,
+                    `data: ${JSON.stringify(transformForStorage({ type: "progress", data: result }))}\n\n`,
                   ),
                 );
               },
@@ -443,26 +440,23 @@ export async function GET(request: NextRequest) {
             ).length;
             const durationMs = Date.now() - apiStartTime;
 
+            // Slim complete event - client already has all results from progress events
             const summary = {
               sessionId,
-              timestamp: formatTimeAEST(
-                fromDate(new Date(), "Australia/Brisbane"),
-              ),
               durationMs,
-              sessionStartMs: apiStartTime,
-              sessionEndMs: Date.now(),
+              sessionStartTimeMs: apiStartTime,
+              sessionEndTimeMs: Date.now(),
               summary: {
                 total: results.length,
                 successful: successCount,
                 failed: failureCount,
                 skipped: skippedCount,
               },
-              results,
             };
 
             controller.enqueue(
               encoder.encode(
-                `data: ${JSON.stringify({ type: "complete", data: summary })}\n\n`,
+                `data: ${JSON.stringify(transformForStorage({ type: "complete", data: summary }))}\n\n`,
               ),
             );
 
@@ -475,7 +469,7 @@ export async function GET(request: NextRequest) {
               error instanceof Error ? error.message : "Unknown error";
             controller.enqueue(
               encoder.encode(
-                `data: ${JSON.stringify({ type: "error", error: errorMsg })}\n\n`,
+                `data: ${JSON.stringify(transformForStorage({ type: "error", error: errorMsg }))}\n\n`,
               ),
             );
           } finally {

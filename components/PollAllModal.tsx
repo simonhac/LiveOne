@@ -1,34 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { X, Check, AlertCircle, Ban } from "lucide-react";
 import { PollTimeline } from "./PollTimeline";
 import { formatDuration } from "@/lib/fe-date-format";
-import type { PollingResult } from "@/lib/vendors/types";
 import { useModalContext } from "@/contexts/ModalContext";
 import SessionInfoModal from "./SessionInfoModal";
-
-interface PollAllResponse {
-  success: boolean;
-  sessionId: string;
-  timestamp: string;
-  durationMs: number;
-  sessionStartMs: number;
-  sessionEndMs: number;
-  summary: {
-    total: number;
-    successful: number;
-    failed: number;
-    skipped: number;
-  };
-  results: PollingResult[];
-}
+import type {
+  PollingSessionState,
+  SystemPollingState,
+} from "@/lib/polling-state-manager";
 
 interface PollAllModalProps {
   isOpen: boolean;
   onClose: () => void;
-  data: PollAllResponse | null;
+  sessionState: PollingSessionState;
   onPollAgain?: () => void;
   isPolling?: boolean;
 }
@@ -41,23 +28,25 @@ interface ErrorTooltipState {
 
 /**
  * TimeCell component that shows live elapsed time during polling
- * and final duration when complete. Prevents flashing by computing
- * elapsed time inline on first render.
+ * and final duration when complete.
  */
-function TimeCell({ result }: { result: PollingResult }) {
-  const [tick, setTick] = useState(0);
+function TimeCell({ system }: { system: SystemPollingState }) {
+  const [, setTick] = useState(0);
 
-  // Check if this system is in progress (has stages but not complete)
+  // Check if this system is in progress
   const isInProgress =
-    result.stages &&
-    result.stages.length > 0 &&
-    result.stages.length < 3 &&
-    result.action === "POLLED";
+    system.status === "polling" ||
+    (system.stages &&
+      system.stages.length > 0 &&
+      system.stages.length < 3 &&
+      system.status !== "completed" &&
+      system.status !== "error" &&
+      system.status !== "skipped");
 
   // Get the start time from first stage
-  const startMs = result.stages?.[0]?.startMs;
+  const startMs = system.stages?.[0]?.startMs;
 
-  // Trigger re-renders while in progress (tick is just a counter to force updates)
+  // Trigger re-renders while in progress
   useEffect(() => {
     if (!isInProgress || !startMs) return;
 
@@ -69,11 +58,11 @@ function TimeCell({ result }: { result: PollingResult }) {
   }, [isInProgress, startMs]);
 
   // Show final duration if available
-  if (result.durationMs !== undefined) {
-    return <>{formatDuration(result.durationMs)}</>;
+  if (system.durationMs !== undefined) {
+    return <>{formatDuration(system.durationMs)}</>;
   }
 
-  // Show live elapsed time if in progress - compute inline to avoid flash
+  // Show live elapsed time if in progress
   if (isInProgress && startMs) {
     return <>{formatDuration(Date.now() - startMs)}</>;
   }
@@ -85,7 +74,7 @@ function TimeCell({ result }: { result: PollingResult }) {
 export function PollAllModal({
   isOpen,
   onClose,
-  data,
+  sessionState,
   onPollAgain,
   isPolling = false,
 }: PollAllModalProps) {
@@ -93,9 +82,14 @@ export function PollAllModal({
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(
     null,
   );
-  const [elapsedTime, setElapsedTime] = useState(0);
   const [errorTooltip, setErrorTooltip] = useState<ErrorTooltipState | null>(
     null,
+  );
+
+  // Convert systems Map to array for rendering
+  const systems = useMemo(
+    () => Array.from(sessionState.systems.values()),
+    [sessionState.systems],
   );
 
   useEffect(() => {
@@ -103,35 +97,16 @@ export function PollAllModal({
     return () => unregisterModal("poll-all");
   }, [registerModal, unregisterModal]);
 
-  // Clear error tooltip when polling starts (prevents orphaned tooltips)
+  // Clear error tooltip when polling starts
   useEffect(() => {
     if (isPolling) {
       setErrorTooltip(null);
     }
   }, [isPolling]);
 
-  // Update elapsed time every 100ms when polling
-  useEffect(() => {
-    if (!isPolling || !data) return;
-
-    const interval = setInterval(() => {
-      setElapsedTime(Date.now() - data.sessionStartMs);
-    }, 100);
-
-    return () => clearInterval(interval);
-  }, [isPolling, data]);
-
-  // Set final elapsed time when polling completes
-  useEffect(() => {
-    if (!isPolling && data) {
-      setElapsedTime(data.durationMs);
-    }
-  }, [isPolling, data]);
-
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        // Close session modal first if it's open, otherwise close poll all modal
         if (selectedSessionId) {
           setSelectedSessionId(null);
         } else {
@@ -151,37 +126,30 @@ export function PollAllModal({
 
   if (!isOpen) return null;
 
-  // Calculate total rows inserted
-  const totalRowsInserted =
-    data?.results.reduce((sum, result) => {
-      return sum + (result.recordsProcessed || 0);
-    }, 0) || 0;
+  // Calculate totals
+  const totalRowsInserted = systems.reduce((sum, sys) => {
+    return sum + (sys.recordsProcessed || 0);
+  }, 0);
 
-  // Calculate total duration (sum of all individual system durations)
-  const totalDuration =
-    data?.results.reduce((sum, result) => {
-      return sum + (result.durationMs || 0);
-    }, 0) || 0;
+  const totalDuration = systems.reduce((sum, sys) => {
+    return sum + (sys.durationMs || 0);
+  }, 0);
 
   // Minimum number of empty rows to show when no data
   const minEmptyRows = 5;
-  const displayResults = data?.results || [];
-  const emptyRowsNeeded = Math.max(0, minEmptyRows - displayResults.length);
+  const emptyRowsNeeded = Math.max(0, minEmptyRows - systems.length);
 
-  const getStatusText = (result: PollingResult) => {
+  const getStatusText = (system: SystemPollingState) => {
     // Check if waiting to start (no stages yet)
     if (
-      (!result.stages || result.stages.length === 0) &&
-      result.action === "POLLED"
+      (!system.stages || system.stages.length === 0) &&
+      system.status === "pending"
     ) {
       return <span className="text-gray-500">-</span>;
     }
 
     // Check if in progress
-    const isInProgress =
-      result.stages && result.stages.length < 3 && result.action === "POLLED";
-
-    if (isInProgress) {
+    if (system.status === "polling") {
       return (
         <span className="inline-flex items-center gap-1 text-blue-400">
           <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
@@ -201,10 +169,10 @@ export function PollAllModal({
       onMouseEnter?: (e: React.MouseEvent) => void;
       onMouseLeave?: () => void;
     }) => {
-      if (result.sessionLabel && result.sessionId) {
+      if (system.sessionLabel && system.sessionId) {
         return (
           <button
-            onClick={() => handleSessionClick(result.sessionId!)}
+            onClick={() => handleSessionClick(system.sessionId!)}
             onMouseEnter={onMouseEnter}
             onMouseLeave={onMouseLeave}
             className={`${className} session-col-narrow-link`}
@@ -224,8 +192,8 @@ export function PollAllModal({
       );
     };
 
-    switch (result.action) {
-      case "POLLED":
+    switch (system.status) {
+      case "completed":
         return (
           <StatusContent className="inline-flex items-center gap-1 text-green-400">
             <>
@@ -234,15 +202,15 @@ export function PollAllModal({
             </>
           </StatusContent>
         );
-      case "ERROR":
+      case "error":
         return (
           <StatusContent
             className="inline-flex items-center gap-1 text-red-400 cursor-help"
             onMouseEnter={(e) => {
-              if (result.error) {
+              if (system.error) {
                 const rect = e.currentTarget.getBoundingClientRect();
                 setErrorTooltip({
-                  error: result.error,
+                  error: system.error,
                   x: rect.left,
                   y: rect.bottom + 4,
                 });
@@ -254,47 +222,10 @@ export function PollAllModal({
             <span className="status-text">error</span>
           </StatusContent>
         );
-      case "SKIPPED":
+      case "skipped":
         return <span className="text-yellow-400">skipped</span>;
-    }
-  };
-
-  const getActionBadge = (result: PollingResult) => {
-    // Check if in progress (has stages but not all 3 complete, and not an error)
-    const isInProgress =
-      result.stages && result.stages.length < 3 && result.action === "POLLED";
-
-    if (isInProgress) {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded bg-blue-500/20 text-blue-400">
-          <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-          In Progress
-        </span>
-      );
-    }
-
-    switch (result.action) {
-      case "POLLED":
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded bg-green-500/20 text-green-400">
-            <Check className="w-3 h-3" />
-            Success
-          </span>
-        );
-      case "ERROR":
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded bg-red-500/20 text-red-400">
-            <AlertCircle className="w-3 h-3" />
-            Failed
-          </span>
-        );
-      case "SKIPPED":
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded bg-yellow-500/20 text-yellow-400">
-            <Ban className="w-3 h-3" />
-            Skipped
-          </span>
-        );
+      default:
+        return <span className="text-gray-500">-</span>;
     }
   };
 
@@ -304,10 +235,7 @@ export function PollAllModal({
         {/* Header */}
         <div className="flex justify-between items-start mb-4 mobile-header">
           <h3 className="text-lg font-semibold text-white">
-            Polling All Systems{" "}
-            {data && (
-              <span className="text-gray-500">Session: {data.sessionId}</span>
-            )}
+            Polling All Systems
           </h3>
           <button
             onClick={onClose}
@@ -387,60 +315,55 @@ export function PollAllModal({
                 <col style={{ minWidth: "175px", width: "25%" }} />
               </colgroup>
               <tbody>
-                {displayResults.map((result, index) => (
+                {systems.map((system, index) => (
                   <tr
-                    key={`${result.systemId}-${index}`}
+                    key={system.systemId}
                     className={`${index % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"} hover:bg-gray-700 transition-colors`}
                   >
                     <td className="px-4 py-2.5 text-sm">
                       <div>
                         <span className="text-gray-300">
-                          {result.displayName || `System ${result.systemId}`}
+                          {system.displayName || `System ${system.systemId}`}
                         </span>
                         <span className="text-gray-500">
                           {"\u00A0"}
                           ID:{"\u00A0"}
-                          {result.systemId}
+                          {system.systemId}
                         </span>
                       </div>
                     </td>
                     <td className="vendor-col px-4 py-2.5 text-sm text-gray-400">
-                      {result.vendorType}
+                      {system.vendorType}
                     </td>
                     <td className="px-4 py-2.5 text-sm">
-                      {getStatusText(result)}
+                      {getStatusText(system)}
                     </td>
                     <td className="session-col px-4 py-2.5 text-sm">
-                      {result.sessionLabel && result.sessionId ? (
+                      {system.sessionLabel && system.sessionId ? (
                         <button
-                          onClick={() => handleSessionClick(result.sessionId!)}
+                          onClick={() => handleSessionClick(system.sessionId!)}
                           className="font-mono text-xs text-gray-400 hover:text-gray-200 hover:underline transition-colors"
                         >
-                          {result.sessionLabel}
+                          {system.sessionLabel}
                         </button>
                       ) : (
                         <span className="text-gray-600">-</span>
                       )}
                     </td>
                     <td className="px-4 py-2.5 text-sm text-gray-300 text-right">
-                      {result.recordsProcessed !== undefined
-                        ? result.recordsProcessed
+                      {system.recordsProcessed !== undefined
+                        ? system.recordsProcessed
                         : "-"}
                     </td>
                     <td className="px-4 py-2.5 text-sm text-gray-300 text-right">
-                      <TimeCell result={result} />
+                      <TimeCell system={system} />
                     </td>
                     <td className="px-4 py-2.5 text-sm h-12">
                       <div className="h-6">
-                        {result.stages && result.stages.length > 0 && data ? (
+                        {system.stages && system.stages.length > 0 ? (
                           <PollTimeline
-                            stages={result.stages}
-                            sessionStartMs={data.sessionStartMs}
-                            sessionEndMs={data.sessionEndMs}
-                            isLive={
-                              result.stages.length < 3 &&
-                              result.action === "POLLED"
-                            }
+                            sessionState={sessionState}
+                            systemId={system.systemId}
                           />
                         ) : (
                           <span className="text-gray-600">-</span>
@@ -453,7 +376,7 @@ export function PollAllModal({
                 {Array.from({ length: emptyRowsNeeded }).map((_, index) => (
                   <tr
                     key={`empty-${index}`}
-                    className={`${(displayResults.length + index) % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"}`}
+                    className={`${(systems.length + index) % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"}`}
                   >
                     <td className="px-4 py-2.5 text-sm h-12">&nbsp;</td>
                     <td className="vendor-col px-4 py-2.5 text-sm h-12">
@@ -518,7 +441,6 @@ export function PollAllModal({
               display: none;
             }
             .session-col-narrow-link {
-              /* Make status clickable on narrow screens - always underlined */
               cursor: pointer;
               text-decoration: underline;
               text-underline-offset: 2px;
@@ -529,7 +451,6 @@ export function PollAllModal({
           }
           @media (min-width: 1201px) {
             .session-col-narrow-link {
-              /* On wide screens, status is not clickable */
               pointer-events: none;
               cursor: default;
               text-decoration: none;
@@ -556,17 +477,14 @@ export function PollAllModal({
               margin-left: 10px;
               margin-right: 10px;
             }
-            /* Reduce cell padding on mobile */
             :global(.mobile-container) th,
             :global(.mobile-container) td {
               padding-left: 10px !important;
               padding-right: 10px !important;
             }
-            /* Hide status text (ok/error) on mobile, keep only icons */
             .status-text {
               display: none;
             }
-            /* Reduce system name column width by 20px */
             :global(.mobile-container) col:first-child {
               min-width: 155px !important;
             }
@@ -588,7 +506,7 @@ export function PollAllModal({
         )}
       </div>
 
-      {/* Session Info Modal (z-60, appears above this modal) */}
+      {/* Session Info Modal */}
       <SessionInfoModal
         isOpen={selectedSessionId !== null}
         onClose={() => setSelectedSessionId(null)}

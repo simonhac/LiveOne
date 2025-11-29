@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
   Clock,
@@ -22,6 +22,7 @@ import ViewDataModal from "@/components/ViewDataModal";
 import { PollAllModal } from "@/components/PollAllModal";
 import { formatDateTime, formatTime } from "@/lib/fe-date-format";
 import type { SystemData as ServerSystemData } from "@/lib/admin/get-systems-data";
+import { usePollingState } from "@/hooks/usePollingState";
 
 interface SystemInfo {
   model?: string;
@@ -183,15 +184,18 @@ export default function AdminDashboardClient({
     timezoneOffsetMin: null,
   });
 
-  const [pollAllModal, setPollAllModal] = useState<{
-    isOpen: boolean;
-    data: any | null;
-    loading: boolean;
-  }>({
-    isOpen: false,
-    data: null,
-    loading: false,
-  });
+  const [pollAllModalOpen, setPollAllModalOpen] = useState(false);
+
+  // Hook for managing polling state via SSE
+  const {
+    state: pollingState,
+    systems: pollingSystems,
+    isConnected: isPollingConnected,
+    isComplete: isPollingComplete,
+    startPolling,
+    disconnect: disconnectPolling,
+    reset: resetPolling,
+  } = usePollingState();
 
   const openTestModal = (system: SystemData) => {
     setTestModal({
@@ -231,191 +235,15 @@ export default function AdminDashboardClient({
     });
   };
 
-  const handlePollAll = async () => {
-    setPollAllModal({ isOpen: true, data: null, loading: true });
-
-    // Create cleanup function for this polling session
-    let eventSource: EventSource | null = null;
-    let timeoutCheckInterval: NodeJS.Timeout | null = null;
-    let lastMessageTime = Date.now();
-
-    const cleanup = () => {
-      if (timeoutCheckInterval) {
-        clearInterval(timeoutCheckInterval);
-        timeoutCheckInterval = null;
-      }
-      if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-      }
-    };
-
-    try {
-      // Use SSE for real-time updates
-      eventSource = new EventSource(
-        "/api/cron/minutely?force=true&realTime=true",
-      );
-
-      // Check for timeout every 5 seconds
-      timeoutCheckInterval = setInterval(() => {
-        const timeSinceLastMessage = Date.now() - lastMessageTime;
-        if (timeSinceLastMessage > 20000) {
-          // 20 seconds without updates
-          console.warn("[PollAll] Timeout: No updates for 20 seconds");
-
-          // Mark all active/waiting systems as timed out
-          setPollAllModal((prev) => {
-            if (!prev.data) return prev;
-
-            return {
-              ...prev,
-              loading: false,
-              data: {
-                ...prev.data,
-                sessionEndMs: Date.now(),
-                results: prev.data.results.map((r: any) => {
-                  // Timeout systems that are waiting or in progress
-                  const isWaitingOrInProgress =
-                    r.action === "POLLED" && (!r.stages || r.stages.length < 3);
-
-                  if (isWaitingOrInProgress) {
-                    return {
-                      ...r,
-                      action: "ERROR" as const,
-                      error: "Connection timeout - no updates for 20 seconds",
-                      errorCode: "TIMEOUT",
-                    };
-                  }
-                  return r;
-                }),
-              },
-            };
-          });
-
-          // Clean up this session
-          cleanup();
-        }
-      }, 5000);
-
-      eventSource.addEventListener("message", (event) => {
-        try {
-          const message = JSON.parse(event.data);
-          lastMessageTime = Date.now(); // Reset timeout on any message
-
-          switch (message.type) {
-            case "start":
-              console.log("[PollAll] Started:", message.data);
-              // Pre-populate table with all systems that will be polled
-              setPollAllModal({
-                isOpen: true,
-                loading: true, // Keep loading until complete/error/timeout
-                data: {
-                  success: true,
-                  sessionId: message.data.sessionId,
-                  timestamp: message.data.timestamp,
-                  durationMs: 0,
-                  sessionStartMs: message.data.sessionStartMs,
-                  sessionEndMs: message.data.sessionStartMs,
-                  summary: {
-                    total: message.data.totalSystems,
-                    successful: 0,
-                    failed: 0,
-                    skipped: 0,
-                  },
-                  results: message.data.systems.map((sys: any) => ({
-                    action: "POLLED" as const,
-                    systemId: sys.systemId,
-                    displayName: sys.displayName,
-                    vendorType: sys.vendorType,
-                    stages: [],
-                  })),
-                },
-              });
-              break;
-
-            case "session-start":
-              // Set sessionLabel and sessionId for this system as soon as session is created
-              setPollAllModal((prev) => {
-                if (!prev.data) return prev;
-                return {
-                  ...prev,
-                  data: {
-                    ...prev.data,
-                    results: prev.data.results.map((r: any) =>
-                      r.systemId === message.data.systemId
-                        ? {
-                            ...r,
-                            sessionLabel: message.data.sessionLabel,
-                            sessionId: message.data.sessionId,
-                          }
-                        : r,
-                    ),
-                  },
-                };
-              });
-              break;
-
-            case "progress":
-              // Update the existing system row with progress data
-              setPollAllModal((prev) => {
-                if (!prev.data) return prev;
-
-                return {
-                  ...prev,
-                  data: {
-                    ...prev.data,
-                    sessionEndMs: Date.now(),
-                    results: prev.data.results.map((r: any) =>
-                      r.systemId === message.data.systemId
-                        ? { ...r, ...message.data }
-                        : r,
-                    ),
-                  },
-                };
-              });
-              break;
-
-            case "complete":
-              // Final data received
-              setPollAllModal({
-                isOpen: true,
-                data: message.data,
-                loading: false,
-              });
-              cleanup();
-              break;
-
-            case "error":
-              console.error("[PollAll] Error:", message.error);
-              alert(`Polling error: ${message.error}`);
-              setPollAllModal({ isOpen: false, data: null, loading: false });
-              cleanup();
-              break;
-          }
-        } catch (parseErr) {
-          console.error("[PollAll] Failed to parse SSE message:", parseErr);
-        }
-      });
-
-      eventSource.addEventListener("error", (err) => {
-        console.error("[PollAll] EventSource error:", err);
-        cleanup();
-        // If we have partial data, keep the modal open with what we got
-        setPollAllModal((prev) => ({
-          ...prev,
-          loading: false,
-        }));
-      });
-    } catch (err) {
-      console.error("Error polling all systems:", err);
-      cleanup();
-      setPollAllModal({ isOpen: false, data: null, loading: false });
-      alert("Failed to poll systems. Please try again.");
-    }
+  const handlePollAll = () => {
+    setPollAllModalOpen(true);
+    startPolling("/api/cron/minutely?force=true&realTime=true");
   };
 
   const closePollAllModal = () => {
-    setPollAllModal({ isOpen: false, data: null, loading: false });
+    setPollAllModalOpen(false);
+    disconnectPolling();
+    resetPolling();
     // Refresh systems list after poll
     fetchSystems();
   };
@@ -428,7 +256,7 @@ export default function AdminDashboardClient({
       settingsModal.isOpen ||
       pollNowModal.isOpen ||
       viewDataModal.isOpen ||
-      pollAllModal.isOpen
+      pollAllModalOpen
     );
   }, [
     testModal.isOpen,
@@ -436,7 +264,7 @@ export default function AdminDashboardClient({
     settingsModal.isOpen,
     pollNowModal.isOpen,
     viewDataModal.isOpen,
-    pollAllModal.isOpen,
+    pollAllModalOpen,
   ]);
 
   const fetchSystems = useCallback(async () => {
@@ -615,7 +443,7 @@ export default function AdminDashboardClient({
                 </div>
                 <button
                   onClick={handlePollAll}
-                  disabled={pollAllModal.loading}
+                  disabled={isPollingConnected}
                   className="px-4 py-2 m-3 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded transition-colors flex items-center gap-2"
                 >
                   <PlayCircle className="w-4 h-4" />
@@ -1014,11 +842,11 @@ export default function AdminDashboardClient({
 
       {/* Poll All Modal */}
       <PollAllModal
-        isOpen={pollAllModal.isOpen}
+        isOpen={pollAllModalOpen}
         onClose={closePollAllModal}
-        data={pollAllModal.data}
+        sessionState={pollingState}
         onPollAgain={handlePollAll}
-        isPolling={pollAllModal.loading}
+        isPolling={isPollingConnected}
       />
     </>
   );
