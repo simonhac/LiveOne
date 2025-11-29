@@ -22,7 +22,6 @@ interface AmberNowProps {
    * - bidi.grid.export/rate (number, c/kWh)
    * - bidi.grid.renewables/proportion (number, %)
    * - bidi.grid.import/descriptor (string, price level)
-   * - bidi.grid.import/spikeStatus (string)
    * - bidi.grid.tariff/code (string)
    * - bidi.grid.interval/start (number, ms)
    * - bidi.grid.interval/end (number, ms)
@@ -40,7 +39,6 @@ export default function AmberNow({ latest }: AmberNowProps) {
   const feedInPrice = getNumericValue(latest, "bidi.grid.export/rate");
   const renewables = getNumericValue(latest, "bidi.grid.renewables/proportion");
   const descriptor = getStringValue(latest, "bidi.grid.import/descriptor");
-  const spikeStatus = getStringValue(latest, "bidi.grid.import/spikeStatus");
 
   // Determine price level from descriptor or fall back to price-based calculation
   const priceLevel = descriptor
@@ -58,7 +56,7 @@ export default function AmberNow({ latest }: AmberNowProps) {
   }
 
   const priceLevelLabel = getPriceLevelLabel(priceLevel);
-  const summaryMessage = getSummaryMessage(priceLevel, renewables, spikeStatus);
+  const summaryMessage = getSummaryMessage(priceLevel, renewables);
   const circleGradient = getPriceLevelGradient(priceLevel);
   const showFeedIn = feedInPrice !== null;
   const showDiamond = priceLevel === "extremelyLow";

@@ -65,9 +65,11 @@ export function descriptorToPriceLevel(descriptor: string | null): PriceLevel {
     case "neutral":
       return "neutral";
     case "high":
-    case "spike":
       return "high";
+    case "spike":
+      return "spike";
     default:
+      console.warn(`Unknown Amber price descriptor: "${descriptor}"`);
       return "neutral";
   }
 }
@@ -87,6 +89,8 @@ export function getPriceLevelLabel(priceLevel: PriceLevel): string {
       return "NEUTRAL PRICES";
     case "high":
       return "HIGH PRICES";
+    case "spike":
+      return "PRICE SPIKE";
     case "missing":
       return "PRICE UNAVAILABLE";
   }
@@ -98,7 +102,7 @@ export function getPriceLevelLabel(priceLevel: PriceLevel): string {
 export function getPriceLevelShortLabel(priceLevel: PriceLevel): string {
   switch (priceLevel) {
     case "extremelyLow":
-      return "EXTREME LOW";
+      return "EXTREMELY LOW";
     case "veryLow":
       return "VERY LOW";
     case "low":
@@ -107,8 +111,10 @@ export function getPriceLevelShortLabel(priceLevel: PriceLevel): string {
       return "NEUTRAL";
     case "high":
       return "HIGH";
+    case "spike":
+      return "SPIKE";
     case "missing":
-      return "";
+      return "(UNKNOWN)";
   }
 }
 
@@ -128,6 +134,9 @@ export function getPriceLevelGradient(priceLevel: PriceLevel): string {
     case "high":
       // Amber's orange gradient
       return "radial-gradient(110.63% 110.63% at 50% 29.42%, rgb(255, 180, 100) 0%, rgb(255, 130, 50) 100%)";
+    case "spike":
+      // Red gradient for price spikes
+      return "radial-gradient(110.63% 110.63% at 50% 29.42%, rgb(248, 113, 113) 0%, rgb(220, 38, 38) 100%)";
     case "missing":
       return "radial-gradient(110.63% 110.63% at 50% 29.42%, rgb(120, 120, 120) 0%, rgb(80, 80, 80) 100%)";
   }
@@ -139,10 +148,8 @@ export function getPriceLevelGradient(priceLevel: PriceLevel): string {
 export function getSummaryMessage(
   priceLevel: PriceLevel,
   renewables: number | null,
-  spikeStatus: string | null,
 ): string {
   const isGreen = renewables !== null && renewables > 50;
-  const isSpike = spikeStatus === "spike" || spikeStatus === "potential";
 
   switch (priceLevel) {
     case "extremelyLow":
@@ -164,10 +171,10 @@ export function getSummaryMessage(
       return "Prices are normal for this time of day.";
 
     case "high":
-      if (isSpike) {
-        return "Warning: Prices are spiking. Consider reducing usage.";
-      }
       return "Prices are elevated. Consider delaying non-essential usage.";
+
+    case "spike":
+      return "Warning: Prices are spiking! Consider reducing usage.";
 
     case "missing":
       return "Price data is currently unavailable.";

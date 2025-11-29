@@ -6,6 +6,7 @@ export type PriceLevel =
   | "low"
   | "neutral"
   | "high"
+  | "spike"
   | "missing";
 
 interface AmberPriceIndicatorProps {
@@ -83,6 +84,7 @@ export function AmberPriceIndicator({
     low: "rgb(250, 204, 21)", // yellow-400 (matches Amber's NEUTRAL)
     neutral: "rgb(250, 204, 21)", // yellow-400
     high: "rgb(249, 115, 22)", // orange-500
+    spike: "rgb(239, 68, 68)", // red-500
   };
 
   const labels: Record<Exclude<PriceLevel, "missing">, string> = {
@@ -91,6 +93,7 @@ export function AmberPriceIndicator({
     low: "Low prices",
     neutral: "Neutral prices",
     high: "High prices",
+    spike: "Price spike",
   };
 
   return (

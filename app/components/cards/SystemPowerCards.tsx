@@ -603,7 +603,7 @@ export default function SystemPowerCards({
             value={batterySoc.toFixed(1)}
             unit="%"
             icon={
-              <span className="inline-flex items-center flex-row-reverse md:flex-row">
+              <span className="inline-flex items-center h-6 flex-row-reverse md:flex-row">
                 {getFlowChevron(
                   batteryPower,
                   batteryPower < 0, // negative = charging = into battery
@@ -643,12 +643,12 @@ export default function SystemPowerCards({
             }
             extra={
               Math.abs(batteryPower) >= 100 ? (
-                <div className="text-xs text-gray-500">
+                <div className="text-xs text-gray-400">
                   {batteryPower < 0 ? "Charging" : "Discharging"}{" "}
                   {formatPowerSmallUnit(Math.abs(batteryPower))}
                 </div>
               ) : (
-                <div className="text-xs text-gray-500">Idle</div>
+                <div className="text-xs text-gray-400">Idle</div>
               )
             }
           />
@@ -665,7 +665,7 @@ export default function SystemPowerCards({
             }
             unit={Math.abs(gridPower) < 100 ? undefined : "kW"}
             icon={
-              <span className="inline-flex items-center flex-row-reverse md:flex-row">
+              <span className="inline-flex items-center h-6 flex-row-reverse md:flex-row">
                 {getFlowChevron(
                   gridPower,
                   gridPower < 0, // negative = exporting = into grid

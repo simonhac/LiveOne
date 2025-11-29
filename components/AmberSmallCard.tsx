@@ -9,7 +9,6 @@ import {
   getStringValue,
   descriptorToPriceLevel,
   getPriceLevel,
-  getPriceLevelLabel,
   getPriceLevelShortLabel,
   getPriceLevelGradient,
 } from "@/lib/amber-utils";
@@ -71,7 +70,6 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
     return null;
   }
 
-  const priceLevelLabel = getPriceLevelLabel(priceLevel);
   const circleGradient = getPriceLevelGradient(priceLevel);
   const showFeedIn = feedInPrice !== null;
 
@@ -161,7 +159,7 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
             className="text-center text-[10px] font-bold mb-0.5"
             style={{ color: "rgb(0, 0, 0)" }}
           >
-            {priceLevelLabel}
+            {getPriceLevelShortLabel(priceLevel)}
           </div>
 
           {/* Large price */}

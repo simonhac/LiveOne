@@ -124,7 +124,7 @@ export default function PowerCard({
       )}
       <div className="relative z-10">
         {/* Mobile: horizontal layout (icon left of title), Desktop: vertical (icon right) */}
-        <div className="flex items-start md:items-center md:justify-between mb-1 md:mb-2 gap-1.5">
+        <div className="flex items-start md:items-center md:justify-between mb-0.5 gap-1.5">
           {/* Icon on left for mobile */}
           <div
             className={`${iconColor} md:hidden flex-shrink-0 [&_svg]:w-4 [&_svg]:h-4`}
@@ -169,7 +169,7 @@ export default function PowerCard({
             {icon}
           </div>
         </div>
-        <p className="text-xl md:text-2xl font-bold text-white">
+        <p className="text-xl md:text-2xl font-bold text-gray-200">
           {value}
           {unit && (
             <>
@@ -178,10 +178,8 @@ export default function PowerCard({
             </>
           )}
         </p>
-        {extraInfo && (
-          <p className="text-xs text-gray-500 mt-0.5 md:mt-1">{extraInfo}</p>
-        )}
-        {extra && <div className="mt-1 md:mt-2">{extra}</div>}
+        {extraInfo && <p className="text-xs text-gray-400">{extraInfo}</p>}
+        {extra && <div className="mt-0.5 md:mt-1">{extra}</div>}
       </div>
     </div>
   );
