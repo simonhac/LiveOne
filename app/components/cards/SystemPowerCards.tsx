@@ -660,7 +660,7 @@ export default function SystemPowerCards({
             title="Grid"
             value={
               Math.abs(gridPower) < 100
-                ? "Neutral"
+                ? "Idle"
                 : formatPowerValue(Math.abs(gridPower))
             }
             unit={Math.abs(gridPower) < 100 ? undefined : "kW"}

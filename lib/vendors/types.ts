@@ -30,6 +30,11 @@ export interface PollOptions {
   sessionLabel: string; // Full label like "sEfn/3.1"
   sessionCause: SessionCause;
   dryRun?: boolean;
+  onSessionStart?: (data: {
+    systemId: number;
+    sessionId: number;
+    sessionLabel: string;
+  }) => void; // Called immediately after session is created
   onProgress?: (result: PollingResult) => void; // For live updates during stages
 }
 

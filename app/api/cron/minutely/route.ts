@@ -15,6 +15,7 @@ import { jsonResponse } from "@/lib/json";
  * This function handles the login stage (credential fetch) and delegates
  * the rest (session creation, fetch, insert, session update) to the adapter.
  *
+ * @param onSessionStart - Callback called when a system's session is assigned (before polling starts)
  * @param onProgress - Callback called after each stage completes (login, fetch, process)
  */
 async function pollAllSystems(params: {
@@ -25,6 +26,11 @@ async function pollAllSystems(params: {
   includeRaw: boolean;
   dryRun: boolean;
   sessionCause: "CRON" | "ADMIN" | "ADMIN-DRYRUN";
+  onSessionStart?: (data: {
+    systemId: number;
+    sessionId: number;
+    sessionLabel: string;
+  }) => void;
   onProgress?: (result: PollingResult) => void;
 }): Promise<PollingResult[]> {
   const {
@@ -35,6 +41,7 @@ async function pollAllSystems(params: {
     includeRaw,
     dryRun,
     sessionCause,
+    onSessionStart,
     onProgress,
   } = params;
 
@@ -121,6 +128,7 @@ async function pollAllSystems(params: {
             systemId: system.id,
             displayName: system.displayName || undefined,
             vendorType: system.vendorType,
+            sessionLabel,
             durationMs: Date.now() - pollStartTime,
             startMs: pollStartTime,
             endMs: Date.now(),
@@ -191,6 +199,16 @@ async function pollAllSystems(params: {
         sessionLabel,
         sessionCause,
         dryRun,
+        onSessionStart: onSessionStart
+          ? (data) => {
+              // Forward session-start with system metadata
+              onSessionStart({
+                systemId: data.systemId,
+                sessionLabel: data.sessionLabel,
+                sessionId: data.sessionId,
+              });
+            }
+          : undefined,
         onProgress: onProgress
           ? (partial) => {
               // Merge login stage with adapter's stages for progress updates
@@ -397,6 +415,13 @@ export async function GET(request: NextRequest) {
               includeRaw,
               dryRun,
               sessionCause,
+              onSessionStart: (data) => {
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({ type: "session-start", data })}\n\n`,
+                  ),
+                );
+              },
               onProgress: (result: PollingResult) => {
                 controller.enqueue(
                   encoder.encode(

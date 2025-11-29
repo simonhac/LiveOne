@@ -181,11 +181,10 @@ export function PollTimeline({
     <>
       <div
         className="relative h-6 w-full"
-        onMouseEnter={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
+        onMouseMove={(e) => {
           setTooltipPos({
-            x: rect.left + rect.width / 2,
-            y: rect.top - 10,
+            x: e.clientX,
+            y: e.clientY - 10,
           });
         }}
         onMouseLeave={() => setTooltipPos(null)}

@@ -333,6 +333,28 @@ export default function AdminDashboardClient({
               });
               break;
 
+            case "session-start":
+              // Set sessionLabel and sessionId for this system as soon as session is created
+              setPollAllModal((prev) => {
+                if (!prev.data) return prev;
+                return {
+                  ...prev,
+                  data: {
+                    ...prev.data,
+                    results: prev.data.results.map((r: any) =>
+                      r.systemId === message.data.systemId
+                        ? {
+                            ...r,
+                            sessionLabel: message.data.sessionLabel,
+                            sessionId: message.data.sessionId,
+                          }
+                        : r,
+                    ),
+                  },
+                };
+              });
+              break;
+
             case "progress":
               // Update the existing system row with progress data
               setPollAllModal((prev) => {
@@ -344,7 +366,9 @@ export default function AdminDashboardClient({
                     ...prev.data,
                     sessionEndMs: Date.now(),
                     results: prev.data.results.map((r: any) =>
-                      r.systemId === message.data.systemId ? message.data : r,
+                      r.systemId === message.data.systemId
+                        ? { ...r, ...message.data }
+                        : r,
                     ),
                   },
                 };

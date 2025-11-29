@@ -167,39 +167,11 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       sessionLabel,
       sessionCause,
       dryRun = false,
+      onSessionStart,
       onProgress,
     } = options;
     const startedAt = new Date();
     const stages: PollStage[] = [];
-
-    // Helper to send progress updates every 200ms during a stage
-    const withProgress = async <T>(
-      stageName: "fetch" | "process",
-      fn: () => Promise<T>,
-    ): Promise<T> => {
-      const stageStart = Date.now();
-      stages.push({ name: stageName, startMs: stageStart, endMs: stageStart });
-
-      let interval: NodeJS.Timeout | null = null;
-      if (onProgress) {
-        interval = setInterval(() => {
-          stages[stages.length - 1].endMs = Date.now();
-          onProgress({
-            action: "POLLED",
-            stages: [...stages],
-            inProgress: true,
-          });
-        }, 200);
-      }
-
-      try {
-        const result = await fn();
-        stages[stages.length - 1].endMs = Date.now();
-        return result;
-      } finally {
-        if (interval) clearInterval(interval);
-      }
-    };
 
     // 1. Check shouldPoll
     const check = await this.shouldPoll(system, forcePollAll, startedAt);
@@ -214,6 +186,47 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       cause: sessionCause,
       started: startedAt,
     });
+
+    // 3. Notify caller that session has started (for SSE updates)
+    if (onSessionStart) {
+      onSessionStart({
+        systemId: system.id,
+        sessionId: session.id,
+        sessionLabel,
+      });
+    }
+
+    // Helper to send progress updates every 200ms during a stage
+    // Defined after session creation so it can include sessionId/sessionLabel
+    const withProgress = async <T>(
+      stageName: "fetch" | "process",
+      fn: () => Promise<T>,
+    ): Promise<T> => {
+      const stageStart = Date.now();
+      stages.push({ name: stageName, startMs: stageStart, endMs: stageStart });
+
+      let interval: NodeJS.Timeout | null = null;
+      if (onProgress) {
+        interval = setInterval(() => {
+          stages[stages.length - 1].endMs = Date.now();
+          onProgress({
+            action: "POLLED",
+            sessionId: session.id,
+            sessionLabel,
+            stages: [...stages],
+            inProgress: true,
+          });
+        }, 200);
+      }
+
+      try {
+        const result = await fn();
+        stages[stages.length - 1].endMs = Date.now();
+        return result;
+      } finally {
+        if (interval) clearInterval(interval);
+      }
+    };
 
     try {
       // 3. Fetch data (vendor implementation) - track "fetch" stage with live updates

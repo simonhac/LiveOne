@@ -13,6 +13,7 @@ import {
   Clock,
   Hash,
   Tag,
+  ChevronRight,
 } from "lucide-react";
 import { formatDateTime, formatDuration } from "@/lib/fe-date-format";
 import JsonViewer from "@/components/JsonViewer";
@@ -52,8 +53,12 @@ export default function PollNowModal({
   dryRun = false,
   onClose,
 }: PollNowModalProps) {
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<PollResult | null>(null);
+  const [result, setResult] = useState<PollResult>({
+    systemId,
+    displayName: displayName || undefined,
+    vendorType: vendorType || undefined,
+    status: "polling",
+  });
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [sessionStartMs, setSessionStartMs] = useState<number>(Date.now());
   const [sessionEndMs, setSessionEndMs] = useState<number>(Date.now());
@@ -83,11 +88,13 @@ export default function PollNowModal({
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
+      // Reset ref so poll can run again if component remounts (StrictMode)
+      hasInitiatedPoll.current = false;
     };
   }, []);
 
   useEffect(() => {
-    // Use ref to ensure poll only happens once, even in StrictMode
+    // Use ref to ensure poll only happens once per mount cycle
     if (!hasInitiatedPoll.current) {
       hasInitiatedPoll.current = true;
       pollNow(false);
@@ -105,9 +112,6 @@ export default function PollNowModal({
 
       if (isRefresh) {
         setIsRefreshing(true);
-      } else {
-        setLoading(true);
-        setResult(null);
       }
 
       const startTime = Date.now();
@@ -160,8 +164,26 @@ export default function PollNowModal({
                 if (data.type === "start") {
                   // Update session start time
                   setSessionStartMs(data.data.sessionStartMs);
+                } else if (data.type === "session-start") {
+                  // Update sessionLabel and sessionId as soon as session is created
+                  if (data.data.systemId === systemId) {
+                    setResult((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            sessionLabel: data.data.sessionLabel,
+                            sessionId: data.data.sessionId,
+                          }
+                        : {
+                            systemId: data.data.systemId,
+                            status: "polling",
+                            sessionLabel: data.data.sessionLabel,
+                            sessionId: data.data.sessionId,
+                          },
+                    );
+                  }
                 } else if (data.type === "progress") {
-                  // Update with progress data
+                  // Update with progress data, preserving session info from session-start
                   const progressData = data.data;
                   setSessionEndMs(Date.now());
                   setResult((prev) => ({
@@ -170,8 +192,9 @@ export default function PollNowModal({
                     displayName: progressData.displayName || prev?.displayName,
                     vendorType: progressData.vendorType || prev?.vendorType,
                     status: progressData.inProgress ? "polling" : "polled",
-                    sessionLabel: progressData.sessionLabel,
-                    sessionId: progressData.sessionId,
+                    sessionLabel:
+                      prev?.sessionLabel || progressData.sessionLabel,
+                    sessionId: prev?.sessionId || progressData.sessionId,
                     stages: progressData.stages,
                     startMs: progressData.startMs,
                     endMs: progressData.endMs,
@@ -189,13 +212,14 @@ export default function PollNowModal({
                   );
 
                   if (systemResult) {
-                    setResult({
+                    setResult((prev) => ({
                       systemId: systemResult.systemId,
                       displayName: systemResult.displayName,
                       vendorType: systemResult.vendorType,
                       status: systemResult.action?.toLowerCase() || "error",
-                      sessionLabel: systemResult.sessionLabel,
-                      sessionId: systemResult.sessionId,
+                      sessionLabel:
+                        systemResult.sessionLabel || prev?.sessionLabel,
+                      sessionId: systemResult.sessionId || prev?.sessionId,
                       stages: systemResult.stages,
                       startMs: systemResult.startMs,
                       endMs: systemResult.endMs,
@@ -205,7 +229,7 @@ export default function PollNowModal({
                       rawResponse: systemResult.rawResponse,
                       skipReason: systemResult.reason,
                       error: systemResult.error,
-                    });
+                    }));
                   }
                 } else if (data.type === "error") {
                   setResult({
@@ -235,7 +259,6 @@ export default function PollNowModal({
           error: err instanceof Error ? err.message : "Failed to poll system",
         });
       } finally {
-        setLoading(false);
         setIsRefreshing(false);
         // Notify dashboard cards that new data may be available
         if (!dryRun) {
@@ -295,11 +318,6 @@ export default function PollNowModal({
             Poll {displayName || "System"}{" "}
             <span className="text-gray-500">ID: {systemId}</span> —{" "}
             {vendorType || result?.vendorType || "System"}
-            {result?.sessionLabel && (
-              <span className="ml-2 text-gray-500 font-mono text-sm">
-                {result.sessionLabel}
-              </span>
-            )}
           </h3>
           <button
             onClick={onClose}
@@ -324,136 +342,122 @@ export default function PollNowModal({
           </div>
         )}
 
-        {/* Timeline Section - Show during polling and after completion */}
-        {result?.stages && result.stages.length > 0 && (
-          <div className="mb-4 bg-gray-900 rounded-lg p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Activity className="w-4 h-4 text-gray-500" />
-              <span className="text-xs text-gray-500">Timeline</span>
-              {isPolling && (
-                <span className="text-xs text-blue-400 ml-auto">
-                  {formatDuration(Date.now() - sessionStartMs)}
-                </span>
-              )}
-            </div>
-            <div className="h-8">
+        {/* Timeline Section - Always visible */}
+        <div className="mb-4 bg-gray-900 rounded-lg p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Activity className="w-4 h-4 text-gray-500" />
+            <span className="text-xs text-gray-500">Timeline</span>
+          </div>
+          <div className="h-8">
+            {result?.stages && result.stages.length > 0 ? (
               <PollTimeline
                 stages={result.stages}
                 sessionStartMs={sessionStartMs}
                 sessionEndMs={isPolling ? Date.now() : sessionEndMs}
                 isLive={isPolling}
               />
-            </div>
-          </div>
-        )}
-
-        {/* Loading State - Initial (before we have stages) */}
-        {loading && !result?.stages?.length && (
-          <div className="text-center py-8">
-            <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="text-gray-400">Polling system...</p>
-          </div>
-        )}
-
-        {/* Data Display */}
-        {result && result.status !== "polling" && (
-          <div className="relative">
-            {/* Refreshing Overlay */}
-            {isRefreshing && (
-              <div className="absolute inset-0 flex items-center justify-center z-10">
-                <div className="bg-gray-800/90 rounded-lg p-4 flex items-center gap-3">
-                  <div className="w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                  <span className="text-gray-300">Polling again...</span>
-                </div>
-              </div>
+            ) : (
+              <div className="h-full bg-gray-800 rounded animate-pulse" />
             )}
+          </div>
+        </div>
 
-            <div
-              className={`space-y-4 transition-opacity ${isRefreshing ? "opacity-40" : ""}`}
-            >
-              {/* Error or Skip Reason Section - Only show if there's an error or skip */}
-              {(result.status === "skipped" || result.status === "error") && (
-                <div className="bg-gray-900 rounded-lg p-4">
-                  <div className="flex items-center gap-3">
-                    {getStatusIcon(result.status)}
-                    <div className="flex-1">
-                      <p
-                        className={`font-semibold ${getStatusColor(result.status)}`}
-                      >
-                        {result.status === "skipped" && "Skipped"}
-                        {result.status === "error" && "Error"}
-                      </p>
-                      {result.status === "skipped" && result.skipReason && (
-                        <p className="text-sm text-gray-400">
-                          {result.skipReason}
-                        </p>
-                      )}
-                      {result.status === "error" && result.error && (
-                        <p className="text-sm text-gray-400">{result.error}</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
+        {/* Poll Metrics - Always visible */}
+        <div className="mb-4 bg-gray-900 rounded-lg p-4">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+            <div className="flex items-start gap-2">
+              <Tag className="w-4 h-4 text-gray-500 mt-0.5" />
+              <div>
+                <p className="text-xs text-gray-500">Session</p>
+                <p className="text-sm font-medium text-white font-mono">
+                  {result.sessionLabel || "—"}
+                </p>
+              </div>
+            </div>
 
-              {/* Poll Metrics */}
-              <div className="bg-gray-900 rounded-lg p-4">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  <div className="flex items-start gap-2">
-                    <FileJson className="w-4 h-4 text-gray-500 mt-0.5" />
-                    <div>
-                      <p className="text-xs text-gray-500">Status</p>
-                      <p
-                        className={`text-sm font-medium capitalize ${getStatusColor(result.status)}`}
-                      >
-                        {result.status}
-                      </p>
-                    </div>
-                  </div>
+            <div className="flex items-start gap-2">
+              <FileJson className="w-4 h-4 text-gray-500 mt-0.5" />
+              <div>
+                <p className="text-xs text-gray-500">Status</p>
+                <p
+                  className={`text-sm font-medium capitalize ${getStatusColor(result.status)}`}
+                >
+                  {result.status}
+                </p>
+              </div>
+            </div>
 
-                  <div className="flex items-start gap-2">
-                    <Hash className="w-4 h-4 text-gray-500 mt-0.5" />
-                    <div>
-                      <p className="text-xs text-gray-500">Records</p>
-                      <p className="text-sm font-medium text-white">
-                        {result.recordsProcessed !== undefined
-                          ? result.recordsProcessed
-                          : "—"}
-                      </p>
-                    </div>
-                  </div>
+            <div className="flex items-start gap-2">
+              <Hash className="w-4 h-4 text-gray-500 mt-0.5" />
+              <div>
+                <p className="text-xs text-gray-500">Records</p>
+                <p className="text-sm font-medium text-white">
+                  {result.recordsProcessed !== undefined
+                    ? result.recordsProcessed
+                    : "—"}
+                </p>
+              </div>
+            </div>
 
-                  <div className="flex items-start gap-2">
-                    <Activity className="w-4 h-4 text-gray-500 mt-0.5" />
-                    <div>
-                      <p className="text-xs text-gray-500">Duration</p>
-                      <p className="text-sm font-medium text-white">
-                        {result.durationMs !== undefined
-                          ? formatDuration(result.durationMs)
-                          : "—"}
-                      </p>
-                    </div>
-                  </div>
+            <div className="flex items-start gap-2">
+              <Activity className="w-4 h-4 text-gray-500 mt-0.5" />
+              <div>
+                <p className="text-xs text-gray-500">Duration</p>
+                <p className="text-sm font-medium text-white">
+                  {result.durationMs !== undefined
+                    ? formatDuration(result.durationMs)
+                    : "—"}
+                </p>
+              </div>
+            </div>
 
-                  <div className="flex items-start gap-2">
-                    <Clock className="w-4 h-4 text-gray-500 mt-0.5" />
-                    <div>
-                      <p className="text-xs text-gray-500">Next Poll</p>
-                      <p className="text-sm font-medium text-white">
-                        {result.nextPollTimeMs
-                          ? formatDateTime(new Date(result.nextPollTimeMs), {
-                              includeSeconds: true,
-                            }).time
-                          : "—"}
-                      </p>
-                    </div>
-                  </div>
+            <div className="flex items-start gap-2">
+              <Clock className="w-4 h-4 text-gray-500 mt-0.5" />
+              <div>
+                <p className="text-xs text-gray-500">Next Poll</p>
+                <p className="text-sm font-medium text-white">
+                  {result.nextPollTimeMs
+                    ? formatDateTime(new Date(result.nextPollTimeMs), {
+                        includeSeconds: true,
+                      }).time
+                    : "—"}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Error/Skip Section - Only show after completion with error/skip */}
+        {result.status !== "polling" &&
+          (result.status === "skipped" || result.status === "error") && (
+            <div className="mb-4 bg-gray-900 rounded-lg p-4">
+              <div className="flex items-center gap-3">
+                {getStatusIcon(result.status)}
+                <div className="flex-1">
+                  <p
+                    className={`font-semibold ${getStatusColor(result.status)}`}
+                  >
+                    {result.status === "skipped" && "Skipped"}
+                    {result.status === "error" && "Error"}
+                  </p>
+                  {result.status === "skipped" && result.skipReason && (
+                    <p className="text-sm text-gray-400">{result.skipReason}</p>
+                  )}
+                  {result.status === "error" && result.error && (
+                    <p className="text-sm text-gray-400">{result.error}</p>
+                  )}
                 </div>
               </div>
-
-              {/* Raw Response Section */}
-              {result.rawResponse && <JsonViewer data={result.rawResponse} />}
             </div>
+          )}
+
+        {/* Raw Comms Section - Always visible, disabled when no data */}
+        {result.rawResponse ? (
+          <JsonViewer data={result.rawResponse} />
+        ) : (
+          <div className="flex items-center gap-2 text-sm text-gray-600 cursor-not-allowed">
+            <ChevronRight className="w-4 h-4" />
+            Raw Comms
           </div>
         )}
 

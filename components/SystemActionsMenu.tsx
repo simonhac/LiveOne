@@ -92,23 +92,30 @@ export default function SystemActionsMenu({
   // Shift key detection
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.shiftKey) {
+      if (e.key === "Shift") {
         setShiftKeyDown(true);
       }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (!e.shiftKey) {
+      if (e.key === "Shift") {
         setShiftKeyDown(false);
       }
     };
 
+    // Reset shift state when window loses focus (prevents stuck state)
+    const handleBlur = () => {
+      setShiftKeyDown(false);
+    };
+
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", handleBlur);
 
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", handleBlur);
     };
   }, []);
 
