@@ -10,7 +10,7 @@ import {
   OBSERVATIONS_QUEUE_NAME,
   getObservationsReceiverUrl,
 } from "@/lib/qstash";
-import { Observation, ObservationBatch } from "./types";
+import { Observation, QueueMessage } from "./types";
 import { SystemWithPolling } from "@/lib/systems-manager";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 import { pointInfo as pointInfoTable } from "@/lib/db/schema-monitoring-points";
@@ -20,9 +20,10 @@ import { PointReference } from "@/lib/identifiers";
 type PointInfo = typeof pointInfoTable.$inferSelect;
 
 /**
- * Input for a single observation (from insertPointReadingsBatch)
+ * Input for a single observation (from insertPointReadingsRaw)
  */
 export interface RawObservationInput {
+  sessionId: number;
   point: PointInfo;
   value: number | string | null;
   measurementTimeMs: number;
@@ -54,6 +55,7 @@ function buildObservations(
   inputs: RawObservationInput[],
 ): Observation[] {
   return inputs.map((input) => ({
+    sessionId: input.sessionId,
     topic: buildTopic(system, input.point),
     measurementTime: formatTimestamp(
       input.measurementTimeMs,
@@ -65,7 +67,7 @@ function buildObservations(
     ),
     value: input.value,
     interval: input.interval,
-    metadata: {
+    debug: {
       type: input.point.metricType,
       unit: input.point.metricUnit,
       pointName: input.point.displayName,
@@ -112,7 +114,8 @@ export async function publishObservationBatch(
   try {
     // Build the observation batch
     const observations = buildObservations(system, inputs);
-    const batch: ObservationBatch = {
+    const message: QueueMessage = {
+      env: process.env.NODE_ENV === "production" ? "prod" : "dev",
       systemId: system.id,
       systemName: system.displayName,
       batchTime: formatTimestamp(Date.now(), system.timezoneOffsetMin),
@@ -123,7 +126,7 @@ export async function publishObservationBatch(
     const queue = qstash.queue({ queueName: OBSERVATIONS_QUEUE_NAME });
     await queue.enqueueJSON({
       url: receiverUrl,
-      body: batch,
+      body: message,
     });
 
     console.log(

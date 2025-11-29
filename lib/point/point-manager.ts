@@ -5,7 +5,7 @@
  * This is the single source of truth for all point operations:
  * - Reading point definitions (getActivePointsForSystem, getSeriesForSystem)
  * - Writing point definitions (createPoint, updatePoint, ensurePointInfo)
- * - Inserting point readings (insertPointReading, insertPointReadingsBatch, insertPointReadingsDirectTo5m)
+ * - Inserting point readings (insertPointReading, insertPointReadingsRaw, insertPointReadingsAgg5m)
  */
 
 import { db } from "@/lib/db";
@@ -580,7 +580,7 @@ export class PointManager {
    * @param session - Session info containing id and started timestamp
    * @param readings - Array of readings to insert (receivedTimeMs comes from session.started)
    */
-  async insertPointReadingsBatch(
+  async insertPointReadingsRaw(
     systemId: number,
     session: SessionInfo,
     readings: Array<{
@@ -635,6 +635,7 @@ export class PointManager {
       await publishObservationBatch(
         system,
         valuesToInsert.map((v) => ({
+          sessionId: session.id,
           point: Object.values(pointMap).find((p) => p.index === v.pointId)!,
           value: v.value ?? v.valueStr ?? null,
           measurementTimeMs: v.measurementTimeMs,
@@ -730,7 +731,7 @@ export class PointManager {
    * @param session - Session info (null for historical backfills without a session)
    * @param readings - Array of readings to insert
    */
-  async insertPointReadingsDirectTo5m(
+  async insertPointReadingsAgg5m(
     systemId: number,
     session: SessionInfo | null,
     readings: Array<{
@@ -797,12 +798,14 @@ export class PointManager {
     }
 
     // Publish observations to queue (before database insert)
+    // Only publish if we have a session (skip historical backfills)
     const systemsManager = await SystemsManager.getInstance();
     const system = await systemsManager.getSystem(systemId);
-    if (system && aggregatesToInsert.length > 0) {
+    if (system && session && aggregatesToInsert.length > 0) {
       await publishObservationBatch(
         system,
         aggregatesToInsert.map((a) => ({
+          sessionId: session.id,
           point: Object.values(pointMap).find((p) => p.index === a.pointId)!,
           // Use the most meaningful value: delta for energy, otherwise avg/last
           value: a.delta ?? a.avg ?? a.last ?? a.valueStr ?? null,
@@ -846,7 +849,7 @@ export class PointManager {
 
     // Note: We intentionally do NOT update the KV cache here.
     // Cache updates should only happen from real-time data in point_readings table
-    // via insertPointReadingsBatch(). Pre-aggregated data is typically historical/backfill
+    // via insertPointReadingsRaw(). Pre-aggregated data is typically historical/backfill
     // and should not overwrite the actual latest values in the cache.
   }
 

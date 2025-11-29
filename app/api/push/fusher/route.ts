@@ -292,7 +292,7 @@ export async function POST(request: NextRequest) {
 
       // Batch insert all readings - this will automatically ensure point_info entries exist
       if (readingsToInsert.length > 0) {
-        await PointManager.getInstance().insertPointReadingsBatch(
+        await PointManager.getInstance().insertPointReadingsRaw(
           system.id,
           session,
           readingsToInsert,

@@ -238,7 +238,7 @@ export async function fetchEnphaseDay(
 
   // Insert directly to point_readings_agg_5m table (bypassing point_readings since Enphase already provides 5m data)
   if (!dryRun && pointReadings.length > 0) {
-    await PointManager.getInstance().insertPointReadingsDirectTo5m(
+    await PointManager.getInstance().insertPointReadingsAgg5m(
       systemId,
       session,
       pointReadings,

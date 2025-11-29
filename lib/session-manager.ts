@@ -3,6 +3,7 @@ import { sessions, systems, type NewSession } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { transformForStorage } from "@/lib/json";
 import type { SessionInfo } from "@/lib/point/point-manager";
+import { publishSession } from "@/lib/observations/session-publisher";
 
 export type SessionCause =
   | "CRON"
@@ -160,6 +161,32 @@ export class SessionManager {
           numRows: data.numRows,
         })
         .where(eq(sessions.id, sessionId));
+
+      // Publish to QStash queue for replication
+      // Fetch the full session to get all fields including started, sessionLabel, createdAt
+      const session = await db
+        .select()
+        .from(sessions)
+        .where(eq(sessions.id, sessionId))
+        .limit(1);
+
+      if (session.length > 0) {
+        const s = session[0];
+        await publishSession({
+          id: s.id,
+          sessionLabel: s.sessionLabel,
+          systemId: s.systemId,
+          cause: s.cause,
+          started: s.started,
+          duration: s.duration,
+          successful: s.successful,
+          errorCode: s.errorCode,
+          error: s.error,
+          response: s.response,
+          numRows: s.numRows,
+          createdAt: s.createdAt,
+        });
+      }
     } catch (error) {
       // Log the error but don't throw - we don't want session recording to break the main flow
       console.error("[SessionManager] Failed to update session:", error);

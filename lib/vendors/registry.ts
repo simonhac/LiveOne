@@ -5,6 +5,7 @@ import { FusherAdapter } from "./fusher/adapter";
 import { MondoAdapter } from "./mondo/adapter";
 import { AmberAdapter } from "./amber/adapter";
 import { CompositeAdapter } from "./composite/adapter";
+import { TeslaAdapter } from "./tesla/adapter";
 import { SystemsManager } from "@/lib/systems-manager";
 
 /**
@@ -28,6 +29,7 @@ export class VendorRegistry {
     this.adapters.set("fusher", new FusherAdapter());
     this.adapters.set("mondo", new MondoAdapter());
     this.adapters.set("amber", new AmberAdapter());
+    this.adapters.set("tesla", new TeslaAdapter());
     this.adapters.set("composite", new CompositeAdapter());
 
     this.initialized = true;

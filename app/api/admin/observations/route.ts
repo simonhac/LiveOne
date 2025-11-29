@@ -101,13 +101,15 @@ export async function GET(request: NextRequest) {
       // Find messageIds that have been terminated (delivered, cancelled, or failed to DLQ)
       const terminatedMessageIds = new Set<string>();
       for (const e of allEvents) {
+        // Cast to any - QStash SDK types don't include queueName but it exists at runtime
+        const event = e as any;
         if (
-          e.queueName === OBSERVATIONS_QUEUE_NAME &&
-          (e.state === "DELIVERED" ||
-            e.state === "CANCELED" ||
-            e.state === "ERROR")
+          event.queueName === OBSERVATIONS_QUEUE_NAME &&
+          (event.state === "DELIVERED" ||
+            event.state === "CANCELED" ||
+            event.state === "ERROR")
         ) {
-          terminatedMessageIds.add(e.messageId);
+          terminatedMessageIds.add(event.messageId);
         }
       }
 
@@ -121,7 +123,9 @@ export async function GET(request: NextRequest) {
         )
         .slice(0, limit);
 
-      for (const event of queueEvents) {
+      for (const evt of queueEvents) {
+        // Cast to any - QStash SDK types don't include retried but it exists at runtime
+        const event = evt as any;
         let body: ObservationBatch | null = null;
         try {
           // Body is base64 encoded

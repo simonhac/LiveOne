@@ -313,7 +313,7 @@ export class MondoAdapter extends BaseVendorAdapter {
         }
 
         // Batch insert all readings - this will automatically ensure point_info entries exist
-        await PointManager.getInstance().insertPointReadingsBatch(
+        await PointManager.getInstance().insertPointReadingsRaw(
           systemId,
           session,
           readingsToInsert,

@@ -834,7 +834,7 @@ async function storeRecordsLocally(
 ): Promise<StageResult> {
   const records = batch.getRecords();
 
-  // Flatten nested Map structure into array for insertPointReadingsDirectTo5m
+  // Flatten nested Map structure into array for insertPointReadingsAgg5m
   const readingsToInsert: Array<{
     pointMetadata: PointMetadata;
     rawValue: any;
@@ -858,7 +858,7 @@ async function storeRecordsLocally(
   }
 
   // Batch insert to point_readings_agg_5m
-  await PointManager.getInstance().insertPointReadingsDirectTo5m(
+  await PointManager.getInstance().insertPointReadingsAgg5m(
     systemId,
     session,
     readingsToInsert,
