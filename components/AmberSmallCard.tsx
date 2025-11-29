@@ -40,19 +40,12 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
     width: number;
     height: number;
   }>({ width: 0, height: 0 });
-  const [devToolsOpen, setDevToolsOpen] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
 
-  // Detect if DevTools is open (works for docked DevTools)
+  // Show debug indicator only when ?debug is in URL
   useEffect(() => {
-    const checkDevTools = () => {
-      const threshold = 160;
-      const widthDiff = window.outerWidth - window.innerWidth > threshold;
-      const heightDiff = window.outerHeight - window.innerHeight > threshold;
-      setDevToolsOpen(widthDiff || heightDiff);
-    };
-    checkDevTools();
-    window.addEventListener("resize", checkDevTools);
-    return () => window.removeEventListener("resize", checkDevTools);
+    const params = new URLSearchParams(window.location.search);
+    setShowDebug(params.has("debug"));
   }, []);
 
   // Track container size for debugging
@@ -112,8 +105,8 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
       ref={containerRef}
       className={`@container relative bg-gray-800/50 border border-gray-700 rounded-lg p-2 @[180px]:p-3 min-h-[110px] @[180px]:min-h-[180px] min-w-[66px] self-stretch ${ttInterphases.className}`}
     >
-      {/* DEBUG: Container size indicator - only shown when DevTools is open */}
-      {devToolsOpen && (
+      {/* DEBUG: Container size indicator - only shown when ?debug is in URL */}
+      {showDebug && (
         <div className="absolute top-0 right-0 bg-red-500 text-white text-[10px] px-1 rounded-bl z-50">
           {containerSize.width}w {containerSize.height}h
         </div>
