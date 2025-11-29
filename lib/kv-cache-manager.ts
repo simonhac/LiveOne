@@ -57,23 +57,27 @@ function getSubscriptionsKey(systemId: number): string {
  * @param systemId - Source system ID
  * @param pointId - Source point ID (database id/index)
  * @param pointPath - Point path string (e.g., "source.solar.local/power")
- * @param value - Latest value
+ * @param value - Latest value (numeric or string for text/json types)
  * @param measurementTimeMs - Unix timestamp in milliseconds when value was measured
  * @param receivedTimeMs - Unix timestamp in milliseconds when value was received from vendor
- * @param metricUnit - Unit of measurement (e.g., "W", "kWh", "%")
+ * @param metricUnit - Unit of measurement (e.g., "W", "kWh", "%", "text", "json")
  * @param displayName - Display name from point_info
  * @param sourceSystemName - Display name of source system (stored at write time for composite tracking)
+ * @param sessionId - Session ID that wrote this value
+ * @param sessionLabel - Session label/name for display
  */
 export async function updateLatestPointValue(
   systemId: number,
   pointId: number,
   pointPath: string,
-  value: number | string,
+  value: number | string | null,
   measurementTimeMs: number,
   receivedTimeMs: number,
   metricUnit: string,
   displayName: string,
   sourceSystemName?: string,
+  sessionId?: number,
+  sessionLabel?: string,
 ): Promise<void> {
   const pointValue: LatestValue = {
     value,
@@ -86,6 +90,8 @@ export async function updateLatestPointValue(
     sourcePointId: pointId,
     reference: `${systemId}.${pointId}`,
     ...(sourceSystemName && { sourceSystemName }),
+    ...(sessionId && { sessionId }),
+    ...(sessionLabel && { sessionLabel }),
   };
 
   // Update source system's cache

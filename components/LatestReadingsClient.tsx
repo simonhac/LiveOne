@@ -1,18 +1,22 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { AlertTriangle } from "lucide-react";
 import { formatRelativeTime, formatDateTime } from "@/lib/fe-date-format";
 import { getUnitDisplay } from "@/lib/point/unit-display";
+import { useDashboardRefresh } from "@/hooks/useDashboardRefresh";
+import SessionInfoModal from "@/components/SessionInfoModal";
 
 interface LatestValue {
-  value: number | string | null;
+  value?: number | string | boolean;
   logicalPath: string | null;
-  measurementTime: string | null; // ISO8601 datetime (from jsonResponse transform)
-  receivedTime: string | null; // ISO8601 datetime (from jsonResponse transform)
+  measurementTime?: string; // ISO8601 datetime (from jsonResponse transform)
+  receivedTime?: string; // ISO8601 datetime (from jsonResponse transform)
   metricUnit: string;
   pointName: string;
-  reference: string | null; // Format: "systemId.pointId"
+  reference?: string; // Format: "systemId.pointId"
+  sessionId?: number; // Session that wrote this value
+  sessionLabel?: string; // Session label/name for display
 }
 
 interface AvailableSystem {
@@ -37,11 +41,34 @@ interface LatestReadingsClientProps {
 
 /**
  * Format a value with its unit for display
+ * Returns either a string or a React element for complex displays (like location)
  */
 function formatValueWithUnit(
-  value: number | string,
+  value: number | string | boolean,
   metricUnit: string,
-): string {
+): string | React.ReactElement {
+  // Handle json metricUnit (e.g., location) - value is a JSON string
+  if (metricUnit === "json" && typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed.lat !== undefined && parsed.lon !== undefined) {
+        return (
+          <span className="text-xs text-gray-400">
+            {parsed.lat.toFixed(5)}, {parsed.lon.toFixed(5)}
+          </span>
+        );
+      }
+      return value;
+    } catch {
+      return value;
+    }
+  }
+
+  // Handle boolean values
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+
   // Handle string values (like tariff codes)
   if (typeof value === "string") {
     return value;
@@ -91,35 +118,54 @@ export default function LatestReadingsClient({
   const [error, setError] = useState<string | null>(null);
   const [lastFetched, setLastFetched] = useState<Date | null>(null);
   const [showSpinner, setShowSpinner] = useState(false);
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(
+    null,
+  );
+  const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
 
-  // Fetch latest values
-  useEffect(() => {
-    async function fetchLatest() {
-      try {
-        setLoading(true);
-        setError(null);
+  // Fetch latest values - extracted to useCallback so it can be called from refresh hook
+  const fetchLatest = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
 
-        const response = await fetch(`/api/system/${systemId}/latest`);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        setValues(data.values || []);
-        setLastFetched(new Date());
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Unknown error");
-      } finally {
-        setLoading(false);
+      const response = await fetch(`/api/system/${systemId}/latest`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch: ${response.statusText}`);
       }
-    }
 
+      const data = await response.json();
+      setValues(data.values || []);
+      setLastFetched(new Date());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  }, [systemId]);
+
+  // Initial fetch and periodic refresh
+  useEffect(() => {
     fetchLatest();
 
     // Refresh every 30 seconds
     const interval = setInterval(fetchLatest, 30000);
     return () => clearInterval(interval);
-  }, [systemId]);
+  }, [fetchLatest]);
+
+  // Listen for dashboard refresh events (e.g., after "Poll Now" completes)
+  useDashboardRefresh(fetchLatest);
+
+  // Handle escape key to close modal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isSessionModalOpen) {
+        setIsSessionModalOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isSessionModalOpen]);
 
   // Delay showing spinner by 500ms to avoid flash on quick loads
   useEffect(() => {
@@ -197,6 +243,9 @@ export default function LatestReadingsClient({
                 Ref
               </th>
               <th className="px-3 py-2 text-left font-medium text-gray-300">
+                Session
+              </th>
+              <th className="px-3 py-2 text-left font-medium text-gray-300">
                 Logical Path
               </th>
               <th className="px-3 py-2 text-right font-medium text-gray-300">
@@ -252,6 +301,21 @@ export default function LatestReadingsClient({
                       >
                         <AlertTriangle className="w-4 h-4 inline" />
                       </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-sm">
+                    {item.sessionId != null ? (
+                      <button
+                        onClick={() => {
+                          setSelectedSessionId(item.sessionId);
+                          setIsSessionModalOpen(true);
+                        }}
+                        className="text-gray-400 hover:text-blue-400 hover:underline transition-colors"
+                      >
+                        {item.sessionLabel || item.sessionId}
+                      </button>
+                    ) : (
+                      <span className="text-gray-600">—</span>
                     )}
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-gray-400">
@@ -312,6 +376,12 @@ export default function LatestReadingsClient({
           <span> — {omittedCount} without logical path omitted</span>
         )}
       </div>
+
+      <SessionInfoModal
+        isOpen={isSessionModalOpen}
+        onClose={() => setIsSessionModalOpen(false)}
+        sessionId={selectedSessionId}
+      />
     </div>
   );
 }

@@ -59,6 +59,7 @@ export interface PointMetadata {
 export interface SessionInfo {
   id: number;
   started: Date;
+  label?: string | null;
 }
 
 /**
@@ -610,7 +611,7 @@ export class PointManager {
       );
 
       // Convert raw value based on metadata
-      const { value, valueStr } = this.convertValueByMetadata(
+      const { value } = this.convertValueByMetadata(
         reading.rawValue,
         reading.pointMetadata,
       );
@@ -619,10 +620,10 @@ export class PointManager {
         systemId,
         pointId: point.index,
         sessionId: session.id,
+        sessionLabel: session.label ?? null,
         measurementTimeMs: reading.measurementTime,
         receivedTimeMs,
         value,
-        valueStr,
         error: reading.error || null,
         dataQuality: reading.dataQuality || ("good" as const),
       });
@@ -636,7 +637,7 @@ export class PointManager {
         system,
         valuesToInsert.map((v) => ({
           point: Object.values(pointMap).find((p) => p.index === v.pointId)!,
-          value: v.value ?? v.valueStr ?? null,
+          value: v.value,
           measurementTimeMs: v.measurementTimeMs,
           receivedTimeMs: v.receivedTimeMs,
           interval: "raw" as const,
@@ -757,18 +758,22 @@ export class PointManager {
       );
 
       // Convert raw value based on metadata
-      const { value, valueStr } = this.convertValueByMetadata(
+      const { value } = this.convertValueByMetadata(
         reading.rawValue,
         reading.pointMetadata,
       );
+
+      // Separate numeric and string values for database storage
+      const numericValue = typeof value === "number" ? value : null;
+      const stringValue = typeof value === "string" ? value : null;
 
       // For pre-aggregated data with a single value per interval:
       // - Energy metrics with transform='d': value goes into last (cumulative counter), avg/min/max/delta = null
       // - Energy metrics with transform!='d': value goes into delta (total energy), avg/min/max/last = null
       // - Text metrics: valueStr is stored, all numeric fields are null
       // - Other metrics: avg = min = max = last = value, delta = null
-      // If both value and valueStr are null, this is an error reading
-      const isError = value === null && valueStr === null;
+      // If value is null, this is an error reading
+      const isError = value === null;
       const isEnergyCounter =
         point.metricType === "energy" && point.transform === "d";
       const isEnergyDelta =
@@ -779,17 +784,17 @@ export class PointManager {
         pointId: point.index,
         sessionId: session?.id ?? null,
         intervalEnd: reading.intervalEndMs,
-        avg: isError || isEnergyCounter || isEnergyDelta ? null : value,
-        min: isError || isEnergyCounter || isEnergyDelta ? null : value,
-        max: isError || isEnergyCounter || isEnergyDelta ? null : value,
+        avg: isError || isEnergyCounter || isEnergyDelta ? null : numericValue,
+        min: isError || isEnergyCounter || isEnergyDelta ? null : numericValue,
+        max: isError || isEnergyCounter || isEnergyDelta ? null : numericValue,
         last:
           !isError && isEnergyCounter
-            ? value
+            ? numericValue
             : isError || isEnergyDelta
               ? null
-              : value,
-        delta: !isError && isEnergyDelta ? value : null,
-        valueStr: valueStr,
+              : numericValue,
+        delta: !isError && isEnergyDelta ? numericValue : null,
+        valueStr: stringValue,
         sampleCount: isError ? 0 : 1,
         errorCount: isError ? 1 : 0,
         dataQuality: reading.dataQuality ?? null,
@@ -804,8 +809,8 @@ export class PointManager {
         system,
         aggregatesToInsert.map((a) => ({
           point: Object.values(pointMap).find((p) => p.index === a.pointId)!,
-          // Use the most meaningful value: delta for energy, otherwise avg/last
-          value: a.delta ?? a.avg ?? a.last ?? a.valueStr ?? null,
+          // Use the most meaningful value: delta for energy, otherwise avg/last, or string value
+          value: a.delta ?? a.avg ?? a.last ?? a.valueStr,
           measurementTimeMs: a.intervalEnd,
           receivedTimeMs: Date.now(),
           interval: "5m" as const,
@@ -856,38 +861,46 @@ export class PointManager {
 
   /**
    * Convert raw value to appropriate storage format based on metadata
+   * Returns numeric value for most types, string value for text/json types
    */
   private convertValueByMetadata(
     rawValue: any,
     metadata: PointMetadata,
-  ): { value: number | null; valueStr: string | null } {
+  ): { value: number | string | null } {
     if (rawValue == null) {
-      return { value: null, valueStr: null };
+      return { value: null };
     }
 
-    // Handle text fields
+    // Handle text fields - store as string
     if (metadata.metricUnit === "text") {
-      return { value: null, valueStr: String(rawValue) };
+      return { value: String(rawValue) };
+    }
+
+    // Handle json fields (e.g., location) - store as JSON string
+    if (metadata.metricUnit === "json") {
+      const jsonStr =
+        typeof rawValue === "string" ? rawValue : JSON.stringify(rawValue);
+      return { value: jsonStr };
     }
 
     // Handle timestamp fields (epochMs)
     if (metadata.metricUnit === "epochMs") {
       // If it's already a number (Unix timestamp in seconds), convert to ms
       if (typeof rawValue === "number") {
-        return { value: rawValue * 1000, valueStr: null };
+        return { value: rawValue * 1000 };
       }
       // If it's a string (ISO format), parse and convert to ms
       if (typeof rawValue === "string") {
-        return { value: new Date(rawValue).getTime(), valueStr: null };
+        return { value: new Date(rawValue).getTime() };
       }
       // If it's a Date object
       if (rawValue instanceof Date) {
-        return { value: rawValue.getTime(), valueStr: null };
+        return { value: rawValue.getTime() };
       }
     }
 
     // All other fields are numeric
-    return { value: Number(rawValue), valueStr: null };
+    return { value: Number(rawValue) };
   }
 
   /**
@@ -898,9 +911,11 @@ export class PointManager {
     systemId: number,
     valuesToInsert: Array<{
       pointId: number;
-      value: number | null;
+      value: number | string | null;
       measurementTimeMs: number;
       receivedTimeMs: number;
+      sessionId?: number | null;
+      sessionLabel?: string | null;
     }>,
   ): Promise<void> {
     try {
@@ -918,13 +933,15 @@ export class PointManager {
       const cacheUpdates = valuesToInsert.map((val) => {
         const point = points.find((p: PointInfo) => p.index === val.pointId);
         const logicalPath = point?.getLogicalPath();
-        // Only cache active points with a proper logicalPath
+        // Only cache active points with a proper logicalPath and a value
         if (point && val.value !== null && logicalPath && point.active) {
-          // Collect for system summary
-          summaryValues.push({
-            logicalPath,
-            value: val.value,
-          });
+          // Collect for system summary (only numeric values)
+          if (typeof val.value === "number") {
+            summaryValues.push({
+              logicalPath,
+              value: val.value,
+            });
+          }
           if (val.measurementTimeMs > maxMeasurementTimeMs) {
             maxMeasurementTimeMs = val.measurementTimeMs;
           }
@@ -939,6 +956,8 @@ export class PointManager {
             point.metricUnit,
             point.name, // displayName if set, otherwise defaultName
             sourceSystemName,
+            val.sessionId ?? undefined,
+            val.sessionLabel ?? undefined,
           );
         }
         return Promise.resolve();

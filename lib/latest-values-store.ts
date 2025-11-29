@@ -11,16 +11,18 @@ import { kv, kvKey } from "./kv";
  * A latest value entry stored in the cache
  */
 export interface LatestValue {
-  value: number | string; // Can be numeric or string (e.g., tariff period "pk")
+  value: number | string | null; // Can be numeric or string (for text/json types)
   logicalPath: string; // Format: "path/metricType" (e.g., "bidi.grid.import/rate")
   measurementTimeMs: number; // When the value was measured
   receivedTimeMs: number; // When the value was received/cached (Unix timestamp)
-  metricUnit: string; // Unit of measurement (e.g., "c/kWh", "%", "text")
+  metricUnit: string; // Unit of measurement (e.g., "c/kWh", "%", "text", "json")
   displayName: string; // Human-readable name
   sourceSystemId?: number; // Original system ID where the value was recorded (optional for virtual points)
   sourcePointId?: number; // Original point ID (index) where the value was recorded (optional for virtual points)
   sourceSystemName?: string; // Display name of source system (stored at write time, not looked up)
   reference?: string; // Format: "systemId.pointId" (e.g., "9.7")
+  sessionId?: number; // Session ID that wrote this value
+  sessionLabel?: string; // Session label/name for display
 }
 
 /**

@@ -105,7 +105,7 @@ export class SessionManager {
         .values(sessionRecord)
         .returning();
 
-      return { id: result[0].id, started: data.started };
+      return { id: result[0].id, started: data.started, label: sessionLabel };
     } catch (error) {
       // Log the error but don't throw - we don't want session recording to break the main flow
       console.error("[SessionManager] Failed to create session:", error);
