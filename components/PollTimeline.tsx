@@ -53,8 +53,8 @@ export function PollTimeline({
 
   const rafRef = useRef<number | null>(null);
 
-  // Minimum timeline width of 20 seconds (20000ms)
-  const minTimelineWidth = 20000;
+  // Minimum timeline width of 10 seconds (10000ms)
+  const minTimelineWidth = 10000;
   const actualDuration = sessionEndMs - sessionStartMs;
   const sessionDuration = Math.max(actualDuration, minTimelineWidth);
 

@@ -184,6 +184,7 @@ export default function PollNowModal({
                   }
                 } else if (data.type === "progress") {
                   // Update with progress data, preserving session info from session-start
+                  // Keep status as "polling" - final status comes from "complete" event
                   const progressData = data.data;
                   setSessionEndMs(Date.now());
                   setResult((prev) => ({
@@ -191,7 +192,7 @@ export default function PollNowModal({
                     systemId: progressData.systemId,
                     displayName: progressData.displayName || prev?.displayName,
                     vendorType: progressData.vendorType || prev?.vendorType,
-                    status: progressData.inProgress ? "polling" : "polled",
+                    status: "polling",
                     sessionLabel:
                       prev?.sessionLabel || progressData.sessionLabel,
                     sessionId: prev?.sessionId || progressData.sessionId,
