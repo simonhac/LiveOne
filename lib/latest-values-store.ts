@@ -17,10 +17,7 @@ export interface LatestValue {
   receivedTimeMs: number; // When the value was received/cached (Unix timestamp)
   metricUnit: string; // Unit of measurement (e.g., "c/kWh", "%", "text", "json")
   displayName: string; // Human-readable name
-  sourceSystemId?: number; // Original system ID where the value was recorded (optional for virtual points)
-  sourcePointId?: number; // Original point ID (index) where the value was recorded (optional for virtual points)
-  sourceSystemName?: string; // Display name of source system (stored at write time, not looked up)
-  reference?: string; // Format: "systemId.pointId" (e.g., "9.7")
+  pointReference?: string; // Format: "systemId.pointId" (e.g., "9.7") - identifies source point
   sessionId?: number; // Session ID that wrote this value
   sessionLabel?: string; // Session label/name for display
 }

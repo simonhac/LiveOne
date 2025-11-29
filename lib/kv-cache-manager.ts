@@ -62,7 +62,7 @@ function getSubscriptionsKey(systemId: number): string {
  * @param receivedTimeMs - Unix timestamp in milliseconds when value was received from vendor
  * @param metricUnit - Unit of measurement (e.g., "W", "kWh", "%", "text", "json")
  * @param displayName - Display name from point_info
- * @param sourceSystemName - Display name of source system (stored at write time for composite tracking)
+ * @param _sourceSystemName - DEPRECATED: No longer stored (pointReference encodes systemId)
  * @param sessionId - Session ID that wrote this value
  * @param sessionLabel - Session label/name for display
  */
@@ -75,7 +75,7 @@ export async function updateLatestPointValue(
   receivedTimeMs: number,
   metricUnit: string,
   displayName: string,
-  sourceSystemName?: string,
+  _sourceSystemName?: string,
   sessionId?: number,
   sessionLabel?: string,
 ): Promise<void> {
@@ -86,10 +86,7 @@ export async function updateLatestPointValue(
     receivedTimeMs,
     metricUnit,
     displayName,
-    sourceSystemId: systemId,
-    sourcePointId: pointId,
-    reference: `${systemId}.${pointId}`,
-    ...(sourceSystemName && { sourceSystemName }),
+    pointReference: `${systemId}.${pointId}`,
     ...(sessionId && { sessionId }),
     ...(sessionLabel && { sessionLabel }),
   };

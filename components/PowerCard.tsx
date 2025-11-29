@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Clock } from "lucide-react";
+import { ttInterphases } from "@/lib/fonts/amber";
 
 interface PowerCardProps {
   title: string;
@@ -111,7 +112,7 @@ export default function PowerCard({
 
   return (
     <div
-      className={`${bgColor} border ${borderColor} rounded-lg p-2 md:p-4 relative overflow-hidden min-h-[110px] md:min-h-0 ${isStale ? "opacity-75" : ""}`}
+      className={`${bgColor} border ${borderColor} rounded-lg p-2 md:p-4 relative overflow-hidden min-h-[110px] md:min-h-0 ${isStale ? "opacity-75" : ""} ${ttInterphases.className}`}
     >
       {isStale && (
         <div

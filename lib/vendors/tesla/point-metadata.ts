@@ -34,6 +34,18 @@ export const TESLA_POINTS: TeslaPointConfig[] = [
       transform: null,
     },
   },
+  {
+    extract: (data) => data.charge_state.charge_limit_soc,
+    metadata: {
+      physicalPathTail: "charge_limit_soc",
+      logicalPathStem: "ev.charge.limit",
+      metricType: "soc",
+      metricUnit: "%",
+      defaultName: "Charge Limit SoC",
+      subsystem: "ev",
+      transform: null,
+    },
+  },
 
   // ============================================================================
   // CHARGE STATUS
@@ -70,6 +82,18 @@ export const TESLA_POINTS: TeslaPointConfig[] = [
     extract: (data) => data.charge_state.charge_amps,
     metadata: {
       physicalPathTail: "charge_amps",
+      logicalPathStem: "ev.charge.limit",
+      metricType: "current",
+      metricUnit: "A",
+      defaultName: "Charge Limit Current",
+      subsystem: "ev",
+      transform: null,
+    },
+  },
+  {
+    extract: (data) => data.charge_state.charger_actual_current,
+    metadata: {
+      physicalPathTail: "charger_actual_current",
       logicalPathStem: "ev.charge",
       metricType: "current",
       metricUnit: "A",

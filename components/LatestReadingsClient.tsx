@@ -9,12 +9,13 @@ import SessionInfoModal from "@/components/SessionInfoModal";
 
 interface LatestValue {
   value?: number | string | boolean;
+  physicalPath: string;
   logicalPath: string | null;
+  pointReference?: string; // Format: "systemId.pointId"
   measurementTime?: string; // ISO8601 datetime (from jsonResponse transform)
   receivedTime?: string; // ISO8601 datetime (from jsonResponse transform)
   metricUnit: string;
   pointName: string;
-  reference?: string; // Format: "systemId.pointId"
   sessionId?: number; // Session that wrote this value
   sessionLabel?: string; // Session label/name for display
 }
@@ -276,20 +277,23 @@ export default function LatestReadingsClient({
                     {isSameNameAsPrev ? "" : item.pointName}
                   </td>
                   <td className="px-3 py-2 text-sm">
-                    {item.reference ? (
+                    {item.pointReference ? (
                       (() => {
                         const refSystemId = parseInt(
-                          item.reference.split(".")[0],
+                          item.pointReference.split(".")[0],
                         );
                         const systemName = systemNameMap.get(refSystemId);
                         return (
-                          <span>
+                          <span className="group relative cursor-default">
                             <span className="text-gray-400">
                               {systemName ?? "Unknown"}
                             </span>
                             <span className="text-gray-600">
                               {" "}
-                              ID: {item.reference}
+                              ID: {item.pointReference}
+                            </span>
+                            <span className="pointer-events-none absolute bottom-full left-0 mb-1 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-gray-200 opacity-0 transition-opacity delay-200 group-hover:opacity-100">
+                              {item.physicalPath}
                             </span>
                           </span>
                         );
@@ -303,11 +307,11 @@ export default function LatestReadingsClient({
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-sm">
+                  <td className="px-3 py-2 text-sm font-mono">
                     {item.sessionId != null ? (
                       <button
                         onClick={() => {
-                          setSelectedSessionId(item.sessionId);
+                          setSelectedSessionId(item.sessionId!);
                           setIsSessionModalOpen(true);
                         }}
                         className="text-gray-400 hover:text-blue-400 hover:underline transition-colors"

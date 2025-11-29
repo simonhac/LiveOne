@@ -10,12 +10,13 @@ import { jsonResponse } from "@/lib/json";
  */
 interface LatestValueResponse {
   value?: number | string | boolean;
+  physicalPath: string; // Physical path tail from point_info
   logicalPath: string | null;
+  pointReference?: string; // Format: "systemId.pointId"
   measurementTimeMs?: number;
   receivedTimeMs?: number;
   metricUnit: string;
   pointName: string;
-  reference?: string; // Format: "systemId.pointId"
   sessionId?: number; // Session that wrote this value
   sessionLabel?: string; // Session label/name for display
 }
@@ -108,7 +109,11 @@ export async function GET(
 
         return {
           ...(displayValue != null && { value: displayValue }),
+          physicalPath: point.physicalPathTail,
           logicalPath: cached.logicalPath,
+          ...(cached.pointReference != null && {
+            pointReference: cached.pointReference,
+          }),
           ...(cached.measurementTimeMs != null && {
             measurementTimeMs: cached.measurementTimeMs,
           }),
@@ -117,7 +122,6 @@ export async function GET(
           }),
           metricUnit: cached.metricUnit,
           pointName: cached.displayName,
-          ...(cached.reference != null && { reference: cached.reference }),
           ...(cached.sessionId != null && { sessionId: cached.sessionId }),
           ...(cached.sessionLabel != null && {
             sessionLabel: cached.sessionLabel,
@@ -127,6 +131,7 @@ export async function GET(
 
       // No cached value - only include non-null fields
       return {
+        physicalPath: point.physicalPathTail,
         logicalPath: logicalPath,
         metricUnit: point.metricUnit,
         pointName: point.name,
