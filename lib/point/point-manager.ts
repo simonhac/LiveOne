@@ -33,6 +33,7 @@ import {
   updateSystemSummary,
   updateSubscriberSummaries,
 } from "../system-summary-store";
+import { publishObservationBatch } from "../observations/publisher";
 
 // ============================================================================
 // Types
@@ -627,6 +628,22 @@ export class PointManager {
       });
     }
 
+    // Publish observations to queue (before database insert)
+    const systemsManager = await SystemsManager.getInstance();
+    const system = await systemsManager.getSystem(systemId);
+    if (system) {
+      await publishObservationBatch(
+        system,
+        valuesToInsert.map((v) => ({
+          point: Object.values(pointMap).find((p) => p.index === v.pointId)!,
+          value: v.value ?? v.valueStr ?? null,
+          measurementTimeMs: v.measurementTimeMs,
+          receivedTimeMs: v.receivedTimeMs,
+          interval: "raw" as const,
+        })),
+      );
+    }
+
     // SQLite doesn't support ON CONFLICT for batch inserts well,
     // so we'll do them one by one for now
     for (const val of valuesToInsert) {
@@ -777,6 +794,23 @@ export class PointManager {
         errorCount: isError ? 1 : 0,
         dataQuality: reading.dataQuality ?? null,
       });
+    }
+
+    // Publish observations to queue (before database insert)
+    const systemsManager = await SystemsManager.getInstance();
+    const system = await systemsManager.getSystem(systemId);
+    if (system && aggregatesToInsert.length > 0) {
+      await publishObservationBatch(
+        system,
+        aggregatesToInsert.map((a) => ({
+          point: Object.values(pointMap).find((p) => p.index === a.pointId)!,
+          // Use the most meaningful value: delta for energy, otherwise avg/last
+          value: a.delta ?? a.avg ?? a.last ?? a.valueStr ?? null,
+          measurementTimeMs: a.intervalEnd,
+          receivedTimeMs: Date.now(),
+          interval: "5m" as const,
+        })),
+      );
     }
 
     // Batch upsert all aggregates

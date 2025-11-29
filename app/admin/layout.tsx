@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Menu,
   X,
+  Radio,
 } from "lucide-react";
 
 const navItems = [
@@ -39,6 +40,12 @@ const navItems = [
     href: "/admin/readings",
     icon: Database,
     description: "Manage syncing",
+  },
+  {
+    name: "Observations",
+    href: "/admin/observations",
+    icon: Radio,
+    description: "Queue status and inspection",
   },
 ];
 
