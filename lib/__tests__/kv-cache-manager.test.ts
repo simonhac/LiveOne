@@ -15,12 +15,13 @@ jest.mock("../kv", () => ({
     get: jest.fn<() => Promise<any>>().mockResolvedValue(null),
     set: jest.fn<() => Promise<string>>().mockResolvedValue("OK"),
     del: jest.fn<() => Promise<number>>().mockResolvedValue(1),
+    keys: jest.fn<() => Promise<string[]>>().mockResolvedValue([]),
   },
   kvKey: jest.fn((pattern: string) => `test:${pattern}`),
 }));
 
 // Mock the database
-jest.mock("../db", () => ({
+jest.mock("../db/turso", () => ({
   db: {
     select: jest.fn(() => ({
       from: jest.fn(() => ({
@@ -33,9 +34,16 @@ jest.mock("../db", () => ({
 }));
 
 // Mock the schema
-jest.mock("../db/schema", () => ({
+jest.mock("../db/turso/schema", () => ({
   systems: {
     vendorType: "vendorType",
+  },
+}));
+
+jest.mock("../db/turso/schema-monitoring-points", () => ({
+  pointInfo: {
+    systemId: "systemId",
+    index: "index",
   },
 }));
 
