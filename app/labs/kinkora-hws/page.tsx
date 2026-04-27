@@ -6,6 +6,7 @@ import { pointInfo } from "@/lib/db/turso/schema-monitoring-points";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { modelHws, DEFAULT_HWS_MODEL_OPTIONS } from "@/lib/hws-model";
+import { validateShareToken } from "@/lib/share-tokens";
 import Timeline from "./Timeline";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -13,10 +14,12 @@ const DISPLAY_DAYS = 7;
 const MODEL_WARMUP_DAYS = 2;
 const MODEL_WINDOW_MS = (DISPLAY_DAYS + MODEL_WARMUP_DAYS) * DAY_MS;
 
-export default async function KinkoraHwsPage() {
-  const authResult = await auth();
-  const { userId } = authResult;
-  if (!userId) redirect("/sign-in");
+export default async function KinkoraHwsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ access?: string }>;
+}) {
+  const { access } = await searchParams;
 
   const systemsManager = SystemsManager.getInstance();
   const system = await systemsManager.getSystemByUsernameAndAlias(
@@ -25,9 +28,24 @@ export default async function KinkoraHwsPage() {
   );
   if (!system) notFound();
 
-  const isOwner = system.ownerClerkUserId === userId;
-  const isAdmin = isOwner ? false : await isUserAdmin(authResult);
-  if (!isOwner && !isAdmin) redirect("/dashboard");
+  // Access check: a valid share token whose owner matches the system's owner
+  // is sufficient. Otherwise fall back to Clerk auth (owner or admin).
+  let viaShareToken = false;
+  if (access) {
+    const validated = await validateShareToken(access);
+    if (validated && validated.ownerClerkUserId === system.ownerClerkUserId) {
+      viaShareToken = true;
+    }
+  }
+
+  if (!viaShareToken) {
+    const authResult = await auth();
+    const { userId } = authResult;
+    if (!userId) redirect("/sign-in");
+    const isOwner = system.ownerClerkUserId === userId;
+    const isAdmin = isOwner ? false : await isUserAdmin(authResult);
+    if (!isOwner && !isAdmin) redirect("/dashboard");
+  }
 
   const hwsPoint = await db
     .select()

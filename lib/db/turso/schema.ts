@@ -172,6 +172,25 @@ export const clerkIdMapping = sqliteTable("clerk_id_mapping", {
     .default(sql`(unixepoch())`),
 });
 
+// Share tokens - view-only access links scoped to systems owned by the token's owner
+export const shareTokens = sqliteTable(
+  "share_tokens",
+  {
+    token: text("token").primaryKey(), // 3-word phrase, e.g. "leaping-fizzy-wombat"
+    ownerClerkUserId: text("owner_clerk_user_id").notNull(),
+    label: text("label"),
+    createdAtMs: integer("created_at_ms")
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    expiresAtMs: integer("expires_at_ms"),
+    revokedAtMs: integer("revoked_at_ms"),
+    lastUsedAtMs: integer("last_used_at_ms"),
+  },
+  (table) => ({
+    ownerIdx: index("share_tokens_owner_idx").on(table.ownerClerkUserId),
+  }),
+);
+
 // Sync status table - tracks last synced timestamps for automatic sync
 // WARNING: This table should ONLY exist in development databases
 export const syncStatus = sqliteTable("sync_status", {
@@ -191,3 +210,5 @@ export type NewUser = typeof users.$inferInsert;
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
 export type ClerkIdMapping = typeof clerkIdMapping.$inferSelect;
+export type ShareToken = typeof shareTokens.$inferSelect;
+export type NewShareToken = typeof shareTokens.$inferInsert;
