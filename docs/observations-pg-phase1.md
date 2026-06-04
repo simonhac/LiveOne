@@ -148,6 +148,8 @@ Backfill historical `point_readings` / `point_readings_agg_5m` / `sessions` from
 into Postgres. When done, read the real aggregate columns from Turso (full fidelity)
 and preserve Turso session ids; **upsert** so it can overwrite any lossy rows.
 
-```
+## Provisioning status
 
-```
+The Postgres mirror is provisioned: all tables created, `systems` + `point_info`
+seeded from prod Turso, `point_readings.created_at` (+ indexes) added, and ownership
+consolidated to the shared `postgres` role so future migrations work from any role.
