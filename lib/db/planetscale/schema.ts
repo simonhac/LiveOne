@@ -250,6 +250,11 @@ export const pointReadings = pgTable(
     // Quality & status
     error: text("error"),
     dataQuality: text("data_quality").notNull().default("good"),
+
+    // When this row was ingested into Postgres (the queue consumer leaves this to
+    // defaultNow). Distinct from measurementTime/receivedTime — used to chart the
+    // true ingestion rate, and to distinguish live ingestion from later backfills.
+    createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (table) => ({
     pointTimeUnique: uniqueIndex("pr_point_time_unique").on(
@@ -264,6 +269,7 @@ export const pointReadings = pgTable(
     measurementTimeIdx: index("pr_measurement_time_idx").on(
       table.measurementTime,
     ),
+    createdAtIdx: index("pr_created_at_idx").on(table.createdAt),
   }),
 );
 
@@ -305,6 +311,7 @@ export const pointReadingsAgg5m = pgTable(
       table.intervalEnd,
     ),
     intervalEndIdx: index("pr5m_interval_end_idx").on(table.intervalEnd),
+    createdAtIdx: index("pr5m_created_at_idx").on(table.createdAt),
   }),
 );
 

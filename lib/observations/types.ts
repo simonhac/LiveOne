@@ -27,6 +27,25 @@ export interface Observation {
   /** Which insertion path generated this: "raw" for point_readings, "5m" for pre-aggregated */
   interval: "raw" | "5m";
 
+  /**
+   * Full aggregate detail for `interval: "5m"` observations.
+   * Carries the complete 5-minute tuple so the Postgres mirror is full-fidelity
+   * rather than collapsing everything into the single `value` field.
+   * Absent for raw observations (and for legacy 5m messages published before this
+   * field existed — the consumer falls back to `value` in that case).
+   */
+  agg?: {
+    avg: number | null;
+    min: number | null;
+    max: number | null;
+    last: number | null;
+    delta: number | null;
+    valueStr: string | null;
+    sampleCount: number;
+    errorCount: number;
+    dataQuality: string | null;
+  };
+
   /** Optional debug info (can be stripped for terse payloads) */
   debug?: {
     /** metricType (power, energy, soc, etc.) */

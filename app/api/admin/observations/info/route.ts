@@ -85,6 +85,20 @@ export async function POST(request: Request) {
         await queue.upsert({ paused: false });
         return NextResponse.json({ status: "resumed" });
 
+      case "set-parallelism": {
+        const n = Number(body.parallelism);
+        if (!Number.isInteger(n) || n < 1 || n > 20) {
+          return NextResponse.json(
+            { error: "parallelism must be an integer between 1 and 20" },
+            { status: 400 },
+          );
+        }
+        // Keep ≤ the Postgres pool size (max 10) to avoid exhausting connections
+        // while draining a large backlog.
+        await queue.upsert({ parallelism: n });
+        return NextResponse.json({ status: "ok", parallelism: n });
+      }
+
       default:
         return NextResponse.json(
           { error: `Unknown action: ${action}` },

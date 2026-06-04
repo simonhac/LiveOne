@@ -2,11 +2,18 @@
  * QStash Receiver Endpoint for Observation Batches
  *
  * Receives QueueMessage from QStash and inserts into PlanetScale PostgreSQL.
- * - Observations → point_readings or point_readings_agg_5m based on interval
+ * - Observations → point_readings (raw) or point_readings_agg_5m (5m) based on interval
  * - Sessions → sessions table
  *
+ * Idempotent: every insert uses .onConflictDoNothing(), so re-delivery / retries
+ * are safe. Inserts are batched (one statement per table per message).
+ *
+ * Failure handling: if anything throws — or if PlanetScale is not configured —
+ * the handler returns a non-2xx so QStash retries. It must NEVER ack-and-drop,
+ * because (in a later phase) Postgres becomes the system of record and a silent
+ * drop would be unrecoverable.
+ *
  * Uses verifySignatureAppRouter wrapper for automatic signature verification.
- * QStash will retry on non-2xx responses.
  */
 
 import { verifySignatureAppRouter } from "@upstash/qstash/nextjs";
@@ -22,6 +29,8 @@ import type {
   Observation,
   Session,
 } from "@/lib/observations/types";
+
+type Db = NonNullable<typeof planetscaleDb>;
 
 /**
  * Parse ISO 8601 timestamp to Date object
@@ -47,15 +56,17 @@ function extractPointId(observation: Observation): number | null {
 }
 
 /**
- * Insert raw observations into point_readings table
+ * Insert raw observations into point_readings table (single batched statement).
+ * Returns the number of rows actually inserted (conflicts are skipped) and the
+ * number skipped for lacking a resolvable pointId.
  */
 async function insertRawObservations(
-  db: NonNullable<typeof planetscaleDb>,
+  db: Db,
   systemId: number,
   observations: Observation[],
 ): Promise<{ inserted: number; skipped: number }> {
-  let inserted = 0;
   let skipped = 0;
+  const rows: (typeof pointReadings.$inferInsert)[] = [];
 
   for (const obs of observations) {
     const pointId = extractPointId(obs);
@@ -66,44 +77,44 @@ async function insertRawObservations(
       skipped++;
       continue;
     }
-
-    try {
-      await db
-        .insert(pointReadings)
-        .values({
-          systemId,
-          pointId,
-          sessionId: obs.sessionId,
-          measurementTime: parseTimestamp(obs.measurementTime),
-          receivedTime: parseTimestamp(obs.receivedTime),
-          value: typeof obs.value === "number" ? obs.value : null,
-          valueStr: typeof obs.value === "string" ? obs.value : null,
-          dataQuality: "good",
-        })
-        .onConflictDoNothing();
-      inserted++;
-    } catch (error) {
-      console.error(
-        `[ObservationsReceiver] Error inserting raw observation:`,
-        error,
-      );
-      skipped++;
-    }
+    rows.push({
+      systemId,
+      pointId,
+      sessionId: obs.sessionId,
+      measurementTime: parseTimestamp(obs.measurementTime),
+      receivedTime: parseTimestamp(obs.receivedTime),
+      value: typeof obs.value === "number" ? obs.value : null,
+      valueStr: typeof obs.value === "string" ? obs.value : null,
+      dataQuality: "good",
+    });
   }
 
-  return { inserted, skipped };
+  if (rows.length === 0) return { inserted: 0, skipped };
+
+  const result = await db
+    .insert(pointReadings)
+    .values(rows)
+    .onConflictDoNothing()
+    .returning({ id: pointReadings.id });
+
+  return { inserted: result.length, skipped };
 }
 
 /**
- * Insert 5m aggregated observations into point_readings_agg_5m table
+ * Insert 5m aggregated observations into point_readings_agg_5m (single batched statement).
+ *
+ * Full fidelity: when the observation carries the `agg` tuple (avg/min/max/last/
+ * delta/sampleCount/errorCount/valueStr/dataQuality) we store it verbatim. Legacy
+ * messages published before `agg` existed fall back to the old single-value shape
+ * (last = value) so any in-flight old payloads still land instead of erroring.
  */
 async function insert5mObservations(
-  db: NonNullable<typeof planetscaleDb>,
+  db: Db,
   systemId: number,
   observations: Observation[],
 ): Promise<{ inserted: number; skipped: number }> {
-  let inserted = 0;
   let skipped = 0;
+  const rows: (typeof pointReadingsAgg5m.$inferInsert)[] = [];
 
   for (const obs of observations) {
     const pointId = extractPointId(obs);
@@ -115,119 +126,133 @@ async function insert5mObservations(
       continue;
     }
 
-    try {
-      await db
-        .insert(pointReadingsAgg5m)
-        .values({
-          systemId,
-          pointId,
-          intervalEnd: parseTimestamp(obs.measurementTime),
-          sessionId: obs.sessionId,
-          // For single observations, last = value
-          last: typeof obs.value === "number" ? obs.value : null,
-          valueStr: typeof obs.value === "string" ? obs.value : null,
-          sampleCount: 1,
-          errorCount: 0,
-          dataQuality: "good",
-        })
-        .onConflictDoNothing();
-      inserted++;
-    } catch (error) {
-      console.error(
-        `[ObservationsReceiver] Error inserting 5m observation:`,
-        error,
-      );
-      skipped++;
+    const base = {
+      systemId,
+      pointId,
+      intervalEnd: parseTimestamp(obs.measurementTime),
+      sessionId: obs.sessionId,
+    };
+
+    if (obs.agg) {
+      const agg = obs.agg;
+      rows.push({
+        ...base,
+        avg: agg.avg,
+        min: agg.min,
+        max: agg.max,
+        last: agg.last,
+        delta: agg.delta,
+        valueStr: agg.valueStr,
+        sampleCount: agg.sampleCount,
+        errorCount: agg.errorCount,
+        dataQuality: agg.dataQuality,
+      });
+    } else {
+      // Legacy single-value payload (pre-fidelity-fix): preserve old behavior.
+      rows.push({
+        ...base,
+        last: typeof obs.value === "number" ? obs.value : null,
+        valueStr: typeof obs.value === "string" ? obs.value : null,
+        sampleCount: 1,
+        errorCount: 0,
+        dataQuality: "good",
+      });
     }
   }
 
-  return { inserted, skipped };
+  if (rows.length === 0) return { inserted: 0, skipped };
+
+  // onConflictDoNothing (first-write-wins) keeps re-delivery idempotent and avoids
+  // out-of-order upsert hazards. Re-refined 5m intervals won't propagate; that drift
+  // is reconciled by the (deferred) Turso backfill while Turso remains source of truth.
+  const result = await db
+    .insert(pointReadingsAgg5m)
+    .values(rows)
+    .onConflictDoNothing()
+    .returning({ systemId: pointReadingsAgg5m.systemId });
+
+  return { inserted: result.length, skipped };
 }
 
 /**
- * Insert session into sessions table
+ * Insert session into sessions table.
+ *
+ * Preserves the Turso session id as the Postgres primary key so that
+ * point_readings.sessionId (which carries the Turso id) joins sessions.id.
+ * The consumer always supplies an explicit id, so the serial default never
+ * fires and the sequence can't collide.
  */
 async function insertSession(
-  db: NonNullable<typeof planetscaleDb>,
+  db: Db,
   systemId: number,
   session: Session,
-): Promise<boolean> {
-  try {
-    await db
-      .insert(sessions)
-      .values({
-        sessionLabel: session.sessionLabel,
-        systemId,
-        cause: session.cause,
-        duration: session.durationMs,
-        successful: session.successful,
-        errorCode: session.errorCode,
-        error: session.error,
-        response: session.response,
-        numRows: session.numRows,
-        createdAt: parseTimestamp(session.started),
-      })
-      .onConflictDoNothing();
-    return true;
-  } catch (error) {
-    console.error(`[ObservationsReceiver] Error inserting session:`, error);
-    return false;
-  }
+): Promise<void> {
+  await db
+    .insert(sessions)
+    .values({
+      id: session.sessionId,
+      sessionLabel: session.sessionLabel,
+      systemId,
+      cause: session.cause,
+      duration: session.durationMs,
+      successful: session.successful,
+      errorCode: session.errorCode,
+      error: session.error,
+      response: session.response,
+      numRows: session.numRows,
+      createdAt: parseTimestamp(session.started),
+    })
+    .onConflictDoNothing();
 }
 
 /**
- * Process the queue message and insert into PlanetScale
+ * Process the queue message and insert into PlanetScale.
+ * Throws on any insert error so the handler returns 500 → QStash retries.
  */
 async function processQueueMessage(
+  db: Db,
   message: QueueMessage,
-): Promise<{ success: boolean; stats: Record<string, number> }> {
-  if (!planetscaleDb) {
-    console.warn("[ObservationsReceiver] PlanetScale not configured, skipping");
-    return { success: true, stats: { skipped: 1 } };
-  }
-
+): Promise<Record<string, number>> {
   const stats: Record<string, number> = {};
 
-  // Process observations
   if (message.observations && message.observations.length > 0) {
     const rawObs = message.observations.filter((o) => o.interval === "raw");
     const agg5mObs = message.observations.filter((o) => o.interval === "5m");
 
     if (rawObs.length > 0) {
-      const result = await insertRawObservations(
-        planetscaleDb,
-        message.systemId,
-        rawObs,
-      );
+      const result = await insertRawObservations(db, message.systemId, rawObs);
       stats.rawInserted = result.inserted;
       stats.rawSkipped = result.skipped;
     }
 
     if (agg5mObs.length > 0) {
-      const result = await insert5mObservations(
-        planetscaleDb,
-        message.systemId,
-        agg5mObs,
-      );
+      const result = await insert5mObservations(db, message.systemId, agg5mObs);
       stats.agg5mInserted = result.inserted;
       stats.agg5mSkipped = result.skipped;
     }
   }
 
-  // Process session
   if (message.session) {
-    const inserted = await insertSession(
-      planetscaleDb,
-      message.systemId,
-      message.session,
-    );
-    stats.sessionInserted = inserted ? 1 : 0;
+    await insertSession(db, message.systemId, message.session);
+    stats.sessionInserted = 1;
   }
 
-  return { success: true, stats };
+  return stats;
 }
 
 async function handler(request: NextRequest) {
+  // Fail loud (retry) rather than silently dropping when Postgres isn't configured.
+  if (!planetscaleDb) {
+    console.error(
+      "[ObservationsReceiver] Postgres not configured (set DB_* or PLANETSCALE_DATABASE_URL) — " +
+        "returning 500 so QStash retries instead of dropping the message",
+    );
+    return NextResponse.json(
+      { status: "error", error: "planetscale_not_configured" },
+      { status: 500 },
+    );
+  }
+
   try {
     const body = (await request.json()) as QueueMessage;
 
@@ -238,11 +263,11 @@ async function handler(request: NextRequest) {
         `batchTime=${body.batchTime}`,
     );
 
-    const { success, stats } = await processQueueMessage(body);
+    const stats = await processQueueMessage(planetscaleDb, body);
 
     console.log(`[ObservationsReceiver] Processed: ${JSON.stringify(stats)}`);
 
-    return NextResponse.json({ status: success ? "ok" : "partial", stats });
+    return NextResponse.json({ status: "ok", stats });
   } catch (error) {
     console.error(`[ObservationsReceiver] Error processing message:`, error);
     // Return 500 to trigger QStash retry

@@ -8,7 +8,7 @@
  */
 
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import { Pool, type PoolConfig } from "pg";
 import * as schema from "./schema";
 
 // Global singleton to persist across hot reloads
@@ -20,11 +20,36 @@ declare global {
 }
 
 /**
- * Get the PlanetScale database URL.
- * Returns null if not configured.
+ * Build the Postgres connection config from env.
+ *
+ * Accepts EITHER a single connection string (PLANETSCALE_DATABASE_URL) OR the
+ * discrete fields DB_HOST / DB_PORT / DB_DATABASE / DB_USERNAME / DB_PASSWORD.
+ * Returns null if neither is configured.
  */
-function getDatabaseUrl(): string | null {
-  return process.env.PLANETSCALE_DATABASE_URL || null;
+function getPoolConfig(): PoolConfig | null {
+  const url = process.env.PLANETSCALE_DATABASE_URL;
+  if (url) {
+    return { connectionString: url };
+  }
+
+  const host = process.env.DB_HOST;
+  if (host) {
+    const sslDisabled = ["0", "false", "disable", "disabled"].includes(
+      (process.env.DB_SSL ?? "").toLowerCase(),
+    );
+    return {
+      host,
+      port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 5432,
+      database: process.env.DB_DATABASE,
+      user: process.env.DB_USERNAME,
+      password: process.env.DB_PASSWORD,
+      // Managed Postgres requires TLS. Default to encrypted-without-strict-CA,
+      // which works across providers; set DB_SSL=disable for a local server.
+      ssl: sslDisabled ? false : { rejectUnauthorized: false },
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -32,8 +57,8 @@ function getDatabaseUrl(): string | null {
  * Returns null if not configured.
  */
 function getPool(): Pool | null {
-  const url = getDatabaseUrl();
-  if (!url) {
+  const config = getPoolConfig();
+  if (!config) {
     return null;
   }
 
@@ -42,7 +67,7 @@ function getPool(): Pool | null {
   }
 
   const pool = new Pool({
-    connectionString: url,
+    ...config,
     // PgBouncer-friendly settings
     max: 10, // Max connections in pool
     idleTimeoutMillis: 30000,
