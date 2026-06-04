@@ -74,18 +74,43 @@ Deploy with `PLANETSCALE_DATABASE_URL` live. This ships the hardened consumer **
 the enriched producer together. Confirm the deployed receiver URL matches
 `OBSERVATIONS_QSTASH_RECEIVER_URL` / `getObservationsReceiverUrl()`.
 
-### 5. Purge the stale backlog, then resume
+### 5. Resume to drain the backlog into Postgres
 
-Check current lag at `/admin/observations` (or `GET /api/admin/observations/info`).
-Pre-fix messages are lossy-shaped, so purge rather than drain:
+Check the depth on `/admin/observations/dashboard` ("Observations queued"). This is the
+original goal — pull the queued observations into Postgres.
+
+**Two caveats to know before draining:**
+
+- **Retention:** a paused QStash queue does not keep messages forever, so the backlog
+  is whatever _survived retention_ — possibly a partial/arbitrary window, not the full
+  history. Turso (dual-write) has the **complete** record; use the deferred Turso
+  backfill to fill any gaps.
+- **5m fidelity:** raw observations drain at full fidelity. Old 5-minute aggregates were
+  published before the fidelity fix, so they arrive with only `last` populated. The
+  deferred Turso backfill (**upsert**) corrects them.
+
+Before resuming:
+
+1. Deploy the hardened consumer (no-drop + backward-compatible) so old-shaped messages
+   land and nothing is dropped.
+2. Bump parallelism for the drain (steady-state default is 1; keep ≤ 8, under the PG
+   pool max of 10), if your QStash plan allows:
+   ```
+   curl -X POST .../api/admin/observations/info \
+     -H 'content-type: application/json' \
+     -d '{"action":"set-parallelism","parallelism":8}'
+   ```
+3. **Resume** from `/admin/observations`. The backlog drains through the consumer into
+   Postgres — watch the dashboard: "Observations queued" falls, "Observations (24h)"
+   rises, the chart fills.
+4. When the drain is done, drop parallelism back to 1 for steady state.
+
+**Alternative — start clean instead of draining:** if you'd rather populate Postgres
+entirely from Turso (complete + full fidelity) and skip the lossy backlog, purge first:
 
 ```
-npx tsx scripts/purge-observations-queue.ts            # shows lag
 npx tsx scripts/purge-observations-queue.ts --confirm  # purge + recreate paused
 ```
-
-Then **Resume** from `/admin/observations`. Parallelism 1 is fine for steady state
-(~18 msgs/min); the 3–5 bump was only for draining a backlog, which we're not doing.
 
 ## Verify
 

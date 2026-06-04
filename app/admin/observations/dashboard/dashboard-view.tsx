@@ -143,6 +143,22 @@ export default function ObservationsDashboard() {
     }
   };
 
+  const setParallelism = async (n: number) => {
+    setActionLoading(true);
+    try {
+      await fetch("/api/admin/observations/info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "set-parallelism", parallelism: n }),
+      });
+      await fetchAll();
+    } catch {
+      // surfaced on next fetch
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   // Build a continuous 24h x 1-minute timeline, filling gaps with 0 so downtime
   // shows as a flat-zero stretch rather than a hidden gap.
   const chart = useMemo(() => {
@@ -284,6 +300,24 @@ export default function ObservationsDashboard() {
             />
             Auto (60s)
           </label>
+          {queue && (
+            <label className="flex items-center gap-1.5 text-xs text-gray-400 select-none">
+              Parallelism
+              <select
+                value={queue.parallelism}
+                onChange={(e) => setParallelism(Number(e.target.value))}
+                disabled={actionLoading}
+                className="bg-gray-700 text-white rounded px-1.5 py-1 text-sm disabled:opacity-50"
+                title="QStash queue parallelism — raise to drain a backlog faster (keep ≤ 8, under the Postgres pool max of 10)"
+              >
+                {[1, 2, 3, 4, 5, 6, 8, 10].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           {queue &&
             (queue.paused ? (
               <button
