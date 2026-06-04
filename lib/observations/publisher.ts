@@ -29,6 +29,8 @@ export interface RawObservationInput {
   measurementTimeMs: number;
   receivedTimeMs: number;
   interval: "raw" | "5m";
+  /** Full 5m aggregate detail (only supplied for interval: "5m"). */
+  agg?: Observation["agg"];
 }
 
 /**
@@ -67,6 +69,7 @@ function buildObservations(
     ),
     value: input.value,
     interval: input.interval,
+    ...(input.agg ? { agg: input.agg } : {}),
     debug: {
       type: input.point.metricType,
       unit: input.point.metricUnit,

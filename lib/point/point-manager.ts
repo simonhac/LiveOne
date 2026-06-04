@@ -813,6 +813,18 @@ export class PointManager {
           measurementTimeMs: a.intervalEnd,
           receivedTimeMs: Date.now(),
           interval: "5m" as const,
+          // Carry the full aggregate tuple so the Postgres mirror is full-fidelity
+          agg: {
+            avg: a.avg,
+            min: a.min,
+            max: a.max,
+            last: a.last,
+            delta: a.delta,
+            valueStr: a.valueStr,
+            sampleCount: a.sampleCount,
+            errorCount: a.errorCount,
+            dataQuality: a.dataQuality,
+          },
         })),
       );
     }
