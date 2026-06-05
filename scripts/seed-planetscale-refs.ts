@@ -17,8 +17,8 @@
  *     TURSO_DATABASE_URL set; otherwise the local dev.db).
  *   - Postgres: PLANETSCALE_DATABASE_URL.
  *
- * Idempotent: upserts systems + point_info on their primary keys, so re-running
- * refreshes changed metadata. Safe to run repeatedly.
+ * Idempotent: upserts systems + point_info + share_tokens on their primary keys,
+ * so re-running refreshes changed metadata. Safe to run repeatedly.
  *
  * Usage:
  *   # dry run (default) — reads + reports, writes nothing
@@ -42,6 +42,7 @@ import {
   systems as tursoSystems,
   users as tursoUsers,
   userSystems as tursoUserSystems,
+  shareTokens as tursoShareTokens,
 } from "@/lib/db/turso/schema";
 import { pointInfo as tursoPointInfo } from "@/lib/db/turso/schema-monitoring-points";
 import {
@@ -49,6 +50,7 @@ import {
   pointInfo as pgPointInfo,
   users as pgUsers,
   userSystems as pgUserSystems,
+  shareTokens as pgShareTokens,
 } from "@/lib/db/planetscale/schema";
 
 /** excluded."<col>" reference for ON CONFLICT DO UPDATE set clauses */
@@ -100,8 +102,9 @@ async function main() {
   // ---- Read from Turso ----
   const systemRows = await turso.select().from(tursoSystems);
   const pointRows = await turso.select().from(tursoPointInfo);
+  const shareTokenRows = await turso.select().from(tursoShareTokens);
   console.log(
-    `Read from Turso: ${systemRows.length} systems, ${pointRows.length} point_info rows`,
+    `Read from Turso: ${systemRows.length} systems, ${pointRows.length} point_info rows, ${shareTokenRows.length} share_tokens`,
   );
 
   let userRows: (typeof tursoUsers.$inferSelect)[] = [];
@@ -216,6 +219,34 @@ async function main() {
     console.log(`✓ Upserted ${pointRows.length} point_info rows`);
   }
 
+  // ---- Seed share_tokens (PK: token; bigint epoch-ms columns) ----
+  if (shareTokenRows.length > 0) {
+    await planetscaleDb
+      .insert(pgShareTokens)
+      .values(
+        shareTokenRows.map((t) => ({
+          token: t.token,
+          ownerClerkUserId: t.ownerClerkUserId,
+          label: t.label,
+          createdAtMs: t.createdAtMs,
+          expiresAtMs: t.expiresAtMs,
+          revokedAtMs: t.revokedAtMs,
+          lastUsedAtMs: t.lastUsedAtMs,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: pgShareTokens.token,
+        set: {
+          ownerClerkUserId: excluded("owner_clerk_user_id"),
+          label: excluded("label"),
+          expiresAtMs: excluded("expires_at_ms"),
+          revokedAtMs: excluded("revoked_at_ms"),
+          lastUsedAtMs: excluded("last_used_at_ms"),
+        },
+      });
+    console.log(`✓ Upserted ${shareTokenRows.length} share_tokens`);
+  }
+
   // ---- Optionally seed users + user_systems (existence only) ----
   if (withUsers) {
     if (userRows.length > 0) {
@@ -259,13 +290,15 @@ async function main() {
   // ---- Verify ----
   const pgSystemCount = await planetscaleDb.select().from(pgSystems);
   const pgPointCount = await planetscaleDb.select().from(pgPointInfo);
+  const pgShareTokenCount = await planetscaleDb.select().from(pgShareTokens);
   console.log("─".repeat(60));
   console.log(
-    `Postgres now has: ${pgSystemCount.length} systems, ${pgPointCount.length} point_info rows`,
+    `Postgres now has: ${pgSystemCount.length} systems, ${pgPointCount.length} point_info rows, ${pgShareTokenCount.length} share_tokens`,
   );
   if (
     pgSystemCount.length < systemRows.length ||
-    pgPointCount.length < pointRows.length
+    pgPointCount.length < pointRows.length ||
+    pgShareTokenCount.length < shareTokenRows.length
   ) {
     console.warn(
       "⚠️  Postgres row counts are below Turso source counts — investigate before resuming the queue.",
