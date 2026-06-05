@@ -50,7 +50,7 @@ truth; Postgres is a secondary mirror.**
 - `scripts/backfill-turso-to-postgres.ts` — historical backfill + `--verify` (see its doc).
 - `scripts/seed-planetscale-refs.ts` — re-seed `systems` + `point_info` if metadata changes.
 - `scripts/purge-observations-queue.ts` — purge + recreate the QStash queue (paused).
-- `/admin/observations/dashboard` — live pipeline depth, ingestion rate, queue controls.
+- `/admin/observations` — live pipeline depth, ingestion rate, queue controls, and queue/DLQ message inspection.
 
 ## Rollback
 
