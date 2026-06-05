@@ -5,8 +5,10 @@
  * - Observations → point_readings (raw) or point_readings_agg_5m (5m) based on interval
  * - Sessions → sessions table
  *
- * Idempotent: every insert uses .onConflictDoNothing(), so re-delivery / retries
- * are safe. Inserts are batched (one statement per table per message).
+ * Idempotent: raw, 5m and session inserts use .onConflictDoNothing() (first-write-wins);
+ * 1d uses .onConflictDoUpdate() (overwrite, since a day can be recomputed as late readings
+ * arrive). Either way re-delivery / retries are safe. Inserts are batched (one statement
+ * per table per message).
  *
  * Failure handling: if anything throws — or if PlanetScale is not configured —
  * the handler returns a non-2xx so QStash retries. It must NEVER ack-and-drop,
@@ -18,10 +20,12 @@
 
 import { verifySignatureAppRouter } from "@upstash/qstash/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { sql } from "drizzle-orm";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import {
   pointReadings,
   pointReadingsAgg5m,
+  pointReadingsAgg1d,
   sessions,
 } from "@/lib/db/planetscale/schema";
 import type {
@@ -175,6 +179,74 @@ async function insert5mObservations(
 }
 
 /**
+ * Insert daily aggregated observations into point_readings_agg_1d (single batched statement).
+ *
+ * The day key (YYYY-MM-DD) is the local date portion of `measurementTime`, which the
+ * publisher sets to local midnight of the day (ISO with the system tz offset). The daily
+ * table has no `sessionId`/`valueStr`/`dataQuality` columns, so those parts of the tuple
+ * are ignored. Upsert (overwrite) on the PK so a day re-published after late readings
+ * arrive replaces the prior aggregate.
+ */
+async function insert1dObservations(
+  db: Db,
+  systemId: number,
+  observations: Observation[],
+): Promise<{ inserted: number; skipped: number }> {
+  let skipped = 0;
+  const rows: (typeof pointReadingsAgg1d.$inferInsert)[] = [];
+
+  for (const obs of observations) {
+    const pointId = extractPointId(obs);
+    if (pointId === null || !obs.agg) {
+      console.warn(
+        `[ObservationsReceiver] Skipping 1d observation without valid pointId/agg: ${obs.topic}`,
+      );
+      skipped++;
+      continue;
+    }
+    const agg = obs.agg;
+    rows.push({
+      systemId,
+      pointId,
+      day: obs.measurementTime.slice(0, 10),
+      avg: agg.avg,
+      min: agg.min,
+      max: agg.max,
+      last: agg.last,
+      delta: agg.delta,
+      sampleCount: agg.sampleCount,
+      errorCount: agg.errorCount,
+    });
+  }
+
+  if (rows.length === 0) return { inserted: 0, skipped };
+
+  const result = await db
+    .insert(pointReadingsAgg1d)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: [
+        pointReadingsAgg1d.systemId,
+        pointReadingsAgg1d.pointId,
+        pointReadingsAgg1d.day,
+      ],
+      set: {
+        avg: sql`excluded.avg`,
+        min: sql`excluded.min`,
+        max: sql`excluded.max`,
+        last: sql`excluded.last`,
+        delta: sql`excluded.delta`,
+        sampleCount: sql`excluded.sample_count`,
+        errorCount: sql`excluded.error_count`,
+        updatedAt: sql`now()`,
+      },
+    })
+    .returning({ systemId: pointReadingsAgg1d.systemId });
+
+  return { inserted: result.length, skipped };
+}
+
+/**
  * Insert session into sessions table.
  *
  * Preserves the Turso session id as the Postgres primary key so that
@@ -229,6 +301,14 @@ async function processQueueMessage(
       const result = await insert5mObservations(db, message.systemId, agg5mObs);
       stats.agg5mInserted = result.inserted;
       stats.agg5mSkipped = result.skipped;
+    }
+
+    const agg1dObs = message.observations.filter((o) => o.interval === "1d");
+    if (agg1dObs.length > 0) {
+      const result = await insert1dObservations(db, message.systemId, agg1dObs);
+      // upsert: RETURNING counts both inserted and overwritten rows.
+      stats.agg1dUpserted = result.inserted;
+      stats.agg1dSkipped = result.skipped;
     }
   }
 
