@@ -68,8 +68,10 @@ function getPool(): Pool | null {
 
   const pool = new Pool({
     ...config,
-    // PgBouncer-friendly settings
-    max: 10, // Max connections in pool
+    // `max` is the PER-INSTANCE connection cap. The real budget is
+    // max × concurrent warm server instances ≤ the Postgres connection limit,
+    // so keep it env-tunable for Sydney/cutover sizing (default unchanged).
+    max: Number(process.env.PLANETSCALE_POOL_MAX ?? 10),
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
   });
@@ -79,9 +81,12 @@ function getPool(): Pool | null {
     console.error("[PlanetScale] Pool error:", err);
   });
 
-  if (process.env.NODE_ENV !== "production") {
-    global.__planetscalePool = pool;
-  }
+  // Memoize on `global` in ALL environments. This was previously guarded by
+  // NODE_ENV !== "production", so warm production Lambdas — and every
+  // isPlanetscaleConfigured() call, which re-invokes getPool() — allocated a
+  // fresh Pool, multiplying connections without bound. One pool per instance
+  // is correct everywhere.
+  global.__planetscalePool = pool;
 
   return pool;
 }
@@ -102,9 +107,8 @@ export const planetscaleDb = (() => {
 
   const db = drizzle(pool, { schema });
 
-  if (process.env.NODE_ENV !== "production") {
-    global.__planetscaleDb = db;
-  }
+  // Memoize unconditionally (see getPool) so a warm instance reuses one client.
+  global.__planetscaleDb = db;
 
   return db;
 })();
@@ -118,7 +122,7 @@ export async function isPlanetscaleConfigured(): Promise<boolean> {
   }
 
   try {
-    // Simple query to test connection
+    // Reuses the memoized pool (getPool no longer allocates a second one).
     const pool = getPool();
     if (!pool) return false;
 
