@@ -5,11 +5,15 @@ import * as dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 
 /**
- * Drizzle Kit configuration for the Postgres mirror.
+ * Drizzle Kit configuration for the Postgres database.
  *
- * Usage:
- *   npx drizzle-kit push --config=drizzle-planetscale.config.ts
- *   npx drizzle-kit generate --config=drizzle-planetscale.config.ts
+ * Workflow (versioned migrations — see drizzle-planetscale/README.md):
+ *   npm run db:pg:generate   # diff schema.ts -> a new migration in drizzle-planetscale/
+ *   npm run db:pg:migrate    # apply pending migrations (tracked in drizzle.__drizzle_migrations)
+ *
+ * DO NOT run `drizzle-kit push` against the authoritative Postgres: it diffs and
+ * applies destructively with no transaction/row-count validation (the migration-0016
+ * failure mode). Use generate + migrate, with the CLAUDE.md migration checklist.
  *
  * Credentials come from EITHER PLANETSCALE_DATABASE_URL_MIGRATIONS (a single
  * connection string with DDL permissions) OR the discrete DB_* vars

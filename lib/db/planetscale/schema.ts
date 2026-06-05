@@ -36,6 +36,7 @@ import {
   pgTable,
   serial,
   integer,
+  bigint,
   text,
   doublePrecision,
   boolean,
@@ -347,6 +348,27 @@ export const pointReadingsAgg1d = pgTable(
 );
 
 // ============================================================================
+// Share tokens - view-only access links scoped to systems owned by the token's owner
+// (mirrors Turso `share_tokens`). Epoch-ms columns use bigint(mode:"number") so
+// share-tokens.ts's `Date.now()` comparisons work unchanged against Postgres.
+// ============================================================================
+export const shareTokens = pgTable(
+  "share_tokens",
+  {
+    token: text("token").primaryKey(), // 3-word phrase, e.g. "leaping-fizzy-wombat"
+    ownerClerkUserId: text("owner_clerk_user_id").notNull(),
+    label: text("label"),
+    createdAtMs: bigint("created_at_ms", { mode: "number" }).notNull(),
+    expiresAtMs: bigint("expires_at_ms", { mode: "number" }),
+    revokedAtMs: bigint("revoked_at_ms", { mode: "number" }),
+    lastUsedAtMs: bigint("last_used_at_ms", { mode: "number" }),
+  },
+  (table) => ({
+    ownerIdx: index("share_tokens_owner_idx").on(table.ownerClerkUserId),
+  }),
+);
+
+// ============================================================================
 // Type exports
 // ============================================================================
 export type System = typeof systems.$inferSelect;
@@ -367,3 +389,5 @@ export type PointReadingAgg5m = typeof pointReadingsAgg5m.$inferSelect;
 export type NewPointReadingAgg5m = typeof pointReadingsAgg5m.$inferInsert;
 export type PointReadingAgg1d = typeof pointReadingsAgg1d.$inferSelect;
 export type NewPointReadingAgg1d = typeof pointReadingsAgg1d.$inferInsert;
+export type ShareToken = typeof shareTokens.$inferSelect;
+export type NewShareToken = typeof shareTokens.$inferInsert;

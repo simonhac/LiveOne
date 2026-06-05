@@ -17,8 +17,10 @@
  *     TURSO_DATABASE_URL set; otherwise the local dev.db).
  *   - Postgres: PLANETSCALE_DATABASE_URL.
  *
- * Idempotent: upserts systems + point_info on their primary keys, so re-running
- * refreshes changed metadata. Safe to run repeatedly.
+ * Idempotent: upserts systems + point_info + share_tokens + polling_status (and,
+ * with --with-users, users + user_systems) on their keys, so re-running refreshes
+ * changed metadata — default system, roles, polling counters. Safe to run
+ * repeatedly. Aborts (non-zero exit) if any Postgres count ends up below Turso.
  *
  * Usage:
  *   # dry run (default) — reads + reports, writes nothing
@@ -42,6 +44,8 @@ import {
   systems as tursoSystems,
   users as tursoUsers,
   userSystems as tursoUserSystems,
+  shareTokens as tursoShareTokens,
+  pollingStatus as tursoPollingStatus,
 } from "@/lib/db/turso/schema";
 import { pointInfo as tursoPointInfo } from "@/lib/db/turso/schema-monitoring-points";
 import {
@@ -49,11 +53,27 @@ import {
   pointInfo as pgPointInfo,
   users as pgUsers,
   userSystems as pgUserSystems,
+  shareTokens as pgShareTokens,
+  pollingStatus as pgPollingStatus,
 } from "@/lib/db/planetscale/schema";
 
 /** excluded."<col>" reference for ON CONFLICT DO UPDATE set clauses */
 function excluded(col: string) {
   return sql.raw(`excluded."${col}"`);
+}
+
+/**
+ * Convert an epoch-ms value to a Date, avoiding the 1970 trap: Turso
+ * `point_info.created_at_ms` defaults to 0, which would otherwise seed as
+ * 1970-01-01. Fall back to a secondary timestamp, then to now.
+ */
+function msToDate(
+  ms: number | null | undefined,
+  fallbackMs: number | null | undefined,
+): Date {
+  if (ms && ms > 0) return new Date(ms);
+  if (fallbackMs && fallbackMs > 0) return new Date(fallbackMs);
+  return new Date();
 }
 
 /** Show only the host of a connection string, never credentials. */
@@ -100,8 +120,10 @@ async function main() {
   // ---- Read from Turso ----
   const systemRows = await turso.select().from(tursoSystems);
   const pointRows = await turso.select().from(tursoPointInfo);
+  const shareTokenRows = await turso.select().from(tursoShareTokens);
+  const pollingRows = await turso.select().from(tursoPollingStatus);
   console.log(
-    `Read from Turso: ${systemRows.length} systems, ${pointRows.length} point_info rows`,
+    `Read from Turso: ${systemRows.length} systems, ${pointRows.length} point_info rows, ${shareTokenRows.length} share_tokens, ${pollingRows.length} polling_status`,
   );
 
   let userRows: (typeof tursoUsers.$inferSelect)[] = [];
@@ -194,7 +216,7 @@ async function main() {
           subsystem: p.subsystem,
           transform: p.transform,
           active: p.active,
-          createdAt: new Date(p.createdAtMs),
+          createdAt: msToDate(p.createdAtMs, p.updatedAtMs),
           updatedAt: p.updatedAtMs != null ? new Date(p.updatedAtMs) : null,
         })),
       )
@@ -216,7 +238,73 @@ async function main() {
     console.log(`✓ Upserted ${pointRows.length} point_info rows`);
   }
 
-  // ---- Optionally seed users + user_systems (existence only) ----
+  // ---- Seed share_tokens (PK: token; bigint epoch-ms columns) ----
+  if (shareTokenRows.length > 0) {
+    await planetscaleDb
+      .insert(pgShareTokens)
+      .values(
+        shareTokenRows.map((t) => ({
+          token: t.token,
+          ownerClerkUserId: t.ownerClerkUserId,
+          label: t.label,
+          createdAtMs: t.createdAtMs,
+          expiresAtMs: t.expiresAtMs,
+          revokedAtMs: t.revokedAtMs,
+          lastUsedAtMs: t.lastUsedAtMs,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: pgShareTokens.token,
+        set: {
+          ownerClerkUserId: excluded("owner_clerk_user_id"),
+          label: excluded("label"),
+          expiresAtMs: excluded("expires_at_ms"),
+          revokedAtMs: excluded("revoked_at_ms"),
+          lastUsedAtMs: excluded("last_used_at_ms"),
+        },
+      });
+    console.log(`✓ Upserted ${shareTokenRows.length} share_tokens`);
+  }
+
+  // ---- Seed polling_status (upsert on unique system_id) ----
+  // Turso timestamp/json columns deserialize to Date/object, which the PG
+  // timestamp/jsonb columns accept directly. id is left to PG's serial (we
+  // upsert on system_id and nothing references polling_status.id).
+  if (pollingRows.length > 0) {
+    await planetscaleDb
+      .insert(pgPollingStatus)
+      .values(
+        pollingRows.map((p) => ({
+          systemId: p.systemId,
+          lastPollTime: p.lastPollTime,
+          lastSuccessTime: p.lastSuccessTime,
+          lastErrorTime: p.lastErrorTime,
+          lastError: p.lastError,
+          lastResponse: p.lastResponse,
+          consecutiveErrors: p.consecutiveErrors,
+          totalPolls: p.totalPolls,
+          successfulPolls: p.successfulPolls,
+          updatedAt: p.updatedAt,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: pgPollingStatus.systemId,
+        set: {
+          lastPollTime: excluded("last_poll_time"),
+          lastSuccessTime: excluded("last_success_time"),
+          lastErrorTime: excluded("last_error_time"),
+          lastError: excluded("last_error"),
+          lastResponse: excluded("last_response"),
+          consecutiveErrors: excluded("consecutive_errors"),
+          totalPolls: excluded("total_polls"),
+          successfulPolls: excluded("successful_polls"),
+          updatedAt: excluded("updated_at"),
+        },
+      });
+    console.log(`✓ Upserted ${pollingRows.length} polling_status rows`);
+  }
+
+  // ---- Optionally seed users + user_systems ----
   if (withUsers) {
     if (userRows.length > 0) {
       await planetscaleDb
@@ -229,8 +317,14 @@ async function main() {
             updatedAt: u.updatedAt,
           })),
         )
-        .onConflictDoNothing();
-      console.log(`✓ Inserted ${userRows.length} users (existing left as-is)`);
+        .onConflictDoUpdate({
+          target: pgUsers.clerkUserId,
+          set: {
+            defaultSystemId: excluded("default_system_id"),
+            updatedAt: excluded("updated_at"),
+          },
+        });
+      console.log(`✓ Upserted ${userRows.length} users`);
     }
 
     if (userSystemRows.length > 0) {
@@ -246,33 +340,62 @@ async function main() {
             updatedAt: us.updatedAt,
           })),
         )
-        .onConflictDoNothing();
+        .onConflictDoUpdate({
+          target: [pgUserSystems.clerkUserId, pgUserSystems.systemId],
+          set: {
+            role: excluded("role"),
+            updatedAt: excluded("updated_at"),
+          },
+        });
       await planetscaleDb.execute(
         sql`SELECT setval(pg_get_serial_sequence('user_systems','id'), GREATEST((SELECT MAX(id) FROM user_systems), 1))`,
       );
-      console.log(
-        `✓ Inserted ${userSystemRows.length} user_systems (existing left as-is)`,
-      );
+      console.log(`✓ Upserted ${userSystemRows.length} user_systems`);
     }
   }
 
-  // ---- Verify ----
-  const pgSystemCount = await planetscaleDb.select().from(pgSystems);
-  const pgPointCount = await planetscaleDb.select().from(pgPointInfo);
+  // ---- Verify (hard-abort on any shortfall) ----
+  const pgSystemCount = (await planetscaleDb.select().from(pgSystems)).length;
+  const pgPointCount = (await planetscaleDb.select().from(pgPointInfo)).length;
+  const pgShareTokenCount = (await planetscaleDb.select().from(pgShareTokens))
+    .length;
+  const pgPollingCount = (await planetscaleDb.select().from(pgPollingStatus))
+    .length;
   console.log("─".repeat(60));
   console.log(
-    `Postgres now has: ${pgSystemCount.length} systems, ${pgPointCount.length} point_info rows`,
+    `Postgres now has: ${pgSystemCount} systems, ${pgPointCount} point_info, ${pgShareTokenCount} share_tokens, ${pgPollingCount} polling_status`,
   );
-  if (
-    pgSystemCount.length < systemRows.length ||
-    pgPointCount.length < pointRows.length
-  ) {
-    console.warn(
-      "⚠️  Postgres row counts are below Turso source counts — investigate before resuming the queue.",
+
+  const shortfalls: string[] = [];
+  if (pgSystemCount < systemRows.length)
+    shortfalls.push(`systems ${pgSystemCount}<${systemRows.length}`);
+  if (pgPointCount < pointRows.length)
+    shortfalls.push(`point_info ${pgPointCount}<${pointRows.length}`);
+  if (pgShareTokenCount < shareTokenRows.length)
+    shortfalls.push(
+      `share_tokens ${pgShareTokenCount}<${shareTokenRows.length}`,
     );
-  } else {
-    console.log("✓ Reference tables seeded.");
+  if (pgPollingCount < pollingRows.length)
+    shortfalls.push(`polling_status ${pgPollingCount}<${pollingRows.length}`);
+  if (withUsers) {
+    const pgUserCount = (await planetscaleDb.select().from(pgUsers)).length;
+    const pgUserSystemCount = (await planetscaleDb.select().from(pgUserSystems))
+      .length;
+    console.log(`  + ${pgUserCount} users, ${pgUserSystemCount} user_systems`);
+    if (pgUserCount < userRows.length)
+      shortfalls.push(`users ${pgUserCount}<${userRows.length}`);
+    if (pgUserSystemCount < userSystemRows.length)
+      shortfalls.push(
+        `user_systems ${pgUserSystemCount}<${userSystemRows.length}`,
+      );
   }
+
+  if (shortfalls.length > 0) {
+    throw new Error(
+      `Postgres row counts below Turso source — aborting: ${shortfalls.join(", ")}`,
+    );
+  }
+  console.log("✓ Reference tables seeded.");
 }
 
 main()
