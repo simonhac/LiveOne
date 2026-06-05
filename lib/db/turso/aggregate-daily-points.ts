@@ -3,10 +3,13 @@ import { systems } from "@/lib/db/turso/schema";
 import {
   pointReadingsAgg5m,
   pointReadingsAgg1d,
+  pointInfo,
 } from "@/lib/db/turso/schema-monitoring-points";
 import { eq, and, gte, lte, asc, inArray, sql } from "drizzle-orm";
 import { getYesterdayInTimezone, getTodayInTimezone } from "@/lib/date-utils";
 import { CalendarDate } from "@internationalized/date";
+import { SystemsManager, SystemWithPolling } from "@/lib/systems-manager";
+import { publishObservationBatch } from "@/lib/observations/publisher";
 
 /**
  * Convert a CalendarDate to Unix timestamp range for daily aggregation
@@ -46,6 +49,12 @@ export function dayToUnixRangeForAggregation(
 
 // Earliest date for point data aggregation (when point data collection began)
 const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
+
+// Only mirror 1d aggregates to Postgres (via the queue) for SMALL aggregation ranges —
+// the nightly cron (yesterday) and modest catch-ups. A full `regenerate`/`aggregate` over
+// the whole history (~290 days × N systems) must NOT enqueue thousands of QStash messages;
+// historical days are mirrored by scripts/backfill-turso-to-postgres.ts (direct, not queued).
+const MIRROR_PUBLISH_MAX_DAYS = 7;
 
 // Type for system object
 type System = typeof systems.$inferSelect;
@@ -352,6 +361,69 @@ export async function deleteRange(
 }
 
 /**
+ * Mirror a system/day's daily aggregates to the Postgres mirror via the observations
+ * queue (interval "1d"), the same path raw/5m use. `measurementTimeMs` is local midnight
+ * of the day so the consumer can derive the YYYY-MM-DD key from the formatted timestamp.
+ * Best-effort: publishObservationBatch swallows its own errors and never throws, so a
+ * queue hiccup can't break Turso aggregation (the source of truth).
+ */
+async function publishDailyAggregates(
+  pollingSystem: SystemWithPolling,
+  pointInfoByIndex: Map<number, typeof pointInfo.$inferSelect>,
+  measurementTimeMs: number,
+  dailyAggregates: Array<{
+    pointId: number;
+    avg: number | null;
+    min: number | null;
+    max: number | null;
+    last: number | null;
+    delta: number | null;
+    sampleCount: number;
+    errorCount: number;
+  }>,
+): Promise<void> {
+  const receivedTimeMs = Date.now();
+  let missingPointInfo = 0;
+  const inputs = dailyAggregates
+    .map((a) => {
+      const point = pointInfoByIndex.get(a.pointId);
+      if (!point) {
+        missingPointInfo++;
+        return null;
+      }
+      return {
+        sessionId: 0, // daily aggregates have no session
+        point,
+        value: a.delta ?? a.avg ?? a.last ?? null,
+        measurementTimeMs,
+        receivedTimeMs,
+        interval: "1d" as const,
+        // valueStr/dataQuality are unused by point_readings_agg_1d (no such columns).
+        agg: {
+          avg: a.avg,
+          min: a.min,
+          max: a.max,
+          last: a.last,
+          delta: a.delta,
+          valueStr: null,
+          sampleCount: a.sampleCount,
+          errorCount: a.errorCount,
+          dataQuality: null,
+        },
+      };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+
+  if (missingPointInfo > 0) {
+    console.warn(
+      `[Daily Points] ${missingPointInfo} point(s) absent from point_info for system ${pollingSystem.id} — not mirrored to Postgres 1d (Turso row is unaffected).`,
+    );
+  }
+  if (inputs.length === 0) return;
+  await publishObservationBatch(pollingSystem, inputs);
+}
+
+/**
  * Aggregate daily point data for a date range (all systems)
  * @param start - Start date (inclusive) or null for earliest available
  * @param end - End date (inclusive) or null for latest available
@@ -447,10 +519,39 @@ export async function aggregateRange(
   let totalPoints = 0;
   let totalRowsCreated = 0;
 
+  // Skip queue mirroring on bulk runs (full regenerate/aggregate) to avoid flooding QStash
+  // with one message per system×day; those days are covered by the direct backfill script.
+  const mirrorToPg = allDays.length <= MIRROR_PUBLISH_MAX_DAYS;
+  if (!mirrorToPg) {
+    console.log(
+      `[Daily Points] Range is ${allDays.length} days (> ${MIRROR_PUBLISH_MAX_DAYS}) — skipping 1d Postgres-mirror publishing; use the backfill script to reconcile.`,
+    );
+  }
+
+  const systemsManager = SystemsManager.getInstance();
+
   for (const system of systemDetails) {
     try {
       let aggregatedCount = 0;
       let rowsCreatedForSystem = 0;
+
+      // For mirroring 1d aggregates to Postgres via the queue, resolve the polling
+      // system (publisher metadata) and a pointId→point_info map once per system.
+      const pollingSystem = mirrorToPg
+        ? await systemsManager.getSystem(system.id)
+        : null;
+      const pointInfoByIndex = new Map<number, typeof pointInfo.$inferSelect>();
+      if (mirrorToPg && pollingSystem) {
+        const pts = await db
+          .select()
+          .from(pointInfo)
+          .where(eq(pointInfo.systemId, system.id));
+        for (const p of pts) pointInfoByIndex.set(p.index, p);
+      } else if (mirrorToPg && !pollingSystem) {
+        console.warn(
+          `[Daily Points] System ${system.id} not in the polling registry — its 1d aggregates won't be mirrored to Postgres this run.`,
+        );
+      }
 
       for (const day of allDays) {
         try {
@@ -459,6 +560,21 @@ export async function aggregateRange(
           if (result.data) {
             aggregatedCount += result.data.length;
             rowsCreatedForSystem += result.data.length;
+
+            // Mirror the day's aggregates to Postgres (best-effort; never throws).
+            if (pollingSystem) {
+              const [dayStartUnix] = dayToUnixRangeForAggregation(
+                day,
+                system.timezoneOffsetMin,
+              );
+              const localMidnightMs = (dayStartUnix - 5 * 60) * 1000;
+              await publishDailyAggregates(
+                pollingSystem,
+                pointInfoByIndex,
+                localMidnightMs,
+                result.data,
+              );
+            }
           }
         } catch (error) {
           console.error(

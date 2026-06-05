@@ -24,13 +24,17 @@ export interface Observation {
   /** The reading value (numeric, string for text metrics, or null for errors) */
   value: number | string | null;
 
-  /** Which insertion path generated this: "raw" for point_readings, "5m" for pre-aggregated */
-  interval: "raw" | "5m";
+  /**
+   * Which insertion path generated this:
+   * "raw" → point_readings, "5m" → point_readings_agg_5m, "1d" → point_readings_agg_1d.
+   */
+  interval: "raw" | "5m" | "1d";
 
   /**
-   * Full aggregate detail for `interval: "5m"` observations.
-   * Carries the complete 5-minute tuple so the Postgres mirror is full-fidelity
-   * rather than collapsing everything into the single `value` field.
+   * Full aggregate detail for aggregated (`interval: "5m"` / `"1d"`) observations.
+   * Carries the complete tuple so the Postgres mirror is full-fidelity rather than
+   * collapsing everything into the single `value` field. (For 1d, `valueStr`/
+   * `dataQuality` are unused — the daily table has no such columns.)
    * Absent for raw observations (and for legacy 5m messages published before this
    * field existed — the consumer falls back to `value` in that case).
    */

@@ -28,8 +28,8 @@ export interface RawObservationInput {
   value: number | string | null;
   measurementTimeMs: number;
   receivedTimeMs: number;
-  interval: "raw" | "5m";
-  /** Full 5m aggregate detail (only supplied for interval: "5m"). */
+  interval: "raw" | "5m" | "1d";
+  /** Full aggregate detail (supplied for interval "5m" / "1d"). */
   agg?: Observation["agg"];
 }
 
