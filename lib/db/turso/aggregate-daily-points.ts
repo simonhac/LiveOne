@@ -392,7 +392,7 @@ async function publishDailyAggregates(
         return null;
       }
       return {
-        sessionId: 0, // daily aggregates have no session
+        sessionId: "0", // daily aggregates have no session (sessionId unused for 1d)
         point,
         value: a.delta ?? a.avg ?? a.last ?? null,
         measurementTimeMs,

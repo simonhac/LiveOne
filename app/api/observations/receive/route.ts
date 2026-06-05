@@ -37,6 +37,12 @@ import type {
 type Db = NonNullable<typeof planetscaleDb>;
 
 /**
+ * The transaction handle passed to the `db.transaction(async (tx) => ...)` callback.
+ * The insert helpers accept `Db | Tx` so they run either standalone or inside a tx.
+ */
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+/**
  * Parse ISO 8601 timestamp to Date object
  */
 function parseTimestamp(isoString: string): Date {
@@ -65,7 +71,7 @@ function extractPointId(observation: Observation): number | null {
  * number skipped for lacking a resolvable pointId.
  */
 async function insertRawObservations(
-  db: Db,
+  db: Db | Tx,
   systemId: number,
   observations: Observation[],
 ): Promise<{ inserted: number; skipped: number }> {
@@ -113,7 +119,7 @@ async function insertRawObservations(
  * (last = value) so any in-flight old payloads still land instead of erroring.
  */
 async function insert5mObservations(
-  db: Db,
+  db: Db | Tx,
   systemId: number,
   observations: Observation[],
 ): Promise<{ inserted: number; skipped: number }> {
@@ -188,7 +194,7 @@ async function insert5mObservations(
  * arrive replaces the prior aggregate.
  */
 async function insert1dObservations(
-  db: Db,
+  db: Db | Tx,
   systemId: number,
   observations: Observation[],
 ): Promise<{ inserted: number; skipped: number }> {
@@ -255,7 +261,7 @@ async function insert1dObservations(
  * fires and the sequence can't collide.
  */
 async function insertSession(
-  db: Db,
+  db: Db | Tx,
   systemId: number,
   session: Session,
 ): Promise<void> {
@@ -279,45 +285,72 @@ async function insertSession(
 
 /**
  * Process the queue message and insert into PlanetScale.
- * Throws on any insert error so the handler returns 500 → QStash retries.
+ *
+ * PR-7b co-enqueues a poll's session and its readings in ONE message, and a later
+ * FK point_readings.session_id → sessions.id is coming. So all inserts for a single
+ * message run in ONE transaction, with the SESSION inserted FIRST (when present) so
+ * the readings never reference a not-yet-existing session row.
+ *
+ * Dual-shape tolerant: during rollout the old separate-message flow and the new
+ * combined flow coexist, so a message may be session-only, observations-only, or
+ * combined. The wrapper handles all three (session first if present, then whatever
+ * observations exist).
+ *
+ * Throws on any insert error: a transaction rollback rethrows, the handler returns
+ * 500, and QStash retries.
  */
 async function processQueueMessage(
   db: Db,
   message: QueueMessage,
 ): Promise<Record<string, number>> {
-  const stats: Record<string, number> = {};
+  return db.transaction(async (tx) => {
+    const stats: Record<string, number> = {};
 
-  if (message.observations && message.observations.length > 0) {
-    const rawObs = message.observations.filter((o) => o.interval === "raw");
-    const agg5mObs = message.observations.filter((o) => o.interval === "5m");
-
-    if (rawObs.length > 0) {
-      const result = await insertRawObservations(db, message.systemId, rawObs);
-      stats.rawInserted = result.inserted;
-      stats.rawSkipped = result.skipped;
+    // Session first so readings can reference it (future FK).
+    if (message.session) {
+      await insertSession(tx, message.systemId, message.session);
+      stats.sessionInserted = 1;
     }
 
-    if (agg5mObs.length > 0) {
-      const result = await insert5mObservations(db, message.systemId, agg5mObs);
-      stats.agg5mInserted = result.inserted;
-      stats.agg5mSkipped = result.skipped;
+    if (message.observations && message.observations.length > 0) {
+      const rawObs = message.observations.filter((o) => o.interval === "raw");
+      const agg5mObs = message.observations.filter((o) => o.interval === "5m");
+
+      if (rawObs.length > 0) {
+        const result = await insertRawObservations(
+          tx,
+          message.systemId,
+          rawObs,
+        );
+        stats.rawInserted = result.inserted;
+        stats.rawSkipped = result.skipped;
+      }
+
+      if (agg5mObs.length > 0) {
+        const result = await insert5mObservations(
+          tx,
+          message.systemId,
+          agg5mObs,
+        );
+        stats.agg5mInserted = result.inserted;
+        stats.agg5mSkipped = result.skipped;
+      }
+
+      const agg1dObs = message.observations.filter((o) => o.interval === "1d");
+      if (agg1dObs.length > 0) {
+        const result = await insert1dObservations(
+          tx,
+          message.systemId,
+          agg1dObs,
+        );
+        // upsert: RETURNING counts both inserted and overwritten rows.
+        stats.agg1dUpserted = result.inserted;
+        stats.agg1dSkipped = result.skipped;
+      }
     }
 
-    const agg1dObs = message.observations.filter((o) => o.interval === "1d");
-    if (agg1dObs.length > 0) {
-      const result = await insert1dObservations(db, message.systemId, agg1dObs);
-      // upsert: RETURNING counts both inserted and overwritten rows.
-      stats.agg1dUpserted = result.inserted;
-      stats.agg1dSkipped = result.skipped;
-    }
-  }
-
-  if (message.session) {
-    await insertSession(db, message.systemId, message.session);
-    stats.sessionInserted = 1;
-  }
-
-  return stats;
+    return stats;
+  });
 }
 
 async function handler(request: NextRequest) {
@@ -362,4 +395,23 @@ async function handler(request: NextRequest) {
 export const POST = verifySignatureAppRouter(handler, {
   currentSigningKey: process.env.OBSERVATIONS_QSTASH_CURRENT_SIGNING_KEY,
   nextSigningKey: process.env.OBSERVATIONS_QSTASH_NEXT_SIGNING_KEY,
+});
+
+/**
+ * Test-only handle on the internal message processor.
+ *
+ * Next.js route modules may only export the recognised route fields (POST, GET,
+ * config, …) — a bare `export function processQueueMessage` (or any extra named
+ * export) fails the build with "is not a valid Route export field". So instead of a
+ * top-level export we hang the function off the (valid) POST export as a
+ * non-enumerable property. Unit tests reach it via
+ * `(POST as WithProcessQueueMessage).__processQueueMessage` without enabling any
+ * extra HTTP path or extra module export.
+ */
+export type WithProcessQueueMessage = typeof POST & {
+  __processQueueMessage: typeof processQueueMessage;
+};
+Object.defineProperty(POST, "__processQueueMessage", {
+  value: processQueueMessage,
+  enumerable: false,
 });

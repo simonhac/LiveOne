@@ -55,7 +55,7 @@ export default function ObservationsViewer() {
   const [dlqError, setDlqError] = useState<string | null>(null);
 
   const [actionLoading, setActionLoading] = useState(false);
-  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
 

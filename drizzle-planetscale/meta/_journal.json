@@ -15,6 +15,20 @@
       "when": 1780667290918,
       "tag": "0001_charming_spencer_smythe",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780674220519,
+      "tag": "0002_melodic_mandarin",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780675904785,
+      "tag": "0003_warm_serpent_society",
+      "breakpoints": true
     }
   ]
 }

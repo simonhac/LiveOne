@@ -14,6 +14,10 @@ import { getNextMinuteBoundary } from "@/lib/date-utils";
 import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 import { sessionManager } from "@/lib/session-manager";
 import {
+  createPollCollector,
+  type PollCollector,
+} from "@/lib/observations/poll-collector";
+import {
   updatePollingStatusSuccess,
   updatePollingStatusError,
 } from "@/lib/polling-utils";
@@ -187,6 +191,10 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       started: startedAt,
     });
 
+    // Buffer this poll's observations so we can emit ONE combined QStash message
+    // (session + all readings) at session close, on both success and failure.
+    const collector = createPollCollector();
+
     // 3. Notify caller that session has started (for SSE updates)
     if (onSessionStart) {
       onSessionStart({
@@ -231,11 +239,22 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     try {
       // 3. Fetch data (vendor implementation) - track "fetch" stage with live updates
       const result = await withProgress("fetch", () =>
-        this.fetchData(system, credentials, { startedAt, dryRun, session }),
+        this.fetchData(system, credentials, {
+          startedAt,
+          dryRun,
+          session,
+          collector,
+        }),
       );
 
       if (!result.success) {
-        await this.completeSessionError(system.id, session, startedAt, result);
+        await this.completeSessionError(
+          system.id,
+          session,
+          startedAt,
+          result,
+          collector,
+        );
         return this.error(
           result.error || "Unknown error",
           result.rawResponse,
@@ -250,6 +269,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
           system.id,
           session,
           result,
+          collector,
         );
         // If adapter reported recordsProcessed (handles own insertion), use that
         // Otherwise use the count from insertAndPublishReadings
@@ -263,6 +283,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
         startedAt,
         recordsProcessed,
         result.rawResponse,
+        collector,
       );
 
       return this.polled(
@@ -274,10 +295,16 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      await this.completeSessionError(system.id, session, startedAt, {
-        success: false,
-        error: errorMessage,
-      });
+      await this.completeSessionError(
+        system.id,
+        session,
+        startedAt,
+        {
+          success: false,
+          error: errorMessage,
+        },
+        collector,
+      );
       return this.error(errorMessage, undefined, stages);
     }
   }
@@ -327,22 +354,29 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     systemId: number,
     session: SessionInfo,
     result: FetchResult,
+    collector: PollCollector,
   ): Promise<number> {
     const pm = PointManager.getInstance();
     let count = 0;
 
-    // Insert raw readings (PointManager handles QStash publishing internally)
+    // Insert raw readings (buffered into the collector for co-enqueue at close)
     if (result.readings?.length) {
-      await pm.insertPointReadingsRaw(systemId, session, result.readings);
+      await pm.insertPointReadingsRaw(
+        systemId,
+        session,
+        result.readings,
+        collector,
+      );
       count += result.readings.length;
     }
 
-    // Insert 5m aggregated readings (PointManager handles QStash publishing internally)
+    // Insert 5m aggregated readings (buffered into the collector for co-enqueue)
     if (result.readingsAgg5m?.length) {
       await pm.insertPointReadingsAgg5m(
         systemId,
         session,
         result.readingsAgg5m,
+        collector,
       );
       count += result.readingsAgg5m.length;
     }
@@ -358,14 +392,19 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     session: SessionInfo,
     startedAt: Date,
     numRows: number,
-    rawResponse?: any,
+    rawResponse: any,
+    collector: PollCollector,
   ): Promise<void> {
-    await sessionManager.updateSessionResult(session.id, {
-      duration: Date.now() - startedAt.getTime(),
-      successful: true,
-      response: rawResponse,
-      numRows,
-    });
+    await sessionManager.updateSessionResult(
+      session.id,
+      {
+        duration: Date.now() - startedAt.getTime(),
+        successful: true,
+        response: rawResponse,
+        numRows,
+      },
+      collector.observations,
+    );
     await updatePollingStatusSuccess(systemId, rawResponse);
   }
 
@@ -377,15 +416,20 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     session: SessionInfo,
     startedAt: Date,
     result: FetchResult,
+    collector: PollCollector,
   ): Promise<void> {
-    await sessionManager.updateSessionResult(session.id, {
-      duration: Date.now() - startedAt.getTime(),
-      successful: false,
-      errorCode: result.errorCode || null,
-      error: result.error || null,
-      response: result.rawResponse,
-      numRows: 0,
-    });
+    await sessionManager.updateSessionResult(
+      session.id,
+      {
+        duration: Date.now() - startedAt.getTime(),
+        successful: false,
+        errorCode: result.errorCode || null,
+        error: result.error || null,
+        response: result.rawResponse,
+        numRows: 0,
+      },
+      collector.observations,
+    );
     await updatePollingStatusError(
       systemId,
       result.error || "Unknown error",

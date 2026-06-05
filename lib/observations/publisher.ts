@@ -23,7 +23,7 @@ type PointInfo = typeof pointInfoTable.$inferSelect;
  * Input for a single observation (from insertPointReadingsRaw)
  */
 export interface RawObservationInput {
-  sessionId: number;
+  sessionId: string;
   point: PointInfo;
   value: number | string | null;
   measurementTimeMs: number;
@@ -52,7 +52,7 @@ function formatTimestamp(timeMs: number, timezoneOffsetMin: number): string {
 /**
  * Convert raw observation inputs to Observation objects
  */
-function buildObservations(
+export function buildObservations(
   system: SystemWithPolling,
   inputs: RawObservationInput[],
 ): Observation[] {

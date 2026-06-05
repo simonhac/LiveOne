@@ -123,7 +123,7 @@ export default function ViewDataModal({
 
   const [showExtras, setShowExtras] = useState(true);
   const [source, setSource] = useState<"raw" | "5m" | "daily">("raw");
-  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
   const [isSessionInfoModalOpen, setIsSessionInfoModalOpen] = useState(false);
@@ -385,7 +385,7 @@ export default function ViewDataModal({
     setIsPointInfoModalOpen(true);
   };
 
-  const handleSessionClick = (sessionId: number | null) => {
+  const handleSessionClick = (sessionId: string | null) => {
     if (sessionId === null) return;
     setSelectedSessionId(sessionId);
     setIsSessionInfoModalOpen(true);
@@ -1030,7 +1030,7 @@ export default function ViewDataModal({
                               <div className="flex flex-wrap gap-x-1">
                                 {row.sessions.map(
                                   (
-                                    session: { label: string; id: number },
+                                    session: { label: string; id: string },
                                     idx: number,
                                   ) => (
                                     <span

@@ -25,7 +25,7 @@ interface Session {
 interface SessionInfoModalProps {
   isOpen: boolean;
   onClose: () => void;
-  sessionId: number | null;
+  sessionId: string | null;
 }
 
 // Helper function to format duration

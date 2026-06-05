@@ -79,7 +79,10 @@ export const pointReadings = sqliteTable(
       .references(() => systems.id, { onDelete: "cascade" }),
     pointId: integer("point_id").notNull(),
     // Composite foreign key to point_info(system_id, id)
-    sessionId: integer("session_id"), // No longer references measurementSessions
+    // Text (UUIDv7) to match the app-minted session id. The physical SQLite
+    // column keeps INTEGER affinity (no rebuild) and stores UUIDv7 strings via
+    // type affinity — see the Postgres-primary migration (PR-7a).
+    sessionId: text("session_id"), // No longer references measurementSessions
 
     // Timestamps (milliseconds for sub-second precision)
     measurementTimeMs: integer("measurement_time").notNull(), // When device recorded
@@ -124,7 +127,8 @@ export const pointReadingsAgg5m = sqliteTable(
       .references(() => systems.id, { onDelete: "cascade" }),
     pointId: integer("point_id").notNull(),
     // Composite foreign key to point_info(system_id, id)
-    sessionId: integer("session_id"), // Optional session ID for tracking data source
+    // Text (UUIDv7); INTEGER-affinity column stores it via affinity (no rebuild).
+    sessionId: text("session_id"), // Optional session ID for tracking data source
     intervalEnd: integer("interval_end").notNull(), // End of interval (ms)
 
     // Aggregates (generic - units determined by point_info.metricUnit)

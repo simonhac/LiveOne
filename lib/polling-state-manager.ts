@@ -30,7 +30,7 @@ export interface SystemPollingState {
   vendorType: string;
   status: SystemPollingStatus;
   sessionLabel?: string;
-  sessionId?: number;
+  sessionId?: string;
   stages?: PollStage[];
   error?: string;
   reason?: string; // For skipped systems

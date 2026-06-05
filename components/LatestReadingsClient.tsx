@@ -16,7 +16,7 @@ interface LatestValue {
   receivedTime?: string; // ISO8601 datetime (from jsonResponse transform)
   metricUnit: string;
   pointName: string;
-  sessionId?: number; // Session that wrote this value
+  sessionId?: string; // Session that wrote this value (UUIDv7 text)
   sessionLabel?: string; // Session label/name for display
 }
 
@@ -119,7 +119,7 @@ export default function LatestReadingsClient({
   const [error, setError] = useState<string | null>(null);
   const [lastFetched, setLastFetched] = useState<Date | null>(null);
   const [showSpinner, setShowSpinner] = useState(false);
-  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
   const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);

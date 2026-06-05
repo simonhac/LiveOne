@@ -13,6 +13,7 @@ import {
   formatTimeAEST,
 } from "@/lib/date-utils";
 import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
+import type { PollCollector } from "@/lib/observations/poll-collector";
 import { ENPHASE_POINTS } from "./point-metadata";
 
 interface EnphaseInterval {
@@ -156,6 +157,7 @@ export async function fetchEnphaseDay(
   timezoneOffsetMin: number,
   session: SessionInfo,
   dryRun = false,
+  collector?: PollCollector,
 ) {
   // Get and validate system
   const system = await getValidatedEnphaseSystem(systemId);
@@ -242,6 +244,7 @@ export async function fetchEnphaseDay(
       systemId,
       session,
       pointReadings,
+      collector,
     );
     console.log(
       `[Enphase] Inserted ${pointReadings.length} pre-aggregated 5m point readings`,
@@ -331,6 +334,7 @@ export async function checkAndFetchYesterdayIfNeeded(
   systemId: number,
   session: SessionInfo,
   dryRun = false,
+  collector?: PollCollector,
 ) {
   // Get and validate system
   const system = await getValidatedEnphaseSystem(systemId);
@@ -366,6 +370,7 @@ export async function checkAndFetchYesterdayIfNeeded(
     system.timezoneOffsetMin,
     session,
     dryRun,
+    collector,
   );
 
   return {

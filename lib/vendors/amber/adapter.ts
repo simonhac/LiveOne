@@ -290,7 +290,7 @@ export class AmberAdapter extends BaseVendorAdapter {
     context: FetchContext,
   ): Promise<FetchResult> {
     try {
-      const { dryRun, session } = context;
+      const { dryRun, session, collector } = context;
       // Determine if this is a force poll based on the cause
       const isForcePoll = true; // We always run usage+forecasts since base adapter checks shouldPoll
       console.log(`[Amber] Fetching data for system ${system.id}`);
@@ -323,6 +323,7 @@ export class AmberAdapter extends BaseVendorAdapter {
           credentialsWithSite,
           session,
           dryRun,
+          collector,
         );
         audits.push(usageAudit);
         totalRecords += usageAudit.summary.numRowsInserted;
@@ -356,6 +357,7 @@ export class AmberAdapter extends BaseVendorAdapter {
           credentialsWithSite,
           session,
           dryRun,
+          collector,
         );
         audits.push(forecastAudit);
         totalRecords += forecastAudit.summary.numRowsInserted;

@@ -10,10 +10,9 @@ export async function GET(
     const authResult = await requireAdmin(request);
     if (authResult instanceof NextResponse) return authResult;
 
-    const { sessionId: sessionIdStr } = await params;
-    const sessionId = parseInt(sessionIdStr);
+    const { sessionId } = await params;
 
-    if (isNaN(sessionId)) {
+    if (!sessionId) {
       return NextResponse.json(
         { error: "Invalid session ID" },
         { status: 400 },

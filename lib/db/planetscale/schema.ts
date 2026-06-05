@@ -155,7 +155,9 @@ export const users = pgTable(
 export const sessions = pgTable(
   "sessions",
   {
-    id: serial("id").primaryKey(),
+    // App-minted UUIDv7 (text). Historical ids are stringified integers (E1).
+    // Was `serial`; the receiver always supplies an explicit id.
+    id: text("id").primaryKey(),
     sessionLabel: text("session_label"),
     systemId: integer("system_id").notNull(),
     cause: text("cause").notNull(),
@@ -169,11 +171,10 @@ export const sessions = pgTable(
     createdAt: timestamp("created_at").notNull(),
   },
   (table) => ({
-    // Unique constraint for dedup during queue processing
-    systemCreatedAtUnique: uniqueIndex("sessions_system_created_at_unique").on(
-      table.systemId,
-      table.createdAt,
-    ),
+    // The old (system_id, created_at) unique was a dedup crutch for the
+    // separate-session-publish path; with UUIDv7 text PKs the id alone
+    // guarantees distinctness, and the unique would reject legitimate
+    // same-instant sessions — dropped in PR-7b.
     systemIdx: index("sessions_system_idx").on(table.systemId),
     createdAtIdx: index("sessions_created_at_idx").on(table.createdAt),
     causeIdx: index("sessions_cause_idx").on(table.cause),
@@ -238,7 +239,10 @@ export const pointReadings = pgTable(
     // Relationships
     systemId: integer("system_id").notNull(),
     pointId: integer("point_id").notNull(),
-    sessionId: integer("session_id"),
+    // Session id is text (UUIDv7 / stringified-int historical). FK to
+    // sessions(id) is enforced (added in PR-7b after co-enqueue guarantees the
+    // session row lands before its readings). NULL session_id is allowed.
+    sessionId: text("session_id").references(() => sessions.id),
 
     // Timestamps (UTC)
     measurementTime: timestamp("measurement_time").notNull(),
@@ -285,8 +289,8 @@ export const pointReadingsAgg5m = pgTable(
     pointId: integer("point_id").notNull(),
     intervalEnd: timestamp("interval_end").notNull(),
 
-    // Optional session tracking
-    sessionId: integer("session_id"),
+    // Optional session tracking (text: UUIDv7 / stringified-int historical)
+    sessionId: text("session_id"),
 
     // Aggregates
     avg: doublePrecision("avg"),

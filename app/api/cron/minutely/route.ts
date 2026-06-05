@@ -28,7 +28,7 @@ async function pollAllSystems(params: {
   sessionCause: "CRON" | "ADMIN" | "ADMIN-DRYRUN";
   onSessionStart?: (data: {
     systemId: number;
-    sessionId: number;
+    sessionId: string;
     sessionLabel: string;
   }) => void;
   onProgress?: (result: PollingResult) => void;
@@ -52,7 +52,7 @@ async function pollAllSystems(params: {
   for (const system of activeSystems) {
     const pollStartTime = Date.now();
     const loginStages: PollStage[] = [];
-    let capturedSessionId: number | undefined;
+    let capturedSessionId: string | undefined;
     subSequence++;
     const sessionLabel = formatSessionId(sessionLabelPrefix, subSequence);
 

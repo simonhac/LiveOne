@@ -76,7 +76,7 @@ export async function updateLatestPointValue(
   metricUnit: string,
   displayName: string,
   _sourceSystemName?: string,
-  sessionId?: number,
+  sessionId?: string,
   sessionLabel?: string,
 ): Promise<void> {
   const pointValue: LatestValue = {

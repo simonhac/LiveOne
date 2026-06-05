@@ -18,7 +18,7 @@ export interface LatestValue {
   metricUnit: string; // Unit of measurement (e.g., "c/kWh", "%", "text", "json")
   displayName: string; // Human-readable name
   pointReference?: string; // Format: "systemId.pointId" (e.g., "9.7") - identifies source point
-  sessionId?: number; // Session ID that wrote this value
+  sessionId?: string; // Session ID that wrote this value (UUIDv7 text)
   sessionLabel?: string; // Session label/name for display
 }
 

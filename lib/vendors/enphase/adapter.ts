@@ -290,7 +290,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
     credentials: any,
     context: FetchContext,
   ): Promise<FetchResult> {
-    const { dryRun, session } = context;
+    const { dryRun, session, collector } = context;
 
     try {
       console.log(
@@ -311,6 +311,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
           system.id,
           session,
           dryRun,
+          collector,
         );
       } else {
         // Otherwise fetch current day's data
@@ -320,6 +321,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
           system.timezoneOffsetMin,
           session,
           dryRun,
+          collector,
         );
       }
 

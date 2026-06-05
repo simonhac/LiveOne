@@ -32,7 +32,7 @@ export interface PollOptions {
   dryRun?: boolean;
   onSessionStart?: (data: {
     systemId: number;
-    sessionId: number;
+    sessionId: string;
     sessionLabel: string;
   }) => void; // Called immediately after session is created
   onProgress?: (result: PollingResult) => void; // For live updates during stages
@@ -45,9 +45,10 @@ export interface FetchContext {
   startedAt: Date;
   dryRun: boolean;
   session: {
-    id: number;
+    id: string; // UUIDv7 (text); historical = stringified int
     started: Date;
   };
+  collector?: import("@/lib/observations/poll-collector").PollCollector;
 }
 
 /**
@@ -156,7 +157,7 @@ export interface PollingResult {
   systemId?: number;
   displayName?: string;
   vendorType?: string;
-  sessionId?: number; // Database session ID (numeric primary key)
+  sessionId?: string; // Database session ID (UUIDv7 text)
   sessionLabel?: string; // Session label (string identifier)
   lastPoll?: string | null;
   durationMs?: number; // Elapsed time for the poll operation in milliseconds

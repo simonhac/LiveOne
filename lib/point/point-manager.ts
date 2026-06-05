@@ -57,7 +57,7 @@ export interface PointMetadata {
  * Session info for tracking when data was received
  */
 export interface SessionInfo {
-  id: number;
+  id: string; // UUIDv7 (text); historical = stringified int
   started: Date;
   label?: string | null;
 }
@@ -540,7 +540,7 @@ export class PointManager {
     measurementTimeMs: number,
     receivedTimeMs: number,
     dataQuality: "good" | "error" | "estimated" | "interpolated" = "good",
-    sessionId?: number | null,
+    sessionId?: string | null,
     error?: string | null,
     valueStr?: string | null,
   ): Promise<void> {
@@ -591,6 +591,7 @@ export class PointManager {
       dataQuality?: string;
       error?: string | null;
     }>,
+    collector?: import("@/lib/observations/poll-collector").PollCollector,
   ): Promise<void> {
     if (readings.length === 0) return;
 
@@ -634,17 +635,19 @@ export class PointManager {
     const systemsManager = await SystemsManager.getInstance();
     const system = await systemsManager.getSystem(systemId);
     if (system) {
-      await publishObservationBatch(
-        system,
-        valuesToInsert.map((v) => ({
-          sessionId: session.id,
-          point: Object.values(pointMap).find((p) => p.index === v.pointId)!,
-          value: v.value,
-          measurementTimeMs: v.measurementTimeMs,
-          receivedTimeMs: v.receivedTimeMs,
-          interval: "raw" as const,
-        })),
-      );
+      const inputs = valuesToInsert.map((v) => ({
+        sessionId: session.id,
+        point: Object.values(pointMap).find((p) => p.index === v.pointId)!,
+        value: v.value,
+        measurementTimeMs: v.measurementTimeMs,
+        receivedTimeMs: v.receivedTimeMs,
+        interval: "raw" as const,
+      }));
+      if (collector) {
+        collector.add(inputs);
+      } else {
+        await publishObservationBatch(system, inputs);
+      }
     }
 
     // SQLite doesn't support ON CONFLICT for batch inserts well,
@@ -744,6 +747,7 @@ export class PointManager {
       error?: string | null;
       dataQuality?: string | null; // 'good', 'forecast', 'actual', 'billable', etc.
     }>,
+    collector?: import("@/lib/observations/poll-collector").PollCollector,
   ): Promise<void> {
     if (readings.length === 0) return;
 
@@ -803,30 +807,32 @@ export class PointManager {
     const systemsManager = await SystemsManager.getInstance();
     const system = await systemsManager.getSystem(systemId);
     if (system && session && aggregatesToInsert.length > 0) {
-      await publishObservationBatch(
-        system,
-        aggregatesToInsert.map((a) => ({
-          sessionId: session.id,
-          point: Object.values(pointMap).find((p) => p.index === a.pointId)!,
-          // Use the most meaningful value: delta for energy, otherwise avg/last, or string value
-          value: a.delta ?? a.avg ?? a.last ?? a.valueStr,
-          measurementTimeMs: a.intervalEnd,
-          receivedTimeMs: Date.now(),
-          interval: "5m" as const,
-          // Carry the full aggregate tuple so the Postgres mirror is full-fidelity
-          agg: {
-            avg: a.avg,
-            min: a.min,
-            max: a.max,
-            last: a.last,
-            delta: a.delta,
-            valueStr: a.valueStr,
-            sampleCount: a.sampleCount,
-            errorCount: a.errorCount,
-            dataQuality: a.dataQuality,
-          },
-        })),
-      );
+      const inputs = aggregatesToInsert.map((a) => ({
+        sessionId: session.id,
+        point: Object.values(pointMap).find((p) => p.index === a.pointId)!,
+        // Use the most meaningful value: delta for energy, otherwise avg/last, or string value
+        value: a.delta ?? a.avg ?? a.last ?? a.valueStr,
+        measurementTimeMs: a.intervalEnd,
+        receivedTimeMs: Date.now(),
+        interval: "5m" as const,
+        // Carry the full aggregate tuple so the Postgres mirror is full-fidelity
+        agg: {
+          avg: a.avg,
+          min: a.min,
+          max: a.max,
+          last: a.last,
+          delta: a.delta,
+          valueStr: a.valueStr,
+          sampleCount: a.sampleCount,
+          errorCount: a.errorCount,
+          dataQuality: a.dataQuality,
+        },
+      }));
+      if (collector) {
+        collector.add(inputs);
+      } else {
+        await publishObservationBatch(system, inputs);
+      }
     }
 
     // Batch upsert all aggregates
@@ -926,7 +932,7 @@ export class PointManager {
       valueStr?: string | null;
       measurementTimeMs: number;
       receivedTimeMs: number;
-      sessionId?: number | null;
+      sessionId?: string | null;
       sessionLabel?: string | null;
     }>,
   ): Promise<void> {

@@ -9,8 +9,8 @@
  * Individual observation (one point reading)
  */
 export interface Observation {
-  /** Session ID that captured this observation */
-  sessionId: number;
+  /** Session ID that captured this observation (UUIDv7 text; historical = stringified int) */
+  sessionId: string;
 
   /** MQTT-style topic: "liveone/{vendorType}/{vendorSiteId}/{physicalPathTail}" */
   topic: string;
@@ -68,8 +68,8 @@ export interface Observation {
  * Represents a communication session with an energy system
  */
 export interface Session {
-  /** Session ID from the database */
-  sessionId: number;
+  /** Session ID from the database (UUIDv7 text; historical = stringified int) */
+  sessionId: string;
 
   /** Label for grouping sessions (e.g., deployment ID suffix) */
   sessionLabel: string | null;

@@ -1,9 +1,21 @@
 import { db } from "@/lib/db/turso";
 import { sessions, systems, type NewSession } from "@/lib/db/turso/schema";
 import { eq } from "drizzle-orm";
+import { uuidv7 } from "uuidv7";
 import { transformForStorage } from "@/lib/json";
 import type { SessionInfo } from "@/lib/point/point-manager";
-import { publishSession } from "@/lib/observations/session-publisher";
+import {
+  publishSession,
+  buildSessionPayload,
+} from "@/lib/observations/session-publisher";
+import { publishPoll } from "@/lib/observations/poll-collector";
+import type { RawObservationInput } from "@/lib/observations/publisher";
+import { SystemsManager } from "@/lib/systems-manager";
+import { planetscaleDb } from "@/lib/db/planetscale";
+import {
+  sessions as pgSessions,
+  systems as pgSystems,
+} from "@/lib/db/planetscale/schema";
 
 export type SessionCause =
   | "CRON"
@@ -32,9 +44,15 @@ export interface SessionData {
 /**
  * Full session record with system info (from JOIN with systems table)
  * Used by: getSessions, getLastSessions, getSessionsByLabel, getSessionById
+ *
+ * Session reads are served from Postgres (the full history mirror) — see the
+ * Postgres-primary migration (PR-7a). `id` is the app-minted UUIDv7 (text);
+ * historical ids are stringified integers. Postgres has no `started` column;
+ * its `createdAt` holds the Turso `started` value, so `started`/`createdAt` are
+ * both mapped from PG `createdAt`.
  */
 export interface SessionWithSystem {
-  id: number;
+  id: string;
   sessionLabel: string | null;
   systemId: number;
   vendorType: string; // from systems.vendorType
@@ -69,7 +87,12 @@ export class SessionManager {
   }
 
   /**
-   * Create a new session record and return SessionInfo
+   * Create a new session record and return SessionInfo.
+   *
+   * The session id is an app-minted UUIDv7 (text, time-ordered) — this removes
+   * the dependency on Turso's autoincrement (decision E). The pending session is
+   * still written to Turso as a best-effort backup; the authoritative copy is
+   * mirrored to Postgres via the queue.
    * Note: vendorType and systemName are no longer stored - they're retrieved via JOIN with systems table
    */
   async createSession(data: {
@@ -88,7 +111,10 @@ export class SessionManager {
       }
       sessionLabel = sessionLabel || null;
 
+      const id = uuidv7();
+
       const sessionRecord: NewSession = {
+        id,
         sessionLabel,
         systemId: data.systemId,
         cause: data.cause,
@@ -101,12 +127,9 @@ export class SessionManager {
         numRows: 0,
       };
 
-      const result = await db
-        .insert(sessions)
-        .values(sessionRecord)
-        .returning();
+      await db.insert(sessions).values(sessionRecord);
 
-      return { id: result[0].id, started: data.started, label: sessionLabel };
+      return { id, started: data.started, label: sessionLabel };
     } catch (error) {
       // Log the error but don't throw - we don't want session recording to break the main flow
       console.error("[SessionManager] Failed to create session:", error);
@@ -118,7 +141,7 @@ export class SessionManager {
    * Update session with final results
    */
   async updateSessionResult(
-    sessionId: number,
+    sessionId: string,
     data: {
       duration: number;
       successful: boolean;
@@ -127,6 +150,7 @@ export class SessionManager {
       response?: any | null;
       numRows: number;
     },
+    pollObservations?: RawObservationInput[],
   ): Promise<void> {
     try {
       // ⚠️  CRITICAL: Transform response data before storage
@@ -172,7 +196,7 @@ export class SessionManager {
 
       if (session.length > 0) {
         const s = session[0];
-        await publishSession({
+        const sessionPublishInput = {
           id: s.id,
           sessionLabel: s.sessionLabel,
           systemId: s.systemId,
@@ -185,7 +209,28 @@ export class SessionManager {
           response: s.response,
           numRows: s.numRows,
           createdAt: s.createdAt,
-        });
+        };
+
+        if (pollObservations !== undefined) {
+          // Poll path: emit a single combined message (session + all readings).
+          // The session is included even when there are zero readings.
+          const system = await SystemsManager.getInstance().getSystem(
+            s.systemId,
+          );
+          if (system) {
+            await publishPoll(
+              system,
+              buildSessionPayload(
+                sessionPublishInput,
+                system.timezoneOffsetMin,
+              ),
+              pollObservations,
+            );
+          }
+        } else {
+          // Legacy callers: session-only publish (unchanged behavior).
+          await publishSession(sessionPublishInput);
+        }
       }
     } catch (error) {
       // Log the error but don't throw - we don't want session recording to break the main flow
@@ -215,6 +260,7 @@ export class SessionManager {
         : null;
 
       const sessionRecord: NewSession = {
+        id: uuidv7(),
         sessionLabel,
         systemId: data.systemId,
         cause: data.cause,
@@ -302,141 +348,132 @@ export class SessionManager {
   }
 
   /**
-   * Get sessions starting from a specific ID (for pagination)
+   * Map a joined Postgres (sessions ⋈ systems) row to SessionWithSystem.
+   * Postgres has no `started` column — `createdAt` holds the Turso `started`
+   * value, so both `started` and `createdAt` are derived from it.
+   */
+  private mapPgRow(r: {
+    sessions: typeof pgSessions.$inferSelect;
+    systems: typeof pgSystems.$inferSelect;
+  }): SessionWithSystem {
+    return {
+      id: r.sessions.id,
+      sessionLabel: r.sessions.sessionLabel,
+      systemId: r.sessions.systemId,
+      vendorType: r.systems.vendorType,
+      systemName: r.systems.displayName,
+      cause: r.sessions.cause,
+      started: r.sessions.createdAt,
+      duration: r.sessions.duration,
+      successful: r.sessions.successful,
+      errorCode: r.sessions.errorCode,
+      error: r.sessions.error,
+      response: r.sessions.response,
+      numRows: r.sessions.numRows,
+      createdAt: r.sessions.createdAt,
+    };
+  }
+
+  /**
+   * Get the most recent `count` sessions, optionally older than `before`
+   * (keyset pagination by createdAt — replaces the old numeric-id cursor, which
+   * is invalid now that ids are UUIDv7 text). Served from Postgres.
    */
   async getSessions(
-    start: number,
+    _start: number,
     count: number,
+    before?: Date,
   ): Promise<{ sessions: SessionWithSystem[]; count: number }> {
+    if (!planetscaleDb) return { sessions: [], count: 0 };
     try {
-      const { gte, desc } = await import("drizzle-orm");
-
+      const { lt, desc } = await import("drizzle-orm");
       const limit = Math.min(count, 100); // Cap at 100
 
-      const results = await db
+      const results = await planetscaleDb
         .select()
-        .from(sessions)
-        .innerJoin(systems, eq(sessions.systemId, systems.id))
-        .where(gte(sessions.id, start))
-        .orderBy(desc(sessions.id))
+        .from(pgSessions)
+        .innerJoin(pgSystems, eq(pgSessions.systemId, pgSystems.id))
+        .where(before ? lt(pgSessions.createdAt, before) : undefined)
+        .orderBy(desc(pgSessions.createdAt))
         .limit(limit);
 
-      // Map joined results to flat structure with vendorType and systemName from systems
-      const mappedResults = results.map((r) => ({
-        ...r.sessions,
-        vendorType: r.systems.vendorType,
-        systemName: r.systems.displayName,
-      }));
-
-      return {
-        sessions: mappedResults,
-        count: mappedResults.length,
-      };
+      const mappedResults = results.map((r) => this.mapPgRow(r));
+      return { sessions: mappedResults, count: mappedResults.length };
     } catch (error) {
       console.error("[SessionManager] Failed to fetch sessions:", error);
-      return {
-        sessions: [],
-        count: 0,
-      };
+      return { sessions: [], count: 0 };
     }
   }
 
   /**
-   * Get the last N sessions (most recent)
+   * Get the last N sessions (most recent). Served from Postgres.
    */
   async getLastSessions(
     count: number,
   ): Promise<{ sessions: SessionWithSystem[]; count: number }> {
+    if (!planetscaleDb) return { sessions: [], count: 0 };
     try {
       const { desc } = await import("drizzle-orm");
+      const limit = Math.min(count, 200); // Cap at 200
 
-      const limit = Math.min(count, 100); // Cap at 100
-
-      const results = await db
+      const results = await planetscaleDb
         .select()
-        .from(sessions)
-        .innerJoin(systems, eq(sessions.systemId, systems.id))
-        .orderBy(desc(sessions.id))
+        .from(pgSessions)
+        .innerJoin(pgSystems, eq(pgSessions.systemId, pgSystems.id))
+        .orderBy(desc(pgSessions.createdAt))
         .limit(limit);
 
-      // Map joined results to flat structure
-      const mappedResults = results.map((r) => ({
-        ...r.sessions,
-        vendorType: r.systems.vendorType,
-        systemName: r.systems.displayName,
-      }));
-
-      return {
-        sessions: mappedResults,
-        count: mappedResults.length,
-      };
+      const mappedResults = results.map((r) => this.mapPgRow(r));
+      return { sessions: mappedResults, count: mappedResults.length };
     } catch (error) {
       console.error("[SessionManager] Failed to fetch last sessions:", error);
-      return {
-        sessions: [],
-        count: 0,
-      };
+      return { sessions: [], count: 0 };
     }
   }
 
   /**
-   * Get sessions by label
+   * Get sessions by label. Served from Postgres.
    */
   async getSessionsByLabel(
     label: string,
   ): Promise<{ sessions: SessionWithSystem[]; count: number }> {
+    if (!planetscaleDb) return { sessions: [], count: 0 };
     try {
-      const results = await db
+      const { desc } = await import("drizzle-orm");
+      const results = await planetscaleDb
         .select()
-        .from(sessions)
-        .innerJoin(systems, eq(sessions.systemId, systems.id))
-        .where(eq(sessions.sessionLabel, label))
+        .from(pgSessions)
+        .innerJoin(pgSystems, eq(pgSessions.systemId, pgSystems.id))
+        .where(eq(pgSessions.sessionLabel, label))
+        .orderBy(desc(pgSessions.createdAt))
         .limit(100); // Cap at 100 results per label
 
-      // Map joined results to flat structure
-      const mappedResults = results.map((r) => ({
-        ...r.sessions,
-        vendorType: r.systems.vendorType,
-        systemName: r.systems.displayName,
-      }));
-
-      return {
-        sessions: mappedResults,
-        count: mappedResults.length,
-      };
+      const mappedResults = results.map((r) => this.mapPgRow(r));
+      return { sessions: mappedResults, count: mappedResults.length };
     } catch (error) {
       console.error(
         "[SessionManager] Failed to fetch sessions by label:",
         error,
       );
-      return {
-        sessions: [],
-        count: 0,
-      };
+      return { sessions: [], count: 0 };
     }
   }
 
   /**
-   * Get a single session by ID
+   * Get a single session by ID. Served from Postgres.
    */
-  async getSessionById(sessionId: number): Promise<SessionWithSystem | null> {
+  async getSessionById(sessionId: string): Promise<SessionWithSystem | null> {
+    if (!planetscaleDb) return null;
     try {
-      const results = await db
+      const results = await planetscaleDb
         .select()
-        .from(sessions)
-        .innerJoin(systems, eq(sessions.systemId, systems.id))
-        .where(eq(sessions.id, sessionId))
+        .from(pgSessions)
+        .innerJoin(pgSystems, eq(pgSessions.systemId, pgSystems.id))
+        .where(eq(pgSessions.id, sessionId))
         .limit(1);
 
       if (results.length === 0) return null;
-
-      // Map joined result to flat structure
-      const r = results[0];
-      return {
-        ...r.sessions,
-        vendorType: r.systems.vendorType,
-        systemName: r.systems.displayName,
-      };
+      return this.mapPgRow(results[0]);
     } catch (error) {
       console.error("[SessionManager] Failed to fetch session:", error);
       return null;
@@ -444,7 +481,8 @@ export class SessionManager {
   }
 
   /**
-   * Query sessions with server-side filtering, sorting, and pagination
+   * Query sessions with server-side filtering, sorting, and pagination.
+   * Served from Postgres.
    */
   async querySessions(params: {
     // Filters
@@ -476,8 +514,13 @@ export class SessionManager {
     page: number;
     pageSize: number;
   }> {
+    const page = params.page ?? 0;
+    const pageSize = Math.min(params.pageSize ?? 100, 100); // Cap at 100
+    if (!planetscaleDb) {
+      return { sessions: [], page, pageSize };
+    }
     try {
-      const { and, or, inArray, gte, desc, asc, sql, count } = await import(
+      const { and, or, inArray, gte, lt, isNull, desc, asc } = await import(
         "drizzle-orm"
       );
 
@@ -485,24 +528,22 @@ export class SessionManager {
       const conditions = [];
 
       if (params.systemIds && params.systemIds.length > 0) {
-        conditions.push(inArray(sessions.systemId, params.systemIds));
+        conditions.push(inArray(pgSessions.systemId, params.systemIds));
       }
 
       if (params.vendorTypes && params.vendorTypes.length > 0) {
-        // Filter on systems.vendorType (joined table)
-        conditions.push(inArray(systems.vendorType, params.vendorTypes));
+        conditions.push(inArray(pgSystems.vendorType, params.vendorTypes));
       }
 
       if (params.causes && params.causes.length > 0) {
-        conditions.push(inArray(sessions.cause, params.causes));
+        conditions.push(inArray(pgSessions.cause, params.causes));
       }
 
       if (params.successful && params.successful.length > 0) {
-        // Handle boolean/null array - convert to OR conditions
-        // null = pending (in-progress), true = success, false = failed
-        const { isNull } = await import("drizzle-orm");
         const successConditions = params.successful.map((s) =>
-          s === null ? isNull(sessions.successful) : eq(sessions.successful, s),
+          s === null
+            ? isNull(pgSessions.successful)
+            : eq(pgSessions.successful, s),
         );
         conditions.push(or(...successConditions)!);
       }
@@ -511,54 +552,47 @@ export class SessionManager {
         const cutoffTime = new Date(
           Date.now() - params.timeRangeHours * 60 * 60 * 1000,
         );
-        conditions.push(gte(sessions.started, cutoffTime));
+        conditions.push(gte(pgSessions.createdAt, cutoffTime));
       }
 
       const whereClause =
         conditions.length > 0 ? and(...conditions) : undefined;
 
-      // Determine sort column and direction
+      // Determine sort column and direction (PG createdAt stands in for `started`)
       let orderByClause;
       const sortOrder = params.sortOrder === "asc" ? asc : desc;
-
       switch (params.sortBy) {
         case "duration":
-          orderByClause = sortOrder(sessions.duration);
+          orderByClause = sortOrder(pgSessions.duration);
           break;
         case "systemName":
-          // Sort by systems.displayName (joined table)
-          orderByClause = sortOrder(systems.displayName);
+          orderByClause = sortOrder(pgSystems.displayName);
           break;
         case "vendorType":
-          // Sort by systems.vendorType (joined table)
-          orderByClause = sortOrder(systems.vendorType);
+          orderByClause = sortOrder(pgSystems.vendorType);
           break;
         case "cause":
-          orderByClause = sortOrder(sessions.cause);
+          orderByClause = sortOrder(pgSessions.cause);
           break;
         case "numRows":
-          orderByClause = sortOrder(sessions.numRows);
+          orderByClause = sortOrder(pgSessions.numRows);
           break;
         case "started":
         default:
-          orderByClause = sortOrder(sessions.started);
+          orderByClause = sortOrder(pgSessions.createdAt);
           break;
       }
 
-      // Pagination
-      const page = params.page ?? 0;
-      const pageSize = Math.min(params.pageSize ?? 100, 100); // Cap at 100
       const offset = page * pageSize;
 
       // Count query is skipped for performance - "go to last" unavailable
       const totalCount: number | undefined = undefined;
+      void lt; // reserved for future keyset pagination
 
-      // Execute main query with JOIN to systems table
-      // Response field will be excluded in the mapping below for performance
-      const results = await db
+      const results = await planetscaleDb
         .select()
-        .from(sessions)
-        .innerJoin(systems, eq(sessions.systemId, systems.id))
+        .from(pgSessions)
+        .innerJoin(pgSystems, eq(pgSessions.systemId, pgSystems.id))
         .where(whereClause)
         .orderBy(orderByClause)
         .limit(pageSize)
@@ -572,7 +606,7 @@ export class SessionManager {
         vendorType: r.systems.vendorType,
         systemName: r.systems.displayName,
         cause: r.sessions.cause,
-        started: r.sessions.started,
+        started: r.sessions.createdAt,
         duration: r.sessions.duration,
         successful: r.sessions.successful,
         errorCode: r.sessions.errorCode,
@@ -591,8 +625,8 @@ export class SessionManager {
       console.error("[SessionManager] Failed to query sessions:", error);
       return {
         sessions: [],
-        page: params.page ?? 0,
-        pageSize: params.pageSize ?? 100,
+        page,
+        pageSize,
       };
     }
   }

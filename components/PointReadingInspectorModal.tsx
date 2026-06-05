@@ -33,7 +33,7 @@ interface ReadingData {
   measurementTime?: number; // For raw data
   intervalEnd?: number; // For 5m data
   date?: string; // For daily data (YYYY-MM-DD format)
-  sessionId?: number | null;
+  sessionId?: string | null;
   sessionLabel?: string | null;
   // Raw data fields
   value?: number | null;
@@ -64,7 +64,7 @@ export default function PointReadingInspectorModal({
   const [loading, setLoading] = useState(false);
   const [showSpinner, setShowSpinner] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
   const [isSessionInfoModalOpen, setIsSessionInfoModalOpen] = useState(false);
@@ -174,7 +174,7 @@ export default function PointReadingInspectorModal({
     system.timezoneOffsetMin,
   ]);
 
-  const handleSessionClick = (sessionId: number | null) => {
+  const handleSessionClick = (sessionId: string | null) => {
     if (sessionId === null) return;
     setSelectedSessionId(sessionId);
     setIsSessionInfoModalOpen(true);

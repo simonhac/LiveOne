@@ -26,6 +26,7 @@ import {
   type PointMetadata,
   type SessionInfo,
 } from "@/lib/point/point-manager";
+import type { PollCollector } from "@/lib/observations/poll-collector";
 import { formatDateAEST } from "@/lib/date-utils";
 import { AmberReadingsBatch } from "./amber-readings-batch";
 import {
@@ -831,6 +832,7 @@ async function storeRecordsLocally(
   session: SessionInfo,
   batch: AmberReadingsBatch,
   stageName: string,
+  collector?: PollCollector,
 ): Promise<StageResult> {
   const records = batch.getRecords();
 
@@ -862,6 +864,7 @@ async function storeRecordsLocally(
     systemId,
     session,
     readingsToInsert,
+    collector,
   );
 
   // Return stage result
@@ -893,6 +896,7 @@ export async function updateUsage(
   credentials: AmberCredentials,
   session: SessionInfo,
   dryRun: boolean = false,
+  collector?: PollCollector,
 ): Promise<AmberSyncResult> {
   const tracker = new StageTracker();
   const stages: StageResult[] = [];
@@ -994,6 +998,7 @@ export async function updateUsage(
                   session,
                   batch,
                   "usage stage 4: store superior usage records",
+                  collector,
                 );
                 stages.push(storeResult);
 
@@ -1065,6 +1070,7 @@ export async function updateForecasts(
   credentials: AmberCredentials,
   session: SessionInfo,
   dryRun: boolean = false,
+  collector?: PollCollector,
 ): Promise<AmberSyncResult> {
   const tracker = new StageTracker();
   const stages: StageResult[] = [];
@@ -1157,6 +1163,7 @@ export async function updateForecasts(
                     session,
                     batch,
                     "forecast stage 4: store superior price records",
+                    collector,
                   );
                   stages.push(storeResult);
 

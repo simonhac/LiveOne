@@ -9,6 +9,7 @@ import {
 import { toZoned, fromDate } from "@internationalized/date";
 import { sessionManager } from "@/lib/session-manager";
 import type { SessionInfo } from "@/lib/point/point-manager";
+import { createPollCollector } from "@/lib/observations/poll-collector";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
 import { requireSystemAccess } from "@/lib/api-auth";
 
@@ -108,6 +109,10 @@ export async function POST(request: NextRequest) {
         let overallSuccess = true;
         let overallError: string | null = null;
 
+        // Buffer readings so the session + all readings are emitted as ONE
+        // combined QStash message at session close, on both success and failure.
+        const collector = createPollCollector();
+
         try {
           // Create session at the start
           session = await sessionManager.createSession({
@@ -149,6 +154,7 @@ export async function POST(request: NextRequest) {
               credentials,
               session,
               dryRun,
+              collector,
             );
             audits.push(audit);
             usageRowsInserted = audit.summary.numRowsInserted;
@@ -169,6 +175,7 @@ export async function POST(request: NextRequest) {
               credentials,
               session,
               dryRun,
+              collector,
             );
             audits.push(audit);
             priceRowsInserted = audit.summary.numRowsInserted;
@@ -352,13 +359,17 @@ export async function POST(request: NextRequest) {
           // Update session with results
           if (session) {
             const duration = Date.now() - startTime;
-            await sessionManager.updateSessionResult(session.id, {
-              duration,
-              successful: overallSuccess,
-              error: overallError,
-              numRows: totalRowsInserted,
-              response: audits,
-            });
+            await sessionManager.updateSessionResult(
+              session.id,
+              {
+                duration,
+                successful: overallSuccess,
+                error: overallError,
+                numRows: totalRowsInserted,
+                response: audits,
+              },
+              collector.observations,
+            );
           }
 
           controller.close();
@@ -370,12 +381,16 @@ export async function POST(request: NextRequest) {
           // Update session with error if we have a session ID
           if (session) {
             const duration = Date.now() - startTime;
-            await sessionManager.updateSessionResult(session.id, {
-              duration,
-              successful: false,
-              error: error instanceof Error ? error.message : String(error),
-              numRows: totalRowsInserted,
-            });
+            await sessionManager.updateSessionResult(
+              session.id,
+              {
+                duration,
+                successful: false,
+                error: error instanceof Error ? error.message : String(error),
+                numRows: totalRowsInserted,
+              },
+              collector.observations,
+            );
           }
 
           controller.close();

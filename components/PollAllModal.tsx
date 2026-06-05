@@ -79,7 +79,7 @@ export function PollAllModal({
   isPolling = false,
 }: PollAllModalProps) {
   const { registerModal, unregisterModal } = useModalContext();
-  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
   const [errorTooltip, setErrorTooltip] = useState<ErrorTooltipState | null>(
@@ -120,7 +120,7 @@ export function PollAllModal({
     return () => document.removeEventListener("keydown", handleEscape);
   }, [isOpen, onClose, selectedSessionId]);
 
-  const handleSessionClick = (sessionId: number) => {
+  const handleSessionClick = (sessionId: string) => {
     setSelectedSessionId(sessionId);
   };
 

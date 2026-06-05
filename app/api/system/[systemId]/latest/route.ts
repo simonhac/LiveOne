@@ -17,7 +17,7 @@ interface LatestValueResponse {
   receivedTimeMs?: number;
   metricUnit: string;
   pointName: string;
-  sessionId?: number; // Session that wrote this value
+  sessionId?: string; // Session that wrote this value (UUIDv7 text)
   sessionLabel?: string; // Session label/name for display
 }
 

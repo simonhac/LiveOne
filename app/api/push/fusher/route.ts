@@ -6,6 +6,7 @@ import {
 } from "@/lib/polling-utils";
 import { sessionManager } from "@/lib/session-manager";
 import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
+import { createPollCollector } from "@/lib/observations/poll-collector";
 import { FUSHER_POINTS } from "@/lib/vendors/fusher/point-metadata";
 import { getSystemCredentials } from "@/lib/secure-credentials";
 
@@ -260,6 +261,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Buffer readings so the session + all readings are emitted as ONE combined
+    // QStash message at session close, on both success and failure.
+    const collector = createPollCollector();
+
     try {
       // Insert into point_readings table
       const measurementTime = inverterTime.getTime();
@@ -296,6 +301,7 @@ export async function POST(request: NextRequest) {
           system.id,
           session,
           readingsToInsert,
+          collector,
         );
         console.log(
           `[Fusher Push] Inserted ${readingsToInsert.length} point readings for system ${system.id}`,
@@ -308,12 +314,16 @@ export async function POST(request: NextRequest) {
 
       // Update session with success
       const duration = Date.now() - sessionStart.getTime();
-      await sessionManager.updateSessionResult(session.id, {
-        duration,
-        successful: true,
-        response: data,
-        numRows: readingsToInsert.length,
-      });
+      await sessionManager.updateSessionResult(
+        session.id,
+        {
+          duration,
+          successful: true,
+          response: data,
+          numRows: readingsToInsert.length,
+        },
+        collector.observations,
+      );
 
       console.log(
         `[Fusher Push] Successfully stored data for system ${system.id}`,
@@ -345,14 +355,18 @@ export async function POST(request: NextRequest) {
       const isDuplicate = errorMessage.includes("UNIQUE constraint failed");
       const duration = Date.now() - sessionStart.getTime();
 
-      await sessionManager.updateSessionResult(session.id, {
-        duration,
-        successful: false,
-        errorCode: isDuplicate ? "409" : null,
-        error: errorMessage,
-        response: data,
-        numRows: 0,
-      });
+      await sessionManager.updateSessionResult(
+        session.id,
+        {
+          duration,
+          successful: false,
+          errorCode: isDuplicate ? "409" : null,
+          error: errorMessage,
+          response: data,
+          numRows: 0,
+        },
+        collector.observations,
+      );
 
       // Check if it's a duplicate entry error
       if (isDuplicate) {

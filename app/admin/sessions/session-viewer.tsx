@@ -35,7 +35,7 @@ declare module "@tanstack/react-table" {
 }
 
 interface Session {
-  id: number;
+  id: string;
   sessionLabel?: string;
   systemId: number;
   vendorType: string;
@@ -219,7 +219,7 @@ export default function ActivityViewer() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
   const [rotateKey, setRotateKey] = useState(0);

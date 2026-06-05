@@ -128,7 +128,10 @@ export const users = sqliteTable(
 export const sessions = sqliteTable(
   "sessions",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    // App-minted UUIDv7 (text). Was INTEGER PK AUTOINCREMENT; switched to text
+    // for UUIDv7 ids (E1). The 13M-row history lives in `sessionsArchive`
+    // (table-aside swap) — see /migrations/0017_sessions_text_id_split.sql.
+    id: text("id").primaryKey(),
     sessionLabel: text("session_label"), // nullable - provided by remote system if available
     systemId: integer("system_id")
       .notNull()
@@ -152,6 +155,26 @@ export const sessions = sqliteTable(
     causeIdx: index("sessions_cause_idx").on(table.cause),
   }),
 );
+
+// Frozen pre-cutover sessions archive (the original integer-autoincrement
+// `sessions` table, moved aside by /migrations/0017_sessions_text_id_split.sql
+// so the live `sessions` table could switch to a text/UUIDv7 id without copying
+// ~1.5 GB of rows). Read-only; full history is served from Postgres. Declared
+// here only so tooling knows the table exists.
+export const sessionsArchive = sqliteTable("sessions_archive", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  sessionLabel: text("session_label"),
+  systemId: integer("system_id").notNull(),
+  cause: text("cause").notNull(),
+  started: integer("started", { mode: "timestamp" }).notNull(),
+  duration: integer("duration").notNull(),
+  successful: integer("successful", { mode: "boolean" }),
+  errorCode: text("error_code"),
+  error: text("error"),
+  response: text("response", { mode: "json" }),
+  numRows: integer("num_rows").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
 
 // Type exports for TypeScript
 export type System = typeof systems.$inferSelect;
