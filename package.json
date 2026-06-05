@@ -20,6 +20,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
+    "db:pg:generate": "drizzle-kit generate --config=drizzle-planetscale.config.ts",
+    "db:pg:migrate": "drizzle-kit migrate --config=drizzle-planetscale.config.ts",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx scripts/seed-db.ts",
     "db:sync-prod": "node scripts/sync-prod-to-dev.js",
