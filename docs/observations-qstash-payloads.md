@@ -133,8 +133,12 @@ once, producing more than one readings message — each a self-contained envelop
 
 ## Planned change (migration context)
 
-Under the Postgres-primary migration, the readings message will additionally **carry the pending
-session stub**, and the receiver will insert the session before the readings in one transaction —
-so a session row is always present when its readings land, enabling a real
-`point_readings.session_id → sessions.id` foreign key. Session ids also become app-generated
-**UUIDv7** strings. Until that ships, the two-independent-messages behaviour above is current.
+Under the Postgres-primary migration this becomes **one combined message per poll, emitted at
+session close**: the completed `session` plus all its `observations` in a single envelope. The
+gap between the last reading and session close is milliseconds, so buffering to close costs
+negligible latency, and the receiver can insert the session then its readings in one transaction
+— making the message self-contained and enabling a real `point_readings.session_id → sessions.id`
+foreign key. Session ids also become app-generated **UUIDv7** strings (stored as `text`). A poll
+that would exceed QStash's 1 MB message limit (10 MB on the Fixed-1M plan) chunks its readings
+across messages that share the session id. Until that ships, the two-independent-messages
+behaviour above (readings mid-poll, session at completion) is current.

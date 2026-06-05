@@ -10,6 +10,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool, type PoolConfig } from "pg";
 import * as schema from "./schema";
+import { isProduction } from "@/lib/env";
 
 // Global singleton to persist across hot reloads
 declare global {
@@ -52,6 +53,42 @@ function getPoolConfig(): PoolConfig | null {
   return null;
 }
 
+/** The host[:port] a PoolConfig points at, for the prod-in-dev guard. */
+function hostOf(config: PoolConfig): string | undefined {
+  if (typeof config.connectionString === "string") {
+    try {
+      return new URL(config.connectionString).host;
+    } catch {
+      return undefined;
+    }
+  }
+  if (config.host) {
+    return config.port ? `${config.host}:${config.port}` : config.host;
+  }
+  return undefined;
+}
+
+/**
+ * Guard a shared PlanetScale dev branch from clobbering production: outside
+ * production, refuse to connect if the resolved host is the declared production
+ * host. Inert until `PLANETSCALE_PRODUCTION_HOST` is set (so the guard can be
+ * armed in dev by recording the prod host — a hostname, not a credential).
+ * `ALLOW_PROD_DB_IN_DEV=true` is an explicit escape hatch.
+ */
+function assertNotProdDbInDev(config: PoolConfig): void {
+  if (isProduction()) return;
+  const prodHost = process.env.PLANETSCALE_PRODUCTION_HOST;
+  if (!prodHost) return;
+  if (process.env.ALLOW_PROD_DB_IN_DEV === "true") return;
+  const host = hostOf(config);
+  if (host && host.toLowerCase().includes(prodHost.toLowerCase())) {
+    throw new Error(
+      `[PlanetScale] Refusing to use the PRODUCTION database (${host}) outside production. ` +
+        `Point PLANETSCALE_DATABASE_URL at the dev branch, or set ALLOW_PROD_DB_IN_DEV=true to override.`,
+    );
+  }
+}
+
 /**
  * Create or get the connection pool.
  * Returns null if not configured.
@@ -61,6 +98,8 @@ function getPool(): Pool | null {
   if (!config) {
     return null;
   }
+
+  assertNotProdDbInDev(config);
 
   if (global.__planetscalePool) {
     return global.__planetscalePool;
