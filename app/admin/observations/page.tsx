@@ -18,7 +18,7 @@ export default async function ObservationsPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 px-0 md:px-6 pt-3 pb-0 overflow-hidden flex flex-col">
+      <div className="flex-1 px-3 md:px-6 pt-3 pb-6 overflow-y-auto">
         <ObservationsViewer />
       </div>
     </div>
