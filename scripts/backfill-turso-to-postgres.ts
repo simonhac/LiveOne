@@ -2,7 +2,7 @@
 /**
  * Phase 2 backfill: copy historical sessions + readings from Turso into the Postgres
  * mirror, in parallel. Turso stays the source of truth; this fills everything that
- * predates the live (Phase 1) pipeline. See docs/observations-pg-phase2.md.
+ * predates the live (Phase 1) pipeline. See docs/backfill-turso-to-postgres.md.
  *
  * Direct Turso→Postgres streaming (NOT via QStash). Properties:
  *   - SHARDED parallelism: each table's key-space is split into N ranges, each driven by
