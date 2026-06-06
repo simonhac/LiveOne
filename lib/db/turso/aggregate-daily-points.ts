@@ -10,42 +10,16 @@ import { getYesterdayInTimezone, getTodayInTimezone } from "@/lib/date-utils";
 import { CalendarDate } from "@internationalized/date";
 import { SystemsManager, SystemWithPolling } from "@/lib/systems-manager";
 import { publishObservationBatch } from "@/lib/observations/publisher";
+import {
+  aggregate1dForPoint,
+  dayToUnixRangeForAggregation,
+} from "@/lib/aggregation/point-aggregates";
+import { AGG_COMPUTE_IN_PG } from "@/lib/db/routing";
+import { recompute1dForDayBestEffort } from "@/lib/db/planetscale/aggregate-points-pg";
 
-/**
- * Convert a CalendarDate to Unix timestamp range for daily aggregation
- * Returns timestamps for 00:05 of the given day to 00:00 of the next day (inclusive)
- * This gives us 288 5-minute intervals (00:05, 00:10, ..., 23:55, 00:00)
- * @param day - The day as CalendarDate
- * @param timezoneOffsetMin - Timezone offset in minutes
- * @returns [startUnix, endUnix] in seconds
- */
-export function dayToUnixRangeForAggregation(
-  day: CalendarDate,
-  timezoneOffsetMin: number,
-): [number, number] {
-  const offsetMinutes = timezoneOffsetMin;
-  const offsetHours = Math.floor(offsetMinutes / 60);
-  const offsetMins = Math.abs(offsetMinutes % 60);
-  const offsetString =
-    offsetMinutes >= 0
-      ? `+${String(offsetHours).padStart(2, "0")}:${String(offsetMins).padStart(2, "0")}`
-      : `-${String(Math.abs(offsetHours)).padStart(2, "0")}:${String(offsetMins).padStart(2, "0")}`;
-
-  // Format day as YYYY-MM-DD
-  const dayStr = `${day.year}-${String(day.month).padStart(2, "0")}-${String(day.day).padStart(2, "0")}`;
-
-  // Start at 00:05 of the given day
-  const dayStart = new Date(`${dayStr}T00:05:00${offsetString}`);
-  // End at 00:00 of the next day (inclusive)
-  const nextDay = new Date(`${dayStr}T00:00:00${offsetString}`);
-  nextDay.setDate(nextDay.getDate() + 1);
-  const dayEnd = nextDay;
-
-  return [
-    Math.floor(dayStart.getTime() / 1000),
-    Math.floor(dayEnd.getTime() / 1000),
-  ];
-}
+// Re-exported from the shared, db-free aggregation module (kept here for backwards
+// compatibility with existing importers of this path).
+export { dayToUnixRangeForAggregation };
 
 // Earliest date for point data aggregation (when point data collection began)
 const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
@@ -134,64 +108,23 @@ async function aggregateDailyPointData(
       pointDataMap.get(record.pointId)!.push(record);
     }
 
-    // Calculate aggregates for each point
+    // Calculate aggregates for each point. The roll-up math lives in the shared,
+    // db-free helper so the Postgres recompute (AGG_COMPUTE_IN_PG) produces identical
+    // values — see lib/aggregation/point-aggregates.ts.
     const dailyAggregates = [];
     const now = Date.now();
 
     for (const [pointId, records] of pointDataMap.entries()) {
-      // Extract non-null values for aggregation
-      const avgValues = records
-        .map((r) => r.avg)
-        .filter((v) => v !== null) as number[];
-      const minValues = records
-        .map((r) => r.min)
-        .filter((v) => v !== null) as number[];
-      const maxValues = records
-        .map((r) => r.max)
-        .filter((v) => v !== null) as number[];
-      const deltaValues = records
-        .map((r) => r.delta)
-        .filter((v) => v !== null) as number[];
-
-      // Calculate aggregates
-      const avg =
-        avgValues.length > 0
-          ? avgValues.reduce((sum, val) => sum + val, 0) / avgValues.length
-          : null;
-
-      const min = minValues.length > 0 ? Math.min(...minValues) : null;
-
-      const max = maxValues.length > 0 ? Math.max(...maxValues) : null;
-
-      const delta =
-        deltaValues.length > 0
-          ? deltaValues.reduce((sum, val) => sum + val, 0)
-          : null;
-
-      // Get last value from 00:00 interval
-      const last = lastValuesMap.get(pointId) ?? null;
-
-      // Sum sample counts and error counts
-      const sampleCount = records.reduce(
-        (sum, r) => sum + (r.sampleCount || 0),
-        0,
-      );
-      const errorCount = records.reduce(
-        (sum, r) => sum + (r.errorCount || 0),
-        0,
-      );
+      const result = aggregate1dForPoint({
+        rows: records,
+        last: lastValuesMap.get(pointId) ?? null,
+      });
 
       dailyAggregates.push({
         systemId: system.id,
         pointId,
         day: dayStr,
-        avg,
-        min,
-        max,
-        last,
-        delta,
-        sampleCount,
-        errorCount,
+        ...result,
         createdAt: now,
         updatedAt: now,
       });
@@ -535,19 +468,26 @@ export async function aggregateRange(
       let aggregatedCount = 0;
       let rowsCreatedForSystem = 0;
 
-      // For mirroring 1d aggregates to Postgres via the queue, resolve the polling
-      // system (publisher metadata) and a pointId→point_info map once per system.
-      const pollingSystem = mirrorToPg
+      // The Turso 1d reaches Postgres one of two ways, both gated to small ranges:
+      //  - AGG_COMPUTE_IN_PG on  → PG recomputes the day's 1d from PG's own 5m (shadow),
+      //    so we do NOT also mirror Turso's 1d (that would overwrite the PG-computed values
+      //    and make the reconciler a no-op). No publisher metadata needed.
+      //  - AGG_COMPUTE_IN_PG off → mirror Turso's 1d over the queue (current behavior),
+      //    which needs the polling system + a pointId→point_info map.
+      const computeInPg = mirrorToPg && AGG_COMPUTE_IN_PG;
+      const publishToPg = mirrorToPg && !AGG_COMPUTE_IN_PG;
+
+      const pollingSystem = publishToPg
         ? await systemsManager.getSystem(system.id)
         : null;
       const pointInfoByIndex = new Map<number, typeof pointInfo.$inferSelect>();
-      if (mirrorToPg && pollingSystem) {
+      if (publishToPg && pollingSystem) {
         const pts = await db
           .select()
           .from(pointInfo)
           .where(eq(pointInfo.systemId, system.id));
         for (const p of pts) pointInfoByIndex.set(p.index, p);
-      } else if (mirrorToPg && !pollingSystem) {
+      } else if (publishToPg && !pollingSystem) {
         console.warn(
           `[Daily Points] System ${system.id} not in the polling registry — its 1d aggregates won't be mirrored to Postgres this run.`,
         );
@@ -561,8 +501,12 @@ export async function aggregateRange(
             aggregatedCount += result.data.length;
             rowsCreatedForSystem += result.data.length;
 
-            // Mirror the day's aggregates to Postgres (best-effort; never throws).
-            if (pollingSystem) {
+            // Land the day's 1d in Postgres (best-effort; never throws).
+            if (computeInPg) {
+              // Shadow: PG computes its own 1d from PG 5m (independent of result.data).
+              await recompute1dForDayBestEffort(system, day);
+            } else if (publishToPg && pollingSystem) {
+              // Mirror the Turso-computed 1d over the queue.
               const [dayStartUnix] = dayToUnixRangeForAggregation(
                 day,
                 system.timezoneOffsetMin,

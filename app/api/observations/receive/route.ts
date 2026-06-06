@@ -33,6 +33,8 @@ import type {
   Observation,
   Session,
 } from "@/lib/observations/types";
+import { AGG_COMPUTE_IN_PG } from "@/lib/db/routing";
+import { recompute5mForRawObservationsBestEffort } from "@/lib/db/planetscale/aggregate-points-pg";
 
 type Db = NonNullable<typeof planetscaleDb>;
 
@@ -379,6 +381,17 @@ async function handler(request: NextRequest) {
     const stats = await processQueueMessage(planetscaleDb, body);
 
     console.log(`[ObservationsReceiver] Processed: ${JSON.stringify(stats)}`);
+
+    // Move 1 (AGG_COMPUTE_IN_PG, shadow): once this message's raw readings have durably
+    // landed (tx committed above), recompute the raw-vendor 5m aggregates for the touched
+    // intervals from PG's own raw. Best-effort — it never throws — but awaited so the work
+    // completes before the serverless function can freeze. Off by default → a no-op.
+    if (AGG_COMPUTE_IN_PG && body.observations) {
+      const rawObs = body.observations.filter((o) => o.interval === "raw");
+      if (rawObs.length > 0) {
+        await recompute5mForRawObservationsBestEffort(body.systemId, rawObs);
+      }
+    }
 
     return NextResponse.json({ status: "ok", stats });
   } catch (error) {
