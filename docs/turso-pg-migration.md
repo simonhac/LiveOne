@@ -52,10 +52,15 @@ PG, compare, log `[CONFIG-SHADOW] … DIVERGE`; PG errors swallowed — can't af
 run). WRITES on = config writes hit **PG only** (no Turso dual-write).
 
 1. **Merge + deploy (dark).** Confirm healthy; with all config flags off the behavior is unchanged.
-2. **Shadow.** Set `CONFIG_READS_FROM_PG=true` in prod. Watch for `[CONFIG-SHADOW] … DIVERGE` /
-   `pg-read failed` across the read sites (systems⋈polling_status, point_info, `userHasSystemAccess`,
-   share-tokens validate/list, `/api/setup`, admin systems/users). Soak until a clean window with
-   **0 divergences** (especially `userHasSystemAccess` — access control). If config drifted, re-seed:
+2. **Shadow.** Set `CONFIG_READS_FROM_PG=true` in prod. The gate is **0 divergence on the stable
+   config** — `systems`, `point_info`, `users`, `user_systems`, and the non-churn fields of
+   `share_tokens`/`polling_status` (especially `userHasSystemAccess` — access control). **Expected and
+   ignorable:** `[CONFIG-SHADOW] loadSystems DIVERGE` on `polling_status` per-poll fields and
+   `share_tokens.lastUsedAtMs` — those are written to Turso every poll/use, so PG lags until the write
+   flip (step 4) heals it. Verify with `NODE_ENV=production npx tsx scripts/parity-config-turso-vs-pg.ts`,
+   which compares every config row with the shadow seam's own normalizers and classifies churn vs. real
+   divergence into a ✅/⚠️ verdict (traffic-independent); or watch logs for `[CONFIG-SHADOW] … DIVERGE` /
+   `pg-read failed` on any label other than `loadSystems`. If the stable config drifted, re-seed:
    `NODE_ENV=production npx tsx scripts/seed-planetscale-refs.ts --apply --with-users`.
 3. **Pre-cutover safety.** Fresh Turso snapshot + confirm PG PITR; re-seed + hard-validate PG ≥ Turso
    config counts (the seed aborts on shortfall). Optionally pause cron for the flip.
