@@ -15,6 +15,14 @@ import {
   pointReadingsAgg5m,
 } from "@/lib/db/turso/schema-monitoring-points";
 import { and, eq, sql } from "drizzle-orm";
+import { planetscaleDb } from "@/lib/db/planetscale";
+import { pointInfo as pgPointInfoTable } from "@/lib/db/planetscale/schema";
+import { CONFIG_WRITES_TO_PG } from "@/lib/db/routing";
+import {
+  shadowReadConfig,
+  toEpochSeconds,
+  SHADOW_SKIP,
+} from "@/lib/db/config-shadow";
 import { PointInfo } from "@/lib/point/point-info";
 import {
   SeriesInfo,
@@ -60,6 +68,54 @@ export interface SessionInfo {
   id: string; // UUIDv7 (text); historical = stringified int
   started: Date;
   label?: string | null;
+}
+
+// ============================================================================
+// point_info config-read shadowing (PR-8, 1A)
+// ============================================================================
+
+/**
+ * Project a single point_info row to the fields compared in the Turso↔PG shadow-diff,
+ * normalizing the schema divergences:
+ *   - Turso stores explicit epoch-ms integer columns `createdAtMs`/`updatedAtMs`; PG uses
+ *     native `createdAt`/`updatedAt` timestamps. Both funnel through `toEpochSeconds`
+ *     (Date | number | null) so they collapse to whole-second precision.
+ *   - `active` is a Turso integer(mode:"boolean") vs PG boolean — coerced to a plain boolean.
+ * The business key is (systemId, index).
+ */
+function normalizePointInfoRowForShadow(row: unknown): unknown {
+  if (!row) return null;
+  const p = row as Record<string, any>;
+  return {
+    systemId: p.systemId,
+    index: p.index,
+    physicalPathTail: p.physicalPathTail,
+    logicalPathStem: p.logicalPathStem ?? null,
+    metricType: p.metricType,
+    metricUnit: p.metricUnit,
+    defaultName: p.defaultName,
+    displayName: p.displayName,
+    subsystem: p.subsystem ?? null,
+    transform: p.transform ?? null,
+    active: !!p.active,
+    // Turso: createdAtMs/updatedAtMs (epoch-ms numbers). PG: createdAt/updatedAt (Date).
+    createdAt: toEpochSeconds(p.createdAtMs ?? p.createdAt ?? null),
+    updatedAt: toEpochSeconds(p.updatedAtMs ?? p.updatedAt ?? null),
+  };
+}
+
+/**
+ * Normalize a set of point_info rows into a business-key-keyed map for order-independent
+ * comparison. Key is `${systemId}.${index}`.
+ */
+function normalizePointInfoRowsForShadow(rows: unknown): unknown {
+  if (!Array.isArray(rows)) return normalizePointInfoRowForShadow(rows);
+  const out: Record<string, unknown> = {};
+  for (const row of rows) {
+    const r = row as Record<string, any>;
+    out[`${r.systemId}.${r.index}`] = normalizePointInfoRowForShadow(row);
+  }
+  return out;
 }
 
 /**
@@ -118,10 +174,25 @@ export class PointManager {
   private async _loadPointsForNonCompositeSystem(
     systemId: number,
   ): Promise<PointInfo[]> {
-    const rows = await db
-      .select()
-      .from(pointInfoTable)
-      .where(eq(pointInfoTable.systemId, systemId));
+    const rows = await shadowReadConfig(
+      "pointInfo.loadForSystem",
+      () =>
+        db
+          .select()
+          .from(pointInfoTable)
+          .where(eq(pointInfoTable.systemId, systemId)),
+      {
+        diffKey: String(systemId),
+        pgRead: async () => {
+          if (!planetscaleDb) return SHADOW_SKIP;
+          return planetscaleDb
+            .select()
+            .from(pgPointInfoTable)
+            .where(eq(pgPointInfoTable.systemId, systemId));
+        },
+        normalize: normalizePointInfoRowsForShadow,
+      },
+    );
 
     return rows.map((row) => PointInfo.from(row));
   }
@@ -236,10 +307,29 @@ export class PointManager {
     const conditions = validPointRefs.map(
       (ref) => sql`(system_id = ${ref.systemId} AND id = ${ref.pointId})`,
     );
-    const pointsData = await db
-      .select()
-      .from(pointInfoTable)
-      .where(sql`${sql.join(conditions, sql` OR `)}`);
+    const pointsData = await shadowReadConfig(
+      "pointInfo.resolveComposite",
+      () =>
+        db
+          .select()
+          .from(pointInfoTable)
+          .where(sql`${sql.join(conditions, sql` OR `)}`),
+      {
+        diffKey: String(system.id),
+        pgRead: async () => {
+          if (!planetscaleDb) return SHADOW_SKIP;
+          // Same OR-of-(system_id,id) predicate against the PG mirror.
+          const pgConditions = validPointRefs.map(
+            (ref) => sql`(system_id = ${ref.systemId} AND id = ${ref.pointId})`,
+          );
+          return planetscaleDb
+            .select()
+            .from(pgPointInfoTable)
+            .where(sql`${sql.join(pgConditions, sql` OR `)}`);
+        },
+        normalize: normalizePointInfoRowsForShadow,
+      },
+    );
 
     return pointsData.map((row) => PointInfo.from(row));
   }
@@ -364,13 +454,29 @@ export class PointManager {
       transform: string | null;
     }>,
   ): Promise<void> {
-    await db
-      .update(pointInfoTable)
-      .set({
-        ...updates,
-        updatedAtMs: Date.now(), // Unix milliseconds
-      })
-      .where(eq(pointInfoTable.index, pointIndex));
+    if (CONFIG_WRITES_TO_PG) {
+      // Config-writes cutover: write to Postgres ONLY (no Turso write).
+      if (!planetscaleDb) {
+        throw new Error(
+          "[PointManager] CONFIG_WRITES_TO_PG is on but PlanetScale is not configured",
+        );
+      }
+      await planetscaleDb
+        .update(pgPointInfoTable)
+        .set({
+          ...updates,
+          updatedAt: new Date(), // PG native timestamp
+        })
+        .where(eq(pgPointInfoTable.index, pointIndex));
+    } else {
+      await db
+        .update(pointInfoTable)
+        .set({
+          ...updates,
+          updatedAtMs: Date.now(), // Unix milliseconds
+        })
+        .where(eq(pointInfoTable.index, pointIndex));
+    }
 
     // Invalidate cache for this system
     this.invalidateSeriesCache(systemId);
@@ -393,20 +499,43 @@ export class PointManager {
     active: boolean;
     transform: string | null;
   }): Promise<void> {
-    await db.insert(pointInfoTable).values({
-      systemId: pointData.systemId,
-      index: pointData.index,
-      physicalPathTail: pointData.physicalPathTail,
-      logicalPathStem: pointData.logicalPathStem,
-      metricType: pointData.metricType,
-      metricUnit: pointData.metricUnit,
-      defaultName: pointData.defaultName,
-      displayName: pointData.displayName,
-      subsystem: pointData.subsystem ?? null,
-      active: pointData.active,
-      transform: pointData.transform,
-      createdAtMs: Date.now(),
-    });
+    if (CONFIG_WRITES_TO_PG) {
+      // Config-writes cutover: write to Postgres ONLY (no Turso write).
+      if (!planetscaleDb) {
+        throw new Error(
+          "[PointManager] CONFIG_WRITES_TO_PG is on but PlanetScale is not configured",
+        );
+      }
+      await planetscaleDb.insert(pgPointInfoTable).values({
+        systemId: pointData.systemId,
+        index: pointData.index,
+        physicalPathTail: pointData.physicalPathTail,
+        logicalPathStem: pointData.logicalPathStem,
+        metricType: pointData.metricType,
+        metricUnit: pointData.metricUnit,
+        defaultName: pointData.defaultName,
+        displayName: pointData.displayName,
+        subsystem: pointData.subsystem ?? null,
+        active: pointData.active,
+        transform: pointData.transform,
+        createdAt: new Date(), // PG native timestamp
+      });
+    } else {
+      await db.insert(pointInfoTable).values({
+        systemId: pointData.systemId,
+        index: pointData.index,
+        physicalPathTail: pointData.physicalPathTail,
+        logicalPathStem: pointData.logicalPathStem,
+        metricType: pointData.metricType,
+        metricUnit: pointData.metricUnit,
+        defaultName: pointData.defaultName,
+        displayName: pointData.displayName,
+        subsystem: pointData.subsystem ?? null,
+        active: pointData.active,
+        transform: pointData.transform,
+        createdAtMs: Date.now(),
+      });
+    }
 
     // Invalidate cache for this system
     this.invalidateSeriesCache(pointData.systemId);
@@ -421,10 +550,25 @@ export class PointManager {
    * Uses physicalPathTail as the key
    */
   async loadPointInfoMap(systemId: number): Promise<PointInfoMap> {
-    const points = await db
-      .select()
-      .from(pointInfoTable)
-      .where(eq(pointInfoTable.systemId, systemId));
+    const points = await shadowReadConfig(
+      "pointInfo.loadMap",
+      () =>
+        db
+          .select()
+          .from(pointInfoTable)
+          .where(eq(pointInfoTable.systemId, systemId)),
+      {
+        diffKey: String(systemId),
+        pgRead: async () => {
+          if (!planetscaleDb) return SHADOW_SKIP;
+          return planetscaleDb
+            .select()
+            .from(pgPointInfoTable)
+            .where(eq(pgPointInfoTable.systemId, systemId));
+        },
+        normalize: normalizePointInfoRowsForShadow,
+      },
+    );
 
     const pointMap: PointInfoMap = {};
     for (const point of points) {
@@ -443,16 +587,40 @@ export class PointManager {
     systemId: number,
     physicalPathTail: string,
   ): Promise<typeof pointInfoTable.$inferSelect | null> {
-    const [point] = await db
-      .select()
-      .from(pointInfoTable)
-      .where(
-        and(
-          eq(pointInfoTable.systemId, systemId),
-          eq(pointInfoTable.physicalPathTail, physicalPathTail),
-        ),
-      )
-      .limit(1);
+    const point = await shadowReadConfig(
+      "pointInfo.getByPhysicalPathTail",
+      async () => {
+        const [row] = await db
+          .select()
+          .from(pointInfoTable)
+          .where(
+            and(
+              eq(pointInfoTable.systemId, systemId),
+              eq(pointInfoTable.physicalPathTail, physicalPathTail),
+            ),
+          )
+          .limit(1);
+        return row || null;
+      },
+      {
+        diffKey: `${systemId}/${physicalPathTail}`,
+        pgRead: async () => {
+          if (!planetscaleDb) return SHADOW_SKIP;
+          const [row] = await planetscaleDb
+            .select()
+            .from(pgPointInfoTable)
+            .where(
+              and(
+                eq(pgPointInfoTable.systemId, systemId),
+                eq(pgPointInfoTable.physicalPathTail, physicalPathTail),
+              ),
+            )
+            .limit(1);
+          return row ?? null;
+        },
+        normalize: normalizePointInfoRowForShadow,
+      },
+    );
 
     return point || null;
   }
@@ -478,44 +646,130 @@ export class PointManager {
       `[PointManager] Creating point_info for ${metadata.defaultName} (${metadata.metricType}) at ${metadata.physicalPathTail}`,
     );
 
-    // Get the next available index for this system
-    const existingPoints = await db
-      .select()
-      .from(pointInfoTable)
-      .where(eq(pointInfoTable.systemId, systemId));
-    const maxIndex =
-      existingPoints.length > 0
-        ? Math.max(...existingPoints.map((p) => p.index))
-        : 0;
-    const nextIndex = maxIndex + 1;
+    let newPoint: typeof pointInfoTable.$inferSelect;
 
-    // Create new point_info entry
-    const [newPoint] = await db
-      .insert(pointInfoTable)
-      .values({
-        systemId,
-        index: nextIndex,
-        physicalPathTail: metadata.physicalPathTail,
-        logicalPathStem: metadata.logicalPathStem,
-        metricType: metadata.metricType,
-        metricUnit: metadata.metricUnit,
-        defaultName: metadata.defaultName,
-        displayName: metadata.defaultName, // Initially same as defaultName
-        subsystem: metadata.subsystem || null,
-        transform: metadata.transform,
-        createdAtMs: Date.now(),
-      })
-      .onConflictDoUpdate({
-        target: [pointInfoTable.systemId, pointInfoTable.physicalPathTail],
-        set: {
-          // Update default name from source if it changed
+    if (CONFIG_WRITES_TO_PG) {
+      // Config-writes cutover: allocate the next index and create the row in
+      // Postgres ONLY. The max-index scan MUST read the same side it writes.
+      if (!planetscaleDb) {
+        throw new Error(
+          "[PointManager] CONFIG_WRITES_TO_PG is on but PlanetScale is not configured",
+        );
+      }
+
+      const existingPoints = await planetscaleDb
+        .select()
+        .from(pgPointInfoTable)
+        .where(eq(pgPointInfoTable.systemId, systemId));
+      const maxIndex =
+        existingPoints.length > 0
+          ? Math.max(...existingPoints.map((p) => p.index))
+          : 0;
+      const nextIndex = maxIndex + 1;
+
+      const [pgRow] = await planetscaleDb
+        .insert(pgPointInfoTable)
+        .values({
+          systemId,
+          index: nextIndex,
+          physicalPathTail: metadata.physicalPathTail,
+          logicalPathStem: metadata.logicalPathStem,
+          metricType: metadata.metricType,
+          metricUnit: metadata.metricUnit,
           defaultName: metadata.defaultName,
-          // Update transform if it changed
+          displayName: metadata.defaultName, // Initially same as defaultName
+          subsystem: metadata.subsystem || null,
           transform: metadata.transform,
-          updatedAtMs: Date.now(),
+          createdAt: new Date(), // PG native timestamp
+        })
+        .onConflictDoUpdate({
+          target: [
+            pgPointInfoTable.systemId,
+            pgPointInfoTable.physicalPathTail,
+          ],
+          set: {
+            // Update default name from source if it changed
+            defaultName: metadata.defaultName,
+            // Update transform if it changed
+            transform: metadata.transform,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+
+      // Map the PG-shaped row back to the Turso row shape this method returns
+      // (epoch-ms columns) so downstream callers/pointMap are unchanged.
+      newPoint = {
+        systemId: pgRow.systemId,
+        index: pgRow.index,
+        physicalPathTail: pgRow.physicalPathTail,
+        logicalPathStem: pgRow.logicalPathStem,
+        metricType: pgRow.metricType,
+        metricUnit: pgRow.metricUnit,
+        defaultName: pgRow.defaultName,
+        displayName: pgRow.displayName,
+        subsystem: pgRow.subsystem,
+        transform: pgRow.transform,
+        active: pgRow.active,
+        createdAtMs: pgRow.createdAt ? pgRow.createdAt.getTime() : 0,
+        updatedAtMs: pgRow.updatedAt ? pgRow.updatedAt.getTime() : null,
+      };
+    } else {
+      // Today's behaviour: allocate from Turso (shadow-compared to PG for
+      // divergence logging only) and write to Turso.
+      const existingPoints = await shadowReadConfig(
+        "pointInfo.ensureMaxIndexScan",
+        () =>
+          db
+            .select()
+            .from(pointInfoTable)
+            .where(eq(pointInfoTable.systemId, systemId)),
+        {
+          diffKey: String(systemId),
+          pgRead: async () => {
+            if (!planetscaleDb) return SHADOW_SKIP;
+            return planetscaleDb
+              .select()
+              .from(pgPointInfoTable)
+              .where(eq(pgPointInfoTable.systemId, systemId));
+          },
+          normalize: normalizePointInfoRowsForShadow,
         },
-      })
-      .returning();
+      );
+      const maxIndex =
+        existingPoints.length > 0
+          ? Math.max(...existingPoints.map((p) => p.index))
+          : 0;
+      const nextIndex = maxIndex + 1;
+
+      // Create new point_info entry
+      [newPoint] = await db
+        .insert(pointInfoTable)
+        .values({
+          systemId,
+          index: nextIndex,
+          physicalPathTail: metadata.physicalPathTail,
+          logicalPathStem: metadata.logicalPathStem,
+          metricType: metadata.metricType,
+          metricUnit: metadata.metricUnit,
+          defaultName: metadata.defaultName,
+          displayName: metadata.defaultName, // Initially same as defaultName
+          subsystem: metadata.subsystem || null,
+          transform: metadata.transform,
+          createdAtMs: Date.now(),
+        })
+        .onConflictDoUpdate({
+          target: [pointInfoTable.systemId, pointInfoTable.physicalPathTail],
+          set: {
+            // Update default name from source if it changed
+            defaultName: metadata.defaultName,
+            // Update transform if it changed
+            transform: metadata.transform,
+            updatedAtMs: Date.now(),
+          },
+        })
+        .returning();
+    }
 
     // Add to cache
     pointMap[key] = newPoint;

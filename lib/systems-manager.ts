@@ -1,9 +1,21 @@
 import { db, dbUtils, isProduction } from "@/lib/db/turso";
 import { systems, userSystems, pollingStatus } from "@/lib/db/turso/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, max } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { clerkClient } from "@clerk/nextjs/server";
+import {
+  shadowReadConfig,
+  toEpochSeconds,
+  normalizeJson,
+  SHADOW_SKIP,
+} from "@/lib/db/config-shadow";
+import { CONFIG_WRITES_TO_PG } from "@/lib/db/routing";
+import { planetscaleDb } from "@/lib/db/planetscale";
+import {
+  systems as pgSystems,
+  pollingStatus as pgPollingStatus,
+} from "@/lib/db/planetscale/schema";
 
 // Export the type for a system from the database
 export type System = InferSelectModel<typeof systems>;
@@ -13,6 +25,97 @@ export type PollingStatus = InferSelectModel<typeof pollingStatus>;
 export type SystemWithPolling = System & {
   pollingStatus?: PollingStatus | null;
 };
+
+// Input shape for creating a system (shared by createSystem and its routed inserts).
+type CreateSystemData = {
+  ownerClerkUserId: string;
+  vendorType: string;
+  vendorSiteId: string;
+  status?: string;
+  displayName: string;
+  alias?: string | null;
+  model?: string | null;
+  serial?: string | null;
+  ratings?: string | null;
+  solarSize?: string | null;
+  batterySize?: string | null;
+  location?: any;
+  metadata?: any;
+  timezoneOffsetMin?: number;
+  displayTimezone?: string;
+};
+
+/**
+ * Project a single systems⋈polling_status join row to the fields compared in shadow-diff,
+ * normalizing the Turso↔PG schema divergences: second-precision timestamps (Turso
+ * integer mode:"timestamp" vs PG microsecond timestamp) and text-json vs jsonb. An
+ * unpolled system (polling_status absent) projects `pollingStatus: null` on both sides.
+ */
+function normalizeSystemRowForShadow(row: {
+  systems: Record<string, any>;
+  polling_status: Record<string, any> | null;
+}): unknown {
+  const s = row.systems;
+  const p = row.polling_status;
+  return {
+    id: s.id,
+    status: s.status,
+    displayName: s.displayName,
+    vendorType: s.vendorType,
+    vendorSiteId: s.vendorSiteId,
+    ownerClerkUserId: s.ownerClerkUserId ?? null,
+    alias: s.alias ?? null,
+    model: s.model ?? null,
+    serial: s.serial ?? null,
+    ratings: s.ratings ?? null,
+    solarSize: s.solarSize ?? null,
+    batterySize: s.batterySize ?? null,
+    timezoneOffsetMin: s.timezoneOffsetMin,
+    displayTimezone: s.displayTimezone,
+    location: normalizeJson(s.location),
+    metadata: normalizeJson(s.metadata),
+    pollingStatus: p
+      ? {
+          lastPollTime: toEpochSeconds(p.lastPollTime),
+          lastSuccessTime: toEpochSeconds(p.lastSuccessTime),
+          lastErrorTime: toEpochSeconds(p.lastErrorTime),
+          lastResponse: normalizeJson(p.lastResponse),
+          consecutiveErrors: p.consecutiveErrors,
+          totalPolls: p.totalPolls,
+          successfulPolls: p.successfulPolls,
+          updatedAt: toEpochSeconds(p.updatedAt),
+        }
+      : null,
+  };
+}
+
+/**
+ * Project the full systems⋈polling_status result set into a per-system map (keyed by
+ * systemId as a string) so the shadow-diff compares each system independently and reports
+ * field-level divergences. Used as `shadowReadConfig`'s `normalize` for loadSystems.
+ */
+function normalizeSystemsLoadForShadow(rows: unknown): unknown {
+  const list = (rows ?? []) as Array<{
+    systems: Record<string, any>;
+    polling_status: Record<string, any> | null;
+  }>;
+  const byId: Record<string, unknown> = {};
+  for (const row of list) {
+    byId[String(row.systems.id)] = normalizeSystemRowForShadow(row);
+  }
+  return byId;
+}
+
+/**
+ * Detect a Postgres unique_violation (SQLSTATE '23505'), e.g. the alias-unique collision.
+ * `pg` puts the SQLSTATE on the error's `code` field; this is the PG analogue of Turso's
+ * SQLITE_CONSTRAINT.
+ */
+function isPgUniqueViolation(e: unknown): boolean {
+  return (
+    !!e && typeof e === "object" && (e as { code?: unknown }).code === "23505"
+  );
+}
 
 /**
  * Manages system data with caching to avoid repeated database queries
@@ -96,14 +199,36 @@ export class SystemsManager {
   }
 
   /**
-   * Load all systems with polling status into cache (called once on instantiation)
+   * Load all systems with polling status into cache (called once on instantiation).
+   *
+   * PR-8 (1A): the systems⋈polling_status read is funneled through `shadowReadConfig`.
+   * The SERVED rows are ALWAYS the Turso join; when `CONFIG_READS_FROM_PG` is on we
+   * additionally run the same join against Postgres, project both to a per-system Map,
+   * and log any divergence (best-effort; PG errors swallowed). See lib/db/config-shadow.ts.
    */
   private async loadSystems() {
-    // Join systems with polling_status to get everything in one query
-    const allSystemsWithPolling = await db
-      .select()
-      .from(systems)
-      .leftJoin(pollingStatus, eq(systems.id, pollingStatus.systemId));
+    // Join systems with polling_status to get everything in one query.
+    const allSystemsWithPolling = await shadowReadConfig(
+      "SystemsManager.loadSystems",
+      async () =>
+        db
+          .select()
+          .from(systems)
+          .leftJoin(pollingStatus, eq(systems.id, pollingStatus.systemId)),
+      {
+        pgRead: async () => {
+          if (!planetscaleDb) return SHADOW_SKIP;
+          return planetscaleDb
+            .select()
+            .from(pgSystems)
+            .leftJoin(
+              pgPollingStatus,
+              eq(pgSystems.id, pgPollingStatus.systemId),
+            );
+        },
+        normalize: normalizeSystemsLoadForShadow,
+      },
+    );
 
     // Create map for O(1) lookups
     for (const row of allSystemsWithPolling) {
@@ -296,31 +421,45 @@ export class SystemsManager {
    * @param systemData - The system data to insert
    * @returns The created system
    */
-  async createSystem(systemData: {
-    ownerClerkUserId: string;
-    vendorType: string;
-    vendorSiteId: string;
-    status?: string;
-    displayName: string;
-    alias?: string | null;
-    model?: string | null;
-    serial?: string | null;
-    ratings?: string | null;
-    solarSize?: string | null;
-    batterySize?: string | null;
-    location?: any;
-    metadata?: any;
-    timezoneOffsetMin?: number;
-    displayTimezone?: string;
-  }): Promise<System> {
+  async createSystem(systemData: CreateSystemData): Promise<System> {
     await this.loadPromise;
 
+    // PR-8 (1B): config writes route on CONFIG_WRITES_TO_PG. OFF (default) = today's
+    // Turso write, unchanged. ON = write to Postgres ONLY (decision B: config writes are
+    // Postgres-only, no dual-write soak). The in-memory cache behaviour is unchanged.
+    const newSystem = CONFIG_WRITES_TO_PG
+      ? await this.insertSystemToPg(systemData)
+      : await this.insertSystemToTurso(systemData);
+
+    console.log(
+      `[SystemsManager] Created system ${newSystem.id} (${systemData.vendorType}) for user ${systemData.ownerClerkUserId}`,
+    );
+
+    // Invalidate cache and refresh immediately
+    SystemsManager.invalidateCache();
+    const freshManager = SystemsManager.getInstance();
+    await freshManager.loadPromise;
+
+    console.log(
+      `[SystemsManager] Cache refreshed after creating system ${newSystem.id}`,
+    );
+
+    return newSystem;
+  }
+
+  /**
+   * Today's write path: insert the system into Turso (unchanged behaviour, used when
+   * CONFIG_WRITES_TO_PG is OFF). Turso surfaces an alias-unique collision as a
+   * SQLITE_CONSTRAINT error from the underlying client.
+   */
+  private async insertSystemToTurso(
+    systemData: CreateSystemData,
+  ): Promise<System> {
     // In dev environment, get explicit ID starting from 10000
     const systemId = !isProduction
       ? await dbUtils.getNextDevSystemId()
       : undefined;
 
-    // Create the system in the database
     const [newSystem] = await db
       .insert(systems)
       .values({
@@ -345,19 +484,71 @@ export class SystemsManager {
       })
       .returning();
 
-    console.log(
-      `[SystemsManager] Created system ${newSystem.id} (${systemData.vendorType}) for user ${systemData.ownerClerkUserId}`,
-    );
-
-    // Invalidate cache and refresh immediately
-    SystemsManager.invalidateCache();
-    const freshManager = SystemsManager.getInstance();
-    await freshManager.loadPromise;
-
-    console.log(
-      `[SystemsManager] Cache refreshed after creating system ${newSystem.id}`,
-    );
-
     return newSystem;
+  }
+
+  /**
+   * PR-8 (1B) write path: insert the system into Postgres ONLY (used when
+   * CONFIG_WRITES_TO_PG is ON — nothing is written to Turso). The PG alias-unique
+   * collision is a unique_violation, surfaced with SQLSTATE '23505' (not
+   * SQLITE_CONSTRAINT); rethrown unchanged so callers keep their existing handling.
+   */
+  private async insertSystemToPg(
+    systemData: CreateSystemData,
+  ): Promise<System> {
+    if (!planetscaleDb) {
+      throw new Error(
+        "[SystemsManager] CONFIG_WRITES_TO_PG is on but Postgres is not configured",
+      );
+    }
+
+    // Mirror Turso's dev-id policy (explicit ids from 10000 in dev, serial in prod),
+    // computed against PG's own systems table since the PG sequence is independent.
+    let systemId: number | undefined = undefined;
+    if (!isProduction) {
+      const DEV_SYSTEM_ID_START = 10000;
+      const [{ maxId }] = await planetscaleDb
+        .select({ maxId: max(pgSystems.id) })
+        .from(pgSystems);
+      systemId =
+        maxId && maxId >= DEV_SYSTEM_ID_START ? maxId + 1 : DEV_SYSTEM_ID_START;
+    }
+
+    try {
+      const [newSystem] = await planetscaleDb
+        .insert(pgSystems)
+        .values({
+          ...(systemId !== undefined ? { id: systemId } : {}),
+          ownerClerkUserId: systemData.ownerClerkUserId,
+          vendorType: systemData.vendorType,
+          vendorSiteId: systemData.vendorSiteId,
+          status: systemData.status || "active",
+          displayName: systemData.displayName,
+          alias: systemData.alias,
+          model: systemData.model,
+          serial: systemData.serial,
+          ratings: systemData.ratings,
+          solarSize: systemData.solarSize,
+          batterySize: systemData.batterySize,
+          location: systemData.location,
+          metadata: systemData.metadata,
+          timezoneOffsetMin: systemData.timezoneOffsetMin ?? 600, // Default to AEST
+          displayTimezone: systemData.displayTimezone ?? "Australia/Melbourne", // Default timezone
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .returning();
+
+      // PG createdAt/updatedAt are Date-typed (same as Turso's timestamp mode); the row
+      // is structurally the System shape the caller expects.
+      return newSystem as unknown as System;
+    } catch (e) {
+      if (isPgUniqueViolation(e)) {
+        console.warn(
+          `[SystemsManager] Postgres alias-unique collision (23505) creating system for user ${systemData.ownerClerkUserId}`,
+        );
+      }
+      throw e;
+    }
   }
 }

@@ -1,6 +1,6 @@
 import { db } from "@/lib/db/turso";
 import { pollingStatus } from "@/lib/db/turso/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { transformForStorage } from "@/lib/json";
 import {
   shadowReadConfig,
@@ -8,6 +8,7 @@ import {
   normalizeJson,
   SHADOW_SKIP,
 } from "@/lib/db/config-shadow";
+import { CONFIG_WRITES_TO_PG } from "@/lib/db/routing";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { pollingStatus as pgPollingStatus } from "@/lib/db/planetscale/schema";
 
@@ -74,7 +75,6 @@ export async function updatePollingStatusSuccess(
   responseData?: any,
 ) {
   const now = new Date();
-  const existingStatus = await getPollingStatus(systemId);
 
   // ⚠️  CRITICAL: Transform response data before storage
   //
@@ -96,6 +96,17 @@ export async function updatePollingStatusSuccess(
   const transformedResponse = responseData
     ? transformForStorage(responseData)
     : null;
+
+  if (CONFIG_WRITES_TO_PG) {
+    // PR-8 (1B) write cutover: config writes go to Postgres ONLY (not Turso).
+    // The counter increment is ATOMIC in the upsert — `total_polls + 1` etc. are
+    // computed from the existing row inside onConflictDoUpdate (no read-then-write),
+    // so concurrent polls can't lose increments.
+    await writePollingStatusSuccessPg(systemId, now, transformedResponse);
+    return;
+  }
+
+  const existingStatus = await getPollingStatus(systemId);
 
   await db
     .insert(pollingStatus)
@@ -128,6 +139,60 @@ export async function updatePollingStatusSuccess(
 }
 
 /**
+ * Postgres-only success upsert (CONFIG_WRITES_TO_PG cutover).
+ *
+ * LOG-BUT-DON'T-THROW: a PG write failure here is caught and logged, never rethrown.
+ * This function is called from the poll's `shouldPoll` path; if it threw, the caller
+ * would treat the poll as failed and re-poll, minting a duplicate session.
+ *
+ * ATOMIC counters: on conflict we reference the EXISTING row
+ * (`polling_status.total_polls + 1`, `polling_status.successful_polls + 1`) via `sql`,
+ * so the increment happens server-side in a single statement with no read-then-write race.
+ * `consecutive_errors` resets to 0 on success.
+ */
+async function writePollingStatusSuccessPg(
+  systemId: number,
+  now: Date,
+  transformedResponse: unknown,
+): Promise<void> {
+  if (!planetscaleDb) return;
+  try {
+    await planetscaleDb
+      .insert(pgPollingStatus)
+      .values({
+        systemId,
+        lastPollTime: now,
+        lastSuccessTime: now,
+        lastError: null,
+        lastResponse: transformedResponse,
+        consecutiveErrors: 0,
+        totalPolls: 1,
+        successfulPolls: 1,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: pgPollingStatus.systemId,
+        set: {
+          lastPollTime: now,
+          lastSuccessTime: now,
+          lastError: null,
+          lastResponse: transformedResponse,
+          consecutiveErrors: 0,
+          totalPolls: sql`${pgPollingStatus.totalPolls} + 1`,
+          successfulPolls: sql`${pgPollingStatus.successfulPolls} + 1`,
+          updatedAt: now,
+        },
+      });
+  } catch (e) {
+    console.error(
+      `[CONFIG-WRITE-PG] updatePollingStatusSuccess systemId=${systemId} failed (swallowed): ${
+        (e as Error)?.message ?? String(e)
+      }`,
+    );
+  }
+}
+
+/**
  * Update polling status after an error
  */
 export async function updatePollingStatusError(
@@ -136,13 +201,26 @@ export async function updatePollingStatusError(
   responseData?: any,
 ) {
   const now = new Date();
-  const existingStatus = await getPollingStatus(systemId);
   const errorMessage = error instanceof Error ? error.message : error;
 
   // Transform response data if provided (same as success case)
   const transformedResponse = responseData
     ? transformForStorage(responseData)
     : null;
+
+  if (CONFIG_WRITES_TO_PG) {
+    // PR-8 (1B) write cutover: config writes go to Postgres ONLY (not Turso).
+    // `consecutive_errors` and `total_polls` increment atomically in the upsert.
+    await writePollingStatusErrorPg(
+      systemId,
+      now,
+      errorMessage,
+      transformedResponse,
+    );
+    return;
+  }
+
+  const existingStatus = await getPollingStatus(systemId);
 
   await db
     .insert(pollingStatus)
@@ -171,6 +249,58 @@ export async function updatePollingStatusError(
         updatedAt: now,
       },
     });
+}
+
+/**
+ * Postgres-only error upsert (CONFIG_WRITES_TO_PG cutover).
+ *
+ * LOG-BUT-DON'T-THROW (see writePollingStatusSuccessPg): a PG failure is caught and
+ * logged, never rethrown, so a poll-error path can't itself throw and re-poll.
+ *
+ * ATOMIC counters: on conflict, `consecutive_errors` and `total_polls` are incremented
+ * from the EXISTING row via `sql` in a single statement. `successful_polls` is left
+ * untouched on conflict (mirrors the Turso branch, which omits it from the SET).
+ */
+async function writePollingStatusErrorPg(
+  systemId: number,
+  now: Date,
+  errorMessage: string,
+  transformedResponse: unknown,
+): Promise<void> {
+  if (!planetscaleDb) return;
+  try {
+    await planetscaleDb
+      .insert(pgPollingStatus)
+      .values({
+        systemId,
+        lastPollTime: now,
+        lastErrorTime: now,
+        lastError: errorMessage,
+        lastResponse: transformedResponse,
+        consecutiveErrors: 1,
+        totalPolls: 1,
+        successfulPolls: 0,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: pgPollingStatus.systemId,
+        set: {
+          lastPollTime: now,
+          lastErrorTime: now,
+          lastError: errorMessage,
+          lastResponse: transformedResponse,
+          consecutiveErrors: sql`${pgPollingStatus.consecutiveErrors} + 1`,
+          totalPolls: sql`${pgPollingStatus.totalPolls} + 1`,
+          updatedAt: now,
+        },
+      });
+  } catch (e) {
+    console.error(
+      `[CONFIG-WRITE-PG] updatePollingStatusError systemId=${systemId} failed (swallowed): ${
+        (e as Error)?.message ?? String(e)
+      }`,
+    );
+  }
 }
 
 /**
