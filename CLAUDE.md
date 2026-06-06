@@ -73,6 +73,7 @@ The application uses Vercel KV to cache the latest point values for fast retriev
 
 ### Git Best Practices
 
+- **NEVER push directly to `main`** - All changes land via a pull request. Push your branch and open a PR (`gh pr create --base main`); never `git push origin <branch>:main` or commit straight onto `main`, even for hotfixes/cutovers. No exceptions.
 - **Never discard uncommitted changes with `git restore`** - Always use `git stash` instead to preserve work
 - If you need to temporarily set aside changes: `git stash push -m "description"`
 - To restore stashed changes: `git stash pop` or `git stash apply`

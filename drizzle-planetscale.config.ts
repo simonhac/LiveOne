@@ -21,7 +21,18 @@ dotenv.config({ path: ".env.local" });
  */
 function resolveDbCredentials() {
   if (process.env.PLANETSCALE_DATABASE_URL_MIGRATIONS) {
-    return { url: process.env.PLANETSCALE_DATABASE_URL_MIGRATIONS };
+    // node-pg's connection-string parser chokes on `sslrootcert=system` (libpq
+    // understands it; pg treats `system` as a file path → ENOENT). Parse the URL
+    // into discrete fields and set ssl explicitly, mirroring lib/db/planetscale.
+    const u = new URL(process.env.PLANETSCALE_DATABASE_URL_MIGRATIONS);
+    return {
+      host: u.hostname,
+      port: u.port ? Number(u.port) : 5432,
+      user: decodeURIComponent(u.username),
+      password: decodeURIComponent(u.password),
+      database: u.pathname.replace(/^\//, "") || "postgres",
+      ssl: { rejectUnauthorized: false },
+    };
   }
   if (process.env.DB_HOST) {
     const sslDisabled = ["0", "false", "disable", "disabled"].includes(
