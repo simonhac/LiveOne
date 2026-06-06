@@ -2,18 +2,68 @@ import { db } from "@/lib/db/turso";
 import { pollingStatus } from "@/lib/db/turso/schema";
 import { eq } from "drizzle-orm";
 import { transformForStorage } from "@/lib/json";
+import {
+  shadowReadConfig,
+  toEpochSeconds,
+  normalizeJson,
+  SHADOW_SKIP,
+} from "@/lib/db/config-shadow";
+import { planetscaleDb } from "@/lib/db/planetscale";
+import { pollingStatus as pgPollingStatus } from "@/lib/db/planetscale/schema";
 
 /**
- * Get the last polling status for a system
+ * Get the last polling status for a system.
+ *
+ * PR-8: shadow-reads polling_status from Postgres when CONFIG_READS_FROM_PG is on (the
+ * served value is still Turso; PG divergence is logged only). See lib/db/config-shadow.ts.
  */
 export async function getPollingStatus(systemId: number) {
-  const [status] = await db
-    .select()
-    .from(pollingStatus)
-    .where(eq(pollingStatus.systemId, systemId))
-    .limit(1);
+  return shadowReadConfig(
+    "getPollingStatus",
+    async () => {
+      const [status] = await db
+        .select()
+        .from(pollingStatus)
+        .where(eq(pollingStatus.systemId, systemId))
+        .limit(1);
+      return status || null;
+    },
+    {
+      diffKey: String(systemId),
+      pgRead: async () => {
+        if (!planetscaleDb) return SHADOW_SKIP;
+        const [status] = await planetscaleDb
+          .select()
+          .from(pgPollingStatus)
+          .where(eq(pgPollingStatus.systemId, systemId))
+          .limit(1);
+        return status ?? null;
+      },
+      normalize: normalizePollingStatusForShadow,
+    },
+  );
+}
 
-  return status || null;
+/**
+ * Project a polling_status row to the fields compared in shadow-diff, normalizing the
+ * Turso↔PG schema divergences: second-precision timestamps (Turso integer mode:"timestamp"
+ * vs PG microsecond timestamp) and text-json vs jsonb.
+ */
+function normalizePollingStatusForShadow(row: unknown): unknown {
+  if (!row) return null;
+  const s = row as Record<string, any>;
+  return {
+    systemId: s.systemId,
+    lastPollTime: toEpochSeconds(s.lastPollTime),
+    lastSuccessTime: toEpochSeconds(s.lastSuccessTime),
+    lastErrorTime: toEpochSeconds(s.lastErrorTime),
+    lastError: s.lastError ?? null,
+    lastResponse: normalizeJson(s.lastResponse),
+    consecutiveErrors: s.consecutiveErrors,
+    totalPolls: s.totalPolls,
+    successfulPolls: s.successfulPolls,
+    updatedAt: toEpochSeconds(s.updatedAt),
+  };
 }
 
 /**

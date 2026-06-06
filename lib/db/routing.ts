@@ -26,6 +26,11 @@ function envFlag(name: string): boolean {
 /**
  * Serve config-table reads (systems, point_info, users, user_systems,
  * polling_status, share_tokens) from Postgres instead of Turso.
+ *
+ * SHADOW PHASE (PR-8): while this flag gates the eventual cutover, in the shadow PR turning
+ * it ON does NOT change the served value — reads are still answered from Turso. It only adds
+ * a best-effort PG read + compare-and-log of any divergence (see lib/db/config-shadow.ts).
+ * Serving config from Postgres is a later cutover PR.
  */
 export const CONFIG_READS_FROM_PG = envFlag("CONFIG_READS_FROM_PG");
 
