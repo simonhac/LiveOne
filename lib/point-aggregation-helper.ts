@@ -6,6 +6,7 @@ import {
 } from "./db/turso/schema-monitoring-points";
 import { and, gt, lte, eq, sql, inArray } from "drizzle-orm";
 import { formatTimeAEST, fromUnixTimestamp } from "./date-utils";
+import { aggregate5mForPoint } from "./aggregation/point-aggregates";
 
 /**
  * Get the last values from a specific 5-minute interval for specified points
@@ -128,74 +129,25 @@ export async function updatePointAggregates5m(
       }
     }
 
-    // Calculate aggregates for each point
+    // Calculate aggregates for each point. The per-point math lives in the shared,
+    // db-free helper so the Postgres recompute (AGG_COMPUTE_IN_PG) produces identical
+    // values — see lib/aggregation/point-aggregates.ts.
     const aggregates = Array.from(pointGroups.entries()).map(
       ([pointId, group]) => {
         const { validReadings, errorCount } = group;
-        const sampleCount = validReadings.length;
-
-        // If all readings were errors, aggregates will be null
-        if (sampleCount === 0) {
-          return {
-            systemId,
-            pointId,
-            intervalEnd: intervalEndMs,
-            avg: null,
-            min: null,
-            max: null,
-            last: null,
-            delta: null,
-            sampleCount: 0,
-            errorCount,
-          };
-        }
-
         const values = validReadings.map((r) => r.value);
-        const last = validReadings[validReadings.length - 1].value;
-
-        // Calculate delta based on point type
-        const transform = pointTransforms.get(pointId);
-        const metricType = pointMetricTypes.get(pointId);
-        let delta: number | null = null;
-        let avg: number | null;
-        let min: number | null;
-        let max: number | null;
-
-        if (transform === "d") {
-          // Differentiate: delta = last - previous interval's last
-          const previousLast = previousLastValues.get(pointId);
-          if (previousLast !== undefined) {
-            delta = last - previousLast;
-          }
-          // If no previous value, delta remains null (can't calculate delta for first interval)
-
-          // For differentiated points, don't calculate avg/min/max (they're not meaningful)
-          avg = null;
-          min = null;
-          max = null;
-        } else {
-          // For non-differentiated points, calculate avg/min/max as normal
-          avg = values.reduce((sum, v) => sum + v, 0) / values.length;
-          min = Math.min(...values);
-          max = Math.max(...values);
-
-          // For energy metrics, also sum values into delta
-          if (metricType === "energy") {
-            delta = values.reduce((sum, v) => sum + v, 0);
-          }
-        }
-
+        const result = aggregate5mForPoint({
+          values,
+          errorCount,
+          transform: pointTransforms.get(pointId) ?? null,
+          metricType: pointMetricTypes.get(pointId) ?? null,
+          previousLast: previousLastValues.get(pointId),
+        });
         return {
           systemId,
           pointId,
           intervalEnd: intervalEndMs,
-          avg,
-          min,
-          max,
-          last,
-          delta,
-          sampleCount,
-          errorCount,
+          ...result,
         };
       },
     );
