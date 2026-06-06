@@ -153,15 +153,20 @@ const TARGET_WHERE = `
       AND s.point_id = r.point_id
       AND s.measurement_time > r.measurement_time
       AND s.measurement_time < r.measurement_time + interval '1 second'
-      AND s.value IS NOT DISTINCT FROM r.value
+      AND (
+        s.value IS NOT DISTINCT FROM r.value
+        OR abs(s.value - r.value)
+             <= 1e-6 * greatest(abs(s.value), abs(r.value), 1)
+      )
   )
 `;
-// The `s.value IS NOT DISTINCT FROM r.value` guard confirms `s` is the SAME reading
-// re-serialized (the truncated copy carries the identical value — only the timestamp
-// was truncated), not a coincidental distinct same-second reading. It can only ever
-// withhold a deletion (safe direction), never broaden it: a true truncated dup always
-// shares its sibling's value, while a genuine .000 reading whose same-second neighbour
-// has a different value is preserved.
+// The value guard confirms `s` is the SAME reading re-serialized, not a coincidental
+// distinct same-second reading. It matches on equality OR within the reconciler's
+// relative tolerance (1e-6, floor 1): the QStash JSON path and the Turso/backfill path
+// can round a double to representations that differ by ~1 ULP (e.g. 15982851.430000003
+// vs ...005), so an exact-equality guard would miss those truncated copies. Two GENUINE
+// distinct same-second readings would differ by far more than 1e-6, so this still
+// preserves them. NULL value ⇔ NULL value matches via IS NOT DISTINCT FROM.
 // Note on the EXISTS bound: a sub-second sibling `s` of the whole-second `r`
 // satisfies date_trunc('second', s) = r AND s <> r exactly when
 // r < s < r + 1 second. This sargable range lets PG use the (system_id,
@@ -225,7 +230,11 @@ async function dryRun() {
                AND s.point_id = r.point_id
                AND s.measurement_time > r.measurement_time
                AND s.measurement_time < r.measurement_time + interval '1 second'
-               AND s.value IS NOT DISTINCT FROM r.value
+               AND (
+                 s.value IS NOT DISTINCT FROM r.value
+                 OR abs(s.value - r.value)
+                      <= 1e-6 * greatest(abs(s.value), abs(r.value), 1)
+               )
            ) AS sibling_subsecond_time
          FROM point_readings r
          WHERE ${TARGET_WHERE}
@@ -274,10 +283,15 @@ async function apply() {
   // side is index-friendly, whereas a single `DELETE … WHERE <correlated EXISTS>`
   // over the window timed out cross-Pacific. Capturing the rows up front also yields
   // the affected (system, interval/day) sets from exactly the rows we will delete.
+  // NOTE: compute the epoch-ms SERVER-SIDE. node-pg parses a `timestamp without time
+  // zone` into a JS Date using the *process* timezone, so `.getTime()` would be offset
+  // by the local tz and `intervalEndForMs` would target the wrong interval. `extract(
+  // epoch …)` treats the stored wall-clock as UTC, giving the correct, tz-independent ms.
   const targetRes = await withRetry(
     () =>
       pool.query(
-        `SELECT r.id, r.system_id, r.point_id, r.measurement_time
+        `SELECT r.id, r.system_id, r.point_id,
+                (extract(epoch from r.measurement_time) * 1000)::bigint AS ms
          FROM point_readings r
          WHERE ${TARGET_WHERE}`,
         [WIN_START, WIN_END],
@@ -288,7 +302,7 @@ async function apply() {
     id: number;
     system_id: number;
     point_id: number;
-    measurement_time: Date;
+    ms: string; // bigint epoch-ms (node-pg returns bigint as string)
   }>;
   console.log(`Rows matching predicate: ${deletedRows.length}`);
 
@@ -329,7 +343,7 @@ async function apply() {
   // its surviving sub-second sibling, so the 5m aggregate must be rebuilt to drop
   // the truncated copy's contribution (and the 1d that rolls it up).
   for (const r of deletedRows) {
-    const ms = (r.measurement_time as Date).getTime();
+    const ms = Number(r.ms);
     const sys = r.system_id;
     let ivSet = affectedIntervalsBySystem.get(sys);
     if (!ivSet) {
