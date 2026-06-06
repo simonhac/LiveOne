@@ -673,11 +673,22 @@ export async function validateShareToken(
   if (!row) return null;
 
   // Best-effort touch of last_used_at_ms (don't await; ignore failure).
-  void db
-    .update(shareTokens)
-    .set({ lastUsedAtMs: nowMs })
-    .where(eq(shareTokens.token, token))
-    .catch(() => {});
+  // WRITE ROUTING (1B): Postgres-only when CONFIG_WRITES_TO_PG is on; otherwise Turso.
+  if (CONFIG_WRITES_TO_PG) {
+    if (planetscaleDb) {
+      void planetscaleDb
+        .update(pgShareTokens)
+        .set({ lastUsedAtMs: nowMs })
+        .where(eq(pgShareTokens.token, token))
+        .catch(() => {});
+    }
+  } else {
+    void db
+      .update(shareTokens)
+      .set({ lastUsedAtMs: nowMs })
+      .where(eq(shareTokens.token, token))
+      .catch(() => {});
+  }
 
   return { token: row.token, ownerClerkUserId: row.ownerClerkUserId };
 }

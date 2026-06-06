@@ -1,12 +1,16 @@
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 
-// Control the CONFIG_READS_FROM_PG flag per-test via a getter mock. config-shadow accesses
-// it as a module property (routing_1.CONFIG_READS_FROM_PG), so the getter is re-evaluated
-// on every read — no module reloading needed.
+// Control the routing flags per-test via getter mocks. config-shadow accesses each as a
+// module property (routing_1.CONFIG_READS_FROM_PG, routing_1.CONFIG_SERVE_FROM_PG), so the
+// getters are re-evaluated on every read — no module reloading needed.
 let mockFlagOn = false;
+let mockServeOn = false;
 jest.mock("../routing", () => ({
   get CONFIG_READS_FROM_PG() {
     return mockFlagOn;
+  },
+  get CONFIG_SERVE_FROM_PG() {
+    return mockServeOn;
   },
 }));
 
@@ -16,10 +20,12 @@ import {
   toEpochSeconds,
   normalizeJson,
   compareNormalized,
+  SHADOW_SKIP,
 } from "../config-shadow";
 
 beforeEach(() => {
   mockFlagOn = false;
+  mockServeOn = false;
 });
 
 describe("config-shadow normalizers", () => {
@@ -145,6 +151,80 @@ describe("shadowReadConfig", () => {
     });
     expect(out).toBe(tursoRow);
     expect(warn).not.toHaveBeenCalled(); // normalized projections are equal
+    warn.mockRestore();
+  });
+
+  it("SERVE ON: returns the PG value and NEVER calls tursoRead", async () => {
+    mockServeOn = true;
+    const tursoRead = jest.fn(async () => ({ x: 1 }));
+    const out = await shadowReadConfig("t", tursoRead, {
+      pgRead: async () => ({ x: 2 }),
+      normalize: (v) => v,
+    });
+    expect(out).toEqual({ x: 2 }); // served FROM Postgres
+    expect(tursoRead).not.toHaveBeenCalled();
+  });
+
+  it("SERVE ON: maps the PG read through toServed", async () => {
+    mockServeOn = true;
+    const tursoRead = jest.fn(async () => ({ x: 1 }));
+    const out = await shadowReadConfig<{ x: number }>("t", tursoRead, {
+      pgRead: async () => ({ raw: 41 }),
+      normalize: (v) => v,
+      toServed: (pg) => ({ x: (pg as { raw: number }).raw + 1 }),
+    });
+    expect(out).toEqual({ x: 42 });
+    expect(tursoRead).not.toHaveBeenCalled();
+  });
+
+  it("SERVE ON + pgRead throws: falls back to the Turso value and logs an error", async () => {
+    mockServeOn = true;
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    const tursoRead = jest.fn(async () => ({ x: 1 }));
+    const out = await shadowReadConfig("t", tursoRead, {
+      pgRead: async () => {
+        throw new Error("pg down");
+      },
+      normalize: (v) => v,
+      diffKey: "7",
+    });
+    expect(out).toEqual({ x: 1 }); // Turso safety-net fallback
+    expect(tursoRead).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+  });
+
+  it("SERVE ON + pgRead returns SHADOW_SKIP: falls through to the Turso value", async () => {
+    mockServeOn = true;
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    const tursoRead = jest.fn(async () => ({ x: 1 }));
+    const out = await shadowReadConfig("t", tursoRead, {
+      pgRead: async () => SHADOW_SKIP,
+      normalize: (v) => v,
+    });
+    expect(out).toEqual({ x: 1 }); // PG unconfigured → Turso
+    expect(tursoRead).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    warn.mockRestore();
+    error.mockRestore();
+  });
+
+  it("SERVE ON takes precedence over READS_FROM_PG: serves PG, no shadow compare", async () => {
+    mockServeOn = true;
+    mockFlagOn = true;
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const tursoRead = jest.fn(async () => ({ x: 1 }));
+    const pgRead = jest.fn(async () => ({ x: 2 }));
+    const out = await shadowReadConfig("t", tursoRead, {
+      pgRead,
+      normalize: (v) => v,
+    });
+    expect(out).toEqual({ x: 2 }); // served FROM Postgres
+    expect(tursoRead).not.toHaveBeenCalled();
+    expect(pgRead).toHaveBeenCalledTimes(1); // only the serve read, no extra shadow read
+    expect(warn).not.toHaveBeenCalled(); // no compare in serve mode
     warn.mockRestore();
   });
 });

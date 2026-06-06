@@ -119,6 +119,42 @@ function normalizePointInfoRowsForShadow(rows: unknown): unknown {
 }
 
 /**
+ * Map a single PG point_info row to the Turso-served row shape (cutover SERVE only).
+ *
+ * The PG and Turso schemas diverge ONLY on the timestamp representation: PG has native
+ * `createdAt`/`updatedAt` (Date), Turso has epoch-ms integer columns `createdAtMs`/
+ * `updatedAtMs` (number). Every other field is identical, so it passes through. The
+ * conversion mirrors `ensurePointInfo`'s PG→Turso return mapping: a missing `createdAt`
+ * collapses to 0 (Turso's notNull default), and a missing `updatedAt` to null.
+ */
+function pgPointInfoToServed(
+  pgRow: typeof pgPointInfoTable.$inferSelect,
+): typeof pointInfoTable.$inferSelect {
+  return {
+    systemId: pgRow.systemId,
+    index: pgRow.index,
+    physicalPathTail: pgRow.physicalPathTail,
+    logicalPathStem: pgRow.logicalPathStem,
+    metricType: pgRow.metricType,
+    metricUnit: pgRow.metricUnit,
+    defaultName: pgRow.defaultName,
+    displayName: pgRow.displayName,
+    subsystem: pgRow.subsystem,
+    transform: pgRow.transform,
+    active: pgRow.active,
+    createdAtMs: pgRow.createdAt ? pgRow.createdAt.getTime() : 0,
+    updatedAtMs: pgRow.updatedAt ? pgRow.updatedAt.getTime() : null,
+  };
+}
+
+/** Map an array of PG point_info rows to Turso-served shape (cutover SERVE only). */
+function pgPointInfoRowsToServed(
+  pgRows: (typeof pgPointInfoTable.$inferSelect)[],
+): (typeof pointInfoTable.$inferSelect)[] {
+  return pgRows.map(pgPointInfoToServed);
+}
+
+/**
  * Manages monitoring points for systems (backend only)
  */
 export class PointManager {
@@ -191,6 +227,10 @@ export class PointManager {
             .where(eq(pgPointInfoTable.systemId, systemId));
         },
         normalize: normalizePointInfoRowsForShadow,
+        toServed: (pg) =>
+          pgPointInfoRowsToServed(
+            pg as (typeof pgPointInfoTable.$inferSelect)[],
+          ),
       },
     );
 
@@ -328,6 +368,10 @@ export class PointManager {
             .where(sql`${sql.join(pgConditions, sql` OR `)}`);
         },
         normalize: normalizePointInfoRowsForShadow,
+        toServed: (pg) =>
+          pgPointInfoRowsToServed(
+            pg as (typeof pgPointInfoTable.$inferSelect)[],
+          ),
       },
     );
 
@@ -467,7 +511,12 @@ export class PointManager {
           ...updates,
           updatedAt: new Date(), // PG native timestamp
         })
-        .where(eq(pgPointInfoTable.index, pointIndex));
+        .where(
+          and(
+            eq(pgPointInfoTable.systemId, systemId),
+            eq(pgPointInfoTable.index, pointIndex),
+          ),
+        );
     } else {
       await db
         .update(pointInfoTable)
@@ -475,7 +524,12 @@ export class PointManager {
           ...updates,
           updatedAtMs: Date.now(), // Unix milliseconds
         })
-        .where(eq(pointInfoTable.index, pointIndex));
+        .where(
+          and(
+            eq(pointInfoTable.systemId, systemId),
+            eq(pointInfoTable.index, pointIndex),
+          ),
+        );
     }
 
     // Invalidate cache for this system
@@ -567,6 +621,10 @@ export class PointManager {
             .where(eq(pgPointInfoTable.systemId, systemId));
         },
         normalize: normalizePointInfoRowsForShadow,
+        toServed: (pg) =>
+          pgPointInfoRowsToServed(
+            pg as (typeof pgPointInfoTable.$inferSelect)[],
+          ),
       },
     );
 
@@ -619,6 +677,10 @@ export class PointManager {
           return row ?? null;
         },
         normalize: normalizePointInfoRowForShadow,
+        toServed: (pg) =>
+          pg
+            ? pgPointInfoToServed(pg as typeof pgPointInfoTable.$inferSelect)
+            : null,
       },
     );
 
@@ -734,6 +796,10 @@ export class PointManager {
               .where(eq(pgPointInfoTable.systemId, systemId));
           },
           normalize: normalizePointInfoRowsForShadow,
+          toServed: (pg) =>
+            pgPointInfoRowsToServed(
+              pg as (typeof pgPointInfoTable.$inferSelect)[],
+            ),
         },
       );
       const maxIndex =

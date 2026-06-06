@@ -448,6 +448,59 @@ export class SystemsManager {
   }
 
   /**
+   * Update an existing system and invalidate the cache.
+   *
+   * PR-8 (1B): flag-routed on CONFIG_WRITES_TO_PG. OFF (default) = today's Turso
+   * UPDATE WHERE id=systemId, unchanged. ON = update Postgres ONLY (decision B:
+   * config writes are Postgres-only). The patch maps 1:1 — both schemas use the same
+   * field names, and PG jsonb/timestamp columns accept plain objects/Dates directly
+   * (the same Date values Turso's timestamp mode takes), so no per-field mapping is
+   * needed. `updatedAt` is always stamped to now regardless of the patch.
+   */
+  async updateSystem(systemId: number, patch: Partial<System>): Promise<void> {
+    // Never let the caller override the id or the freshly-stamped updatedAt.
+    const { id: _ignoredId, updatedAt: _ignoredUpdatedAt, ...rest } = patch;
+    const values = { ...rest, updatedAt: new Date() };
+
+    if (CONFIG_WRITES_TO_PG) {
+      if (!planetscaleDb) {
+        throw new Error(
+          "[SystemsManager] CONFIG_WRITES_TO_PG is on but Postgres is not configured",
+        );
+      }
+      await planetscaleDb
+        .update(pgSystems)
+        .set(values as Partial<InferSelectModel<typeof pgSystems>>)
+        .where(eq(pgSystems.id, systemId));
+    } else {
+      await db.update(systems).set(values).where(eq(systems.id, systemId));
+    }
+
+    SystemsManager.invalidateCache();
+  }
+
+  /**
+   * Delete a system and invalidate the cache.
+   *
+   * PR-8 (1B): flag-routed on CONFIG_WRITES_TO_PG. OFF (default) = today's Turso
+   * DELETE WHERE id=systemId. ON = delete from Postgres ONLY.
+   */
+  async deleteSystem(systemId: number): Promise<void> {
+    if (CONFIG_WRITES_TO_PG) {
+      if (!planetscaleDb) {
+        throw new Error(
+          "[SystemsManager] CONFIG_WRITES_TO_PG is on but Postgres is not configured",
+        );
+      }
+      await planetscaleDb.delete(pgSystems).where(eq(pgSystems.id, systemId));
+    } else {
+      await db.delete(systems).where(eq(systems.id, systemId));
+    }
+
+    SystemsManager.invalidateCache();
+  }
+
+  /**
    * Today's write path: insert the system into Turso (unchanged behaviour, used when
    * CONFIG_WRITES_TO_PG is OFF). Turso surfaces an alias-unique collision as a
    * SQLITE_CONSTRAINT error from the underlying client.

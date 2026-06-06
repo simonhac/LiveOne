@@ -105,10 +105,18 @@ export async function getOrCreateUserPreferences(
         "CONFIG_WRITES_TO_PG is on but PlanetScale is not configured",
       );
     }
-    const [newUser] = await planetscaleDb
+    // Idempotent under serve-from-PG cutover: a concurrent request (or a prior
+    // serve-from-Turso path) may have already created this row in PG. Swallow
+    // the conflict (no 23505) and re-select to return the canonical row.
+    await planetscaleDb
       .insert(pgUsers)
       .values({ clerkUserId })
-      .returning();
+      .onConflictDoNothing({ target: pgUsers.clerkUserId });
+    const [newUser] = await planetscaleDb
+      .select()
+      .from(pgUsers)
+      .where(eq(pgUsers.clerkUserId, clerkUserId))
+      .limit(1);
     return {
       clerkUserId: newUser.clerkUserId,
       defaultSystemId: newUser.defaultSystemId,

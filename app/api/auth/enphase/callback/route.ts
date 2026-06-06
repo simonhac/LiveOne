@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getEnphaseClient } from "@/lib/vendors/enphase/enphase-client";
 import { storeEnphaseTokens } from "@/lib/vendors/enphase/enphase-auth";
-import { db } from "@/lib/db/turso";
-import { systems } from "@/lib/db/turso/schema";
-import { eq, and } from "drizzle-orm";
 import { clerkClient } from "@clerk/nextjs/server";
 import { SystemsManager } from "@/lib/systems-manager";
 
@@ -117,19 +114,17 @@ export async function GET(request: NextRequest) {
     const systemId = String(enphaseSystem.system_id);
     console.log("ENPHASE: Using system:", systemId, enphaseSystem.name);
 
-    // Check if system already exists in database FIRST (before storing tokens)
-    const existingSystem = await db
-      .select()
-      .from(systems)
-      .where(
-        and(
-          eq(systems.vendorType, "enphase"),
-          eq(systems.vendorSiteId, systemId),
-        ),
-      )
-      .limit(1);
+    // Check if system already exists (read via SystemsManager so it honours
+    // CONFIG_SERVE_FROM_PG — the same store createSystem/updateSystem write to).
+    const systemsManager = SystemsManager.getInstance();
+    const existingByVendorSiteId =
+      await systemsManager.getSystemByVendorSiteId(systemId);
+    const existingSystem =
+      existingByVendorSiteId && existingByVendorSiteId.vendorType === "enphase"
+        ? existingByVendorSiteId
+        : null;
 
-    if (existingSystem.length === 0) {
+    if (!existingSystem) {
       // Create new system in database
       console.log("ENPHASE: Creating new system in database");
 
@@ -148,7 +143,6 @@ export async function GET(request: NextRequest) {
         // Add more timezone mappings as needed
       }
 
-      const systemsManager = SystemsManager.getInstance();
       const newSystem = await systemsManager.createSystem({
         ownerClerkUserId: userId,
         vendorType: "enphase",
@@ -183,22 +177,18 @@ export async function GET(request: NextRequest) {
       // Update existing system (reactivate if it was removed)
       console.log("ENPHASE: Updating existing system");
 
-      await db
-        .update(systems)
-        .set({
-          ownerClerkUserId: userId,
-          displayName: enphaseSystem.name || existingSystem[0].displayName,
-          location: enphaseSystem.address || existingSystem[0].location, // Update location if available
-          status: "active", // Reactivate the system if it was removed
-          updatedAt: new Date(),
-        })
-        .where(eq(systems.id, existingSystem[0].id));
+      await systemsManager.updateSystem(existingSystem.id, {
+        ownerClerkUserId: userId,
+        displayName: enphaseSystem.name || existingSystem.displayName,
+        location: enphaseSystem.address || existingSystem.location, // Update location if available
+        status: "active", // Reactivate the system if it was removed
+      });
 
       // Store tokens with the existing system ID
       const storeResult = await storeEnphaseTokens(
         userId,
         tokens,
-        existingSystem[0].id,
+        existingSystem.id,
       );
       if (!storeResult.success) {
         throw new Error(storeResult.error || "Failed to store tokens");

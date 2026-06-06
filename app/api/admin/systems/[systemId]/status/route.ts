@@ -4,6 +4,7 @@ import { systems } from "@/lib/db/turso/schema";
 import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { clearDefaultForAllUsers } from "@/lib/user-preferences";
+import { SystemsManager } from "@/lib/systems-manager";
 
 export async function PATCH(
   request: NextRequest,
@@ -32,19 +33,21 @@ export async function PATCH(
       );
     }
 
-    // Update system status
-    const updated = await db
-      .update(systems)
-      .set({
-        status,
-        updatedAt: new Date(),
-      })
+    // Confirm the system exists before updating (preserves the prior 404 that the
+    // .returning() row count provided — updateSystem returns void).
+    const [existingSystem] = await db
+      .select()
+      .from(systems)
       .where(eq(systems.id, systemId))
-      .returning();
+      .limit(1);
 
-    if (updated.length === 0) {
+    if (!existingSystem) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
+
+    // Update system status. updateSystem honours CONFIG_WRITES_TO_PG and
+    // invalidates the SystemsManager cache; updatedAt is stamped to now.
+    await SystemsManager.getInstance().updateSystem(systemId, { status });
 
     // Clear default system preference for all users if system is being removed
     if (status === "removed") {
@@ -57,7 +60,7 @@ export async function PATCH(
 
     return NextResponse.json({
       success: true,
-      system: updated[0],
+      system: { ...existingSystem, status, updatedAt: new Date() },
       message: `System status updated to ${status}`,
     });
   } catch (error) {

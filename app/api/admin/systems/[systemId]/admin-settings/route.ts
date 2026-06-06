@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
 import { db } from "@/lib/db/turso";
-import { systems, userSystems } from "@/lib/db/turso/schema";
+import { userSystems } from "@/lib/db/turso/schema";
 import { eq, and } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
+import { SystemsManager } from "@/lib/systems-manager";
+import { grantUserSystem, revokeAllForSystem } from "@/lib/user-systems";
 
 export async function GET(
   request: NextRequest,
@@ -20,11 +22,8 @@ export async function GET(
       return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
     }
 
-    // Get the system to find the owner
-    const [system] = await db
-      .select()
-      .from(systems)
-      .where(eq(systems.id, systemId));
+    // Get the system to find the owner (read via SystemsManager → honours CONFIG_SERVE_FROM_PG)
+    const system = await SystemsManager.getInstance().getSystem(systemId);
 
     if (!system) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
@@ -103,11 +102,8 @@ export async function PATCH(
     const body = await request.json();
     const { ownerClerkUserId, viewers } = body;
 
-    // Verify system exists
-    const [system] = await db
-      .select()
-      .from(systems)
-      .where(eq(systems.id, systemId));
+    // Verify system exists (read via SystemsManager → honours CONFIG_SERVE_FROM_PG)
+    const system = await SystemsManager.getInstance().getSystem(systemId);
 
     if (!system) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
@@ -115,57 +111,20 @@ export async function PATCH(
 
     // Update owner if changed
     if (ownerClerkUserId !== undefined) {
-      await db
-        .update(systems)
-        .set({
-          ownerClerkUserId: ownerClerkUserId || null,
-          updatedAt: new Date(),
-        })
-        .where(eq(systems.id, systemId));
+      await SystemsManager.getInstance().updateSystem(systemId, {
+        ownerClerkUserId: ownerClerkUserId || null,
+      });
     }
 
-    // Update viewers
+    // Update viewers: revoke every membership for the system, then re-grant each
+    // viewer. grantUserSystem upserts on (clerkUserId, systemId), so the final
+    // state is the supplied viewer set — the same end state as the prior
+    // incremental add/remove. Both writes honour CONFIG_WRITES_TO_PG.
     if (viewers !== undefined && Array.isArray(viewers)) {
-      // Get current viewer records
-      const currentViewers = await db
-        .select()
-        .from(userSystems)
-        .where(
-          and(
-            eq(userSystems.systemId, systemId),
-            eq(userSystems.role, "viewer"),
-          ),
-        );
+      await revokeAllForSystem(systemId);
 
-      const currentViewerIds = new Set(
-        currentViewers.map((v) => v.clerkUserId),
-      );
-      const newViewerIds = new Set(viewers.map((v: any) => v.clerkUserId));
-
-      // Remove viewers that are no longer in the list
-      for (const currentViewer of currentViewers) {
-        if (!newViewerIds.has(currentViewer.clerkUserId)) {
-          await db
-            .delete(userSystems)
-            .where(
-              and(
-                eq(userSystems.systemId, systemId),
-                eq(userSystems.clerkUserId, currentViewer.clerkUserId),
-                eq(userSystems.role, "viewer"),
-              ),
-            );
-        }
-      }
-
-      // Add new viewers
       for (const viewer of viewers) {
-        if (!currentViewerIds.has(viewer.clerkUserId)) {
-          await db.insert(userSystems).values({
-            clerkUserId: viewer.clerkUserId,
-            systemId: systemId,
-            role: "viewer",
-          });
-        }
+        await grantUserSystem(viewer.clerkUserId, systemId, "viewer");
       }
     }
 

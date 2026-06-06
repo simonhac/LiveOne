@@ -1,23 +1,27 @@
 /**
- * Config-table read shadowing (Turso → Postgres migration, PR-8).
+ * Config-table read shadowing + serve-from-PG cutover (Turso → Postgres migration, PR-8).
  *
- * SHADOW SEMANTICS — identical in spirit to PR-11's `AGG_COMPUTE_IN_PG`:
+ * THREE MODES, gated by two flags (`CONFIG_READS_FROM_PG`, `CONFIG_SERVE_FROM_PG`):
  *
- *   • `CONFIG_READS_FROM_PG` OFF (default): behave exactly as today — Turso read, the PG
- *     read never runs, zero added cost.
- *   • `CONFIG_READS_FROM_PG` ON (shadow): the SERVED value is STILL the Turso read. We
- *     additionally fire the PG read, normalize both sides, compare, and LOG any divergence.
- *     The PG read is best-effort: any error is caught and swallowed, so flipping the flag on
- *     in production can only add log lines — it can never change a user-facing result or
- *     break a request.
- *
- * Serving config FROM Postgres is a LATER cutover PR; PR-8 only proves the mirrors agree.
+ *   • Both OFF (default): behave exactly as today — Turso read, the PG read never runs,
+ *     zero added cost.
+ *   • READS_FROM_PG ON, SERVE_FROM_PG OFF (shadow): the SERVED value is STILL the Turso
+ *     read. We additionally fire the PG read, normalize both sides, compare, and LOG any
+ *     divergence. The PG read is best-effort: any error is caught and swallowed, so flipping
+ *     this flag on in production can only add log lines — it can never change a user-facing
+ *     result or break a request.
+ *   • SERVE_FROM_PG ON (cutover): the SERVED value comes FROM Postgres. The PG read runs
+ *     first and, on success, is returned without ever touching Turso (lazy). An optional
+ *     `toServed` maps the PG read into the Turso-shaped served value. If the PG read returns
+ *     `SHADOW_SKIP` (PG unconfigured) or throws, we fall through to a Turso read as a safety
+ *     net — Turso config is recent at cutover. SERVE takes precedence over the shadow path;
+ *     when SERVE is on the shadow compare is NOT run.
  *
  * Every config read site funnels through `shadowReadConfig`, supplying its own Turso read,
  * PG read, and a `normalize` projection that strips the non-load-bearing schema divergences
  * (see `toEpochSeconds` / `normalizeJson`) before comparison.
  */
-import { CONFIG_READS_FROM_PG } from "./routing";
+import { CONFIG_READS_FROM_PG, CONFIG_SERVE_FROM_PG } from "./routing";
 
 export interface ShadowDiffResult {
   matched: boolean;
@@ -117,9 +121,15 @@ export function compareNormalized(
 }
 
 /**
- * Run the Turso config read and return it. When `CONFIG_READS_FROM_PG` is on, additionally
- * run the PG read (best-effort) and log any normalized divergence. The returned value is
- * ALWAYS the Turso read.
+ * Resolve a config read across the three migration modes (see the file header).
+ *
+ *   • `CONFIG_SERVE_FROM_PG` on (cutover): serve FROM Postgres. Run `pgRead` first; on a
+ *     real result, return it (mapped through `toServed` when supplied) WITHOUT touching
+ *     Turso. On `SHADOW_SKIP` (PG unconfigured) or a thrown error, fall through to a Turso
+ *     read as a safety net. The shadow compare is NOT run in this mode.
+ *   • `CONFIG_READS_FROM_PG` on, SERVE off (shadow): serve the Turso read, then best-effort
+ *     fire `pgRead` and log any normalized divergence.
+ *   • Both off (default): serve the Turso read; `pgRead` never runs.
  */
 export async function shadowReadConfig<T>(
   label: string,
@@ -128,23 +138,46 @@ export async function shadowReadConfig<T>(
     pgRead: () => Promise<unknown>;
     normalize: (v: unknown) => unknown;
     diffKey?: string;
+    /**
+     * Maps a successful PG read into the Turso-shaped served value (cutover only).
+     * Omit when the PG read already matches the Turso shape.
+     */
+    toServed?: (pg: unknown) => T;
   },
 ): Promise<T> {
+  if (CONFIG_SERVE_FROM_PG) {
+    try {
+      const pg = await opts.pgRead();
+      if (pg !== SHADOW_SKIP) {
+        return opts.toServed ? opts.toServed(pg) : (pg as T);
+      }
+      // PG unconfigured (SHADOW_SKIP) → fall through to Turso.
+    } catch (e) {
+      console.error(
+        `[CONFIG-SERVE] ${label}${opts.diffKey ? ` key=${opts.diffKey}` : ""} ` +
+          `PG read failed — serving Turso fallback`,
+        e,
+      );
+      // fall through to Turso (safety net; Turso config is recent at cutover).
+    }
+  }
+
   const served = await tursoRead();
-  if (!CONFIG_READS_FROM_PG) return served;
-  try {
-    const shadow = await opts.pgRead();
-    if (shadow === SHADOW_SKIP) return served;
-    compareNormalized(
-      label,
-      opts.diffKey,
-      opts.normalize(served),
-      opts.normalize(shadow),
-    );
-  } catch (e) {
-    console.warn(
-      `[CONFIG-SHADOW] ${label} pg-read failed (swallowed): ${(e as Error)?.message ?? String(e)}`,
-    );
+  if (CONFIG_READS_FROM_PG && !CONFIG_SERVE_FROM_PG) {
+    try {
+      const shadow = await opts.pgRead();
+      if (shadow === SHADOW_SKIP) return served;
+      compareNormalized(
+        label,
+        opts.diffKey,
+        opts.normalize(served),
+        opts.normalize(shadow),
+      );
+    } catch (e) {
+      console.warn(
+        `[CONFIG-SHADOW] ${label} pg-read failed (swallowed): ${(e as Error)?.message ?? String(e)}`,
+      );
+    }
   }
   return served;
 }

@@ -42,6 +42,13 @@ export const CONFIG_READS_FROM_PG = envFlag("CONFIG_READS_FROM_PG");
 export const CONFIG_WRITES_TO_PG = envFlag("CONFIG_WRITES_TO_PG");
 
 /**
+ * Serve config reads FROM Postgres (the cutover). Flip together with
+ * CONFIG_WRITES_TO_PG. With it off, reads are served from Turso (shadow-only
+ * when CONFIG_READS_FROM_PG is on).
+ */
+export const CONFIG_SERVE_FROM_PG = envFlag("CONFIG_SERVE_FROM_PG");
+
+/**
  * Serve readings reads (point_readings / agg_5m / agg_1d serving queries) from
  * Postgres instead of Turso.
  */
@@ -60,6 +67,7 @@ export function dbRoutingFlags(): Record<string, boolean> {
   return {
     CONFIG_READS_FROM_PG,
     CONFIG_WRITES_TO_PG,
+    CONFIG_SERVE_FROM_PG,
     READINGS_READS_FROM_PG,
     AGG_COMPUTE_IN_PG,
   };

@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { getSystemCredentials } from "@/lib/secure-credentials";
-import { db } from "@/lib/db/turso";
-import { systems } from "@/lib/db/turso/schema";
-import { and, eq } from "drizzle-orm";
 import { SystemsManager } from "@/lib/systems-manager";
 
 async function getUserDisplay(userId: string): Promise<string> {
@@ -32,20 +29,22 @@ export async function POST(request: NextRequest) {
     const userDisplay = await getUserDisplay(userId);
     console.log("TESLA: User disconnecting Tesla:", userDisplay);
 
-    // Mark Tesla systems as removed instead of deleting
-    const result = await db
-      .update(systems)
-      .set({
+    // Read the user's systems from the SystemsManager cache (PG-served under
+    // CONFIG_SERVE_FROM_PG at cutover, so it reads the same store updateSystem writes),
+    // then mark each Tesla system removed via the flag-routed updateSystem (keyed by id)
+    // so the write honours CONFIG_WRITES_TO_PG instead of writing raw to Turso.
+    const systemsManager = SystemsManager.getInstance();
+    const allSystems = await systemsManager.getAllSystems();
+    const teslaSystems = allSystems.filter(
+      (s) => s.ownerClerkUserId === userId && s.vendorType === "tesla",
+    );
+
+    for (const s of teslaSystems) {
+      await systemsManager.updateSystem(s.id, {
         ownerClerkUserId: null,
         status: "removed",
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(systems.ownerClerkUserId, userId),
-          eq(systems.vendorType, "tesla"),
-        ),
-      );
+      });
+    }
 
     console.log("TESLA: Disconnected successfully for user:", userDisplay);
 

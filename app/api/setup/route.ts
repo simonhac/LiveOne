@@ -4,6 +4,7 @@ import { db } from "@/lib/db/turso";
 import { systems, userSystems } from "@/lib/db/turso/schema";
 import { eq, and } from "drizzle-orm";
 import { SystemsManager } from "@/lib/systems-manager";
+import { grantUserSystem } from "@/lib/user-systems";
 
 export async function POST(request: NextRequest) {
   try {
@@ -60,13 +61,8 @@ export async function POST(request: NextRequest) {
       }
 
       // Add user to this existing system as a viewer
-      await db.insert(userSystems).values({
-        clerkUserId: userId,
-        systemId: existingSystem.id,
-        role: "viewer", // New users get viewer role by default
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
+      // Routed through grantUserSystem so the write honours CONFIG_WRITES_TO_PG.
+      await grantUserSystem(userId, existingSystem.id, "viewer"); // New users get viewer role by default
 
       return NextResponse.json({
         success: true,
@@ -88,13 +84,8 @@ export async function POST(request: NextRequest) {
       });
 
       // Add the user as owner of this new system
-      await db.insert(userSystems).values({
-        clerkUserId: userId,
-        systemId: newSystem.id,
-        role: "owner", // Creator gets owner role
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
+      // Routed through grantUserSystem so the write honours CONFIG_WRITES_TO_PG.
+      await grantUserSystem(userId, newSystem.id, "owner"); // Creator gets owner role
 
       return NextResponse.json({
         success: true,
