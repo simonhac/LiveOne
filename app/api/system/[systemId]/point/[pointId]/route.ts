@@ -4,6 +4,7 @@ import { pointInfo } from "@/lib/db/turso/schema-monitoring-points";
 import { eq, and } from "drizzle-orm";
 import { requireSystemAccess } from "@/lib/api-auth";
 import { isValidLogicalPathStem } from "@/lib/identifiers/logical-path";
+import { PointManager } from "@/lib/point/point-manager";
 
 /**
  * PATCH /api/system/{systemId}/point/{pointId}
@@ -104,13 +105,11 @@ export async function PATCH(
       );
     }
 
-    // Perform the update
-    await db
-      .update(pointInfo)
-      .set(updateData)
-      .where(
-        and(eq(pointInfo.systemId, systemId), eq(pointInfo.index, pointId)),
-      );
+    // Perform the update.
+    // Routed through PointManager.updatePoint so the write honours
+    // CONFIG_WRITES_TO_PG and the series cache is invalidated for this system.
+    const pointManager = PointManager.getInstance();
+    await pointManager.updatePoint(systemId, pointId, updateData);
 
     // Fetch the updated record
     const [updatedPoint] = await db

@@ -26,6 +26,7 @@ function loadRouting(env: Record<string, string | undefined>) {
 const FLAG_VARS = [
   "CONFIG_READS_FROM_PG",
   "CONFIG_WRITES_TO_PG",
+  "CONFIG_SERVE_FROM_PG",
   "READINGS_READS_FROM_PG",
   "AGG_COMPUTE_IN_PG",
 ];
@@ -52,6 +53,7 @@ describe("db routing flags", () => {
     expect(r.dbRoutingFlags()).toEqual({
       CONFIG_READS_FROM_PG: false,
       CONFIG_WRITES_TO_PG: false,
+      CONFIG_SERVE_FROM_PG: false,
       READINGS_READS_FROM_PG: false,
       AGG_COMPUTE_IN_PG: false,
     });

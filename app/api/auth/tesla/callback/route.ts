@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getTeslaClient } from "@/lib/vendors/tesla/tesla-client";
 import { storeTeslaTokens } from "@/lib/vendors/tesla/tesla-auth";
-import { db } from "@/lib/db/turso";
-import { systems } from "@/lib/db/turso/schema";
-import { eq, and } from "drizzle-orm";
 import { clerkClient } from "@clerk/nextjs/server";
 import { SystemsManager } from "@/lib/systems-manager";
 
@@ -121,19 +118,17 @@ export async function GET(request: NextRequest) {
     const vehicleId = String(teslaVehicle.id);
     console.log("TESLA: Using vehicle:", vehicleId, teslaVehicle.display_name);
 
-    // Check if system already exists in database
-    const existingSystem = await db
-      .select()
-      .from(systems)
-      .where(
-        and(
-          eq(systems.vendorType, "tesla"),
-          eq(systems.vendorSiteId, vehicleId),
-        ),
-      )
-      .limit(1);
+    // Check if system already exists (read via SystemsManager so it honours
+    // CONFIG_SERVE_FROM_PG — the same store createSystem/updateSystem write to).
+    const systemsManager = SystemsManager.getInstance();
+    const existingByVendorSiteId =
+      await systemsManager.getSystemByVendorSiteId(vehicleId);
+    const existingSystem =
+      existingByVendorSiteId && existingByVendorSiteId.vendorType === "tesla"
+        ? existingByVendorSiteId
+        : null;
 
-    if (existingSystem.length === 0) {
+    if (!existingSystem) {
       // Create new system in database
       console.log("TESLA: Creating new system in database");
 
@@ -141,7 +136,6 @@ export async function GET(request: NextRequest) {
       const timezoneOffsetMin = 600; // UTC+10
       const displayTimezone = "Australia/Melbourne";
 
-      const systemsManager = SystemsManager.getInstance();
       const newSystem = await systemsManager.createSystem({
         ownerClerkUserId: userId,
         vendorType: "tesla",
@@ -172,22 +166,17 @@ export async function GET(request: NextRequest) {
       // Update existing system (reactivate if it was removed)
       console.log("TESLA: Updating existing system");
 
-      await db
-        .update(systems)
-        .set({
-          ownerClerkUserId: userId,
-          displayName:
-            teslaVehicle.display_name || existingSystem[0].displayName,
-          status: "active", // Reactivate the system if it was removed
-          updatedAt: new Date(),
-        })
-        .where(eq(systems.id, existingSystem[0].id));
+      await systemsManager.updateSystem(existingSystem.id, {
+        ownerClerkUserId: userId,
+        displayName: teslaVehicle.display_name || existingSystem.displayName,
+        status: "active", // Reactivate the system if it was removed
+      });
 
       // Store tokens with the existing system ID
       const storeResult = await storeTeslaTokens(
         userId,
         tokens,
-        existingSystem[0].id,
+        existingSystem.id,
         vehicleId,
       );
       if (!storeResult.success) {

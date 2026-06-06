@@ -27,6 +27,9 @@ reviewed against the actual code.
 - **Postgres is still a MIRROR for most reads.** Config + readings reads still come from Turso
   (`CONFIG_READS_FROM_PG` / `READINGS_READS_FROM_PG` / `AGG_COMPUTE_IN_PG` / `CONFIG_WRITES_TO_PG`
   all default off). Turso is the source of truth for everything not yet cut over.
+- **Config seam (1A + 1B + 1C) — in this PR (`simonhac/pr8-config-reads`); deploys dark.** Read-shadow,
+  serve-from-PG (`CONFIG_SERVE_FROM_PG`), and PG-only writes — all flags default off. Execute via the
+  **config cutover runbook** below.
 - **PR-11 (Move 1) — code-complete, NOT yet enabled.** PG can compute its own raw-vendor 5m +
   1d aggregates from PG's own data behind `AGG_COMPUTE_IN_PG` (default **off** = exactly today's
   behavior). Shadow-only: reads still served from Turso; the value reconciler gates trusting it.
@@ -35,6 +38,40 @@ reviewed against the actual code.
 - **Prod PG hardening (done):** `share_tokens` created on prod; `drizzle.__drizzle_migrations`
   baselined (0000–0003); `db:pg:migrate` SSL bug fixed → migration tooling works end-to-end.
 - **Data recoveries (done):** all session data preserved — see [Completed](#completed-2026-06-06).
+
+## As soon as this PR is pushed — config cutover runbook
+
+This PR (`simonhac/pr8-config-reads`) bundles the whole config seam — **1A** read-shadow
+(`CONFIG_READS_FROM_PG`), **1B** PG-only writes (`CONFIG_WRITES_TO_PG`), **1C** serve-from-PG
+(`CONFIG_SERVE_FROM_PG`). All three default **off**, so merge + deploy is **dark** (identical to
+today). The cutover is driven entirely by flipping prod env flags — revert = flip back, no redeploy.
+
+Flag semantics (`lib/db/config-shadow.ts`): READS on + SERVE off = **shadow** (serve Turso, also read
+PG, compare, log `[CONFIG-SHADOW] … DIVERGE`; PG errors swallowed — can't affect a request). SERVE on
+= **serve from PG** (Turso fallback on error/skip, logged `[CONFIG-SERVE]`; the shadow compare is not
+run). WRITES on = config writes hit **PG only** (no Turso dual-write).
+
+1. **Merge + deploy (dark).** Confirm healthy; with all config flags off the behavior is unchanged.
+2. **Shadow.** Set `CONFIG_READS_FROM_PG=true` in prod. Watch for `[CONFIG-SHADOW] … DIVERGE` /
+   `pg-read failed` across the read sites (systems⋈polling_status, point_info, `userHasSystemAccess`,
+   share-tokens validate/list, `/api/setup`, admin systems/users). Soak until a clean window with
+   **0 divergences** (especially `userHasSystemAccess` — access control). If config drifted, re-seed:
+   `NODE_ENV=production npx tsx scripts/seed-planetscale-refs.ts --apply --with-users`.
+3. **Pre-cutover safety.** Fresh Turso snapshot + confirm PG PITR; re-seed + hard-validate PG ≥ Turso
+   config counts (the seed aborts on shortfall). Optionally pause cron for the flip.
+4. **Cutover — flip together.** Set `CONFIG_SERVE_FROM_PG=true` **and** `CONFIG_WRITES_TO_PG=true` in
+   one change (serving from PG while still writing Turso — or the reverse — serves stale config). PG
+   is now authoritative for config. Re-enable cron.
+5. **Verify.** `[CONFIG-SERVE]` fallback/error rate ≈ 0; make a real config edit (rename a system /
+   add a viewer) and confirm it lands in PG; `userHasSystemAccess` still correct.
+6. **Rollback.** Flip `CONFIG_SERVE_FROM_PG` + `CONFIG_WRITES_TO_PG` back off (instant; reverts to
+   Turso, current up to cutover). ⚠️ Config writes made to PG _after_ cutover aren't in Turso — if any
+   occurred, recover via PG PITR rather than a bare flip. Config edits are rare; keep the window short.
+
+**Related (not a blocker):** decision B / R4 — dropping the Turso readings→config CASCADE FKs is
+decommission-time and re-assessed as _not_ a prerequisite for the write flip (investigate the
+`*_2025_11_27_backup` FK drift when scheduled). The PG FK rebuild is likewise later (see the
+_PG foreign-key rebuild_ section).
 
 ## Locked decisions
 
@@ -146,16 +183,114 @@ decommission `liveone-tokyo`). Separate planning.
 
 ### Loose ends / hardening (independent of the phases)
 
-- **Session FK validation (optional):** the FK is `NOT VALID` (enforces all new rows). To fully
-  validate, NULL the ~4,165 unrecoverable orphan `session_id`s (the 2025-11-27 final purge-window
-  block, ids 301,141–305,599) then `VALIDATE CONSTRAINT` — or leave `NOT VALID` (preserves their
-  dangling ids).
+- **Session FK validation (optional):** the FK is `NOT VALID` (enforces all new rows; confirmed
+  still `NOT VALID` by the 2026-06-06 audit). To fully validate, NULL the ~4,165 unrecoverable orphan
+  `session_id`s (the 2025-11-27 final purge-window block, ids 301,141–305,599 — the audit measured
+  **59,730 orphan reading rows** referencing them) then `VALIDATE CONSTRAINT` — or leave `NOT VALID`
+  (preserves their dangling ids). NULL-then-VALIDATE mutates ~60K prod rows, so it needs explicit
+  go-ahead; default is leave-as-is.
 - **Response-capture monitor:** alert when successful-CRON sessions' `response`-presence drops below
   a threshold — the signal that the live mirror pipeline has gone down (it had ~9 such windows in
   2026; gaps were backfilled `response: null`, since restored from the Turso archive).
 - **Dev-seed path:** `db:sync-prod` → `scripts/sync-prod-to-dev.js` (missing) and the
   `sync-database` seed from prod Turso both go stale once PG is authoritative — re-point to seed dev
   from PG (during Phase 1).
+
+### PG foreign-key rebuild (decommission-time hardening)
+
+PG was built FK-less for receiver throughput (only `point_readings.session_id → sessions.id` exists,
+`NOT VALID`). This rebuild restores the relational graph on PG. **Decommission-time, NOT a cutover
+blocker**; runs _after_ the write-to-PG cutover is stable + the reconciler shows agg value-parity,
+and _before_ Turso/`*_backup` tables are dropped (so orphan-backfill stays possible). Creds stay in
+Clerk → nothing here touches credentials; `users` stays a passive Clerk mirror (so its inbound FKs
+are deliberately **not** enforced — see skips).
+
+**Decisions (locked 2026-06-06).** `onDelete`: only trivial rows cascade; everything in the data
+lineage is `NO ACTION`, so tearing down a system is always an explicit, ordered op — never a silent
+cascade over 13M readings.
+
+| #   | Constraint (DB identifiers)                                                | onDelete  |
+| --- | -------------------------------------------------------------------------- | --------- |
+| 1   | `polling_status.system_id → systems.id`                                    | CASCADE   |
+| 2   | `user_systems.system_id → systems.id`                                      | CASCADE   |
+| 3   | `users.default_system_id → systems.id`                                     | SET NULL  |
+| 4   | `sessions.system_id → systems.id`                                          | NO ACTION |
+| 5   | `point_info.system_id → systems.id`                                        | NO ACTION |
+| 6   | `point_readings.(system_id, point_id) → point_info.(system_id, id)`        | NO ACTION |
+| 7   | `point_readings_agg_5m.(system_id, point_id) → point_info.(system_id, id)` | NO ACTION |
+| 8   | `point_readings_agg_1d.(system_id, point_id) → point_info.(system_id, id)` | NO ACTION |
+
+**Skips:** the redundant single-column `point_readings.system_id → systems` (transitively guaranteed
+via #5 + #6); the Clerk-mirror FKs `user_systems.clerk_user_id` / `share_tokens.owner_clerk_user_id
+→ users.clerk_user_id` (the mirror lags the Clerk webhook → would fail membership/token writes for
+marginal benefit; audit shows 0 drift _today_, but write-time lag is the risk). **Keep** the existing
+session FK as-is. **GOTCHA:** `point_info`'s per-system key is DB column **`id`** (the Drizzle TS
+field is named `index` → `integer("id")`); the composite PK is `(system_id, id)`. FK target is
+`point_info(system_id, id)`, never `(…, index)`.
+
+**Pre-flight audit (`scripts/audit-pg-fk-orphans.ts`, read-only, run 2026-06-06 vs prod):** all 8
+proposed constraints are **0-orphan → add + validate cleanly** (decision #4 needs no backfill/clean).
+Row counts: `point_readings` 13.4M, `point_readings_agg_5m` 3.3M, `sessions` 870K, `agg_1d` 11.9K,
+`point_info` 73, `systems` 9. So #4/#6/#7 (large) use `ADD … NOT VALID` + a separate `VALIDATE`
+(validating scan under non-blocking `SHARE UPDATE EXCLUSIVE` instead of `ACCESS EXCLUSIVE` for the
+full scan); the rest validate inline. Re-run the audit immediately before executing — 0-orphan is a
+point-in-time fact.
+
+**Execution (the `0003` precedent).** Update `lib/db/planetscale/schema.ts`:
+`polling_status.systemId`/`userSystems.systemId` → `.references(() => systems.id, {onDelete:"cascade"})`;
+`users.defaultSystemId` → `.references(() => systems.id, {onDelete:"set null"})`;
+`sessions.systemId` + `pointInfo.systemId` → `.references(() => systems.id)`; and a composite
+`foreignKey({columns:[t.systemId,t.pointId], foreignColumns:[pointInfo.systemId, pointInfo.index], name:…})`
+in the `point_readings` / `point_readings_agg_5m` / `point_readings_agg_1d` table callbacks. Then
+`db:pg:generate`, **hand-edit** the generated `drizzle-planetscale/0004_*.sql` to split #4/#6/#7 into
+`NOT VALID` + `VALIDATE` (drizzle emits a plain validating `ADD` by default — same hand-edit as
+`0003`) and add the `pg_constraint` re-run guards, then `db:pg:migrate`. Snapshot Turso + confirm PG
+PITR first per the CLAUDE.md checklist (constraint-only, but cheap insurance). **Forbidden:** `push`.
+
+Staged SQL (reference — do **not** drop into `drizzle-planetscale/` or apply until the gate above;
+add `--> statement-breakpoint` between statements when promoting to a real migration):
+
+```sql
+-- 0004_fk_rebuild.sql (STAGED). Pre-flight 2026-06-06: all 0-orphan.
+-- Group A — trivial rows → systems (CASCADE / SET NULL), validate inline
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='polling_status_system_id_systems_id_fk') THEN
+    ALTER TABLE polling_status ADD CONSTRAINT polling_status_system_id_systems_id_fk
+      FOREIGN KEY (system_id) REFERENCES systems(id) ON DELETE CASCADE; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='user_systems_system_id_systems_id_fk') THEN
+    ALTER TABLE user_systems ADD CONSTRAINT user_systems_system_id_systems_id_fk
+      FOREIGN KEY (system_id) REFERENCES systems(id) ON DELETE CASCADE; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='users_default_system_id_systems_id_fk') THEN
+    ALTER TABLE users ADD CONSTRAINT users_default_system_id_systems_id_fk
+      FOREIGN KEY (default_system_id) REFERENCES systems(id) ON DELETE SET NULL; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='point_info_system_id_systems_id_fk') THEN
+    ALTER TABLE point_info ADD CONSTRAINT point_info_system_id_systems_id_fk
+      FOREIGN KEY (system_id) REFERENCES systems(id); END IF;                 -- 73 rows
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='point_readings_agg_1d_system_id_point_id_point_info_fk') THEN
+    ALTER TABLE point_readings_agg_1d ADD CONSTRAINT point_readings_agg_1d_system_id_point_id_point_info_fk
+      FOREIGN KEY (system_id, point_id) REFERENCES point_info(system_id, id); END IF;  -- 11.9K
+END $$;
+
+-- Large tables → NOT VALID first (brief lock), then VALIDATE (non-blocking scan)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='sessions_system_id_systems_id_fk') THEN
+    ALTER TABLE sessions ADD CONSTRAINT sessions_system_id_systems_id_fk
+      FOREIGN KEY (system_id) REFERENCES systems(id) NOT VALID; END IF;       -- 870K
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='point_readings_system_id_point_id_point_info_fk') THEN
+    ALTER TABLE point_readings ADD CONSTRAINT point_readings_system_id_point_id_point_info_fk
+      FOREIGN KEY (system_id, point_id) REFERENCES point_info(system_id, id) NOT VALID; END IF;  -- 13.4M
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='point_readings_agg_5m_system_id_point_id_point_info_fk') THEN
+    ALTER TABLE point_readings_agg_5m ADD CONSTRAINT point_readings_agg_5m_system_id_point_id_point_info_fk
+      FOREIGN KEY (system_id, point_id) REFERENCES point_info(system_id, id) NOT VALID; END IF;  -- 3.3M
+END $$;
+ALTER TABLE sessions VALIDATE CONSTRAINT sessions_system_id_systems_id_fk;
+ALTER TABLE point_readings VALIDATE CONSTRAINT point_readings_system_id_point_id_point_info_fk;
+ALTER TABLE point_readings_agg_5m VALIDATE CONSTRAINT point_readings_agg_5m_system_id_point_id_point_info_fk;
+```
+
+**Rollback:** `ALTER TABLE <child> DROP CONSTRAINT IF EXISTS <name>;` — mutates no rows, no data risk
+(adding a constraint never fires a cascade). No rollback migration is authored; removal = a new
+forward migration.
 
 ## Top risks & how they're handled
 
@@ -289,6 +424,8 @@ dev-refresh path is already broken; decide the post-cutover dev-seed source (see
 - `scripts/backfill-turso-to-postgres.ts` — historical backfill + `--verify` (see its doc).
 - `scripts/seed-planetscale-refs.ts` — re-seed `systems` + `point_info` if metadata changes.
 - `scripts/reconcile-agg-values.ts` — read Turso, compare aggregate values against PG.
+- `scripts/audit-pg-fk-orphans.ts` — READ-ONLY FK pre-flight: lists existing PG constraints + row
+  counts + orphan counts per proposed FK (run before the FK rebuild; see hardening section).
 - `scripts/purge-observations-queue.ts` — purge + recreate the QStash queue (paused).
 - `/admin/observations` — live pipeline depth, ingestion rate, queue controls + queue/DLQ inspection.
 

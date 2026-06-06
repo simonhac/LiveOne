@@ -26,6 +26,11 @@ function envFlag(name: string): boolean {
 /**
  * Serve config-table reads (systems, point_info, users, user_systems,
  * polling_status, share_tokens) from Postgres instead of Turso.
+ *
+ * SHADOW PHASE (PR-8): while this flag gates the eventual cutover, in the shadow PR turning
+ * it ON does NOT change the served value — reads are still answered from Turso. It only adds
+ * a best-effort PG read + compare-and-log of any divergence (see lib/db/config-shadow.ts).
+ * Serving config from Postgres is a later cutover PR.
  */
 export const CONFIG_READS_FROM_PG = envFlag("CONFIG_READS_FROM_PG");
 
@@ -35,6 +40,13 @@ export const CONFIG_READS_FROM_PG = envFlag("CONFIG_READS_FROM_PG");
  * config-authority cutover.
  */
 export const CONFIG_WRITES_TO_PG = envFlag("CONFIG_WRITES_TO_PG");
+
+/**
+ * Serve config reads FROM Postgres (the cutover). Flip together with
+ * CONFIG_WRITES_TO_PG. With it off, reads are served from Turso (shadow-only
+ * when CONFIG_READS_FROM_PG is on).
+ */
+export const CONFIG_SERVE_FROM_PG = envFlag("CONFIG_SERVE_FROM_PG");
 
 /**
  * Serve readings reads (point_readings / agg_5m / agg_1d serving queries) from
@@ -55,6 +67,7 @@ export function dbRoutingFlags(): Record<string, boolean> {
   return {
     CONFIG_READS_FROM_PG,
     CONFIG_WRITES_TO_PG,
+    CONFIG_SERVE_FROM_PG,
     READINGS_READS_FROM_PG,
     AGG_COMPUTE_IN_PG,
   };

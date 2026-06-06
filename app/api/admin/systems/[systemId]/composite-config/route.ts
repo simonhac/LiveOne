@@ -5,6 +5,7 @@ import { pointInfo } from "@/lib/db/turso/schema-monitoring-points";
 import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
+import { SystemsManager } from "@/lib/systems-manager";
 
 export async function GET(
   request: NextRequest,
@@ -245,20 +246,12 @@ export async function PATCH(
       mappings,
     };
 
-    // Update the system with new metadata
-    // Note: Drizzle auto-stringifies fields with mode: "json", so pass object directly
-    const result = await db
-      .update(systems)
-      .set({
-        metadata: metadata as any,
-        updatedAt: new Date(),
-      })
-      .where(eq(systems.id, systemId))
-      .returning();
-
-    if (result.length === 0) {
-      return NextResponse.json({ error: "System not found" }, { status: 404 });
-    }
+    // Update the system with new metadata. updateSystem honours CONFIG_WRITES_TO_PG
+    // and invalidates the SystemsManager cache. The system's existence was already
+    // confirmed above (targetSystem), so no post-update 404 check is needed.
+    await SystemsManager.getInstance().updateSystem(systemId, {
+      metadata: metadata as any,
+    });
 
     // Rebuild subscription registry to reflect the updated composite system mappings
     console.log(

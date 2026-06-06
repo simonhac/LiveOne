@@ -202,19 +202,22 @@ export async function PATCH(
       }
     }
 
-    // Update the system
-    const result = await db
-      .update(systems)
-      .set(updates)
+    // Confirm the system exists before updating (preserves the prior 404 that the
+    // .returning() row count provided — updateSystem returns void).
+    const [existingSystem] = await db
+      .select()
+      .from(systems)
       .where(eq(systems.id, systemId))
-      .returning();
+      .limit(1);
 
-    if (result.length === 0) {
+    if (!existingSystem) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
-    // Invalidate SystemsManager cache so next request gets fresh data
-    SystemsManager.invalidateCache();
+    // Update the system. updateSystem honours CONFIG_WRITES_TO_PG and already
+    // invalidates the SystemsManager cache, so the explicit invalidateCache call
+    // here is no longer needed.
+    await SystemsManager.getInstance().updateSystem(systemId, updates);
 
     // Revalidate dashboard paths to refresh server-side data
     revalidatePath("/dashboard", "layout");
@@ -223,10 +226,12 @@ export async function PATCH(
       success: true,
       message: "System updated successfully",
       system: {
-        id: result[0].id,
-        displayName: result[0].displayName,
-        alias: result[0].alias,
-        displayTimezone: result[0].displayTimezone,
+        id: systemId,
+        displayName: updates.displayName ?? existingSystem.displayName,
+        alias:
+          updates.alias !== undefined ? updates.alias : existingSystem.alias,
+        displayTimezone:
+          updates.displayTimezone ?? existingSystem.displayTimezone,
       },
     });
   } catch (error) {

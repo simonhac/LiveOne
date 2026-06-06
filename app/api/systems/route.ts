@@ -123,8 +123,9 @@ export async function POST(request: NextRequest) {
     );
 
     if (!credentialResult.success) {
-      // If credential storage failed, delete the system
-      await db.delete(systems).where(eq(systems.id, newSystem.id));
+      // If credential storage failed, delete the system.
+      // Routed through SystemsManager so the rollback honours CONFIG_WRITES_TO_PG.
+      await systemsManager.deleteSystem(newSystem.id);
 
       return NextResponse.json(
         { error: credentialResult.error || "Failed to store credentials" },
