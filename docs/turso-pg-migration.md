@@ -6,13 +6,14 @@ former `postgres-primary-migration-plan.md` and the two `observations-pg-*` docs
 
 ## Goal
 
-LiveOne records energy data into **Turso** (libsql/SQLite, Tokyo) as the system of record, with a
-**Postgres** mirror (PlanetScale-hosted Postgres, not MySQL) fed asynchronously via an Upstash
-**QStash** queue (publisher → receiver route). Goal: **make Postgres the primary** (serve reads from
-it; move the config tables to it), demote **Turso to a transitional best-effort backup**, then
-**decommission Turso**. End-state is Postgres-only, with Vercel + PlanetScale in **Sydney
-(ap-southeast-2 / `syd1`)**. This is a **staged, flag-gated, multi-PR program**, adversarially
-reviewed against the actual code.
+**Goal: make Postgres (PlanetScale-hosted Postgres, not MySQL) the system of record** —
+authoritative for config + aggregates and serving every read — and reduce **Turso** (libsql/SQLite,
+Tokyo) to a **transitional, best-effort mirror/backup**, dropped once Postgres is fully trusted.
+(Turso _was_ the original system of record; the migration inverts that — it is now a mirror only.)
+The collection engine writes to Postgres asynchronously via an Upstash **QStash** queue (publisher →
+receiver route), with an inline Turso write as the best-effort backup. End-state is **Postgres-only**,
+with Vercel + PlanetScale in **Sydney (ap-southeast-2 / `syd1`)**. This is a **staged, flag-gated
+program** delivered as a series of small PRs, adversarially reviewed against the actual code.
 
 **Refined Turso scope (2026-06-06).** Turso has **no special or lasting status** — it is a
 transitional, **best-effort backup of raw `point_readings` + sessions only**, kept until Postgres
@@ -35,7 +36,7 @@ writes.** See the **Direction of travel** section below.
   off), PG pool memoization fix, PG migration tooling, `share_tokens` PG table, seed hardening,
   value reconciler, dev guardrail + read-site inventory. Live QStash→PG pipeline + historical
   backfill done (verified, zero dropped); 1d aggregates flow via the queue.
-- **PR-7 — LIVE in prod.** Session id → UUIDv7/text; one combined QStash message co-enqueued per
+- **Session-id step — LIVE in prod.** Session id → UUIDv7/text; one combined QStash message co-enqueued per
   poll at session close; transactional session-before-readings receiver;
   `point_readings.session_id → sessions.id` FK added `NOT VALID`; dropped the `sessions` unique.
   **Admin session reads now served from PG.**
@@ -43,7 +44,7 @@ writes.** See the **Direction of travel** section below.
   (`CONFIG_READS_FROM_PG` / `READINGS_READS_FROM_PG` / `CONFIG_WRITES_TO_PG` default off). `AGG_COMPUTE_IN_PG`
   is now **ON** in prod (PG computes its own raw-vendor aggregates — see below). Turso is the source
   of truth for everything not yet cut over.
-- **PR-11 (Move 1) — MERGED, ENABLED in prod, and VALIDATED.** PG computes its own raw-vendor 5m + 1d
+- **2A (Move 1) — MERGED, ENABLED in prod, and VALIDATED.** PG computes its own raw-vendor 5m + 1d
   from PG's own data (`AGG_COMPUTE_IN_PG` flipped on). Verified value-clean vs Turso via
   `scripts/reconcile-agg-values.ts` for the active raw vendors (Selectronic sys1: full-day 5m + 1d
   zero mismatch; Mondo sys6 clean after the fix below). Reads are still served from Turso (shadow).
@@ -54,7 +55,7 @@ writes.** See the **Direction of travel** section below.
   `point_readings` under the unique index. Fixed (publisher now emits ms), deployed, and remediated:
   `scripts/dedupe-pg-truncated-readings.ts` removed 2,664 truncated dups + `scripts/restore-sys6-precision.ts`
   restored 11,700 residual rows to ms (PR #9). sys6 now reconciles clean.
-- **PR-8 (config reads, shadow) — first slice MERGED-pending (PR #10).** `lib/db/config-shadow.ts`
+- **1A (config reads, shadow) — first slice MERGED-pending (PR #10).** `lib/db/config-shadow.ts`
   `shadowReadConfig()` seam + normalizers (`toEpochSeconds` truncate-to-seconds for Turso↔PG timestamp
   parity, `normalizeJson` for text-json vs jsonb); `getPollingStatus` wrapped; 10 unit tests. Remaining
   config read sites reuse the seam.
@@ -66,10 +67,10 @@ writes.** See the **Direction of travel** section below.
 
 - **Reads** flip to Postgres (accept queue lag). **Raw** keeps the async dual-write (Turso inline
   best-effort backup + queue → PG).
-- **Sessions** go through the queue, PG-mirrored (not synchronous in PG). _[done — PR-7]_
+- **Sessions** go through the queue, PG-mirrored (not synchronous in PG). _[done — session-id]_
 - **(E) Session id = UUIDv7, app-generated**; **(E1) text in both DBs** (`sessions.id`,
   `point_readings.session_id`, `agg_5m.session_id`) — historical = stringified ints, new = UUIDv7
-  (time-ordered as text). _[done — PR-7]_
+  (time-ordered as text). _[done — session-id]_
 - **Enphase/Amber** (5m-native, no raw) keep flowing their 5m through the queue.
 - **(A) Aggregation ported to Postgres** for raw vendors (Selectronic/Fusher) via deferred
   idempotent recompute; 5m-native vendors' 5m stays queue-fed. Needs the value reconciler.
@@ -155,8 +156,9 @@ hard decouplings (1–4) land incrementally now; the split is then mechanical.
 
 ## What's next — phased plan
 
-PR-7, PR-11 (enabled + validated), and the PR-8 config-reads seam are done. **Every cutover: take a
-fresh Turso snapshot first, land via a PR (never direct-to-`main`), and stay revertible by flag flip.**
+The session-id step, step 2A (enabled + validated), and the 1A config-reads seam are done. **Every cutover: take a
+fresh Turso snapshot first, land via a PR (never direct-to-`main`), and stay revertible by flag flip.** _(Step labels like `1A` / `2B` are plan steps — **not** GitHub PR
+numbers; actual PRs appear as `#N`.)_
 
 ### ▶ Next phase (now): "Postgres owns everything but the raw/sessions backup"
 
@@ -167,49 +169,50 @@ preserving) so the eventual deploy split is mechanical. ~1–2 sub-phases.
 
 **Workstreams:**
 
-- **A · Config → PG** (Phase 1: PR-8 → PR-9 → PR-10). Finish wrapping the remaining config read sites
+- **Config → PG** — Phase 1, steps 1A → 1B → 1C. Finish wrapping the remaining config read sites
   through the shadow seam — `SystemsManager.loadSystems` (systems⋈polling_status; the big one, covers
   most API routes transitively), then `point_info`, `userHasSystemAccess`, share-tokens, the few
-  direct-read routes — and soak shadow-diff clean. Then PR-9 (config writes PG-only behind
+  direct-read routes — and soak shadow-diff clean. Then 1B (config writes PG-only behind
   `CONFIG_WRITES_TO_PG`; prereq: drop the Turso readings→config CASCADE FKs, 0016-grade — investigate
-  the live FK drift first) and PR-10 (flip both config flags). Config then lives only in PG.
-- **B · Aggregates → PG only.** PR-11 is enabled + validated; the remaining step is to **stop Turso
+  the live FK drift first) and 1C (flip both config flags). Config then lives only in PG.
+- **Aggregates → PG-only** — step 2C. 2A is enabled + validated; the remaining step is to **stop Turso
   aggregating at all** — turn off `updatePointAggregates5m` + the Turso daily aggregation so PG is the
   sole aggregator (stronger than the old "trim publishers"). Gate on the reconciler clean over a
   settled window. `agg_5m`/`agg_1d` then leave Turso entirely.
-- **C · Readings reads → PG** (PR-12). PG point-readings provider behind `READINGS_READS_FROM_PG`
+- **Readings reads → PG** — step 2B. PG point-readings provider behind `READINGS_READS_FROM_PG`
   (ms↔timestamp + started↔createdAt); shadow-diff, then cut over `data`/`history`/generator-events/
   admin reads; "latest" stays on KV. After this **the web reads nothing from Turso.**
-- **D · Engine/web decoupling prep** (no deploy split yet). The four hard decouplings from _Direction
-  of travel_: (1) vendor creds off Clerk → encrypted PG config — do this **with** PR-9, it's both a
+- **Engine/web decoupling prep** (no deploy split yet). The four hard decouplings from _Direction
+  of travel_: (1) vendor creds off Clerk → encrypted PG config — do this **with** 1B, it's both a
   config-write and the #1 separation blocker; (2) split `api-auth` into Clerk-auth vs secret-auth;
   (3) extract `pollAllSystems`/daily-agg/receiver into host-agnostic functions; (4) carve the `core`
   import surface. All behaviour-preserving, mergeable independently.
 
-**Sequencing:** A + D‑creds together → B (anytime; PR-11 already validated) → C (after A+B so PG is a
-complete read store) → coordinate the Sydney move (Phase 3) with C so compute + PG stay co-located.
-D‑auth/extract land in parallel.
+**Sequencing:** config-to-PG + the creds decoupling together → aggregates-to-PG-only (anytime; 2A
+already validated) → readings-reads (after config + aggregates are on PG, so PG is a complete read
+store) → coordinate the Sydney move (Phase 3) with the read cutover so compute + PG stay co-located.
+The auth split + handler extraction land in parallel.
 
 **Exit criteria:** Turso holds **only** raw `point_readings` + sessions (best-effort backup); PG is
 authoritative for config + aggregates and serves every read; the web touches only PG/KV; engine code
 is Clerk-free and host-agnostic. (_Dropping_ Turso — removing the backup write — is a later call,
 gated on raw-durability-on-PG; see Phase 4.)
 
-The detailed per-PR notes follow.
+The detailed per-step notes follow.
 
-### Phase 1 — Config authority → Postgres (PR-8 → PR-9 → PR-10)
+### Phase 1 — Config authority → Postgres (1A → 1B → 1C)
 
 **Goal:** make the config tables authoritative in Postgres.
 
-- **PR-8 — config reads** behind `CONFIG_READS_FROM_PG` (default off) + shadow-diff Turso vs PG at
+- **1A — config reads** behind `CONFIG_READS_FROM_PG` (default off) + shadow-diff Turso vs PG at
   every read site (SystemsManager systems⋈polling*status, PointManager point_info cache,
   `userHasSystemAccess`, share-tokens validation, `app/api/setup`, admin systems/users routes).
   Couple polling_status reads with systems (flip together). *[FIRST SLICE SHIPPED — PR #10:
   shadow-only seam `lib/db/config-shadow.ts` (`shadowReadConfig` + `toEpochSeconds`/`normalizeJson`
   normalizers) + `getPollingStatus` wrapped + 10 unit tests. Remaining read sites reuse the seam.]\_
   **Shadow semantics:** flag ON still SERVES Turso, only compares-and-logs PG divergence (PG errors
-  swallowed); serving from PG is the PR-10 cutover.
-- **PR-9 — config writes** PG-only behind `CONFIG_WRITES_TO_PG`: createSystem,
+  swallowed); serving from PG is the 1C cutover.
+- **1B — config writes** PG-only behind `CONFIG_WRITES_TO_PG`: createSystem,
   ensurePointInfo/createPoint/updatePoint, user prefs, user_systems grants, share-tokens (detect PG
   `23505`, not `SQLITE_CONSTRAINT`), polling_status (atomic `total_polls = total_polls + 1` upsert,
   **log-but-don't-throw** so `shouldPoll` doesn't re-poll → dup sessions). **Prereq:** drop the
@@ -217,18 +220,18 @@ The detailed per-PR notes follow.
   TRANSACTION, row-count validation before DROP, recreate indexes, test on a copy). ⚠️ **First
   investigate the live FK drift** — prod `point_readings`/`agg_5m` FKs reference
   `point_info_2025_11_27_backup` / `systems_backup_20251117`, not the live tables.
-- **PR-10 — cutover:** fresh Turso snapshot + confirm PG PITR; pause cron; seed + hard-validate
+- **1C — cutover:** fresh Turso snapshot + confirm PG PITR; pause cron; seed + hard-validate
   PG ≥ Turso counts; flip `CONFIG_READS_FROM_PG` + `CONFIG_WRITES_TO_PG`; re-enable cron.
 - **Verify:** shadow-diff zero divergence (esp. `userHasSystemAccess` — access control);
   `PRAGMA foreign_key_check` clean after the Turso FK-drop. **Rollback:** flip flags back (config
   reverts to stale-but-rarely-changing Turso) + PG PITR.
 
-### Phase 2 — Readings & aggregation on Postgres (PR-11 → PR-12 → PR-13)
+### Phase 2 — Readings & aggregation on Postgres (2A → 2B → 2C)
 
 **Goal:** serve all reads from PG and compute raw-vendor aggregates in PG; trim redundant Turso
 publishers.
 
-- **PR-11 — PG aggregation** behind `AGG_COMPUTE_IN_PG`. _[DONE — merged, ENABLED in prod, validated
+- **2A — PG aggregation** behind `AGG_COMPUTE_IN_PG`. _[DONE — merged, ENABLED in prod, validated
   value-clean vs Turso for the active raw vendors via `scripts/reconcile-agg-values.ts`]_. Idempotent
   recompute of raw-vendor 5m + 1d keyed `(systemId, intervalEnd)` /
   `(systemId, day)` over landed PG data, `onConflictDoUpdate`. Shape:
@@ -251,11 +254,11 @@ publishers.
     overwrites the PG-computed rows and the reconciler falsely passes).
   - Gate enabling/trim on `scripts/reconcile-agg-values.ts` (value parity over a settled window),
     not counts. 286→**316** unit tests (added pure-math + recompute-orchestration suites).
-- **PR-12 — readings reads → PG** endpoint-by-endpoint behind `READINGS_READS_FROM_PG`: a PG
+- **2B — readings reads → PG** endpoint-by-endpoint behind `READINGS_READS_FROM_PG`: a PG
   provider mirroring `lib/history/point-readings-provider.ts` (ms↔timestamp + started↔createdAt
   translation); "latest" stays on KV. Shadow-diff first. Primary sites: `app/api/data/route.ts`,
   the admin point-readings routes, generator-events.
-- **PR-13 — stop Turso aggregating entirely** (refined per decision F — was "trim publishers"). Once
+- **2C — stop Turso aggregating entirely** (refined per decision F — was "trim publishers"). Once
   the reconciler is clean over a settled window: turn off `updatePointAggregates5m` + the Turso daily
   aggregation so **PG is the sole aggregator** and `agg_5m`/`agg_1d` leave Turso. Also quiesce the
   queue to lag 0 on `/admin/observations` and drop the raw-vendor 5m/1d queue publishers + the
@@ -296,13 +299,13 @@ Separate planning.
 
 ## Top risks & how they're handled
 
-- **R3 + R7 — combined message at close + session FK** _[done — PR-7]_: a poll buffers its readings
+- **R3 + R7 — combined message at close + session FK** _[done — session-id]_: a poll buffers its readings
   and emits one combined QStash message at session close (completed session + all readings); the
   receiver inserts session-then-readings in one transaction; FK added `NOT VALID` (orphan-tolerant
   for legacy rows). Caveats handled: flush on success + failure paths; chunk readings (sharing the
   session id) under QStash's ~1 MB / 10 MB-Fixed limit; a crash mid-poll leaves readings in Turso
   but not the queue (rare, acceptable).
-- **R4 — config FK CASCADE** (Phase 1 / PR-9): Turso readings tables FK→`point_info`/`systems` ON
+- **R4 — config FK CASCADE** (Phase 1 / 1B): Turso readings tables FK→`point_info`/`systems` ON
   DELETE CASCADE; drop those FKs (decision B) **before** config writes stop hitting Turso, 0016-grade.
   ⚠️ Live drift: prod FKs reference `*_2025_11_27_backup`, not live tables — investigate first.
 - **R5 — no PG migration runner** _[done]_: prod was built by destructive `drizzle-kit push`; now
@@ -340,8 +343,8 @@ Separate planning.
 
 ## Completed (2026-06-06)
 
-- **Stage 1 (PR-0…PR-6)** merged.
-- **PR-7** (session-id UUIDv7/text + co-enqueue + transactional receiver + FK `NOT VALID` + drop
+- **Stage 1** merged.
+- **Session-id step** (UUIDv7/text + co-enqueue + transactional receiver + FK `NOT VALID` + drop
   unique) shipped to prod via: PG cols→text (psql), Turso `sessions` table-aside (rename →
   `sessions_archive`, fresh text-id `sessions`), app deploy. tsc clean, 286 unit tests, build green.
 - **Data recoveries — nothing lost:** 36 deploy-window sessions; 19 backfill-gap sessions; **118,613
@@ -384,7 +387,7 @@ Generated from importers of `@/lib/db/turso*`. A **scoping checklist** — exact
 confirmed during the relevant PR. Classes: **Config** (→ PG-authoritative), **Readings** (→ PG
 read/compute), **Mixed**, **Ops/Vendor/Script/Test**.
 
-**Config accessors & write sites → Phase 1 (PR-8/9/10):** `lib/systems-manager.ts`
+**Config accessors & write sites → Phase 1 (1A/1B/1C):** `lib/systems-manager.ts`
 (systems⋈polling_status + `createSystem`); `lib/polling-utils.ts` (polling_status; atomic increment +
 log-not-throw); `lib/share-tokens.ts` (share_tokens; PG `23505`); `lib/user-preferences.ts` (users +
 `userHasSystemAccess`); `app/api/setup/route.ts`;
@@ -392,21 +395,21 @@ log-not-throw); `lib/share-tokens.ts` (share_tokens; PG `23505`); `lib/user-pref
 `app/api/admin/users/route.ts`, `app/api/admin/user/[userId]/points/route.ts`; `app/api/systems/route.ts`;
 `app/api/auth/{enphase,tesla}/{callback,disconnect}/route.ts`.
 
-**Readings reads & aggregation compute → Phase 2 (PR-11/12):** `lib/history/point-readings-provider.ts`
+**Readings reads & aggregation compute → Phase 2 (2A/2B):** `lib/history/point-readings-provider.ts`
 (**the** serving provider; ms↔timestamp + started↔createdAt); `app/api/data/route.ts`;
 `app/api/system/[systemId]/generator-events/route.ts`;
 `app/api/admin/systems/[systemId]/point-readings/route.ts`,
 `app/api/admin/point/[systemIdDotPointId]/readings/route.ts`; `lib/db/turso/aggregate-daily-points.ts`
 (1d); `lib/point-aggregation-helper.ts` (5m); `app/labs/kinkora-hws/page.tsx` (low priority).
 
-**Mixed:** `lib/point/point-manager.ts` (point_info CRUD = config/PR-9 **and** raw insert + 5m + KV
-cache = readings/PR-11; split by concern); `lib/session-manager.ts` (session lifecycle — **done, PR-7**);
+**Mixed:** `lib/point/point-manager.ts` (point_info CRUD = config/1B **and** raw insert + 5m + KV
+cache = readings/2A; split by concern); `lib/session-manager.ts` (session lifecycle — **done, session-id**);
 `app/api/system/[systemId]/point/[pointId]/route.ts`.
 
 **Vendor adapters:** `lib/vendors/enphase/*` (5m-native; 5m stays queue-fed, read config from PG
 post-cutover); `lib/observations/publisher.ts` (point_info type only).
 
-**Ops / cron / sync:** `app/api/cron/daily/route.ts` (1d trigger, PR-11);
+**Ops / cron / sync:** `app/api/cron/daily/route.ts` (1d trigger, 2A);
 `app/api/cron/db-stats/route.ts`, `app/api/admin/storage/route.ts`, `app/api/health/route.ts`
 (stats/health; port opportunistically); `app/api/admin/sync-database/{route,stages}.ts` (dev-seed
 from prod Turso — re-point to seed dev from PG, or retire); `app/api/enphase-proxy/route.ts`.
@@ -416,7 +419,7 @@ from prod Turso — re-point to seed dev from PG, or retire); `app/api/enphase-p
 (2026-06-06): `scripts/temp/recover-sessions-fullfidelity.ts`, `scripts/temp/backfill-session-responses.ts`.
 
 **Tests:** `app/api/system/__tests__/point.integration.test.ts` — needs a PG-backed harness once
-reads move (PR-12).
+reads move (2B).
 
 **Note:** `db:sync-prod` → `scripts/sync-prod-to-dev.js` does **not exist** — the documented
 dev-refresh path is already broken; decide the post-cutover dev-seed source (seed dev from PG).
@@ -431,19 +434,19 @@ dev-refresh path is already broken; decide the post-cutover dev-seed source (see
 
 ## Verification
 
-- Per PR: `npm run build:local && npm run typecheck`; targeted `npm test`; shadow-diff (PR-8/11/12)
+- Per PR: `npm run build:local && npm run typecheck`; targeted `npm test`; shadow-diff (1A/2A/2B)
   logs Turso-vs-PG divergence with the flag on but reads still served from Turso.
-- The value reconciler gates the aggregation trim (PR-13).
+- The value reconciler gates the aggregation trim (2C).
 - After the next daily cron: `--verify --table=agg_1d` clean; dashboard lag ~0.
 
 ## Rollback
 
-- Additive / flag-gated PRs (PR-8, 9, 11, 12; the PR-7 work): revert the PR or flip the env flag
+- Additive / flag-gated PRs (1A, 1B, 2A, 2B; the session-id work): revert the PR or flip the env flag
   (instant, no logic redeploy); `DROP CONSTRAINT` removes the session FK.
-- CUTOVER PRs (PR-10, PR-13): flip the relevant flag back (instant). Config has no Turso dual-write
+- CUTOVER steps (1C, 2C): flip the relevant flag back (instant). Config has no Turso dual-write
   soak (decision B), so config rollback relies on **PG PITR** + the pre-cutover Turso snapshot;
   flipping `CONFIG_READS_FROM_PG` back reads stale-but-rarely-changing Turso config (acceptable).
 - Always take a fresh Turso snapshot (`turso db create --from-db liveone-tokyo …`) and confirm PG
   PITR before each CUTOVER PR. The old "pause the queue, Turso untouched" rollback is valid only
-  **before** PR-10. If ingestion misbehaves, **pause the queue** from `/admin/observations` — Turso
+  **before** 1C. If ingestion misbehaves, **pause the queue** from `/admin/observations` — Turso
   keeps serving; backfill writes are idempotent (worst case `TRUNCATE` the PG table(s) and re-run).
