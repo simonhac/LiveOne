@@ -270,29 +270,51 @@ async function apply() {
   const affectedIntervalsBySystem = new Map<number, Set<number>>();
   const affectedDaysBySystem = new Map<number, Set<string>>();
 
-  const client = await pool.connect();
-  let deletedRows: Array<{
+  // Phase 1 — identify the target rows with a fast SELECT. The predicate's SELECT
+  // side is index-friendly, whereas a single `DELETE … WHERE <correlated EXISTS>`
+  // over the window timed out cross-Pacific. Capturing the rows up front also yields
+  // the affected (system, interval/day) sets from exactly the rows we will delete.
+  const targetRes = await withRetry(
+    () =>
+      pool.query(
+        `SELECT r.id, r.system_id, r.point_id, r.measurement_time
+         FROM point_readings r
+         WHERE ${TARGET_WHERE}`,
+        [WIN_START, WIN_END],
+      ),
+    "select-targets",
+  );
+  const deletedRows = targetRes.rows as Array<{
     id: number;
     system_id: number;
     point_id: number;
     measurement_time: Date;
-  }> = [];
+  }>;
+  console.log(`Rows matching predicate: ${deletedRows.length}`);
+
+  if (deletedRows.length === 0) {
+    console.log("Nothing to delete (already clean). Skipping recompute.");
+    const afterCount = await windowCount();
+    console.log(`point_readings in window AFTER: ${afterCount}`);
+    return;
+  }
+
+  // Phase 2 — delete by PRIMARY KEY in batches (index-driven, fast) inside one
+  // transaction (all-or-nothing). Each batch is well under the query timeout.
+  const ids = deletedRows.map((r) => r.id);
+  const client = await pool.connect();
+  let totalDeleted = 0;
   try {
     await client.query("BEGIN");
-
-    // DELETE … RETURNING gives us the exact rows removed, so the affected
-    // (system_id, intervalEnd) and (system_id, day) sets are derived from reality,
-    // not a separate (possibly racy) SELECT.
-    const del = await client.query(
-      `DELETE FROM point_readings r
-       WHERE ${TARGET_WHERE}
-       RETURNING r.id, r.system_id, r.point_id, r.measurement_time`,
-      [WIN_START, WIN_END],
-    );
-    deletedRows = del.rows as any[];
-
-    console.log(`Rows deleted: ${deletedRows.length}`);
-
+    const DEL_BATCH = 500;
+    for (let i = 0; i < ids.length; i += DEL_BATCH) {
+      const batch = ids.slice(i, i + DEL_BATCH);
+      const res = await client.query(
+        `DELETE FROM point_readings WHERE id = ANY($1::int[])`,
+        [batch],
+      );
+      totalDeleted += res.rowCount ?? 0;
+    }
     await client.query("COMMIT");
   } catch (e) {
     await client.query("ROLLBACK");
@@ -301,13 +323,7 @@ async function apply() {
   } finally {
     client.release();
   }
-
-  if (deletedRows.length === 0) {
-    console.log("Nothing deleted (already clean). Skipping recompute.");
-    const afterCount = await windowCount();
-    console.log(`point_readings in window AFTER: ${afterCount}`);
-    return;
-  }
+  console.log(`Rows deleted: ${totalDeleted}`);
 
   // Build affected sets from the deleted rows. A deleted row's interval still has
   // its surviving sub-second sibling, so the 5m aggregate must be rebuilt to drop
