@@ -43,10 +43,11 @@ function buildTopic(system: SystemWithPolling, point: PointInfo): string {
 
 /**
  * Format a millisecond timestamp as ISO 8601 with system's timezone offset
- * Example: "2025-01-15T20:30:00+10:00"
+ * Includes milliseconds so sub-second precision survives the queue round-trip.
+ * Example: "2025-01-15T20:30:00.123+10:00"
  */
 function formatTimestamp(timeMs: number, timezoneOffsetMin: number): string {
-  return formatTime_fromJSDate(new Date(timeMs), timezoneOffsetMin);
+  return formatTime_fromJSDate(new Date(timeMs), timezoneOffsetMin, true);
 }
 
 /**
