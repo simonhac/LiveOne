@@ -12,6 +12,7 @@ import {
   getYesterdayInTimezone,
   getCalendarDateDaysAgo,
   calendarDateToUnixRange,
+  formatTime_fromJSDate,
 } from "../date-utils";
 import { formatDateTimeRange } from "../fe-date-format";
 import { parseAbsolute, toZoned, CalendarDate } from "@internationalized/date";
@@ -417,6 +418,58 @@ describe("formatDateTimeRange", () => {
       expect(formatDateTimeRange(start, end, true)).toBe(
         "11pm, 1 Sept – 1am, 2 Sept 2025",
       );
+    });
+  });
+});
+
+describe("formatTime_fromJSDate", () => {
+  describe("includeMillis", () => {
+    it("appends .mmm before the offset and round-trips losslessly", () => {
+      // Epoch-ms with non-zero milliseconds (.611)
+      const epochMs = 1749081599611; // 2025-06-05T... with .611 ms
+      const result = formatTime_fromJSDate(new Date(epochMs), 600, true);
+
+      // Milliseconds appear (zero-padded to 3) immediately before the offset
+      expect(result).toMatch(/T\d{2}:\d{2}:\d{2}\.\d{3}\+10:00$/);
+      expect(result).toContain(".611+10:00");
+
+      // The string round-trips back to the original epoch-ms without loss
+      expect(new Date(result).getTime()).toBe(epochMs);
+    });
+
+    it("is unchanged (second precision, no dot) when includeMillis is omitted", () => {
+      const epochMs = 1749081599611; // same instant, with .611 ms
+      const withoutMillis = formatTime_fromJSDate(new Date(epochMs), 600);
+      const explicitFalse = formatTime_fromJSDate(
+        new Date(epochMs),
+        600,
+        false,
+      );
+
+      // Default matches explicit false (guards existing callers)
+      expect(withoutMillis).toBe(explicitFalse);
+      // No milliseconds dot; second precision only
+      expect(withoutMillis).toMatch(/T\d{2}:\d{2}:\d{2}\+10:00$/);
+      expect(withoutMillis).not.toContain(".");
+    });
+
+    it("zero-pads milliseconds below 100 (e.g. ms=007)", () => {
+      // ...007 ms — must be padded to ".007", not ".7"
+      const epochMs = 1749081599007;
+      const result = formatTime_fromJSDate(new Date(epochMs), 600, true);
+
+      expect(result).toContain(".007+10:00");
+      expect(new Date(result).getTime()).toBe(epochMs);
+    });
+
+    it("places .mmm before a NEGATIVE offset and round-trips", () => {
+      // Guards the ms-vs-offset ordering for west-of-UTC offsets.
+      const epochMs = 1749081599007; // .007 ms
+      const result = formatTime_fromJSDate(new Date(epochMs), -300, true);
+
+      expect(result).toMatch(/T\d{2}:\d{2}:\d{2}\.\d{3}-05:00$/);
+      expect(result).toContain(".007-05:00");
+      expect(new Date(result).getTime()).toBe(epochMs);
     });
   });
 });

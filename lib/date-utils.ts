@@ -510,11 +510,13 @@ export function unixToFormattedAEST(
  * Format a JavaScript Date to an ISO string with timezone offset
  * @param date - JavaScript Date object
  * @param timezoneOffsetMin - Timezone offset in minutes from UTC (positive for east, negative for west)
+ * @param includeMillis - When true, include milliseconds (e.g., "2025-08-16T20:36:41.123+10:00"); defaults to false (second precision)
  * @returns ISO string with timezone offset (e.g., "2025-08-16T20:36:41+10:00")
  */
 export function formatTime_fromJSDate(
   date: Date,
   timezoneOffsetMin: number,
+  includeMillis: boolean = false,
 ): string {
   // Get the UTC time
   const utcTime = date.getTime();
@@ -530,6 +532,11 @@ export function formatTime_fromJSDate(
   const minute = String(localTime.getUTCMinutes()).padStart(2, "0");
   const second = String(localTime.getUTCSeconds()).padStart(2, "0");
 
+  // Optionally include milliseconds (zero-padded to 3 digits)
+  const millisStr = includeMillis
+    ? `.${String(localTime.getUTCMilliseconds()).padStart(3, "0")}`
+    : "";
+
   // Format the timezone offset (e.g., "+10:00" or "-05:00")
   const offsetHours = Math.floor(Math.abs(timezoneOffsetMin) / 60);
   const offsetMinutes = Math.abs(timezoneOffsetMin) % 60;
@@ -537,7 +544,7 @@ export function formatTime_fromJSDate(
   const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, "0")}:${String(offsetMinutes).padStart(2, "0")}`;
 
   // Return ISO format with timezone offset
-  return `${year}-${month}-${day}T${hour}:${minute}:${second}${offsetStr}`;
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}${millisStr}${offsetStr}`;
 }
 
 /**
