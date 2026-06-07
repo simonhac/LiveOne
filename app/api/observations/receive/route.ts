@@ -21,12 +21,14 @@
 import { verifySignatureAppRouter } from "@upstash/qstash/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import {
   pointReadings,
   pointReadingsAgg5m,
   pointReadingsAgg1d,
   sessions,
+  systems,
 } from "@/lib/db/planetscale/schema";
 import type {
   QueueMessage,
@@ -35,8 +37,34 @@ import type {
 } from "@/lib/observations/types";
 import { AGG_COMPUTE_IN_PG } from "@/lib/db/routing";
 import { recompute5mForRawObservationsBestEffort } from "@/lib/db/planetscale/aggregate-points-pg";
+import { isFiveMinuteNativeVendor } from "@/lib/vendors/native-intervals";
 
 type Db = NonNullable<typeof planetscaleDb>;
+
+/**
+ * Cache of systemId → whether the system's vendor is 5m-native (Amber/Enphase). Vendor type is
+ * effectively immutable, so caching avoids a `systems` lookup on every message. Used to decide
+ * whether `insert5mObservations` UPSERTS (5m-native: late re-published refinements must overwrite)
+ * or first-write-wins (raw vendors: the PG recompute owns their 5m).
+ */
+const fiveMinNativeCache = new Map<number, boolean>();
+
+async function isSystemFiveMinuteNative(
+  db: Db,
+  systemId: number,
+): Promise<boolean> {
+  const cached = fiveMinNativeCache.get(systemId);
+  if (cached !== undefined) return cached;
+  const rows = await db
+    .select({ vendorType: systems.vendorType })
+    .from(systems)
+    .where(eq(systems.id, systemId))
+    .limit(1);
+  // Unknown system (not yet mirrored) → treat as raw-vendor (safe default; first-write-wins).
+  const isNative = isFiveMinuteNativeVendor(rows[0]?.vendorType);
+  fiveMinNativeCache.set(systemId, isNative);
+  return isNative;
+}
 
 /**
  * The transaction handle passed to the `db.transaction(async (tx) => ...)` callback.
@@ -124,6 +152,7 @@ async function insert5mObservations(
   db: Db | Tx,
   systemId: number,
   observations: Observation[],
+  useUpsert: boolean,
 ): Promise<{ inserted: number; skipped: number }> {
   let skipped = 0;
   const rows: (typeof pointReadingsAgg5m.$inferInsert)[] = [];
@@ -174,15 +203,42 @@ async function insert5mObservations(
 
   if (rows.length === 0) return { inserted: 0, skipped };
 
-  // onConflictDoNothing (first-write-wins) keeps re-delivery idempotent and avoids
-  // out-of-order upsert hazards. Re-refined 5m intervals won't propagate; that drift
-  // is reconciled by the (deferred) Turso backfill while Turso remains source of truth.
-  const result = await db
-    .insert(pointReadingsAgg5m)
-    .values(rows)
-    .onConflictDoNothing()
-    .returning({ systemId: pointReadingsAgg5m.systemId });
+  // Conflict handling depends on who OWNS this system's 5m in PG:
+  //  - RAW vendors (useUpsert=false): the PG recompute (AGG_COMPUTE_IN_PG) recomputes 5m from PG
+  //    raw right after this insert, so it owns the values. Keep onConflictDoNothing (first-write-
+  //    wins) to stay idempotent on re-delivery and avoid out-of-order upsert hazards.
+  //  - 5m-NATIVE vendors (useUpsert=true, Amber/Enphase): there is NO raw and NO recompute — the
+  //    queue copy IS the value. Amber re-publishes late `updateUsage` refinements (estimated →
+  //    billable), so we must UPSERT to overwrite the earlier stale interval; onConflictDoNothing
+  //    would silently drop the refinement and leave PG stale (the divergence the value reconciler
+  //    flagged). See lib/vendors/native-intervals.ts.
+  const insert = db.insert(pointReadingsAgg5m).values(rows);
+  const result = await (
+    useUpsert
+      ? insert.onConflictDoUpdate({
+          target: [
+            pointReadingsAgg5m.systemId,
+            pointReadingsAgg5m.pointId,
+            pointReadingsAgg5m.intervalEnd,
+          ],
+          set: {
+            sessionId: sql`excluded.session_id`,
+            avg: sql`excluded.avg`,
+            min: sql`excluded.min`,
+            max: sql`excluded.max`,
+            last: sql`excluded.last`,
+            delta: sql`excluded.delta`,
+            valueStr: sql`excluded.value_str`,
+            sampleCount: sql`excluded.sample_count`,
+            errorCount: sql`excluded.error_count`,
+            dataQuality: sql`excluded.data_quality`,
+            updatedAt: sql`now()`,
+          },
+        })
+      : insert.onConflictDoNothing()
+  ).returning({ systemId: pointReadingsAgg5m.systemId });
 
+  // For onConflictDoUpdate, RETURNING counts both inserted and overwritten rows.
   return { inserted: result.length, skipped };
 }
 
@@ -305,6 +361,9 @@ async function processQueueMessage(
   db: Db,
   message: QueueMessage,
 ): Promise<Record<string, number>> {
+  // Resolve (cached) whether this system's 5m is queue-owned (5m-native → upsert) or
+  // recompute-owned (raw vendor → first-write-wins). Done outside the tx; vendor type is immutable.
+  const fiveMinUpsert = await isSystemFiveMinuteNative(db, message.systemId);
   return db.transaction(async (tx) => {
     const stats: Record<string, number> = {};
 
@@ -333,6 +392,7 @@ async function processQueueMessage(
           tx,
           message.systemId,
           agg5mObs,
+          fiveMinUpsert,
         );
         stats.agg5mInserted = result.inserted;
         stats.agg5mSkipped = result.skipped;

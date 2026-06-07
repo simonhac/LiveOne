@@ -12,6 +12,10 @@
     {
       "path": "/api/cron/db-stats",
       "schedule": "0 2,14 * * *"
+    },
+    {
+      "path": "/api/cron/monitor-observations",
+      "schedule": "*/15 * * * *"
     }
   ],
   "functions": {
