@@ -159,6 +159,37 @@ A wider Amber-history sweep can use the same tool over a longer window if older 
 _Investigation scripts (read-only, `scripts/temp/`, gitignored): `investigate-sys9-5m.ts`,
 `investigate-sys9-boundary.ts`._
 
+## Full-history parity + live pipeline health (verified 2026-06-08)
+
+A whole-history read-only sweep (all `TZ=UTC`, prod) — PG is complete and reconciles against Turso back
+to inception (first data **2025-08**):
+
+| Check                                                     | Window                                  | Result                                                                   |
+| --------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------ |
+| Raw `point_readings` deficits (`gap-map-raw-readings.ts`) | 2025-01-01 → 2026-06-08                 | ✅ **0 — PG ⊇ Turso on every (system, day)**                             |
+| `agg_5m` value parity, **all systems** (chunked)          | inception → 2026-06-08, **~3.31M rows** | ✅ **0 mismatches** (per-window all 0)                                   |
+| `agg_1d` value parity                                     | all 2025 (5900) + all 2026 (6106)       | ✅ **0 mismatches**                                                      |
+| Live QStash queue                                         | now                                     | ✅ **lag 0, DLQ 0, parallelism 1, not paused**                           |
+| Live PG mirror (last hour)                                | now                                     | ✅ **response-presence 100% (102/102), 1500 raw rows, newest 0 min old** |
+
+"Complete" here means **complete relative to Turso** (the gap-map flags only days where PG < Turso —
+none exist; a reading that never reached Turso either is a collection gap, invisible to a two-store diff).
+The `agg_5m` sweep was chunked by month/quarter because a single multi-month Turso response exceeds the
+libsql client's max decode-string size (`ERR_STRING_TOO_LONG`) — a tooling limit, not a data issue.
+
+**Durability model (today vs end-state) — answers "do we ever drop a reading before it's in PG?":**
+Not via QStash alone, and that's intentional for now. A poll writes **Turso inline (synchronous, the real
+durability anchor)** and then **best-effort enqueues to QStash** — `publishObservationBatch` swallows
+enqueue errors ("do NOT break the database insertion"), and there is **no synchronous PG write** (PG is fed
+only by the receiver). Once enqueued, QStash is at-least-once with retries → **DLQ**, parallelism-1
+(ordered); the receiver is idempotent. So the actual guarantee is **"Turso has it, and PG holes heal from
+Turso"** via idempotent `gap-map-raw-readings.ts --apply` — exactly how 2026's ~9 mirror-down windows were
+repaired. The gaps QStash itself doesn't close (swallowed enqueue, crash mid-poll before publish, stranded
+DLQ) are caught by the every-15-min `monitor-observations` cron + the Turso backstop. **"Never drop until
+ingested into PG" is the Phase-4 goal** (a synchronous PG raw write, or formally accepting queue-only
+at-least-once with monitoring) — not yet built, and the reason Turso can't be decommissioned yet
+(decision F). _Snapshot tooling: `scripts/temp/qstash-health.ts` (read-only live lag/DLQ/presence)._
+
 ## Status (2026-06-07)
 
 - **Stage 1 (additive groundwork) — merged.** Flag seam (`lib/db/routing.ts`, all flags default
