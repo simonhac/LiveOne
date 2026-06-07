@@ -14,7 +14,74 @@ it; move the config tables to it), demote **Turso to a transitional best-effort 
 (ap-southeast-2 / `syd1`)**. This is a **staged, flag-gated, multi-PR program**, adversarially
 reviewed against the actual code.
 
-## Status (2026-06-06)
+## ⚠️ What's not working — needs fixing
+
+Phase 1 (config) is **done and healthy**. The **readings + aggregation** side is **not yet
+trustworthy**: the value reconciler is currently **RED**, which blocks all of Phase 2.
+
+1. **PG raw `point_readings` is incomplete (historical pipeline gaps). — the Phase-2 blocker.**
+   `scripts/reconcile-agg-values.ts` (run 2026-06-07) shows `agg_1d` for 2026-06-06 with PG
+   `sampleCount` ≈ **43–48% of Turso** (system 1: 620 vs 1427; system 6: 342 vs 718). PG simply has
+   **fewer raw readings** for that window, so PG-computed aggregates cannot match Turso's. Root cause:
+   the QStash→PG mirror pipeline's **~9 ON/OFF windows in 2026** (see "Response capture decline" in
+   Completed) — PG raw has a hole wherever the pipeline was down. **Live ingestion works now** (receiver
+   logs show current readings landing); these are _historical_ holes, but they must be filled before PG
+   readings can be trusted.
+   → **Fix:** (a) map PG-raw-vs-Turso gaps (read-only, scoped/indexed — not a big-table `COUNT(*)`);
+   (b) backfill via `scripts/backfill-turso-to-postgres.ts`; (c) re-run the daily 1d recompute for the
+   affected days; (d) re-reconcile. **And** harden ingestion so new holes stop forming (ties into
+   Phase 4 "raw durability off Turso").
+
+2. **5m-native (Amber/Enphase) 5m mirror is stale.** `agg_5m` system 9 (Amber) diverges with
+   `avg=min=max=last` (one native sample/interval). Amber sends **late multi-day `updateUsage`**; Turso
+   recomputes those past 5m intervals, but PG holds the **earlier queue-published copy** → stale (5m-native
+   5m is queue-mirrored, _not_ recomputed in PG).
+   → **Fix:** decide how to reconcile late 5m-native data — re-publish the updated intervals, recompute,
+   or give the reconciler a bounded lag tolerance for 5m-native points. **Also confirm** the
+   `AGG_COMPUTE_IN_PG` recompute is **not** touching 5m-native points (design says disjoint — verify
+   against the data).
+
+3. **Value reconciler is RED — the Phase 2 gate.** 144 `agg_5m` + 37 `agg_1d` value mismatches over
+   recent windows (2026-06-07). **Not a math bug** — the shared-math design is intact; the _inputs_ are
+   wrong (gaps + staleness above). Must be **green over a settled window** before trimming any Turso
+   publisher (PR-13) or cutting readings reads to PG (PR-12).
+
+4. **Mirror-pipeline reliability (the upstream cause).** The ON/OFF windows are why raw gaps keep
+   appearing. The `response`-presence monitor (Loose ends) _detects_ it; the durable fix (a synchronous
+   PG raw write, or accepted at-least-once queue durability with alerting) is the **Phase 4 "raw
+   durability" question** — bringing it forward would stop new gaps.
+
+_Minor / known (not blockers):_ auth-middleware `protect()` was a no-op → fixed in **PR #12 (open,
+pending merge)**; session FK still `NOT VALID` (deferred decision, ~60K tolerated orphans); the
+`db:sync-prod` dev-seed path is broken (`sync-prod-to-dev.js` missing).
+
+## ▶️ What's next (and why)
+
+Ordered by dependency. Phase 1 (config) is done; **the gate to all of Phase 2 is a green reconciler.**
+
+1. **Restore PG raw completeness** _(unblocks Phase 2)._ Gap-map → backfill → re-recompute 1d →
+   re-reconcile (item 1 above). **Why first:** PG can't become the readings source of truth while its
+   raw data has holes; every later step (serve reads from PG, trim Turso) depends on trusting it.
+2. **Reconcile 5m-native late data** _(item 2)._ **Why:** the reconciler must be green for _all_
+   vendors, not just raw vendors.
+3. **Merge + deploy PR #12 (auth enforcement)** on its own. **Why:** closes a real auth gap + the 404
+   noise; isolated from the readings work so any surprise stays contained. Verify Fronius push, OAuth
+   round-trip, share link.
+4. **Phase 2 cutover — once the reconciler is green over a settled window (incl. one daily 1d run):**
+   - **PR-12 — readings reads → PG** behind `READINGS_READS_FROM_PG`, shadow-diff first,
+     endpoint-by-endpoint. **Why:** serve reads from PG so the Turso read paths can retire.
+   - **PR-13 — trim the raw-vendor Turso 5m/1d publishers** (after quiescing the queue to lag 0).
+     **Why:** stop the double-write; PG becomes the sole aggregator.
+5. **Phase 3 — Sydney region move** (parallel ops). **Why:** co-locate compute + data and kill the
+   cross-region RTT (R8); sequence with the readings cutover.
+6. **Phase 4 — Turso decommission.** **Why:** the end-state is PG-only. Needs raw durability off Turso
+   (same fix as items 1/4) + dropping the `*_backup`/archive tables.
+7. **Decommission-time hardening (gated, not blockers):** PG FK rebuild (audited; plan ready below),
+   R4 Turso-FK drop, session-FK validation. **Why:** relational integrity + cleanup, after readings cut over.
+
+Per-phase detail is in **Phased plan (detail)** below.
+
+## Status (2026-06-07)
 
 - **Stage 1 (additive groundwork) — merged.** Flag seam (`lib/db/routing.ts`, all flags default
   off), PG pool memoization fix, PG migration tooling, `share_tokens` PG table, seed hardening,
@@ -24,22 +91,27 @@ reviewed against the actual code.
   poll at session close; transactional session-before-readings receiver;
   `point_readings.session_id → sessions.id` FK added `NOT VALID`; dropped the `sessions` unique.
   **Admin session reads now served from PG.**
-- **Postgres is still a MIRROR for most reads.** Config + readings reads still come from Turso
-  (`CONFIG_READS_FROM_PG` / `READINGS_READS_FROM_PG` / `AGG_COMPUTE_IN_PG` / `CONFIG_WRITES_TO_PG`
-  all default off). Turso is the source of truth for everything not yet cut over.
-- **Config seam (1A + 1B + 1C) — in this PR (`simonhac/pr8-config-reads`); deploys dark.** Read-shadow,
-  serve-from-PG (`CONFIG_SERVE_FROM_PG`), and PG-only writes — all flags default off. Execute via the
-  **config cutover runbook** below.
-- **PR-11 (Move 1) — code-complete, NOT yet enabled.** PG can compute its own raw-vendor 5m +
-  1d aggregates from PG's own data behind `AGG_COMPUTE_IN_PG` (default **off** = exactly today's
-  behavior). Shadow-only: reads still served from Turso; the value reconciler gates trusting it.
-  Lands via PR (branch `simonhac/pg-pr7-session-id` continuation). Enable in prod only after the
-  reconciler is clean over a settled window.
+- **✅ Phase 1 — Config authority on Postgres: LIVE in prod (cut over 2026-06-07).**
+  `CONFIG_SERVE_FROM_PG` + `CONFIG_WRITES_TO_PG` flipped together — **Postgres is now the system of
+  record for config** (`systems`, `point_info`, `users`, `user_systems`, `polling_status`,
+  `share_tokens`). Turso config is now a stale, no-longer-written mirror. Verified: full Turso↔PG
+  parity pre-flip (`scripts/parity-config-turso-vs-pg.ts`), `[CONFIG-SERVE]` errors ≈ 0 post-flip,
+  writes confirmed on PG (PG `polling_status` runs ahead of Turso), shadow compare stopped. Revert =
+  flip both flags off; rollback point = snapshot `liveone-snapshot-20260607-000847` + PG PITR.
+- **Readings reads still come from Turso** (`READINGS_READS_FROM_PG` off) — that's Phase 2. Turso
+  remains the source of truth for raw readings + their aggregates' _serving_.
+- **PR-11 (Move 1) — ENABLED in prod (`AGG_COMPUTE_IN_PG=true`).** PG computes its own raw-vendor
+  5m + 1d aggregates from PG's own data. Reads still served from Turso (shadow-for-reads); the
+  Turso-publisher trim (PR-13) is gated on `scripts/reconcile-agg-values.ts` value-parity over a settled
+  window — **currently RED** (PG raw gaps + 5m-native staleness; see _What's not working_ above).
 - **Prod PG hardening (done):** `share_tokens` created on prod; `drizzle.__drizzle_migrations`
   baselined (0000–0003); `db:pg:migrate` SSL bug fixed → migration tooling works end-to-end.
-- **Data recoveries (done):** all session data preserved — see [Completed](#completed-2026-06-06).
+- **Data recoveries (done):** all session data preserved — see [Completed](#completed).
 
-## As soon as this PR is pushed — config cutover runbook
+## Config cutover runbook — ✅ EXECUTED 2026-06-07
+
+_Executed in prod 2026-06-07: `CONFIG_SERVE_FROM_PG` + `CONFIG_WRITES_TO_PG` flipped together; config
+is now served + written from PG (see Status). Steps retained as the record + rollback reference._
 
 This PR (`simonhac/pr8-config-reads`) bundles the whole config seam — **1A** read-shadow
 (`CONFIG_READS_FROM_PG`), **1B** PG-only writes (`CONFIG_WRITES_TO_PG`), **1C** serve-from-PG
@@ -107,14 +179,17 @@ _PG foreign-key rebuild_ section).
   they're left behind and dropped when Turso is decommissioned. The migration concerns
   `point_readings*` only.
 
-## What's next — phased plan
+## Phased plan (detail)
 
-PR-7 is done and live. The remaining work groups into **four phases**. **Every cutover: take a fresh
+The concise prioritized list is in **What's next (and why)** above; this is the per-phase detail.
+PR-7 and **Phase 1 (config authority)** are done and live (2026-06-07). **Every cutover: take a fresh
 Turso snapshot first, land via a PR (never direct-to-`main`), and stay revertible by flag flip.**
 
-### Phase 1 — Config authority → Postgres (PR-8 → PR-9 → PR-10)
+### Phase 1 — Config authority → Postgres ✅ DONE (cut over 2026-06-07)
 
-**Goal:** make the config tables authoritative in Postgres.
+**Goal (achieved):** config tables authoritative in Postgres — executed via the config cutover runbook
+above (`CONFIG_SERVE_FROM_PG` + `CONFIG_WRITES_TO_PG` flipped 2026-06-07). The PR-8/9/10 detail below
+is the historical record.
 
 - **PR-8 — config reads** behind `CONFIG_READS_FROM_PG` (default off) + shadow-diff Turso vs PG at
   every read site (SystemsManager systems⋈polling_status, PointManager point_info cache,
@@ -139,8 +214,9 @@ Turso snapshot first, land via a PR (never direct-to-`main`), and stay revertibl
 **Goal:** serve all reads from PG and compute raw-vendor aggregates in PG; trim redundant Turso
 publishers.
 
-- **PR-11 — PG aggregation in shadow** behind `AGG_COMPUTE_IN_PG`. _[IMPLEMENTED — code-complete,
-  flag default off]_. Idempotent recompute of raw-vendor 5m + 1d keyed `(systemId, intervalEnd)` /
+- **PR-11 — PG aggregation** behind `AGG_COMPUTE_IN_PG`. _[✅ ENABLED in prod 2026-06-07 — but the
+  reconciler is currently RED; see *What's not working* above]_. Idempotent recompute of raw-vendor
+  5m + 1d keyed `(systemId, intervalEnd)` /
   `(systemId, day)` over landed PG data, `onConflictDoUpdate`. Shape:
   - The per-point math is a **shared db-free module** `lib/aggregation/point-aggregates.ts`
     (`aggregate5mForPoint`, `aggregate1dForPoint`) that **both** the Turso writers
@@ -341,8 +417,15 @@ forward migration.
 - **Value-level reconciler** `scripts/reconcile-agg-values.ts`: diff avg/min/max/last/delta per
   system/point/interval within tolerance — gates the aggregation trim. _[done — Stage 1]_
 
-## Completed (2026-06-06)
+## Completed
 
+- **Phase 1 — config authority on Postgres (2026-06-07).** Flipped `CONFIG_SERVE_FROM_PG` +
+  `CONFIG_WRITES_TO_PG` in prod; PG is now the config system of record. Pre-flight: fresh snapshot
+  `liveone-snapshot-20260607-000847`, full Turso↔PG config parity (`scripts/parity-config-turso-vs-pg.ts`),
+  and a write-routing completeness audit (every config write flag-routed; no Turso bypass). Post-flip
+  verified: `[CONFIG-SERVE]` ≈ 0, writes landing on PG, shadow compare stopped. Side fixes: the
+  receiver's recurring `NEXT_HTTP_ERROR_FALLBACK;404` (Clerk middleware now allow-lists
+  `/api/observations(.*)`) and the un-awaited `protect()` no-op (separate PR #12).
 - **Stage 1 (PR-0…PR-6)** merged.
 - **PR-7** (session-id UUIDv7/text + co-enqueue + transactional receiver + FK `NOT VALID` + drop
   unique) shipped to prod via: PG cols→text (psql), Turso `sessions` table-aside (rename →
