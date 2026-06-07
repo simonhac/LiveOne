@@ -16,12 +16,16 @@ reviewed against the actual code. The deeper reason for all of this is to cleanl
 data-collection **engine** from the **web/FE** — see [Direction of travel — engine/web
 separation](#direction-of-travel--engineweb-separation).
 
-## ✅ What was not working — now fixed (reconciler GREEN, 2026-06-07)
+## ✅ What was not working — now fixed (reconciler GREEN, all systems, 2026-06-07)
 
 Phase 1 (config) is **done and healthy**. The **readings + aggregation** reconciler was **RED**, which
-gated all of Phase 2. As of **2026-06-07 it is GREEN** over a settled window
-(`scripts/reconcile-agg-values.ts --table=agg_5m|agg_1d --days=2` → 0 value mismatches; also clean over
-2026-06-04..06-07 incl. the 06-06 daily 1d). What the investigation actually found and did:
+gated all of Phase 2. As of **2026-06-07 it is GREEN over a settled window for all systems**: `agg_5m
+--days=2` reconciles **19978/19978, 0 mismatch** and `agg_1d --days=2` is clean; raw `point_readings` is
+complete (PG ⊇ Turso, `gap-map-raw-readings.ts`, `TZ=UTC`).
+A 2026-06-07 re-verification initially found 16 system-9 (Amber) `agg_5m` mismatches — diagnosed as
+pre-#15-deploy stale rows and **cleaned up the same day**; the _all-systems_ `agg_5m --days=2` and
+`agg_1d --days=2` now both reconcile **0 mismatches** (see [Open follow-up](#open-follow-up--amber-system-9-5m-live-tail-drift)).
+What the investigation actually found and did:
 
 1. **PG raw `point_readings` is NOT incomplete — that earlier reading was a measurement artifact.**
    node-postgres serializes JS `Date` params in the **client's local timezone**; on a non-UTC box (this
@@ -52,14 +56,16 @@ zone` columns shifts the boundary ~10h, so an ad-hoc per-day count looked ~43–
    lag/DLQ, alerting via `OBSERVATIONS_ALERT_WEBHOOK_URL` (graceful no-op if unset). The synchronous-PG-
    raw-write end-state stays **Phase 4**; the monitor catches a "mirror down" window in minutes meanwhile.
 
-_Residual (not a blocker):_ Amber `agg_5m` outside the settled window still carries pre-existing late-
-refinement drift (it doesn't break `agg_1d`); the receiver upsert prevents recurrence, and a wider
-history clean can run later via `recompute-pg-range.ts --system 9` + a Turso 1d regen for those days.
-**Durability depends on deploying the item-3 receiver change** (PR pending) — until then a new Amber
-refinement could re-stale PG 5m.
+_Residual (not a blocker, root-caused 2026-06-07):_ a verification re-run found 16 `agg_5m` mismatches,
+all system 9 (Amber), in the day's recent intervals (06-07 07:30–10:00 UTC); `agg_1d` is unaffected.
+**Diagnosed:** these are refinements the **old `onConflictDoNothing` receiver dropped in the ~2h before
+#15 deployed** (~10:11 UTC) — **not** a recompute bug (system 9 has no raw at all). The #15 upsert is
+proven (85 post-deploy refinements healed within seconds). Heal the 16 stragglers with a one-shot
+`recompute-pg-range.ts --system 9 --from 2026-06-06 --to 2026-06-08 --apply`; full analysis in
+[Open follow-up](#open-follow-up--amber-system-9-5m-live-tail-drift).
 
-_Minor / known (not blockers):_ auth-middleware `protect()` was a no-op → fixed in **PR #12 (open,
-pending merge)**; session FK still `NOT VALID` (deferred decision, ~60K tolerated orphans); the
+_Minor / known (not blockers):_ auth-middleware `protect()` was a no-op → fixed in **PR #12 (merged
+2026-06-07)**; session FK still `NOT VALID` (deferred decision, ~60K tolerated orphans); the
 `db:sync-prod` dev-seed path is broken (`sync-prod-to-dev.js` missing).
 
 ## ▶️ What's next (and why)
@@ -68,28 +74,121 @@ Ordered by dependency. Phase 1 (config) is done; **the gate to all of Phase 2 wa
 now met (2026-06-07).** The aggregation reconcile + recompute work above is done; remaining:
 
 1. ✅ **DONE — shipped via #15** (the item-3 receiver upsert + item-4 monitor + the new tooling, merged
-   2026-06-07, deploying). **Why it mattered:** the green only _held_ once the receiver upserts 5m-native
+   2026-06-07). **Why it mattered:** the green only _held_ once the receiver upserts 5m-native
    (else the next Amber refinement re-stales PG); the monitor stops new mirror-down windows; the tooling
    landed for future use. **Verification window:** monitor-cron signal in ≤15 min (it runs every 15 min);
    full settled-window reconciler confidence ~48h — needs one daily 1d cron (14:05 UTC) **and** one Amber
-   (sys 9) late-refinement to ride through before the durability fix is proven.
-2. **Merge + deploy PR #12 (auth enforcement)** on its own. **Why:** closes a real auth gap + the 404
-   noise; isolated from the readings work so any surprise stays contained. Verify Fronius push, OAuth
-   round-trip, share link.
-3. **Phase 2 cutover — reconciler is green over a settled window (incl. the 06-06 daily 1d):**
+   (sys 9) late-refinement to ride through before the durability fix is proven. **UPDATE (2026-06-07
+   re-run): durability fix PROVEN** — 85 post-deploy Amber refinements healed PG within seconds. The only
+   residue is 16 stale rows refined in the ~2h _before_ #15 deployed (old receiver dropped them); fix is a
+   one-shot recompute. See [Open follow-up](#open-follow-up--amber-system-9-5m-live-tail-drift).
+2. ✅ **DONE — PR #12 (auth enforcement) merged 2026-06-07.** Closed a real auth gap + the 404 noise;
+   isolated from the readings work. **Still to verify on live traffic:** Fronius push, OAuth round-trip,
+   share link (smoke only — code is in).
+3. ✅ **DONE — Amber (system 9) 5m stale-row cleanup (2026-06-07).** Root-caused as pre-#15-deploy
+   refinements the old receiver dropped (**not** a recompute bug — system 9 has no raw); healed with a
+   one-shot `recompute-pg-range.ts --system 9`. Reconciler now **fully green, all systems** (`agg_5m
+--days=2` 19978/19978, `agg_1d` clean). See
+   [Open follow-up](#open-follow-up--amber-system-9-5m-live-tail-drift).
+4. **Phase 2 cutover — raw-vendor reconciler is green over a settled window (incl. the daily 1d):**
    - **PR-12 — readings reads → PG** behind `READINGS_READS_FROM_PG`, shadow-diff first,
      endpoint-by-endpoint. **Why:** serve reads from PG so the Turso read paths can retire.
    - **PR-13 — trim the raw-vendor Turso 5m/1d publishers** (after quiescing the queue to lag 0).
      **Why:** stop the double-write; PG becomes the sole aggregator. Re-confirm the reconciler green
      immediately before trimming.
-4. **Phase 3 — Sydney region move** (parallel ops). **Why:** co-locate compute + data and kill the
+5. **Phase 3 — Sydney region move** (parallel ops). **Why:** co-locate compute + data and kill the
    cross-region RTT (R8); sequence with the readings cutover.
-5. **Phase 4 — Turso decommission.** **Why:** the end-state is PG-only. Needs raw durability off Turso
+6. **Phase 4 — Turso decommission.** **Why:** the end-state is PG-only. Needs raw durability off Turso
    (synchronous PG raw write — bring forward the item-4 end-state) + dropping the `*_backup`/archive tables.
-6. **Decommission-time hardening (gated, not blockers):** PG FK rebuild (audited; plan ready below),
+7. **Decommission-time hardening (gated, not blockers):** PG FK rebuild (audited; plan ready below),
    R4 Turso-FK drop, session-FK validation. **Why:** relational integrity + cleanup, after readings cut over.
 
 Per-phase detail is in **Phased plan (detail)** below.
+
+## Open follow-up — Amber (system 9) 5m live-tail drift
+
+**RESOLVED (diagnosed 2026-06-07) — only a one-shot data cleanup remains; left here as the record.**
+Surfaced by a **2026-06-07 verification re-run** (after #15 + PR #12 merged) and **fully root-caused** the
+same day: it's **pre-#15-deploy stale rows, not a bug in current code, not a Phase-2 blocker** — and the
+investigation doubled as positive proof the #15 durability fix works.
+
+**What was measured (read-only, prod, `TZ=UTC`):**
+
+| Check                     | Command                                                      | Result                                                      |
+| ------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------- |
+| Unit tests                | `npm test`                                                   | ✅ 365 passed / 24 suites                                   |
+| Raw completeness          | `gap-map-raw-readings.ts --from 2026-06-05 --to 2026-06-08`  | ✅ no PG raw deficits                                       |
+| `agg_1d` settled          | `reconcile-agg-values.ts --table=agg_1d --days=2`            | ✅ 0 mismatches (only-in-PG=39, presence-only)              |
+| Raw-vendor `agg_5m` sys 1 | `reconcile-agg-values.ts --table=agg_5m --system=1 --days=2` | ✅ 0 / 9216                                                 |
+| Raw-vendor `agg_5m` sys 6 | `reconcile-agg-values.ts --table=agg_5m --system=6 --days=2` | ✅ 0 / 10368                                                |
+| **All-systems `agg_5m`**  | `reconcile-agg-values.ts --table=agg_5m --days=2`            | ⚠️ **16 mismatches, all system 9** → ✅ **0 after cleanup** |
+
+**Root cause (proven).** System 9 (Amber) has **no raw `point_readings` in PG _or_ Turso** — so
+`AGG_COMPUTE_IN_PG` is _not_ averaging raw (Hypothesis 1 **refuted**; the recompute is correctly disjoint
+from 5m-native). Instead: Amber writes **forecast `agg_5m` intervals ahead of time and refines them toward
+actuals** as the interval approaches (rows for `interval_end` 06-07 were _created_ 06-06 02:34). The 16
+stale rows are refinements the **old `onConflictDoNothing` 5m-native receiver dropped** in the window just
+before #15 deployed:
+
+- All 16 mismatched intervals were last refined in **Turso between 07:58 and 10:04 UTC**, but their PG
+  `updated_at` is **frozen at 07:46:06** — PG never got those refinements.
+- **#15 merged ~10:11 UTC**; the latest dropped refinement was **10:04** (minutes before).
+- **85 intervals refined _after_ the deploy all match**, with PG `updated_at` landing **2–4 s after** Turso's
+  (the queue→receiver→upsert latency) — i.e. post-deploy refinements heal automatically, within seconds.
+
+The "computed-looking" long decimals (e.g. PG `9.20755389609171`) were just Amber's _earlier forecast_
+estimates frozen in PG; Turso's clean `7.606` is the later actual. Nothing computes them on the PG side.
+
+**Status of the durability fix:** **proven.** The plan's gate ("one Amber late-refinement must ride
+through") is met many times over — 85 post-deploy refinements propagated cleanly. The 16 stragglers won't
+self-heal (Amber won't re-publish already-settled intervals).
+
+**Cleanup — ✅ EXECUTED 2026-06-07.** Re-copied Turso's refined `agg_5m` for the pre-deploy window into PG
+(snapshot `liveone-snapshot-20260607-215859` first), then re-reconciled — **now fully green, all systems
+included**:
+
+```bash
+# snapshot taken: liveone-snapshot-20260607-215859
+TZ=UTC NODE_ENV=production ALLOW_PROD_DB_IN_DEV=true npx tsx scripts/recompute-pg-range.ts --system 9 --from 2026-06-06 --to 2026-06-08 --apply
+#   → copied 346 5m row(s), recomputed 3 day(s) of 1d
+TZ=UTC NODE_ENV=production npx tsx scripts/reconcile-agg-values.ts --table=agg_5m --days=2   # ✅ 19978/19978, 0 mismatch
+TZ=UTC NODE_ENV=production npx tsx scripts/reconcile-agg-values.ts --table=agg_1d --days=2   # ✅ 0 mismatch
+```
+
+A wider Amber-history sweep can use the same tool over a longer window if older days ever need it.
+_Investigation scripts (read-only, `scripts/temp/`, gitignored): `investigate-sys9-5m.ts`,
+`investigate-sys9-boundary.ts`._
+
+## Full-history parity + live pipeline health (verified 2026-06-08)
+
+A whole-history read-only sweep (all `TZ=UTC`, prod) — PG is complete and reconciles against Turso back
+to inception (first data **2025-08**):
+
+| Check                                                     | Window                                  | Result                                                                   |
+| --------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------ |
+| Raw `point_readings` deficits (`gap-map-raw-readings.ts`) | 2025-01-01 → 2026-06-08                 | ✅ **0 — PG ⊇ Turso on every (system, day)**                             |
+| `agg_5m` value parity, **all systems** (chunked)          | inception → 2026-06-08, **~3.31M rows** | ✅ **0 mismatches** (per-window all 0)                                   |
+| `agg_1d` value parity                                     | all 2025 (5900) + all 2026 (6106)       | ✅ **0 mismatches**                                                      |
+| Live QStash queue                                         | now                                     | ✅ **lag 0, DLQ 0, parallelism 1, not paused**                           |
+| Live PG mirror (last hour)                                | now                                     | ✅ **response-presence 100% (102/102), 1500 raw rows, newest 0 min old** |
+
+"Complete" here means **complete relative to Turso** (the gap-map flags only days where PG < Turso —
+none exist; a reading that never reached Turso either is a collection gap, invisible to a two-store diff).
+The `agg_5m` sweep was chunked by month/quarter because a single multi-month Turso response exceeds the
+libsql client's max decode-string size (`ERR_STRING_TOO_LONG`) — a tooling limit, not a data issue.
+
+**Durability model (today vs end-state) — answers "do we ever drop a reading before it's in PG?":**
+Not via QStash alone, and that's intentional for now. A poll writes **Turso inline (synchronous, the real
+durability anchor)** and then **best-effort enqueues to QStash** — `publishObservationBatch` swallows
+enqueue errors ("do NOT break the database insertion"), and there is **no synchronous PG write** (PG is fed
+only by the receiver). Once enqueued, QStash is at-least-once with retries → **DLQ**, parallelism-1
+(ordered); the receiver is idempotent. So the actual guarantee is **"Turso has it, and PG holes heal from
+Turso"** via idempotent `gap-map-raw-readings.ts --apply` — exactly how 2026's ~9 mirror-down windows were
+repaired. The gaps QStash itself doesn't close (swallowed enqueue, crash mid-poll before publish, stranded
+DLQ) are caught by the every-15-min `monitor-observations` cron + the Turso backstop. **"Never drop until
+ingested into PG" is the Phase-4 goal** (a synchronous PG raw write, or formally accepting queue-only
+at-least-once with monitoring) — not yet built, and the reason Turso can't be decommissioned yet
+(decision F). _Snapshot tooling: `scripts/qstash-health.ts` (read-only live lag/DLQ/presence)._
 
 ## Status (2026-06-07)
 
@@ -113,10 +212,12 @@ Per-phase detail is in **Phased plan (detail)** below.
 - **PR-11 (Move 1) — ENABLED in prod (`AGG_COMPUTE_IN_PG=true`).** PG computes its own raw-vendor
   5m + 1d aggregates from PG's own data. Reads still served from Turso (shadow-for-reads); the
   Turso-publisher trim (PR-13) is gated on `scripts/reconcile-agg-values.ts` value-parity over a settled
-  window — **now GREEN (2026-06-07)** after recomputing historical PG 5m + 1d (`scripts/recompute-pg-range.ts`)
-  and re-copying Amber's late-refined 5m. PG raw was verified complete (the earlier "raw gaps" were a
-  client-TZ measurement artifact). Durable item-2 fix (receiver upserts 5m-native) + the mirror monitor
-  **shipped via #15 (2026-06-07, deploying)** — the green now holds.
+  window — **GREEN, all systems (2026-06-07): `agg_5m --days=2` 19978/19978, `agg_1d` clean** after
+  recomputing historical PG 5m + 1d (`scripts/recompute-pg-range.ts`) and re-copying Amber's late-refined
+  5m. PG raw was verified complete (the earlier "raw gaps" were a client-TZ measurement artifact). Durable
+  item-2 fix (receiver upserts 5m-native) + the mirror monitor **shipped via #15 (merged 2026-06-07)** —
+  and is now **proven** (85 post-deploy Amber refinements healed PG within seconds; the 16 pre-deploy
+  stragglers were cleaned up — see [Open follow-up](#open-follow-up--amber-system-9-5m-live-tail-drift)).
 - **Prod PG hardening (done):** `share_tokens` created on prod; `drizzle.__drizzle_migrations`
   baselined (0000–0003); `db:pg:migrate` SSL bug fixed → migration tooling works end-to-end.
 - **Data recoveries (done):** all session data preserved — see [Completed](#completed).
@@ -202,6 +303,12 @@ _PG foreign-key rebuild_ section).
   `point_readings*` only.
 
 ## Direction of travel — engine/web separation
+
+> **Canonical doc:** [`architecture/ENGINE-WEB-SEPARATION.md`](architecture/ENGINE-WEB-SEPARATION.md)
+> now owns the target shape **and** the ingest durability decision ("should the queue be the only write
+> path?" → adopt the spirit, reframe the letter: one idempotent ingest contract per store, on-ramped by
+> a **transactional outbox**; the queue is transport, not the durability/replay mechanism). The summary
+> below is retained for context.
 
 The Postgres migration is the enabler for a deeper split: separate the data-collection **engine**
 from the **web/FE** so the front-end can iterate (and **multiple FEs** can run) without ever risking
@@ -510,10 +617,13 @@ forward migration.
   reconcile **0 value mismatches** (`--days=2` and 2026-06-04..06-07). Snapshot
   `liveone-snapshot-20260607-171037` taken first. New scripts: `gap-map-raw-readings.ts`,
   `recompute-pg-range.ts`. Durable fixes (receiver 5m-native upsert; mirror monitor) **shipped via #15**.
-- **#15 — agg-reconciler durability + tooling shipped (2026-06-07, deploying).** Receiver now upserts
-  5m for 5m-native systems (Amber refinements heal automatically — the fix the green reconciler depends
-  on); the `monitor-observations` cron (every 15 min) lands for mirror-health alerting; `recompute-pg-range.ts`
-  + `gap-map-raw-readings.ts` tooling lands. This was item 1 of *What's next* — the green now _holds_.
+- **#15 — agg-reconciler durability + tooling shipped (merged 2026-06-07).** Receiver now upserts
+  5m for 5m-native systems (Amber refinements should heal automatically); the `monitor-observations` cron
+  (every 15 min) lands for mirror-health alerting; `recompute-pg-range.ts` + `gap-map-raw-readings.ts`
+  tooling lands. This was item 1 of _What's next_. ✅ A 2026-06-07 re-run **proved the auto-heal** (85
+  post-deploy Amber refinements healed PG within seconds); the 16 remaining sys-9 mismatches are
+  pre-deploy stale rows fixed by a one-shot recompute — see
+  [Open follow-up](#open-follow-up--amber-system-9-5m-live-tail-drift).
 - **Phase 1 — config authority on Postgres (2026-06-07).** Flipped `CONFIG_SERVE_FROM_PG` +
   `CONFIG_WRITES_TO_PG` in prod; PG is now the config system of record. Pre-flight: fresh snapshot
   `liveone-snapshot-20260607-000847`, full Turso↔PG config parity (`scripts/parity-config-turso-vs-pg.ts`),
@@ -620,6 +730,9 @@ dev-refresh path is already broken; decide the post-cutover dev-seed source (see
 - `scripts/audit-pg-fk-orphans.ts` — READ-ONLY FK pre-flight: lists existing PG constraints + row
   counts + orphan counts per proposed FK (run before the FK rebuild; see hardening section).
 - `scripts/purge-observations-queue.ts` — purge + recreate the QStash queue (paused).
+- `scripts/qstash-health.ts` — READ-ONLY one-shot snapshot of live mirror health (QStash queue
+  lag/DLQ/paused/parallelism + PG response-presence + raw-landing age); the CLI sibling of the
+  `monitor-observations` cron. Run with `TZ=UTC`.
 - `app/api/cron/monitor-observations` — mirror-health monitor (response-presence, raw-landing, queue
   lag/DLQ) + alert; `/admin/observations` — live pipeline depth, ingestion rate, queue/DLQ controls.
 
