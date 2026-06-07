@@ -779,6 +779,187 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 - **README updates**: Expanded architecture docs, heatmap and Amber features
 - **Admin/systems optimization**: Page load performance improvements
 
+## 28–30 November 2025
+
+### API Field Renames
+
+- **`path` → `logicalPath`**: Renamed throughout API responses (e.g. `solar.power`)
+- **`name` → `pointName`**: Clearer point identifier naming
+- **`physical_path` → `physicalPathTail`**: Renamed throughout codebase
+- **Documentation**: POINTS.md updated to clarify logical vs physical paths
+
+### Schema Changes
+
+- **Migration 0060**: Rename `physical_path` → `physicalPathTail`
+- **Migration 0061**: Rename `fronius` vendor → `fusher`
+
+### Power Cards Consolidation
+
+- **SystemPowerCards**: Single component replaces ~225 lines of inline card code in DashboardClient (sidebar + horizontal layouts)
+- **Directional chevrons**: Animated chevrons on Battery/Grid cards show charge/discharge/import/export direction by flow sign
+- **Typography**: `ttInterphases` font applied across power cards; narrow no-break space (U+202F) between value and unit
+- **Metadata**: Card labels use `displayName` from point metadata
+
+### fusher Rename (was fronius)
+
+- **Vendor rename**: `fronius` → `fusher` vendor type (Fronius was the original name)
+- **Backward compatibility**: `/api/push/fronius` alias routes to `/api/push/fusher` during transition
+- **Credentials move**: Fronius API key moved from environment variables to Clerk credentials (with `siteId`, defaults to "kinkora")
+
+### Tesla Integration (Seventh Vendor)
+
+- **OAuth flow**: `/api/auth/tesla/` (connect/callback/disconnect); Fleet API with Owner API fallback
+- **Adapter**: Dynamic polling intervals — 15 min default, 5 min when charging; in-memory charging-state tracking per system
+- **EV points**: battery SoC, charge limit, plugged-in status, charge power, location, charge energy (`ev.battery`, `ev.charge` logical stems)
+- **TeslaSmallCard**: Battery icon with charging indicator, charge percentage, and power rate
+- **EV category**: Added "ev" category to composite settings
+
+### QStash Observations Queue
+
+- **Async mirror**: Best-effort message queue (Vercel QStash) decoupling observation ingestion from storage; enqueue errors swallowed so live ingestion never breaks
+- **Observation**: A single point reading with `sessionId`, `topic`, `measurementTime`, `receivedTime`, `value`, `interval` (raw/5m/1d), and optional debug metadata
+- **QueueMessage**: Unified type carrying `observations[]`, optional `session`, `systemId`, `systemName`, `batchTime`, and `env`
+- **Receiver**: `/api/observations/receive`; admin endpoints split into async parallel routes (`/info`, `/messages`, `/dlq`)
+- **Admin viewer**: `/admin/observations` real-time table with pause/resume queue and DLQ inspection
+- **Session publishing**: Sessions published to the queue with `sessionLabel`, `cause` (CRON/ADMIN/USER), duration, and success/error state
+
+### PlanetScale PostgreSQL Schema (Migration Groundwork)
+
+- **DB directory reorg**: `lib/db/` split into `lib/db/turso/` (SQLite) and `lib/db/planetscale/` (PostgreSQL); imports updated to `/turso` paths
+- **PG schema**: Native `boolean`, `timestamp` (UTC), and `jsonb` types instead of SQLite's integer/text encodings
+- **No foreign keys**: High-throughput tables left FK-free for the queue receiver's unvalidated inserts
+- **Drizzle config**: Added `drizzle-planetscale.config.ts` alongside the Turso config
+- _(This is the seed of the Turso → Postgres migration — see June 2026.)_
+
+### Vendor Adapter `fetchData` Pattern
+
+- **Lifecycle refactor**: All adapters migrate `doPoll()` → `fetchData()`; `BaseVendorAdapter.poll()` orchestrates schedule check → session creation → fetch → insertion → completion
+- **SSE in PollNowModal**: Live stage timeline streamed from `/api/cron/minutely?realTime=true`; `PollTimeline` shows per-stage durations
+- **PollingStateManager**: Shared client-side SSE state manager (subscribe/unsubscribe) tracking per-system status and session-level summary
+- **Session IDs**: Changed to 5-char alphanumeric prefix (`aB3xZ/1`), persisting for the lifetime of a serverless instance (~15 min)
+
+---
+
+# April 2026
+
+> _December 2025 – late April 2026 was a quiet period with no committed changes on the main line._
+
+## 27–28 April 2026
+
+### /labs Thermal-Model Timeline (kinkora-hws)
+
+- **HWS visualization**: 7-day midnight-to-midnight timeline at `/labs/kinkora-hws` for a hot-water system
+- **Thermal model**: First-order Newton's-law model (`lib/hws-model.ts`) computes modelled hot-tap temperature from heat-pump power in `point_readings_agg_5m`; tempering-valve cap at 40°C
+- **Granularity**: 5-minute slots (288/day) showing heat-pump runtime + modelled temperature gradient
+- **D3 migration**: `Timeline.tsx` moved from a CSS grid of 4,032+ tooltip cells to a single SVG driven by `d3-scale`/`d3-time`/`d3-interpolate`; continuous 6h/12h/18h gridlines; one mouse-event overlay per day
+
+### View-Only Share Tokens
+
+- **share_tokens table**: 3-word token (e.g. `leaping-fizzy-wombat`), owner Clerk user id, optional label, optional expiry, revocation timestamp, last-used tracking
+- **API**: `/api/share-tokens` CRUD (list / create with `expiresInDays` / revoke by token)
+- **Management UI**: `/settings/share-tokens` page to create, copy share URLs, and revoke tokens
+- **Access**: `?access=<token>` query param grants read-only access without Clerk — middleware skips `auth.protect()`, destination route validates the token against the system owner
+
+### Schema Changes
+
+- **Migration 0062**: Create `share_tokens` table with owner index
+
+### Maintenance
+
+- **Next.js bump**: 15.4.6 → 15.5.15
+- **Test fix**: kv-cache-manager test updated after the db directory reorg
+
+---
+
+# June 2026
+
+> **The Turso → Postgres migration.** The largest architectural effort to date: make Postgres (PlanetScale, eventually Sydney `ap-southeast-2`) the primary store for both readings and configuration, demote Turso to a disposable best-effort backup, and lay the groundwork for splitting the data-collection engine from the web frontend. The migration is **phased, flag-gated, and shadow-diff-first** — every cutover is preceded by parallel reads and a parity check, and every flag flips back instantly.
+
+## 5 June 2026
+
+### Observations → Postgres (Phases 1 & 2)
+
+- **Phase 1 (#2)**: QStash queue consumer writes observations into Postgres; admin dashboard for the live pipeline
+- **Phase 2 (#4)**: Historical backfill (`scripts/backfill-turso-to-postgres.ts` — streaming, sharded, resumable, idempotent; zero rows dropped); 1d aggregates published via the queue
+- **Receiver fix (#3)**: QStash receiver URL uses the public domain instead of `VERCEL_URL`
+
+## 6 June 2026
+
+### Stage 1 — Additive Groundwork (#5)
+
+- **Flag seam**: `lib/db/routing.ts` with all migration flags defaulting **off**
+- **PG plumbing**: Connection-pool memoization; PG migrations baselined; `share_tokens` PG table created
+- **Value reconciler**: Deployed for store-vs-store parity checks; read-site inventory audit completed
+- **Admin consolidation (#6)**: Admin observations merged into a single page
+
+### Session ID → UUIDv7 / Text (PR-7)
+
+- **Text session ids in both DBs**: New sessions use time-ordered UUIDv7; historical sessions are stringified ints
+- **Co-enqueue**: One combined QStash message per poll at session close — all readings in a poll share the session id
+- **FK**: `point_readings.session_id → sessions.id` added as `NOT VALID` (orphan-tolerant); dropped the `sessions` unique index
+- **Recovery**: ~147K response blobs restored from `sessions_archive`; deploy-window, backfill-gap, and purged Sep–Nov 2025 sessions recovered
+
+### Compute Aggregates in Postgres — Shadow (PR-11, #7)
+
+- **`AGG_COMPUTE_IN_PG` flag**: PG computes its own raw-vendor 5m + 1d from PG's raw `point_readings`
+- **Shared math**: `lib/aggregation/point-aggregates.ts` (`aggregate5mForPoint`, `aggregate1dForPoint`) guarantees value parity between stores
+- **Reads still from Turso**: Shadow-for-reads only; Turso publisher trim gated on the reconciler going GREEN
+- **Timestamp fix (#8)**: Fixed observation millisecond truncation on the queue path
+
+### Config-Read Shadow-Diff Seam (PR-8, #10)
+
+- **`CONFIG_READS_FROM_PG` flag**: Reads PG in parallel with Turso at every config read site (SystemsManager, PointManager, `userHasSystemAccess`, share-tokens, admin routes) and logs divergence
+
+### Schema Changes
+
+- **Migration 0063**: Sessions text-id split
+
+## 7 June 2026
+
+### Phase 1 Config Authority — CUT OVER (#13, #14)
+
+- **Flipped together**: `CONFIG_SERVE_FROM_PG` + `CONFIG_WRITES_TO_PG` in a single cutover
+- **Pre-flight**: Fresh Turso snapshot + `scripts/parity-config-turso-vs-pg.ts` zero-divergence gate
+- **Result**: **Postgres is now the config system-of-record**; Turso config is a stale, no-longer-written mirror
+- **Rollback**: Flip flags back (instant), or PG point-in-time recovery if edits occurred post-cutover
+
+### Enforce Clerk Auth in Middleware (PR-12, #12)
+
+- **The bug**: `auth.protect()` was called without `await` — a no-op that threw a floating `404` and never blocked; security relied entirely on per-route handler checks
+- **The fix**: Middleware callback made `async` with `await auth.protect()` — unauthenticated requests now blocked at the Edge
+- **Allow-list** (`lib/route-matchers.ts`): Self-authenticating routes exempted — `/api/cron` (CRON_SECRET), `/api/push` (API key), `/api/observations` (QStash signature), `/api/auth` (vendor OAuth callbacks), `/api/health`, and Clerk's own sign-in/up pages
+- **Tests (#17)**: Route-matchers extracted and the allow-list unit-tested
+
+### Aggregation Reconciler GREEN + Durability (PR-15, #15)
+
+- **Root cause**: The earlier "PG raw is 43–48% short" reading was a client-timezone artifact — node-postgres serializes `Date` params in local time; re-running with `TZ=UTC` showed zero deficits
+- **Real blockers fixed**: Historical PG 5m never recomputed (pre-`AGG_COMPUTE_IN_PG` queue-mirror gaps), and Amber (sys 9) 5m staleness (late `updateUsage` dropped by `onConflictDoNothing`)
+- **Receiver upserts 5m-native**: 5m-native systems (Amber/Enphase) heal automatically when refinements arrive late
+- **Monitor cron**: New `monitor-observations` (every 15 min) watches response-presence, raw-landing vs sessions, and QStash lag/DLQ — alerts via `OBSERVATIONS_ALERT_WEBHOOK_URL`
+- **Tooling**: `scripts/gap-map-raw-readings.ts` (raw-count diff) and `scripts/recompute-pg-range.ts` (idempotent recompute + 5m-native backfill)
+- **Verification**: `agg_5m` and `agg_1d` reconcile with 0 mismatches across all systems; raw `point_readings` complete (`TZ=UTC`)
+
+## 7–8 June 2026
+
+### Engine/Web Separation — Direction of Travel (#16)
+
+- **Goal**: Split the data-collection **engine** (cron scheduler → vendor adapters → collector → store/KV writes + QStash publish + receiver) from the **web/FE** (read-only API + Clerk auth + low-frequency config writes), as two independently deployable units
+- **Cross-boundary contracts only**: Postgres, KV (engine writes / web reads), QStash observations queue, and a future Control API + job queue for web→engine commands
+- **Turso is not a contract**: Engine-internal, disposable backup
+- **Planned decouplings**: Split `lib/api-auth.ts` (Clerk for web vs. secret/signature for engine); extract `pollAllSystems()` / receiver / aggregation out of Next routes into host-agnostic functions; stop assuming cross-service cache coherence
+- **Deployment target**: Monorepo → `packages/core` + `apps/engine` (`engine.liveone.energy`) + `apps/web` (×N)
+
+### Documentation & Tooling
+
+- **Docs sweeps**: Full-history parity verification, live-pipeline health, and durability-model documentation in `docs/turso-pg-migration.md`
+- **`qstash-health.ts`**: Promoted to tracked `scripts/` as a reusable live mirror-health snapshot (lag / DLQ / presence)
+
+### Current State (as of 2026-06-08)
+
+- **Live in production**: Config authority on PG; UUIDv7 text session ids; `AGG_COMPUTE_IN_PG`; reconciler green; middleware auth enforcement
+- **Verified**: Raw `point_readings` complete vs Turso (zero deficits, `TZ=UTC`); `agg_5m`/`agg_1d` parity at 0 mismatches; live QStash lag 0 / DLQ 0
+- **Next**: Phase 2 — readings reads → PG (`READINGS_READS_FROM_PG`, shadow-diff first), then trim Turso publishers, then the Sydney region move, then Turso decommission
+
 ---
 
 # Major Architectural Milestones
@@ -793,6 +974,9 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 6. **Upstash Redis KV** (14 November): Real-time caching layer
 7. **Legacy table removal** (26 November): Removed deprecated readings tables
 8. **Database growth tracking** (23 November): Hourly/daily size snapshots
+9. **QStash observations queue** (29 November): Async best-effort mirror pipeline
+10. **PlanetScale Postgres schema** (29 November): Second store introduced; db dirs split turso/planetscale
+11. **Postgres-primary config cutover** (7 June 2026): PG becomes the config system-of-record; Turso → disposable backup
 
 ## Vendor Integration Timeline
 
@@ -802,12 +986,16 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 4. **Fronius** (21 September): Push-based data
 5. **Mondo** (1–4 October): Multi-point systems
 6. **Amber Electric** (16 November): Pricing data
+7. **Tesla** (29 November): EV/battery via Fleet API OAuth, charge-aware polling
+   - **fronius → fusher** (29 November): Push vendor renamed (with compat alias)
 
 ## Authentication Journey
 
 1. **Session-based** (16 August): Initial auth
 2. **Clerk migration** (30 August): OAuth support
 3. **Session claims** (23 September): Performance optimization
+4. **View-only share tokens** (28 April 2026): `?access=<token>` read-only links, no Clerk required
+5. **Middleware enforcement** (7 June 2026): Real `await auth.protect()` at the Edge + self-auth route allow-list
 
 ## API Architecture
 
@@ -817,6 +1005,8 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 4. **Series filtering** (11 November): Glob patterns
 5. **KV subscriptions** (14 November): Real-time cache
 6. **Route restructure** (23 November): `/api/system/[systemId]/` namespace
+7. **QStash observations queue** (29 November): Async receiver + admin endpoints
+8. **Postgres store migration** (June 2026): Flag-gated, shadow-diff cutover off Turso
 
 ## Key UI Components
 
@@ -830,6 +1020,9 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 8. **Amber live display** (26 November): CRT-style price display
 9. **Latest readings page** (26 November): Real-time point inspection
 10. **Dashboard routing** (23 November): Catch-all `[...slug]` consolidation
+11. **SystemPowerCards & TeslaSmallCard** (29 November): Consolidated power cards with directional chevrons
+12. **Observations admin viewer** (29 November): Live queue/DLQ inspection
+13. **kinkora-hws thermal timeline** (28 April 2026): D3 SVG hot-water thermal model
 
 ## Critical Incidents
 
@@ -839,4 +1032,4 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 
 ---
 
-_This document chronicles the evolution of LiveOne from a single-vendor Selectronic monitor to a comprehensive multi-vendor solar monitoring platform with advanced features including composite systems, point-level granularity, real-time caching, and sophisticated aggregation pipelines._
+_This document chronicles the evolution of LiveOne from a single-vendor Selectronic monitor to a comprehensive multi-vendor solar monitoring platform with advanced features including composite systems, point-level granularity, real-time caching, and sophisticated aggregation pipelines. Its current chapter is the staged Turso → Postgres migration and the engine/web separation it enables — moving the platform toward a Postgres-primary store with an independently deployable data-collection engine._
