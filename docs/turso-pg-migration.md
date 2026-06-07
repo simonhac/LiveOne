@@ -12,7 +12,9 @@ LiveOne records energy data into **Turso** (libsql/SQLite, Tokyo) as the system 
 it; move the config tables to it), demote **Turso to a transitional best-effort backup**, then
 **decommission Turso**. End-state is Postgres-only, with Vercel + PlanetScale in **Sydney
 (ap-southeast-2 / `syd1`)**. This is a **staged, flag-gated, multi-PR program**, adversarially
-reviewed against the actual code.
+reviewed against the actual code. The deeper reason for all of this is to cleanly separate the
+data-collection **engine** from the **web/FE** — see [Direction of travel — engine/web
+separation](#direction-of-travel--engineweb-separation).
 
 ## ✅ What was not working — now fixed (reconciler GREEN, 2026-06-07)
 
@@ -65,9 +67,12 @@ pending merge)**; session FK still `NOT VALID` (deferred decision, ~60K tolerate
 Ordered by dependency. Phase 1 (config) is done; **the gate to all of Phase 2 was a green reconciler —
 now met (2026-06-07).** The aggregation reconcile + recompute work above is done; remaining:
 
-1. **Merge + deploy the item-3 receiver upsert + the item-4 monitor + the new tooling** (separate PRs).
-   **Why:** the green only _holds_ once the receiver upserts 5m-native (else the next Amber refinement
-   re-stales PG); the monitor stops new mirror-down windows; the tooling lands for future use.
+1. ✅ **DONE — shipped via #15** (the item-3 receiver upsert + item-4 monitor + the new tooling, merged
+   2026-06-07, deploying). **Why it mattered:** the green only _held_ once the receiver upserts 5m-native
+   (else the next Amber refinement re-stales PG); the monitor stops new mirror-down windows; the tooling
+   landed for future use. **Verification window:** monitor-cron signal in ≤15 min (it runs every 15 min);
+   full settled-window reconciler confidence ~48h — needs one daily 1d cron (14:05 UTC) **and** one Amber
+   (sys 9) late-refinement to ride through before the durability fix is proven.
 2. **Merge + deploy PR #12 (auth enforcement)** on its own. **Why:** closes a real auth gap + the 404
    noise; isolated from the readings work so any surprise stays contained. Verify Fronius push, OAuth
    round-trip, share link.
@@ -111,7 +116,7 @@ Per-phase detail is in **Phased plan (detail)** below.
   window — **now GREEN (2026-06-07)** after recomputing historical PG 5m + 1d (`scripts/recompute-pg-range.ts`)
   and re-copying Amber's late-refined 5m. PG raw was verified complete (the earlier "raw gaps" were a
   client-TZ measurement artifact). Durable item-2 fix (receiver upserts 5m-native) + the mirror monitor
-  are coded, **pending PR merge/deploy** — the green holds once they ship.
+  **shipped via #15 (2026-06-07, deploying)** — the green now holds.
 - **Prod PG hardening (done):** `share_tokens` created on prod; `drizzle.__drizzle_migrations`
   baselined (0000–0003); `db:pg:migrate` SSL bug fixed → migration tooling works end-to-end.
 - **Data recoveries (done):** all session data preserved — see [Completed](#completed).
@@ -174,6 +179,15 @@ _PG foreign-key rebuild_ section).
   PITR** + a pre-cutover Turso snapshot.
 - **(C) Dev = shared PlanetScale dev branch** + hard guardrails + PITR backstop.
 - **(D) Move Vercel + PlanetScale to Sydney.** Turso stays in Tokyo, decommissioned soon.
+- **(F) Turso = transitional backup of raw + sessions only** _(2026-06-06)_ — no special or lasting
+  status. Config **and** all aggregates leave Turso entirely (PG is the sole aggregator); design as
+  if **PG is the only store**, with the inline Turso write an extra best-effort backup deletable with
+  zero architectural change. Retire Turso once **raw-durability-on-PG** is proven (accept the
+  at-least-once QStash queue with monitoring, or add a synchronous PG raw write) — not on any feature
+  it provides. Supersedes any "Turso = permanent substrate" framing.
+- **(G) Engine/web separation is the end goal** _(2026-06-06)_ — two independently deployable units
+  (collection engine vs web/FE); Postgres + KV + the QStash queue + an engine Control API are the
+  only cross-boundary contracts. See [Direction of travel](#direction-of-travel--engineweb-separation).
 
 ## Two table classes (until Turso decommission)
 
@@ -186,6 +200,62 @@ _PG foreign-key rebuild_ section).
   `readings_agg_1d` tables (superseded data model, no longer read) are **not** moved to Postgres;
   they're left behind and dropped when Turso is decommissioned. The migration concerns
   `point_readings*` only.
+
+## Direction of travel — engine/web separation
+
+The Postgres migration is the enabler for a deeper split: separate the data-collection **engine**
+from the **web/FE** so the front-end can iterate (and **multiple FEs** can run) without ever risking
+data collection. Postgres is what makes the boundary clean — the web reads only Postgres + KV; the
+engine owns all writes. _(Direction of travel, not yet built. Locked decisions (F)/(G).)_
+
+**Two runtime roles, split by data-flow:**
+
+- **Engine** = write/collect: cron scheduler → vendor adapters → collector → writes the store + KV +
+  publishes to QStash, **plus the QStash observations receiver** (writes PG). Must never be disturbed
+  by an FE deploy.
+- **Web (×N)** = read/serve: FE pages + read-only API + Clerk auth + low-frequency config/admin writes.
+
+**The only things that cross the boundary (the contracts):** (1) the shared **Postgres** store;
+(2) the **KV** latest-values cache (engine writes, web reads — engine is the _sole_ KV writer);
+(3) the **QStash** observations queue (engine → receiver); (4) an engine **Control API** + a job
+queue for web→engine commands (below). No shared process, no shared in-memory cache, no synchronous
+web→engine call except the Control API. Turso is **not** a contract — it's an engine-internal,
+disposable backup.
+
+**FE→engine command pattern — "web brokers, engine executes."** The browser never talks to the
+engine; the web server (which holds the Clerk session) does the user's authorization, then re-auths
+to the engine with a service credential. Two lanes:
+
+- **Sync (request/response)** — interactive config needing the engine's vendor-adapter code: _test
+  connection, discover monitoring points, validate credentials, "poll now & show the result."_
+- **Async (durable job)** — long / fire-and-forget: _poll-now batch, recompute, resync._ The Control
+  API enqueues a job (a `jobs` row in PG, or QStash) and returns a job id; the engine worker executes
+  and writes status back for the FE to poll.
+
+Config _persistence_ writes the authoritative store (PG); the engine reads it fresh. **Credentials
+stay in Clerk** (decision 2026-06-06) — the engine keeps a Clerk read path for vendor secrets
+(`lib/secure-credentials.ts` `getSystemCredentials`) and the connect/disconnect OAuth flows write
+Clerk; this is **not** moved to PG. Net: the engine exposes exactly two inbound contracts — the
+**QStash receiver** and the **Control API**.
+
+**Hard decouplings (code, not deploy — all behaviour-preserving; do these first):**
+
+1. **Split `lib/api-auth.ts`** into Clerk-auth (web) vs secret/signature-auth (engine) — the QStash
+   receiver already uses signature auth. _(Note: vendor creds off Clerk was considered and **dropped**
+   — creds stay in Clerk per (above); `SystemsManager.getSystemByUsernameAndAlias`'s `clerkClient()`
+   username→owner lookup is a web-only concern, keep it out of the engine.)_
+2. **Extract `pollAllSystems()` / daily aggregation / the receiver handler** out of `NextRequest`/SSE
+   route handlers into host-agnostic `async` functions (so they run under a Next route _or_ a worker).
+3. **Stop assuming cross-service cache coherence** — `SystemsManager`/`PointManager` 60s caches and
+   the `global`-memoised DB pools are fine per-process; the store is the source of truth.
+
+**Deployment.** Monorepo → `packages/core` (db clients, schema, aggregation math, identifiers,
+date-utils, observation types, routing flags) + `apps/engine` (crons + receiver + Control API; a
+stable public domain e.g. `engine.liveone.energy`; co-located with PG) + `apps/web` (×N). Likely two
+Vercel projects from one repo (keeps the cron/serverless model); engine-as-worker (Fly/Railway) is a
+later option if serverless limits bite. The `OBSERVATIONS_QSTASH_RECEIVER_URL` override already
+supports re-pointing the receiver to the engine domain. **Sequence the deploy split AFTER the store
+is on PG** — the decouplings above land incrementally now; the split is then mechanical.
 
 ## Phased plan (detail)
 
@@ -282,7 +352,7 @@ decommission `liveone-tokyo`). Separate planning.
   alerts when recent successful-CRON sessions' `response`-presence drops, when raw stops landing in PG
   despite sessions, or when QStash lag/DLQ grows — the signals that the live mirror pipeline went down
   (it had ~9 such windows in 2026). Alerts POST to `OBSERVATIONS_ALERT_WEBHOOK_URL` (Slack-compatible;
-  graceful no-op if unset) and always log structured. _[pending PR merge/deploy]_
+  graceful no-op if unset) and always log structured. _[shipped — #15]_
 - **Dev-seed path:** `db:sync-prod` → `scripts/sync-prod-to-dev.js` (missing) and the
   `sync-database` seed from prod Turso both go stale once PG is authoritative — re-point to seed dev
   from PG (during Phase 1).
@@ -439,7 +509,11 @@ forward migration.
   recomputed 1d; `aggregateRange` regenerated 06-06's 1d on both stores. Result: `agg_5m` + `agg_1d`
   reconcile **0 value mismatches** (`--days=2` and 2026-06-04..06-07). Snapshot
   `liveone-snapshot-20260607-171037` taken first. New scripts: `gap-map-raw-readings.ts`,
-  `recompute-pg-range.ts`. Durable fixes coded (receiver 5m-native upsert; mirror monitor) — pending PR.
+  `recompute-pg-range.ts`. Durable fixes (receiver 5m-native upsert; mirror monitor) **shipped via #15**.
+- **#15 — agg-reconciler durability + tooling shipped (2026-06-07, deploying).** Receiver now upserts
+  5m for 5m-native systems (Amber refinements heal automatically — the fix the green reconciler depends
+  on); the `monitor-observations` cron (every 15 min) lands for mirror-health alerting; `recompute-pg-range.ts`
+  + `gap-map-raw-readings.ts` tooling lands. This was item 1 of *What's next* — the green now _holds_.
 - **Phase 1 — config authority on Postgres (2026-06-07).** Flipped `CONFIG_SERVE_FROM_PG` +
   `CONFIG_WRITES_TO_PG` in prod; PG is now the config system of record. Pre-flight: fresh snapshot
   `liveone-snapshot-20260607-000847`, full Turso↔PG config parity (`scripts/parity-config-turso-vs-pg.ts`),
