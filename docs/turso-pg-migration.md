@@ -188,7 +188,7 @@ repaired. The gaps QStash itself doesn't close (swallowed enqueue, crash mid-pol
 DLQ) are caught by the every-15-min `monitor-observations` cron + the Turso backstop. **"Never drop until
 ingested into PG" is the Phase-4 goal** (a synchronous PG raw write, or formally accepting queue-only
 at-least-once with monitoring) — not yet built, and the reason Turso can't be decommissioned yet
-(decision F). _Snapshot tooling: `scripts/temp/qstash-health.ts` (read-only live lag/DLQ/presence)._
+(decision F). _Snapshot tooling: `scripts/qstash-health.ts` (read-only live lag/DLQ/presence)._
 
 ## Status (2026-06-07)
 
@@ -724,6 +724,9 @@ dev-refresh path is already broken; decide the post-cutover dev-seed source (see
 - `scripts/audit-pg-fk-orphans.ts` — READ-ONLY FK pre-flight: lists existing PG constraints + row
   counts + orphan counts per proposed FK (run before the FK rebuild; see hardening section).
 - `scripts/purge-observations-queue.ts` — purge + recreate the QStash queue (paused).
+- `scripts/qstash-health.ts` — READ-ONLY one-shot snapshot of live mirror health (QStash queue
+  lag/DLQ/paused/parallelism + PG response-presence + raw-landing age); the CLI sibling of the
+  `monitor-observations` cron. Run with `TZ=UTC`.
 - `app/api/cron/monitor-observations` — mirror-health monitor (response-presence, raw-landing, queue
   lag/DLQ) + alert; `/admin/observations` — live pipeline depth, ingestion rate, queue/DLQ controls.
 
