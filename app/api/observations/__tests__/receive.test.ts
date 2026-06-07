@@ -52,26 +52,55 @@ function tableName(table: unknown): string {
 /**
  * Build a fake `db` matching the slice of the drizzle node-postgres surface that
  * processQueueMessage touches:
+ *   db.select({...}).from(systems).where(...).limit(1) → [{ vendorType }]   (5m-native lookup)
  *   db.transaction(fn) → fn(tx)
  *   tx.insert(table).values(...).onConflictDoNothing()/onConflictDoUpdate().returning()
- * Every insert pushes the resolved table name onto `order` so we can assert sequencing.
+ * Every insert pushes the resolved table name onto `order` (sequencing) and records which
+ * conflict mode was used per table in `inserts` (so we can assert upsert-vs-do-nothing).
+ *
+ * `opts.vendorType` drives the 5m-native classification (defaults to a raw vendor so existing
+ * tests keep first-write-wins 5m behavior).
  */
-function makeFakeDb() {
+function makeFakeDb(opts?: { vendorType?: string }) {
   const order: string[] = [];
-
-  const chainAfterValues = {
-    onConflictDoNothing: () => ({ returning: async () => [] }),
-    onConflictDoUpdate: () => ({ returning: async () => [] }),
-  };
+  const inserts: { table: string; conflict: "nothing" | "update" | null }[] =
+    [];
 
   const tx = {
     insert(table: unknown) {
-      order.push(tableName(table));
-      return { values: () => chainAfterValues };
+      const name = tableName(table);
+      order.push(name);
+      const rec: { table: string; conflict: "nothing" | "update" | null } = {
+        table: name,
+        conflict: null,
+      };
+      inserts.push(rec);
+      return {
+        values: () => ({
+          onConflictDoNothing: () => {
+            rec.conflict = "nothing";
+            return { returning: async () => [] };
+          },
+          onConflictDoUpdate: () => {
+            rec.conflict = "update";
+            return { returning: async () => [] };
+          },
+        }),
+      };
     },
   };
 
   const db = {
+    // 5m-native vendor lookup (isSystemFiveMinuteNative): resolves to one row.
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          limit: async () => [
+            { vendorType: opts?.vendorType ?? "selectronic" },
+          ],
+        }),
+      }),
+    }),
     async transaction<T>(fn: (txArg: typeof tx) => Promise<T>): Promise<T> {
       return fn(tx);
     },
@@ -79,7 +108,15 @@ function makeFakeDb() {
 
   // The helpers are typed against the real Db/Tx; the fake satisfies the runtime
   // contract used in processQueueMessage, so cast through unknown for the call.
-  return { db, order };
+  return { db, order, inserts };
+}
+
+/** The conflict mode recorded for the first insert into the given table, or undefined. */
+function conflictFor(
+  inserts: { table: string; conflict: "nothing" | "update" | null }[],
+  table: string,
+): "nothing" | "update" | null | undefined {
+  return inserts.find((i) => i.table === table)?.conflict;
 }
 
 const SESSION: Session = {
@@ -208,5 +245,59 @@ describe("processQueueMessage (receiver transaction + dual-shape)", () => {
     expect(order.indexOf("sessions")).toBeLessThan(
       order.indexOf("point_readings_agg_1d"),
     );
+  });
+});
+
+describe("processQueueMessage (5m conflict mode depends on vendor)", () => {
+  const agg = {
+    avg: 1,
+    min: 0,
+    max: 2,
+    last: 1,
+    delta: null,
+    valueStr: null,
+    sampleCount: 3,
+    errorCount: 0,
+    dataQuality: "good",
+  };
+  const obs5m = (systemId: number): Observation => ({
+    ...rawObs(),
+    interval: "5m",
+    agg,
+    debug: { ...rawObs().debug!, reference: `${systemId}.0` },
+  });
+
+  // Distinct systemIds per case: isSystemFiveMinuteNative caches by systemId across the module,
+  // so each case uses its own id to stay hermetic from the other describe block (systemId=1).
+
+  it("UPSERTS 5m for a 5m-native vendor (Amber) so late refinements heal", async () => {
+    const { db, inserts } = makeFakeDb({ vendorType: "amber" });
+
+    await run(db, makeMessage({ systemId: 9, observations: [obs5m(9)] }));
+
+    // 5m-native: the queue copy is authoritative; a re-published refinement must overwrite.
+    expect(conflictFor(inserts, "point_readings_agg_5m")).toBe("update");
+  });
+
+  it("keeps 5m first-write-wins for a raw vendor (PG recompute owns it)", async () => {
+    const { db, inserts } = makeFakeDb({ vendorType: "selectronic" });
+
+    await run(db, makeMessage({ systemId: 2, observations: [obs5m(2)] }));
+
+    expect(conflictFor(inserts, "point_readings_agg_5m")).toBe("nothing");
+    // Raw readings always first-write-wins; 1d always upserts (re-computable as late data lands).
+  });
+
+  it("raw point_readings stay do-nothing and 1d stays upsert regardless of vendor", async () => {
+    const { db, inserts } = makeFakeDb({ vendorType: "amber" });
+
+    const obs1d: Observation = { ...rawObs(), interval: "1d", agg };
+    await run(
+      db,
+      makeMessage({ systemId: 9, observations: [rawObs(), obs1d] }),
+    );
+
+    expect(conflictFor(inserts, "point_readings")).toBe("nothing");
+    expect(conflictFor(inserts, "point_readings_agg_1d")).toBe("update");
   });
 });

@@ -166,6 +166,12 @@ echo 'export PATH="$HOME/.turso:$PATH"' >> ~/.zshrc
 
 ### Common Queries
 
+> ⚠️ **Never `COUNT(*)` (or run any full-table scan/aggregate) on the big tables** — `point_readings` (~13M rows), `point_readings_agg_5m` (~3M), `sessions` (~870K). It's slow and almost never what you actually need.
+>
+> - **Approximate row counts:** Postgres → `SELECT relname, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC` (planner estimate, instant). SQLite/Turso has no cheap exact count — don't try to get one.
+> - **Presence / recency / "is it current":** use an indexed `ORDER BY <indexed col> DESC LIMIT 1` — e.g. `SELECT MAX(measurement_time) FROM point_readings` or `SELECT 1 FROM <table> LIMIT 1`. This is how you verify a snapshot/backup has data, too.
+> - **Exact `COUNT(*)` is fine** only on the small config tables: `systems`, `point_info`, `users`, `user_systems`, `polling_status`, `share_tokens`.
+
 #### Check Recent Data
 
 ```sql
