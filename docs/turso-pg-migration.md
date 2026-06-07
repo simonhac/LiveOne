@@ -304,6 +304,12 @@ _PG foreign-key rebuild_ section).
 
 ## Direction of travel — engine/web separation
 
+> **Canonical doc:** [`architecture/ENGINE-WEB-SEPARATION.md`](architecture/ENGINE-WEB-SEPARATION.md)
+> now owns the target shape **and** the ingest durability decision ("should the queue be the only write
+> path?" → adopt the spirit, reframe the letter: one idempotent ingest contract per store, on-ramped by
+> a **transactional outbox**; the queue is transport, not the durability/replay mechanism). The summary
+> below is retained for context.
+
 The Postgres migration is the enabler for a deeper split: separate the data-collection **engine**
 from the **web/FE** so the front-end can iterate (and **multiple FEs** can run) without ever risking
 data collection. Postgres is what makes the boundary clean — the web reads only Postgres + KV; the
