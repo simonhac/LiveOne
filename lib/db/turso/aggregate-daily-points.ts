@@ -299,6 +299,11 @@ export async function deleteRange(
  * of the day so the consumer can derive the YYYY-MM-DD key from the formatted timestamp.
  * Best-effort: publishObservationBatch swallows its own errors and never throws, so a
  * queue hiccup can't break Turso aggregation (the source of truth).
+ *
+ * PR-13: with AGG_COMPUTE_IN_PG on in prod, PG recomputes 1d from its own 5m, so this
+ * publisher is no longer called (its only call site is gated `!AGG_COMPUTE_IN_PG`).
+ * Retained as a no-op for one release so AGG_COMPUTE_IN_PG=false restores the old mirror
+ * behaviour exactly; remove once Turso is decommissioned.
  */
 async function publishDailyAggregates(
   pollingSystem: SystemWithPolling,
@@ -474,6 +479,12 @@ export async function aggregateRange(
       //    and make the reconciler a no-op). No publisher metadata needed.
       //  - AGG_COMPUTE_IN_PG off → mirror Turso's 1d over the queue (current behavior),
       //    which needs the polling system + a pointId→point_info map.
+      //
+      // PR-13: with AGG_COMPUTE_IN_PG on in prod, `publishToPg` is always false, so the
+      // queue-publish branch below is a NO-OP — the redundant 1d double-write is already
+      // gone. The branch (and `publishDailyAggregates`) is retained for one release so a
+      // flag flip to AGG_COMPUTE_IN_PG=false restores the old mirror behaviour exactly;
+      // it can be deleted once Turso is decommissioned.
       const computeInPg = mirrorToPg && AGG_COMPUTE_IN_PG;
       const publishToPg = mirrorToPg && !AGG_COMPUTE_IN_PG;
 

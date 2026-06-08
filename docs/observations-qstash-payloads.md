@@ -65,9 +65,9 @@ one element per point read, not one message per reading. Each `Observation`:
 Three flavours of readings message, by `interval`:
 
 - **`raw`** — the common case. Selectronic/Fusher polls publish their raw point readings here (via
-  `insertPointReadingsRaw`). `value` only; no `agg`.
-- **`5m`** — 5-minute aggregates. Published directly by 5m-native vendors that produce no raw
-  readings (Enphase, Amber) via `insertPointReadingsAgg5m`. Carries the full `agg` tuple:
+  `insertPointReadingsRaw`). `value` only; no `agg`. **Always published** (this is the dual-write
+  Postgres needs to self-compute its own aggregates).
+- **`5m`** — 5-minute aggregates. Carries the full `agg` tuple:
 
   ```jsonc
   "agg": {
@@ -76,8 +76,21 @@ Three flavours of readings message, by `interval`:
   }
   ```
 
+  - **5m-native vendors** (Enphase, Amber) produce NO raw readings, so their 5m is the only
+    copy — it is **always published** and the receiver **upserts** it (late `updateUsage`
+    refinements must overwrite).
+  - **Raw vendors** (Selectronic/Fusher/…): their 5m is **no longer published when
+    `AGG_COMPUTE_IN_PG` is on** (PR-13) — Postgres recomputes it from PG's own raw, so the
+    queue copy would be a redundant double-write. With `AGG_COMPUTE_IN_PG` off it is published
+    as before (and the receiver inserts it first-write-wins).
+
 - **`1d`** — daily aggregates from the nightly cron. Same `agg` tuple, but `valueStr`/`dataQuality`
-  are unused (the daily table has no such columns).
+  are unused (the daily table has no such columns). **No longer published when `AGG_COMPUTE_IN_PG`
+  is on** (PR-13) — Postgres recomputes 1d from its own 5m; published as before when the flag is off.
+
+In short, on the queue today (`AGG_COMPUTE_IN_PG` on): **`raw` + sessions + 5m-native `5m`** always
+flow; **raw-vendor `5m`** and **`1d`** no longer do. A straggler of either still reaches the
+receiver harmlessly as a logged no-op.
 
 For aggregated observations the full `agg` tuple is sent so the Postgres mirror is full-fidelity
 rather than collapsing everything into the single `value` field. Raw observations omit `agg`.

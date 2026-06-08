@@ -17,7 +17,8 @@ import {
 import { and, eq, sql } from "drizzle-orm";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { pointInfo as pgPointInfoTable } from "@/lib/db/planetscale/schema";
-import { CONFIG_WRITES_TO_PG } from "@/lib/db/routing";
+import { CONFIG_WRITES_TO_PG, AGG_COMPUTE_IN_PG } from "@/lib/db/routing";
+import { isFiveMinuteNativeVendor } from "@/lib/vendors/native-intervals";
 import {
   shadowReadConfig,
   toEpochSeconds,
@@ -1126,7 +1127,24 @@ export class PointManager {
     // Only publish if we have a session (skip historical backfills)
     const systemsManager = await SystemsManager.getInstance();
     const system = await systemsManager.getSystem(systemId);
-    if (system && session && aggregatesToInsert.length > 0) {
+
+    // PR-13: when Postgres self-computes raw-vendor 5m aggregates from PG's own
+    // raw point_readings (AGG_COMPUTE_IN_PG), publishing raw-vendor 5m on the
+    // queue is a redundant double-write. Skip the publish ONLY for raw vendors.
+    // 5m-native vendors (Amber, Enphase) have NO raw point_readings, so their 5m
+    // MUST keep being published and upserted into PG. This is a logging no-op:
+    // the Turso agg_5m upsert below is left untouched. Gated so flipping
+    // AGG_COMPUTE_IN_PG=false restores the original publish behaviour exactly.
+    const skipRawVendor5mPublish =
+      AGG_COMPUTE_IN_PG &&
+      system != null &&
+      !isFiveMinuteNativeVendor(system.vendorType);
+
+    if (skipRawVendor5mPublish && session && aggregatesToInsert.length > 0) {
+      console.log(
+        `[PointManager] AGG_COMPUTE_IN_PG on: skipping raw-vendor 5m queue publish for system ${systemId} (${system!.vendorType}); PG recomputes from raw (${aggregatesToInsert.length} intervals)`,
+      );
+    } else if (system && session && aggregatesToInsert.length > 0) {
       const inputs = aggregatesToInsert.map((a) => ({
         sessionId: session.id,
         point: Object.values(pointMap).find((p) => p.index === a.pointId)!,
