@@ -211,66 +211,70 @@ export default function EnergyFlowSankey({
       links: links.map((d) => ({ ...d })) as any,
     });
 
-    // Align the top and bottom of both columns by adjusting gaps on the shorter side
-    const sourceNodes = graph.nodes.slice(0, sourceCount);
-    const loadNodes = graph.nodes.slice(sourceCount);
+    // Align the top and bottom of both columns to the same vertical band.
+    //
+    // d3-sankey lays out and centers each column independently, so columns with
+    // different node counts / total values end up with mismatched top and bottom
+    // edges. Re-flow each column to fill the full extent [margin.top, bottom],
+    // keeping each node's d3-computed height and distributing the gaps evenly.
+    const bandTop = margin.top;
+    const bandBottom = height - margin.bottom;
+    const availableHeight = bandBottom - bandTop;
 
-    if (sourceNodes.length > 0 && loadNodes.length > 0) {
-      // Calculate total height of each side (from first node top to last node bottom)
-      const sourceHeight =
-        (sourceNodes[sourceNodes.length - 1] as any).y1 -
-        (sourceNodes[0] as any).y0;
-      const loadHeight =
-        (loadNodes[loadNodes.length - 1] as any).y1 - (loadNodes[0] as any).y0;
+    // Track how much each node was shifted (for updating links afterwards)
+    const nodeShifts = new Map<any, number>();
 
-      // Find which side is shorter and calculate the height difference
-      const heightDiff = Math.abs(sourceHeight - loadHeight);
+    const reflowColumn = (columnNodes: any[]) => {
+      if (columnNodes.length === 0) return;
 
-      // Only adjust if there's a meaningful difference (> 0.1px)
-      if (heightDiff > 0.1) {
-        const isShorterSide = sourceHeight < loadHeight;
-        const shorterSide = isShorterSide ? sourceNodes : loadNodes;
-        const numGaps = shorterSide.length - 1;
+      // Sort by current y0 to get true top-to-bottom order (the nodes array
+      // order need not match vertical order once nodeSort has run).
+      const ordered = [...columnNodes].sort((a, b) => a.y0 - b.y0);
 
-        // Track how much each node was shifted (for updating links later)
-        const nodeShifts = new Map<any, number>();
+      const sumNodeHeights = ordered.reduce(
+        (sum, node) => sum + (node.y1 - node.y0),
+        0,
+      );
 
-        // Distribute the height difference evenly among the gaps
-        if (numGaps > 0) {
-          const additionalGapPerSpace = heightDiff / numGaps;
-
-          // Adjust y positions for nodes on the shorter side
-          // Start from index 1 (second node) since first node stays at top
-          for (let i = 1; i < shorterSide.length; i++) {
-            const node = shorterSide[i] as any;
-            const shift = i * additionalGapPerSpace;
-            const nodeHeight = node.y1 - node.y0;
-
-            // Shift the node down by cumulative gap increase
-            node.y0 += shift;
-            node.y1 = node.y0 + nodeHeight; // Preserve node height
-
-            // Record the shift amount for this node
-            nodeShifts.set(node, shift);
-          }
-
-          // Update link coordinates to match shifted nodes
-          graph.links.forEach((link: any) => {
-            // If source node was shifted, adjust link's y0
-            const sourceShift = nodeShifts.get(link.source);
-            if (sourceShift !== undefined) {
-              link.y0 += sourceShift;
-            }
-
-            // If target node was shifted, adjust link's y1
-            const targetShift = nodeShifts.get(link.target);
-            if (targetShift !== undefined) {
-              link.y1 += targetShift;
-            }
-          });
-        }
+      if (ordered.length === 1) {
+        // A single node can't span both edges; center it in the band instead.
+        const node = ordered[0];
+        const nodeHeight = node.y1 - node.y0;
+        const newY0 = bandTop + (availableHeight - nodeHeight) / 2;
+        nodeShifts.set(node, newY0 - node.y0);
+        node.y0 = newY0;
+        node.y1 = newY0 + nodeHeight;
+        return;
       }
-    }
+
+      const gap = (availableHeight - sumNodeHeights) / (ordered.length - 1);
+
+      let y = bandTop;
+      for (const node of ordered) {
+        const nodeHeight = node.y1 - node.y0;
+        nodeShifts.set(node, y - node.y0);
+        node.y0 = y;
+        node.y1 = y + nodeHeight;
+        y = node.y1 + gap;
+      }
+    };
+
+    reflowColumn(graph.nodes.slice(0, sourceCount));
+    reflowColumn(graph.nodes.slice(sourceCount));
+
+    // Update link coordinates to match the shifted nodes. Each node moves
+    // rigidly, so a link's within-node offset is preserved by shifting its
+    // endpoints by the same delta as the node they attach to.
+    graph.links.forEach((link: any) => {
+      const sourceShift = nodeShifts.get(link.source);
+      if (sourceShift !== undefined) {
+        link.y0 += sourceShift;
+      }
+      const targetShift = nodeShifts.get(link.target);
+      if (targetShift !== undefined) {
+        link.y1 += targetShift;
+      }
+    });
 
     // Create SVG container
     const svgElement = svg as any;
