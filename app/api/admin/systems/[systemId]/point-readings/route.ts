@@ -267,7 +267,7 @@ export async function GET(
           s.session_label,
           ${pivotColumns}
         FROM point_readings_agg_5m pr
-        LEFT JOIN sessions s ON pr.session_id = s.id
+        LEFT JOIN sessions s ON s.id = CAST(pr.session_id AS TEXT)
         WHERE pr.system_id = ${systemId}
           AND pr.interval_end IN (SELECT interval_end FROM recent_timestamps)
         GROUP BY pr.interval_end, pr.session_id
@@ -309,7 +309,7 @@ export async function GET(
           s.session_label,
           ${pivotColumns}
         FROM point_readings pr
-        LEFT JOIN sessions s ON pr.session_id = s.id
+        LEFT JOIN sessions s ON s.id = CAST(pr.session_id AS TEXT)
         WHERE pr.system_id = ${systemId}
           AND pr.measurement_time IN (SELECT measurement_time FROM recent_timestamps)
         GROUP BY pr.measurement_time, pr.session_id
