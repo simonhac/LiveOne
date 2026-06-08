@@ -4,11 +4,8 @@ import { sql } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { decodeUrlDateToEpoch, decodeUrlOffset } from "@/lib/url-date";
 import { formatDateYYYYMMDD, parseDateYYYYMMDD } from "@/lib/date-utils";
-import {
-  fetchSinglePointReadingsPg,
-  compareSinglePoint,
-} from "@/lib/db/planetscale/readings-read-pg";
-import { shadowServeReadings, SHADOW_SKIP } from "@/lib/db/readings-shadow";
+import { fetchSinglePointReadingsPg } from "@/lib/db/planetscale/readings-read-pg";
+import { serveReadings, SHADOW_SKIP } from "@/lib/db/readings-serve";
 
 export async function GET(
   request: NextRequest,
@@ -96,8 +93,8 @@ export async function GET(
       );
     }
 
-    // Build the served window from Turso; under READINGS_READS_FROM_PG, concurrently shadow-read
-    // the same window from Postgres and log any divergence (PR-12). Turso is always served.
+    // Serve the window from Postgres under READINGS_READS_FROM_PG, falling back to Turso on
+    // error/SHADOW_SKIP (PR-13a). With the flag off, Turso is served exactly as before.
     let dailyStartDayStr: string | undefined;
     let dailyEndDayStr: string | undefined;
     if (source === "daily") {
@@ -204,7 +201,7 @@ export async function GET(
     };
 
     // Center the window on the target row (±5, widening to ±10 at the edges). Pure; shared by the
-    // Turso served path and the PG shadow path.
+    // PG served path and the Turso fallback path.
     const centerReadings = (allReadings: any[]): any[] => {
       let targetIndex: number;
       if (source === "daily") {
@@ -233,25 +230,21 @@ export async function GET(
       return allReadings.slice(startIndex, endIndex);
     };
 
-    const readings = await shadowServeReadings(
-      `admin-point/${source}`,
-      async () => centerReadings(await fetchAllReadingsTurso()),
-      {
-        pgServe: async () => {
-          const all = await fetchSinglePointReadingsPg({
-            systemId,
-            pointId,
-            source,
-            timestamp,
-            startDayStr: dailyStartDayStr,
-            endDayStr: dailyEndDayStr,
-          });
-          if (all === SHADOW_SKIP) return SHADOW_SKIP;
-          return centerReadings(all);
-        },
-        compare: (t, p) => compareSinglePoint(t, p, source),
-        diffKey: `${systemId}.${pointId} src=${source}`,
+    const readings = await serveReadings(
+      `admin-point/${source} ${systemId}.${pointId}`,
+      async () => {
+        const all = await fetchSinglePointReadingsPg({
+          systemId,
+          pointId,
+          source,
+          timestamp,
+          startDayStr: dailyStartDayStr,
+          endDayStr: dailyEndDayStr,
+        });
+        if (all === SHADOW_SKIP) return SHADOW_SKIP;
+        return centerReadings(all);
       },
+      async () => centerReadings(await fetchAllReadingsTurso()),
     );
 
     return NextResponse.json({

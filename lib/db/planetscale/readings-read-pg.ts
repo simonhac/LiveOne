@@ -7,9 +7,10 @@
  * Time keys: Turso stores epoch-ms integers; PG stores native `timestamp` (UTC). Where the route's
  * transform consumes an epoch-ms `measurement_time`, these queries project
  * `EXTRACT(EPOCH FROM col AT TIME ZONE 'UTC') * 1000` so the value is epoch-ms regardless of the
- * Node process timezone — keeping the shadow comparison aligned even outside a TZ=UTC runtime.
+ * Node process timezone — keeping the values aligned even outside a TZ=UTC runtime.
  *
- * Best-effort: callers run these under `shadowServeReadings`, which swallows any error.
+ * These are the served PG read for the admin point-readings views; callers run them under
+ * `serveReadings`, which falls back to Turso on any error.
  */
 import { sql } from "drizzle-orm";
 import { planetscaleDb } from "./index";
@@ -17,7 +18,7 @@ import {
   SHADOW_SKIP,
   pairMatches,
   type ReadingsCompareResult,
-} from "@/lib/db/readings-shadow";
+} from "@/lib/db/readings-serve";
 
 type Row = Record<string, unknown>;
 
