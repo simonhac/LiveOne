@@ -389,7 +389,7 @@ async function getSystemHistoryInOpenNEMFormat(
         pra.max,
         pra.last,
         pra.delta,
-        pra.data_quality
+        NULL as data_quality
       FROM ${aggTable} AS pra
       JOIN pairs p
         ON p.system_id = pra.system_id

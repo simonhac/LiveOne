@@ -416,13 +416,15 @@ export async function GET(
             ? "point_readings"
             : "point_readings";
       const checkStartTime = Date.now();
+      // Existence check: SELECT 1 … LIMIT 1 stops at the first matching row (index-friendly).
+      // NOT COUNT(*), which scans every matching row — prohibitively slow on the big tables.
       const checkResult = (await db.all(
         sql.raw(
-          `SELECT COUNT(*) as count FROM ${alternativeTableName} WHERE system_id = ${systemId} LIMIT 1`,
+          `SELECT 1 FROM ${alternativeTableName} WHERE system_id = ${systemId} LIMIT 1`,
         ),
-      )) as Array<{ count: number }>;
+      )) as unknown[];
       dbElapsedMs += Date.now() - checkStartTime;
-      hasAlternativeData = (checkResult[0]?.count || 0) > 0;
+      hasAlternativeData = checkResult.length > 0;
     }
 
     // (`data` is computed above by the shared `buildPivotData`, under the readings shadow.)
@@ -485,21 +487,23 @@ export async function GET(
           ? `${timeColumn} > '${firstTimestamp}'`
           : `${timeColumn} > ${firstTimestamp}`;
 
-      // Check for older records
+      // Existence checks: SELECT 1 … LIMIT 1 short-circuits at the first matching row via the
+      // (system_id, <time>) index. The old COUNT(*) tallied every older/newer row — an unbounded
+      // scan of point_readings (~13M) / agg_5m (~3M) that made raw/5m pages take 10s+.
       const olderCheck = (await db.all(
         sql.raw(
-          `SELECT COUNT(*) as count FROM ${tableName} WHERE system_id = ${systemId} AND ${olderCondition} LIMIT 1`,
+          `SELECT 1 FROM ${tableName} WHERE system_id = ${systemId} AND ${olderCondition} LIMIT 1`,
         ),
-      )) as Array<{ count: number }>;
-      hasOlder = (olderCheck[0]?.count || 0) > 0;
+      )) as unknown[];
+      hasOlder = olderCheck.length > 0;
 
       // Check for newer records
       const newerCheck = (await db.all(
         sql.raw(
-          `SELECT COUNT(*) as count FROM ${tableName} WHERE system_id = ${systemId} AND ${newerCondition} LIMIT 1`,
+          `SELECT 1 FROM ${tableName} WHERE system_id = ${systemId} AND ${newerCondition} LIMIT 1`,
         ),
-      )) as Array<{ count: number }>;
-      hasNewer = (newerCheck[0]?.count || 0) > 0;
+      )) as unknown[];
+      hasNewer = newerCheck.length > 0;
 
       dbElapsedMs += Date.now() - checkStartTime;
     }
