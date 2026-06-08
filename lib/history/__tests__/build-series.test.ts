@@ -154,6 +154,29 @@ describe("buildSeriesFromAggRows", () => {
     expect(out[0].history.data).toEqual([42]);
   });
 
+  it("1d: orders day rows by day regardless of input row order", async () => {
+    const point = fakePoint({ index: 8, systemId: 1, metricType: "power" });
+    const d = (s: string) => new Date(s + "T00:00:00Z").getTime();
+    // A recomputed/upserted day (01-14) arrives out of order at the end — as Postgres can return
+    // an upserted row out of heap position when the query is unordered. Without the 1d sort this
+    // shifts the served series ([1,3,4,2] instead of [1,2,3,4]).
+    const allRows: AggRow[] = [
+      { system_id: 1, point_id: 8, day: "2026-01-13", avg: 1 },
+      { system_id: 1, point_id: 8, day: "2026-01-15", avg: 3 },
+      { system_id: 1, point_id: 8, day: "2026-01-16", avg: 4 },
+      { system_id: 1, point_id: 8, day: "2026-01-14", avg: 2 },
+    ];
+    const out = await buildSeriesFromAggRows(
+      allRows,
+      [seriesInfo(point, "avg")],
+      "1d",
+      system,
+      d("2026-01-13"),
+      d("2026-01-16"),
+    );
+    expect(out[0].history.data).toEqual([1, 2, 3, 4]);
+  });
+
   it("skips a series whose source system is missing", async () => {
     const point = fakePoint({ index: 1, systemId: 999 });
     const allRows: AggRow[] = [

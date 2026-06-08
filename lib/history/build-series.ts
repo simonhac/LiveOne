@@ -212,6 +212,15 @@ export async function buildSeriesFromAggRows(
       }
     }
 
+    // 1d rows are grouped but not guaranteed day-ordered: Postgres can return a recomputed/
+    // upserted day out of heap position (an unordered scan), which would shift the served series
+    // by one vs Turso since this transform maps rows in arrival order. Sort by interval_end so the
+    // 1d series is day-ascending regardless of the source's row order. No-op for the 5m/30m paths
+    // (already dense / bucket-sorted ascending).
+    if (interval === "1d") {
+      rows = [...rows].sort((a, b) => a.interval_end - b.interval_end);
+    }
+
     // Get source system for series ID
     const sourceSystem = await systemsManager.getSystem(series.point.systemId);
     if (!sourceSystem) continue;

@@ -37,7 +37,14 @@ function makeFakeDb(byTable: { agg5m?: unknown[]; agg1d?: unknown[] }) {
               : table === pointReadingsAgg1d
                 ? (byTable.agg1d ?? [])
                 : [];
-          return { where: () => Promise.resolve(rows) };
+          // `where()` is awaited directly by the 5m/30m path and chained with `.orderBy()` by the
+          // 1d path — return a thenable that supports both (the canned rows are order-agnostic).
+          return {
+            where: () =>
+              Object.assign(Promise.resolve(rows), {
+                orderBy: () => Promise.resolve(rows),
+              }),
+          };
         },
       };
     },
