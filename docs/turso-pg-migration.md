@@ -91,8 +91,9 @@ now met (2026-06-07).** The aggregation reconcile + recompute work above is done
 --days=2` 19978/19978, `agg_1d` clean). See
    [Open follow-up](#open-follow-up--amber-system-9-5m-live-tail-drift).
 4. **Phase 2 cutover — raw-vendor reconciler is green over a settled window (incl. the daily 1d):**
-   - **PR-12 — readings reads → PG** behind `READINGS_READS_FROM_PG`, shadow-diff first,
-     endpoint-by-endpoint. **Why:** serve reads from PG so the Turso read paths can retire.
+   - ✅ **PR-12 — readings reads → PG (shadow): SHIPPED (#19, 2026-06-08); flag ON in prod (shadow).**
+     Shadow runs on `/api/history` + the two admin point-readings routes. **Next:** burn in over a
+     settled window watching for `[READINGS-SHADOW] DIVERGE`, then flip the same flag to serve-from-PG.
    - **PR-13 — trim the raw-vendor Turso 5m/1d publishers** (after quiescing the queue to lag 0).
      **Why:** stop the double-write; PG becomes the sole aggregator. Re-confirm the reconciler green
      immediately before trimming.
@@ -207,8 +208,13 @@ at-least-once with monitoring) — not yet built, and the reason Turso can't be 
   parity pre-flip (`scripts/parity-config-turso-vs-pg.ts`), `[CONFIG-SERVE]` errors ≈ 0 post-flip,
   writes confirmed on PG (PG `polling_status` runs ahead of Turso), shadow compare stopped. Revert =
   flip both flags off; rollback point = snapshot `liveone-snapshot-20260607-000847` + PG PITR.
-- **Readings reads still come from Turso** (`READINGS_READS_FROM_PG` off) — that's Phase 2. Turso
-  remains the source of truth for raw readings + their aggregates' _serving_.
+- **✅ PR-12 (readings reads shadow) — SHIPPED (#19, 2026-06-08); `READINGS_READS_FROM_PG` flipped ON
+  in prod = SHADOW mode.** Reads are still **served from Turso**; with the flag on, the read path also
+  fires a concurrent best-effort PG read, compares the served payload, and logs `[READINGS-SHADOW] …
+DIVERGE` (PG errors swallowed). Readings use a **single** flag (unlike config's two): the same flag is
+  repurposed to serve-from-PG at the cutover. Optional `READINGS_SHADOW_SAMPLE` (0–1, default 1)
+  throttles the shadow. Turso remains the source of truth for raw readings + their aggregates' _serving_
+  until the cutover.
 - **PR-11 (Move 1) — ENABLED in prod (`AGG_COMPUTE_IN_PG=true`).** PG computes its own raw-vendor
   5m + 1d aggregates from PG's own data. Reads still served from Turso (shadow-for-reads); the
   Turso-publisher trim (PR-13) is gated on `scripts/reconcile-agg-values.ts` value-parity over a settled
@@ -422,10 +428,18 @@ publishers.
     overwrites the PG-computed rows and the reconciler falsely passes).
   - Gate enabling/trim on `scripts/reconcile-agg-values.ts` (value parity over a settled window),
     not counts. 286→**316** unit tests (added pure-math + recompute-orchestration suites).
-- **PR-12 — readings reads → PG** endpoint-by-endpoint behind `READINGS_READS_FROM_PG`: a PG
-  provider mirroring `lib/history/point-readings-provider.ts` (ms↔timestamp + started↔createdAt
-  translation); "latest" stays on KV. Shadow-diff first. Primary sites: `app/api/data/route.ts`,
-  the admin point-readings routes, generator-events.
+- ✅ **PR-12 — readings reads → PG (shadow): SHIPPED (#19, 2026-06-08); `READINGS_READS_FROM_PG` ON in
+  prod (shadow).** Generic harness `lib/db/readings-shadow.ts` (`shadowServeReadings`): with the flag on,
+  fire a concurrent best-effort PG read, serve Turso, compare the served payload, log
+  `[READINGS-SHADOW] DIVERGE`; PG errors swallowed. Single flag (repurposed for serve at cutover) +
+  optional `READINGS_SHADOW_SAMPLE`; "latest" stays on KV. **Correction to the original plan:** the live
+  read path is the **raw SQL in `app/api/history/route.ts`** (extracted to the shared
+  `lib/history/build-series.ts`, mirrored by `lib/history/readings-pg.ts`), **not** the dead
+  `lib/history/point-readings-provider.ts`; and `app/api/data/route.ts` serves **config + KV-latest only**
+  (not a readings site). Wired sites: `/api/history` + the two admin point-readings routes
+  (`lib/db/planetscale/readings-read-pg.ts`). PG `agg_1d` has no `data_quality` → emitted null; live-tail
+  lag and that gap are treated as presence-only (never a hard divergence). **generator-events DEFERRED** —
+  its unbounded full-history fetch is a hack to rewrite to a bounded range before shadowing.
 - **PR-13 — cutover:** quiesce the queue to lag 0 on `/admin/observations`, then trim only the
   raw-vendor Turso 5m/1d publishers + the receiver's raw-vendor 5m/1d inserts. **Keep** raw,
   sessions, and 5m-native 5m on the queue. Keep removed branches as logging no-ops one release.
@@ -606,6 +620,16 @@ forward migration.
 
 ## Completed
 
+- **Admin readings perf + 1d `data_quality` fix (2026-06-08).** PR-12 burn-in surfaced two
+  **pre-existing** bugs (not caused by the shadow): the admin point-readings
+  `hasOlder`/`hasNewer`/`hasAlternativeData` checks used `COUNT(*)` over `point_readings` (~13M) /
+  `agg_5m` (~3M) → raw/5m pages took **10–13s**; and `/api/history?interval=1d` **500'd**
+  (`no such column: pra.data_quality` — Turso `agg_1d` lacks it; only `agg_5m` got it in migration 0039).
+  **Fixed:** `COUNT(*)` → index-friendly `SELECT 1 … LIMIT 1` existence checks; the 1d query selects
+  `NULL as data_quality`. **Migration datapoint:** during the shadow, PG served the same admin reads in
+  **<1s vs Turso's 10–13s** — so serve-from-PG cutover makes these views ~10× faster (and fixes 1d, which
+  the PG path already handles). The 1d fix also **unblocks 1d shadow validation** (Turso no longer throws
+  before the compare runs).
 - **Aggregation reconciler driven GREEN (2026-06-07).** Investigation found PG **raw was complete** —
   the earlier "43–48% short" was a client-TZ artifact (node-postgres serializes Date params in local tz
   vs the UTC `timestamp` columns); re-checked with `TZ=UTC`, `gap-map-raw-readings.ts` shows zero raw
@@ -683,12 +707,15 @@ log-not-throw); `lib/share-tokens.ts` (share_tokens; PG `23505`); `lib/user-pref
 `app/api/admin/users/route.ts`, `app/api/admin/user/[userId]/points/route.ts`; `app/api/systems/route.ts`;
 `app/api/auth/{enphase,tesla}/{callback,disconnect}/route.ts`.
 
-**Readings reads & aggregation compute → Phase 2 (PR-11/12):** `lib/history/point-readings-provider.ts`
-(**the** serving provider; ms↔timestamp + started↔createdAt); `app/api/data/route.ts`;
-`app/api/system/[systemId]/generator-events/route.ts`;
+**Readings reads & aggregation compute → Phase 2 (PR-11/12):** `app/api/history/route.ts` (**the** live
+serving read path — raw SQL; shadowed in PR-12 via `lib/history/build-series.ts` + `readings-pg.ts`);
 `app/api/admin/systems/[systemId]/point-readings/route.ts`,
-`app/api/admin/point/[systemIdDotPointId]/readings/route.ts`; `lib/db/turso/aggregate-daily-points.ts`
+`app/api/admin/point/[systemIdDotPointId]/readings/route.ts` (shadowed in PR-12 via
+`lib/db/planetscale/readings-read-pg.ts`); `app/api/system/[systemId]/generator-events/route.ts`
+(**DEFERRED** — unbounded full-history hack; rewrite-then-shadow); `lib/db/turso/aggregate-daily-points.ts`
 (1d); `lib/point-aggregation-helper.ts` (5m); `app/labs/kinkora-hws/page.tsx` (low priority).
+**Note:** `lib/history/point-readings-provider.ts` / `history-service.ts` are **dead code** (not the live
+path); `app/api/data/route.ts` serves **config + KV-latest**, not readings.
 
 **Mixed:** `lib/point/point-manager.ts` (point_info CRUD = config/PR-9 **and** raw insert + 5m + KV
 cache = readings/PR-11; split by concern); `lib/session-manager.ts` (session lifecycle — **done, PR-7**);
