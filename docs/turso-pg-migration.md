@@ -17,7 +17,7 @@ it; move the config tables to it), demote **Turso to a transitional best-effort 
 (ap-southeast-2 / `syd1`)**. Staged, flag-gated, multi-PR. The deeper reason is to cleanly separate the
 data-collection **engine** from the **web/FE** — see [Direction of travel](#direction-of-travel--engineweb-separation).
 
-## Current status (2026-06-08)
+## Current status (2026-06-09)
 
 - **Phase 1 — config authority on PG: ✅ LIVE** (cut over 2026-06-07). PG is the system of record for
   config (`systems`, `point_info`, `users`, `user_systems`, `polling_status`, `share_tokens`); Turso
@@ -28,8 +28,9 @@ data-collection **engine** from the **web/FE** — see [Direction of travel](#di
     `agg_5m --days=2` 19966/19966, `agg_1d` clean, 0 value mismatches.
   - **PR-12 (readings reads shadow, `#19`) ✅ shipped; burn-in GREEN.** Ran `READINGS_READS_FROM_PG`
     ON = shadow (serve Turso, concurrently read PG, compare, log `[READINGS-SHADOW] DIVERGE`).
-  - **PR-13a (serve readings FROM PG) ▶️ CODE READY** — branch `simonhac/readings-serve-from-pg`
-    (not yet merged). See [Phase 2](#phase-2--readings--aggregation-on-postgres).
+  - **PR-13a (serve readings FROM PG) ✅ LIVE** — merged `#24`; `READINGS_READS_FROM_PG` flipped true in
+    prod 2026-06-09; PG serves `/api/history` + admin point-readings, Turso = fallback. See
+    [Phase 2](#phase-2--readings--aggregation-on-postgres).
 - **Live pipeline healthy:** QStash lag 0 / DLQ 0 / parallelism 1; PG mirror response-presence 100%,
   raw landing < 1 min old.
 
@@ -48,14 +49,12 @@ chunked by month/quarter because one multi-month Turso response exceeds the libs
 
 ## What's next (ordered by dependency)
 
-1. **PR-13a — serve readings FROM PG (the cutover).** Code ready; sequence in
-   [Phase 2](#phase-2--readings--aggregation-on-postgres). Cutover = flag flip after a dark deploy.
-2. **PR-13 — trim the raw-vendor Turso 5m/1d publishers** (after quiescing the queue to lag 0). Stops
+1. **PR-13 — trim the raw-vendor Turso 5m/1d publishers** (after quiescing the queue to lag 0). Stops
    the double-write; PG becomes the sole aggregator. Re-confirm the reconciler green just before.
-3. **Phase 3 — Sydney region move** (parallel ops). Co-locate compute + data; kill cross-region RTT (R8).
-4. **Phase 4 — Turso decommission.** Needs raw durability off Turso (synchronous PG raw write, or
+2. **Phase 3 — Sydney region move** (parallel ops). Co-locate compute + data; kill cross-region RTT (R8).
+3. **Phase 4 — Turso decommission.** Needs raw durability off Turso (synchronous PG raw write, or
    formally accepting queue-only at-least-once) + dropping the `*_backup`/archive tables.
-5. **Decommission-time hardening (gated, not blockers):** PG FK rebuild, R4 Turso-FK drop, session-FK
+4. **Decommission-time hardening (gated, not blockers):** PG FK rebuild, R4 Turso-FK drop, session-FK
    validation.
 
 ## Locked decisions
@@ -121,7 +120,7 @@ Turso keeps serving; backfill writes are idempotent (worst case `TRUNCATE` the P
 - **Readings flag** — a **single** flag `READINGS_READS_FROM_PG`, repurposed across the phase:
   - **Shadow (PR-12, shipped):** ON = serve Turso + concurrent PG read + compare + log
     `[READINGS-SHADOW] DIVERGE`.
-  - **Serve (PR-13a, code ready):** ON = `serveReadings` serves PG, falls back to Turso (logged
+  - **Serve (PR-13a, ✅ live):** ON = `serveReadings` serves PG, falls back to Turso (logged
     `[READINGS-SERVE]`) only on error / `SHADOW_SKIP`; OFF = serve Turso. Flipping shadow→serve is a
     **code change** (`readings-shadow.ts` → `readings-serve.ts`), not just a flag flip.
 
@@ -169,14 +168,15 @@ DEFERRED** — unbounded full-history hack, rewrite to a bounded range before mi
 _Not the live path: `lib/history/point-readings-provider.ts` / `history-service.ts` (dead code);
 `app/api/data/route.ts` (config + KV-latest, not readings)._
 
-**PR-13a — serve readings FROM PG: ▶️ CODE READY** (branch `simonhac/readings-serve-from-pg`).
+**PR-13a — serve readings FROM PG: ✅ DONE (merged `#24`, flag flipped true 2026-06-09).**
 `readings-shadow.ts` → `readings-serve.ts`; `shadowServeReadings` → `serveReadings(label, pgServe,
 tursoServe)` (one store read on the happy path; Turso fallback on error/`SHADOW_SKIP`, logged
 `[READINGS-SERVE]`). Shadow comparators unwired from the request path (kept as exported, tested
-helpers). 413 jest green; build + type-check clean.
-**Cutover sequence:** set `READINGS_READS_FROM_PG=false` in prod → merge + deploy **dark** (flag off =
-serve Turso) → fresh Turso snapshot + confirm PG PITR + re-run reconciler → flip flag **true** (serve
-PG). Expect admin readings ~10× faster (PG < 1s vs Turso 10–13s). **Rollback:** flip false (instant).
+helpers).
+**Cutover sequence (executed):** set `READINGS_READS_FROM_PG=false` in prod → merge + deploy **dark**
+(flag off = serve Turso) → fresh Turso snapshot + confirm PG PITR + re-run reconciler → flip flag
+**true** (serve PG). Admin readings ~10× faster (PG < 1s vs Turso 10–13s). **Rollback:** flip false
+(instant).
 
 **PR-13 — trim publishers (cutover).** Quiesce the queue to lag 0 on `/admin/observations`, then trim
 only the raw-vendor Turso 5m/1d publishers + the receiver's raw-vendor 5m/1d inserts. **Keep** raw,
@@ -423,6 +423,10 @@ confirmed during the relevant PR.
 
 One line per completed milestone — detail lives in git + the sections above.
 
+- **2026-06-09 — PR-13a LIVE.** Readings served FROM PG (`#24`); `READINGS_READS_FROM_PG` flipped true in
+  prod (Turso = fallback). Post-cutover verification sweep GREEN: `qstash-health` lag 0 / DLQ 0 /
+  presence 100% / raw landing < 1 min; reconciler `agg_5m --days=2` and `agg_1d` (all 2026) 0 mismatches;
+  raw `gap-map-raw-readings.ts` 0 deficits.
 - **2026-06-08 — PR-12 burn-in GREEN.** Readings-reads shadow (`#19`) ran clean over a settled window
   incl. the fresh post-midnight 1d (reconciler `agg_1d` 150/150, `agg_5m` 19966/19966). Composite-system
   1d day-shift (serve-path: PG 1d fetch was unordered; data was fine) fixed in `#23` (ORDER BY +

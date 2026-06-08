@@ -154,6 +154,19 @@ async function insert5mObservations(
   observations: Observation[],
   useUpsert: boolean,
 ): Promise<{ inserted: number; skipped: number }> {
+  // PR-13: when PG self-computes raw-vendor 5m from PG's own raw (AGG_COMPUTE_IN_PG),
+  // the publisher no longer sends raw-vendor 5m, so this branch is normally unreachable;
+  // a straggler that arrives must NOT be inserted (it would race the recompute and is
+  // redundant). 5m-NATIVE vendors (useUpsert=true, Amber/Enphase) have no raw and no
+  // recompute — the queue copy IS the value — so they always keep upserting. Gated so
+  // AGG_COMPUTE_IN_PG=false restores the original raw-vendor insert exactly.
+  if (AGG_COMPUTE_IN_PG && !useUpsert) {
+    console.log(
+      `[ObservationsReceiver] AGG_COMPUTE_IN_PG on: skipping raw-vendor 5m insert for system ${systemId} (PG recomputes from raw); ${observations.length} observation(s) ignored`,
+    );
+    return { inserted: 0, skipped: 0 };
+  }
+
   let skipped = 0;
   const rows: (typeof pointReadingsAgg5m.$inferInsert)[] = [];
 
@@ -256,6 +269,16 @@ async function insert1dObservations(
   systemId: number,
   observations: Observation[],
 ): Promise<{ inserted: number; skipped: number }> {
+  // PR-13: when PG self-computes 1d from its own 5m (AGG_COMPUTE_IN_PG), the 1d publisher
+  // is gated off, so no 1d should arrive. A straggler must NOT be inserted (it would
+  // overwrite the PG-computed day). Logging no-op; flip AGG_COMPUTE_IN_PG=false to restore.
+  if (AGG_COMPUTE_IN_PG) {
+    console.log(
+      `[ObservationsReceiver] AGG_COMPUTE_IN_PG on: skipping 1d insert for system ${systemId} (PG recomputes from 5m); ${observations.length} observation(s) ignored`,
+    );
+    return { inserted: 0, skipped: 0 };
+  }
+
   let skipped = 0;
   const rows: (typeof pointReadingsAgg1d.$inferInsert)[] = [];
 
