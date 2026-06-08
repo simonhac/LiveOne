@@ -164,7 +164,7 @@ export async function GET(
             s.session_label as sessionLabel,
             ROW_NUMBER() OVER (ORDER BY pr.interval_end ASC) as row_num
           FROM point_readings_agg_5m pr
-          LEFT JOIN sessions s ON pr.session_id = s.id
+          LEFT JOIN sessions s ON s.id = CAST(pr.session_id AS TEXT)
           WHERE pr.system_id = ${systemId}
             AND pr.point_id = ${pointId}
         )
@@ -192,7 +192,7 @@ export async function GET(
           pr.data_quality as dataQuality,
           s.session_label as sessionLabel
         FROM point_readings pr
-        LEFT JOIN sessions s ON pr.session_id = s.id
+        LEFT JOIN sessions s ON s.id = CAST(pr.session_id AS TEXT)
         WHERE pr.system_id = ${systemId}
           AND pr.point_id = ${pointId}
           AND pr.measurement_time >= ${startTime}
