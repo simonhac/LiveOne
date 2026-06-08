@@ -1,23 +1,20 @@
-import fetch, { Headers, Response } from 'node-fetch';
-import * as cheerio from 'cheerio';
-import {
-  SELECTLIVE_CONFIG,
-  ERROR_MESSAGES,
-} from '@/config';
+import fetch, { Headers, Response } from "node-fetch";
+import * as cheerio from "cheerio";
+import { ERROR_MESSAGES } from "@/config";
 
 /**
  * Internal type for Selectronic data from the API
  */
 export interface SelectronicData {
-  solarW: number | null;    // Total solar (solarinverter_w + shunt_w) in Watts
-  solarInverterW: number | null;   // Remote solar generation in Watts
-  shuntW: number | null;    // Local solar generation in Watts
-  loadW: number;            // Load in Watts
+  solarW: number | null; // Total solar (solarinverter_w + shunt_w) in Watts
+  solarInverterW: number | null; // Remote solar generation in Watts
+  shuntW: number | null; // Local solar generation in Watts
+  loadW: number; // Load in Watts
   batterySOC: number;
-  batteryW: number;         // Battery power in Watts (negative = charging)
-  gridW: number;            // Grid power in Watts
+  batteryW: number; // Battery power in Watts (negative = charging)
+  gridW: number; // Grid power in Watts
   faultCode: number;
-  faultTimestamp: number;   // Unix timestamp
+  faultTimestamp: number; // Unix timestamp
   generatorStatus: number;
   // Energy totals (kWh despite the _wh_ in API names)
   solarKwhTotal: number;
@@ -40,18 +37,18 @@ export interface SelectronicData {
 export interface ApiResponse<T> {
   success: boolean;
   data?: T;
-  rawResponse?: any;  // Raw response object from API
+  rawResponse?: any; // Raw response object from API
   error?: string;
   timestamp: Date;
 }
 
 // Select.Live API Configuration
 const SELECTLIVE_API = {
-  baseUrl: 'https://select.live',
-  loginEndpoint: '/login',
-  dataEndpoint: '/dashboard/hfdata',
-  magicWindowStart: 48,  // API unavailable from minute 48
-  magicWindowEnd: 52,    // until minute 52 of each hour
+  baseUrl: "https://select.live",
+  loginEndpoint: "/login",
+  dataEndpoint: "/dashboard/hfdata",
+  magicWindowStart: 48, // API unavailable from minute 48
+  magicWindowEnd: 52, // until minute 52 of each hour
 } as const;
 
 interface Credentials {
@@ -77,13 +74,9 @@ export class SelectronicFetchClient {
   private lastAuthTime?: Date;
   private credentials: Credentials;
 
-  constructor(credentials?: Credentials) {
-    // Use provided credentials or fall back to config
-    this.credentials = credentials || {
-      email: SELECTLIVE_CONFIG.username,
-      password: SELECTLIVE_CONFIG.password,
-      systemNumber: SELECTLIVE_CONFIG.systemNumber,
-    };
+  constructor(credentials: Credentials) {
+    // Per-system credentials come from Clerk (see lib/secure-credentials.ts).
+    this.credentials = credentials;
   }
 
   /**
@@ -91,8 +84,10 @@ export class SelectronicFetchClient {
    */
   private isInMagicWindow(): boolean {
     const minute = new Date().getMinutes();
-    return minute >= SELECTLIVE_API.magicWindowStart && 
-           minute <= SELECTLIVE_API.magicWindowEnd;
+    return (
+      minute >= SELECTLIVE_API.magicWindowStart &&
+      minute <= SELECTLIVE_API.magicWindowEnd
+    );
   }
 
   /**
@@ -100,7 +95,7 @@ export class SelectronicFetchClient {
    */
   private parseCookies(setCookieHeaders: string[]): void {
     for (const header of setCookieHeaders) {
-      const parts = header.split(';')[0].split('=');
+      const parts = header.split(";")[0].split("=");
       if (parts.length === 2) {
         this.cookies.set(parts[0].trim(), parts[1].trim());
       }
@@ -113,7 +108,7 @@ export class SelectronicFetchClient {
   public getCookieString(): string {
     return Array.from(this.cookies.entries())
       .map(([key, value]) => `${key}=${value}`)
-      .join('; ');
+      .join("; ");
   }
 
   /**
@@ -121,44 +116,55 @@ export class SelectronicFetchClient {
    */
   public async authenticate(): Promise<boolean> {
     try {
-      console.log('[Selectronic] Authenticating with select.live...');
-      
+      console.log("[Selectronic] Authenticating with select.live...");
+
       // Prepare form data - matching what SelectronicMQTT does
       const params = new URLSearchParams();
-      params.append('email', this.credentials.email);
-      params.append('pwd', this.credentials.password);
+      params.append("email", this.credentials.email);
+      params.append("pwd", this.credentials.password);
 
-      console.log('[Selectronic] Sending login request...');
-      
-      const response = await fetch(`${SELECTLIVE_API.baseUrl}${SELECTLIVE_API.loginEndpoint}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'LiveOne/1.0',
-          'Accept': '*/*',
+      console.log("[Selectronic] Sending login request...");
+
+      const response = await fetch(
+        `${SELECTLIVE_API.baseUrl}${SELECTLIVE_API.loginEndpoint}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "LiveOne/1.0",
+            Accept: "*/*",
+          },
+          body: params.toString(),
+          redirect: "manual", // Don't auto-follow to see the redirect
         },
-        body: params.toString(),
-        redirect: 'manual', // Don't auto-follow to see the redirect
-      });
+      );
 
       console.log(`[Selectronic] Response status: ${response.status}`);
 
       // Handle cookies from response
-      const setCookieHeaders = response.headers.raw()['set-cookie'];
+      const setCookieHeaders = response.headers.raw()["set-cookie"];
       if (setCookieHeaders) {
         this.parseCookies(setCookieHeaders);
         console.log(`[Selectronic] Cookies received: ${this.cookies.size}`);
-        console.log('[Selectronic] Cookie names:', Array.from(this.cookies.keys()));
+        console.log(
+          "[Selectronic] Cookie names:",
+          Array.from(this.cookies.keys()),
+        );
       }
 
       // Check for redirect (which indicates successful login)
       if (response.status === 302 || response.status === 301) {
-        const location = response.headers.get('location');
+        const location = response.headers.get("location");
         console.log(`[Selectronic] Redirect to: ${location}`);
-        
-        if (location && (location.includes('dashboard') || location.includes('systems'))) {
+
+        if (
+          location &&
+          (location.includes("dashboard") || location.includes("systems"))
+        ) {
           this.lastAuthTime = new Date();
-          console.log('[Selectronic] Login successful - redirected to systems/dashboard');
+          console.log(
+            "[Selectronic] Login successful - redirected to systems/dashboard",
+          );
           return true;
         }
       }
@@ -167,29 +173,32 @@ export class SelectronicFetchClient {
       if (response.status === 200) {
         // We got the login page back - check for error messages
         const text = await response.text();
-        
+
         // Check for the exact error message
-        if (text.includes('Bad email address or password')) {
-          console.error('[Auth] Login failed - "Bad email address or password"');
+        if (text.includes("Bad email address or password")) {
+          console.error(
+            '[Auth] Login failed - "Bad email address or password"',
+          );
           return false;
         }
-        
+
         // Check if we have session cookies (unlikely with 200 response)
         if (this.cookies.size > 0) {
           this.lastAuthTime = new Date();
-          console.log('[Selectronic] Login successful - got session cookies');
+          console.log("[Selectronic] Login successful - got session cookies");
           return true;
         }
-        
-        console.log('[Selectronic] Got login page without error message - unexpected state');
+
+        console.log(
+          "[Selectronic] Got login page without error message - unexpected state",
+        );
         return false;
       }
 
-      console.error('[Auth] Unexpected response status');
+      console.error("[Auth] Unexpected response status");
       return false;
-
     } catch (error) {
-      console.error('[Auth] Authentication error:', error);
+      console.error("[Auth] Authentication error:", error);
       return false;
     }
   }
@@ -201,74 +210,79 @@ export class SelectronicFetchClient {
     try {
       // Ensure we have cookies
       if (this.cookies.size === 0) {
-        console.log('[SystemInfo] No cookies, not authenticated');
+        console.log("[SystemInfo] No cookies, not authenticated");
         return null;
       }
 
       // Fetch dashboard page
       const url = `${SELECTLIVE_API.baseUrl}/dashboard/${this.credentials.systemNumber}`;
       console.log(`[SystemInfo] Fetching system info from ${url}`);
-      
+
       const response = await fetch(url, {
         headers: {
-          'Cookie': this.getCookieString(),
-          'User-Agent': 'LiveOne/1.0',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          Cookie: this.getCookieString(),
+          "User-Agent": "LiveOne/1.0",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         },
       });
 
       if (!response.ok) {
-        console.error(`[SystemInfo] Failed to fetch dashboard: ${response.status}`);
+        console.error(
+          `[SystemInfo] Failed to fetch dashboard: ${response.status}`,
+        );
         return null;
       }
 
       const html = await response.text();
-      
+
       // Parse HTML using cheerio for robust extraction
       const $ = cheerio.load(html);
       const systemInfo: SystemInfo = {};
-      
+
       // Debug: Check if we got a valid dashboard page
-      const pageTitle = $('title').text();
+      const pageTitle = $("title").text();
       console.log(`[SystemInfo] Page title: ${pageTitle}`);
-      
+
       // Debug: Save HTML for system 648 to inspect
-      if (this.credentials.systemNumber === '648') {
-        const fs = await import('fs');
-        fs.writeFileSync('/tmp/dashboard-648.html', html);
-        console.log('[SystemInfo] Saved HTML to /tmp/dashboard-648.html for inspection');
+      if (this.credentials.systemNumber === "648") {
+        const fs = await import("fs");
+        fs.writeFileSync("/tmp/dashboard-648.html", html);
+        console.log(
+          "[SystemInfo] Saved HTML to /tmp/dashboard-648.html for inspection",
+        );
       }
-      
+
       // Look for divs with table-cell display that contain system info
       // The structure is: <div class="table-row"><div>Label:</div><div>Value</div></div>
       $('div[style*="table-cell"]').each((_, element) => {
         const $el = $(element);
         const text = $el.text().trim();
-        
+
         // Check for each field we're interested in
-        if (text === 'SP PRO Model:') {
+        if (text === "SP PRO Model:") {
           // Look for the next sibling with table-cell style
           const value = $el.next('div[style*="table-cell"]').text().trim();
           console.log(`[SystemInfo] Found model: ${value}`);
           if (value) systemInfo.model = value;
-        } else if (text === 'SP PRO Serial:') {
+        } else if (text === "SP PRO Serial:") {
           const value = $el.next('div[style*="table-cell"]').text().trim();
           if (value) systemInfo.serial = value;
-        } else if (text === 'SP PRO Ratings:') {
+        } else if (text === "SP PRO Ratings:") {
           const value = $el.next('div[style*="table-cell"]').text().trim();
           if (value) systemInfo.ratings = value;
-        } else if (text === 'Solar Size:') {
+        } else if (text === "Solar Size:") {
           const value = $el.next('div[style*="table-cell"]').text().trim();
           if (value) systemInfo.solarSize = value;
-        } else if (text === 'Battery Size:') {
+        } else if (text === "Battery Size:") {
           const value = $el.next('div[style*="table-cell"]').text().trim();
           if (value) systemInfo.batterySize = value;
         }
       });
-      
+
       // Alternative approach: Look for elements by ID (if they have IDs)
       if (!systemInfo.model) {
-        const modelById = $('#sppro_model').text().trim();
+        const modelById = $("#sppro_model").text().trim();
         if (modelById) systemInfo.model = modelById;
       }
       if (!systemInfo.serial) {
@@ -276,23 +290,25 @@ export class SelectronicFetchClient {
         // This is why we rely on the label-based extraction above
       }
       if (!systemInfo.ratings) {
-        const ratingsById = $('#sppro_rating').text().trim();
+        const ratingsById = $("#sppro_rating").text().trim();
         if (ratingsById) systemInfo.ratings = ratingsById;
       }
       if (!systemInfo.solarSize) {
-        const solarById = $('#solar_size').text().trim();
+        const solarById = $("#solar_size").text().trim();
         if (solarById) systemInfo.solarSize = solarById;
       }
       if (!systemInfo.batterySize) {
-        const batteryById = $('#battery_size').text().trim();
+        const batteryById = $("#battery_size").text().trim();
         if (batteryById) systemInfo.batterySize = batteryById;
       }
-      
-      console.log('[SystemInfo] Extracted info:', JSON.stringify(systemInfo, null, 2));
+
+      console.log(
+        "[SystemInfo] Extracted info:",
+        JSON.stringify(systemInfo, null, 2),
+      );
       return systemInfo;
-      
     } catch (error) {
-      console.error('[SystemInfo] Error fetching system info:', error);
+      console.error("[SystemInfo] Error fetching system info:", error);
       return null;
     }
   }
@@ -300,7 +316,12 @@ export class SelectronicFetchClient {
   /**
    * Get list of available systems for the authenticated user
    */
-  public async getSystemsList(): Promise<Array<{systemNumber: string, name?: string, model?: string, serialNumber?: string}> | null> {
+  public async getSystemsList(): Promise<Array<{
+    systemNumber: string;
+    name?: string;
+    model?: string;
+    serialNumber?: string;
+  }> | null> {
     try {
       // Ensure we're authenticated
       if (this.cookies.size === 0) {
@@ -313,13 +334,13 @@ export class SelectronicFetchClient {
       // Fetch the dashboard page to get system list
       const response = await fetch(`${SELECTLIVE_API.baseUrl}/dashboard`, {
         headers: {
-          'Cookie': this.getCookieString(),
-          'User-Agent': 'LiveOne/1.0',
+          Cookie: this.getCookieString(),
+          "User-Agent": "LiveOne/1.0",
         },
       });
 
       if (!response.ok) {
-        console.error('[SystemsList] Failed to fetch dashboard');
+        console.error("[SystemsList] Failed to fetch dashboard");
         return null;
       }
 
@@ -327,16 +348,21 @@ export class SelectronicFetchClient {
       const $ = cheerio.load(html);
 
       // Look for system selector or system information
-      const systems: Array<{systemNumber: string, name?: string, model?: string, serialNumber?: string}> = [];
+      const systems: Array<{
+        systemNumber: string;
+        name?: string;
+        model?: string;
+        serialNumber?: string;
+      }> = [];
 
       // Try to find system selector dropdown or similar
       $('select[name="system"], .system-selector option').each((_, el) => {
         const value = $(el).val() as string;
         const text = $(el).text().trim();
-        if (value && value !== '') {
+        if (value && value !== "") {
           systems.push({
             systemNumber: value,
-            name: text
+            name: text,
           });
         }
       });
@@ -344,22 +370,24 @@ export class SelectronicFetchClient {
       // If no selector, look for single system info
       if (systems.length === 0) {
         // Try to extract from the current system being displayed
-        const systemNumber = $('[data-system-id], .system-number').first().text().trim() ||
-                           this.credentials.systemNumber;
+        const systemNumber =
+          $("[data-system-id], .system-number").first().text().trim() ||
+          this.credentials.systemNumber;
 
         if (systemNumber) {
           systems.push({
             systemNumber,
-            name: $('[data-system-name], .system-name').first().text().trim() || 'System 1'
+            name:
+              $("[data-system-name], .system-name").first().text().trim() ||
+              "System 1",
           });
         }
       }
 
-      console.log('[SystemsList] Found systems:', systems);
+      console.log("[SystemsList] Found systems:", systems);
       return systems.length > 0 ? systems : null;
-
     } catch (error) {
-      console.error('[SystemsList] Error getting systems list:', error);
+      console.error("[SystemsList] Error getting systems list:", error);
       return null;
     }
   }
@@ -374,7 +402,7 @@ export class SelectronicFetchClient {
 
       // Ensure we have cookies
       if (this.cookies.size === 0) {
-        console.log('[Selectronic] No cookies, authenticating...');
+        console.log("[Selectronic] No cookies, authenticating...");
         const authSuccess = await this.authenticate();
         if (!authSuccess) {
           return {
@@ -388,26 +416,26 @@ export class SelectronicFetchClient {
       // Fetch data
       const url = `${SELECTLIVE_API.baseUrl}${SELECTLIVE_API.dataEndpoint}/${this.credentials.systemNumber}`;
       console.log(`[Selectronic] Fetching data from ${url}`);
-      
+
       const response = await fetch(url, {
         headers: {
-          'Cookie': this.getCookieString(),
-          'User-Agent': 'LiveOne/1.0',
-          'Accept': 'application/json',
+          Cookie: this.getCookieString(),
+          "User-Agent": "LiveOne/1.0",
+          Accept: "application/json",
         },
       });
 
       console.log(`[Selectronic] Response status: ${response.status}`);
 
       if (response.status === 401) {
-        console.log('[Selectronic] Session expired, re-authenticating...');
+        console.log("[Selectronic] Session expired, re-authenticating...");
         this.cookies.clear();
-        
+
         const authSuccess = await this.authenticate();
         if (authSuccess) {
           return this.fetchData(); // Retry with fresh auth
         }
-        
+
         return {
           success: false,
           error: ERROR_MESSAGES.AUTH_FAILED,
@@ -417,15 +445,18 @@ export class SelectronicFetchClient {
 
       if (!response.ok) {
         // Check if it's a magic window error (usually 500 or 503)
-        if (inMagicWindow && (response.status === 500 || response.status === 503)) {
-          console.warn('[API] Request failed during magic window (48-52 min)');
+        if (
+          inMagicWindow &&
+          (response.status === 500 || response.status === 503)
+        ) {
+          console.warn("[API] Request failed during magic window (48-52 min)");
           return {
             success: false,
             error: `${ERROR_MESSAGES.MAGIC_WINDOW} (HTTP ${response.status})`,
             timestamp: new Date(),
           };
         }
-        
+
         return {
           success: false,
           error: `HTTP ${response.status}: ${response.statusText}`,
@@ -435,16 +466,20 @@ export class SelectronicFetchClient {
 
       const responseText = await response.text();
       const data = JSON.parse(responseText);
-      console.log('[Selectronic] Data received successfully');
-      
+      console.log("[Selectronic] Data received successfully");
+
       // Transform the data - only fields that actually exist in the API
       const solarInverterW = data.items?.solarinverter_w ?? null;
       const shuntW = data.items?.shunt_w ?? null;
-      
+
       const transformed: SelectronicData = {
-        solarW: (solarInverterW !== null && shuntW !== null) ? Math.round(solarInverterW + shuntW) : null,  // Total solar = remote + local
-        solarInverterW: solarInverterW !== null ? Math.round(solarInverterW) : null,   // Remote solar
-        shuntW: shuntW !== null ? Math.round(shuntW) : null,                   // Local solar
+        solarW:
+          solarInverterW !== null && shuntW !== null
+            ? Math.round(solarInverterW + shuntW)
+            : null, // Total solar = remote + local
+        solarInverterW:
+          solarInverterW !== null ? Math.round(solarInverterW) : null, // Remote solar
+        shuntW: shuntW !== null ? Math.round(shuntW) : null, // Local solar
         loadW: Math.round(data.items?.load_w || 0),
         batterySOC: data.items?.battery_soc || 0,
         batteryW: Math.round(data.items?.battery_w || 0),
@@ -466,7 +501,9 @@ export class SelectronicFetchClient {
         batteryOutKwhToday: data.items?.battery_out_wh_today || 0,
         gridInKwhToday: data.items?.grid_in_wh_today || 0,
         gridOutKwhToday: data.items?.grid_out_wh_today || 0,
-        timestamp: data.items?.timestamp ? new Date(data.items.timestamp * 1000) : new Date(),
+        timestamp: data.items?.timestamp
+          ? new Date(data.items.timestamp * 1000)
+          : new Date(),
         raw: data,
       };
 
@@ -474,22 +511,25 @@ export class SelectronicFetchClient {
       if (data.items?.timestamp) {
         const dataTime = new Date(data.items.timestamp * 1000);
         const now = new Date();
-        const delaySeconds = Math.floor((now.getTime() - dataTime.getTime()) / 1000);
-        console.log(`[Selectronic] Data timestamp: ${dataTime.toLocaleTimeString()} (${delaySeconds}s delay from inverter)`);
+        const delaySeconds = Math.floor(
+          (now.getTime() - dataTime.getTime()) / 1000,
+        );
+        console.log(
+          `[Selectronic] Data timestamp: ${dataTime.toLocaleTimeString()} (${delaySeconds}s delay from inverter)`,
+        );
       }
 
       return {
         success: true,
         data: transformed,
-        rawResponse: data,  // Include the parsed JSON object
+        rawResponse: data, // Include the parsed JSON object
         timestamp: new Date(),
       };
-
     } catch (error) {
-      console.error('[API] Error:', error);
+      console.error("[API] Error:", error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: error instanceof Error ? error.message : "Unknown error",
         timestamp: new Date(),
       };
     }
