@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSystemAccess } from "@/lib/api-auth";
-import { SystemsManager, SystemWithPolling } from "@/lib/systems-manager";
+import { SystemWithPolling } from "@/lib/systems-manager";
 import { OpenNEMDataSeries } from "@/types/opennem";
 import { formatOpenNEMResponse } from "@/lib/history/format-opennem";
 import {
@@ -9,14 +9,21 @@ import {
   parseRelativeTime,
   getDateDifferenceMs,
   getTimeDifferenceMs,
-  formatTime_fromJSDate,
 } from "@/lib/date-utils";
 import { decodeUrlSafeStringToI18n } from "@/lib/url-date";
 import { CalendarDate, ZonedDateTime, now } from "@internationalized/date";
 import { splitBraceAware } from "@/lib/series-filter-utils";
-import { HistoryDebugInfo, registerSeries } from "@/lib/history/history-debug";
+import { HistoryDebugInfo, QueryDebugInfo } from "@/lib/history/history-debug";
 import { PointManager } from "@/lib/point/point-manager";
-import { getSeriesPath } from "@/lib/point/series-info";
+import {
+  buildSeriesFromAggRows,
+  type AggRow,
+} from "@/lib/history/build-series";
+import {
+  fetchAggRowsPg,
+  compareHistorySeries,
+} from "@/lib/history/readings-pg";
+import { shadowServeReadings, SHADOW_SKIP } from "@/lib/db/readings-shadow";
 
 // Initialize manager instances
 const pointManager = PointManager.getInstance();
@@ -24,21 +31,6 @@ const pointManager = PointManager.getInstance();
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-/**
- * Apply transform to a numeric value based on the transform type
- * - null or 'n': no transform (return original value)
- * - 'i': invert (multiply by -1)
- */
-function applyTransform(
-  value: number | null,
-  transform: string | null,
-): number | null {
-  if (value === null) return null;
-  if (!transform || transform === "n") return value;
-  if (transform === "i") return -value;
-  return value;
-}
 
 /**
  * Validate glob patterns for series filtering
@@ -325,8 +317,6 @@ async function getSystemHistoryInOpenNEMFormat(
     return { series: [] };
   }
 
-  // Setup database query
-  const { rawClient } = await import("@/lib/db/turso");
   const aggTable =
     interval === "1d" ? "point_readings_agg_1d" : "point_readings_agg_5m";
   const firstEpoch =
@@ -348,47 +338,45 @@ async function getSystemHistoryInOpenNEMFormat(
       }
     : undefined;
 
-  // Build single batched query for all points
-  // We'll query all rows for all points in one go using CTE with VALUES
-  // Deduplicate pairs since we select ALL aggregation fields for each point
-  const uniquePairsArray = Array.from(
+  // Deduplicate (system_id, point_id) pairs — we select ALL aggregation fields per point.
+  const uniquePairsArray: Array<[number, number]> = Array.from(
     new Set(
       seriesInfos.map(
         (series) => `${series.point.systemId},${series.point.index}`,
       ),
     ),
-  ).map((pair: string) => pair.split(",").map(Number));
+  ).map((pair) => {
+    const [systemId, pointId] = pair.split(",").map(Number);
+    return [systemId, pointId] as [number, number];
+  });
 
-  // Build parameterized query with placeholders
-  // LibSQL supports positional parameters with ?, so we'll build (?, ?), (?, ?)...
-  const pairsPlaceholders = uniquePairsArray.map(() => "(?, ?)").join(", ");
+  // Time window: 1d uses YYYY-MM-DD day strings; 5m/30m uses an epoch-ms dense timeline.
+  // When aggregating 5m → 30m we fetch 25 min earlier (a 30m bucket needs six 5m readings).
+  const startDate =
+    interval === "1d" ? (startTime as CalendarDate).toString() : undefined;
+  const endDate =
+    interval === "1d" ? (endTime as CalendarDate).toString() : undefined;
+  const queryFirstEpoch =
+    interval === "30m" ? firstEpoch - 25 * 60 * 1000 : firstEpoch;
 
-  // Flatten the pairs array for the args parameter
-  const pairArgs = uniquePairsArray.flat();
+  // ---- Turso fetch: the live served path. The raw SQL is unchanged from before the PR-12
+  // extraction; it just feeds the shared `buildSeriesFromAggRows` now. ----
+  const fetchAggRowsTurso = async (): Promise<{
+    rows: AggRow[];
+    debugQuery?: QueryDebugInfo;
+  }> => {
+    const { rawClient } = await import("@/lib/db/turso");
 
-  // Get the aggregation field to query - we need to handle all aggregation fields used
-  // For simplicity in the batched query, we'll SELECT all common aggregation fields
-  // and filter/use them based on each SeriesInfo's aggregationField
-  let queryTemplate: string;
-  let queryArgs: (number | string)[];
-  let allRows: Array<{
-    system_id: number;
-    point_id: number;
-    interval_end?: number;
-    day?: string;
-    avg?: number | null;
-    min?: number | null;
-    max?: number | null;
-    last?: number | null;
-    delta?: number | null;
-    data_quality?: string | null;
-  }>;
+    // LibSQL supports positional parameters with ?, so build (?, ?), (?, ?)...
+    const pairsPlaceholders = uniquePairsArray.map(() => "(?, ?)").join(", ");
+    const pairArgs = uniquePairsArray.flat();
 
-  if (interval === "1d") {
-    const startDate = (startTime as CalendarDate).toString();
-    const endDate = (endTime as CalendarDate).toString();
+    let queryTemplate: string;
+    let queryArgs: (number | string)[];
+    let rows: AggRow[];
 
-    queryTemplate = `
+    if (interval === "1d") {
+      queryTemplate = `
       WITH pairs(system_id, point_id) AS (
         VALUES ${pairsPlaceholders}
       )
@@ -410,22 +398,16 @@ async function getSystemHistoryInOpenNEMFormat(
       ORDER BY pra.system_id, pra.point_id, pra.day
     `;
 
-    queryArgs = [...pairArgs, startDate, endDate];
+      queryArgs = [...pairArgs, startDate!, endDate!];
 
-    allRows = (
-      await rawClient.execute({
-        sql: queryTemplate,
-        args: queryArgs,
-      })
-    ).rows as unknown as typeof allRows;
-  } else {
-    // When aggregating 5m data to 30m, we need to fetch earlier data
-    // For 30m bucket ending at 00:30, we need 5m data from 00:05-00:30 (6 readings)
-    // That's 25 minutes earlier: 30m - 5m = 25m
-    const queryFirstEpoch =
-      interval === "30m" ? firstEpoch - 25 * 60 * 1000 : firstEpoch;
-
-    queryTemplate = `
+      rows = (
+        await rawClient.execute({
+          sql: queryTemplate,
+          args: queryArgs,
+        })
+      ).rows as unknown as AggRow[];
+    } else {
+      queryTemplate = `
       WITH RECURSIVE
         timeline AS (
           -- Generate dense timeline at 5-minute intervals
@@ -457,238 +439,78 @@ async function getSystemHistoryInOpenNEMFormat(
       ORDER BY p.system_id, p.point_id, t.interval_end
     `;
 
-    queryArgs = [queryFirstEpoch, lastEpoch, ...pairArgs];
+      queryArgs = [queryFirstEpoch, lastEpoch, ...pairArgs];
 
-    allRows = (
-      await rawClient.execute({
-        sql: queryTemplate,
-        args: queryArgs,
-      })
-    ).rows as unknown as typeof allRows;
-  }
-
-  if (debug) {
-    // Store query template and parameters separately for debugging
-    // Normalize whitespace: replace newlines and multiple spaces with single spaces
-    const normalizedTemplate = queryTemplate
-      .replace(/\n/g, " ")
-      .replace(/\s+/g, " ")
-      .replace(/"/g, "'")
-      .trim();
-
-    debug.query.push({
-      template: normalizedTemplate,
-      args: queryArgs,
-    } as any);
-  }
-
-  // Group rows by (system_id, point_id, aggregation_field)
-  const rowsByPointAndField = new Map<
-    string,
-    Array<{ interval_end: number; value: number | string | null }>
-  >();
-
-  for (const row of allRows) {
-    // Convert day to interval_end if needed
-    const intervalEnd =
-      row.interval_end ?? new Date(row.day! + "T00:00:00Z").getTime();
-
-    // Process each aggregation field (including NULLs from dense timeline)
-    // With CTE-generated dense timeline, we always have rows even if data is NULL
-    for (const field of [
-      "avg",
-      "min",
-      "max",
-      "last",
-      "delta",
-      "quality",
-    ] as const) {
-      // Map field name to database column (quality -> data_quality)
-      const dbField = field === "quality" ? "data_quality" : field;
-
-      // Always add an entry for this field (value may be null)
-      const key = `${row.system_id}.${row.point_id}.${field}`;
-      if (!rowsByPointAndField.has(key)) {
-        rowsByPointAndField.set(key, []);
-      }
-      rowsByPointAndField.get(key)!.push({
-        interval_end: intervalEnd,
-        value: row[dbField] ?? null,
-      });
-    }
-  }
-
-  // Build series for each SeriesInfo
-  const { formatTime_fromJSDate } = await import("@/lib/date-utils");
-  const systemsManager = SystemsManager.getInstance();
-  const allSeries: OpenNEMDataSeries[] = [];
-
-  const intervalMs =
-    interval === "5m"
-      ? 5 * 60 * 1000
-      : interval === "30m"
-        ? 30 * 60 * 1000
-        : 24 * 60 * 60 * 1000;
-
-  for (const series of seriesInfos) {
-    const key = `${series.point.systemId}.${series.point.index}.${series.aggregationField}`;
-    let rows = rowsByPointAndField.get(key) || [];
-
-    // Apply transform (skip for quality which is a string)
-    if (series.aggregationField !== "quality") {
-      rows = rows.map((row) => ({
-        interval_end: row.interval_end,
-        value: applyTransform(
-          row.value as number | null,
-          series.point.transform,
-        ),
-      }));
+      rows = (
+        await rawClient.execute({
+          sql: queryTemplate,
+          args: queryArgs,
+        })
+      ).rows as unknown as AggRow[];
     }
 
-    // Handle 30m aggregation if needed
-    if (interval === "30m" && aggTable === "point_readings_agg_5m") {
-      if (series.aggregationField === "quality") {
-        // For quality (string values), take the last value in each 30m bucket
-        const aggregated: Array<{
-          interval_end: number;
-          value: string | null;
-        }> = [];
-        const buckets = new Map<
-          number,
-          Array<{ interval_end: number; value: string }>
-        >();
-
-        for (const row of rows) {
-          // Align bucketing to request boundaries
-          // Use ceil to round readings UP to the next bucket boundary
-          const bucketIndex = Math.ceil(
-            (row.interval_end - firstEpoch) / intervalMs,
-          );
-          const bucketEnd = firstEpoch + bucketIndex * intervalMs;
-
-          if (!buckets.has(bucketEnd)) {
-            buckets.set(bucketEnd, []);
-          }
-
-          if (row.value !== null) {
-            buckets.get(bucketEnd)!.push({
-              interval_end: row.interval_end,
-              value: row.value as string,
-            });
-          }
-        }
-
-        // Take the last (most recent) quality value in each bucket
-        for (const [bucketEnd, values] of buckets.entries()) {
-          if (values.length > 0) {
-            // Sort by interval_end and take the last one
-            values.sort((a, b) => a.interval_end - b.interval_end);
-            aggregated.push({
-              interval_end: bucketEnd,
-              value: values[values.length - 1].value,
-            });
-          }
-        }
-
-        aggregated.sort((a, b) => a.interval_end - b.interval_end);
-        rows = aggregated;
-      } else {
-        // For numeric values, average them
-        const aggregated: Array<{
-          interval_end: number;
-          value: number | null;
-        }> = [];
-        const buckets = new Map<number, number[]>();
-
-        for (const row of rows) {
-          // Align bucketing to request boundaries
-          // Use ceil to round readings UP to the next bucket boundary
-          const bucketIndex = Math.ceil(
-            (row.interval_end - firstEpoch) / intervalMs,
-          );
-          const bucketEnd = firstEpoch + bucketIndex * intervalMs;
-
-          if (!buckets.has(bucketEnd)) {
-            buckets.set(bucketEnd, []);
-          }
-
-          if (row.value !== null) {
-            buckets.get(bucketEnd)!.push(row.value as number);
-          }
-        }
-
-        for (const [bucketEnd, values] of buckets.entries()) {
-          const avg =
-            values.length > 0
-              ? values.reduce((sum, v) => sum + v, 0) / values.length
-              : null;
-          aggregated.push({ interval_end: bucketEnd, value: avg });
-        }
-
-        aggregated.sort((a, b) => a.interval_end - b.interval_end);
-        rows = aggregated;
-      }
+    let debugQuery: QueryDebugInfo | undefined;
+    if (enableDebug) {
+      // Normalize whitespace: newlines and multiple spaces → single spaces.
+      const normalizedTemplate = queryTemplate
+        .replace(/\n/g, " ")
+        .replace(/\s+/g, " ")
+        .replace(/"/g, "'")
+        .trim();
+      debugQuery = { template: normalizedTemplate, args: queryArgs };
     }
 
-    // Get source system for series ID
-    const sourceSystem = await systemsManager.getSystem(series.point.systemId);
-    if (!sourceSystem) continue;
+    return { rows, debugQuery };
+  };
 
-    // Build series ID using SeriesPath
-    const seriesPath = getSeriesPath(series);
-    const seriesId = seriesPath.toString();
-
-    // Build field data - database CTE provides dense timeline with NULLs for gaps
-    const fieldData: (number | string | null)[] = rows.map((row) => {
-      const value = row.value;
-      // For quality (string), push as-is; for numbers, apply precision
-      if (typeof value === "string") {
-        return value;
-      } else {
-        return value === null ? null : parseFloat(value.toPrecision(4));
-      }
-    });
-
-    // Build path for the series (e.g., "bidi.battery/power.avg")
-    const pointPath =
-      series.point.getLogicalPath() ||
-      `${series.point.index}/${series.point.metricType}`;
-    const fullPath = `${pointPath}.${series.aggregationField}`;
-
-    // Format timestamps
-    const timezoneOffsetMin = system.timezoneOffsetMin ?? 600;
-    const startFormatted = formatTime_fromJSDate(
-      new Date(firstEpoch),
-      timezoneOffsetMin,
+  // Serve from Turso, building the OpenNEM series via the shared transform.
+  const tursoServe = async (): Promise<OpenNEMDataSeries[]> => {
+    const { rows, debugQuery } = await fetchAggRowsTurso();
+    if (debug && debugQuery) debug.query.push(debugQuery);
+    return buildSeriesFromAggRows(
+      rows,
+      seriesInfos,
+      interval,
+      system,
+      firstEpoch,
+      lastEpoch,
+      debug,
     );
-    const endFormatted = formatTime_fromJSDate(
-      new Date(lastEpoch),
-      timezoneOffsetMin,
-    );
+  };
 
-    allSeries.push({
-      id: seriesId,
-      type: "power",
-      units: series.point.metricUnit,
-      path: fullPath,
-      label: series.point.name,
-      history: {
-        firstInterval: startFormatted,
-        lastInterval: endFormatted,
-        interval: interval,
-        numIntervals: fieldData.length,
-        data: fieldData,
-      },
+  // PR-12 shadow: read the same window from Postgres and build via the SAME transform, without
+  // touching the served request's debug object. Best-effort — the harness swallows PG errors.
+  const pgServe = async (): Promise<
+    OpenNEMDataSeries[] | typeof SHADOW_SKIP
+  > => {
+    const rows = await fetchAggRowsPg({
+      uniquePairs: uniquePairsArray,
+      interval,
+      queryFirstEpoch,
+      lastEpoch,
+      startDate,
+      endDate,
     });
+    if (rows === SHADOW_SKIP) return SHADOW_SKIP;
+    return buildSeriesFromAggRows(
+      rows,
+      seriesInfos,
+      interval,
+      system,
+      firstEpoch,
+      lastEpoch,
+      undefined,
+    );
+  };
 
-    // Register series for debug tracking
-    if (debug) {
-      registerSeries(debug, series);
-    }
-  }
+  const series = await shadowServeReadings(`history/${interval}`, tursoServe, {
+    pgServe,
+    compare: compareHistorySeries,
+    diffKey: `sys=${system.id} ${firstEpoch}..${lastEpoch}`,
+  });
 
   return {
-    series: allSeries,
+    series,
     dataSource: aggTable,
     debug,
   };

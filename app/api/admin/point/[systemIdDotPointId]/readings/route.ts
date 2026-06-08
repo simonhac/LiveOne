@@ -4,6 +4,11 @@ import { sql } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { decodeUrlDateToEpoch, decodeUrlOffset } from "@/lib/url-date";
 import { formatDateYYYYMMDD, parseDateYYYYMMDD } from "@/lib/date-utils";
+import {
+  fetchSinglePointReadingsPg,
+  compareSinglePoint,
+} from "@/lib/db/planetscale/readings-read-pg";
+import { shadowServeReadings, SHADOW_SKIP } from "@/lib/db/readings-shadow";
 
 export async function GET(
   request: NextRequest,
@@ -91,22 +96,21 @@ export async function GET(
       );
     }
 
-    let readings: any[] = [];
-
+    // Build the served window from Turso; under READINGS_READS_FROM_PG, concurrently shadow-read
+    // the same window from Postgres and log any divergence (PR-12). Turso is always served.
+    let dailyStartDayStr: string | undefined;
+    let dailyEndDayStr: string | undefined;
     if (source === "daily") {
-      // targetDate is guaranteed to be non-null by validation above
+      // targetDate is guaranteed to be non-null by validation above.
+      // Fetch wider range: 9 days before and 9 days after.
       const date = parseDateYYYYMMDD(targetDate!);
+      dailyStartDayStr = formatDateYYYYMMDD(date.subtract({ days: 9 }));
+      dailyEndDayStr = formatDateYYYYMMDD(date.add({ days: 9 }));
+    }
 
-      // Fetch wider range: 9 days before and 9 days after
-      const startDay = date.subtract({ days: 9 });
-      const endDay = date.add({ days: 9 });
-
-      // Format as YYYYMMDD strings
-      const startDayStr = formatDateYYYYMMDD(startDay);
-      const endDayStr = formatDateYYYYMMDD(endDay);
-
-      // Query daily aggregated data
-      const query = `
+    const fetchAllReadingsTurso = async (): Promise<any[]> => {
+      if (source === "daily") {
+        const query = `
         SELECT
           pr.system_id as systemId,
           pr.point_id as pointId,
@@ -121,43 +125,15 @@ export async function GET(
         FROM point_readings_agg_1d pr
         WHERE pr.system_id = ${systemId}
           AND pr.point_id = ${pointId}
-          AND pr.day >= '${startDayStr}'
-          AND pr.day <= '${endDayStr}'
+          AND pr.day >= '${dailyStartDayStr}'
+          AND pr.day <= '${dailyEndDayStr}'
         ORDER BY pr.day ASC
       `;
-
-      const allReadings = await db.all(sql.raw(query));
-
-      // Find target index
-      const targetIndex = allReadings.findIndex(
-        (r: any) => r.date === targetDate,
-      );
-
-      if (targetIndex === -1) {
-        // Target not found, return all readings
-        readings = allReadings;
-      } else {
-        // Calculate ideal range: 5 before, target, 5 after
-        let startIndex = Math.max(0, targetIndex - 5);
-        let endIndex = Math.min(allReadings.length, targetIndex + 6);
-
-        // If we don't have enough before, show more after (up to 10 after)
-        if (targetIndex < 5) {
-          endIndex = Math.min(allReadings.length, targetIndex + 11);
-        }
-
-        // If we don't have enough after, show more before (up to 10 before)
-        if (targetIndex + 6 > allReadings.length) {
-          startIndex = Math.max(0, targetIndex - 10);
-        }
-
-        readings = allReadings.slice(startIndex, endIndex);
-      }
-    } else if (source === "5m") {
-      // timestamp is guaranteed to be non-null for 5m data
-      // Use window functions to get records centered around target
-      // Get 10 before + target + 10 after = 21 records max, then trim to 11
-      const query = `
+        return (await db.all(sql.raw(query))) as any[];
+      } else if (source === "5m") {
+        // Use window functions to get records centered around target
+        // Get 10 before + target + 10 after = 21 records max, then trim to 11
+        const query = `
         WITH all_rows AS (
           SELECT
             interval_end,
@@ -196,42 +172,13 @@ export async function GET(
         WHERE ranked.row_num BETWEEN (target_position.target_row - 10) AND (target_position.target_row + 10)
         ORDER BY intervalEnd ASC
       `;
-
-      const allReadings = await db.all(sql.raw(query));
-
-      // Find target index in results
-      const targetIndex = allReadings.findIndex(
-        (r: any) => r.intervalEnd === timestamp,
-      );
-
-      if (targetIndex === -1) {
-        // Target not found, return empty
-        readings = [];
+        return (await db.all(sql.raw(query))) as any[];
       } else {
-        // Calculate ideal range: 5 before, target, 5 after
-        let startIndex = Math.max(0, targetIndex - 5);
-        let endIndex = Math.min(allReadings.length, targetIndex + 6);
-
-        // If we don't have enough before, show more after (up to 10 after)
-        if (targetIndex < 5) {
-          endIndex = Math.min(allReadings.length, targetIndex + 11);
-        }
-
-        // If we don't have enough after, show more before (up to 10 before)
-        if (targetIndex + 6 > allReadings.length) {
-          startIndex = Math.max(0, targetIndex - 10);
-        }
-
-        readings = allReadings.slice(startIndex, endIndex);
-      }
-    } else {
-      // timestamp is guaranteed to be non-null for raw data
-      const oneHour = 60 * 60 * 1000;
-      const startTime = timestamp! - oneHour;
-      const endTime = timestamp! + oneHour;
-
-      // Query raw point readings with session labels
-      const query = `
+        // timestamp is guaranteed to be non-null for raw data
+        const oneHour = 60 * 60 * 1000;
+        const startTime = timestamp! - oneHour;
+        const endTime = timestamp! + oneHour;
+        const query = `
         SELECT
           pr.id,
           pr.system_id as systemId,
@@ -252,35 +199,60 @@ export async function GET(
           AND pr.measurement_time <= ${endTime}
         ORDER BY pr.measurement_time ASC
       `;
-
-      const allReadings = await db.all(sql.raw(query));
-
-      // Find target index
-      const targetIndex = allReadings.findIndex(
-        (r: any) => r.measurementTime === timestamp,
-      );
-
-      if (targetIndex === -1) {
-        // Target not found, return all readings
-        readings = allReadings;
-      } else {
-        // Calculate ideal range: 5 before, target, 5 after
-        let startIndex = Math.max(0, targetIndex - 5);
-        let endIndex = Math.min(allReadings.length, targetIndex + 6);
-
-        // If we don't have enough before, show more after (up to 10 after)
-        if (targetIndex < 5) {
-          endIndex = Math.min(allReadings.length, targetIndex + 11);
-        }
-
-        // If we don't have enough after, show more before (up to 10 before)
-        if (targetIndex + 6 > allReadings.length) {
-          startIndex = Math.max(0, targetIndex - 10);
-        }
-
-        readings = allReadings.slice(startIndex, endIndex);
+        return (await db.all(sql.raw(query))) as any[];
       }
-    }
+    };
+
+    // Center the window on the target row (±5, widening to ±10 at the edges). Pure; shared by the
+    // Turso served path and the PG shadow path.
+    const centerReadings = (allReadings: any[]): any[] => {
+      let targetIndex: number;
+      if (source === "daily") {
+        targetIndex = allReadings.findIndex((r: any) => r.date === targetDate);
+      } else if (source === "5m") {
+        targetIndex = allReadings.findIndex(
+          (r: any) => r.intervalEnd === timestamp,
+        );
+      } else {
+        targetIndex = allReadings.findIndex(
+          (r: any) => r.measurementTime === timestamp,
+        );
+      }
+
+      // Target not found: daily/raw return the full window; 5m returns empty (prior behavior).
+      if (targetIndex === -1) return source === "5m" ? [] : allReadings;
+
+      let startIndex = Math.max(0, targetIndex - 5);
+      let endIndex = Math.min(allReadings.length, targetIndex + 6);
+      if (targetIndex < 5) {
+        endIndex = Math.min(allReadings.length, targetIndex + 11);
+      }
+      if (targetIndex + 6 > allReadings.length) {
+        startIndex = Math.max(0, targetIndex - 10);
+      }
+      return allReadings.slice(startIndex, endIndex);
+    };
+
+    const readings = await shadowServeReadings(
+      `admin-point/${source}`,
+      async () => centerReadings(await fetchAllReadingsTurso()),
+      {
+        pgServe: async () => {
+          const all = await fetchSinglePointReadingsPg({
+            systemId,
+            pointId,
+            source,
+            timestamp,
+            startDayStr: dailyStartDayStr,
+            endDayStr: dailyEndDayStr,
+          });
+          if (all === SHADOW_SKIP) return SHADOW_SKIP;
+          return centerReadings(all);
+        },
+        compare: (t, p) => compareSinglePoint(t, p, source),
+        diffKey: `${systemId}.${pointId} src=${source}`,
+      },
+    );
 
     return NextResponse.json({
       readings,

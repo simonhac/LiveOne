@@ -7,6 +7,11 @@ import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
 import { PointInfo } from "@/lib/point/point-info";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
+import {
+  fetchAdminPivotRowsPg,
+  comparePivotData,
+} from "@/lib/db/planetscale/readings-read-pg";
+import { shadowServeReadings, SHADOW_SKIP } from "@/lib/db/readings-shadow";
 
 /**
  * Apply transform to a numeric value based on the transform type
@@ -178,12 +183,14 @@ export async function GET(
       headers[`point_${p.index}`] = pointInfoObj;
     });
 
-    // Build dynamic SQL for pivot query based on data source
+    // Build dynamic SQL for pivot query based on data source. `pivotColumns` is dialect-agnostic
+    // (same column names in Turso and PG) so the PG shadow reuses it verbatim.
     let pivotQuery: string;
+    let pivotColumns = "";
 
     if (source === "daily") {
       // Query daily aggregated data
-      const pivotColumns = points
+      pivotColumns = points
         .map((p) => {
           const aggCol = getAggColumn(p.metricType, p.transform, source);
           return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.index} THEN pr.${aggCol} END) as point_${p.index}`;
@@ -223,7 +230,7 @@ export async function GET(
       `;
     } else if (source === "5m") {
       // Query 5-minute aggregated data
-      const pivotColumns = points
+      pivotColumns = points
         .map((p) => {
           // For text fields, use value_str; for numeric fields, use the appropriate aggregate column
           if (p.metricUnit === "text") {
@@ -268,7 +275,7 @@ export async function GET(
       `;
     } else {
       // Query raw point readings
-      const pivotColumns = points
+      pivotColumns = points
         .map((p) => {
           // For text fields, use valueStr; for others, use value
           const column = p.metricUnit === "text" ? "pr.value_str" : "pr.value";
@@ -310,22 +317,94 @@ export async function GET(
       `;
     }
 
-    const pivotStartTime = Date.now();
-    let result: any[] = [];
-    try {
-      result = await db.all(sql.raw(pivotQuery));
-    } catch (error: any) {
-      // Handle case where table doesn't exist yet (e.g., migration not run)
-      if (error?.message?.includes("no such table")) {
-        console.warn(
-          `Table for ${source} data source not found. Returning empty result.`,
-        );
-        result = [];
-      } else {
-        throw error;
-      }
-    }
-    dbElapsedMs += Date.now() - pivotStartTime;
+    // Transform raw pivot rows → the served `data` shape. Shared by the Turso (served) path and
+    // the PG shadow path so any divergence is purely in the data, not the transform.
+    const buildPivotData = (rows: any[]) =>
+      rows.map((row: any) => {
+        // Use session_label from the joined sessions table, or fallback to session_id if label is null
+        const sessionLabel =
+          row.session_label || row.session_id?.toString() || null;
+
+        const transformed: any = {
+          sessionLabel: sessionLabel,
+          sessionId: row.session_id || null,
+        };
+
+        // For daily data, use "date" field (YYYY-MM-DD); for others, use "time" field (ISO8601)
+        if (source === "daily") {
+          transformed.date = row.measurement_time; // YYYY-MM-DD string
+        } else {
+          // Convert Unix timestamp (ms) to ISO8601 with timezone
+          transformed.time = formatTime_fromJSDate(
+            new Date(row.measurement_time),
+            system.timezoneOffsetMin,
+          ); // ISO8601 string (e.g., "2025-11-09T14:30:00+10:00")
+        }
+
+        // Add point values in sorted order
+        sortedPoints.forEach((p) => {
+          const value = row[`point_${p.index}`];
+          // For text fields, keep as string; for others, convert to number and apply transform
+          if (value !== null) {
+            if (p.metricUnit === "text") {
+              transformed[`point_${p.index}`] = String(value);
+            } else {
+              const numValue = Number(value);
+              transformed[`point_${p.index}`] = applyTransform(
+                numValue,
+                p.transform,
+              );
+            }
+          } else {
+            transformed[`point_${p.index}`] = null;
+          }
+        });
+
+        return transformed;
+      });
+
+    // Serve from Turso; under READINGS_READS_FROM_PG, concurrently shadow-read the same pivot
+    // from Postgres and log any divergence in the served `data` (PR-12). Turso is always served.
+    let pivotElapsedMs = 0;
+    const { result, data } = await shadowServeReadings(
+      `admin-pivot/${source}`,
+      async () => {
+        const t0 = Date.now();
+        let rows: any[] = [];
+        try {
+          rows = await db.all(sql.raw(pivotQuery));
+        } catch (error: any) {
+          // Handle case where table doesn't exist yet (e.g., migration not run)
+          if (error?.message?.includes("no such table")) {
+            console.warn(
+              `Table for ${source} data source not found. Returning empty result.`,
+            );
+            rows = [];
+          } else {
+            throw error;
+          }
+        }
+        pivotElapsedMs = Date.now() - t0;
+        return { result: rows, data: buildPivotData(rows) };
+      },
+      {
+        pgServe: async () => {
+          const rows = await fetchAdminPivotRowsPg({
+            systemId,
+            source,
+            cursor,
+            direction,
+            limit,
+            pivotColumns,
+          });
+          if (rows === SHADOW_SKIP) return SHADOW_SKIP;
+          return { result: rows, data: buildPivotData(rows) };
+        },
+        compare: (t, p) => comparePivotData(t.data, p.data),
+        diffKey: `sys=${systemId} src=${source}`,
+      },
+    );
+    dbElapsedMs += pivotElapsedMs;
 
     // If no data, check if the other tables have data
     let hasAlternativeData = false;
@@ -346,49 +425,7 @@ export async function GET(
       hasAlternativeData = (checkResult[0]?.count || 0) > 0;
     }
 
-    // Transform the data
-    const data = result.map((row: any) => {
-      // Use session_label from the joined sessions table, or fallback to session_id if label is null
-      const sessionLabel =
-        row.session_label || row.session_id?.toString() || null;
-
-      const transformed: any = {
-        sessionLabel: sessionLabel,
-        sessionId: row.session_id || null,
-      };
-
-      // For daily data, use "date" field (YYYY-MM-DD); for others, use "time" field (ISO8601)
-      if (source === "daily") {
-        transformed.date = row.measurement_time; // YYYY-MM-DD string
-      } else {
-        // Convert Unix timestamp (ms) to ISO8601 with timezone
-        transformed.time = formatTime_fromJSDate(
-          new Date(row.measurement_time),
-          system.timezoneOffsetMin,
-        ); // ISO8601 string (e.g., "2025-11-09T14:30:00+10:00")
-      }
-
-      // Add point values in sorted order
-      sortedPoints.forEach((p) => {
-        const value = row[`point_${p.index}`];
-        // For text fields, keep as string; for others, convert to number and apply transform
-        if (value !== null) {
-          if (p.metricUnit === "text") {
-            transformed[`point_${p.index}`] = String(value);
-          } else {
-            const numValue = Number(value);
-            transformed[`point_${p.index}`] = applyTransform(
-              numValue,
-              p.transform,
-            );
-          }
-        } else {
-          transformed[`point_${p.index}`] = null;
-        }
-      });
-
-      return transformed;
-    });
+    // (`data` is computed above by the shared `buildPivotData`, under the readings shadow.)
 
     // Get raw timestamps from result for database queries
     const firstTimestamp =
