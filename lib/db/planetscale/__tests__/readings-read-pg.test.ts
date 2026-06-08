@@ -14,7 +14,7 @@ import {
   fetchSinglePointReadingsPg,
   compareSinglePoint,
 } from "../readings-read-pg";
-import { SHADOW_SKIP } from "@/lib/db/readings-shadow";
+import { SHADOW_SKIP } from "@/lib/db/readings-serve";
 
 /** Fake the drizzle node-postgres `execute()` surface: capture the query, return canned rows. */
 function makeFakeDb(rows: unknown[]) {

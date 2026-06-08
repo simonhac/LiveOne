@@ -19,11 +19,8 @@ import {
   buildSeriesFromAggRows,
   type AggRow,
 } from "@/lib/history/build-series";
-import {
-  fetchAggRowsPg,
-  compareHistorySeries,
-} from "@/lib/history/readings-pg";
-import { shadowServeReadings, SHADOW_SKIP } from "@/lib/db/readings-shadow";
+import { fetchAggRowsPg } from "@/lib/history/readings-pg";
+import { serveReadings, SHADOW_SKIP } from "@/lib/db/readings-serve";
 
 // Initialize manager instances
 const pointManager = PointManager.getInstance();
@@ -463,7 +460,8 @@ async function getSystemHistoryInOpenNEMFormat(
     return { rows, debugQuery };
   };
 
-  // Serve from Turso, building the OpenNEM series via the shared transform.
+  // Turso path (served when the flag is off, else the fallback), building the OpenNEM series via
+  // the shared transform.
   const tursoServe = async (): Promise<OpenNEMDataSeries[]> => {
     const { rows, debugQuery } = await fetchAggRowsTurso();
     if (debug && debugQuery) debug.query.push(debugQuery);
@@ -478,8 +476,9 @@ async function getSystemHistoryInOpenNEMFormat(
     );
   };
 
-  // PR-12 shadow: read the same window from Postgres and build via the SAME transform, without
-  // touching the served request's debug object. Best-effort — the harness swallows PG errors.
+  // Serve from Postgres (under READINGS_READS_FROM_PG): read the same window and build via the SAME
+  // transform, without touching the served request's debug object. The harness falls back to Turso
+  // if this throws or returns SHADOW_SKIP.
   const pgServe = async (): Promise<
     OpenNEMDataSeries[] | typeof SHADOW_SKIP
   > => {
@@ -503,11 +502,11 @@ async function getSystemHistoryInOpenNEMFormat(
     );
   };
 
-  const series = await shadowServeReadings(`history/${interval}`, tursoServe, {
+  const series = await serveReadings(
+    `history/${interval} sys=${system.id} ${firstEpoch}..${lastEpoch}`,
     pgServe,
-    compare: compareHistorySeries,
-    diffKey: `sys=${system.id} ${firstEpoch}..${lastEpoch}`,
-  });
+    tursoServe,
+  );
 
   return {
     series,

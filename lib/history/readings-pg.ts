@@ -21,7 +21,7 @@ import {
   SHADOW_SKIP,
   pairMatches,
   type ReadingsCompareResult,
-} from "@/lib/db/readings-shadow";
+} from "@/lib/db/readings-serve";
 import type { AggRow } from "./build-series";
 
 export interface AggFetchParams {

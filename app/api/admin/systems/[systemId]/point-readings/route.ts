@@ -7,11 +7,8 @@ import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
 import { PointInfo } from "@/lib/point/point-info";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
-import {
-  fetchAdminPivotRowsPg,
-  comparePivotData,
-} from "@/lib/db/planetscale/readings-read-pg";
-import { shadowServeReadings, SHADOW_SKIP } from "@/lib/db/readings-shadow";
+import { fetchAdminPivotRowsPg } from "@/lib/db/planetscale/readings-read-pg";
+import { serveReadings, SHADOW_SKIP } from "@/lib/db/readings-serve";
 
 /**
  * Apply transform to a numeric value based on the transform type
@@ -363,11 +360,25 @@ export async function GET(
         return transformed;
       });
 
-    // Serve from Turso; under READINGS_READS_FROM_PG, concurrently shadow-read the same pivot
-    // from Postgres and log any divergence in the served `data` (PR-12). Turso is always served.
+    // Serve the pivot from Postgres under READINGS_READS_FROM_PG, falling back to Turso on
+    // error/SHADOW_SKIP (PR-13a). With the flag off, Turso is served exactly as before.
     let pivotElapsedMs = 0;
-    const { result, data } = await shadowServeReadings(
-      `admin-pivot/${source}`,
+    const { result, data } = await serveReadings(
+      `admin-pivot/${source} sys=${systemId}`,
+      async () => {
+        const t0 = Date.now();
+        const rows = await fetchAdminPivotRowsPg({
+          systemId,
+          source,
+          cursor,
+          direction,
+          limit,
+          pivotColumns,
+        });
+        if (rows === SHADOW_SKIP) return SHADOW_SKIP;
+        pivotElapsedMs = Date.now() - t0;
+        return { result: rows, data: buildPivotData(rows) };
+      },
       async () => {
         const t0 = Date.now();
         let rows: any[] = [];
@@ -386,22 +397,6 @@ export async function GET(
         }
         pivotElapsedMs = Date.now() - t0;
         return { result: rows, data: buildPivotData(rows) };
-      },
-      {
-        pgServe: async () => {
-          const rows = await fetchAdminPivotRowsPg({
-            systemId,
-            source,
-            cursor,
-            direction,
-            limit,
-            pivotColumns,
-          });
-          if (rows === SHADOW_SKIP) return SHADOW_SKIP;
-          return { result: rows, data: buildPivotData(rows) };
-        },
-        compare: (t, p) => comparePivotData(t.data, p.data),
-        diffKey: `sys=${systemId} src=${source}`,
       },
     );
     dbElapsedMs += pivotElapsedMs;

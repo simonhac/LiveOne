@@ -49,13 +49,13 @@ export const CONFIG_WRITES_TO_PG = envFlag("CONFIG_WRITES_TO_PG");
 export const CONFIG_SERVE_FROM_PG = envFlag("CONFIG_SERVE_FROM_PG");
 
 /**
- * Readings reads (point_readings / agg_5m / agg_1d serving queries) Turso → Postgres.
+ * Serve readings reads (point_readings / agg_5m / agg_1d serving queries) FROM Postgres.
  *
- * SHADOW PHASE (PR-12): turning this ON does NOT change the served value — reads are still
- * answered from Turso. It only adds a best-effort, concurrent PG read + compare-and-log of any
- * divergence in the final served payload (see lib/db/readings-shadow.ts). Unlike config, readings
- * use a SINGLE flag: serving readings FROM Postgres is a later cutover that REPURPOSES this same
- * flag (a code change, not just a flip), once the shadow diff is clean over a settled window.
+ * CUTOVER (PR-13a): turning this ON makes Postgres the SERVED source — `serveReadings`
+ * (lib/db/readings-serve.ts) reads PG and falls back to Turso only on error / unconfigured PG.
+ * With it OFF, reads are served from Turso exactly as before. Unlike config, readings use a SINGLE
+ * flag: it gated the earlier shadow phase (#19) and now, after the shadow diff went clean over a
+ * settled window, the same flag is repurposed to serve. Rollback = flip back to false.
  */
 export const READINGS_READS_FROM_PG = envFlag("READINGS_READS_FROM_PG");
 

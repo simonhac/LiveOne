@@ -13,7 +13,7 @@ import {
   pointReadingsAgg5m,
   pointReadingsAgg1d,
 } from "@/lib/db/planetscale/schema";
-import { SHADOW_SKIP } from "@/lib/db/readings-shadow";
+import { SHADOW_SKIP } from "@/lib/db/readings-serve";
 import type { OpenNEMDataSeries } from "@/types/opennem";
 
 const FIVE = 5 * 60 * 1000;
