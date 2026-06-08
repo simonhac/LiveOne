@@ -84,7 +84,12 @@ export async function fetchAggRowsPg(
             gte(pgAgg1d.day, p.startDate!),
             lte(pgAgg1d.day, p.endDate!),
           ),
-        );
+        )
+        // Match the Turso query's `ORDER BY system_id, point_id, day`. The shared 1d transform
+        // (buildSeriesFromAggRows) maps rows in arrival order without re-sorting, so an unordered
+        // PG scan (e.g. a recomputed/upserted day returned out of heap position) would shift the
+        // served day series by one vs Turso. Ordering here keeps both stores byte-identical.
+        .orderBy(pgAgg1d.systemId, pgAgg1d.pointId, pgAgg1d.day);
       for (const r of res) {
         rows.push({
           system_id: r.systemId,
