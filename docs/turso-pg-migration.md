@@ -31,6 +31,9 @@ data-collection **engine** from the **web/FE** — see [Direction of travel](#di
   - **PR-13a (serve readings FROM PG) ✅ LIVE** — merged `#24`; `READINGS_READS_FROM_PG` flipped true in
     prod 2026-06-09; PG serves `/api/history` + admin point-readings, Turso = fallback. See
     [Phase 2](#phase-2--readings--aggregation-on-postgres).
+  - **PR-13 (trim raw-vendor 5m/1d double-write) ✅ LIVE** — merged `#26`; PG is the sole raw-vendor
+    aggregator. Burn-in GREEN 2026-06-09 (queue resumed → lag 0; reconciler `agg_5m --days=2`
+    20010/20010, `agg_1d` June 261/261, 0 mismatches).
 - **Live pipeline healthy:** QStash lag 0 / DLQ 0 / parallelism 1; PG mirror response-presence 100%,
   raw landing < 1 min old.
 
@@ -49,12 +52,12 @@ chunked by month/quarter because one multi-month Turso response exceeds the libs
 
 ## What's next (ordered by dependency)
 
-1. **PR-13 — trim the raw-vendor Turso 5m/1d publishers** (after quiescing the queue to lag 0). Stops
-   the double-write; PG becomes the sole aggregator. Re-confirm the reconciler green just before.
-2. **Phase 3 — Sydney region move** (parallel ops). Co-locate compute + data; kill cross-region RTT (R8).
-3. **Phase 4 — Turso decommission.** Needs raw durability off Turso (synchronous PG raw write, or
-   formally accepting queue-only at-least-once) + dropping the `*_backup`/archive tables.
-4. **Decommission-time hardening (gated, not blockers):** PG FK rebuild, R4 Turso-FK drop, session-FK
+1. **Phase 3 — Sydney region move** (parallel ops). Co-locate compute + data; kill cross-region RTT (R8).
+2. **Phase 4 — Turso decommission.** Needs raw durability off Turso (synchronous PG raw write, or
+   formally accepting queue-only at-least-once) + dropping the `*_backup`/archive tables. Also folds in
+   the deferred dead-publisher cleanup (`publishObservationBatch` + its no-collector arms, the gated 1d
+   Turso→PG mirror) — kept until then as the `AGG_COMPUTE_IN_PG=false` rollback path.
+3. **Decommission-time hardening (gated, not blockers):** PG FK rebuild, R4 Turso-FK drop, session-FK
    validation.
 
 ## Locked decisions
@@ -178,11 +181,12 @@ helpers).
 **true** (serve PG). Admin readings ~10× faster (PG < 1s vs Turso 10–13s). **Rollback:** flip false
 (instant).
 
-**PR-13 — trim publishers (cutover).** Quiesce the queue to lag 0 on `/admin/observations`, then trim
-only the raw-vendor Turso 5m/1d publishers + the receiver's raw-vendor 5m/1d inserts. **Keep** raw,
-sessions, and 5m-native 5m on the queue. Keep removed branches as logging no-ops one release.
-**Verify:** reconciler clean; dashboard lag ~0. **Rollback:** flip `READINGS_READS_FROM_PG` back;
-un-trim publishers.
+**PR-13 — trim publishers (cutover): ✅ DONE (merged `#26`, burn-in GREEN 2026-06-09).** Trimmed the
+raw-vendor Turso→queue 5m/1d publish + the receiver's raw-vendor 5m / all-1d inserts (now straggler-safe
+no-ops), gated behind `AGG_COMPUTE_IN_PG`; **kept** raw, sessions, and 5m-native 5m on the queue.
+Turso still computes its own local 5m/1d (untouched) so the reconciler stays a valid gate. **Rollback:**
+`AGG_COMPUTE_IN_PG=false` restores publish + intake exactly. Removed branches retained as no-ops until
+the Phase-4 cleanup.
 
 ### Phase 3 — Region move to Sydney (parallel ops; coordinate with the readings cutover)
 
@@ -423,6 +427,12 @@ confirmed during the relevant PR.
 
 One line per completed milestone — detail lives in git + the sections above.
 
+- **2026-06-09 — PR-13 LIVE + burn-in GREEN.** Trimmed raw-vendor 5m/1d Turso→queue double-write (`#26`,
+  gated `AGG_COMPUTE_IN_PG`); PG is sole raw-vendor aggregator. Post-resume verification: queue lag 0 /
+  DLQ 0 / presence 100% / raw landing < 2 min; reconciler `agg_5m --days=2` 20010/20010 and `agg_1d`
+  (June) 261/261, 0 value-mismatches. Also dropped the now-unreachable `publishSession` session-only
+  branch (all `updateSessionResult` callers emit the combined `publishPoll` message); remaining
+  dead-publisher cleanup deferred to Phase 4 (it's the `AGG_COMPUTE_IN_PG=false` rollback path).
 - **2026-06-09 — PR-13a LIVE.** Readings served FROM PG (`#24`); `READINGS_READS_FROM_PG` flipped true in
   prod (Turso = fallback). Post-cutover verification sweep GREEN: `qstash-health` lag 0 / DLQ 0 /
   presence 100% / raw landing < 1 min; reconciler `agg_5m --days=2` and `agg_1d` (all 2026) 0 mismatches;

@@ -960,6 +960,23 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 - **Verified**: Raw `point_readings` complete vs Turso (zero deficits, `TZ=UTC`); `agg_5m`/`agg_1d` parity at 0 mismatches; live QStash lag 0 / DLQ 0
 - **Next**: Phase 2 — readings reads → PG (`READINGS_READS_FROM_PG`, shadow-diff first), then trim Turso publishers, then the Sydney region move, then Turso decommission
 
+## 8–9 June 2026
+
+### Readings Served from Postgres (Phase 2) — CUT OVER
+
+- **Readings-read shadow (PR-12, #19)**: `READINGS_READS_FROM_PG` ON = serve Turso + a concurrent best-effort PG read + compare + log `[READINGS-SHADOW] DIVERGE`. The live read path is the raw SQL in `/api/history` (extracted to `lib/history/build-series.ts`, mirrored by `lib/history/readings-pg.ts`) plus the two admin point-readings routes. **generator-events deferred** (unbounded full-history hack — rewrite to a bounded range before migrating)
+- **Pre-existing bugs fixed during burn-in (#21, #22, #23)**: admin pagination `COUNT(*)` on huge tables → index-friendly existence check (10–13s → <1s); `/api/history?interval=1d` 500 (`data_quality` absent on PG `agg_1d` → emit `NULL`); sessions join cast to use the PK index (9.5s → 0.6s); composite-system 1d day-shift on the serve path — PG 1d fetch had no `ORDER BY` (stored data was fine), fixed with `ORDER BY` + a defensive series sort
+- **Serve from PG (PR-13a, #24)**: `readings-shadow.ts` → `readings-serve.ts`; `shadowServeReadings` → `serveReadings(label, pgServe, tursoServe)` — one store read on the happy path, Turso fallback only on error/`SHADOW_SKIP` (logged `[READINGS-SERVE]`). `READINGS_READS_FROM_PG` flipped **true** in prod — **Postgres now serves `/api/history` + admin point-readings**, Turso = fallback; admin readings ~10× faster. Rollback = flip false (instant)
+- **Trim the raw-vendor double-write (PR-13, #26)**: With PG self-computing raw-vendor 5m/1d (`AGG_COMPUTE_IN_PG`), the Turso→queue→PG path for those aggregates was a redundant double-write — gated off behind that flag. The raw-vendor 5m publish became vendor-conditional (5m-native Amber/Enphase keep publishing), and the receiver's raw-vendor 5m / all-1d inserts became straggler-safe logging no-ops. **Raw, sessions, 5m-native, and Turso's own backup aggregates untouched.** Rollback = `AGG_COMPUTE_IN_PG=false` (restores publish + intake exactly)
+- **`publishSession` cleanup**: Dropped the now-unreachable session-only publish branch in `updateSessionResult` — every poll (including 5m-native Amber/Enphase, which already route through the `PollCollector`) emits one combined session+observations message via `publishPoll`. The remaining dead publishers (`publishObservationBatch`, the gated 1d Turso→PG mirror) are deferred to Phase 4, where they serve as the `AGG_COMPUTE_IN_PG=false` rollback path
+- **Config cleanup (#25)**: Removed the vestigial `USER_SECRETS` credential mechanism
+
+### Current State (as of 2026-06-09)
+
+- **Live in production**: Config authority on PG; **readings served from PG** (Turso = fallback); **PG is the sole raw-vendor aggregator** (`AGG_COMPUTE_IN_PG`); UUIDv7 text session ids; middleware auth enforcement
+- **PR-13 burn-in GREEN**: queue lag 0 / DLQ 0 / presence 100% / raw landing < 2 min; reconciler `agg_5m --days=2` 20010/20010 and `agg_1d` (June) 261/261, **0 value-mismatches**
+- **Next**: Phase 3 — Sydney region move (Vercel `syd1` + PlanetScale `ap-southeast-2` + env re-point), then Phase 4 — Turso decommission (gated on raw-durability-off-Turso)
+
 ---
 
 # Major Architectural Milestones
@@ -977,6 +994,7 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 9. **QStash observations queue** (29 November): Async best-effort mirror pipeline
 10. **PlanetScale Postgres schema** (29 November): Second store introduced; db dirs split turso/planetscale
 11. **Postgres-primary config cutover** (7 June 2026): PG becomes the config system-of-record; Turso → disposable backup
+12. **Postgres-primary readings cutover** (9 June 2026): PG serves all readings and is the sole raw-vendor aggregator; Turso → fallback only (raw + sessions best-effort backup)
 
 ## Vendor Integration Timeline
 

@@ -5,8 +5,8 @@
  * message at session close — the completed session plus all of its readings,
  * chunked if the serialized message would exceed QStash's ~1MB size limit.
  *
- * This replaces the per-insert `publishObservationBatch` + separate
- * `publishSession` flow with one co-enqueued message per chunk.
+ * This is the sole publish path for polls: one co-enqueued session+readings
+ * message per chunk (replacing the old per-insert + separate-session flow).
  */
 
 import {
