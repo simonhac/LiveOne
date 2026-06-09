@@ -1044,9 +1044,9 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 
 ## Critical Incidents
 
-1. **Migration 0016** (3 November): 345K records lost, 8-hour recovery
-2. **Migration 0034/0035** (10 November): Energy delta corruption
-3. **Migration 0036** (16 November): Point_info corruption
+1. **Migration 0016** (3 November): 345K records lost, 8-hour recovery — A composite-primary-key migration dropped tables without validating the copy, losing 345,456 `point_readings`; all rows were fully restored from backup over an 8+ hour recovery with no permanent data loss.
+2. **Migration 0034/0035** (10 November): Energy delta corruption — Faulty energy-delta calculations corrupted aggregate energy values; the affected aggregates were restored from backup with no permanent data loss.
+3. **Migration 0036** (16 November): Point_info corruption — A migration corrupted `point_info` records; the data was fully repaired in place via a follow-up data-repair migration with no permanent data loss.
 
 ---
 
