@@ -75,7 +75,8 @@ chunked by month/quarter because one multi-month Turso response exceeds the libs
   Turso raw backup survives with config rows living only in PG. Config rollback relies on **PG PITR** +
   a pre-cutover Turso snapshot. _[config writes done; Turso-FK drop is decommission-time]_
 - **(C) Dev = shared PlanetScale dev branch** + hard guardrails + PITR backstop.
-- **(D) Move Vercel + PlanetScale to Sydney.** Turso stays in Tokyo, decommissioned soon.
+- **(D) Move PlanetScale, then Vercel, to Sydney** — **separate windows** _(sequencing set 2026-06-09)_:
+  Phase 3 moves PlanetScale only (compute→`syd1` is a later window). Turso stays in Tokyo, decommissioned soon.
 - **(F) Turso = transitional backup of raw + sessions only** _(2026-06-06)_ — no lasting status. Config
   **and** all aggregates leave Turso entirely (PG is the sole aggregator); design as if **PG is the only
   store**, with the inline Turso write an extra best-effort backup deletable with zero architectural
@@ -188,12 +189,28 @@ Turso still computes its own local 5m/1d (untouched) so the reconciler stays a v
 `AGG_COMPUTE_IN_PG=false` restores publish + intake exactly. Removed branches retained as no-ops until
 the Phase-4 cleanup.
 
-### Phase 3 — Region move to Sydney (parallel ops; coordinate with the readings cutover)
+### Phase 3 — Region move to Sydney (PlanetScale only; Vercel→`syd1` deferred)
 
-Provision PlanetScale Postgres in **Sydney (ap-southeast-2)** (data via backup/branch restore), set
-Vercel `regions` to **`syd1`** (`vercel.json`), re-point env vars. Turso stays in Tokyo (decommissioning).
-Sequence the data move with the read cutover so compute + data stay co-located. Mostly cloud-ops + a
-one-line `vercel.json` change.
+**Scope:** move PlanetScale to **Sydney (`aws-ap-southeast-2`)** and upsize the lone us-east node (`PS-5`,
+`replicas: 0`) to **3-node HA**. **Vercel stays in Tokyo (`hnd1`) this window** — `vercel.json` unchanged;
+compute→`syd1` is a later window. Env-only, no app code. Turso stays in Tokyo (decommissioning).
+
+**Mechanism (verified 2026-06-09).** Cross-region _physical_ restore is **impossible** — `pscale branch
+create` rejects `--region` with `--restore` (backups restore to their original region), so the bulk copy is
+a **`pgcopydb` logical clone** into a new Sydney **production branch** of `liveone`. HA is set _after_
+create, not at it: change-request `cluster_size ≥ PS_10` + `replicas: 2` (= 3 nodes), match the source PG
+`--major-version`, then `pscale branch promote`. Plain `clone` — **no `--follow`/CDC**: the queue + live
+Turso already are the change-capture.
+
+**Cutover.** Pre-stage the HA branch off-path, then: **pause the queue** (collection keeps writing Turso;
+QStash buffers — safe, it retains for days vs a minutes-long pause) → `pgcopydb clone` us-east→Sydney
+(clone captures ≤pause, queue holds >pause, so the happy path needs no heal) → re-point
+`PLANETSCALE_DATABASE_URL` / `_MIGRATIONS` / `PLANETSCALE_PRODUCTION_HOST` + redeploy (the ≤10-min serving
+blip; reads fall back to Turso) → **resume** → drain. **Then check** (`qstash-health` lag/DLQ 0,
+`gap-map-raw-readings` 0 deficits, `reconcile-agg-values` 0 mismatches); **only if RED**, heal from live
+Turso (`gap-map-raw-readings.ts --apply` + `recompute-pg-range.ts --apply`). Zero collection downtime holds
+because the poll's only PG write — `polling_status` — is swallowed (`lib/polling-utils.ts`), so readings
+land in Turso + queue regardless. **Rollback:** flip env back to us-east, kept hot through a 24–48h burn-in.
 
 ### Phase 4 — Turso decommission
 
