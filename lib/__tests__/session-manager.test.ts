@@ -12,7 +12,7 @@ jest.mock("@/lib/db/planetscale", () => ({ planetscaleDb: null }));
 
 // Session publishing is out of scope here.
 jest.mock("@/lib/observations/session-publisher", () => ({
-  publishSession: jest.fn(async () => undefined),
+  buildSessionPayload: jest.fn(() => ({})),
 }));
 
 import { sessionManager } from "@/lib/session-manager";

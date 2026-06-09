@@ -4,10 +4,7 @@ import { eq } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import { transformForStorage } from "@/lib/json";
 import type { SessionInfo } from "@/lib/point/point-manager";
-import {
-  publishSession,
-  buildSessionPayload,
-} from "@/lib/observations/session-publisher";
+import { buildSessionPayload } from "@/lib/observations/session-publisher";
 import { publishPoll } from "@/lib/observations/poll-collector";
 import type { RawObservationInput } from "@/lib/observations/publisher";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -150,7 +147,7 @@ export class SessionManager {
       response?: any | null;
       numRows: number;
     },
-    pollObservations?: RawObservationInput[],
+    pollObservations: RawObservationInput[],
   ): Promise<void> {
     try {
       // ⚠️  CRITICAL: Transform response data before storage
@@ -211,25 +208,15 @@ export class SessionManager {
           createdAt: s.createdAt,
         };
 
-        if (pollObservations !== undefined) {
-          // Poll path: emit a single combined message (session + all readings).
-          // The session is included even when there are zero readings.
-          const system = await SystemsManager.getInstance().getSystem(
-            s.systemId,
+        // Emit a single combined message (session + all readings).
+        // The session is included even when there are zero readings.
+        const system = await SystemsManager.getInstance().getSystem(s.systemId);
+        if (system) {
+          await publishPoll(
+            system,
+            buildSessionPayload(sessionPublishInput, system.timezoneOffsetMin),
+            pollObservations,
           );
-          if (system) {
-            await publishPoll(
-              system,
-              buildSessionPayload(
-                sessionPublishInput,
-                system.timezoneOffsetMin,
-              ),
-              pollObservations,
-            );
-          }
-        } else {
-          // Legacy callers: session-only publish (unchanged behavior).
-          await publishSession(sessionPublishInput);
         }
       }
     } catch (error) {
