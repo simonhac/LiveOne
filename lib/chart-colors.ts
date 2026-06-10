@@ -4,13 +4,6 @@
  */
 
 import { stemSplit } from "@/lib/identifiers/logical-path";
-import {
-  interpolateViridis,
-  interpolatePlasma,
-  interpolateTurbo,
-  interpolateRdYlBu,
-  interpolateGreens,
-} from "d3-scale-chromatic";
 
 // Fixed colors for specific series types
 export const CHART_COLORS = {
@@ -18,6 +11,7 @@ export const CHART_COLORS = {
   solar: {
     primary: "rgb(254, 240, 138)", // yellow-200 - Solar Local
     secondary: "rgb(245, 158, 11)", // amber-500 - Solar Remote
+    residual: "rgb(202, 138, 4)", // yellow-600 - Solar Residual (unmetered remainder)
   },
 
   // Battery (green)
@@ -99,8 +93,10 @@ export function getColorForPath(path: string, label?: string): string {
     return CHART_COLORS.battery.soc;
   }
 
-  // Check for special identifiers
-  if (path === "rest_of_house") {
+  // Check for special identifiers — synthetic "rest of house" load.
+  // Matches both the in-memory series id ("rest-of-house") and the persisted
+  // canonical path ("load.rest-of-house") used by the energy-flow matrix.
+  if (path === "rest-of-house" || path === "load.rest-of-house") {
     return CHART_COLORS.restOfHouse;
   }
 
@@ -117,9 +113,9 @@ export function getColorForPath(path: string, label?: string): string {
 
   // Solar
   if (type === "source" && subtype === "solar") {
-    return extension === "remote"
-      ? CHART_COLORS.solar.secondary
-      : CHART_COLORS.solar.primary;
+    if (extension === "remote") return CHART_COLORS.solar.secondary;
+    if (extension === "residual") return CHART_COLORS.solar.residual;
+    return CHART_COLORS.solar.primary;
   }
 
   // Battery
@@ -151,38 +147,5 @@ export function getColorForPath(path: string, label?: string): string {
   return "rgb(156, 163, 175)"; // gray-400
 }
 
-/**
- * Heatmap color palettes using d3-scale-chromatic
- * All palettes are scientifically designed for data visualization
- */
-export const HEATMAP_PALETTES = {
-  viridis: {
-    name: "Viridis",
-    description:
-      "Purple → Green → Yellow (perceptually uniform, colorblind-safe)",
-    fn: interpolateViridis,
-  },
-  plasma: {
-    name: "Plasma",
-    description:
-      "Purple → Pink → Orange → Yellow (vibrant, perceptually uniform)",
-    fn: interpolatePlasma,
-  },
-  turbo: {
-    name: "Turbo",
-    description: "Blue → Cyan → Green → Yellow → Red (high contrast)",
-    fn: interpolateTurbo,
-  },
-  rdylbu: {
-    name: "Cool-Warm",
-    description: "Blue → Yellow → Red (diverging)",
-    fn: interpolateRdYlBu,
-  },
-  greens: {
-    name: "Greens",
-    description: "Light → Dark Green (sequential)",
-    fn: interpolateGreens,
-  },
-} as const;
-
-export type HeatmapPaletteKey = keyof typeof HEATMAP_PALETTES;
+// Heatmap palettes live in `lib/heatmap-colors.ts` to keep this module free of the heavy
+// d3-scale-chromatic dependency.

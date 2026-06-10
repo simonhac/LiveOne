@@ -399,4 +399,84 @@ describe("calculateEnergyFlowMatrix", () => {
       color: "rgb(128, 0, 128)",
     });
   });
+
+  it("does not double-count solar: uses leaves over the bare total, attributing correctly", () => {
+    // System exposes a bare total source.solar (= local + remote) AND the two leaves, plus a
+    // discharging battery. Summing bare+leaves would inflate solar's share and starve the
+    // battery; using the leaves attributes the load truthfully.
+    const timestamps = [
+      new Date("2025-01-01T12:00:00Z"),
+      new Date("2025-01-01T13:00:00Z"),
+    ];
+
+    const data: ProcessedSiteData = {
+      generation: {
+        timestamps,
+        series: [
+          {
+            id: "1/source.solar/power.avg",
+            description: "Solar",
+            data: [8, 8],
+            color: "y",
+          },
+          {
+            id: "1/source.solar.local/power.avg",
+            description: "Solar Local",
+            data: [5, 5],
+            color: "y1",
+          },
+          {
+            id: "1/source.solar.remote/power.avg",
+            description: "Solar Remote",
+            data: [3, 3],
+            color: "y2",
+          },
+          {
+            id: "1/bidi.battery.discharge/power.avg",
+            description: "Battery Discharge",
+            data: [2, 2],
+            color: "g",
+          },
+        ],
+        mode: "power",
+      },
+      load: {
+        timestamps,
+        series: [
+          {
+            id: "1/load/power.avg",
+            description: "Load",
+            data: [10, 10],
+            color: "p",
+          },
+        ],
+        mode: "power",
+      },
+    };
+
+    const result = calculateEnergyFlowMatrix(data)!;
+    expect(result).not.toBeNull();
+
+    // The bare total is dropped; the two leaves stand in for solar (5 + 3 == 8 → no residual).
+    const solarIds = result.sources
+      .map((s) => s.id)
+      .filter((id) => id.includes("solar"));
+    expect(solarIds).toEqual(["source.solar.local", "source.solar.remote"]);
+
+    const localIdx = result.sources.findIndex(
+      (s) => s.id === "source.solar.local",
+    );
+    const remoteIdx = result.sources.findIndex(
+      (s) => s.id === "source.solar.remote",
+    );
+    const batteryIdx = result.sources.findIndex((s) =>
+      s.id.includes("battery"),
+    );
+
+    // True 8 kW solar (5+3) and 2 kW battery shares of the 10 kWh load — not inflated.
+    expect(result.sourceTotals[localIdx]).toBeCloseTo(5, 6);
+    expect(result.sourceTotals[remoteIdx]).toBeCloseTo(3, 6);
+    expect(result.sourceTotals[batteryIdx]).toBeCloseTo(2, 6);
+    expect(result.totalEnergy).toBeCloseTo(10, 6);
+  });
 });

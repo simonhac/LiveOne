@@ -1,4 +1,7 @@
 import { ProcessedSiteData } from "./site-data-processor";
+import { computeFlowMatrix, FlowSeries } from "./aggregation/flow-matrix-core";
+import { resolveSolarSources } from "./aggregation/flow-series";
+import { getColorForPath } from "./chart-colors";
 
 /**
  * Represents a source or load in the energy flow matrix
@@ -7,6 +10,13 @@ export interface EnergyFlowNode {
   id: string;
   label: string;
   color: string;
+}
+
+/** Human label for a canonical solar path lacking an upstream-provided description. */
+function solarLabel(stem: string): string {
+  const prefix = "source.solar.";
+  const ext = stem.startsWith(prefix) ? stem.slice(prefix.length) : "";
+  return ext ? `Solar ${ext.charAt(0).toUpperCase()}${ext.slice(1)}` : "Solar";
 }
 
 /**
@@ -65,64 +75,59 @@ export function calculateEnergyFlowMatrix(
     return null;
   }
 
-  // Aggregate solar series into a single "Solar" source
-  const solarSeriesIndices: number[] = [];
-  const nonSolarSeries: typeof generationPowerSeries = [];
+  // Resolve solar sources: prefer per-array leaves (source.solar.local/.remote/…) over the
+  // bare total to avoid double counting, adding a synthetic `source.solar.residual` for any
+  // unmetered shortfall (see lib/aggregation/flow-series.ts). Non-solar generation (battery
+  // discharge, grid import) passes through unchanged, keeping its original order.
+  const stemOfId = (id: string): string => id.split("/")[1] ?? id;
 
-  generationPowerSeries.forEach((series, index) => {
+  const solarOriginalByStem = new Map<
+    string,
+    { id: string; description: string; color: string; data: (number | null)[] }
+  >();
+  const solarInput: FlowSeries[] = [];
+  for (const series of generationPowerSeries) {
+    if (!series.id.includes("source.solar")) continue;
+    const stem = stemOfId(series.id);
+    if (!solarOriginalByStem.has(stem)) solarOriginalByStem.set(stem, series);
+    solarInput.push({ path: stem, power: series.data });
+  }
+  const resolvedSolar = resolveSolarSources(solarInput);
+
+  // Rebuild the generation series list: non-solar in place; the resolved solar nodes inserted
+  // where the first solar series appeared.
+  const aggregatedGeneration: {
+    id: string;
+    description: string;
+    color: string;
+    data: (number | null)[];
+  }[] = [];
+  let solarInserted = false;
+  for (const series of generationPowerSeries) {
     if (series.id.includes("source.solar")) {
-      solarSeriesIndices.push(index);
+      if (solarInserted) continue;
+      solarInserted = true;
+      for (const solar of resolvedSolar) {
+        const original = solarOriginalByStem.get(solar.path);
+        aggregatedGeneration.push({
+          id: solar.path,
+          description: original?.description ?? solarLabel(solar.path),
+          color: original?.color ?? getColorForPath(solar.path),
+          data: solar.power,
+        });
+      }
     } else {
-      nonSolarSeries.push(series);
-    }
-  });
-
-  // Create aggregated solar data if we have multiple solar series
-  const aggregatedGeneration = [...generationPowerSeries];
-  let aggregatedSolarIndex = -1;
-
-  if (solarSeriesIndices.length > 0) {
-    // Get the first solar series as the base
-    const firstSolarSeries = generationPowerSeries[solarSeriesIndices[0]];
-
-    // Create aggregated solar series
-    const aggregatedSolarData = firstSolarSeries.data.map((_, i) => {
-      let sum = 0;
-      let hasNull = false;
-
-      for (const solarIdx of solarSeriesIndices) {
-        const value = generationPowerSeries[solarIdx].data[i];
-        if (value === null) {
-          hasNull = true;
-          break;
-        }
-        sum += value;
-      }
-
-      return hasNull ? null : sum;
-    });
-
-    // Replace first solar series with aggregated data
-    aggregatedGeneration[solarSeriesIndices[0]] = {
-      id: "source.solar",
-      description: "Solar",
-      color: firstSolarSeries.color, // Use first solar's color
-      data: aggregatedSolarData,
-    };
-
-    aggregatedSolarIndex = solarSeriesIndices[0];
-
-    // Remove other solar series (in reverse order to maintain indices)
-    for (let i = solarSeriesIndices.length - 1; i > 0; i--) {
-      aggregatedGeneration.splice(solarSeriesIndices[i], 1);
-      // Adjust aggregated index if needed
-      if (solarSeriesIndices[i] < aggregatedSolarIndex) {
-        aggregatedSolarIndex--;
-      }
+      aggregatedGeneration.push({
+        id: series.id,
+        description: series.description,
+        color: series.color,
+        data: series.data,
+      });
     }
   }
 
-  // Extract source and load metadata (using filtered power series only)
+  // Extract source and load metadata (using filtered power series only).
+  // The browser owns node identity/labels/colors; the pure core owns only the math.
   const sources: EnergyFlowNode[] = aggregatedGeneration.map((s) => ({
     id: s.id,
     label: s.description,
@@ -135,90 +140,31 @@ export function calculateEnergyFlowMatrix(
     color: s.color,
   }));
 
-  // Initialize matrix with zeros
-  const matrix: number[][] = Array(sources.length)
-    .fill(0)
-    .map(() => Array(loads.length).fill(0));
+  // Delegate the integration to the shared, pure core so this live path and the engine's
+  // daily recompute (lib/db/planetscale/flow-matrix-pg.ts) compute identical values by
+  // construction. Identity is carried as `path`; results map back by index.
+  const sourceSeries: FlowSeries[] = aggregatedGeneration.map((s) => ({
+    path: s.id,
+    power: s.data,
+  }));
+  const loadSeries: FlowSeries[] = loadPowerSeries.map((s) => ({
+    path: s.id,
+    power: s.data,
+  }));
 
-  const timestamps = generation.timestamps;
-
-  // For each time interval, calculate energy and distribute proportionally
-  for (let i = 0; i < timestamps.length - 1; i++) {
-    // Calculate time delta in hours
-    const time1 = timestamps[i].getTime();
-    const time2 = timestamps[i + 1].getTime();
-    const deltaHours = (time2 - time1) / (1000 * 60 * 60);
-
-    // Calculate total generation power at this instant (using aggregated data)
-    // Only count sources with non-null values
-    let totalGenPower = 0;
-
-    for (const sourceSeries of aggregatedGeneration) {
-      const power = sourceSeries.data[i];
-      if (power !== null) {
-        totalGenPower += power;
-      }
-    }
-
-    // Skip this interval if no generation
-    if (totalGenPower <= 0) {
-      continue;
-    }
-
-    // For each source, calculate its proportion and distribute to loads
-    for (let s = 0; s < sources.length; s++) {
-      const sourceSeries = aggregatedGeneration[s];
-      const power1 = sourceSeries.data[i];
-      const power2 = sourceSeries.data[i + 1];
-
-      // Skip if either power value is null
-      if (power1 === null || power2 === null) {
-        continue;
-      }
-
-      // This source's proportion of total generation at this instant
-      const sourceProportion = power1 / totalGenPower;
-
-      // For each load, calculate energy and distribute proportionally
-      for (let l = 0; l < loads.length; l++) {
-        const loadSeries = loadPowerSeries[l];
-        const loadPower1 = loadSeries.data[i];
-        const loadPower2 = loadSeries.data[i + 1];
-
-        // Skip if either power value is null
-        if (loadPower1 === null || loadPower2 === null) {
-          continue;
-        }
-
-        // Calculate energy for this load in this interval (trapezoidal rule)
-        const loadIntervalEnergy = ((loadPower1 + loadPower2) / 2) * deltaHours;
-
-        // Distribute this load's energy proportionally to this source
-        matrix[s][l] += loadIntervalEnergy * sourceProportion;
-      }
-    }
-  }
-
-  // Calculate row and column totals
-  const sourceTotals = matrix.map((row) =>
-    row.reduce((sum, val) => sum + val, 0),
-  );
-  const loadTotals = Array(loads.length).fill(0);
-  for (let l = 0; l < loads.length; l++) {
-    for (let s = 0; s < sources.length; s++) {
-      loadTotals[l] += matrix[s][l];
-    }
-  }
-
-  const totalEnergy = sourceTotals.reduce((sum, val) => sum + val, 0);
+  const result = computeFlowMatrix({
+    timestamps: generation.timestamps.map((t) => t.getTime()),
+    sources: sourceSeries,
+    loads: loadSeries,
+  });
 
   return {
     sources,
     loads,
-    matrix,
-    sourceTotals,
-    loadTotals,
-    totalEnergy,
+    matrix: result.matrix,
+    sourceTotals: result.sourceTotals,
+    loadTotals: result.loadTotals,
+    totalEnergy: result.totalEnergy,
   };
 }
 

@@ -141,7 +141,7 @@ export function generateSeriesConfig(
     // Add rest of house placeholder (after loads, at the bottom of the load stack)
     // Note: label and color are not used - site-data-processor provides full SeriesData
     configs.push({
-      id: "rest_of_house",
+      id: "rest-of-house",
       label: "", // Not used - comes from site-data-processor
       color: "", // Not used - comes from site-data-processor
       order: loadSeries.length,

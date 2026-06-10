@@ -14,8 +14,9 @@ import {
   aggregate1dForPoint,
   dayToUnixRangeForAggregation,
 } from "@/lib/aggregation/point-aggregates";
-import { AGG_COMPUTE_IN_PG } from "@/lib/db/routing";
+import { AGG_COMPUTE_IN_PG, FLOW_MATRIX_COMPUTE_IN_PG } from "@/lib/db/routing";
 import { recompute1dForDayBestEffort } from "@/lib/db/planetscale/aggregate-points-pg";
+import { recomputeFlowMatrixForDayBestEffort } from "@/lib/db/planetscale/flow-matrix-pg";
 
 // Re-exported from the shared, db-free aggregation module (kept here for backwards
 // compatibility with existing importers of this path).
@@ -516,6 +517,10 @@ export async function aggregateRange(
             if (computeInPg) {
               // Shadow: PG computes its own 1d from PG 5m (independent of result.data).
               await recompute1dForDayBestEffort(system, day);
+              // Materialize the day's energy-flow matrix from the (now settled) PG 5m.
+              if (FLOW_MATRIX_COMPUTE_IN_PG) {
+                await recomputeFlowMatrixForDayBestEffort(system, day);
+              }
             } else if (publishToPg && pollingSystem) {
               // Mirror the Turso-computed 1d over the queue.
               const [dayStartUnix] = dayToUnixRangeForAggregation(

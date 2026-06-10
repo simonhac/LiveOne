@@ -436,10 +436,10 @@ function calculateRestOfHouse(
       `[Site Processor] Case 1: Added rest of house (master - children)`,
     );
     return {
-      id: "rest_of_house",
+      id: "rest-of-house",
       description: REST_OF_HOUSE_LABEL,
       data: restOfHouse,
-      color: getColorForPath("rest_of_house"),
+      color: getColorForPath("rest-of-house"),
     };
   }
 
@@ -470,10 +470,10 @@ function calculateRestOfHouse(
       `[Site Processor] Case 3: Added rest of house (generation - battery - grid - children)`,
     );
     return {
-      id: "rest_of_house",
+      id: "rest-of-house",
       description: REST_OF_HOUSE_LABEL,
       data: restOfHouse,
-      color: getColorForPath("rest_of_house"),
+      color: getColorForPath("rest-of-house"),
     };
   }
 
@@ -522,7 +522,7 @@ function processMode(
 
   // Process each configured series
   for (const config of seriesConfig) {
-    if (config.id === "rest_of_house" && mode === "load") continue;
+    if (config.id === "rest-of-house" && mode === "load") continue;
 
     const dataSeries = seriesMap.get(config.id);
     if (!dataSeries) {

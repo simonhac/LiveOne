@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/chart-colors";
+import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/heatmap-colors";
 import type { ZonedDateTime } from "@internationalized/date";
 import { toZoned } from "@internationalized/date";
 import { getUnitDisplay } from "@/lib/point/unit-display";
