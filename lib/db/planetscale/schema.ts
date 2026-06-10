@@ -35,6 +35,7 @@
 import {
   pgTable,
   serial,
+  bigserial,
   integer,
   bigint,
   text,
@@ -46,6 +47,7 @@ import {
   primaryKey,
   timestamp,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 // ============================================================================
 // Systems table - stores inverter system information
@@ -373,6 +375,48 @@ export const shareTokens = pgTable(
 );
 
 // ============================================================================
+// Observations outbox - the transactional "PG bin before the queue" (Phase 4).
+//
+// A poll's built QueueMessage(s) are recorded here durably; a relay
+// (app/api/cron/relay-outbox) drains unpublished rows to QStash and marks them
+// published once accepted. This makes raw durability live on Postgres without
+// relying on the inline Turso write — see docs/architecture/ENGINE-WEB-SEPARATION.md
+// §6.4 and docs/turso-pg-migration.md Phase 4. Gated by WRITE_OUTBOX; written in
+// parallel with (a tee of) the live direct enqueue during the soak.
+// ============================================================================
+export const observationsOutbox = pgTable(
+  "observations_outbox",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    systemId: integer("system_id").notNull(),
+    // NULL for the no-collector publishObservationBatch path (no session).
+    sessionId: text("session_id"),
+    // Chunk index within a poll's multi-message set (0 for single-message paths).
+    seq: integer("seq").notNull().default(0),
+    // The full QueueMessage (env, systemId, batchTime, observations?, session?),
+    // republished verbatim by the relay.
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    // NULL until the relay enqueues it to QStash and QStash accepts it.
+    publishedAt: timestamp("published_at"),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+  },
+  (table) => ({
+    // The relay only ever scans unpublished rows, oldest first. A partial index
+    // keeps that scan tiny even as published history accumulates before GC.
+    unpublishedIdx: index("outbox_unpublished_idx")
+      .on(table.createdAt)
+      .where(sql`published_at IS NULL`),
+    // Dedup poll-path rows on publish retry. publishObservationBatch rows have no
+    // session, so the unique only covers session-bearing rows.
+    sessionSeqUnique: uniqueIndex("outbox_session_seq_unique")
+      .on(table.systemId, table.sessionId, table.seq)
+      .where(sql`session_id IS NOT NULL`),
+  }),
+);
+
+// ============================================================================
 // Type exports
 // ============================================================================
 export type System = typeof systems.$inferSelect;
@@ -395,3 +439,5 @@ export type PointReadingAgg1d = typeof pointReadingsAgg1d.$inferSelect;
 export type NewPointReadingAgg1d = typeof pointReadingsAgg1d.$inferInsert;
 export type ShareToken = typeof shareTokens.$inferSelect;
 export type NewShareToken = typeof shareTokens.$inferInsert;
+export type ObservationsOutbox = typeof observationsOutbox.$inferSelect;
+export type NewObservationsOutbox = typeof observationsOutbox.$inferInsert;
