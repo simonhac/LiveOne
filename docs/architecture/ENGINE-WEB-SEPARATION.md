@@ -122,12 +122,22 @@ store, not between collection and **all** durability.
 
 ### 6.4 Recommended target for LiveOne
 
-1. **Make Postgres itself the outbox** (post-migration). The poll does
-   `BEGIN; insert point_readings; insert observations_outbox; COMMIT;` — one local, coordinated
-   transaction. This is a deliberate direct DB write, and it's the boring correct answer.
-2. A **relay** drains the outbox → QStash → the existing idempotent receiver (and any tee'd consumer).
-   The enqueue is now derived from a committed row and retried until acked — closing the swallowed-
-   enqueue and crash-before-publish windows. This **is** the Phase-4 "raw durability off Turso" gate.
+1. **Make Postgres itself the outbox** (post-migration), carrying the **message** — not a serving-store
+   write. The poll commits **one `observations_outbox` row holding the built `QueueMessage`** (the _same_
+   payload that goes on the queue: `env, systemId, batchTime, observations?, session?`) and nothing else.
+   **Collection never writes the serving store (`point_readings`/aggregates) directly** _(locked
+   2026-06-10)_ — that is the whole point: data collection stays **decoupled from the source of truth**,
+   with the outbox as the only durable on-ramp. The committed outbox row is the durable PG capture
+   (recoverable by replay), which is all the durability gate needs; the first-write is unavoidable, but
+   it's a **write-only buffer**, not the read model. _An earlier draft wrote `point_readings` directly at
+   poll time (atomic with the outbox row) to also kill raw read-after-write lag — **rejected**: it couples
+   collection to the source of truth and breaks the §6.1 "receiver is the single writer of
+   `point_readings`" invariant. If the relay-cadence materialisation lag ever matters, run the relay more
+   often / inline — never a direct serving-store write._
+2. A **relay** drains the outbox → QStash → the existing idempotent **receiver, which materialises
+   `point_readings` + aggregates** (the receiver stays the single writer of the source of truth). The
+   enqueue is now derived from a committed row and retried until acked — closing the swallowed-enqueue and
+   crash-before-publish windows. This **is** the Phase-4 "raw durability off Turso" gate.
 3. **Keep the queue as the fan-out / decoupling transport** — its value is real and unchanged. PG (with
    PITR) becomes the replayable source-of-truth; "tee a new sink" = "replay the outbox/PG into it."
 4. **Keep Turso until raw-durability-on-PG is proven** (decision F). Turso + `gap-map` is already a

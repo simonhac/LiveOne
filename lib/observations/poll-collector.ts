@@ -18,6 +18,8 @@ import { Observation, QueueMessage, Session } from "./types";
 import { SystemWithPolling } from "@/lib/systems-manager";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 import { buildObservations, RawObservationInput } from "./publisher";
+import { WRITE_OUTBOX } from "@/lib/db/routing";
+import { persistOutbox } from "./outbox";
 
 /**
  * Default maximum serialized message size in bytes.
@@ -170,6 +172,13 @@ export async function publishPoll(
 
   try {
     const messages = buildPollMessages({ system, session, inputs });
+
+    // Phase 4: durably capture the messages in PG first (a tee, in parallel with
+    // the live direct enqueue below). Best-effort — never throws — so the direct
+    // enqueue and the poll proceed unchanged when the flag is off or PG is down.
+    if (WRITE_OUTBOX) {
+      await persistOutbox(messages);
+    }
 
     const queue = qstash.queue({ queueName: OBSERVATIONS_QUEUE_NAME });
     for (const message of messages) {

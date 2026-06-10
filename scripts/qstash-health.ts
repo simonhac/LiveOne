@@ -81,6 +81,29 @@ async function main() {
   console.log(
     `  raw rows last 1h=${r.raw_1h}  last raw at=${r.last_raw_at ? new Date(r.last_raw_at).toISOString() : "—"}  age=${ageMin == null ? "n/a" : ageMin + " min"} (alert if >15)`,
   );
+
+  // Outbox relay backlog/age (Phase 4). Separate query so a not-yet-migrated
+  // table doesn't fail the mirror-health snapshot above.
+  console.log(line);
+  console.log("Outbox relay (Phase 4):");
+  try {
+    const ob = await pool.query(`
+      SELECT
+        (SELECT count(*)::int FROM observations_outbox WHERE published_at IS NULL) AS backlog,
+        (SELECT min(created_at) FROM observations_outbox WHERE published_at IS NULL) AS oldest_at,
+        (SELECT count(*)::int FROM observations_outbox WHERE published_at IS NOT NULL) AS published
+    `);
+    const o = ob.rows[0];
+    const oldestAgeMin = o.oldest_at
+      ? Math.round((Date.now() - new Date(o.oldest_at).getTime()) / 60000)
+      : null;
+    console.log(
+      `  unpublished backlog=${o.backlog}  oldest=${o.oldest_at ? new Date(o.oldest_at).toISOString() : "—"}  age=${oldestAgeMin == null ? "n/a" : oldestAgeMin + " min"} (alert if >10)  published(retained)=${o.published}`,
+    );
+  } catch (e) {
+    console.log(`  outbox query failed (table missing?): ${String(e)}`);
+  }
+
   console.log(line);
   await pool.end();
 }

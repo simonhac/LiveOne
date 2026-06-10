@@ -16,10 +16,17 @@
     {
       "path": "/api/cron/monitor-observations",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/relay-outbox",
+      "schedule": "* * * * *"
     }
   ],
   "functions": {
     "app/api/cron/minutely/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/cron/relay-outbox/route.ts": {
       "maxDuration": 60
     },
     "app/api/cron/db-stats/route.ts": {

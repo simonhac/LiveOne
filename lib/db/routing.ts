@@ -66,6 +66,19 @@ export const READINGS_READS_FROM_PG = envFlag("READINGS_READS_FROM_PG");
 export const AGG_COMPUTE_IN_PG = envFlag("AGG_COMPUTE_IN_PG");
 
 /**
+ * Phase 4 — PG raw durability. When ON, each poll's built QueueMessage(s) are
+ * also recorded in the `observations_outbox` table (a tee, in parallel with the
+ * unchanged live direct enqueue), and the relay cron (app/api/cron/relay-outbox)
+ * drains them to QStash. This makes raw readings durable on Postgres — derived
+ * from a committed row, retried until acked — instead of relying on the inline
+ * Turso write + a fire-and-forget enqueue. Additive and fully reversible: OFF =
+ * exactly today's behaviour (direct enqueue only). See
+ * docs/architecture/ENGINE-WEB-SEPARATION.md §6.4 and docs/turso-pg-migration.md
+ * Phase 4.
+ */
+export const WRITE_OUTBOX = envFlag("WRITE_OUTBOX");
+
+/**
  * All routing flags as a snapshot, for logging / admin diagnostics.
  */
 export function dbRoutingFlags(): Record<string, boolean> {
@@ -75,5 +88,6 @@ export function dbRoutingFlags(): Record<string, boolean> {
     CONFIG_SERVE_FROM_PG,
     READINGS_READS_FROM_PG,
     AGG_COMPUTE_IN_PG,
+    WRITE_OUTBOX,
   };
 }

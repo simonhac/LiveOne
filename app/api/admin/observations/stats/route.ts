@@ -75,6 +75,39 @@ export async function GET(request: NextRequest) {
       last_ingested_at: Date | null;
     };
 
+    // Outbox relay backlog (Phase 4). Separate query, defaulting on error so a
+    // not-yet-migrated outbox table degrades to nulls instead of 500-ing.
+    let outbox: {
+      backlog: number;
+      oldestUnpublishedAt: string | null;
+      published24h: number;
+    } | null = null;
+    try {
+      const obRes = await db.execute(sql`
+        SELECT
+          (SELECT count(*)::int FROM observations_outbox
+             WHERE published_at IS NULL)                     AS backlog,
+          (SELECT min(created_at) FROM observations_outbox
+             WHERE published_at IS NULL)                     AS oldest_at,
+          (SELECT count(*)::int FROM observations_outbox
+             WHERE published_at >= now() - interval '24 hours') AS published_24h
+      `);
+      const o = ((obRes.rows ?? [])[0] ?? {}) as {
+        backlog: number;
+        oldest_at: Date | null;
+        published_24h: number;
+      };
+      outbox = {
+        backlog: Number(o.backlog ?? 0),
+        oldestUnpublishedAt: o.oldest_at
+          ? new Date(o.oldest_at).toISOString()
+          : null,
+        published24h: Number(o.published_24h ?? 0),
+      };
+    } catch (err) {
+      console.error("[AdminObservations] outbox stats failed:", err);
+    }
+
     return NextResponse.json({
       configured: true,
       now: new Date().toISOString(),
@@ -89,6 +122,7 @@ export async function GET(request: NextRequest) {
           ? new Date(s.last_ingested_at).toISOString()
           : null,
       },
+      outbox,
     });
   } catch (error) {
     console.error("[AdminObservations] GET stats error:", error);
