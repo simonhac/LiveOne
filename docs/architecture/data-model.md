@@ -1,0 +1,123 @@
+# Data Model
+
+> **Status:** current — last verified 2026-06-10.
+> This doc covers **semantics and invariants only**. For columns, types, and indexes, the
+> Drizzle schema files are the source of truth — do not duplicate them here:
+>
+> - **PostgreSQL (primary):** `lib/db/planetscale/schema.ts` (well-commented; read it)
+> - **Turso/SQLite (legacy backup):** `lib/db/turso/schema.ts`, `lib/db/turso/schema-monitoring-points.ts`
+
+## Stores and their roles
+
+| Store                                                               | Role                                                                                                                                                       |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **PostgreSQL** (PlanetScale, `sydney` branch, `aws-ap-southeast-2`) | Primary. Serving store for readings/aggregates/sessions, config authority, and raw-durability outbox.                                                      |
+| **Turso** (`liveone-tokyo`)                                         | Legacy. Transitional raw+sessions backup, slated for decommission in migration Phase 5. Holds the only copy of the pre-Nov-2025 legacy `readings*` tables. |
+| **Vercel KV** (Upstash Redis)                                       | Cache for latest point values and the composite subscription registry. See [kv-store.md](kv-store.md).                                                     |
+| **QStash**                                                          | Decoupling transport for observations (NOT a durability anchor — that's the outbox). See [engine-web-separation.md](engine-web-separation.md) §6.          |
+
+Mid-migration read/write routing is controlled by flags in `lib/db/routing.ts`
+(e.g. `READINGS_READS_FROM_PG`, `AGG_COMPUTE_IN_PG`, `WRITE_OUTBOX`). Migration state and
+phase plan: [../turso-pg-migration.md](../turso-pg-migration.md).
+
+## Table inventory (PG)
+
+| Table                   | One-liner                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------ |
+| `systems`               | One row per monitored energy system (or composite). Owner, vendor, status, timezone, metadata.         |
+| `polling_status`        | Per-system collection health (last poll/success/error, streaks, counters).                             |
+| `users`                 | Per-user preferences (default system). Identity itself lives in Clerk.                                 |
+| `user_systems`          | User↔system access grants (`owner`/`admin`/`viewer`).                                                 |
+| `sessions`              | One row per vendor communication session. UUIDv7 text PKs (historical ids are stringified ints).       |
+| `point_info`            | Point registry: identity, physical/logical paths, metric type/unit, display config.                    |
+| `point_readings`        | Raw time-series, one row per point per measurement time.                                               |
+| `point_readings_agg_5m` | 5-minute aggregates (avg/min/max/last/delta).                                                          |
+| `point_readings_agg_1d` | Daily aggregates, keyed by local-time `day` (YYYY-MM-DD).                                              |
+| `share_tokens`          | View-only share links (3-word phrases) scoped to an owner's systems.                                   |
+| `observations_outbox`   | Transactional outbox: durable copy of each poll's `QueueMessage`, drained to QStash by the relay cron. |
+
+## Invariants
+
+These are load-bearing; don't violate them without updating
+[engine-web-separation.md](engine-web-separation.md) first.
+
+1. **The receiver is the single writer of the serving store.** Collection code never writes
+   `point_readings` or the aggregates directly — polls publish `QueueMessage`s (via the outbox
+   and/or direct enqueue) and `/api/observations/receive` materialises them. Idempotent by
+   design: re-delivery is safe.
+2. **The outbox carries the message, not the rows.** `observations_outbox.payload` is the same
+   `QueueMessage` that goes on the queue, republished verbatim by `app/api/cron/relay-outbox`.
+   A direct point-readings write at poll time is explicitly rejected (locked decision,
+   2026-06-10).
+3. **Point identity** is `(system_id, point_id)`; `point_id` is sequential per system.
+   Readings dedup on the unique `(system_id, point_id, measurement_time)`. Points are lazily
+   created when first observed; per-system uniqueness on `physical_path_tail` and on
+   `(logical_path_stem, metric_type)`.
+4. **Aggregation ladder:** raw → 5m (recomputed order-independently as data arrives, safe for
+   parallel queue consumption) → 1d (cron at 00:05 local). 5m-native vendors (Amber, Enphase)
+   upsert straight into the 5m table; aggregates inherit raw holes.
+5. **Almost no FKs in PG.** The receiver inserts without FK validation for performance; the
+   one exception is `point_readings.session_id → sessions(id)` (safe because the session row
+   is co-enqueued ahead of its readings).
+
+## Semantics
+
+### Timestamps & timezones
+
+- PG uses **native UTC `timestamp` columns** (no timezone). Turso stores epoch-ms integers —
+  convert with `new Date(ms)` when crossing stores. `share_tokens` keeps epoch-ms `bigint`s
+  deliberately (the code compares against `Date.now()`).
+- `point_readings` carries three times: `measurement_time` (device clock), `received_time`
+  (when we fetched it), `created_at` (when it landed in PG — distinguishes live ingestion
+  from backfill).
+- `systems.timezone_offset_min` is the **fixed standard offset** (e.g. 600 = AEST), no DST —
+  used for day boundaries in daily aggregation. `systems.display_timezone` is the IANA zone
+  for UI display and **does** observe DST.
+- Daily aggregation buckets by local day: `> 00:00 local` to `<= 24:00 local`, keyed as
+  YYYY-MM-DD text.
+
+### Units & precision
+
+- Power: Watts (float in point tables).
+- Energy: kWh, 3 decimal places (5m-interval energies in Wh where vendor-native).
+- Battery SoC: percent, 1 decimal place.
+
+### Data quality
+
+`point_readings.data_quality` ∈ `good` (default) / `error` / `estimated` / `interpolated`.
+Readings can carry `value` (numeric), `value_str` (e.g. tariff codes), or `error`.
+
+### Composite systems
+
+`systems.vendor_type = 'composite'`: virtual systems that aggregate points from other systems.
+Never polled, no credentials, no nesting. The mapping lives in `systems.metadata`:
+
+```json
+{
+  "version": 1,
+  "mappings": {
+    "solar": ["liveone.system1.source.solar.local.power.avg"],
+    "battery": ["liveone.system1.bidi.battery.power.avg"],
+    "load": ["liveone.system2.load.total.power.avg"],
+    "grid": ["liveone.system1.bidi.grid.power.avg"]
+  }
+}
+```
+
+The KV subscription registry maps source points → subscribing composites so latest-value
+updates fan out. See [points.md](points.md) for path grammar and composite rules.
+
+### Vendor credentials
+
+Stored in **Clerk private metadata** under the owning user — not in either database (locked
+decision 2026-06-06). See [authentication.md](authentication.md).
+
+## Legacy: pre-points `readings*` tables
+
+The original fixed-column tables (`readings`, `readings_agg_5m`, `readings_agg_1d`) were
+deprecated Nov 2025 and superseded by the point tables. They were **never migrated to PG**
+and exist only in Turso `liveone-tokyo`.
+
+> ⚠️ **Phase 5 consideration:** decommissioning `liveone-tokyo` destroys the only copy of the
+> legacy readings history — export first if it matters. Their full schema is preserved in git
+> (`docs/DEPRECATED_SCHEMA.md`, deleted 2026-06-10).

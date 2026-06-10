@@ -1,5 +1,7 @@
 # What gets pushed into QStash (readings + sessions)
 
+> **Status:** current — last verified 2026-06-10.
+
 How a poll's data reaches the QStash `observations` queue, and the exact JSON shapes.
 Source of truth: `lib/observations/types.ts`, `lib/observations/publisher.ts`,
 `lib/observations/session-publisher.ts`, `lib/qstash.ts`.

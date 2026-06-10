@@ -1,5 +1,7 @@
 # Tesla Integration
 
+> **Status:** current — last verified 2026-06-10.
+
 ## Overview
 
 The Tesla adapter polls vehicle data including:

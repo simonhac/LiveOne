@@ -1,5 +1,7 @@
 # LiveOne Authentication & Security
 
+> **Status:** current — last verified 2026-06-10.
+
 ## Overview
 
 LiveOne uses [Clerk](https://clerk.dev) for authentication, providing enterprise-grade security with minimal implementation overhead. Vendor credentials are stored securely in Clerk's private metadata, never in the database.

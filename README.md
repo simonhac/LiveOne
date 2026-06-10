@@ -262,27 +262,30 @@ Admins have access to:
 ```
 liveone/
 ├── app/                    # Next.js app router pages
-│   ├── api/               # API routes (see docs/architecture/API.md)
+│   ├── api/               # API routes (see docs/architecture/api.md)
 │   ├── admin/             # Admin pages
 │   └── dashboard/         # User dashboards
 ├── components/            # React components
 ├── lib/                   # Core libraries
-│   ├── db/               # Database schema & client (see docs/architecture/SCHEMA.md)
+│   ├── db/               # Database schema & client (see docs/architecture/data-model.md)
 │   ├── auth-utils.ts     # Authentication helpers
 │   └── energy-formatting.ts # Unit formatting
-├── docs/                  # Documentation
+├── docs/                  # Documentation (see docs/README.md for the index)
 │   ├── architecture/     # Architecture documentation
-│   │   ├── SCHEMA.md     # Database schema reference
-│   │   └── API.md        # API endpoint documentation
-│   └── POINTS.md         # Point system guide
+│   │   ├── overview.md   # Orientation: stack, data path, glossary
+│   │   ├── data-model.md # Data semantics & invariants
+│   │   └── api.md        # API conventions & route inventory
+│   └── ...
 └── scripts/              # Utility scripts
 ```
 
 ### Documentation
 
-- **[docs/architecture/SCHEMA.md](docs/architecture/SCHEMA.md)** - Complete database schema reference with all tables and fields
-- **[docs/architecture/API.md](docs/architecture/API.md)** - API endpoint documentation with parameters and examples
-- **[docs/POINTS.md](docs/POINTS.md)** - Comprehensive guide to the point-based monitoring system
+- **[docs/README.md](docs/README.md)** - Documentation index (start here)
+- **[docs/architecture/overview.md](docs/architecture/overview.md)** - Architecture orientation: stack, data path, vendors
+- **[docs/architecture/data-model.md](docs/architecture/data-model.md)** - Data semantics & invariants (schema source of truth: `lib/db/planetscale/schema.ts`)
+- **[docs/architecture/api.md](docs/architecture/api.md)** - API conventions and route inventory
+- **[docs/architecture/points.md](docs/architecture/points.md)** - Comprehensive guide to the point-based monitoring system
 
 ### Key Commands
 
@@ -407,4 +410,4 @@ The project uses a flexible point-based architecture (`point_info`, `point_readi
 - Tracking multiple devices in a single system
 - Creating composite virtual systems
 
-See [docs/architecture/SCHEMA.md](docs/architecture/SCHEMA.md) for detailed schema documentation.
+See [docs/architecture/data-model.md](docs/architecture/data-model.md) for data semantics and invariants; the schema source of truth is `lib/db/planetscale/schema.ts`.

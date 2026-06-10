@@ -380,7 +380,7 @@ export const shareTokens = pgTable(
 // A poll's built QueueMessage(s) are recorded here durably; a relay
 // (app/api/cron/relay-outbox) drains unpublished rows to QStash and marks them
 // published once accepted. This makes raw durability live on Postgres without
-// relying on the inline Turso write — see docs/architecture/ENGINE-WEB-SEPARATION.md
+// relying on the inline Turso write — see docs/architecture/engine-web-separation.md
 // §6.4 and docs/turso-pg-migration.md Phase 4. Gated by WRITE_OUTBOX; written in
 // parallel with (a tee of) the live direct enqueue during the soak.
 // ============================================================================

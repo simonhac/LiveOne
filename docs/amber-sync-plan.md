@@ -1,5 +1,7 @@
 # Implementation Plan: Amber Client with Audit-Based Syncing
 
+> **Status:** current — last verified 2026-06-10.
+
 ## Overview
 
 The `/lib/vendors/amber/client.ts` implements methodical, audit-focused syncing with auto-numbered stages. This will eventually replace the current adapter.ts polling mechanism.

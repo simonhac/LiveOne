@@ -1,5 +1,7 @@
 # LiveOne Project History
 
+> **Status:** record — append-only timeline.
+
 A chronological record of major features, APIs, subsystems, migrations, and architectural changes in the LiveOne solar monitoring platform.
 
 ---
