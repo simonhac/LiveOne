@@ -53,6 +53,11 @@ const MIN_SESSIONS = num(process.env.MONITOR_MIN_SESSIONS, 5); // don't judge on
 const RAW_STALE_MINUTES = num(process.env.MONITOR_RAW_STALE_MINUTES, 15);
 const QUEUE_LAG_MAX = num(process.env.MONITOR_QUEUE_LAG_MAX, 1000);
 const DLQ_ALERT = num(process.env.MONITOR_DLQ_ALERT, 50); // DLQ ≥ this ⇒ alert (any DLQ ⇒ warn)
+// Outbox relay (Phase 4): a healthy relay keeps the unpublished backlog ≈ 0 and
+// the oldest unpublished row fresh. A growing backlog / aging row ⇒ the relay is
+// stalled. Inert until WRITE_OUTBOX is on (backlog stays 0 otherwise).
+const OUTBOX_BACKLOG_MAX = num(process.env.MONITOR_OUTBOX_BACKLOG_MAX, 500);
+const OUTBOX_STALE_MINUTES = num(process.env.MONITOR_OUTBOX_STALE_MINUTES, 10);
 
 /** Send a Slack-compatible alert if a webhook is configured. Best-effort; never throws. */
 async function sendAlert(text: string): Promise<boolean> {
@@ -158,6 +163,57 @@ export async function GET(request: NextRequest) {
       severity: "warn",
       code: "pg_check_failed",
       message: `Could not query PG health: ${String(err)}`,
+    });
+  }
+
+  // ── 4: outbox relay backlog/age (Phase 4) ──
+  // Separate try so a not-yet-migrated outbox table never breaks the checks above.
+  try {
+    const res = await db.execute(sql`
+      SELECT
+        (SELECT count(*)::int FROM observations_outbox
+           WHERE published_at IS NULL)                AS outbox_backlog,
+        (SELECT min(created_at) FROM observations_outbox
+           WHERE published_at IS NULL)                AS outbox_oldest_at
+    `);
+    const r = ((res.rows ?? [])[0] ?? {}) as {
+      outbox_backlog: number;
+      outbox_oldest_at: Date | null;
+    };
+    const backlog = Number(r.outbox_backlog ?? 0);
+    const oldestAt = r.outbox_oldest_at ? new Date(r.outbox_oldest_at) : null;
+    const oldestAgeMin = oldestAt
+      ? Math.round((Date.now() - oldestAt.getTime()) / 60_000)
+      : null;
+
+    checks.outbox = {
+      backlog,
+      oldestUnpublishedAt: oldestAt ? oldestAt.toISOString() : null,
+      oldestAgeMinutes: oldestAgeMin,
+      backlogMax: OUTBOX_BACKLOG_MAX,
+      staleThresholdMinutes: OUTBOX_STALE_MINUTES,
+    };
+
+    if (backlog > OUTBOX_BACKLOG_MAX) {
+      issues.push({
+        severity: "alert",
+        code: "outbox_backlog_high",
+        message: `Outbox relay backlog is ${backlog} unpublished rows (> ${OUTBOX_BACKLOG_MAX}) — the relay is stalled.`,
+      });
+    }
+    if (oldestAgeMin !== null && oldestAgeMin > OUTBOX_STALE_MINUTES) {
+      issues.push({
+        severity: "alert",
+        code: "outbox_stale",
+        message: `Oldest unpublished outbox row is ${oldestAgeMin} min old (> ${OUTBOX_STALE_MINUTES}) — the relay isn't draining.`,
+      });
+    }
+  } catch (err) {
+    console.error("[MonitorObservations] outbox check failed:", err);
+    issues.push({
+      severity: "warn",
+      code: "outbox_check_failed",
+      message: `Could not query outbox health: ${String(err)}`,
     });
   }
 

@@ -31,6 +31,7 @@ const FLAG_VARS = [
   "AGG_COMPUTE_IN_PG",
   "FLOW_MATRIX_COMPUTE_IN_PG",
   "FLOW_MATRIX_SERVE_FROM_PG",
+  "WRITE_OUTBOX",
 ];
 
 describe("db routing flags", () => {
@@ -60,6 +61,7 @@ describe("db routing flags", () => {
       AGG_COMPUTE_IN_PG: false,
       FLOW_MATRIX_COMPUTE_IN_PG: false,
       FLOW_MATRIX_SERVE_FROM_PG: false,
+      WRITE_OUTBOX: false,
     });
   });
 

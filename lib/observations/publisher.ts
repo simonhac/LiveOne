@@ -15,6 +15,8 @@ import { SystemWithPolling } from "@/lib/systems-manager";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 import { pointInfo as pointInfoTable } from "@/lib/db/turso/schema-monitoring-points";
 import { PointReference } from "@/lib/identifiers";
+import { WRITE_OUTBOX } from "@/lib/db/routing";
+import { persistOutbox } from "./outbox";
 
 // Type for point info from the database
 type PointInfo = typeof pointInfoTable.$inferSelect;
@@ -125,6 +127,12 @@ export async function publishObservationBatch(
       batchTime: formatTimestamp(Date.now(), system.timezoneOffsetMin),
       observations,
     };
+
+    // Phase 4: durably capture in PG first (a tee, in parallel with the direct
+    // enqueue below). Best-effort — never throws.
+    if (WRITE_OUTBOX) {
+      await persistOutbox([message]);
+    }
 
     // Get the queue and publish
     const queue = qstash.queue({ queueName: OBSERVATIONS_QUEUE_NAME });
