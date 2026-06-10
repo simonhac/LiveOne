@@ -55,14 +55,21 @@ chunked by month/quarter because one multi-month Turso response exceeds the libs
 
 ## What's next (ordered by dependency)
 
-1. **Phase 3 tail — burn-in + Vercel→`syd1`.** PlanetScale→Sydney is ✅ live (2026-06-10); keep us-east
-   `main` hot for a 24–48h burn-in (rollback = repoint `DB_*` + redeploy, then heal `main` from Turso
-   since it stopped receiving at cutover). The Vercel compute move to `syd1` is a **separate later window**.
-2. **Phase 4 — Turso decommission.** Needs raw durability off Turso (synchronous PG raw write, or
-   formally accepting queue-only at-least-once) + dropping the `*_backup`/archive tables. Also folds in
-   the deferred dead-publisher cleanup (`publishObservationBatch` + its no-collector arms, the gated 1d
-   Turso→PG mirror) — kept until then as the `AGG_COMPUTE_IN_PG=false` rollback path.
-3. **Decommission-time hardening (gated, not blockers):** PG FK rebuild, R4 Turso-FK drop, session-FK
+1. **Phase 3 tail — Vercel→`syd1` + close out the region move.** PlanetScale→Sydney is ✅ live
+   (2026-06-10). Move Vercel compute to `syd1` now (`vercel.json` `regions`) so the engine is co-located
+   with PG ahead of the Phase 4 synchronous PG write — sequenced **before** the outbox _(decided
+   2026-06-10, reversing the earlier "separate later window")_. Finish the 24–48h burn-in green, then
+   decommission us-east `main` (one-off `pscale backup create` first). `main` is purely the region-move
+   rollback (rollback = repoint `DB_*` + redeploy, then heal `main` from Turso since it stopped receiving
+   at cutover) — decoupled from Turso.
+2. **Phase 4 — PG raw durability (non-destructive).** Build + soak the transactional **outbox** (the "PG
+   bin before the queue") so raw readings are durable on PG without the inline-Turso net, while Turso
+   still backs everything. Fully reversible (stop the relay). This is the gate for Phase 5.
+3. **Phase 5 — Turso decommission (destructive).** Cut the ungated Turso writes (raw, sessions, local
+   agg), fold in the deferred dead-publisher cleanup (`publishObservationBatch` + its no-collector arms,
+   the gated 1d Turso→PG mirror — kept until now as the `AGG_COMPUTE_IN_PG=false` rollback path), retire
+   the now-dead flags, drop the `*_backup`/archive tables, decommission `liveone-tokyo`.
+4. **Decommission-time hardening (gated, not blockers):** PG FK rebuild, R4 Turso-FK drop, session-FK
    validation.
 
 ## Locked decisions
@@ -81,7 +88,9 @@ chunked by month/quarter because one multi-month Turso response exceeds the libs
   a pre-cutover Turso snapshot. _[config writes done; Turso-FK drop is decommission-time]_
 - **(C) Dev = shared PlanetScale dev branch** + hard guardrails + PITR backstop.
 - **(D) Move PlanetScale, then Vercel, to Sydney** — **separate windows** _(sequencing set 2026-06-09)_:
-  Phase 3 moves PlanetScale only (compute→`syd1` is a later window). Turso stays in Tokyo, decommissioned soon.
+  PlanetScale moved first (✅ 2026-06-10); the Vercel compute→`syd1` window follows immediately _(brought
+  forward 2026-06-10 to precede the Phase 4 outbox so its PG write is local)_. Turso stays in Tokyo,
+  decommissioned at Phase 5.
 - **(F) Turso = transitional backup of raw + sessions only** _(2026-06-06)_ — no lasting status. Config
   **and** all aggregates leave Turso entirely (PG is the sole aggregator); design as if **PG is the only
   store**, with the inline Turso write an extra best-effort backup deletable with zero architectural
@@ -198,14 +207,24 @@ raw-vendor Turso→queue 5m/1d publish + the receiver's raw-vendor 5m / all-1d i
 no-ops), gated behind `AGG_COMPUTE_IN_PG`; **kept** raw, sessions, and 5m-native 5m on the queue.
 Turso still computes its own local 5m/1d (untouched) so the reconciler stays a valid gate. **Rollback:**
 `AGG_COMPUTE_IN_PG=false` restores publish + intake exactly. Removed branches retained as no-ops until
-the Phase-4 cleanup.
+the Phase-5 cleanup.
 
-### Phase 3 — Region move to Sydney (PlanetScale; Vercel→`syd1` deferred) ✅ DONE (cut over 2026-06-10)
+### Phase 3 — Region move to Sydney (PlanetScale ✅ DONE 2026-06-10; Vercel→`syd1` in progress)
 
 Prod Postgres is the **`sydney` branch** of `liveone` (`aws-ap-southeast-2`): `PS-5-AWS-ARM`, `replicas: 2`
 (3-node HA), `production`, PG 17.10, `TimeZone=Etc/UTC` — same compute tier as the old us-east node, HA
-added. **Vercel stays in Tokyo (`hnd1`)** (its move to `syd1` is a separate later window). us-east `main`
-is kept hot as the burn-in rollback. The branch was created in one command (HA + production land at create —
+added. us-east `main` is kept hot as the burn-in rollback.
+
+**Vercel→`syd1` (no longer deferred — decided 2026-06-10):** move compute to Sydney to co-locate the
+engine with PG before the Phase 4 synchronous PG write. Mechanism: one-line `vercel.json`
+`"regions": ["hnd1"]` → `["syd1"]` (no dedicated CLI command — region is deploy config; `vercel.json`
+makes it durable across deploys, vs. a per-deploy `--regions syd1`), land via PR → `main` auto-deploy.
+This relocates the crons (poller/daily/db-stats/monitor-observations) **and** `/api/history` serving to
+Sydney. **Latency inverts:** PG reads/writes become local (the goal); the still-load-bearing **Turso
+inline write becomes cross-region** (Sydney→Tokyo ~100ms, awaited) until Phase 5 deletes it — acceptable
+for a minutely small write, and the reason the move precedes the outbox. **Verify:** runtime
+`VERCEL_REGION=syd1`, crons firing from syd1, poll/PG-read latency. **Rollback:** revert the one line,
+redeploy. The branch was created in one command (HA + production land at create —
 no change-request / `promote`), and inherited PITR automatically since backup schedules are database-wide:
 
 ```
@@ -223,12 +242,44 @@ downtime: the poll's only PG write, `polling_status`, is swallowed (`lib/polling
 land in Turso + queue regardless. **Rollback:** repoint `DB_*` to us-east + redeploy, then heal `main`
 from Turso (`gap-map --apply` + `recompute`) since it stopped receiving at cutover.
 
-### Phase 4 — Turso decommission
+### Phase 4 — PG raw durability (non-destructive; Turso untouched)
 
-With session-id minting already off Turso (PR-7), this reduces to **raw durability off Turso**: raw
-readings must reach PG without the inline Turso write as the synchronous safety net — either a
-synchronous PG raw write or accepting queue-only (at-least-once) durability. Then retire Turso (drop
-`sessions_archive` / `*_backup` tables, decommission `liveone-tokyo`). Separate planning.
+The exit-condition for dropping Turso: raw readings durable on PG **without** the inline-Turso safety
+net. With session-id minting already off Turso (PR-7), this reduces to building + soaking the
+**transactional outbox** of [`architecture/ENGINE-WEB-SEPARATION.md`](architecture/ENGINE-WEB-SEPARATION.md)
+§6.4 — the chosen mechanism (decision 2026-06-08) over "accept queue-only at-least-once". Everything here
+is additive and reversible while Turso still backs everything.
+
+- **4a — outbox + relay ("the PG bin before the queue").** New `observations_outbox` table (PG); the
+  poll writes readings **and** an outbox row in one local PG transaction (a durable first-write is
+  unavoidable — this is the deliberate, correct direct DB write). A **relay** drains the outbox → QStash
+  → the existing idempotent receiver (and any tee'd consumer), at-least-once + ack, marking rows
+  published. Closes the swallowed-enqueue (`lib/observations/publisher.ts`, session-close publish) and
+  crash-before-publish windows. Publish surface is small/centralised (`lib/qstash.ts`,
+  `lib/observations/*`, `poll-collector.ts`, `session-publisher.ts`).
+- **4b — "queue as sole path" hardening** (§6.5): a **monotonicity guard** on the 5m-native/1d upserts
+  (today correctness leans on QStash `parallelism=1` ordering — a broker setting, not a data invariant;
+  `aggregate-points-pg.ts` `previousLast`); **DLQ drain/replay-from-source** tooling (`monitor-observations`
+  only alerts today); **SLOs + paging** on lag/DLQ/receiver-success/raw-landing-age (+ actually set
+  `OBSERVATIONS_ALERT_WEBHOOK_URL`); a **read-after-write** path for interactive "poll now & show result".
+- **4c — soak.** Run outbox+relay alongside the Turso inline write; prove zero loss via the reconciler /
+  `gap-map`, and that PG heals _from itself_ (replay outbox/PG), not from Turso. **Rollback: stop the
+  relay** — the Turso inline write still anchors durability.
+
+### Phase 5 — Turso decommission (destructive; gated on Phase 4 soak green)
+
+Once raw durability on PG is proven without the inline-Turso net:
+
+- **Cut the ungated Turso writes:** raw `point_readings` inline (`lib/point/point-manager.ts`), sessions
+  backup (`lib/session-manager.ts`), Turso local 5m/1d compute.
+- **Dead-publisher cleanup + retire dead flags:** remove `publishObservationBatch` + its no-collector
+  arms + the gated 1d Turso→PG mirror (kept until now as the `AGG_COMPUTE_IN_PG=false` rollback path);
+  then retire `AGG_COMPUTE_IN_PG`, `CONFIG_WRITES_TO_PG`, `CONFIG_SERVE_FROM_PG`, `READINGS_READS_FROM_PG`,
+  and the Turso read-fallback in `serveReadings`. (`CONFIG_READS_FROM_PG` + the config shadow-compare path
+  are already inert — deletable any time as the smallest standalone cleanup.)
+- **Decommission-time hardening:** PG FK rebuild (staged `0004`), R4 Turso-FK drop, optional session-FK
+  validation, re-point the dev-seed (`db:sync-prod`) to seed from PG.
+- **Drop Turso:** `sessions_archive` / `*_backup` / legacy `readings*` tables; decommission `liveone-tokyo`.
 
 ### Loose ends / hardening (independent of the phases)
 
@@ -343,10 +394,11 @@ ALTER TABLE point_readings_agg_5m VALIDATE CONSTRAINT point_readings_agg_5m_syst
   baselined into `drizzle.__drizzle_migrations`; **`push` forbidden** (see `drizzle-planetscale.config.ts`).
 - **R6 — pool bug** _[done — Stage 1]_: PG pool memoized unconditionally on `global`; budget `max` ×
   warm-instances ≤ PlanetScale connection limit (`PLANETSCALE_POOL_MAX`).
-- **R8 — region latency (transitional):** post-Phase-3, **PG is in Sydney while Vercel + Turso are in
-  Tokyo**, so the receiver→PG writes and the PG reads now cross Tokyo↔Sydney (~100ms); the inline Turso raw
-  write is local (Tokyo). Acceptable; resolved when Vercel also moves to `syd1` (separate later window) and
-  fully at Phase 4 (Turso gone).
+- **R8 — region latency (transitional):** the cross-region hop moves with the Vercel→`syd1` step. _Before
+  it_ (PG Sydney, Vercel + Turso Tokyo): receiver→PG writes + PG reads cross Tokyo↔Sydney (~100ms), Turso
+  inline write local. _After it_ (PG + Vercel Sydney, Turso Tokyo): PG writes/reads local, **the Turso
+  inline write becomes the cross-region hop** (~100ms, awaited) — acceptable for a minutely small write,
+  and fully resolved at Phase 5 (Turso gone).
 
 ## Cross-cutting prerequisites _(all done unless noted)_
 
@@ -473,7 +525,7 @@ One line per completed milestone — detail lives in git + the sections above.
   DLQ 0 / presence 100% / raw landing < 2 min; reconciler `agg_5m --days=2` 20010/20010 and `agg_1d`
   (June) 261/261, 0 value-mismatches. Also dropped the now-unreachable `publishSession` session-only
   branch (all `updateSessionResult` callers emit the combined `publishPoll` message); remaining
-  dead-publisher cleanup deferred to Phase 4 (it's the `AGG_COMPUTE_IN_PG=false` rollback path).
+  dead-publisher cleanup deferred to Phase 5 (it's the `AGG_COMPUTE_IN_PG=false` rollback path).
 - **2026-06-09 — PR-13a LIVE.** Readings served FROM PG (`#24`); `READINGS_READS_FROM_PG` flipped true in
   prod (Turso = fallback). Post-cutover verification sweep GREEN: `qstash-health` lag 0 / DLQ 0 /
   presence 100% / raw landing < 1 min; reconciler `agg_5m --days=2` and `agg_1d` (all 2026) 0 mismatches;

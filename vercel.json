@@ -1,5 +1,5 @@
 {
-  "regions": ["hnd1"],
+  "regions": ["syd1"],
   "crons": [
     {
       "path": "/api/cron/minutely",
