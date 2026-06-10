@@ -158,7 +158,7 @@ function synthesizeRestOfHouse(
 
   return {
     value: restOfHouseValue,
-    logicalPath: "load.OTHER/power",
+    logicalPath: "load.rest-of-house/power",
     measurementTime: maxMeasurementTime,
     metricUnit: "W",
     displayName: "Other",
@@ -245,7 +245,7 @@ function synthesizeMasterLoad(
  *
  * Returns array of LoadPoints with standardized paths (format: type/power).
  * Master load has path "load/power", child loads keep original paths like "load.hvac/power",
- * and rest of house has path "load.OTHER/power".
+ * and rest of house has path "load.rest-of-house/power".
  *
  * Note: Expects master load to exist in latest (either real or synthesized).
  * Call synthesizeMasterLoad() first if needed.
@@ -324,7 +324,7 @@ function calculateAllLoads(latest: LatestPointValues): LoadPoint[] {
 
     if (restOfHouse > 0) {
       allLoads.push({
-        path: "load.OTHER/power",
+        path: "load.rest-of-house/power",
         value: restOfHouse,
         label: "Other",
       });
@@ -403,7 +403,7 @@ export default function SystemPowerCards({
     if (synthesizedRestOfHouse) {
       enriched = {
         ...enriched,
-        "load.OTHER/power": synthesizedRestOfHouse,
+        "load.rest-of-house/power": synthesizedRestOfHouse,
       };
     }
 

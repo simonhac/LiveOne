@@ -314,6 +314,8 @@ Benefits:
 
 ## Database Migrations
 
+> 🛑 **Always ask before modifying the schema.** Never add/alter/drop a column, table, or index — or generate/apply a migration — without explicit approval first. Propose the change and wait for a "yes". This applies to both the Postgres (PlanetScale) and the Turso/SQLite schemas.
+
 ### PostgreSQL (primary)
 
 PG schema changes are versioned drizzle-kit migrations generated from `lib/db/planetscale/schema.ts`:
@@ -325,6 +327,7 @@ npm run db:pg:migrate    # apply pending migrations (needs PLANETSCALE_DATABASE_
 
 - **Never use `drizzle-kit push`** — destructive diff with no transaction or validation (the migration-0016 failure mode). See `drizzle-planetscale/README.md`.
 - The Safety Guidelines below (backup/snapshot first, test on a copy, validate row counts before any DROP) apply to PG too. PG backup = PITR schedules + `pscale backup create`.
+- Applying to a specific branch (`main` vs `sydney`), `pscale role` connections, the table-ownership pitfall, and parallel-agent number collisions: see **Applying Postgres (PlanetScale) migrations** below.
 
 ### Turso/SQLite (legacy — until migration Phase 5)
 
@@ -518,6 +521,31 @@ Result: 345,456 point_readings lost, requiring 8+ hour restoration from backup.
 - **No Rollbacks**: This project doesn't use rollback migrations - if you need to undo a change, create a new forward migration
 - **Composite Keys**: When creating foreign keys with composite primary keys, remember that SQLite doesn't update FK table references on `ALTER TABLE RENAME` - create tables with final names or use temporary tables
 - **Run pre-checks**: Before complex migrations, check data volumes and estimate time required
+
+### Applying Postgres (PlanetScale) migrations
+
+The `db:pg:generate` / `db:pg:migrate` basics are in **PostgreSQL (primary)** above; these are **manual** (no auto-apply at deploy), and applying by hand has a few traps worth knowing.
+
+`db:pg:migrate` targets whatever `PLANETSCALE_DATABASE_URL_MIGRATIONS` (or the `DB_*` vars) in `.env.local` points at — **today that's the us-east `main` branch, not `sydney`**. Always confirm the host before applying; override the env var to target a specific branch.
+
+**Branches & connections (`liveone` PlanetScale db).** Two production PG branches: `main` (us-east, in `.env.local`) and `sydney` (`aws-ap-southeast-2`). PG branches use **`pscale role`**, not `pscale password`. There is no stored Sydney connection string — mint a short-TTL one:
+
+```bash
+pscale role create liveone sydney <name> --inherited-roles postgres --ttl 1h --format json
+# then: PLANETSCALE_DATABASE_URL_MIGRATIONS="<that database_url>" npm run db:pg:migrate
+```
+
+**⚠️ Table-ownership trap (learned the hard way).** A migration applied via a freshly-minted `pscale role` makes that role the **owner** of the tables it creates. Consequences: (a) the app connects as `postgres` and will get _"permission denied"_ on a non-`postgres`-owned table; (b) the temp role **cannot be dropped while it owns objects** (`DROP ROLE` is refused — Postgres does NOT cascade-drop owned tables, so the data is safe, but the role lingers and the TTL delete fails the same way). Every normal table here is owned by `postgres`. So either:
+
+- Apply as the persistent `postgres` role (`pscale role reset-default liveone <branch>` to get its creds), **or**
+- After applying with a temp role, reassign + clean up:
+  ```bash
+  pscale role reassign liveone <branch> <temp-role-id> --successor postgres --force
+  pscale role delete   liveone <branch> <temp-role-id> --force
+  ```
+  (Control-plane `reassign` works even though SQL `ALTER ... OWNER` / `SET ROLE postgres` fail with "must be owner" — `postgres` here is not a superuser.)
+
+**Parallel-agent collisions.** Multiple Conductor workspaces can each `db:pg:generate` and grab the **same `NNNN` number** for different migrations (e.g. two `0004_*`). Before generating/applying, `git fetch origin main` and check `drizzle-planetscale/` + the live `drizzle.__drizzle_migrations`; if main already shipped your number, sync main and regenerate so yours lands as the next free number. Migrations are additive/independent objects, so the only real damage is the drizzle journal/numbering — fix it by renumbering, not by force.
 
 ## Vercel Deployment
 

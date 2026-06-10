@@ -29,6 +29,8 @@ const FLAG_VARS = [
   "CONFIG_SERVE_FROM_PG",
   "READINGS_READS_FROM_PG",
   "AGG_COMPUTE_IN_PG",
+  "FLOW_MATRIX_COMPUTE_IN_PG",
+  "FLOW_MATRIX_SERVE_FROM_PG",
   "WRITE_OUTBOX",
 ];
 
@@ -57,6 +59,8 @@ describe("db routing flags", () => {
       CONFIG_SERVE_FROM_PG: false,
       READINGS_READS_FROM_PG: false,
       AGG_COMPUTE_IN_PG: false,
+      FLOW_MATRIX_COMPUTE_IN_PG: false,
+      FLOW_MATRIX_SERVE_FROM_PG: false,
       WRITE_OUTBOX: false,
     });
   });

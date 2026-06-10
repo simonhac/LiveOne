@@ -354,6 +354,47 @@ export const pointReadingsAgg1d = pgTable(
 );
 
 // ============================================================================
+// Energy-flow matrix — per local-day, per (source, load) directional energy.
+//
+// Built by the engine from `point_readings_agg_5m` (NOT from `agg_1d`, whose
+// daily avg cancels bidirectional direction — that cancellation is the whole bug
+// this table fixes). Energy is ALWAYS >= 0; direction is encoded by which slot a
+// flow lands in: battery charge -> load.battery, discharge -> source.battery;
+// grid import -> source.grid, export -> load.grid. Path-keyed (not point-keyed)
+// so aggregated solar (one node for many points) and the synthetic
+// `load.rest-of-house` have a stable identity; labels/colors resolve at read
+// time. A multi-day range is a plain `SUM(energy_kwh) GROUP BY (source_path,
+// load_path)`, because per-interval energy is additive.
+// ============================================================================
+export const pointReadingsFlow1d = pgTable(
+  "point_readings_flow_1d",
+  {
+    // Composite primary key columns
+    systemId: integer("system_id").notNull(),
+    day: text("day").notNull(), // YYYY-MM-DD, system-local — same key convention as agg_1d
+    sourcePath: text("source_path").notNull(), // e.g. "source.solar" | "source.battery" | "source.grid"
+    loadPath: text("load_path").notNull(), // "load" | "load.<sub>" | "load.battery" | "load.grid" | "load.rest-of-house"
+
+    // Flow value
+    energyKwh: doublePrecision("energy_kwh").notNull(), // always >= 0
+
+    // Data quality / provenance
+    sampleCount: integer("sample_count").notNull(), // # of 5m intervals that contributed
+    version: integer("version").notNull().default(1), // algorithm version → lets backfill detect stale rows
+
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.systemId, table.day, table.sourcePath, table.loadPath],
+    }),
+    systemDayIdx: index("prf1d_system_day_idx").on(table.systemId, table.day),
+    dayIdx: index("prf1d_day_idx").on(table.day),
+  }),
+);
+
+// ============================================================================
 // Share tokens - view-only access links scoped to systems owned by the token's owner
 // (mirrors Turso `share_tokens`). Epoch-ms columns use bigint(mode:"number") so
 // share-tokens.ts's `Date.now()` comparisons work unchanged against Postgres.
@@ -437,6 +478,8 @@ export type PointReadingAgg5m = typeof pointReadingsAgg5m.$inferSelect;
 export type NewPointReadingAgg5m = typeof pointReadingsAgg5m.$inferInsert;
 export type PointReadingAgg1d = typeof pointReadingsAgg1d.$inferSelect;
 export type NewPointReadingAgg1d = typeof pointReadingsAgg1d.$inferInsert;
+export type PointReadingFlow1d = typeof pointReadingsFlow1d.$inferSelect;
+export type NewPointReadingFlow1d = typeof pointReadingsFlow1d.$inferInsert;
 export type ShareToken = typeof shareTokens.$inferSelect;
 export type NewShareToken = typeof shareTokens.$inferInsert;
 export type ObservationsOutbox = typeof observationsOutbox.$inferSelect;

@@ -19,7 +19,7 @@ import {
   type ZonedDateTime,
 } from "@internationalized/date";
 import { encodeI18nToUrlSafeString } from "@/lib/url-date";
-import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/chart-colors";
+import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/heatmap-colors";
 import ServerErrorModal from "./ServerErrorModal";
 import { formatTimeAEST } from "@/lib/date-utils";
 import { formatTime, formatDate } from "@/lib/fe-date-format";
