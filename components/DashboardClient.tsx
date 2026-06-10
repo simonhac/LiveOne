@@ -11,7 +11,10 @@ import SitePowerChart, { type ChartData } from "@/components/SitePowerChart";
 import EnergyTable from "@/components/EnergyTable";
 import { fetchAndProcessSiteData } from "@/lib/site-data-processor";
 import EnergyFlowSankey from "@/components/EnergyFlowSankey";
-import { calculateEnergyFlowMatrix } from "@/lib/energy-flow-matrix";
+import {
+  calculateEnergyFlowMatrix,
+  type EnergyFlowMatrix,
+} from "@/lib/energy-flow-matrix";
 import SystemPowerCards from "@/app/components/cards/SystemPowerCards";
 import PeriodSwitcher from "@/components/PeriodSwitcher";
 import { formatDateTime, formatDateTimeRange } from "@/lib/fe-date-format";
@@ -125,6 +128,8 @@ interface DashboardClientProps {
   isAdmin: boolean;
   availableSystems?: AvailableSystem[];
   userId?: string;
+  /** When true, the long-range (30D) Sankey is served from PG (FLOW_MATRIX_SERVE_FROM_PG). */
+  serveFlowFromPg?: boolean;
 }
 
 // Helper function to get stale threshold based on vendor type
@@ -141,6 +146,7 @@ export default function DashboardClient({
   isAdmin: isAdminProp,
   availableSystems = [],
   userId,
+  serveFlowFromPg = false,
 }: DashboardClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -272,7 +278,14 @@ export default function DashboardClient({
   const [processedHistoryData, setProcessedHistoryData] = useState<{
     load: ChartData | null;
     generation: ChartData | null;
+    requestStart?: string;
+    requestEnd?: string;
   }>({ load: null, generation: null });
+  // Energy-flow matrix served from PG for the long-range (30D) Sankey (gated by
+  // serveFlowFromPg). null = not loaded / not applicable → fall back to client-side calc.
+  const [pgFlowMatrix, setPgFlowMatrix] = useState<EnergyFlowMatrix | null>(
+    null,
+  );
   const [historyLoading, setHistoryLoading] = useState(false);
   const [loadChartData, setLoadChartData] = useState<ChartData | null>(null);
   const [generationChartData, setGenerationChartData] =
@@ -556,6 +569,53 @@ export default function DashboardClient({
     historyTimeRange.start,
     historyTimeRange.end,
     isHistoricalMode,
+  ]);
+
+  // Long-range Sankey served from Postgres (point_readings_flow_1d), gated by
+  // FLOW_MATRIX_SERVE_FROM_PG. v1: 30D only, completed days summed server-side. Reuses the
+  // history fetch's request window; today contributes nothing until it materializes at midnight.
+  useEffect(() => {
+    if (!serveFlowFromPg || sitePeriod !== "30D" || !systemId) {
+      setPgFlowMatrix(null);
+      return;
+    }
+    const start = processedHistoryData.requestStart;
+    const end = processedHistoryData.requestEnd;
+    if (!start || !end) {
+      setPgFlowMatrix(null);
+      return;
+    }
+    const offsetMin = system?.timezoneOffsetMin || 0;
+    const toLocalYMD = (iso: string) =>
+      new Date(new Date(iso).getTime() + offsetMin * 60000)
+        .toISOString()
+        .slice(0, 10);
+
+    const abort = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/energy-flow-matrix?systemId=${systemId}&start=${toLocalYMD(start)}&end=${toLocalYMD(end)}`,
+          { signal: abort.signal },
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const matrix = (await res.json()) as EnergyFlowMatrix;
+        if (!abort.signal.aborted) setPgFlowMatrix(matrix);
+      } catch (err) {
+        if (!abort.signal.aborted) {
+          console.error("Failed to fetch energy flow matrix from PG:", err);
+          setPgFlowMatrix(null); // graceful fall back to client-side calc
+        }
+      }
+    })();
+    return () => abort.abort();
+  }, [
+    serveFlowFromPg,
+    sitePeriod,
+    systemId,
+    system?.timezoneOffsetMin,
+    processedHistoryData.requestStart,
+    processedHistoryData.requestEnd,
   ]);
 
   // Ensure period is always in the URL
@@ -1368,10 +1428,18 @@ export default function DashboardClient({
                           {processedHistoryData.generation &&
                             processedHistoryData.load &&
                             (() => {
-                              const matrix = calculateEnergyFlowMatrix({
-                                generation: processedHistoryData.generation,
-                                load: processedHistoryData.load,
-                              });
+                              // Long-range 30D Sankey is served from PG when the gate is on and
+                              // the materialized matrix has loaded; otherwise compute client-side.
+                              const usePg =
+                                serveFlowFromPg && sitePeriod === "30D";
+                              const matrix =
+                                usePg && pgFlowMatrix
+                                  ? pgFlowMatrix
+                                  : calculateEnergyFlowMatrix({
+                                      generation:
+                                        processedHistoryData.generation,
+                                      load: processedHistoryData.load,
+                                    });
                               return matrix ? (
                                 <div className="sm:p-4">
                                   <h3 className="text-base font-semibold text-gray-300 mb-2 px-2 sm:px-0">
@@ -1384,20 +1452,21 @@ export default function DashboardClient({
                                       height={680}
                                     />
                                   </div>
-                                  {sitePeriod === "30D" && (
-                                    <div className="mt-4 px-2 sm:px-0">
-                                      <div className="text-xs text-amber-400/80 bg-amber-950/20 border border-amber-800/30 rounded-md p-3">
-                                        <span className="font-medium">
-                                          Note:
-                                        </span>{" "}
-                                        Battery and grid energy values in 30D
-                                        view are not yet accurate due to daily
-                                        averaging. Values will be corrected when
-                                        server-side energy flow calculation is
-                                        implemented.
+                                  {sitePeriod === "30D" &&
+                                    !(usePg && pgFlowMatrix) && (
+                                      <div className="mt-4 px-2 sm:px-0">
+                                        <div className="text-xs text-amber-400/80 bg-amber-950/20 border border-amber-800/30 rounded-md p-3">
+                                          <span className="font-medium">
+                                            Note:
+                                          </span>{" "}
+                                          Battery and grid energy values in 30D
+                                          view are not yet accurate due to daily
+                                          averaging. Values will be corrected
+                                          when server-side energy flow
+                                          calculation is implemented.
+                                        </div>
                                       </div>
-                                    </div>
-                                  )}
+                                    )}
                                 </div>
                               ) : null;
                             })()}

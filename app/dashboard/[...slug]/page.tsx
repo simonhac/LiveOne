@@ -9,6 +9,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { VendorRegistry } from "@/lib/vendors/registry";
+import { FLOW_MATRIX_SERVE_FROM_PG } from "@/lib/db/routing";
 
 interface PageProps {
   params: Promise<{
@@ -226,6 +227,7 @@ export default async function DashboardPage({ params }: PageProps) {
         isAdmin={isAdmin}
         availableSystems={systemsWithUsernames}
         userId={userId}
+        serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
       />
     );
   }
@@ -248,6 +250,7 @@ export default async function DashboardPage({ params }: PageProps) {
         isAdmin={isAdmin}
         availableSystems={systemsWithUsernames}
         userId={userId}
+        serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
       />
     </DashboardLayout>
   );
