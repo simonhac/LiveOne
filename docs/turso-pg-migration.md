@@ -17,7 +17,7 @@ it; move the config tables to it), demote **Turso to a transitional best-effort 
 (ap-southeast-2 / `syd1`)**. Staged, flag-gated, multi-PR. The deeper reason is to cleanly separate the
 data-collection **engine** from the **web/FE** — see [Direction of travel](#direction-of-travel--engineweb-separation).
 
-## Current status (2026-06-09)
+## Current status (2026-06-10)
 
 - **Phase 1 — config authority on PG: ✅ LIVE** (cut over 2026-06-07). PG is the system of record for
   config (`systems`, `point_info`, `users`, `user_systems`, `polling_status`, `share_tokens`); Turso
@@ -34,8 +34,11 @@ data-collection **engine** from the **web/FE** — see [Direction of travel](#di
   - **PR-13 (trim raw-vendor 5m/1d double-write) ✅ LIVE** — merged `#26`; PG is the sole raw-vendor
     aggregator. Burn-in GREEN 2026-06-09 (queue resumed → lag 0; reconciler `agg_5m --days=2`
     20010/20010, `agg_1d` June 261/261, 0 mismatches).
-- **Live pipeline healthy:** QStash lag 0 / DLQ 0 / parallelism 1; PG mirror response-presence 100%,
-  raw landing < 1 min old.
+- **Phase 3 — PlanetScale → Sydney: ✅ LIVE** (cut over 2026-06-10). Prod PG is now the 3-node HA
+  `sydney` branch (`aws-ap-southeast-2`); us-east `main` is the hot-standby rollback for the burn-in.
+  Vercel stays in Tokyo (`hnd1`) — that move is a separate later window.
+- **Live pipeline healthy:** QStash lag 0 / DLQ 0; PG mirror response-presence 100%, raw landing
+  < 1 min old. (Aggregation is order-independent, so queue parallelism may be raised safely.)
 
 **Whole-history parity (read-only sweep, all `TZ=UTC`, prod; first data 2025-08):**
 
@@ -52,7 +55,9 @@ chunked by month/quarter because one multi-month Turso response exceeds the libs
 
 ## What's next (ordered by dependency)
 
-1. **Phase 3 — Sydney region move** (parallel ops). Co-locate compute + data; kill cross-region RTT (R8).
+1. **Phase 3 tail — burn-in + Vercel→`syd1`.** PlanetScale→Sydney is ✅ live (2026-06-10); keep us-east
+   `main` hot for a 24–48h burn-in (rollback = repoint `DB_*` + redeploy, then heal `main` from Turso
+   since it stopped receiving at cutover). The Vercel compute move to `syd1` is a **separate later window**.
 2. **Phase 4 — Turso decommission.** Needs raw durability off Turso (synchronous PG raw write, or
    formally accepting queue-only at-least-once) + dropping the `*_backup`/archive tables. Also folds in
    the deferred dead-publisher cleanup (`publishObservationBatch` + its no-collector arms, the gated 1d
@@ -102,7 +107,8 @@ Answers "do we ever drop a reading before it's in PG?" — **not via QStash alon
 for now.** A poll writes **Turso inline (synchronous — the real durability anchor)** then **best-effort
 enqueues to QStash** (`publishObservationBatch` swallows enqueue errors — "do NOT break the database
 insertion"); there is **no synchronous PG write** (PG is fed only by the receiver). Once enqueued, QStash
-is at-least-once with retries → **DLQ**, parallelism-1 (ordered); the receiver is idempotent. So the
+is at-least-once with retries → **DLQ**; the receiver is idempotent and its aggregation is
+**order-independent** (successor-recompute + per-system advisory lock), so parallelism > 1 is safe. So the
 guarantee is **"Turso has it, and PG holes heal from Turso"** via idempotent `gap-map-raw-readings.ts
 --apply` — exactly how 2026's ~9 mirror-down windows were repaired. Gaps QStash itself doesn't close
 (swallowed enqueue, crash mid-poll before publish, stranded DLQ) are caught by the every-15-min
@@ -154,8 +160,13 @@ keyed `(systemId, intervalEnd)` / `(systemId, day)` over landed PG data (`onConf
   `dayToUnixRangeForAggregation` moved here too (fixed a latent negative-fractional-tz bug).
 - **5m:** `lib/db/planetscale/aggregate-points-pg.ts` `recomputeAgg5mForIntervals`; the receiver
   recomputes the touched intervals from PG raw after the raw-insert tx commits (best-effort, awaited),
-  matching Turso's granularity. `transform='d'` `previousLast` from PG raw — correct because the queue
-  delivers in order (parallelism 1). Points absent from the PG `point_info` mirror are **skipped**.
+  matching Turso's granularity. `transform='d'` `previousLast` is read from PG raw. **Order-independent
+  (parallelism > 1 safe):** the receiver also rebuilds each touched interval's immediate successor
+  (`withSuccessorIntervals` — a 'd' delta depends on the previous interval's last) and the whole
+  recompute runs under a per-system `pg_advisory_xact_lock`, so out-of-order / parallel delivery still
+  converges to the correct value (whichever recompute runs last under the lock sees all committed raw).
+  In-order delivery is byte-identical to before. Points absent from the PG `point_info` mirror are
+  **skipped**.
 - **1d:** `recomputeAgg1dForDay` from PG 5m; the daily cron computes 1d in PG **instead of** publishing
   the Turso 1d queue-mirror when the flag is on (else the async queue overwrites the PG-computed rows).
 - **5m-native (Enphase/Amber) is disjoint** — no raw `point_readings`, so the recompute never touches
@@ -189,28 +200,28 @@ Turso still computes its own local 5m/1d (untouched) so the reconciler stays a v
 `AGG_COMPUTE_IN_PG=false` restores publish + intake exactly. Removed branches retained as no-ops until
 the Phase-4 cleanup.
 
-### Phase 3 — Region move to Sydney (PlanetScale only; Vercel→`syd1` deferred)
+### Phase 3 — Region move to Sydney (PlanetScale; Vercel→`syd1` deferred) ✅ DONE (cut over 2026-06-10)
 
-**Scope:** move PlanetScale to **Sydney (`aws-ap-southeast-2`)** and upsize the lone us-east node (`PS-5`,
-`replicas: 0`) to **3-node HA**. **Vercel stays in Tokyo (`hnd1`) this window** — `vercel.json` unchanged;
-compute→`syd1` is a later window. Env-only, no app code. Turso stays in Tokyo (decommissioning).
+Prod Postgres is the **`sydney` branch** of `liveone` (`aws-ap-southeast-2`): `PS-5-AWS-ARM`, `replicas: 2`
+(3-node HA), `production`, PG 17.10, `TimeZone=Etc/UTC` — same compute tier as the old us-east node, HA
+added. **Vercel stays in Tokyo (`hnd1`)** (its move to `syd1` is a separate later window). us-east `main`
+is kept hot as the burn-in rollback. The branch was created in one command (HA + production land at create —
+no change-request / `promote`), and inherited PITR automatically since backup schedules are database-wide:
 
-**Mechanism (verified 2026-06-09).** Cross-region _physical_ restore is **impossible** — `pscale branch
-create` rejects `--region` with `--restore` (backups restore to their original region), so the bulk copy is
-a **`pgcopydb` logical clone** into a new Sydney **production branch** of `liveone`. HA is set _after_
-create, not at it: change-request `cluster_size ≥ PS_10` + `replicas: 2` (= 3 nodes), match the source PG
-`--major-version`, then `pscale branch promote`. Plain `clone` — **no `--follow`/CDC**: the queue + live
-Turso already are the change-capture.
+```
+pscale branch create liveone sydney --region aws-ap-southeast-2 --cluster-size PS-5-AWS-ARM --major-version 17
+```
 
-**Cutover.** Pre-stage the HA branch off-path, then: **pause the queue** (collection keeps writing Turso;
-QStash buffers — safe, it retains for days vs a minutes-long pause) → `pgcopydb clone` us-east→Sydney
-(clone captures ≤pause, queue holds >pause, so the happy path needs no heal) → re-point
-`PLANETSCALE_DATABASE_URL` / `_MIGRATIONS` / `PLANETSCALE_PRODUCTION_HOST` + redeploy (the ≤10-min serving
-blip; reads fall back to Turso) → **resume** → drain. **Then check** (`qstash-health` lag/DLQ 0,
-`gap-map-raw-readings` 0 deficits, `reconcile-agg-values` 0 mismatches); **only if RED**, heal from live
-Turso (`gap-map-raw-readings.ts --apply` + `recompute-pg-range.ts --apply`). Zero collection downtime holds
-because the poll's only PG write — `polling_status` — is swallowed (`lib/polling-utils.ts`), so readings
-land in Turso + queue regardless. **Rollback:** flip env back to us-east, kept hot through a 24–48h burn-in.
+**How the cutover was done** (reference for future region moves): **pause the queue** (collection keeps
+writing Turso; QStash buffers for days) → **`pg_dump -Fc` → `pg_restore`** us-east→Sydney over the
+**direct port 5432** (the 6432 pooler rejects `pg_dump`/`pg_restore`), excluding the platform-managed
+`hypopg`/`pscale_extensions` → re-point prod `DB_HOST`/`DB_USERNAME`/`DB_PASSWORD` (the app uses discrete
+`DB_*` via the pooler) to the Sydney Default role + `vercel redeploy` → **resume** → drain the backlog →
+**recompute the boundary day** (`recompute-pg-range.ts --apply`, since its `agg_1d` was cloned mid-day) →
+verify against Sydney (`gap-map-raw-readings` 0 deficits, `reconcile-agg-values` clean). Zero collection
+downtime: the poll's only PG write, `polling_status`, is swallowed (`lib/polling-utils.ts`), so readings
+land in Turso + queue regardless. **Rollback:** repoint `DB_*` to us-east + redeploy, then heal `main`
+from Turso (`gap-map --apply` + `recompute`) since it stopped receiving at cutover.
 
 ### Phase 4 — Turso decommission
 
@@ -332,8 +343,10 @@ ALTER TABLE point_readings_agg_5m VALIDATE CONSTRAINT point_readings_agg_5m_syst
   baselined into `drizzle.__drizzle_migrations`; **`push` forbidden** (see `drizzle-planetscale.config.ts`).
 - **R6 — pool bug** _[done — Stage 1]_: PG pool memoized unconditionally on `global`; budget `max` ×
   warm-instances ≤ PlanetScale connection limit (`PLANETSCALE_POOL_MAX`).
-- **R8 — region latency (transitional):** with Vercel→`syd1` and Turso in Tokyo, the inline Turso raw
-  backup write eats ~100ms cross-region RTT per poll. Acceptable (best-effort); gone at Phase 4.
+- **R8 — region latency (transitional):** post-Phase-3, **PG is in Sydney while Vercel + Turso are in
+  Tokyo**, so the receiver→PG writes and the PG reads now cross Tokyo↔Sydney (~100ms); the inline Turso raw
+  write is local (Tokyo). Acceptable; resolved when Vercel also moves to `syd1` (separate later window) and
+  fully at Phase 4 (Turso gone).
 
 ## Cross-cutting prerequisites _(all done unless noted)_
 
@@ -341,8 +354,10 @@ ALTER TABLE point_readings_agg_5m VALIDATE CONSTRAINT point_readings_agg_5m_syst
   `CONFIG_SERVE_FROM_PG`, `READINGS_READS_FROM_PG`, `AGG_COMPUTE_IN_PG`. Cutover = flip env var.
 - **PG migrations** via `drizzle-kit generate`/`migrate` (`db:pg:generate`/`db:pg:migrate`); baseline
   0000–0003 seeded; **never `push`**.
-- **PITR backups:** long-retention custom backup **schedule** + **prevent-deletion** in the PlanetScale
-  dashboard (no documented CLI/API for the schedule); optionally scripted periodic `pscale backup create`.
+- **PITR backups:** backup **schedules are database-wide** — they "run for all production branches", so a
+  new production branch (e.g. `sydney`) inherits them at create. Set in the PlanetScale dashboard (no
+  CLI/API for the schedule). `liveone` has 12h-keep-2d (immutable) + 3-day-keep-6mo; `pscale backup create`
+  makes one-off base backups.
 - **Dev guardrails (C):** distinct `PLANETSCALE_DATABASE_URL` per env; startup `assertNotProdDbInDev`
   throws if dev resolves to `PLANETSCALE_PRODUCTION_HOST`; `ALLOW_PROD_DB_IN_DEV=true` is the escape hatch.
 - **share_tokens PG schema:** bigint epoch-ms columns + text PK; write-port detects PG `23505`.
@@ -444,6 +459,15 @@ confirmed during the relevant PR.
 
 One line per completed milestone — detail lives in git + the sections above.
 
+- **2026-06-10 — Phase 3 Sydney cutover LIVE.** PlanetScale prod moved us-east→Sydney (3-node HA `sydney`
+  branch, PS-5 ARM, PG 17.10). Paused queue → `pg_dump -Fc`/`pg_restore` (local PG-17 client, ~3.7 GB,
+  direct port 5432) → repointed prod `DB_*` to the Sydney pooler + `vercel redeploy` → resumed → drained
+  the 495-msg backlog → recomputed the boundary day. Verified vs Sydney: row-parity 12/12 tables, 38/38
+  indexes, FK `NOT VALID` preserved, seq past max; `gap-map` 0 deficits, `agg_5m` 20016/20016, `agg_1d`
+  clean. PITR auto-covered (DB-wide schedules) + manual base backup. us-east `main` kept hot for rollback;
+  Vercel→`syd1` deferred. Also made the PG 5m recompute order-independent (successor recompute + per-system
+  advisory lock) so queue parallelism >1 is safe.
+
 - **2026-06-09 — PR-13 LIVE + burn-in GREEN.** Trimmed raw-vendor 5m/1d Turso→queue double-write (`#26`,
   gated `AGG_COMPUTE_IN_PG`); PG is sole raw-vendor aggregator. Post-resume verification: queue lag 0 /
   DLQ 0 / presence 100% / raw landing < 2 min; reconciler `agg_5m --days=2` 20010/20010 and `agg_1d`
@@ -460,12 +484,11 @@ One line per completed milestone — detail lives in git + the sections above.
   defensive series sort). Admin readings perf + 1d `data_quality` 500 — two **pre-existing** bugs fixed
   (`COUNT(*)` → `SELECT 1 … LIMIT 1`; 1d selects `NULL as data_quality`); PG served the same admin reads
   < 1s vs Turso 10–13s.
-- **2026-06-07 — reconciler driven GREEN, all systems.** The earlier "PG raw 43–48% short" was a
-  client-TZ measurement artifact (run scripts with `TZ=UTC`); PG raw is complete. Real RED causes:
-  historical PG 5m never recomputed (queue-mirror gaps pre-`AGG_COMPUTE_IN_PG`) + Amber (sys 9) 5m
-  staleness (late `updateUsage` dropped by the receiver's `onConflictDoNothing`). Fixed via
-  `recompute-pg-range.ts --apply` + re-copying Amber's refined 5m; 16 pre-`#15`-deploy Amber stragglers
-  cleaned up (snapshot `liveone-snapshot-20260607-215859`).
+- **2026-06-07 — reconciler driven GREEN, all systems.** RED causes fixed: historical PG 5m never
+  recomputed (queue-mirror gaps pre-`AGG_COMPUTE_IN_PG`) + Amber (sys 9) 5m staleness (late `updateUsage`
+  dropped by the receiver's `onConflictDoNothing`). Fixed via `recompute-pg-range.ts --apply` + re-copying
+  Amber's refined 5m; 16 pre-`#15`-deploy Amber stragglers cleaned up (snapshot
+  `liveone-snapshot-20260607-215859`).
 - **2026-06-07 — `#15` shipped.** Receiver upserts 5m for 5m-native systems (Amber refinements heal
   automatically — proven: 85 post-deploy refinements healed within seconds); `monitor-observations` cron
   (15 min) + `gap-map-raw-readings.ts` / `recompute-pg-range.ts` tooling landed.
@@ -481,8 +504,6 @@ One line per completed milestone — detail lives in git + the sections above.
 - **2026-06-06 — data recoveries, nothing lost.** 36 deploy-window + 19 backfill-gap sessions; **118,613
   purged Sep–Nov 2025 sessions** recovered full-fidelity from snapshot `liveone-snapshot-20251126-195709`;
   **147,727 response blobs** restored from `sessions_archive`. ~4,165 orphans remain (the 2025-11-27 final
-  purge-window block, in no snapshot) — tolerated under the `NOT VALID` FK. _(The "response capture
-  decline" was an intermittently-running mirror pipeline + a backfill writing `response: null`, not a
-  regression; every response existed in Turso.)_
+  purge-window block, in no snapshot) — tolerated under the `NOT VALID` FK.
 - **Stage 1 (PR-0…PR-6) + prod PG hardening merged.** Flag seam, pool-memo fix, migration tooling +
   baseline, `share_tokens` table, seed hardening, value reconciler, dev guardrail, read-site inventory.

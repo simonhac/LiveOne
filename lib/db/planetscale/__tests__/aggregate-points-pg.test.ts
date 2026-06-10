@@ -15,6 +15,7 @@
 import { describe, it, expect } from "@jest/globals";
 import {
   affectedIntervalEndsMs,
+  withSuccessorIntervals,
   recomputeAgg5mForIntervals,
   recomputeAgg1dForDay,
 } from "../aggregate-points-pg";
@@ -46,6 +47,8 @@ interface Canned {
 
 function makeFakeDb(canned: Canned) {
   const upserts: { table: string; rows: any[] }[] = [];
+  // Raw SQL executed (e.g. the per-system advisory lock) — recorded so tests can assert it.
+  const executed: unknown[] = [];
 
   function makeQuery(rows: unknown[]) {
     const p = Promise.resolve(rows);
@@ -80,9 +83,18 @@ function makeFakeDb(canned: Canned) {
         },
       };
     },
+    // recomputeAgg5mForIntervals wraps its work in a transaction guarded by an advisory lock.
+    execute(q: unknown) {
+      executed.push(q);
+      return Promise.resolve({ rows: [] });
+    },
+    transaction(cb: (tx: unknown) => unknown) {
+      // The transaction handle is the same fake surface (select/insert/execute).
+      return Promise.resolve(cb(db));
+    },
   };
 
-  return { db, upserts };
+  return { db, upserts, executed };
 }
 
 const asDb = (db: unknown) =>
@@ -118,7 +130,41 @@ describe("affectedIntervalEndsMs", () => {
   });
 });
 
+describe("withSuccessorIntervals", () => {
+  it("adds each interval's immediate successor (end + 5min), deduped + ascending", () => {
+    const e = Date.parse("2026-01-15T20:35:00+10:00");
+    expect(withSuccessorIntervals([e])).toEqual([e, e + FIVE]);
+  });
+
+  it("dedupes where a touched interval is another's successor", () => {
+    const e = Date.parse("2026-01-15T20:35:00+10:00");
+    // [N, N+1] → {N, N+1, N+2} (N+1 is both touched and N's successor → not duplicated)
+    expect(withSuccessorIntervals([e, e + FIVE])).toEqual([
+      e,
+      e + FIVE,
+      e + 2 * FIVE,
+    ]);
+  });
+
+  it("returns [] for none", () => {
+    expect(withSuccessorIntervals([])).toEqual([]);
+  });
+});
+
 describe("recomputeAgg5mForIntervals", () => {
+  it("acquires the per-system advisory lock before recomputing (order-safety)", async () => {
+    const intervalEndMs = 1_700_000_400_000;
+    const { db, executed } = makeFakeDb({
+      point_info: [{ index: 1, transform: null, metricType: "power" }],
+      point_readings: [
+        { pointId: 1, measurementTime: new Date(intervalEndMs), value: 5 },
+      ],
+    });
+    await recomputeAgg5mForIntervals(asDb(db), 7, [intervalEndMs]);
+    // The recompute runs in a transaction whose only raw statement is the advisory lock.
+    expect(executed).toHaveLength(1);
+  });
+
   it("computes per-point 5m from raw and upserts the expected rows", async () => {
     const intervalEndMs = 1_700_000_400_000; // multiple of FIVE
     const intervalStartMs = intervalEndMs - FIVE;
