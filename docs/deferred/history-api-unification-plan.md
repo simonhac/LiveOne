@@ -1,5 +1,7 @@
 # History API Unification Plan
 
+> **Status:** deferred plan — not yet executed (moved from to-clean/, 2026-06-10). The composite and non-composite history paths in `app/api/history/route.ts` remain separate.
+
 ## Overview
 
 Unify the composite and non-composite code paths in `/app/api/history/route.ts` to use `FlavouredPoint[]` from `PointManager.getFilteredSeriesForSystem()`.

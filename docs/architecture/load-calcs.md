@@ -1,5 +1,7 @@
 # Load Calculations
 
+> **Status:** current — last verified 2026-06-10.
+
 This document describes how load calculations work in the site data processor, particularly the "Rest of House" calculation.
 
 ## Overview

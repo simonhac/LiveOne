@@ -1,5 +1,7 @@
 # KV Store Documentation
 
+> **Status:** current — last verified 2026-06-10.
+
 This document describes the Upstash Redis KV store key organization and usage patterns.
 
 ## Overview

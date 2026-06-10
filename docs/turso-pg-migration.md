@@ -39,8 +39,9 @@ data-collection **engine** from the **web/FE** — see [Direction of travel](#di
   **Vercel compute → `syd1` ✅ LIVE 2026-06-10** (PR #31; confirmed by function region `syd1` on a live
   request) — engine co-located with PG; the still-live Turso inline write is now the cross-region hop
   (R8) until Phase 5.
-- **Phase 4a — PG raw-durability outbox: ✅ BUILT** (this branch), gated `WRITE_OUTBOX`, deploy + soak
-  next. See [Phase 4](#phase-4--pg-raw-durability-non-destructive-turso-untouched).
+- **Phase 4a — PG raw-durability outbox: ✅ DEPLOYED + SOAKING** (merged `#32`; migration `0004` applied
+  to prod Sydney PG; `WRITE_OUTBOX=true` flipped on 2026-06-10; relay draining, backlog ~0; Slack alerts
+  wired). ~30h soak in progress. See [Phase 4](#phase-4--pg-raw-durability-non-destructive-turso-untouched).
 - **Live pipeline healthy:** QStash lag 0 / DLQ 0; PG mirror response-presence 100%, raw landing
   < 1 min old. (Aggregation is order-independent, so queue parallelism may be raised safely.)
 
@@ -64,9 +65,10 @@ chunked by month/quarter because one multi-month Turso response exceeds the libs
    `pscale backup create` first). `main` is purely the region-move rollback (rollback = repoint `DB_*` +
    redeploy, then heal `main` from Turso since it stopped receiving at cutover) — decoupled from Turso.
    _(Planned tomorrow, ~30h after cutover.)_
-2. **Phase 4 — PG raw durability (non-destructive).** **4a outbox + relay ✅ BUILT** (this branch, gated
-   `WRITE_OUTBOX`); deploy dark → flip on → soak ~30h alongside the Turso inline write, proving zero loss
-   and an ≈0 relay backlog. Fully reversible (`WRITE_OUTBOX=false`). This is the gate for Phase 5.
+2. **Phase 4 — PG raw durability (non-destructive).** **4a outbox + relay ✅ DEPLOYED** (merged `#32`,
+   `WRITE_OUTBOX=true` flipped on 2026-06-10); **soak in progress** — running ~30h alongside the Turso
+   inline write, proving zero loss and an ≈0 relay backlog. Remaining: complete the green soak window,
+   then Phase 5. Fully reversible (`WRITE_OUTBOX=false`). This is the gate for Phase 5.
 3. **Phase 5 — Turso decommission (destructive).** Cut the ungated Turso writes (raw, sessions, local
    agg), fold in the deferred dead-publisher cleanup (`publishObservationBatch` + its no-collector arms,
    the gated 1d Turso→PG mirror — kept until now as the `AGG_COMPUTE_IN_PG=false` rollback path), retire
@@ -125,7 +127,7 @@ guarantee is **"Turso has it, and PG holes heal from Turso"** via idempotent `ga
 (swallowed enqueue, crash mid-poll before publish, stranded DLQ) are caught by the every-15-min
 `monitor-observations` cron + the Turso backstop. **"Never drop until ingested into PG" is the Phase-4
 goal** (the transactional outbox — a committed PG capture relayed at-least-once with monitoring) —
-**4a now BUILT (gated `WRITE_OUTBOX`), soak pending**; until that soak is green Turso can't be
+**4a now DEPLOYED + soaking (`WRITE_OUTBOX=true`, 2026-06-10)**; until that soak is green Turso can't be
 decommissioned (decision F).
 
 ## Cutover pattern & flag semantics
@@ -249,12 +251,12 @@ from Turso (`gap-map --apply` + `recompute`) since it stopped receiving at cutov
 
 The exit-condition for dropping Turso: raw readings durable on PG **without** the inline-Turso safety
 net. With session-id minting already off Turso (PR-7), this reduces to building + soaking the
-**transactional outbox** of [`architecture/ENGINE-WEB-SEPARATION.md`](architecture/ENGINE-WEB-SEPARATION.md)
+**transactional outbox** of [`architecture/engine-web-separation.md`](architecture/engine-web-separation.md)
 §6.4 — the chosen mechanism (decision 2026-06-08) over "accept queue-only at-least-once". Everything here
 is additive and reversible while Turso still backs everything.
 
-- **4a — outbox + relay ("the PG bin before the queue"). ✅ BUILT (this branch); gated `WRITE_OUTBOX`,
-  soak next.** New `observations_outbox` table (PG, migration `0004`) holding each poll's built
+- **4a — outbox + relay ("the PG bin before the queue"). ✅ DEPLOYED (merged `#32`); `WRITE_OUTBOX=true`
+  live 2026-06-10, soak in progress.** New `observations_outbox` table (PG, migration `0004`) holding each poll's built
   `QueueMessage` (env, session, observations) — the durable PG capture. The publish seam
   (`poll-collector.ts` `publishPoll`, `publisher.ts` `publishObservationBatch`) **tees**: when
   `WRITE_OUTBOX` is on it `persistOutbox()`s the same messages **in parallel with** the unchanged live
@@ -279,8 +281,9 @@ is additive and reversible while Turso still backs everything.
 - **4b — "queue as sole path" hardening** (§6.5): a **monotonicity guard** on the 5m-native/1d upserts
   (today correctness leans on QStash `parallelism=1` ordering — a broker setting, not a data invariant;
   `aggregate-points-pg.ts` `previousLast`); **DLQ drain/replay-from-source** tooling (`monitor-observations`
-  only alerts today); **SLOs + paging** on lag/DLQ/receiver-success/raw-landing-age (+ actually set
-  `OBSERVATIONS_ALERT_WEBHOOK_URL`); a **read-after-write** path for interactive "poll now & show result".
+  only alerts today); **SLOs + paging** on lag/DLQ/receiver-success/raw-landing-age
+  (`OBSERVATIONS_ALERT_WEBHOOK_URL` now set in prod → Slack, tested 2026-06-10; the broader SLO set is
+  still TODO); a **read-after-write** path for interactive "poll now & show result".
 - **4c — soak.** Run outbox+relay alongside the Turso inline write; prove zero loss via the reconciler /
   `gap-map`, the outbox backlog stays ≈0 (`monitor-observations` now alerts on
   `outbox_backlog_high`/`outbox_stale`), and that PG heals _from itself_ (replay outbox/PG), not from
@@ -443,7 +446,7 @@ ALTER TABLE point_readings_agg_5m VALIDATE CONSTRAINT point_readings_agg_5m_syst
 
 ## Direction of travel — engine/web separation
 
-> **Canonical doc:** [`architecture/ENGINE-WEB-SEPARATION.md`](architecture/ENGINE-WEB-SEPARATION.md)
+> **Canonical doc:** [`architecture/engine-web-separation.md`](architecture/engine-web-separation.md)
 > owns the target shape **and** the ingest-durability decision (one idempotent ingest contract per
 > store, on-ramped by a **transactional outbox**; the queue is transport, not the durability/replay
 > mechanism). Summary only here.
@@ -536,13 +539,15 @@ confirmed during the relevant PR.
 
 One line per completed milestone — detail lives in git + the sections above.
 
-- **2026-06-10 — Vercel→`syd1` LIVE + Phase 4a outbox BUILT.** Moved Vercel compute Tokyo→Sydney (PR #31,
+- **2026-06-10 — Vercel→`syd1` LIVE + Phase 4a outbox DEPLOYED + SOAKING.** Moved Vercel compute Tokyo→Sydney (PR #31,
   `vercel.json` `regions`; confirmed by function region `syd1` on a live request) — engine co-located with
   PG. Built the Phase-4a transactional outbox (gated `WRITE_OUTBOX`): `observations_outbox` (migration
   `0004`), `persistOutbox` tee at the publish seam (`poll-collector.ts`/`publisher.ts`) alongside the
   unchanged direct enqueue, minutely `app/api/cron/relay-outbox` draining → QStash → the unchanged
   receiver (`FOR UPDATE SKIP LOCKED`, per-row tx, GC), + outbox backlog/age monitoring. Additive +
-  reversible (`WRITE_OUTBOX=false`); deploy + ~30h soak next.
+  reversible (`WRITE_OUTBOX=false`). Merged as PR #32, deployed; migration `0004` applied to prod Sydney
+  PG; `WRITE_OUTBOX=true` flipped on; relay draining (backlog ~0); Slack alert webhook
+  (`OBSERVATIONS_ALERT_WEBHOOK_URL`) wired + tested. ~30h soak in progress.
 - **2026-06-10 — Phase 3 Sydney cutover LIVE.** PlanetScale prod moved us-east→Sydney (3-node HA `sydney`
   branch, PS-5 ARM, PG 17.10). Paused queue → `pg_dump -Fc`/`pg_restore` (local PG-17 client, ~3.7 GB,
   direct port 5432) → repointed prod `DB_*` to the Sydney pooler + `vercel redeploy` → resumed → drained

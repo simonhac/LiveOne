@@ -1,10 +1,14 @@
 # Database Migrations
 
+> **Status:** current — last verified 2026-06-10. SQL sections below target Turso/SQLite;
+> PostgreSQL (PlanetScale) migrations live in `/drizzle-planetscale/`. The safety principles
+> apply to both.
+
 This project uses plain SQL migration files for database schema changes. See also `CLAUDE.md` for the migration checklist.
 
 ## File Structure
 
-- **Location**: `/migrations/` directory
+- **Location**: `/migrations/` directory (Turso/SQLite); `/drizzle-planetscale/` (PostgreSQL)
 - **Naming**: `NNNN_description.sql` (e.g., `0056_add_snapshot_hour.sql`)
 - **Format**: Plain SQL with migration tracking at the end
 
@@ -124,6 +128,18 @@ sqlite3 dev.db "SELECT * FROM migrations WHERE id = 'NNNN_migration_name'"
 3. **Verify row counts** before and after
 4. **Check indexes** are recreated if needed
 5. **Update application code** to use new schema
+
+## Deployment Verification
+
+(Folded in from the retired `DEPLOYMENT.md`, 2026-06-10.)
+
+- **Diff schemas before deploying schema changes** — dump dev and prod schemas and diff them;
+  don't assume they match.
+- **Verify env vars are set** before relying on them: `vercel env ls production`.
+- **Verify incrementally after deploy** — don't assume success. Start with
+  `curl -s https://liveone.vercel.app/api/health | jq '.status'` (expect `"healthy"`), then
+  spot-check the affected endpoints/pages.
+- **Document any manual steps** a deploy requires, and write them down _before_ starting.
 
 ## Lessons Learned
 

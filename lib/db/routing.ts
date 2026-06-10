@@ -89,7 +89,7 @@ export const FLOW_MATRIX_SERVE_FROM_PG = envFlag("FLOW_MATRIX_SERVE_FROM_PG");
  * from a committed row, retried until acked — instead of relying on the inline
  * Turso write + a fire-and-forget enqueue. Additive and fully reversible: OFF =
  * exactly today's behaviour (direct enqueue only). See
- * docs/architecture/ENGINE-WEB-SEPARATION.md §6.4 and docs/turso-pg-migration.md
+ * docs/architecture/engine-web-separation.md §6.4 and docs/turso-pg-migration.md
  * Phase 4.
  */
 export const WRITE_OUTBOX = envFlag("WRITE_OUTBOX");

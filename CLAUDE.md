@@ -22,15 +22,24 @@ To check TypeScript compilation:
 
 ### Key Documentation
 
-- **Database Schema**: See `docs/SCHEMA.md` for complete table documentation
-- **API Documentation**: See `docs/API.md` for endpoint details
-- **Database**: Turso (production: `liveone-tokyo`), SQLite (development: `dev.db`)
-- **Deployment**: Vercel (automatic from main branch)
+- **Docs index**: `docs/README.md` — start here; canonical docs are `docs/architecture/overview.md` and `docs/architecture/engine-web-separation.md`
+- **Data Model**: See `docs/architecture/data-model.md` (semantics/invariants); schema source of truth is `lib/db/planetscale/schema.ts`
+- **API Documentation**: See `docs/architecture/api.md` for conventions and route inventory
+- **Database (primary)**: PostgreSQL on PlanetScale — prod = `sydney` branch (`aws-ap-southeast-2`), dev = shared PlanetScale dev branch
+- **Database (legacy)**: Turso `liveone-tokyo` — transitional raw+sessions backup until migration Phase 5; local SQLite `dev.db` for the legacy dev paths. Migration state: `docs/turso-pg-migration.md`
+- **Deployment**: Vercel (automatic from main branch; region `syd1`)
 
 ### Environment Variables
 
 ```bash
-# Database
+# PostgreSQL (PlanetScale) - PRIMARY database
+PLANETSCALE_DATABASE_URL=<runtime connection string>           # dev: dev branch; prod: sydney branch
+PLANETSCALE_DATABASE_URL_MIGRATIONS=<DDL connection string>    # for npm run db:pg:migrate (or discrete DB_* vars)
+PLANETSCALE_PRODUCTION_HOST=<prod host>                        # arms the dev guardrail (assertNotProdDbInDev)
+# ALLOW_PROD_DB_IN_DEV=true                                    # escape hatch for the guardrail - use deliberately
+# PLANETSCALE_POOL_MAX=10                                      # optional pool size
+
+# Turso (LEGACY backup - until migration Phase 5)
 TURSO_DATABASE_URL=libsql://liveone-tokyo-simonhac.aws-ap-northeast-1.turso.io
 TURSO_AUTH_TOKEN=<your-token>  # Generate with: ~/.turso/turso db tokens create liveone-tokyo
 
@@ -115,7 +124,9 @@ npm run dev              # Start development server with TypeScript checking
 npm run build            # Build for production
 npm run type-check       # Check TypeScript types
 npm test                 # Run unit tests
-npm run db:push          # Push schema changes to database
+npm run db:pg:generate   # Diff PG schema.ts -> new migration in /drizzle-planetscale/
+npm run db:pg:migrate    # Apply pending PG migrations
+npm run db:push          # Push schema changes to the SQLite/Turso dev DB (legacy; NEVER for PG)
 npm run db:studio        # Open Drizzle Studio for database exploration
 ```
 
@@ -148,9 +159,43 @@ curl -H "x-claude: true" http://localhost:3000/api/cron/db-stats
 
 **Note**: The value must be exactly `"true"` (not `"1"` or other truthy values). This header only works in development mode.
 
-## Turso Database Management
+## Database Management
 
-### Quick Setup
+### PostgreSQL (primary)
+
+```bash
+# Connect with psql (dev branch, from .env.local)
+psql "$PLANETSCALE_DATABASE_URL"
+# Production (sydney branch): use the prod connection string deliberately
+```
+
+PG uses **native UTC timestamps** (no epoch-ms conversion needed):
+
+```sql
+-- Latest point readings
+SELECT pr.measurement_time, pi.display_name, pr.value
+FROM point_readings pr
+JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
+WHERE pr.system_id = 1
+ORDER BY pr.measurement_time DESC
+LIMIT 10;
+
+-- 5-min aggregation lag (minutes behind now)
+SELECT MAX(interval_end) AS latest_agg,
+       EXTRACT(EPOCH FROM (now() AT TIME ZONE 'UTC' - MAX(interval_end))) / 60 AS minutes_behind
+FROM point_readings_agg_5m;
+
+-- Approximate row counts (instant; never COUNT(*) the big tables)
+SELECT relname, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC;
+```
+
+**PG backups:** PITR schedules are database-wide, set in the PlanetScale dashboard (currently 12h-keep-2d immutable + 3-day-keep-6mo); `pscale backup create` makes a one-off base backup.
+
+**PG migrations:** `npm run db:pg:generate` / `npm run db:pg:migrate` — **never `drizzle-kit push`**. See `drizzle-planetscale/README.md`.
+
+### Turso (legacy backup — until migration Phase 5)
+
+#### Quick Setup
 
 ```bash
 # Install Turso CLI (one-time)
@@ -164,7 +209,7 @@ echo 'export PATH="$HOME/.turso:$PATH"' >> ~/.zshrc
 ~/.turso/turso db shell liveone-tokyo
 ```
 
-### Common Queries
+#### Common Queries (SQLite — timestamps are epoch-ms)
 
 > ⚠️ **Never `COUNT(*)` (or run any full-table scan/aggregate) on the big tables** — `point_readings` (~13M rows), `point_readings_agg_5m` (~3M), `sessions` (~870K). It's slow and almost never what you actually need.
 >
@@ -172,7 +217,7 @@ echo 'export PATH="$HOME/.turso:$PATH"' >> ~/.zshrc
 > - **Presence / recency / "is it current":** use an indexed `ORDER BY <indexed col> DESC LIMIT 1` — e.g. `SELECT MAX(measurement_time) FROM point_readings` or `SELECT 1 FROM <table> LIMIT 1`. This is how you verify a snapshot/backup has data, too.
 > - **Exact `COUNT(*)` is fine** only on the small config tables: `systems`, `point_info`, `users`, `user_systems`, `polling_status`, `share_tokens`.
 
-#### Check Recent Data
+##### Check Recent Data
 
 ```sql
 -- Latest point readings (timestamps in milliseconds)
@@ -193,7 +238,7 @@ SELECT
 FROM point_readings_agg_5m;
 ```
 
-#### Data Health Checks
+##### Data Health Checks
 
 ```sql
 -- Check for duplicate timestamps in point_readings
@@ -222,9 +267,9 @@ ORDER BY measurement_time DESC
 LIMIT 20;
 ```
 
-### Backup & Restore
+#### Backup & Restore (Turso)
 
-#### Recommended: Turso Snapshots (Instant, Copy-on-Write)
+##### Recommended: Turso Snapshots (Instant, Copy-on-Write)
 
 Turso's native branching feature creates instant point-in-time snapshots using copy-on-write:
 
@@ -253,7 +298,7 @@ Benefits:
 - Can query directly without restore
 - Perfect for pre-migration snapshots
 
-#### Alternative: File Export (for offline backups)
+##### Alternative: File Export (for offline backups)
 
 ```bash
 # Backup to file (slower, but portable)
@@ -269,11 +314,24 @@ Benefits:
 
 ## Database Migrations
 
-> 🛑 **Always ask before modifying the schema.** Never add/alter/drop a column, table, or index — or generate/apply a migration — without explicit approval first. Propose the change and wait for a "yes". This applies to both the Turso/SQLite and the Postgres (PlanetScale) schemas.
+> 🛑 **Always ask before modifying the schema.** Never add/alter/drop a column, table, or index — or generate/apply a migration — without explicit approval first. Propose the change and wait for a "yes". This applies to both the Postgres (PlanetScale) and the Turso/SQLite schemas.
 
-### Overview
+### PostgreSQL (primary)
 
-This project uses plain SQL migration files for the Turso/SQLite schema. The Postgres (PlanetScale) database uses **Drizzle versioned migrations** — see **Applying Postgres (PlanetScale) migrations** below. Migrations are tracked so they're only applied once per database.
+PG schema changes are versioned drizzle-kit migrations generated from `lib/db/planetscale/schema.ts`:
+
+```bash
+npm run db:pg:generate   # diff schema.ts -> new migration SQL in /drizzle-planetscale/
+npm run db:pg:migrate    # apply pending migrations (needs PLANETSCALE_DATABASE_URL_MIGRATIONS)
+```
+
+- **Never use `drizzle-kit push`** — destructive diff with no transaction or validation (the migration-0016 failure mode). See `drizzle-planetscale/README.md`.
+- The Safety Guidelines below (backup/snapshot first, test on a copy, validate row counts before any DROP) apply to PG too. PG backup = PITR schedules + `pscale backup create`.
+- Applying to a specific branch (`main` vs `sydney`), `pscale role` connections, the table-ownership pitfall, and parallel-agent number collisions: see **Applying Postgres (PlanetScale) migrations** below.
+
+### Turso/SQLite (legacy — until migration Phase 5)
+
+This section covers the legacy plain-SQL migrations in `/migrations/`. Migrations are tracked in a `migrations` table to ensure they're only applied once per database.
 
 ### Migration File Structure
 
@@ -428,6 +486,11 @@ CREATE TABLE IF NOT EXISTS migrations (
 INSERT INTO migrations (id) VALUES ('NNNN_migration_name');
 ```
 
+> ⚠️ **Migration-0056 lesson**: in SQLite, `RAISE(ABORT, ...)` only works inside trigger
+> programs — the Step 3 validation above will error outside a trigger. Validate row counts
+> via application code or manually before the DROP instead. (In PostgreSQL, use a `DO` block
+> with `RAISE EXCEPTION`, which works fine.) See `docs/migrations.md`.
+
 #### Why Migration 0016 Failed
 
 The migration had INSERT...SELECT statements but **no validation** before dropping old tables:
@@ -461,14 +524,7 @@ Result: 345,456 point_readings lost, requiring 8+ hour restoration from backup.
 
 ### Applying Postgres (PlanetScale) migrations
 
-> 🛑 Schema changes need approval first (see the callout at the top of this section). These are **manual** — we do not auto-apply at deploy time.
-
-The Postgres schema lives in `lib/db/planetscale/schema.ts`; migrations are versioned files in `drizzle-planetscale/` (tracked in `drizzle.__drizzle_migrations`, NOT the SQLite `migrations` table).
-
-```bash
-npm run db:pg:generate   # diff schema.ts -> a new drizzle-planetscale/NNNN_*.sql (offline; safe, no DB write)
-npm run db:pg:migrate    # apply pending migrations. NEVER `db:push` (destructive, no validation)
-```
+The `db:pg:generate` / `db:pg:migrate` basics are in **PostgreSQL (primary)** above; these are **manual** (no auto-apply at deploy), and applying by hand has a few traps worth knowing.
 
 `db:pg:migrate` targets whatever `PLANETSCALE_DATABASE_URL_MIGRATIONS` (or the `DB_*` vars) in `.env.local` points at — **today that's the us-east `main` branch, not `sydney`**. Always confirm the host before applying; override the env var to target a specific branch.
 
@@ -522,39 +578,48 @@ vercel ls
 
 **Database Access Patterns**
 
-- **Drizzle ORM (`db`)**: Use for type-safe queries with Drizzle query builder
+- **PostgreSQL Drizzle ORM (`planetscaleDb`)**: the primary store
+  - Import: `import { planetscaleDb } from '@/lib/db/planetscale'`
+  - Example: `await planetscaleDb.select().from(systems).where(eq(systems.id, systemId))`
+  - Read/write routing between PG and Turso during the migration goes through `lib/db/routing.ts` flags — check there before adding a direct DB call
+
+- **Turso Drizzle ORM (`db`)**: legacy paths only (until Phase 5)
   - Example: `await db.select().from(systems).where(eq(systems.id, systemId))`
   - Does NOT have `.execute()` or `.all()` methods
 
-- **Raw SQL queries (`rawClient`)**: Use for direct SQL execution (e.g., complex queries, migrations)
+- **Turso raw SQL (`rawClient`)**: direct SQL against Turso
   - Import: `import { rawClient } from '@/lib/db/turso'`
-  - Example: `await rawClient.execute('SELECT COUNT(*) FROM point_readings')`
+  - Example: `await rawClient.execute('SELECT 1 FROM point_readings LIMIT 1')`
   - Returns `{ rows: [...], columns: [...] }` format
-  - Use this when you need to run raw SQL queries that can't be expressed with Drizzle query builder
 
 ## Data Pipeline
 
-1. **Collection**: Cron job polls vendor APIs (minutely or smart schedule)
-2. **Storage**: Raw data → `point_readings` table
-3. **5-Min Aggregation**: Real-time as data arrives → `point_readings_agg_5m`
-4. **Daily Aggregation**: Runs at 00:05 daily → `point_readings_agg_1d`
-5. **API**: Queries use pre-aggregated data (< 1s response)
+1. **Collection**: Cron polls vendor APIs (minutely or per-vendor smart schedule); push vendors (`fusher`) arrive via webhook
+2. **Publish**: Poll collector builds `QueueMessage`s → durable tee to the PG `observations_outbox` (`WRITE_OUTBOX`) + direct QStash enqueue; the relay cron drains the outbox to QStash
+3. **Materialise**: `/api/observations/receive` (the **single writer** of the serving store, idempotent) → PG `point_readings` + real-time `point_readings_agg_5m` upsert
+4. **Daily Aggregation**: Cron at 00:05 local → `point_readings_agg_1d`
+5. **Serve**: APIs read pre-aggregated PG data; latest values from the KV cache
+6. **Transitional**: an inline Turso write keeps the legacy backup current until Phase 5
+
+Details and invariants: `docs/architecture/data-model.md`, `docs/architecture/engine-web-separation.md`.
 
 ### Manual Operations
 
 ```bash
-# Trigger daily aggregation manually
+# Trigger daily aggregation manually (admin; in dev use -H "x-claude: true" instead)
+# action: aggregate | regenerate (delete + re-aggregate) | delete; no action = yesterday
+# dates: date=YYYY-MM-DD | start=...&end=... | last=7d; no dates = all available data
 curl -X POST https://liveone.vercel.app/api/cron/daily \
-  -H "Cookie: auth-token=password" \
-  -d '{"action": "catchup"}'  # or "clear" to regenerate
+  -H "Authorization: Bearer $CRON_SECRET" \
+  -d '{"action": "aggregate", "last": "7d"}'
 ```
 
 ## Code Style & Conventions
 
 - **TypeScript**: Strict mode enabled
 - **Imports**: Use `@/` for root imports
-- **Dates**: Store as Unix timestamps (UTC) in database
-- **Power**: Store as integers (Watts)
+- **Dates**: UTC everywhere — PG uses native `timestamp` columns; Turso/legacy uses Unix epoch-ms integers
+- **Power**: Watts (floats in the point tables)
 - **Energy**: Store with 3 decimal places (kWh)
 - **Test Scripts**: Save in `/scripts` directory
 
@@ -570,9 +635,8 @@ curl -X POST https://liveone.vercel.app/api/cron/daily \
 
 1. Use indexes for time-based queries
 2. Query aggregated tables for historical data
-3. Batch inserts (max 100 records for SQLite)
-4. Run `VACUUM` periodically
-5. Use prepared statements for repeated queries
+3. Batch inserts (max 100 records for SQLite; PG autovacuums and handles larger batches)
+4. Use prepared statements for repeated queries
 
-- when backing up prod, use @scripts/utils/backup-prod-db.sh and check that the file is at least 6MB in size
+- when backing up prod **Turso**, use @scripts/utils/backup-prod-db.sh and check that the file is at least 6MB in size; for prod **Postgres**, PITR schedules run automatically and `pscale backup create` makes a one-off base backup
 - don't use NPM run to check for typescript errors

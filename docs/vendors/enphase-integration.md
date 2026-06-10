@@ -1,5 +1,7 @@
 # Enphase Integration Documentation
 
+> **Status:** current — last verified 2026-06-10.
+
 ## Overview
 
 This document outlines the complete workflow for integrating Enphase solar systems into LiveOne, using the Enphase API v4 with OAuth 2.0 authorization.

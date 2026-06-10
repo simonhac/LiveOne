@@ -1,5 +1,15 @@
 # Enphase Integration Testing Guide
 
+> **Status:** historical record — the mock it describes was removed 2026-06-10.
+>
+> ⚠️ **REMOVED (2026-06-10):** The Enphase mock client and the `ENPHASE_USE_MOCK`
+> environment variable have been removed from the codebase. Nothing reads
+> `ENPHASE_USE_MOCK` any longer, and there is no mock client in
+> `lib/vendors/enphase/`. The mock-based workflows described below no longer
+> function — this document is retained for historical reference only. Live Enphase
+> integration still uses `ENPHASE_API_KEY`, `ENPHASE_CLIENT_ID`, and
+> `ENPHASE_CLIENT_SECRET`.
+
 ## Overview
 
 This guide explains how to test the Enphase integration without having access to a real Enphase system. The implementation includes a comprehensive mock client that simulates Enphase API responses.
