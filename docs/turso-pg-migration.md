@@ -251,7 +251,7 @@ from Turso (`gap-map --apply` + `recompute`) since it stopped receiving at cutov
 
 The exit-condition for dropping Turso: raw readings durable on PG **without** the inline-Turso safety
 net. With session-id minting already off Turso (PR-7), this reduces to building + soaking the
-**transactional outbox** of [`architecture/ENGINE-WEB-SEPARATION.md`](architecture/ENGINE-WEB-SEPARATION.md)
+**transactional outbox** of [`architecture/engine-web-separation.md`](architecture/engine-web-separation.md)
 §6.4 — the chosen mechanism (decision 2026-06-08) over "accept queue-only at-least-once". Everything here
 is additive and reversible while Turso still backs everything.
 
@@ -446,7 +446,7 @@ ALTER TABLE point_readings_agg_5m VALIDATE CONSTRAINT point_readings_agg_5m_syst
 
 ## Direction of travel — engine/web separation
 
-> **Canonical doc:** [`architecture/ENGINE-WEB-SEPARATION.md`](architecture/ENGINE-WEB-SEPARATION.md)
+> **Canonical doc:** [`architecture/engine-web-separation.md`](architecture/engine-web-separation.md)
 > owns the target shape **and** the ingest-durability decision (one idempotent ingest contract per
 > store, on-ramped by a **transactional outbox**; the queue is transport, not the durability/replay
 > mechanism). Summary only here.

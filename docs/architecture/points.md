@@ -1,5 +1,7 @@
 # Points System Documentation
 
+> **Status:** current — last verified 2026-06-10.
+
 ## Table of Contents
 
 - [Introduction](#introduction)
@@ -1127,7 +1129,7 @@ WHERE system_id = X AND point_id = Y;
 
 ## Related Documentation
 
-- [Database Schema](SCHEMA.md) - Complete database documentation
+- [Data Model](data-model.md) - Data semantics and invariants (schema source of truth: `lib/db/planetscale/schema.ts`)
 - [Vendor Integration](vendors/) - Vendor-specific integration guides
-- [History API](HISTORY-GLOB.md) - Querying historical data
+- [API](api.md) - API conventions and route inventory
 - [Daily Aggregates](DAILY_AGGREGATES.md) - Daily aggregation process

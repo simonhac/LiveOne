@@ -1,5 +1,7 @@
 # Enphase API `/telemetry/production_micro` Endpoint Documentation
 
+> **Status:** current — last verified 2026-06-10.
+
 ## Summary of Learnings
 
 ### 1. Default Behavior (no parameters)

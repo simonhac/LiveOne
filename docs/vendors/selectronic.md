@@ -1,5 +1,7 @@
 # Selectronic SP PRO / select.live API Documentation
 
+> **Status:** current — legacy vendor, still in service.
+
 ## Overview
 
 The Selectronic SP PRO inverters can be monitored remotely through the select.live web portal. This document describes how to programmatically access the API to retrieve real-time inverter data.

@@ -1,5 +1,7 @@
 # Enphase Integration Testing Guide
 
+> **Status:** historical record — the mock it describes was removed 2026-06-10.
+>
 > ⚠️ **REMOVED (2026-06-10):** The Enphase mock client and the `ENPHASE_USE_MOCK`
 > environment variable have been removed from the codebase. Nothing reads
 > `ENPHASE_USE_MOCK` any longer, and there is no mock client in

@@ -1,8 +1,16 @@
 # Fronius Push API Specification
 
+> **Status:** current — last verified 2026-06-10. The vendor was renamed `fronius` → `fusher`
+> (June 2026): the canonical endpoint is now `/api/push/fusher`; `/api/push/fronius` remains
+> as a compatibility alias. Spec below is otherwise accurate.
+>
+> _Decision record:_ a Fronius GEN24 **Modbus TCP** integration was evaluated and rejected in
+> favour of this Solar API push approach (see `docs/fronius-modbus-vs-solar-api.md` in git
+> history, deleted 2026-06-10).
+
 ## Endpoint
 
-**URL**: `https://liveone.vercel.app/api/push/fronius`  
+**URL**: `https://liveone.vercel.app/api/push/fusher` (alias: `/api/push/fronius`)  
 **Method**: `POST`  
 **Content-Type**: `application/json`
 

@@ -1,5 +1,7 @@
 # `scripts/backfill-turso-to-postgres.ts`
 
+> **Status:** current — re-runnable tool; retire with migration Phase 5.
+
 One-time (re-runnable) tool that copies the full history of **sessions**, **point_readings**,
 **point_readings_agg_5m** and **point_readings_agg_1d** from **Turso** (SQLite, source of
 truth) into the **Postgres mirror**. It fills everything that predates the live (Phase 1)
