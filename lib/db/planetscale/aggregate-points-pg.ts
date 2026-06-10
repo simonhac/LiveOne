@@ -44,6 +44,15 @@ import type { Observation } from "@/lib/observations/types";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
 
+/** A pool or a transaction handle — the inner recompute runs against either. */
+type PgExecutor = PgDb | Parameters<Parameters<PgDb["transaction"]>[0]>[0];
+
+/**
+ * Fixed namespace for the per-system 5m-recompute advisory lock (paired with the systemId as
+ * the second key) so it can't collide with any other advisory-lock use. Value is arbitrary.
+ */
+const AGG5M_RECOMPUTE_LOCK_NS = 0x41475335; // ascii "AGS5"
+
 /** Minimal system shape the 1d recompute needs (Turso `systems` row satisfies it). */
 interface SystemForDailyAgg {
   id: number;
@@ -65,6 +74,26 @@ export function affectedIntervalEndsMs(observations: Observation[]): number[] {
 }
 
 /**
+ * Expand a set of interval-ends to also include each one's immediate successor (end + 5min),
+ * deduped + ascending.
+ *
+ * A transform='d' interval's delta is computed against the PREVIOUS interval's last reading,
+ * so when raw for interval N lands we must also rebuild N+1. Recomputing the successor is what
+ * makes the 5m recompute **independent of queue delivery order**: out-of-order or parallel
+ * delivery still converges, because whichever of {N's message, N-1's message} recomputes N last
+ * sees N-1's raw already committed. A successor with no readings yet is skipped by
+ * `recomputeAgg5mForIntervals` (the `hasCurrent` guard), so this never creates future rows.
+ */
+export function withSuccessorIntervals(intervalEndsMs: number[]): number[] {
+  const set = new Set<number>();
+  for (const e of intervalEndsMs) {
+    set.add(e);
+    set.add(e + FIVE_MIN_MS);
+  }
+  return [...set].sort((a, b) => a - b);
+}
+
+/**
  * Recompute the raw-vendor 5m aggregates for the given `(systemId, intervalEnd)` pairs
  * from PG `point_readings`, upserting into PG `point_readings_agg_5m`.
  *
@@ -73,14 +102,17 @@ export function affectedIntervalEndsMs(observations: Observation[]): number[] {
  * the reading's own interval is recomputed, never a neighbour).
  *
  * The transform='d' `previousLast` is read from the previous interval's raw (the last
- * non-null reading), which equals the previous interval's stored `last` (itself the last raw
- * reading). This matches Turso's `getPointsLastValues5m` value AND works at the flag-flip
- * boundary, where the previous AGGREGATE row may not exist yet but the raw does. It relies on
- * the observations queue's **ordered delivery (parallelism 1)**: a later interval's message is
- * never processed before an earlier one's, so the previous interval's raw is always present —
- * exactly like Turso's in-order inline insert. (If the queue parallelism were ever raised,
- * out-of-order delivery could transiently null a 'd' delta until the data settled; the value
- * reconciler is run over a settled window regardless.)
+ * non-null reading), which equals the previous interval's stored `last`. This matches Turso's
+ * `getPointsLastValues5m` value AND works at the flag-flip boundary, where the previous
+ * AGGREGATE row may not exist yet but the raw does.
+ *
+ * ORDER-INDEPENDENT (parallelism > 1 safe): callers pass each touched interval together with
+ * its immediate successor (`withSuccessorIntervals`), and the recompute runs inside one
+ * transaction guarded by a per-system advisory lock, with the raw already committed by the
+ * receiver. So out-of-order / parallel delivery still converges to the correct value — when
+ * interval N's raw lands we also rebuild N+1 (whose delta depends on N), and the advisory lock
+ * makes the last writer for any interval observe all committed raw (different systems never
+ * contend). The value reconciler is still run over a settled window as a backstop.
  */
 export async function recomputeAgg5mForIntervals(
   db: PgDb,
@@ -90,7 +122,26 @@ export async function recomputeAgg5mForIntervals(
   if (intervalEndsMs.length === 0) {
     return { intervalsProcessed: 0, rowsUpserted: 0 };
   }
+  // Serialize recomputes for THIS system: one transaction holding a per-system advisory lock,
+  // so concurrent queue messages can't interleave a read-then-write on a shared interval and
+  // lose an update. Transaction-scoped lock → released at commit, safe under the pooler.
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${AGG5M_RECOMPUTE_LOCK_NS}::int4, ${systemId}::int4)`,
+    );
+    return recompute5mIntervalsWithin(tx, systemId, intervalEndsMs);
+  });
+}
 
+/**
+ * Inner recompute: read raw → group by point → upsert 5m for the given intervals, against a
+ * transaction handle so the caller's advisory lock serializes it per system.
+ */
+async function recompute5mIntervalsWithin(
+  db: PgExecutor,
+  systemId: number,
+  intervalEndsMs: number[],
+): Promise<{ intervalsProcessed: number; rowsUpserted: number }> {
   // point_info metadata (transform / metric_type) for the system, from the PG mirror.
   const points = await db
     .select({
@@ -371,7 +422,13 @@ export async function recompute5mForRawObservationsBestEffort(
   if (!planetscaleDb) return;
   if (rawObservations.length === 0) return;
   try {
-    const intervals = affectedIntervalEndsMs(rawObservations);
+    // Rebuild each touched interval AND its immediate successor: a transform='d' interval's
+    // delta depends on the previous interval's last reading, so when raw for N lands, N+1 must
+    // be rebuilt too. This (plus the per-system advisory lock in recomputeAgg5mForIntervals) is
+    // what makes the recompute independent of queue delivery order — so parallelism > 1 is safe.
+    const intervals = withSuccessorIntervals(
+      affectedIntervalEndsMs(rawObservations),
+    );
     const { intervalsProcessed, rowsUpserted } =
       await recomputeAgg5mForIntervals(planetscaleDb, systemId, intervals);
     console.log(
