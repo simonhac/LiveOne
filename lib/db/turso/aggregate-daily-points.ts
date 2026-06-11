@@ -17,6 +17,7 @@ import {
 import { AGG_COMPUTE_IN_PG, FLOW_MATRIX_COMPUTE_IN_PG } from "@/lib/db/routing";
 import { recompute1dForDayBestEffort } from "@/lib/db/planetscale/aggregate-points-pg";
 import { recomputeFlowMatrixForDayBestEffort } from "@/lib/db/planetscale/flow-matrix-pg";
+import { listCompleteLogicalSystems } from "@/lib/aggregation/logical-system";
 
 // Re-exported from the shared, db-free aggregation module (kept here for backwards
 // compatibility with existing importers of this path).
@@ -513,14 +514,11 @@ export async function aggregateRange(
             aggregatedCount += result.data.length;
             rowsCreatedForSystem += result.data.length;
 
-            // Land the day's 1d in Postgres (best-effort; never throws).
+            // Land the day's 1d in Postgres (best-effort; never throws). The energy-flow matrix is
+            // recomputed separately below, per LOGICAL system, after all 1d aggregation completes.
             if (computeInPg) {
               // Shadow: PG computes its own 1d from PG 5m (independent of result.data).
               await recompute1dForDayBestEffort(system, day);
-              // Materialize the day's energy-flow matrix from the (now settled) PG 5m.
-              if (FLOW_MATRIX_COMPUTE_IN_PG) {
-                await recomputeFlowMatrixForDayBestEffort(system, day);
-              }
             } else if (publishToPg && pollingSystem) {
               // Mirror the Turso-computed 1d over the queue.
               const [dayStartUnix] = dayToUnixRangeForAggregation(
@@ -562,6 +560,23 @@ export async function aggregateRange(
         `Failed to aggregate range for system ${system.id}:`,
         error,
       );
+    }
+  }
+
+  // Materialize the energy-flow matrix per LOGICAL system (composites + qualifying single systems),
+  // each read from its own (possibly cross-system) 5m. Driven by the logical-system registry rather
+  // than the physical-system list above, so composites — which have no agg_5m of their own and are
+  // absent from `getSystemsWithRecentPointData` — are covered. Same gate as the 1d recompute
+  // (small ranges only); best-effort and idempotent per day, so re-running just heals each day.
+  if (mirrorToPg && AGG_COMPUTE_IN_PG && FLOW_MATRIX_COMPUTE_IN_PG) {
+    const logicalSystems = await listCompleteLogicalSystems();
+    console.log(
+      `[Daily Points] Recomputing energy-flow matrix for ${logicalSystems.length} logical systems × ${allDays.length} days`,
+    );
+    for (const ls of logicalSystems) {
+      for (const day of allDays) {
+        await recomputeFlowMatrixForDayBestEffort(ls, day);
+      }
     }
   }
 

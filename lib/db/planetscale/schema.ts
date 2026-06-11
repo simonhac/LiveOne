@@ -365,12 +365,21 @@ export const pointReadingsAgg1d = pgTable(
 // `load.rest-of-house` have a stable identity; labels/colors resolve at read
 // time. A multi-day range is a plain `SUM(energy_kwh) GROUP BY (source_path,
 // load_path)`, because per-interval energy is additive.
+//
+// `system_id` is the LOGICAL SYSTEM / view the flows belong to (`resolveLogicalSystem`):
+// a single physical system, OR a composite whose points are drawn from CHILD systems.
+// For a composite the cross-system origin is collapsed into the composite's id (provenance
+// is not preserved on the row); `source_path`/`load_path` are stems in that view's namespace.
+// All flows in a row therefore belong to one view — cross-system *edges* (a source on one
+// system, a load on another) are not representable in this shape. NOTE: a composite and its
+// child systems each get their own rows, so a portfolio rollup must never sum a composite
+// AND its members.
 // ============================================================================
 export const pointReadingsFlow1d = pgTable(
   "point_readings_flow_1d",
   {
     // Composite primary key columns
-    systemId: integer("system_id").notNull(),
+    systemId: integer("system_id").notNull(), // LOGICAL system / view id (physical OR composite)
     day: text("day").notNull(), // YYYY-MM-DD, system-local — same key convention as agg_1d
     sourcePath: text("source_path").notNull(), // e.g. "source.solar" | "source.battery" | "source.grid"
     loadPath: text("load_path").notNull(), // "load" | "load.<sub>" | "load.battery" | "load.grid" | "load.rest-of-house"
