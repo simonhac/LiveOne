@@ -13,8 +13,8 @@ Direction survives in `point_readings_agg_5m` (a single **signed** `avg` per poi
 Per‑interval energy is **additive**, so a range's matrix is the element‑wise **sum** of per‑interval matrices — and therefore the sum of per‑day matrices:
 
 1. The **engine** computes a directional energy‑flow matrix for each completed **local day** from that day's `agg_5m`, and stores it in `point_readings_flow_1d`.
-2. A range read is `SUM(energy_kwh) GROUP BY (source_path, load_path)` over the days in range.
-3. The **current (partial) day** is not materialized; it is integrated on the fly from `agg_5m` and added to the summed completed days, so "today so far" stays live.
+2. A long‑range read is `SUM(energy_kwh) GROUP BY (source_path, load_path)` over the **completed days** in range.
+3. **Sub‑daily** views (≤ 1 week) don't read `flow_1d` at all — they integrate the window live from `agg_5m`, so "today so far" stays current at that grain. The long‑range read serves **completed days only**; adding today's partial day to a 30‑day/month total is a deliberate **v1 limitation**, not yet implemented.
 
 The day grain matches the only unit the product cares about — **midnight‑to‑midnight local time** — and reuses the same day boundary (`dayToUnixRangeForAggregation`) that `agg_1d` uses, so the days tile perfectly.
 
@@ -41,7 +41,7 @@ Nodes are keyed by **canonical path string**, not point id — so aggregated sol
 | `version`                                      | algorithm version — lets a backfill detect and replace stale rows |
 | `created_at`, `updated_at`                     |                                                                   |
 
-No foreign keys (consistent with the rest of the PG schema); writes are idempotent `onConflictDoUpdate` on the primary key.
+No foreign keys (consistent with the rest of the PG schema). Each (system, day)'s rows are replaced atomically — delete-then-insert in one transaction — so the write is idempotent and a flow that drops below threshold between runs doesn't linger. (It is NOT an upsert; concurrent recomputes of the same day serialize on row locks, and the best-effort wrapper swallows a transient duplicate-key abort since both runs compute identical values.)
 
 ## Logical systems
 
@@ -55,7 +55,7 @@ After the daily `agg_1d` pass, the cron recomputes the matrix **per logical syst
 
 Two serving paths, one shared computation:
 
-- **Long‑range (30‑day / month / arbitrary)** — `GET /api/energy-flow-matrix?systemId&start&end` returns summed completed days from `point_readings_flow_1d` plus the live partial day.
+- **Long‑range (30‑day / month / arbitrary)** — `GET /api/energy-flow-matrix?systemId&start&end` returns summed **completed days** from `point_readings_flow_1d` (today's partial day is not included — see the v1 limitation above). Returns an explicit `{reason}` when there's nothing to serve (e.g. a not-yet-materialized or non-logical system).
 - **Sub‑daily (1D/7D)** — bundled with the history payload via `GET /api/history?include=sankey`, computed on the fly from the **same signed 5‑minute rows the history read already loads** (5m and 30m both read `agg_5m`; the matrix is built before 30m bucketing, so 7D stays 5m‑accurate) — no extra query. Refused for `1d` and for filtered requests that don't cover the role set.
 
 Both are presented through the shared `toEnergyFlowMatrix` (`lib/aggregation/flow-node-meta.ts`). Gated by `FLOW_MATRIX_SERVE_FROM_PG`; off → the dashboard computes sub‑daily client‑side and 30D shows the old client path. `FLOW_MATRIX_COMPUTE_IN_PG` (materialization) and `FLOW_MATRIX_SERVE_FROM_PG` (serving) are independent; rollback is a flag flip.
