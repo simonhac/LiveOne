@@ -569,14 +569,19 @@ export async function aggregateRange(
   // absent from `getSystemsWithRecentPointData` — are covered. Same gate as the 1d recompute
   // (small ranges only); best-effort and idempotent per day, so re-running just heals each day.
   if (mirrorToPg && AGG_COMPUTE_IN_PG && FLOW_MATRIX_COMPUTE_IN_PG) {
-    const logicalSystems = await listCompleteLogicalSystems();
-    console.log(
-      `[Daily Points] Recomputing energy-flow matrix for ${logicalSystems.length} logical systems × ${allDays.length} days`,
-    );
-    for (const ls of logicalSystems) {
-      for (const day of allDays) {
-        await recomputeFlowMatrixForDayBestEffort(ls, day);
+    // Best-effort: a resolver/DB hiccup here must never fail the (already-committed) 1d aggregation.
+    try {
+      const logicalSystems = await listCompleteLogicalSystems();
+      console.log(
+        `[Daily Points] Recomputing energy-flow matrix for ${logicalSystems.length} logical systems × ${allDays.length} days`,
+      );
+      for (const ls of logicalSystems) {
+        for (const day of allDays) {
+          await recomputeFlowMatrixForDayBestEffort(ls, day);
+        }
       }
+    } catch (error) {
+      console.error("[Daily Points] Energy-flow matrix pass failed:", error);
     }
   }
 
