@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db/turso";
-import { systems } from "@/lib/db/turso/schema";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { systems } from "@/lib/db/planetscale/schema";
 import { eq, and, ne } from "drizzle-orm";
 import { requireAdmin, requireSystemAccess } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -186,7 +186,7 @@ export async function PATCH(
 
     // Check if alias is already taken by another system
     if (updates.alias) {
-      const existing = await db
+      const existing = await requirePlanetscaleDb()
         .select()
         .from(systems)
         .where(and(eq(systems.alias, updates.alias), ne(systems.id, systemId)))
@@ -204,7 +204,7 @@ export async function PATCH(
 
     // Confirm the system exists before updating (preserves the prior 404 that the
     // .returning() row count provided — updateSystem returns void).
-    const [existingSystem] = await db
+    const [existingSystem] = await requirePlanetscaleDb()
       .select()
       .from(systems)
       .where(eq(systems.id, systemId))

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
-import { db } from "@/lib/db/turso";
-import { userSystems, systems } from "@/lib/db/turso/schema";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { userSystems, systems } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
     if (authResult instanceof NextResponse) return authResult;
 
     // Get all user-system relationships from userSystems table
-    const allUserSystems = await db
+    const allUserSystems = await requirePlanetscaleDb()
       .select()
       .from(userSystems)
       .innerJoin(systems, eq(userSystems.systemId, systems.id));

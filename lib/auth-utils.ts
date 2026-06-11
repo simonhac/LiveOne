@@ -1,6 +1,6 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { db } from "./db/turso";
-import { userSystems } from "./db/turso/schema";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { userSystems } from "@/lib/db/planetscale/schema";
 import { eq, or } from "drizzle-orm";
 
 type AuthResult = Awaited<ReturnType<typeof auth>>;
@@ -82,7 +82,7 @@ export async function getUserSystems(userId?: string | null) {
     return [];
   }
 
-  return db
+  return requirePlanetscaleDb()
     .select()
     .from(userSystems)
     .where(eq(userSystems.clerkUserId, userId));

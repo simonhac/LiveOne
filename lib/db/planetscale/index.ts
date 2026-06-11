@@ -153,6 +153,21 @@ export const planetscaleDb = (() => {
 })();
 
 /**
+ * Postgres is the sole store (Turso was decommissioned in Phase 5), so almost every
+ * read/write path requires a configured connection. This returns the non-null Drizzle
+ * client or throws a clear error — the replacement for the old `if (!planetscaleDb)`
+ * Turso-fallback guards.
+ */
+export function requirePlanetscaleDb(): NonNullable<typeof planetscaleDb> {
+  if (!planetscaleDb) {
+    throw new Error(
+      "[PlanetScale] Database is not configured (PLANETSCALE_DATABASE_URL / DB_* unset)",
+    );
+  }
+  return planetscaleDb;
+}
+
+/**
  * Check if PlanetScale is configured and connected.
  */
 export async function isPlanetscaleConfigured(): Promise<boolean> {

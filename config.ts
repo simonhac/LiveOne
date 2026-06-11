@@ -15,14 +15,7 @@ export const ERROR_MESSAGES = {
 
 // Database Configuration
 export const DATABASE_CONFIG = {
-  // Use SQLite in development, Turso/PostgreSQL in production
   url: process.env.DATABASE_URL || "file:./dev.db",
-
-  // Turso config (for production)
-  turso: {
-    url: process.env.TURSO_DATABASE_URL,
-    authToken: process.env.TURSO_AUTH_TOKEN,
-  },
 
   // Data retention settings
   retention: {

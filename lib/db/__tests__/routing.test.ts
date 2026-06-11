@@ -8,8 +8,12 @@ import {
 } from "@jest/globals";
 
 /**
- * Flags are evaluated at module load, so each case sets env then re-imports the
- * module in isolation.
+ * Phase 5 decommissioned Turso, so the staged-migration flags (`CONFIG_*`,
+ * `READINGS_READS_FROM_PG`, `AGG_COMPUTE_IN_PG`, `WRITE_OUTBOX`) are retired. The only
+ * surviving routing flags gate the not-yet-enabled energy-flow-matrix rollout.
+ *
+ * Flags are evaluated at module load, so each case sets env then re-imports the module in
+ * isolation.
  */
 function loadRouting(env: Record<string, string | undefined>) {
   let mod!: typeof import("../routing");
@@ -23,16 +27,7 @@ function loadRouting(env: Record<string, string | undefined>) {
   return mod;
 }
 
-const FLAG_VARS = [
-  "CONFIG_READS_FROM_PG",
-  "CONFIG_WRITES_TO_PG",
-  "CONFIG_SERVE_FROM_PG",
-  "READINGS_READS_FROM_PG",
-  "AGG_COMPUTE_IN_PG",
-  "FLOW_MATRIX_COMPUTE_IN_PG",
-  "FLOW_MATRIX_SERVE_FROM_PG",
-  "WRITE_OUTBOX",
-];
+const FLAG_VARS = ["FLOW_MATRIX_COMPUTE_IN_PG", "FLOW_MATRIX_SERVE_FROM_PG"];
 
 describe("db routing flags", () => {
   let saved: Record<string, string | undefined>;
@@ -49,52 +44,53 @@ describe("db routing flags", () => {
     }
   });
 
-  it("defaults every flag to false when unset", () => {
+  it("dbRoutingFlags() reports both surviving flags, defaulting to false when unset", () => {
     const r = loadRouting(
       Object.fromEntries(FLAG_VARS.map((v) => [v, undefined])),
     );
     expect(r.dbRoutingFlags()).toEqual({
-      CONFIG_READS_FROM_PG: false,
-      CONFIG_WRITES_TO_PG: false,
-      CONFIG_SERVE_FROM_PG: false,
-      READINGS_READS_FROM_PG: false,
-      AGG_COMPUTE_IN_PG: false,
       FLOW_MATRIX_COMPUTE_IN_PG: false,
       FLOW_MATRIX_SERVE_FROM_PG: false,
-      WRITE_OUTBOX: false,
     });
   });
 
   it('treats exactly "true" (case-insensitive, trimmed) as the only truthy value', () => {
     expect(
-      loadRouting({ CONFIG_READS_FROM_PG: "true" }).CONFIG_READS_FROM_PG,
+      loadRouting({ FLOW_MATRIX_COMPUTE_IN_PG: "true" })
+        .FLOW_MATRIX_COMPUTE_IN_PG,
     ).toBe(true);
     expect(
-      loadRouting({ CONFIG_READS_FROM_PG: "TRUE" }).CONFIG_READS_FROM_PG,
+      loadRouting({ FLOW_MATRIX_COMPUTE_IN_PG: "TRUE" })
+        .FLOW_MATRIX_COMPUTE_IN_PG,
     ).toBe(true);
     expect(
-      loadRouting({ CONFIG_READS_FROM_PG: "  true  " }).CONFIG_READS_FROM_PG,
+      loadRouting({ FLOW_MATRIX_COMPUTE_IN_PG: "  true  " })
+        .FLOW_MATRIX_COMPUTE_IN_PG,
     ).toBe(true);
   });
 
   it("treats other truthy-looking values as false", () => {
     for (const val of ["1", "yes", "on", "false", "", "0"]) {
-      expect(loadRouting({ AGG_COMPUTE_IN_PG: val }).AGG_COMPUTE_IN_PG).toBe(
-        false,
-      );
+      expect(
+        loadRouting({ FLOW_MATRIX_COMPUTE_IN_PG: val })
+          .FLOW_MATRIX_COMPUTE_IN_PG,
+      ).toBe(false);
     }
   });
 
   it("reads each flag independently", () => {
     const r = loadRouting({
-      CONFIG_READS_FROM_PG: undefined,
-      CONFIG_WRITES_TO_PG: "true",
-      READINGS_READS_FROM_PG: undefined,
-      AGG_COMPUTE_IN_PG: "true",
+      FLOW_MATRIX_COMPUTE_IN_PG: "true",
+      FLOW_MATRIX_SERVE_FROM_PG: undefined,
     });
-    expect(r.CONFIG_WRITES_TO_PG).toBe(true);
-    expect(r.AGG_COMPUTE_IN_PG).toBe(true);
-    expect(r.CONFIG_READS_FROM_PG).toBe(false);
-    expect(r.READINGS_READS_FROM_PG).toBe(false);
+    expect(r.FLOW_MATRIX_COMPUTE_IN_PG).toBe(true);
+    expect(r.FLOW_MATRIX_SERVE_FROM_PG).toBe(false);
+
+    const r2 = loadRouting({
+      FLOW_MATRIX_COMPUTE_IN_PG: undefined,
+      FLOW_MATRIX_SERVE_FROM_PG: "true",
+    });
+    expect(r2.FLOW_MATRIX_COMPUTE_IN_PG).toBe(false);
+    expect(r2.FLOW_MATRIX_SERVE_FROM_PG).toBe(true);
   });
 });

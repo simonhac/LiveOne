@@ -1,7 +1,9 @@
 import { kv, kvKey } from "./kv";
-import { db } from "./db/turso";
-import { systems as systemsTable } from "./db/turso/schema";
-import { pointInfo as pointInfoTable } from "./db/turso/schema-monitoring-points";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import {
+  systems as systemsTable,
+  pointInfo as pointInfoTable,
+} from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
 import { PointReference } from "./identifiers";
 import { LatestValue, LatestValuesMap } from "./latest-values-store";
@@ -175,7 +177,7 @@ async function getPointSubscribers(
  */
 export async function buildSubscriptionRegistry(): Promise<void> {
   // Query all composite systems with their points
-  const compositeSystems = await db
+  const compositeSystems = await requirePlanetscaleDb()
     .select()
     .from(systemsTable)
     .where(eq(systemsTable.vendorType, "composite"));
@@ -193,7 +195,7 @@ export async function buildSubscriptionRegistry(): Promise<void> {
     }
 
     // Get all points for this composite system to map array index to point info
-    const compositePoints = await db
+    const compositePoints = await requirePlanetscaleDb()
       .select()
       .from(pointInfoTable)
       .where(eq(pointInfoTable.systemId, composite.id))

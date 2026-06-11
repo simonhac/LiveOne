@@ -1,10 +1,8 @@
 /**
  * Unit tests for the shared, db-free aggregation math (lib/aggregation/point-aggregates.ts).
  *
- * These pin the EXACT semantics that both the Turso writers (updatePointAggregates5m,
- * aggregateDailyPointData) and the Postgres recompute (AGG_COMPUTE_IN_PG) rely on. Because
- * both engines call these helpers, equality here is what guarantees the value reconciler
- * (scripts/reconcile-agg-values.ts) can pass.
+ * These pin the EXACT semantics the Postgres aggregation (5m + 1d recompute) relies on, so the
+ * value reconciler (scripts/reconcile-agg-values.ts) can pass.
  */
 import { describe, it, expect } from "@jest/globals";
 import {

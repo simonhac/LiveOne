@@ -17,7 +17,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireCronOrAdmin } from "@/lib/api-auth";
-import { WRITE_OUTBOX } from "@/lib/db/routing";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { drainOutbox } from "@/lib/observations/outbox";
 
@@ -32,14 +31,14 @@ export async function GET(request: NextRequest) {
   }
 
   const startedAt = Date.now();
-  // Always drain (even when WRITE_OUTBOX is off) so that, after a rollback flip,
-  // any straggler rows still reach the queue. With the flag off nothing new is
-  // written, so steady state is an empty drain.
+  // Drain the outbox to QStash. The outbox tee is always written at the publish
+  // seam, so this is the durable on-ramp that re-delivers anything the direct
+  // enqueue dropped.
   const result = await drainOutbox();
 
   return NextResponse.json({
     configured: true,
-    enabled: WRITE_OUTBOX,
+    enabled: true,
     now: new Date().toISOString(),
     durationMs: Date.now() - startedAt,
     ...result,

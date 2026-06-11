@@ -10,9 +10,13 @@
 
 import { describe, it, expect, beforeAll } from "@jest/globals";
 import { SystemsManager } from "@/lib/systems-manager";
-import { db } from "@/lib/db/turso";
-import { pointInfo } from "@/lib/db/turso/schema-monitoring-points";
-import { eq, and } from "drizzle-orm";
+// Phase 5: Turso decommissioned. The point lookup now reads Postgres. The PG `pointInfo`
+// schema mirrors the same fields the seed uses (systemId, index, displayName, active,
+// transform), so this is a drop-in re-point of the same .select().from().where().limit()
+// query. See docs/deferred/postgres-integration-test-harness.md.
+import { planetscaleDb } from "@/lib/db/planetscale";
+import { pointInfo } from "@/lib/db/planetscale/schema";
+import { eq } from "drizzle-orm";
 
 const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3000";
 
@@ -73,8 +77,12 @@ describe("GET /api/system/[systemId]/point/[pointId]", () => {
 
     testSystemId = systems[0].id;
 
+    if (!planetscaleDb) {
+      throw new Error("Postgres not configured for integration test");
+    }
+
     // Find a point for this system
-    const [point] = await db
+    const [point] = await planetscaleDb
       .select()
       .from(pointInfo)
       .where(eq(pointInfo.systemId, testSystemId))
@@ -146,8 +154,12 @@ describe("PATCH /api/system/[systemId]/point/[pointId]", () => {
 
     testSystemId = systems[0].id;
 
+    if (!planetscaleDb) {
+      throw new Error("Postgres not configured for integration test");
+    }
+
     // Find a point for this system
-    const [point] = await db
+    const [point] = await planetscaleDb
       .select()
       .from(pointInfo)
       .where(eq(pointInfo.systemId, testSystemId))

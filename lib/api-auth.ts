@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { isUserAdmin } from "./auth-utils";
 import { SystemsManager, SystemWithPolling } from "./systems-manager";
-import { db } from "./db/turso";
-import { userSystems } from "./db/turso/schema";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { userSystems } from "@/lib/db/planetscale/schema";
 import { eq, and } from "drizzle-orm";
 
 // Authorization result with context
@@ -134,7 +134,7 @@ export async function requireSystemAccess(
 
   if (ctx.userId && !isOwner && !ctx.isAdmin) {
     // Check userSystems table for viewer access
-    const viewerAccess = await db
+    const viewerAccess = await requirePlanetscaleDb()
       .select()
       .from(userSystems)
       .where(

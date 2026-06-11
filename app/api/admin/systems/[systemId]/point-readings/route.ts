@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
-import { db } from "@/lib/db/turso";
-import { pointInfo } from "@/lib/db/turso/schema-monitoring-points";
 import { eq, sql } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
 import { PointInfo } from "@/lib/point/point-info";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 import { fetchAdminPivotRowsPg } from "@/lib/db/planetscale/readings-read-pg";
-import { serveReadings, SHADOW_SKIP } from "@/lib/db/readings-serve";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { pointInfo as pgPointInfo } from "@/lib/db/planetscale/schema";
+
+/** Run a raw read against Postgres and return its rows. */
+async function pgRows(query: string): Promise<unknown[]> {
+  const res = await requirePlanetscaleDb().execute(sql.raw(query));
+  return ((res as { rows?: unknown[] }).rows ?? []) as unknown[];
+}
 
 /**
  * Apply transform to a numeric value based on the transform type
@@ -77,11 +82,18 @@ export async function GET(
 
     // Get all point info for this system
     const pointsStartTime = Date.now();
-    const points = await db
+    const pgPoints = await requirePlanetscaleDb()
       .select()
-      .from(pointInfo)
-      .where(eq(pointInfo.systemId, systemId))
-      .orderBy(pointInfo.index);
+      .from(pgPointInfo)
+      .where(eq(pgPointInfo.systemId, systemId))
+      .orderBy(pgPointInfo.index);
+    // Map PG rows (native timestamps) to the served shape (epoch-ms columns) the rest
+    // of this route consumes.
+    const points = pgPoints.map((p) => ({
+      ...p,
+      createdAtMs: p.createdAt ? p.createdAt.getTime() : 0,
+      updatedAtMs: p.updatedAt ? p.updatedAt.getTime() : null,
+    }));
     dbElapsedMs += Date.now() - pointsStartTime;
 
     if (points.length === 0) {
@@ -360,46 +372,19 @@ export async function GET(
         return transformed;
       });
 
-    // Serve the pivot from Postgres under READINGS_READS_FROM_PG, falling back to Turso on
-    // error/SHADOW_SKIP (PR-13a). With the flag off, Turso is served exactly as before.
-    let pivotElapsedMs = 0;
-    const { result, data } = await serveReadings(
-      `admin-pivot/${source} sys=${systemId}`,
-      async () => {
-        const t0 = Date.now();
-        const rows = await fetchAdminPivotRowsPg({
-          systemId,
-          source,
-          cursor,
-          direction,
-          limit,
-          pivotColumns,
-        });
-        if (rows === SHADOW_SKIP) return SHADOW_SKIP;
-        pivotElapsedMs = Date.now() - t0;
-        return { result: rows, data: buildPivotData(rows) };
-      },
-      async () => {
-        const t0 = Date.now();
-        let rows: any[] = [];
-        try {
-          rows = await db.all(sql.raw(pivotQuery));
-        } catch (error: any) {
-          // Handle case where table doesn't exist yet (e.g., migration not run)
-          if (error?.message?.includes("no such table")) {
-            console.warn(
-              `Table for ${source} data source not found. Returning empty result.`,
-            );
-            rows = [];
-          } else {
-            throw error;
-          }
-        }
-        pivotElapsedMs = Date.now() - t0;
-        return { result: rows, data: buildPivotData(rows) };
-      },
-    );
-    dbElapsedMs += pivotElapsedMs;
+    // Serve the pivot from Postgres.
+    void pivotQuery; // the Turso pivot SQL is no longer executed (Phase 5)
+    const t0 = Date.now();
+    const result = await fetchAdminPivotRowsPg({
+      systemId,
+      source,
+      cursor,
+      direction,
+      limit,
+      pivotColumns,
+    });
+    const data = buildPivotData(result);
+    dbElapsedMs += Date.now() - t0;
 
     // If no data, check if the other tables have data
     let hasAlternativeData = false;
@@ -413,11 +398,9 @@ export async function GET(
       const checkStartTime = Date.now();
       // Existence check: SELECT 1 … LIMIT 1 stops at the first matching row (index-friendly).
       // NOT COUNT(*), which scans every matching row — prohibitively slow on the big tables.
-      const checkResult = (await db.all(
-        sql.raw(
-          `SELECT 1 FROM ${alternativeTableName} WHERE system_id = ${systemId} LIMIT 1`,
-        ),
-      )) as unknown[];
+      const checkResult = await pgRows(
+        `SELECT 1 FROM ${alternativeTableName} WHERE system_id = ${systemId} LIMIT 1`,
+      );
       dbElapsedMs += Date.now() - checkStartTime;
       hasAlternativeData = checkResult.length > 0;
     }
@@ -472,32 +455,27 @@ export async function GET(
 
       const checkStartTime = Date.now();
 
-      // For daily data, use YYYY-MM-DD string comparison; for others use Unix ms timestamp
+      // For daily data, use YYYY-MM-DD string comparison; for raw/5m the cursors are epoch-ms,
+      // converted to a PG timestamp literal via to_timestamp().
       const olderCondition =
         source === "daily"
           ? `${timeColumn} < '${lastTimestamp}'`
-          : `${timeColumn} < ${lastTimestamp}`;
+          : `${timeColumn} < to_timestamp(${Number(lastTimestamp)} / 1000.0)`;
       const newerCondition =
         source === "daily"
           ? `${timeColumn} > '${firstTimestamp}'`
-          : `${timeColumn} > ${firstTimestamp}`;
+          : `${timeColumn} > to_timestamp(${Number(firstTimestamp)} / 1000.0)`;
 
       // Existence checks: SELECT 1 … LIMIT 1 short-circuits at the first matching row via the
-      // (system_id, <time>) index. The old COUNT(*) tallied every older/newer row — an unbounded
-      // scan of point_readings (~13M) / agg_5m (~3M) that made raw/5m pages take 10s+.
-      const olderCheck = (await db.all(
-        sql.raw(
-          `SELECT 1 FROM ${tableName} WHERE system_id = ${systemId} AND ${olderCondition} LIMIT 1`,
-        ),
-      )) as unknown[];
+      // (system_id, <time>) index.
+      const olderCheck = await pgRows(
+        `SELECT 1 FROM ${tableName} WHERE system_id = ${systemId} AND ${olderCondition} LIMIT 1`,
+      );
       hasOlder = olderCheck.length > 0;
 
-      // Check for newer records
-      const newerCheck = (await db.all(
-        sql.raw(
-          `SELECT 1 FROM ${tableName} WHERE system_id = ${systemId} AND ${newerCondition} LIMIT 1`,
-        ),
-      )) as unknown[];
+      const newerCheck = await pgRows(
+        `SELECT 1 FROM ${tableName} WHERE system_id = ${systemId} AND ${newerCondition} LIMIT 1`,
+      );
       hasNewer = newerCheck.length > 0;
 
       dbElapsedMs += Date.now() - checkStartTime;

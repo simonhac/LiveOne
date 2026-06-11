@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
-import { db } from "@/lib/db/turso";
-import { userSystems } from "@/lib/db/turso/schema";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { userSystems } from "@/lib/db/planetscale/schema";
 import { eq, and } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -30,7 +30,7 @@ export async function GET(
     }
 
     // Get all viewers from userSystems table
-    const viewerRecords = await db
+    const viewerRecords = await requirePlanetscaleDb()
       .select()
       .from(userSystems)
       .where(

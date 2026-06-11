@@ -253,10 +253,8 @@ async function loadLocalRecords(
   try {
     const { SystemsManager } = await import("@/lib/systems-manager");
     const { PointManager } = await import("@/lib/point/point-manager");
-    const { db } = await import("@/lib/db/turso");
-    const { pointReadingsAgg5m } = await import(
-      "@/lib/db/turso/schema-monitoring-points"
-    );
+    const { requirePlanetscaleDb } = await import("@/lib/db/planetscale");
+    const { pointReadingsAgg5m } = await import("@/lib/db/planetscale/schema");
     const { eq, and, inArray } = await import("drizzle-orm");
 
     // 0. Verify this is an Amber system
@@ -303,19 +301,28 @@ async function loadLocalRecords(
     // 2. Generate expected intervals
     const expectedIntervals = generateIntervalsAEST(firstDay, numberOfDays);
 
-    // 3. Fetch readings for filtered points only
+    // 3. Fetch readings for filtered points only. PG stores interval_end as a native
+    // timestamp; query with Date bounds, then map intervalEnd back to epoch-ms so the
+    // downstream batch builder keeps its Turso-era numeric shape.
     const pointIds = filteredPoints.map((p: PointInfo) => p.index);
-    const readings = await db
+    const pgReadings = await requirePlanetscaleDb()
       .select()
       .from(pointReadingsAgg5m)
       .where(
         and(
           eq(pointReadingsAgg5m.systemId, systemId),
           inArray(pointReadingsAgg5m.pointId, pointIds),
-          inArray(pointReadingsAgg5m.intervalEnd, expectedIntervals),
+          inArray(
+            pointReadingsAgg5m.intervalEnd,
+            expectedIntervals.map((ms) => new Date(ms)),
+          ),
         ),
       )
       .orderBy(pointReadingsAgg5m.intervalEnd);
+    const readings = pgReadings.map((r) => ({
+      ...r,
+      intervalEnd: r.intervalEnd.getTime(),
+    }));
 
     // 4. Build AmberReadingsBatch from database readings
     const group = buildRecordsMapFromLocal(

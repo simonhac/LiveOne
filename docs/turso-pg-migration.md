@@ -44,6 +44,14 @@ data-collection **engine** from the **web/FE** — see [Direction of travel](#di
 - **Phase 4a — PG raw-durability outbox: ✅ DEPLOYED + SOAKING** (merged `#32`; migration `0004` applied
   to prod Sydney PG; `WRITE_OUTBOX=true` flipped on 2026-06-10; relay draining, backlog ~0; Slack alerts
   wired). ~30h soak in progress. See [Phase 4](#phase-4--pg-raw-durability-non-destructive-turso-untouched).
+- **Phase 5 — Turso decommission: ✅ CODE-COMPLETE (this PR), pending manual ops.** Every Turso read/write
+  removed; **Postgres is the sole store**. Migration flags retired (`CONFIG_*`, `READINGS_READS_FROM_PG`,
+  `AGG_COMPUTE_IN_PG`, `WRITE_OUTBOX` — only `FLOW_MATRIX_*` remain); the dual-store seams
+  (`config-shadow`/`readings-serve`) and the whole `lib/db/turso` module are deleted; the outbox tee is
+  unconditional (durability anchor); sessions publish from an in-process pending-session registry; daily
+  1d is computed in a PG-only module. Typecheck + 415 unit tests + `build:local` all green. **Remaining
+  manual / DB-touching ops:** apply the `0005` FK rebuild, optional session-FK NULL-then-VALIDATE, then
+  `turso db destroy liveone-tokyo` + its snapshots.
 - **Live pipeline healthy:** QStash lag 0 / DLQ 0; PG mirror response-presence 100%, raw landing
   < 1 min old. (Aggregation is order-independent, so queue parallelism may be raised safely.)
 
@@ -590,6 +598,15 @@ confirmed during the relevant PR.
 
 One line per completed milestone — detail lives in git + the sections above.
 
+- **2026-06-11 — Phase 5 (Turso decommission) CODE-COMPLETE.** Removed every Turso read/write: cut the
+  inline raw/5m/1d writes + config dual-writes, retired the migration flags (only `FLOW_MATRIX_*` remain),
+  deleted the dual-store seams (`config-shadow`/`readings-serve`) and the entire `lib/db/turso` module,
+  made the outbox tee unconditional, replaced the session DB read-back with an in-process pending-session
+  registry, moved daily 1d aggregation to a PG-only `lib/aggregation/daily-points.ts`, repointed all
+  vendor/admin/leaf reads to Postgres, and stubbed the SQLite-specific ops routes (db-stats/storage/health)
+  - the dev-seed. ~50 files; typecheck + 415 unit tests + `build:local` green. Remaining (manual,
+    DB-touching, post-merge): the `0005` FK rebuild, optional session-FK NULL-then-VALIDATE, and
+    `turso db destroy liveone-tokyo` + snapshots.
 - **2026-06-11 — Phase 3 closeout + Turso tidy + off-site-backup decision.** Deleted the us-east `main` PG
   branch after a green ~26h burn-in (sydney now the standalone primary — lineage re-parented to
   sydney→root, main→leaf; one-off base backup `pre-decommission-main-20260611` taken first). Repointed all

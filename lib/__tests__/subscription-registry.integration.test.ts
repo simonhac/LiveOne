@@ -17,10 +17,16 @@ import {
   getLatestPointValues,
 } from "../kv-cache-manager";
 import { kv, kvKey } from "../kv";
-import { db } from "../db/turso";
-import { systems as systemsTable } from "../db/turso/schema";
-import { pointInfo as pointInfoTable } from "../db/turso/schema-monitoring-points";
+// TODO: re-point this integration harness to seed Postgres directly (Turso was
+// decommissioned in Phase 5). Cast to `any` so the legacy Turso-shaped seed values
+// still type-check until the harness is rewritten against the PG schema.
+import { planetscaleDb } from "@/lib/db/planetscale";
+import {
+  systems as systemsTable,
+  pointInfo as pointInfoTable,
+} from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
+const db = planetscaleDb as unknown as Record<string, any>;
 
 // Skip these tests if KV is not configured
 const isKVConfigured = !!(

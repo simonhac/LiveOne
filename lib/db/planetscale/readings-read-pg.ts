@@ -13,17 +13,12 @@
  * `serveReadings`, which falls back to Turso on any error.
  */
 import { sql } from "drizzle-orm";
-import { planetscaleDb } from "./index";
-import {
-  SHADOW_SKIP,
-  pairMatches,
-  type ReadingsCompareResult,
-} from "@/lib/db/readings-serve";
+import { requirePlanetscaleDb } from "./index";
 
 type Row = Record<string, unknown>;
 
 async function runRawPg(query: string): Promise<Row[]> {
-  const res = await planetscaleDb!.execute(sql.raw(query));
+  const res = await requirePlanetscaleDb().execute(sql.raw(query));
   return ((res as { rows?: Row[] }).rows ?? []) as Row[];
 }
 
@@ -49,8 +44,7 @@ export interface AdminPivotParams {
  */
 export async function fetchAdminPivotRowsPg(
   p: AdminPivotParams,
-): Promise<Row[] | typeof SHADOW_SKIP> {
-  if (!planetscaleDb) return SHADOW_SKIP;
+): Promise<Row[]> {
   const { systemId, source, cursor, direction, limit, pivotColumns } = p;
 
   if (source === "daily") {
@@ -119,39 +113,6 @@ export async function fetchAdminPivotRowsPg(
   `);
 }
 
-/**
- * Compare the transformed admin-pivot `data[]` from Turso vs Postgres. Rows are matched by their
- * time/date + sessionId key; the `point_*` value cells are compared with `pairMatches` (numeric
- * tolerance, null/presence-only lenient — so live-tail lag and the sliding LIMIT window at the
- * page boundary never register as a hard divergence). Reports up to the first 10 cell diffs.
- */
-export function comparePivotData(
-  turso: Row[],
-  pg: Row[],
-): ReadingsCompareResult {
-  const keyOf = (r: Row) =>
-    `${(r.time ?? r.date ?? "") as string}|${(r.sessionId ?? "") as string}`;
-  const pByKey = new Map(pg.map((r) => [keyOf(r), r]));
-  const diffs: string[] = [];
-
-  for (const t of turso) {
-    const p = pByKey.get(keyOf(t));
-    if (!p) continue; // present only on Turso (tail / page boundary) — not a divergence
-    for (const field of Object.keys(t)) {
-      if (!field.startsWith("point_")) continue;
-      if (!pairMatches(t[field], p[field])) {
-        diffs.push(`${keyOf(t)} ${field}: turso=${t[field]} pg=${p[field]}`);
-      }
-    }
-  }
-
-  if (diffs.length === 0) return { matched: true };
-  return {
-    matched: false,
-    detail: `rows=${turso.length}/${pg.length} ${diffs.slice(0, 10).join("; ")}`,
-  };
-}
-
 // ============================================================================
 // Single-point readings window (admin/point/[systemIdDotPointId]/readings)
 // ============================================================================
@@ -178,8 +139,7 @@ function tsLitUTC(ms: number): string {
  */
 export async function fetchSinglePointReadingsPg(
   p: SinglePointParams,
-): Promise<Row[] | typeof SHADOW_SKIP> {
-  if (!planetscaleDb) return SHADOW_SKIP;
+): Promise<Row[]> {
   const { systemId, pointId, source, timestamp } = p;
 
   if (source === "daily") {
@@ -266,44 +226,4 @@ export async function fetchSinglePointReadingsPg(
       AND pr.measurement_time <= ${tsLitUTC(endTime)}
     ORDER BY pr.measurement_time ASC
   `);
-}
-
-/**
- * Compare the single-point window rows from Turso vs Postgres. Rows are keyed by their time field
- * (date / intervalEnd / measurementTime); value fields use the reconciler's value set for aggregates
- * and value/valueStr for raw, all via `pairMatches` (numeric tolerance, presence-only lenient).
- */
-export function compareSinglePoint(
-  turso: Row[],
-  pg: Row[],
-  source: string,
-): ReadingsCompareResult {
-  const keyField =
-    source === "daily"
-      ? "date"
-      : source === "5m"
-        ? "intervalEnd"
-        : "measurementTime";
-  const valueFields =
-    source === "raw"
-      ? ["value", "valueStr"]
-      : ["avg", "min", "max", "last", "delta", "sampleCount", "errorCount"];
-
-  const pByKey = new Map(pg.map((r) => [String(r[keyField]), r]));
-  const diffs: string[] = [];
-  for (const t of turso) {
-    const p = pByKey.get(String(t[keyField]));
-    if (!p) continue; // present only on Turso (tail / window boundary) — not a divergence
-    for (const f of valueFields) {
-      if (!pairMatches(t[f], p[f])) {
-        diffs.push(`${String(t[keyField])} ${f}: turso=${t[f]} pg=${p[f]}`);
-      }
-    }
-  }
-
-  if (diffs.length === 0) return { matched: true };
-  return {
-    matched: false,
-    detail: `n=${turso.length}/${pg.length} ${diffs.slice(0, 10).join("; ")}`,
-  };
 }

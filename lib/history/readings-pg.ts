@@ -10,18 +10,12 @@
  * `compareHistorySeries` is the shadow comparator for the served OpenNEM payload.
  */
 import { and, eq, gte, inArray, lte } from "drizzle-orm";
-import { planetscaleDb } from "@/lib/db/planetscale";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   pointReadingsAgg5m as pgAgg5m,
   pointReadingsAgg1d as pgAgg1d,
 } from "@/lib/db/planetscale/schema";
 import { FIVE_MIN_MS } from "@/lib/aggregation/point-aggregates";
-import { OpenNEMDataSeries } from "@/types/opennem";
-import {
-  SHADOW_SKIP,
-  pairMatches,
-  type ReadingsCompareResult,
-} from "@/lib/db/readings-serve";
 import type { AggRow } from "./build-series";
 
 export interface AggFetchParams {
@@ -52,14 +46,10 @@ function groupPointIdsBySystem(
 }
 
 /**
- * Fetch the uniform `AggRow[]` from Postgres for `/api/history`. Returns `SHADOW_SKIP` when PG is
- * unconfigured. Best-effort: callers run it under the shadow harness and swallow errors.
+ * Fetch the uniform `AggRow[]` from Postgres for `/api/history`.
  */
-export async function fetchAggRowsPg(
-  p: AggFetchParams,
-): Promise<AggRow[] | typeof SHADOW_SKIP> {
-  if (!planetscaleDb) return SHADOW_SKIP;
-  const db = planetscaleDb;
+export async function fetchAggRowsPg(p: AggFetchParams): Promise<AggRow[]> {
+  const db = requirePlanetscaleDb();
   const idsBySystem = groupPointIdsBySystem(p.uniquePairs);
 
   if (p.interval === "1d") {
@@ -161,46 +151,4 @@ export async function fetchAggRowsPg(
     }
   }
   return rows;
-}
-
-/**
- * Compare the served OpenNEM series from Turso vs Postgres. Series are matched by `id`; their
- * `history.data` arrays are index-aligned (both grids are identical) and compared element-wise with
- * `pairMatches` — so a value present on one side but null on the other (live-tail lag, or PG agg_1d
- * having no data_quality → null `.quality`) is never a divergence; only two present values that
- * differ count. Reports up to the first 10 diverging cells.
- */
-export function compareHistorySeries(
-  turso: OpenNEMDataSeries[],
-  pg: OpenNEMDataSeries[],
-): ReadingsCompareResult {
-  const tById = new Map(turso.map((s) => [s.id, s]));
-  const pById = new Map(pg.map((s) => [s.id, s]));
-  const diffs: string[] = [];
-
-  for (const id of new Set([...tById.keys(), ...pById.keys()])) {
-    const t = tById.get(id);
-    const p = pById.get(id);
-    if (!t || !p) {
-      diffs.push(`${id}: present only in ${t ? "turso" : "pg"}`);
-      continue;
-    }
-    const td = t.history.data;
-    const pd = p.history.data;
-    if (td.length !== pd.length) {
-      diffs.push(`${id}: numIntervals turso=${td.length} pg=${pd.length}`);
-    }
-    const n = Math.min(td.length, pd.length);
-    for (let i = 0; i < n; i++) {
-      if (!pairMatches(td[i], pd[i])) {
-        diffs.push(`${id}[${i}]: turso=${td[i]} pg=${pd[i]}`);
-      }
-    }
-  }
-
-  if (diffs.length === 0) return { matched: true };
-  return {
-    matched: false,
-    detail: `series=${turso.length}/${pg.length} ${diffs.slice(0, 10).join("; ")}`,
-  };
 }

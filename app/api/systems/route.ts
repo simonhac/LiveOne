@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
-import { db } from "@/lib/db/turso";
-import { systems } from "@/lib/db/turso/schema";
 import { eq, desc } from "drizzle-orm";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { systems as pgSystems } from "@/lib/db/planetscale/schema";
 import { storeSystemCredentials } from "@/lib/secure-credentials";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -159,11 +159,11 @@ export async function GET(request: NextRequest) {
     const { userId } = authResult;
 
     // Get all systems for this user
-    const userSystems = await db
+    const userSystems = await requirePlanetscaleDb()
       .select()
-      .from(systems)
-      .where(eq(systems.ownerClerkUserId, userId))
-      .orderBy(desc(systems.createdAt));
+      .from(pgSystems)
+      .where(eq(pgSystems.ownerClerkUserId, userId))
+      .orderBy(desc(pgSystems.createdAt));
 
     return NextResponse.json({
       systems: userSystems,

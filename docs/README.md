@@ -24,6 +24,7 @@
 - [migrations.md](migrations.md) — migration safety practices and lessons learned
 - [amber-sync-plan.md](amber-sync-plan.md) — Amber sync/audit design
 - [tesla.md](tesla.md) — Tesla vendor adapter spec
+- [old-database-admin.md](old-database-admin.md) — historical notes for rebuilding the stripped `/admin/readings` database admin tools
 - [backfill-turso-to-postgres.md](backfill-turso-to-postgres.md) — re-runnable Turso→PG backfill tool
 - vendors/ — [enphase-api.md](vendors/enphase-api.md) · [enphase-integration.md](vendors/enphase-integration.md) · [enphase-testing.md](vendors/enphase-testing.md) (historical — mock removed 2026-06-10) · [fronius-push-spec.md](vendors/fronius-push-spec.md) · [selectronic.md](vendors/selectronic.md)
 
@@ -31,6 +32,7 @@
 
 - [deferred/generator-events-rewrite.md](deferred/generator-events-rewrite.md) — bounded-range rewrite owed before its PG migration
 - [deferred/history-api-unification-plan.md](deferred/history-api-unification-plan.md) — unify composite/non-composite history paths
+- [deferred/postgres-integration-test-harness.md](deferred/postgres-integration-test-harness.md) — re-point Turso-seeded/flag-gated test suites to Postgres (Phase 5)
 
 ## Records (append-only; never "stale")
 
