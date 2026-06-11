@@ -48,12 +48,12 @@ ENDPOINT="https://${R2_ACCOUNT_ID:?set R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 OUT="$TMP/backup.${EXT}"
 
-alert() {
+notify() {  # best-effort webhook post (Slack-compatible); never fails the run
   [ -n "${ALERT_WEBHOOK_URL:-}" ] || return 0
   curl -fsS -X POST -H 'Content-Type: application/json' \
-    -d "{\"text\":\"🔴 PG→R2 backup FAILED: $1\"}" "$ALERT_WEBHOOK_URL" >/dev/null 2>&1 || true
+    -d "{\"text\":\"$1\"}" "$ALERT_WEBHOOK_URL" >/dev/null 2>&1 || true
 }
-fail() { echo "ERROR: $1" >&2; alert "$1"; exit 1; }
+fail() { echo "ERROR: $1" >&2; notify "🔴 PG→R2 backup FAILED: $1"; exit 1; }
 
 command -v pg_dump >/dev/null || fail "pg_dump not found"
 command -v rclone  >/dev/null || fail "rclone not found"
@@ -85,8 +85,15 @@ export RCLONE_CONFIG_R2_PROVIDER=Cloudflare
 export RCLONE_CONFIG_R2_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
 export RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
 export RCLONE_CONFIG_R2_ENDPOINT="$ENDPOINT"
-export RCLONE_CONFIG_R2_ACL=private
-rclone copyto "$OUT" "r2:${R2_BUCKET}/${KEY}" --s3-no-check-bucket --stats-one-line \
+# Don't set an ACL — R2 doesn't support S3 ACLs and returns NotImplemented (rclone then retries
+# without it). The rclone "Cloudflare" provider already omits the unsupported headers.
+# Single-PUT upload (cutoff above the dump size) — atomic, leaves no orphaned multipart parts.
+# Known cosmetic quirk: rclone logs one "NotImplemented" on the first request to R2 then succeeds on
+# the retry (R2 rejects a header the AWS SDK sends initially). The object lands correctly and the
+# command exits 0, so we accept the one-line retry rather than chase it. R2 single-PUT limit is 5 GiB.
+rclone copyto "$OUT" "r2:${R2_BUCKET}/${KEY}" --s3-no-check-bucket --s3-upload-cutoff=4Gi --stats-one-line \
   || fail "R2 upload failed"
 
+MB=$(( SIZE / 1024 / 1024 ))
 echo "✓ Backup complete: r2://${R2_BUCKET}/${KEY} (${SIZE} bytes)"
+notify "✅ PG→R2 backup OK — ${MB} MB — ${KEY}"
