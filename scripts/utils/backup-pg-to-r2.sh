@@ -86,10 +86,14 @@ export RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
 export RCLONE_CONFIG_R2_ENDPOINT="$ENDPOINT"
 # Don't set an ACL — R2 doesn't support S3 ACLs and returns NotImplemented (rclone then retries
 # without it). The rclone "Cloudflare" provider already omits the unsupported headers.
-# Single-PUT upload (cutoff above the dump size) — atomic, leaves no orphaned multipart parts.
-# Known cosmetic quirk: rclone logs one "NotImplemented" on the first request to R2 then succeeds on
-# the retry (R2 rejects a header the AWS SDK sends initially). The object lands correctly and the
-# command exits 0, so we accept the one-line retry rather than chase it. R2 single-PUT limit is 5 GiB.
+# Single-PUT upload (cutoff above the dump size) — atomic, no multipart, so no orphaned parts.
+# R2 single-PUT limit is 5 GiB; our dump is ~214 MB.
+# Known cosmetic quirk: R2 returns one "501 NotImplemented" for the x-amz-checksum-crc32 request-
+# integrity header that AWS's 2025 default-integrity change bakes into its SDKs; the client retries
+# without it, the object lands correctly, and the command exits 0 — so we accept the one-line retry
+# rather than chase it. NB: --s3-disable-checksum does NOT fix this (it only drops the stored MD5
+# metadata, not the crc32 request trailer); the real lever is request_checksum_calculation=when_required
+# / a newer rclone — both unverified on the runner and not worth chasing for a self-healing one-liner.
 rclone copyto "$OUT" "r2:${R2_BUCKET}/${KEY}" --s3-no-check-bucket --s3-upload-cutoff=4Gi --stats-one-line \
   || fail "R2 upload failed"
 

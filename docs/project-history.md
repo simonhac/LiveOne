@@ -1004,8 +1004,8 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 - **Postgres is now the sole datastore.** Removed every Turso read/write: the inline raw/5m/1d writes, config dual-writes, and the entire `lib/db/turso` module
 - **Migration flags retired**: `CONFIG_*`, `READINGS_READS_FROM_PG`, `AGG_COMPUTE_IN_PG`, `WRITE_OUTBOX` (only `FLOW_MATRIX_*` remain); the dual-store seams (`config-shadow`/`readings-serve`) deleted
 - **Architecture simplified**: the outbox tee is now unconditional (the durability anchor); sessions publish from an in-process pending-session registry instead of a DB read-back; daily 1d aggregation moved to a PG-only module (`lib/aggregation/daily-points.ts`); the SQLite-specific ops routes (db-stats / storage / sync-database / health) were stubbed
-- **Cleanup PR**: scrubbed vestigial Turso/libsql references across code comments and docs; deleted the legacy plain-SQL `/migrations/` SQLite archive and the `db:sync-prod` dev-seed tool (`@libsql/client` dropped as a direct dependency); staged the `0006` FK-rebuild migration (unapplied)
-- **Remaining manual ops**: apply the `0006` FK rebuild, the optional session-FK validation, and `turso db destroy liveone-tokyo`
+- **Cleanup PR**: scrubbed vestigial Turso/libsql references across code comments and docs; deleted the legacy plain-SQL `/migrations/` SQLite archive and the `db:sync-prod` dev-seed tool (`@libsql/client` dropped as a direct dependency); applied the `0006` FK-rebuild migration to prod Sydney (all 8 constraints validated)
+- **Remaining manual ops**: only the optional session-FK validation. (`liveone-tokyo` is **not** destroyed — downgraded to Turso's free Starter plan and kept as a frozen, no-longer-written cold archive of raw+sessions.)
 
 ### Current State (as of 2026-06-11)
 
