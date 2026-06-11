@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  deleteRange,
-  aggregateRange,
-} from "@/lib/db/turso/aggregate-daily-points";
+import { deleteRange, aggregateRange } from "@/lib/aggregation/daily-points";
 import { requireCronOrAdmin } from "@/lib/api-auth";
 import { parseDate, CalendarDate } from "@internationalized/date";
 import { getNowFormattedAEST, getYesterdayInTimezone } from "@/lib/date-utils";

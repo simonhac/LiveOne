@@ -13,13 +13,12 @@ import {
 import { Observation, QueueMessage } from "./types";
 import { SystemWithPolling } from "@/lib/systems-manager";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
-import { pointInfo as pointInfoTable } from "@/lib/db/turso/schema-monitoring-points";
+import type { PointInfoRow } from "@/lib/point/point-manager";
 import { PointReference } from "@/lib/identifiers";
-import { WRITE_OUTBOX } from "@/lib/db/routing";
 import { persistOutbox } from "./outbox";
 
-// Type for point info from the database
-type PointInfo = typeof pointInfoTable.$inferSelect;
+// Type for point info (the served point_info row shape).
+type PointInfo = PointInfoRow;
 
 /**
  * Input for a single observation (from insertPointReadingsRaw)
@@ -128,11 +127,10 @@ export async function publishObservationBatch(
       observations,
     };
 
-    // Phase 4: durably capture in PG first (a tee, in parallel with the direct
-    // enqueue below). Best-effort — never throws.
-    if (WRITE_OUTBOX) {
-      await persistOutbox([message]);
-    }
+    // Durably capture in PG first (a tee, in parallel with the direct enqueue
+    // below). Best-effort — never throws. The outbox is the durability anchor;
+    // the relay re-drains anything the direct enqueue drops.
+    await persistOutbox([message]);
 
     // Get the queue and publish
     const queue = qstash.queue({ queueName: OBSERVATIONS_QUEUE_NAME });

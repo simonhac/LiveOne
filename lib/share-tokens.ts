@@ -1,10 +1,6 @@
 import { randomInt } from "crypto";
 import { and, desc, eq, isNull, gt, or } from "drizzle-orm";
-import { db } from "@/lib/db/turso";
-import { shareTokens } from "@/lib/db/turso/schema";
-import { CONFIG_WRITES_TO_PG } from "@/lib/db/routing";
-import { shadowReadConfig, SHADOW_SKIP } from "@/lib/db/config-shadow";
-import { planetscaleDb } from "@/lib/db/planetscale";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { shareTokens as pgShareTokens } from "@/lib/db/planetscale/schema";
 
 // Three-word tokens use the form: <adjective>-<adjective>-<noun>
@@ -555,40 +551,19 @@ export async function createShareToken(opts: CreateShareTokenOptions) {
         ? Date.now() + opts.expiresInDays * 24 * 60 * 60 * 1000
         : null;
     try {
-      // WRITE ROUTING (1B): when CONFIG_WRITES_TO_PG is on, write the new token
-      // to Postgres ONLY (no dual-write to Turso). The Turso `created_at_ms`
-      // default doesn't exist in PG, so set it explicitly. Otherwise, today's
-      // unchanged Turso insert.
-      if (CONFIG_WRITES_TO_PG) {
-        if (!planetscaleDb) {
-          throw new Error(
-            "CONFIG_WRITES_TO_PG is on but PlanetScale is not configured",
-          );
-        }
-        await planetscaleDb.insert(pgShareTokens).values({
+      await requirePlanetscaleDb()
+        .insert(pgShareTokens)
+        .values({
           token,
           ownerClerkUserId: opts.ownerClerkUserId,
           label: opts.label ?? null,
           createdAtMs: Date.now(),
           expiresAtMs,
         });
-      } else {
-        await db.insert(shareTokens).values({
-          token,
-          ownerClerkUserId: opts.ownerClerkUserId,
-          label: opts.label ?? null,
-          expiresAtMs,
-        });
-      }
       return { token, expiresAtMs };
     } catch (err: any) {
-      // Token PK collision: Turso surfaces SQLITE_CONSTRAINT / "UNIQUE";
-      // Postgres surfaces SQLSTATE 23505 (unique_violation).
-      if (
-        err?.message?.includes("UNIQUE") ||
-        err?.code === "SQLITE_CONSTRAINT" ||
-        err?.code === "23505"
-      ) {
+      // Token PK collision: Postgres surfaces SQLSTATE 23505 (unique_violation).
+      if (err?.code === "23505") {
         continue;
       }
       throw err;
@@ -602,120 +577,45 @@ export interface ValidatedToken {
   ownerClerkUserId: string;
 }
 
-/**
- * Project a share_tokens row to the fields compared in shadow-diff. share_tokens stores
- * all timestamps as bigint epoch-ms on BOTH sides (Turso integer, PG bigint mode:"number"),
- * so the *Ms columns are plain numbers needing no second/µs translation.
- */
-function normalizeShareTokenForShadow(row: unknown): unknown {
-  if (!row) return null;
-  const s = row as Record<string, any>;
-  return {
-    token: s.token,
-    ownerClerkUserId: s.ownerClerkUserId,
-    label: s.label ?? null,
-    createdAtMs: s.createdAtMs ?? null,
-    expiresAtMs: s.expiresAtMs ?? null,
-    revokedAtMs: s.revokedAtMs ?? null,
-    lastUsedAtMs: s.lastUsedAtMs ?? null,
-  };
-}
-
 export async function validateShareToken(
   token: string,
 ): Promise<ValidatedToken | null> {
   if (!isWellFormedToken(token)) return null;
-  // Capture nowMs ONCE and reuse for both Turso and PG reads so the
-  // `gt(expiresAtMs, nowMs)` predicate can't false-diff on clock skew.
   const nowMs = Date.now();
-  const row = await shadowReadConfig(
-    "validateShareToken",
-    async () => {
-      const rows = await db
-        .select()
-        .from(shareTokens)
-        .where(
-          and(
-            eq(shareTokens.token, token),
-            isNull(shareTokens.revokedAtMs),
-            or(
-              isNull(shareTokens.expiresAtMs),
-              gt(shareTokens.expiresAtMs, nowMs),
-            ),
-          ),
-        )
-        .limit(1);
-      return rows[0] ?? null;
-    },
-    {
-      diffKey: token,
-      pgRead: async () => {
-        if (!planetscaleDb) return SHADOW_SKIP;
-        const rows = await planetscaleDb
-          .select()
-          .from(pgShareTokens)
-          .where(
-            and(
-              eq(pgShareTokens.token, token),
-              isNull(pgShareTokens.revokedAtMs),
-              or(
-                isNull(pgShareTokens.expiresAtMs),
-                gt(pgShareTokens.expiresAtMs, nowMs),
-              ),
-            ),
-          )
-          .limit(1);
-        return rows[0] ?? null;
-      },
-      normalize: normalizeShareTokenForShadow,
-    },
-  );
+  const pg = requirePlanetscaleDb();
+  const rows = await pg
+    .select()
+    .from(pgShareTokens)
+    .where(
+      and(
+        eq(pgShareTokens.token, token),
+        isNull(pgShareTokens.revokedAtMs),
+        or(
+          isNull(pgShareTokens.expiresAtMs),
+          gt(pgShareTokens.expiresAtMs, nowMs),
+        ),
+      ),
+    )
+    .limit(1);
+  const row = rows[0] ?? null;
   if (!row) return null;
 
   // Best-effort touch of last_used_at_ms (don't await; ignore failure).
-  // WRITE ROUTING (1B): Postgres-only when CONFIG_WRITES_TO_PG is on; otherwise Turso.
-  if (CONFIG_WRITES_TO_PG) {
-    if (planetscaleDb) {
-      void planetscaleDb
-        .update(pgShareTokens)
-        .set({ lastUsedAtMs: nowMs })
-        .where(eq(pgShareTokens.token, token))
-        .catch(() => {});
-    }
-  } else {
-    void db
-      .update(shareTokens)
-      .set({ lastUsedAtMs: nowMs })
-      .where(eq(shareTokens.token, token))
-      .catch(() => {});
-  }
+  void pg
+    .update(pgShareTokens)
+    .set({ lastUsedAtMs: nowMs })
+    .where(eq(pgShareTokens.token, token))
+    .catch(() => {});
 
   return { token: row.token, ownerClerkUserId: row.ownerClerkUserId };
 }
 
 export async function listShareTokens(ownerClerkUserId: string) {
-  return shadowReadConfig(
-    "listShareTokens",
-    async () =>
-      db
-        .select()
-        .from(shareTokens)
-        .where(eq(shareTokens.ownerClerkUserId, ownerClerkUserId))
-        .orderBy(desc(shareTokens.createdAtMs)),
-    {
-      diffKey: ownerClerkUserId,
-      pgRead: async () => {
-        if (!planetscaleDb) return SHADOW_SKIP;
-        return planetscaleDb
-          .select()
-          .from(pgShareTokens)
-          .where(eq(pgShareTokens.ownerClerkUserId, ownerClerkUserId))
-          .orderBy(desc(pgShareTokens.createdAtMs));
-      },
-      normalize: (v: unknown) =>
-        Array.isArray(v) ? v.map(normalizeShareTokenForShadow) : v,
-    },
-  );
+  return requirePlanetscaleDb()
+    .select()
+    .from(pgShareTokens)
+    .where(eq(pgShareTokens.ownerClerkUserId, ownerClerkUserId))
+    .orderBy(desc(pgShareTokens.createdAtMs));
 }
 
 export async function revokeShareToken(
@@ -723,37 +623,14 @@ export async function revokeShareToken(
   ownerClerkUserId: string,
 ) {
   const revokedAtMs = Date.now();
-  // WRITE ROUTING (1B): Postgres-only when CONFIG_WRITES_TO_PG is on; otherwise
-  // today's unchanged Turso update. Both back-ends use `.returning()` so the
-  // revoked-a-matching-row check is identical.
-  if (CONFIG_WRITES_TO_PG) {
-    if (!planetscaleDb) {
-      throw new Error(
-        "CONFIG_WRITES_TO_PG is on but PlanetScale is not configured",
-      );
-    }
-    const result = await planetscaleDb
-      .update(pgShareTokens)
-      .set({ revokedAtMs })
-      .where(
-        and(
-          eq(pgShareTokens.token, token),
-          eq(pgShareTokens.ownerClerkUserId, ownerClerkUserId),
-          isNull(pgShareTokens.revokedAtMs),
-        ),
-      )
-      .returning();
-    return result.length > 0;
-  }
-
-  const result = await db
-    .update(shareTokens)
+  const result = await requirePlanetscaleDb()
+    .update(pgShareTokens)
     .set({ revokedAtMs })
     .where(
       and(
-        eq(shareTokens.token, token),
-        eq(shareTokens.ownerClerkUserId, ownerClerkUserId),
-        isNull(shareTokens.revokedAtMs),
+        eq(pgShareTokens.token, token),
+        eq(pgShareTokens.ownerClerkUserId, ownerClerkUserId),
+        isNull(pgShareTokens.revokedAtMs),
       ),
     )
     .returning();

@@ -1,5 +1,3 @@
-import { db } from "@/lib/db/turso";
-import { sessions, systems, type NewSession } from "@/lib/db/turso/schema";
 import { eq } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import { transformForStorage } from "@/lib/json";
@@ -71,6 +69,21 @@ export interface SessionWithSystem {
  */
 export type SessionSummary = Omit<SessionWithSystem, "response">;
 
+/**
+ * In-process registry of pending sessions. `createSession` stashes the session's
+ * descriptive fields here so `updateSessionResult` can assemble the combined
+ * session+observations publish message at close WITHOUT a database read-back
+ * (Turso, the old backing store, was decommissioned in Phase 5). create + update
+ * always run in the same invocation, so a Map is sufficient.
+ */
+interface PendingSession {
+  systemId: number;
+  cause: SessionCause;
+  started: Date;
+  sessionLabel: string | null;
+}
+const pendingSessions = new Map<string, PendingSession>();
+
 export class SessionManager {
   private static instance: SessionManager | null = null;
 
@@ -110,21 +123,15 @@ export class SessionManager {
 
       const id = uuidv7();
 
-      const sessionRecord: NewSession = {
-        id,
-        sessionLabel,
+      // Stash the pending session in-process; updateSessionResult reads it back
+      // to build the combined publish message at close (no DB write here — the
+      // session lands in Postgres via the queue at session close).
+      pendingSessions.set(id, {
         systemId: data.systemId,
         cause: data.cause,
         started: data.started,
-        duration: 0, // Will be updated when session completes
-        // successful left as NULL (pending) - will be updated when session completes
-        errorCode: null,
-        error: null,
-        response: null,
-        numRows: 0,
-      };
-
-      await db.insert(sessions).values(sessionRecord);
+        sessionLabel,
+      });
 
       return { id, started: data.started, label: sessionLabel };
     } catch (error) {
@@ -171,54 +178,44 @@ export class SessionManager {
         ? transformForStorage(data.response)
         : null;
 
-      await db
-        .update(sessions)
-        .set({
-          duration: data.duration,
-          successful: data.successful,
-          errorCode: data.errorCode || null,
-          error: data.error || null,
-          response: transformedResponse,
-          numRows: data.numRows,
-        })
-        .where(eq(sessions.id, sessionId));
-
-      // Publish to QStash queue for replication
-      // Fetch the full session to get all fields including started, sessionLabel, createdAt
-      const session = await db
-        .select()
-        .from(sessions)
-        .where(eq(sessions.id, sessionId))
-        .limit(1);
-
-      if (session.length > 0) {
-        const s = session[0];
-        const sessionPublishInput = {
-          id: s.id,
-          sessionLabel: s.sessionLabel,
-          systemId: s.systemId,
-          cause: s.cause,
-          started: s.started,
-          duration: s.duration,
-          successful: s.successful,
-          errorCode: s.errorCode,
-          error: s.error,
-          response: s.response,
-          numRows: s.numRows,
-          createdAt: s.createdAt,
-        };
-
-        // Emit a single combined message (session + all readings).
-        // The session is included even when there are zero readings.
-        const system = await SystemsManager.getInstance().getSystem(s.systemId);
-        if (system) {
-          await publishPoll(
-            system,
-            buildSessionPayload(sessionPublishInput, system.timezoneOffsetMin),
-            pollObservations,
-          );
-        }
+      const pending = pendingSessions.get(sessionId);
+      if (!pending) {
+        console.warn(
+          `[SessionManager] No pending session ${sessionId} in-process — cannot publish result (skipped).`,
+        );
+        return;
       }
+
+      const sessionPublishInput = {
+        id: sessionId,
+        sessionLabel: pending.sessionLabel,
+        systemId: pending.systemId,
+        cause: pending.cause,
+        started: pending.started,
+        duration: data.duration,
+        successful: data.successful,
+        errorCode: data.errorCode || null,
+        error: data.error || null,
+        response: transformedResponse,
+        numRows: data.numRows,
+        // Postgres has no separate `started` column; createdAt carries it.
+        createdAt: pending.started,
+      };
+
+      // Emit a single combined message (session + all readings) to the queue,
+      // which the receiver materialises into Postgres. The session is included
+      // even when there are zero readings.
+      const system = await SystemsManager.getInstance().getSystem(
+        pending.systemId,
+      );
+      if (system) {
+        await publishPoll(
+          system,
+          buildSessionPayload(sessionPublishInput, system.timezoneOffsetMin),
+          pollObservations,
+        );
+      }
+      pendingSessions.delete(sessionId);
     } catch (error) {
       // Log the error but don't throw - we don't want session recording to break the main flow
       console.error("[SessionManager] Failed to update session:", error);
@@ -246,7 +243,7 @@ export class SessionManager {
         ? transformForStorage(data.response)
         : null;
 
-      const sessionRecord: NewSession = {
+      const sessionPublishInput = {
         id: uuidv7(),
         sessionLabel,
         systemId: data.systemId,
@@ -258,9 +255,22 @@ export class SessionManager {
         error: data.error || null,
         response: transformedResponse,
         numRows: data.numRows,
+        // Postgres has no separate `started` column; createdAt carries it.
+        createdAt: data.started,
       };
 
-      await db.insert(sessions).values(sessionRecord);
+      // Publish the completed session to the queue (→ Postgres via the receiver);
+      // a session-only message with no readings.
+      const system = await SystemsManager.getInstance().getSystem(
+        data.systemId,
+      );
+      if (system) {
+        await publishPoll(
+          system,
+          buildSessionPayload(sessionPublishInput, system.timezoneOffsetMin),
+          [],
+        );
+      }
     } catch (error) {
       // Log the error but don't throw - we don't want session recording to break the main flow
       console.error("[SessionManager] Failed to record session:", error);
@@ -314,19 +324,14 @@ export class SessionManager {
     systemId: number,
   ): Promise<{ vendorType: string; systemName: string } | null> {
     try {
-      const system = await db
-        .select()
-        .from(systems)
-        .where(eq(systems.id, systemId))
-        .limit(1);
-
-      if (system.length === 0) {
+      const system = await SystemsManager.getInstance().getSystem(systemId);
+      if (!system) {
         return null;
       }
 
       return {
-        vendorType: system[0].vendorType,
-        systemName: system[0].displayName || `System ${systemId}`,
+        vendorType: system.vendorType,
+        systemName: system.displayName || `System ${systemId}`,
       };
     } catch (error) {
       console.error("[SessionManager] Failed to get system info:", error);

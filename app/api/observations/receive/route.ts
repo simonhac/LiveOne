@@ -26,7 +26,6 @@ import { planetscaleDb } from "@/lib/db/planetscale";
 import {
   pointReadings,
   pointReadingsAgg5m,
-  pointReadingsAgg1d,
   sessions,
   systems,
 } from "@/lib/db/planetscale/schema";
@@ -35,7 +34,6 @@ import type {
   Observation,
   Session,
 } from "@/lib/observations/types";
-import { AGG_COMPUTE_IN_PG } from "@/lib/db/routing";
 import { recompute5mForRawObservationsBestEffort } from "@/lib/db/planetscale/aggregate-points-pg";
 import { isFiveMinuteNativeVendor } from "@/lib/vendors/native-intervals";
 
@@ -154,15 +152,14 @@ async function insert5mObservations(
   observations: Observation[],
   useUpsert: boolean,
 ): Promise<{ inserted: number; skipped: number }> {
-  // PR-13: when PG self-computes raw-vendor 5m from PG's own raw (AGG_COMPUTE_IN_PG),
-  // the publisher no longer sends raw-vendor 5m, so this branch is normally unreachable;
-  // a straggler that arrives must NOT be inserted (it would race the recompute and is
-  // redundant). 5m-NATIVE vendors (useUpsert=true, Amber/Enphase) have no raw and no
-  // recompute — the queue copy IS the value — so they always keep upserting. Gated so
-  // AGG_COMPUTE_IN_PG=false restores the original raw-vendor insert exactly.
-  if (AGG_COMPUTE_IN_PG && !useUpsert) {
+  // Postgres self-computes raw-vendor 5m from its own raw point_readings, so the
+  // publisher never sends raw-vendor 5m; a straggler that arrives must NOT be
+  // inserted (it would race the recompute and is redundant). 5m-NATIVE vendors
+  // (useUpsert=true, Amber/Enphase) have no raw and no recompute — the queue copy
+  // IS the value — so they always keep upserting.
+  if (!useUpsert) {
     console.log(
-      `[ObservationsReceiver] AGG_COMPUTE_IN_PG on: skipping raw-vendor 5m insert for system ${systemId} (PG recomputes from raw); ${observations.length} observation(s) ignored`,
+      `[ObservationsReceiver] skipping raw-vendor 5m insert for system ${systemId} (PG recomputes from raw); ${observations.length} observation(s) ignored`,
     );
     return { inserted: 0, skipped: 0 };
   }
@@ -269,68 +266,16 @@ async function insert1dObservations(
   systemId: number,
   observations: Observation[],
 ): Promise<{ inserted: number; skipped: number }> {
-  // PR-13: when PG self-computes 1d from its own 5m (AGG_COMPUTE_IN_PG), the 1d publisher
-  // is gated off, so no 1d should arrive. A straggler must NOT be inserted (it would
-  // overwrite the PG-computed day). Logging no-op; flip AGG_COMPUTE_IN_PG=false to restore.
-  if (AGG_COMPUTE_IN_PG) {
+  // Postgres self-computes 1d from its own 5m (the daily cron), so the 1d publisher
+  // is gone and no 1d should arrive. A straggler must NOT be inserted (it would
+  // overwrite the PG-computed day). Unconditional no-op.
+  void db;
+  if (observations.length > 0) {
     console.log(
-      `[ObservationsReceiver] AGG_COMPUTE_IN_PG on: skipping 1d insert for system ${systemId} (PG recomputes from 5m); ${observations.length} observation(s) ignored`,
+      `[ObservationsReceiver] skipping 1d insert for system ${systemId} (PG recomputes from 5m); ${observations.length} observation(s) ignored`,
     );
-    return { inserted: 0, skipped: 0 };
   }
-
-  let skipped = 0;
-  const rows: (typeof pointReadingsAgg1d.$inferInsert)[] = [];
-
-  for (const obs of observations) {
-    const pointId = extractPointId(obs);
-    if (pointId === null || !obs.agg) {
-      console.warn(
-        `[ObservationsReceiver] Skipping 1d observation without valid pointId/agg: ${obs.topic}`,
-      );
-      skipped++;
-      continue;
-    }
-    const agg = obs.agg;
-    rows.push({
-      systemId,
-      pointId,
-      day: obs.measurementTime.slice(0, 10),
-      avg: agg.avg,
-      min: agg.min,
-      max: agg.max,
-      last: agg.last,
-      delta: agg.delta,
-      sampleCount: agg.sampleCount,
-      errorCount: agg.errorCount,
-    });
-  }
-
-  if (rows.length === 0) return { inserted: 0, skipped };
-
-  const result = await db
-    .insert(pointReadingsAgg1d)
-    .values(rows)
-    .onConflictDoUpdate({
-      target: [
-        pointReadingsAgg1d.systemId,
-        pointReadingsAgg1d.pointId,
-        pointReadingsAgg1d.day,
-      ],
-      set: {
-        avg: sql`excluded.avg`,
-        min: sql`excluded.min`,
-        max: sql`excluded.max`,
-        last: sql`excluded.last`,
-        delta: sql`excluded.delta`,
-        sampleCount: sql`excluded.sample_count`,
-        errorCount: sql`excluded.error_count`,
-        updatedAt: sql`now()`,
-      },
-    })
-    .returning({ systemId: pointReadingsAgg1d.systemId });
-
-  return { inserted: result.length, skipped };
+  return { inserted: 0, skipped: 0 };
 }
 
 /**
@@ -465,11 +410,11 @@ async function handler(request: NextRequest) {
 
     console.log(`[ObservationsReceiver] Processed: ${JSON.stringify(stats)}`);
 
-    // Move 1 (AGG_COMPUTE_IN_PG, shadow): once this message's raw readings have durably
-    // landed (tx committed above), recompute the raw-vendor 5m aggregates for the touched
-    // intervals from PG's own raw. Best-effort — it never throws — but awaited so the work
-    // completes before the serverless function can freeze. Off by default → a no-op.
-    if (AGG_COMPUTE_IN_PG && body.observations) {
+    // Once this message's raw readings have durably landed (tx committed above),
+    // recompute the raw-vendor 5m aggregates for the touched intervals from PG's
+    // own raw. Best-effort — it never throws — but awaited so the work completes
+    // before the serverless function can freeze.
+    if (body.observations) {
       const rawObs = body.observations.filter((o) => o.interval === "raw");
       if (rawObs.length > 0) {
         await recompute5mForRawObservationsBestEffort(body.systemId, rawObs);

@@ -20,7 +20,6 @@ import {
   type AggRow,
 } from "@/lib/history/build-series";
 import { fetchAggRowsPg } from "@/lib/history/readings-pg";
-import { serveReadings, SHADOW_SKIP } from "@/lib/db/readings-serve";
 import {
   resolveLogicalSystem,
   type LogicalSystem,
@@ -390,160 +389,26 @@ async function getSystemHistoryInOpenNEMFormat(
   const queryFirstEpoch =
     interval === "30m" ? firstEpoch - 25 * 60 * 1000 : firstEpoch;
 
-  // ---- Turso fetch: the live served path. The raw SQL is unchanged from before the PR-12
-  // extraction; it just feeds the shared `buildSeriesFromAggRows` now. ----
-  const fetchAggRowsTurso = async (): Promise<{
-    rows: AggRow[];
-    debugQuery?: QueryDebugInfo;
-  }> => {
-    const { rawClient } = await import("@/lib/db/turso");
-
-    // LibSQL supports positional parameters with ?, so build (?, ?), (?, ?)...
-    const pairsPlaceholders = uniquePairsArray.map(() => "(?, ?)").join(", ");
-    const pairArgs = uniquePairsArray.flat();
-
-    let queryTemplate: string;
-    let queryArgs: (number | string)[];
-    let rows: AggRow[];
-
-    if (interval === "1d") {
-      queryTemplate = `
-      WITH pairs(system_id, point_id) AS (
-        VALUES ${pairsPlaceholders}
-      )
-      SELECT
-        pra.system_id,
-        pra.point_id,
-        pra.day,
-        pra.avg,
-        pra.min,
-        pra.max,
-        pra.last,
-        pra.delta,
-        NULL as data_quality
-      FROM ${aggTable} AS pra
-      JOIN pairs p
-        ON p.system_id = pra.system_id
-       AND p.point_id = pra.point_id
-      WHERE pra.day >= ? AND pra.day <= ?
-      ORDER BY pra.system_id, pra.point_id, pra.day
-    `;
-
-      queryArgs = [...pairArgs, startDate!, endDate!];
-
-      rows = (
-        await rawClient.execute({
-          sql: queryTemplate,
-          args: queryArgs,
-        })
-      ).rows as unknown as AggRow[];
-    } else {
-      queryTemplate = `
-      WITH RECURSIVE
-        timeline AS (
-          -- Generate dense timeline at 5-minute intervals
-          SELECT ? as interval_end
-          UNION ALL
-          SELECT interval_end + 300000
-          FROM timeline
-          WHERE interval_end < ?
-        ),
-        pairs(system_id, point_id) AS (
-          VALUES ${pairsPlaceholders}
-        )
-      SELECT
-        t.interval_end,
-        p.system_id,
-        p.point_id,
-        pra.avg,
-        pra.min,
-        pra.max,
-        pra.last,
-        pra.delta,
-        pra.data_quality
-      FROM timeline t
-      CROSS JOIN pairs p
-      LEFT JOIN ${aggTable} AS pra
-        ON pra.system_id = p.system_id
-       AND pra.point_id = p.point_id
-       AND pra.interval_end = t.interval_end
-      ORDER BY p.system_id, p.point_id, t.interval_end
-    `;
-
-      queryArgs = [queryFirstEpoch, lastEpoch, ...pairArgs];
-
-      rows = (
-        await rawClient.execute({
-          sql: queryTemplate,
-          args: queryArgs,
-        })
-      ).rows as unknown as AggRow[];
-    }
-
-    let debugQuery: QueryDebugInfo | undefined;
-    if (enableDebug) {
-      // Normalize whitespace: newlines and multiple spaces → single spaces.
-      const normalizedTemplate = queryTemplate
-        .replace(/\n/g, " ")
-        .replace(/\s+/g, " ")
-        .replace(/"/g, "'")
-        .trim();
-      debugQuery = { template: normalizedTemplate, args: queryArgs };
-    }
-
-    return { rows, debugQuery };
-  };
-
-  // Turso path (served when the flag is off, else the fallback), building the OpenNEM series via
-  // the shared transform.
-  const tursoServe = async (): Promise<OpenNEMDataSeries[]> => {
-    const { rows, debugQuery } = await fetchAggRowsTurso();
-    if (debug && debugQuery) debug.query.push(debugQuery);
-    if (computeSankey)
-      flowMatrix = buildFlowMatrixFromAggRows(rows, sankey!.logicalSystem);
-    return buildSeriesFromAggRows(
-      rows,
-      seriesInfos,
-      interval,
-      system,
-      firstEpoch,
-      lastEpoch,
-      debug,
-    );
-  };
-
-  // Serve from Postgres (under READINGS_READS_FROM_PG): read the same window and build via the SAME
-  // transform, without touching the served request's debug object. The harness falls back to Turso
-  // if this throws or returns SHADOW_SKIP.
-  const pgServe = async (): Promise<
-    OpenNEMDataSeries[] | typeof SHADOW_SKIP
-  > => {
-    const rows = await fetchAggRowsPg({
-      uniquePairs: uniquePairsArray,
-      interval,
-      queryFirstEpoch,
-      lastEpoch,
-      startDate,
-      endDate,
-    });
-    if (rows === SHADOW_SKIP) return SHADOW_SKIP;
-    if (computeSankey)
-      flowMatrix = buildFlowMatrixFromAggRows(rows, sankey!.logicalSystem);
-    return buildSeriesFromAggRows(
-      rows,
-      seriesInfos,
-      interval,
-      system,
-      firstEpoch,
-      lastEpoch,
-      undefined,
-    );
-  };
-
-  const series = await serveReadings(
-    `history/${interval} sys=${system.id} ${firstEpoch}..${lastEpoch}`,
-    pgServe,
-    tursoServe,
+  // Serve from Postgres: read the window and build the OpenNEM series via the shared transform.
+  void enableDebug; // Turso-era SQL-template debug capture removed (Phase 5)
+  const rows = await fetchAggRowsPg({
+    uniquePairs: uniquePairsArray,
+    interval,
+    queryFirstEpoch,
+    lastEpoch,
+    startDate,
+    endDate,
+  });
+  if (computeSankey)
+    flowMatrix = buildFlowMatrixFromAggRows(rows, sankey!.logicalSystem);
+  const series = buildSeriesFromAggRows(
+    rows,
+    seriesInfos,
+    interval,
+    system,
+    firstEpoch,
+    lastEpoch,
+    debug,
   );
 
   return {

@@ -1,25 +1,18 @@
-import { db, dbUtils, isProduction } from "@/lib/db/turso";
-import { systems, userSystems, pollingStatus } from "@/lib/db/turso/schema";
-import { eq, and, max } from "drizzle-orm";
+import { eq, max } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
+import { isProduction } from "@/lib/env";
 import { clerkClient } from "@clerk/nextjs/server";
-import {
-  shadowReadConfig,
-  toEpochSeconds,
-  normalizeJson,
-  SHADOW_SKIP,
-} from "@/lib/db/config-shadow";
-import { CONFIG_WRITES_TO_PG } from "@/lib/db/routing";
-import { planetscaleDb } from "@/lib/db/planetscale";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   systems as pgSystems,
   pollingStatus as pgPollingStatus,
+  userSystems as pgUserSystems,
 } from "@/lib/db/planetscale/schema";
 
 // Export the type for a system from the database
-export type System = InferSelectModel<typeof systems>;
-export type PollingStatus = InferSelectModel<typeof pollingStatus>;
+export type System = InferSelectModel<typeof pgSystems>;
+export type PollingStatus = InferSelectModel<typeof pgPollingStatus>;
 
 // Combined system with polling status
 export type SystemWithPolling = System & {
@@ -46,70 +39,8 @@ type CreateSystemData = {
 };
 
 /**
- * Project a single systems⋈polling_status join row to the fields compared in shadow-diff,
- * normalizing the Turso↔PG schema divergences: second-precision timestamps (Turso
- * integer mode:"timestamp" vs PG microsecond timestamp) and text-json vs jsonb. An
- * unpolled system (polling_status absent) projects `pollingStatus: null` on both sides.
- */
-function normalizeSystemRowForShadow(row: {
-  systems: Record<string, any>;
-  polling_status: Record<string, any> | null;
-}): unknown {
-  const s = row.systems;
-  const p = row.polling_status;
-  return {
-    id: s.id,
-    status: s.status,
-    displayName: s.displayName,
-    vendorType: s.vendorType,
-    vendorSiteId: s.vendorSiteId,
-    ownerClerkUserId: s.ownerClerkUserId ?? null,
-    alias: s.alias ?? null,
-    model: s.model ?? null,
-    serial: s.serial ?? null,
-    ratings: s.ratings ?? null,
-    solarSize: s.solarSize ?? null,
-    batterySize: s.batterySize ?? null,
-    timezoneOffsetMin: s.timezoneOffsetMin,
-    displayTimezone: s.displayTimezone,
-    location: normalizeJson(s.location),
-    metadata: normalizeJson(s.metadata),
-    pollingStatus: p
-      ? {
-          lastPollTime: toEpochSeconds(p.lastPollTime),
-          lastSuccessTime: toEpochSeconds(p.lastSuccessTime),
-          lastErrorTime: toEpochSeconds(p.lastErrorTime),
-          lastResponse: normalizeJson(p.lastResponse),
-          consecutiveErrors: p.consecutiveErrors,
-          totalPolls: p.totalPolls,
-          successfulPolls: p.successfulPolls,
-          updatedAt: toEpochSeconds(p.updatedAt),
-        }
-      : null,
-  };
-}
-
-/**
- * Project the full systems⋈polling_status result set into a per-system map (keyed by
- * systemId as a string) so the shadow-diff compares each system independently and reports
- * field-level divergences. Used as `shadowReadConfig`'s `normalize` for loadSystems.
- */
-function normalizeSystemsLoadForShadow(rows: unknown): unknown {
-  const list = (rows ?? []) as Array<{
-    systems: Record<string, any>;
-    polling_status: Record<string, any> | null;
-  }>;
-  const byId: Record<string, unknown> = {};
-  for (const row of list) {
-    byId[String(row.systems.id)] = normalizeSystemRowForShadow(row);
-  }
-  return byId;
-}
-
-/**
  * Detect a Postgres unique_violation (SQLSTATE '23505'), e.g. the alias-unique collision.
- * `pg` puts the SQLSTATE on the error's `code` field; this is the PG analogue of Turso's
- * SQLITE_CONSTRAINT.
+ * `pg` puts the SQLSTATE on the error's `code` field.
  */
 function isPgUniqueViolation(e: unknown): boolean {
   return (
@@ -208,27 +139,10 @@ export class SystemsManager {
    */
   private async loadSystems() {
     // Join systems with polling_status to get everything in one query.
-    const allSystemsWithPolling = await shadowReadConfig(
-      "SystemsManager.loadSystems",
-      async () =>
-        db
-          .select()
-          .from(systems)
-          .leftJoin(pollingStatus, eq(systems.id, pollingStatus.systemId)),
-      {
-        pgRead: async () => {
-          if (!planetscaleDb) return SHADOW_SKIP;
-          return planetscaleDb
-            .select()
-            .from(pgSystems)
-            .leftJoin(
-              pgPollingStatus,
-              eq(pgSystems.id, pgPollingStatus.systemId),
-            );
-        },
-        normalize: normalizeSystemsLoadForShadow,
-      },
-    );
+    const allSystemsWithPolling = await requirePlanetscaleDb()
+      .select()
+      .from(pgSystems)
+      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId));
 
     // Create map for O(1) lookups
     for (const row of allSystemsWithPolling) {
@@ -381,10 +295,10 @@ export class SystemsManager {
       );
 
       // Get systems the user has been granted access to
-      const grantedAccess = await db
+      const grantedAccess = await requirePlanetscaleDb()
         .select()
-        .from(userSystems)
-        .where(eq(userSystems.clerkUserId, userId));
+        .from(pgUserSystems)
+        .where(eq(pgUserSystems.clerkUserId, userId));
 
       const grantedSystemIds = new Set(grantedAccess.map((ua) => ua.systemId));
 
@@ -424,12 +338,7 @@ export class SystemsManager {
   async createSystem(systemData: CreateSystemData): Promise<System> {
     await this.loadPromise;
 
-    // PR-8 (1B): config writes route on CONFIG_WRITES_TO_PG. OFF (default) = today's
-    // Turso write, unchanged. ON = write to Postgres ONLY (decision B: config writes are
-    // Postgres-only, no dual-write soak). The in-memory cache behaviour is unchanged.
-    const newSystem = CONFIG_WRITES_TO_PG
-      ? await this.insertSystemToPg(systemData)
-      : await this.insertSystemToTurso(systemData);
+    const newSystem = await this.insertSystemToPg(systemData);
 
     console.log(
       `[SystemsManager] Created system ${newSystem.id} (${systemData.vendorType}) for user ${systemData.ownerClerkUserId}`,
@@ -462,19 +371,10 @@ export class SystemsManager {
     const { id: _ignoredId, updatedAt: _ignoredUpdatedAt, ...rest } = patch;
     const values = { ...rest, updatedAt: new Date() };
 
-    if (CONFIG_WRITES_TO_PG) {
-      if (!planetscaleDb) {
-        throw new Error(
-          "[SystemsManager] CONFIG_WRITES_TO_PG is on but Postgres is not configured",
-        );
-      }
-      await planetscaleDb
-        .update(pgSystems)
-        .set(values as Partial<InferSelectModel<typeof pgSystems>>)
-        .where(eq(pgSystems.id, systemId));
-    } else {
-      await db.update(systems).set(values).where(eq(systems.id, systemId));
-    }
+    await requirePlanetscaleDb()
+      .update(pgSystems)
+      .set(values as Partial<InferSelectModel<typeof pgSystems>>)
+      .where(eq(pgSystems.id, systemId));
 
     SystemsManager.invalidateCache();
   }
@@ -486,81 +386,27 @@ export class SystemsManager {
    * DELETE WHERE id=systemId. ON = delete from Postgres ONLY.
    */
   async deleteSystem(systemId: number): Promise<void> {
-    if (CONFIG_WRITES_TO_PG) {
-      if (!planetscaleDb) {
-        throw new Error(
-          "[SystemsManager] CONFIG_WRITES_TO_PG is on but Postgres is not configured",
-        );
-      }
-      await planetscaleDb.delete(pgSystems).where(eq(pgSystems.id, systemId));
-    } else {
-      await db.delete(systems).where(eq(systems.id, systemId));
-    }
+    await requirePlanetscaleDb()
+      .delete(pgSystems)
+      .where(eq(pgSystems.id, systemId));
 
     SystemsManager.invalidateCache();
   }
 
   /**
-   * Today's write path: insert the system into Turso (unchanged behaviour, used when
-   * CONFIG_WRITES_TO_PG is OFF). Turso surfaces an alias-unique collision as a
-   * SQLITE_CONSTRAINT error from the underlying client.
-   */
-  private async insertSystemToTurso(
-    systemData: CreateSystemData,
-  ): Promise<System> {
-    // In dev environment, get explicit ID starting from 10000
-    const systemId = !isProduction
-      ? await dbUtils.getNextDevSystemId()
-      : undefined;
-
-    const [newSystem] = await db
-      .insert(systems)
-      .values({
-        id: systemId, // Only set in dev mode, undefined in production (auto-increment)
-        ownerClerkUserId: systemData.ownerClerkUserId,
-        vendorType: systemData.vendorType,
-        vendorSiteId: systemData.vendorSiteId,
-        status: systemData.status || "active",
-        displayName: systemData.displayName,
-        alias: systemData.alias,
-        model: systemData.model,
-        serial: systemData.serial,
-        ratings: systemData.ratings,
-        solarSize: systemData.solarSize,
-        batterySize: systemData.batterySize,
-        location: systemData.location,
-        metadata: systemData.metadata,
-        timezoneOffsetMin: systemData.timezoneOffsetMin ?? 600, // Default to AEST
-        displayTimezone: systemData.displayTimezone ?? "Australia/Melbourne", // Default timezone
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .returning();
-
-    return newSystem;
-  }
-
-  /**
-   * PR-8 (1B) write path: insert the system into Postgres ONLY (used when
-   * CONFIG_WRITES_TO_PG is ON — nothing is written to Turso). The PG alias-unique
-   * collision is a unique_violation, surfaced with SQLSTATE '23505' (not
-   * SQLITE_CONSTRAINT); rethrown unchanged so callers keep their existing handling.
+   * Insert the system into Postgres. The alias-unique collision is a unique_violation,
+   * surfaced with SQLSTATE '23505'; rethrown unchanged so callers keep their handling.
    */
   private async insertSystemToPg(
     systemData: CreateSystemData,
   ): Promise<System> {
-    if (!planetscaleDb) {
-      throw new Error(
-        "[SystemsManager] CONFIG_WRITES_TO_PG is on but Postgres is not configured",
-      );
-    }
+    const pg = requirePlanetscaleDb();
 
-    // Mirror Turso's dev-id policy (explicit ids from 10000 in dev, serial in prod),
-    // computed against PG's own systems table since the PG sequence is independent.
+    // Dev-id policy: explicit ids from 10000 in dev, serial in prod.
     let systemId: number | undefined = undefined;
-    if (!isProduction) {
+    if (!isProduction()) {
       const DEV_SYSTEM_ID_START = 10000;
-      const [{ maxId }] = await planetscaleDb
+      const [{ maxId }] = await pg
         .select({ maxId: max(pgSystems.id) })
         .from(pgSystems);
       systemId =
@@ -568,7 +414,7 @@ export class SystemsManager {
     }
 
     try {
-      const [newSystem] = await planetscaleDb
+      const [newSystem] = await pg
         .insert(pgSystems)
         .values({
           ...(systemId !== undefined ? { id: systemId } : {}),

@@ -30,6 +30,7 @@
 
 - [deferred/generator-events-rewrite.md](deferred/generator-events-rewrite.md) — bounded-range rewrite owed before its PG migration
 - [deferred/history-api-unification-plan.md](deferred/history-api-unification-plan.md) — unify composite/non-composite history paths
+- [deferred/postgres-integration-test-harness.md](deferred/postgres-integration-test-harness.md) — re-point Turso-seeded/flag-gated test suites to Postgres (Phase 5)
 
 ## Records (append-only; never "stale")
 

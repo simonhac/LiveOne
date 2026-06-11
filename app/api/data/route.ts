@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSystemAccess } from "@/lib/api-auth";
-import { db } from "@/lib/db/turso";
-import { pollingStatus } from "@/lib/db/turso/schema";
-import { eq } from "drizzle-orm";
+import { getPollingStatus } from "@/lib/polling-utils";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { getLatestPointValues } from "@/lib/kv-cache-manager";
@@ -35,12 +33,8 @@ export async function GET(request: NextRequest) {
     if (authResult instanceof NextResponse) return authResult;
     const { system, userId } = authResult;
 
-    // Get polling status from database
-    const [pollingStatusResult] = await db
-      .select()
-      .from(pollingStatus)
-      .where(eq(pollingStatus.systemId, system.id))
-      .limit(1);
+    // Get polling status from Postgres
+    const pollingStatusResult = await getPollingStatus(system.id);
 
     // Build the system object with full SystemWithPolling data
     const systemData = {
