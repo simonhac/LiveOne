@@ -30,6 +30,12 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-17 rclone age
+          # pg_wrapper otherwise defaults to the runner's preinstalled PG16 client, which refuses
+          # to dump the 17.10 server ("server version mismatch"). Put the v17 binaries first.
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Verify pg_dump version
+        run: pg_dump --version
 
       - name: Dump + upload to R2
         env:
