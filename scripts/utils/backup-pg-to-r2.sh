@@ -87,9 +87,10 @@ export RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
 export RCLONE_CONFIG_R2_ENDPOINT="$ENDPOINT"
 # Don't set an ACL — R2 doesn't support S3 ACLs and returns NotImplemented (rclone then retries
 # without it). The rclone "Cloudflare" provider already omits the unsupported headers.
-# Force a single-PUT upload (no multipart) for dumps under 4 GiB — avoids an rclone↔R2 multipart
-# quirk that returns NotImplemented on the first attempt then self-heals on retry. R2's single-PUT
-# limit is 5 GiB; revisit (tune --s3-chunk-size) if the dump ever approaches that.
+# Single-PUT upload (cutoff above the dump size) — atomic, leaves no orphaned multipart parts.
+# Known cosmetic quirk: rclone logs one "NotImplemented" on the first request to R2 then succeeds on
+# the retry (R2 rejects a header the AWS SDK sends initially). The object lands correctly and the
+# command exits 0, so we accept the one-line retry rather than chase it. R2 single-PUT limit is 5 GiB.
 rclone copyto "$OUT" "r2:${R2_BUCKET}/${KEY}" --s3-no-check-bucket --s3-upload-cutoff=4Gi --stats-one-line \
   || fail "R2 upload failed"
 
