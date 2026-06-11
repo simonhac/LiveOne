@@ -9,8 +9,8 @@
  *     past 5m intervals.
  *   - **Enphase** — pulls per-day 5m series.
  *
- * This matters for the Turso→Postgres mirror: raw-vendor 5m/1d are RECOMPUTED in Postgres from PG's own
- * raw (`AGG_COMPUTE_IN_PG`), whereas 5m-native 5m is QUEUE-FED (the receiver mirrors what the vendor
+ * This matters for the aggregation path: raw-vendor 5m/1d are RECOMPUTED in Postgres from PG's own
+ * raw, whereas 5m-native 5m is QUEUE-FED (the receiver mirrors what the vendor
  * published). The receiver must therefore UPSERT 5m-native 5m (so a re-published late refinement heals
  * the earlier copy) while keeping raw-vendor 5m first-write-wins (the PG recompute owns those).
  *

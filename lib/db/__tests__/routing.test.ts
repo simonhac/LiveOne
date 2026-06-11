@@ -8,7 +8,7 @@ import {
 } from "@jest/globals";
 
 /**
- * Phase 5 decommissioned Turso, so the staged-migration flags (`CONFIG_*`,
+ * Phase 5 decommissioned the legacy store, so the staged-migration flags (`CONFIG_*`,
  * `READINGS_READS_FROM_PG`, `AGG_COMPUTE_IN_PG`, `WRITE_OUTBOX`) are retired. The only
  * surviving routing flags gate the not-yet-enabled energy-flow-matrix rollout.
  *

@@ -20,9 +20,9 @@ export default async function StoragePage() {
       <section className="max-w-3xl">
         <h1 className="text-2xl font-semibold text-white">Database Admin</h1>
         <p className="mt-3 text-sm leading-6 text-gray-300">
-          The old Turso/SQLite database admin tools have been stripped back
-          after the Postgres cutover. This page is intentionally a placeholder
-          while the Postgres-native admin surface is redesigned.
+          The old SQLite database admin tools have been stripped back after the
+          Postgres cutover. This page is intentionally a placeholder while the
+          Postgres-native admin surface is redesigned.
         </p>
         <p className="mt-3 text-sm leading-6 text-gray-400">
           The previous behavior and rebuild notes are documented in{" "}

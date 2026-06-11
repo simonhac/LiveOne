@@ -347,7 +347,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   }
 
   /**
-   * Insert readings to Turso and publish to QStash queue
+   * Insert readings and publish to QStash queue
    * Note: PointManager methods handle QStash publishing internally
    */
   private async insertAndPublishReadings(

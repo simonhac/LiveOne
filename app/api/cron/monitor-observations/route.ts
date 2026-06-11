@@ -1,14 +1,14 @@
 /**
- * Mirror-health monitor for the Turso→Postgres observations pipeline.
+ * Health monitor for the observations pipeline.
  *
  * GET /api/cron/monitor-observations
  *
- * The mirror is async/best-effort: a poll writes Turso inline but PG is fed via the QStash queue
- * (publisher → receiver). When the receiver is down/erroring, readings stop landing in PG and the
- * mirror silently falls behind (the ~9 "mirror down" windows in 2026). This cron catches that within
- * minutes instead of weeks. It is READ-ONLY and best-effort; it never throws and never mutates data.
+ * The pipeline is async/best-effort: PG is fed via the QStash queue (publisher → receiver). When the
+ * receiver is down/erroring, readings stop landing in PG and the pipeline silently falls behind (the
+ * ~9 "down" windows in 2026). This cron catches that within minutes instead of weeks. It is READ-ONLY
+ * and best-effort; it never throws and never mutates data.
  *
- * Signals (all self-contained — no Turso dependency):
+ * Signals (all self-contained):
  *   1. Response-presence — fraction of recent successful CRON sessions in PG carrying a `response`.
  *      Live polls always capture one, so a low fraction means the mirror pipeline is degraded.
  *   2. Raw-landing — most recent `point_readings.created_at`, and whether raw landed in the last hour

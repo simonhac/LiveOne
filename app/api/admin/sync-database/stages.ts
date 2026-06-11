@@ -1,10 +1,11 @@
 /**
  * Dev-seed sync stages.
  *
- * RETIRED in the Phase 5 Turso decommission: this tool copied prod **Turso** into
- * the local SQLite dev DB. With Turso gone, the stages no longer execute. The admin
- * UI still reads the stage metadata (id/name/modifiesMetadata), so the shape is
- * preserved; `execute` throws. Re-point to seed dev from Postgres when needed.
+ * RETIRED in the Phase 5 decommission of the legacy store: this tool copied the prod
+ * legacy SQLite store into the local SQLite dev DB. With the legacy store gone, the
+ * stages no longer execute. The admin UI still reads the stage metadata
+ * (id/name/modifiesMetadata), so the shape is preserved; `execute` throws. Re-point
+ * to seed dev from Postgres when needed.
  */
 
 export interface SyncContext {
@@ -40,14 +41,14 @@ export interface StageDefinition {
 
 const retired = async (): Promise<{ detail?: string }> => {
   throw new Error(
-    "dev-seed from Turso retired in Phase 5 — re-point sync to seed dev from Postgres",
+    "legacy SQLite dev-seed retired in Phase 5 — re-point sync to seed dev from Postgres",
   );
 };
 
 export const syncStages: StageDefinition[] = [
   {
     id: "retired",
-    name: "Dev-seed retired (Turso decommissioned)",
+    name: "Dev-seed retired (legacy store decommissioned)",
     modifiesMetadata: false,
     execute: retired,
   },

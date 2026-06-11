@@ -40,11 +40,10 @@ export interface SessionData {
  * Full session record with system info (from JOIN with systems table)
  * Used by: getSessions, getLastSessions, getSessionsByLabel, getSessionById
  *
- * Session reads are served from Postgres (the full history mirror) — see the
- * Postgres-primary migration (PR-7a). `id` is the app-minted UUIDv7 (text);
+ * Session reads are served from Postgres. `id` is the app-minted UUIDv7 (text);
  * historical ids are stringified integers. Postgres has no `started` column;
- * its `createdAt` holds the Turso `started` value, so `started`/`createdAt` are
- * both mapped from PG `createdAt`.
+ * its `createdAt` holds the legacy store's `started` value, so `started`/`createdAt`
+ * are both mapped from PG `createdAt`.
  */
 export interface SessionWithSystem {
   id: string;
@@ -73,7 +72,7 @@ export type SessionSummary = Omit<SessionWithSystem, "response">;
  * In-process registry of pending sessions. `createSession` stashes the session's
  * descriptive fields here so `updateSessionResult` can assemble the combined
  * session+observations publish message at close WITHOUT a database read-back
- * (Turso, the old backing store, was decommissioned in Phase 5). create + update
+ * (the legacy backing store was decommissioned in Phase 5). create + update
  * always run in the same invocation, so a Map is sufficient.
  */
 interface PendingSession {
@@ -100,9 +99,8 @@ export class SessionManager {
    * Create a new session record and return SessionInfo.
    *
    * The session id is an app-minted UUIDv7 (text, time-ordered) — this removes
-   * the dependency on Turso's autoincrement (decision E). The pending session is
-   * still written to Turso as a best-effort backup; the authoritative copy is
-   * mirrored to Postgres via the queue.
+   * the dependency on the legacy store's autoincrement (decision E). The
+   * authoritative copy is written to Postgres via the queue.
    * Note: vendorType and systemName are no longer stored - they're retrieved via JOIN with systems table
    */
   async createSession(data: {
@@ -341,8 +339,8 @@ export class SessionManager {
 
   /**
    * Map a joined Postgres (sessions ⋈ systems) row to SessionWithSystem.
-   * Postgres has no `started` column — `createdAt` holds the Turso `started`
-   * value, so both `started` and `createdAt` are derived from it.
+   * Postgres has no `started` column — `createdAt` holds the legacy store's
+   * `started` value, so both `started` and `createdAt` are derived from it.
    */
   private mapPgRow(r: {
     sessions: typeof pgSessions.$inferSelect;

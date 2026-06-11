@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * Liveness check against the Postgres store (the sole store after the Phase 5
- * Turso decommission).
+ * decommission of the legacy store).
  */
 export async function GET() {
   try {

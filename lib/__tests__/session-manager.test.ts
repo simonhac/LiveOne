@@ -15,9 +15,9 @@ import { sessionManager } from "@/lib/session-manager";
 const UUIDV7_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-// TODO(Phase 5 — Turso decommissioned): re-point the createSession write-capture to Postgres.
+// TODO(Phase 5 — legacy store decommissioned): re-point the createSession write-capture to Postgres.
 // These cases asserted the exact UUIDv7 record written via `db.insert(sessions).values(...)` on
-// the Turso client (`@/lib/db/turso`), which Phase 5 removes. The write now targets Postgres /
+// the legacy store, which Phase 5 removed. The write now targets Postgres /
 // the publish path, whose mockable shape is settled as part of the source rewrite — until then
 // the write-path assertions are skipped. The UUIDv7 minting itself is unchanged; the
 // graceful-degrade read suite below still runs. See docs/deferred/postgres-integration-test-harness.md.

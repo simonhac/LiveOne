@@ -3,9 +3,8 @@
  *
  * Extracted verbatim from `app/api/history/route.ts` (`getSystemHistoryInOpenNEMFormat`, the block
  * that ran after the DB fetch). It is the source-agnostic half of the read path: given a uniform
- * `AggRow[]` it produces the served `OpenNEMDataSeries[]`, independent of whether those rows came
- * from Turso or Postgres. This is the seam the PR-12 readings shadow-diff compares across — both
- * stores feed THE SAME function so any divergence is purely in the data, not the transform.
+ * `AggRow[]` it produces the served `OpenNEMDataSeries[]`, independent of where those rows came
+ * from.
  *
  * Behavior must stay byte-identical to the pre-extraction route: dense-timeline handling, 30m
  * bucketing (numeric avg / quality last-in-bucket), transform inversion, `toPrecision(4)`.
@@ -17,7 +16,7 @@ import { HistoryDebugInfo, registerSeries } from "@/lib/history/history-debug";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 
 /**
- * The uniform intermediate row shape both the Turso and Postgres fetches produce. `interval_end`
+ * The uniform intermediate row shape the fetches produce. `interval_end`
  * (epoch-ms) is present for 5m/30m; `day` (YYYY-MM-DD) is present for 1d.
  */
 export interface AggRow {
@@ -214,7 +213,7 @@ export async function buildSeriesFromAggRows(
 
     // 1d rows are grouped but not guaranteed day-ordered: Postgres can return a recomputed/
     // upserted day out of heap position (an unordered scan), which would shift the served series
-    // by one vs Turso since this transform maps rows in arrival order. Sort by interval_end so the
+    // by one since this transform maps rows in arrival order. Sort by interval_end so the
     // 1d series is day-ascending regardless of the source's row order. No-op for the 5m/30m paths
     // (already dense / bucket-sorted ascending).
     if (interval === "1d") {

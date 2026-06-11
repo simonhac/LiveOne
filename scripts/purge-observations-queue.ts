@@ -4,10 +4,11 @@
  *
  * Why: messages enqueued before the full-fidelity fixes (enriched 5m payload +
  * preserved session ids) use the old lossy shape. Draining them would write lossy
- * point_readings_agg_5m rows that the (deferred) Turso backfill — which uses
+ * point_readings_agg_5m rows that the (deferred) backfill — which uses
  * onConflictDoNothing — could not later overwrite. Purging ensures only new,
- * full-fidelity messages reach Postgres. The purged data is NOT lost: every
- * observation is also in Turso (dual-write), and history is backfilled from Turso.
+ * full-fidelity messages reach Postgres. The purged data was NOT lost: every
+ * observation was also in the legacy store (dual-write), and history was backfilled
+ * from it.
  *
  * Deleting the queue removes its pending messages; we immediately recreate it
  * paused so publishing keeps succeeding (messages accumulate) until you resume.

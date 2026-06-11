@@ -1,13 +1,12 @@
 /**
- * Postgres side of the `/api/history` readings shadow (PR-12).
+ * Postgres side of the `/api/history` readings fetch.
  *
- * `fetchAggRowsPg` mirrors the Turso raw-SQL fetch in `app/api/history/route.ts`, returning the
- * SAME uniform `AggRow[]` so it can feed the shared `buildSeriesFromAggRows`. The 5m/30m dense
- * timeline that the Turso `WITH RECURSIVE` CTE generates is reproduced here in JS (identical grid
+ * `fetchAggRowsPg` returns a uniform `AggRow[]` so it can feed the shared
+ * `buildSeriesFromAggRows`. The 5m/30m dense timeline is reproduced here in JS (identical grid
  * math) rather than via PG `generate_series`, so the grid is identical by construction and never
  * drifts on timestamp/timezone boundary semantics.
  *
- * `compareHistorySeries` is the shadow comparator for the served OpenNEM payload.
+ * `compareHistorySeries` is a comparator for the served OpenNEM payload.
  */
 import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
@@ -19,7 +18,7 @@ import { FIVE_MIN_MS } from "@/lib/aggregation/point-aggregates";
 import type { AggRow } from "./build-series";
 
 export interface AggFetchParams {
-  /** Distinct `[systemId, pointId]` pairs to fetch (same set the Turso CTE joins against). */
+  /** Distinct `[systemId, pointId]` pairs to fetch. */
   uniquePairs: Array<[number, number]>;
   interval: "5m" | "30m" | "1d";
   /** 5m/30m only: dense-timeline bounds in epoch-ms (queryFirstEpoch = firstEpoch − 25m for 30m). */
@@ -75,10 +74,10 @@ export async function fetchAggRowsPg(p: AggFetchParams): Promise<AggRow[]> {
             lte(pgAgg1d.day, p.endDate!),
           ),
         )
-        // Match the Turso query's `ORDER BY system_id, point_id, day`. The shared 1d transform
+        // Order by `system_id, point_id, day`. The shared 1d transform
         // (buildSeriesFromAggRows) maps rows in arrival order without re-sorting, so an unordered
         // PG scan (e.g. a recomputed/upserted day returned out of heap position) would shift the
-        // served day series by one vs Turso. Ordering here keeps both stores byte-identical.
+        // served day series by one. Ordering here keeps the output deterministic.
         .orderBy(pgAgg1d.systemId, pgAgg1d.pointId, pgAgg1d.day);
       for (const r of res) {
         rows.push({
@@ -97,7 +96,7 @@ export async function fetchAggRowsPg(p: AggFetchParams): Promise<AggRow[]> {
     return rows;
   }
 
-  // 5m / 30m: query the sparse PG rows, then densify to the exact grid the Turso CTE emits.
+  // 5m / 30m: query the sparse PG rows, then densify to the exact grid.
   const queryFirstEpoch = p.queryFirstEpoch!;
   const lastEpoch = p.lastEpoch!;
   const rows: AggRow[] = [];
@@ -128,10 +127,10 @@ export async function fetchAggRowsPg(p: AggFetchParams): Promise<AggRow[]> {
     for (const r of res)
       byKey.set(`${r.pointId}:${r.intervalEnd.getTime()}`, r);
 
-    // Densify: emit the same dense grid as the Turso `WITH RECURSIVE timeline` CTE — seed at
+    // Densify: emit a dense grid — seed at
     // queryFirstEpoch, step 5min, and include the first grid point that reaches/passes lastEpoch
-    // (the CTE generates R+5min for every R < lastEpoch, so the largest emitted value is the first
-    // grid point ≥ lastEpoch). Rows ascending per point, matching the CTE's ORDER BY.
+    // (R+5min for every R < lastEpoch, so the largest emitted value is the first
+    // grid point ≥ lastEpoch). Rows ascending per point.
     for (const pointId of ids) {
       for (let t = queryFirstEpoch; ; t += FIVE_MIN_MS) {
         const hit = byKey.get(`${pointId}:${t}`);

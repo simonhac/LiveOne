@@ -10,8 +10,8 @@ Source of truth: `lib/observations/types.ts`, `lib/observations/publisher.ts`,
 
 A single poll produces **two or more independent QStash messages**, not one combined message:
 
-1. **One readings message** (sometimes more) — published **mid-poll**, _before_ the Turso write,
-   by `publishObservationBatch()` (`lib/point/point-manager.ts:637`). It carries an
+1. **One readings message** (sometimes more) — published **mid-poll** by
+   `publishObservationBatch()` (`lib/point/point-manager.ts:637`). It carries an
    `observations[]` array and **no** `session`.
 2. **One session message** — published at **poll completion** by `publishSession()` (from
    `session-manager.updateSessionResult()`), _after_ the readings. It carries a `session` object
@@ -48,7 +48,7 @@ one element per point read, not one message per reading. Each `Observation`:
 
 ```jsonc
 {
-  "sessionId": 12345, // integer today (Turso-minted); becomes a UUIDv7 string after the session-id migration
+  "sessionId": "0190f3c2-...", // UUIDv7 string (historical ids are stringified ints)
   "topic": "liveone/select.live/abc123/battery_soc", // liveone/{vendorType}/{vendorSiteId}/{physicalPathTail}
   "measurementTime": "2026-06-05T14:32:00+10:00",
   "receivedTime": "2026-06-05T14:32:09+10:00",
@@ -128,7 +128,7 @@ For a poll of system 1 that reads 42 points and succeeds, QStash receives, in or
 (not guaranteed order of delivery):
 
 1. **Readings message** — one envelope whose `observations` array holds 42 `raw` entries, all
-   stamped with the same `sessionId`. (Published before the Turso insert.)
+   stamped with the same `sessionId`. (Published mid-poll.)
 2. **Session message** — one envelope with the `session` object (`numRows: 42`, `successful: true`).
 
 If the poll reads enough points to exceed a batch, `insertPointReadingsRaw` may be called more than
@@ -153,7 +153,7 @@ session close**: the completed `session` plus all its `observations` in a single
 gap between the last reading and session close is milliseconds, so buffering to close costs
 negligible latency, and the receiver can insert the session then its readings in one transaction
 — making the message self-contained and enabling a real `point_readings.session_id → sessions.id`
-foreign key. Session ids also become app-generated **UUIDv7** strings (stored as `text`). A poll
+foreign key. (Session ids are already app-generated **UUIDv7** strings, stored as `text`.) A poll
 that would exceed QStash's 1 MB message limit (10 MB on the Fixed-1M plan) chunks its readings
 across messages that share the session id. Until that ships, the two-independent-messages
 behaviour above (readings mid-poll, session at completion) is current.

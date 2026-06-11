@@ -18,10 +18,8 @@ visualisations. Virtual **composite systems** combine points across real systems
 
 - **App:** Next.js 15 (App Router), single Vercel deployment, region `syd1`. shadcn/ui,
   Recharts, Clerk for auth, Drizzle ORM, Jest.
-- **Primary DB:** PostgreSQL 17 on PlanetScale (`sydney` branch, `aws-ap-southeast-2`,
-  3-node HA) — serving store and config authority.
-- **Legacy DB:** Turso `liveone-tokyo` (SQLite) — transitional raw+sessions backup, slated
-  for decommission (migration Phase 5). Local dev uses `dev.db`.
+- **DB:** PostgreSQL 17 on PlanetScale (`sydney` branch, `aws-ap-southeast-2`,
+  3-node HA) — the sole store: serving store, config authority, and raw-durability outbox.
 - **Queue:** Upstash QStash — decoupling transport for observations.
 - **Cache:** Vercel KV (Upstash Redis) — latest point values, composite subscription
   registry ([kv-store.md](kv-store.md)).
@@ -32,19 +30,19 @@ visualisations. Virtual **composite systems** combine points across real systems
 ```
 vendor APIs ──poll (cron/minutely)──► vendor adapters ──► poll collector / publisher
                                                                 │
-                                              ┌─────────────────┼──────────────────┐
-                                              ▼                 ▼                  ▼
-                                     observations_outbox   QStash enqueue    Turso inline write
-                                     (PG, WRITE_OUTBOX)         │            (transitional, dies
-                                              │                 ▼             in Phase 5)
-                                     relay-outbox cron ──► /api/observations/receive
-                                                            (single writer, idempotent)
-                                                                │
-                                                                ▼
+                                              ┌─────────────────┴──────────────────┐
+                                              ▼                                     ▼
+                                     observations_outbox                     QStash enqueue
+                                            (PG)                                    │
+                                              │                                     ▼
+                                     relay-outbox cron ──────────► /api/observations/receive
+                                                                    (single writer, idempotent)
+                                                                            │
+                                                                            ▼
                                               PG: point_readings + agg_5m upsert
                                                   (agg_1d via daily cron)
-                                                                │
-                                                                ▼
+                                                                            │
+                                                                            ▼
                                               KV latest-values cache ──► dashboards
 ```
 
@@ -85,7 +83,7 @@ and error normalisation.
 | Auth (Clerk, roles, API auth functions)                  | [authentication.md](authentication.md)                                   |
 | KV cache keys & registry                                 | [kv-store.md](kv-store.md)                                               |
 | "Rest of house" load calculations                        | [load-calcs.md](load-calcs.md)                                           |
-| Turso→PG migration state & runbook                       | [../turso-pg-migration.md](../turso-pg-migration.md)                     |
+| Historical: the completed Turso→Postgres migration       | [../turso-pg-migration.md](../turso-pg-migration.md)                     |
 | Queue payload formats                                    | [../observations-qstash-payloads.md](../observations-qstash-payloads.md) |
 | Migration safety practices                               | [../migrations.md](../migrations.md)                                     |
 

@@ -6,7 +6,6 @@
 # Cloudflare R2 via the S3 API (multipart, so >1 GB is fine). Built to run from GitHub Actions
 # (.github/workflows/pg-backup.yml) but runnable locally. Best-effort Slack alert on failure.
 #
-# This is the PG sibling of scripts/utils/backup-prod-db.sh (which exports Turso to a local file).
 # Rationale + design: docs/turso-pg-migration.md → "Off-site backup — provider-independent DR".
 #
 # Required env:

@@ -2,23 +2,17 @@
 
 > **Status:** current — last verified 2026-06-10.
 > This doc covers **semantics and invariants only**. For columns, types, and indexes, the
-> Drizzle schema files are the source of truth — do not duplicate them here:
+> Drizzle schema is the source of truth — do not duplicate it here:
 >
-> - **PostgreSQL (primary):** `lib/db/planetscale/schema.ts` (well-commented; read it)
-> - **Turso/SQLite (legacy backup):** `lib/db/turso/schema.ts`, `lib/db/turso/schema-monitoring-points.ts`
+> - **PostgreSQL:** `lib/db/planetscale/schema.ts` (well-commented; read it)
 
 ## Stores and their roles
 
-| Store                                                               | Role                                                                                                                                                       |
-| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **PostgreSQL** (PlanetScale, `sydney` branch, `aws-ap-southeast-2`) | Primary. Serving store for readings/aggregates/sessions, config authority, and raw-durability outbox.                                                      |
-| **Turso** (`liveone-tokyo`)                                         | Legacy. Transitional raw+sessions backup, slated for decommission in migration Phase 5. Holds the only copy of the pre-Nov-2025 legacy `readings*` tables. |
-| **Vercel KV** (Upstash Redis)                                       | Cache for latest point values and the composite subscription registry. See [kv-store.md](kv-store.md).                                                     |
-| **QStash**                                                          | Decoupling transport for observations (NOT a durability anchor — that's the outbox). See [engine-web-separation.md](engine-web-separation.md) §6.          |
-
-Mid-migration read/write routing is controlled by flags in `lib/db/routing.ts`
-(e.g. `READINGS_READS_FROM_PG`, `AGG_COMPUTE_IN_PG`, `WRITE_OUTBOX`). Migration state and
-phase plan: [../turso-pg-migration.md](../turso-pg-migration.md).
+| Store                                                               | Role                                                                                                                                              |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **PostgreSQL** (PlanetScale, `sydney` branch, `aws-ap-southeast-2`) | The sole store. Serving store for readings/aggregates/sessions, config authority, and raw-durability outbox.                                      |
+| **Vercel KV** (Upstash Redis)                                       | Cache for latest point values and the composite subscription registry. See [kv-store.md](kv-store.md).                                            |
+| **QStash**                                                          | Decoupling transport for observations (NOT a durability anchor — that's the outbox). See [engine-web-separation.md](engine-web-separation.md) §6. |
 
 ## Table inventory (PG)
 
@@ -64,9 +58,8 @@ These are load-bearing; don't violate them without updating
 
 ### Timestamps & timezones
 
-- PG uses **native UTC `timestamp` columns** (no timezone). Turso stores epoch-ms integers —
-  convert with `new Date(ms)` when crossing stores. `share_tokens` keeps epoch-ms `bigint`s
-  deliberately (the code compares against `Date.now()`).
+- PG uses **native UTC `timestamp` columns** (no timezone). `share_tokens` keeps epoch-ms
+  `bigint`s deliberately (the code compares against `Date.now()`).
 - `point_readings` carries three times: `measurement_time` (device clock), `received_time`
   (when we fetched it), `created_at` (when it landed in PG — distinguishes live ingestion
   from backfill).
@@ -109,15 +102,12 @@ updates fan out. See [points.md](points.md) for path grammar and composite rules
 
 ### Vendor credentials
 
-Stored in **Clerk private metadata** under the owning user — not in either database (locked
+Stored in **Clerk private metadata** under the owning user — not in the database (locked
 decision 2026-06-06). See [authentication.md](authentication.md).
 
 ## Legacy: pre-points `readings*` tables
 
 The original fixed-column tables (`readings`, `readings_agg_5m`, `readings_agg_1d`) were
-deprecated Nov 2025 and superseded by the point tables. They were **never migrated to PG**
-and exist only in Turso `liveone-tokyo`.
-
-> ⚠️ **Phase 5 consideration:** decommissioning `liveone-tokyo` destroys the only copy of the
-> legacy readings history — export first if it matters. Their full schema is preserved in git
-> (`docs/DEPRECATED_SCHEMA.md`, deleted 2026-06-10).
+deprecated Nov 2025 and superseded by the point tables. They were never migrated to Postgres
+and were retired with the former SQLite store; their full schema is preserved in git
+(`docs/DEPRECATED_SCHEMA.md`, deleted 2026-06-10).

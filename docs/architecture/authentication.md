@@ -167,9 +167,8 @@ NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
 NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/dashboard
 NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/setup
 
-# Database
-TURSO_DATABASE_URL=libsql://your-db.turso.io
-TURSO_AUTH_TOKEN=your-auth-token
+# Database (PostgreSQL on PlanetScale)
+PLANETSCALE_DATABASE_URL=postgres://user:pass@host/db?sslmode=require
 
 # Vercel KV Cache (optional)
 KV_REST_API_URL=https://your-kv.kv.vercel-storage.com
@@ -189,17 +188,17 @@ ADMIN_USER_IDS=user_xxx,user_yyy
 Systems are linked to Clerk users via the `systems` table:
 
 ```typescript
-// lib/db/schema.ts
-export const systems = sqliteTable("systems", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+// lib/db/planetscale/schema.ts
+export const systems = pgTable("systems", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   ownerClerkUserId: text("owner_clerk_user_id"), // Clerk user ID
   vendorType: text("vendor_type").notNull(), // 'selectronic', 'enphase', etc.
   displayName: text("display_name").notNull(),
   // ... other fields
 });
 
-export const userSystems = sqliteTable("user_systems", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const userSystems = pgTable("user_systems", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   clerkUserId: text("clerk_user_id").notNull(), // Viewer access
   systemId: integer("system_id").notNull(),
   role: text("role").notNull().default("viewer"), // 'owner', 'viewer'
@@ -210,8 +209,8 @@ export const userSystems = sqliteTable("user_systems", {
 
 ```typescript
 import { auth } from "@clerk/nextjs/server";
-import { db } from "@/lib/db/turso";
-import { systems, userSystems } from "@/lib/db/turso/schema";
+import { planetscaleDb as db } from "@/lib/db/planetscale";
+import { systems, userSystems } from "@/lib/db/planetscale/schema";
 import { eq, or } from "drizzle-orm";
 
 // Get systems user has access to

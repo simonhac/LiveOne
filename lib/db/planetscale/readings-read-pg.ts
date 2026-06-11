@@ -1,16 +1,15 @@
 /**
- * Postgres side of the admin readings shadows (PR-12): the point-readings pivot and the
- * single-point window views. These mirror the Turso raw-SQL the admin routes run today, with the
+ * Postgres side of the admin readings views: the point-readings pivot and the
+ * single-point window views. These mirror the raw-SQL the admin routes run, with the
  * ms↔timestamp translation Postgres needs, and return rows shaped so the routes' existing JS
  * transforms are unchanged.
  *
- * Time keys: Turso stores epoch-ms integers; PG stores native `timestamp` (UTC). Where the route's
- * transform consumes an epoch-ms `measurement_time`, these queries project
+ * Time keys: the legacy store used epoch-ms integers; PG stores native `timestamp` (UTC). Where
+ * the route's transform consumes an epoch-ms `measurement_time`, these queries project
  * `EXTRACT(EPOCH FROM col AT TIME ZONE 'UTC') * 1000` so the value is epoch-ms regardless of the
  * Node process timezone — keeping the values aligned even outside a TZ=UTC runtime.
  *
- * These are the served PG read for the admin point-readings views; callers run them under
- * `serveReadings`, which falls back to Turso on any error.
+ * These are the served PG read for the admin point-readings views.
  */
 import { sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "./index";
@@ -37,7 +36,7 @@ export interface AdminPivotParams {
 }
 
 /**
- * Run the admin point-readings pivot against Postgres, mirroring the Turso pivot in
+ * Run the admin point-readings pivot against Postgres, mirroring the pivot in
  * `app/api/admin/systems/[systemId]/point-readings/route.ts`. Returns `SHADOW_SKIP` when PG is
  * unconfigured. `measurement_time` comes back as epoch-ms (raw/5m) or a YYYY-MM-DD string (daily),
  * matching what the route's transform expects.
@@ -122,7 +121,7 @@ export interface SinglePointParams {
   pointId: number;
   source: string; // "raw" | "5m" | "daily"
   timestamp: number | null; // epoch-ms (raw/5m)
-  startDayStr?: string; // 1d window (YYYY-MM-DD-ish, mirrors the Turso route exactly)
+  startDayStr?: string; // 1d window (YYYY-MM-DD-ish, mirrors the route exactly)
   endDayStr?: string;
 }
 
@@ -135,7 +134,7 @@ function tsLitUTC(ms: number): string {
  * Mirror of the admin single-point window queries (raw ±1h / 5m ROW_NUMBER ±10 / daily ±9d) against
  * Postgres. camelCase aliases are double-quoted (PG folds unquoted identifiers to lowercase) and
  * the `measurement_time`/`interval_end`/`received_time` columns are projected back to epoch-ms so
- * the route's centering (`r.intervalEnd === timestamp`) and the comparator match Turso's shape.
+ * the route's centering (`r.intervalEnd === timestamp`) and the comparator match the legacy shape.
  */
 export async function fetchSinglePointReadingsPg(
   p: SinglePointParams,

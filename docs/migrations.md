@@ -1,133 +1,79 @@
 # Database Migrations
 
-> **Status:** current — last verified 2026-06-10. SQL sections below target Turso/SQLite;
-> PostgreSQL (PlanetScale) migrations live in `/drizzle-planetscale/`. The safety principles
-> apply to both.
+> **Status:** current — last verified 2026-06-11. PostgreSQL (PlanetScale) is the only store;
+> migrations are versioned Drizzle migrations in `/drizzle-planetscale/`. The old plain-SQL
+> SQLite migration system (`/migrations/`, tracked in a `migrations` table) was retired and
+> removed when the legacy SQLite store was decommissioned — this doc documents the Postgres
+> path only. See also `CLAUDE.md` for the migration checklist and the PlanetScale-specific
+> traps (branches, `pscale role`, table-ownership), and `drizzle-planetscale/README.md`.
 
-This project uses plain SQL migration files for database schema changes. See also `CLAUDE.md` for the migration checklist.
+## How migrations work
 
-## File Structure
+PG schema changes are **generated from the Drizzle schema**, not hand-written:
 
-- **Location**: `/migrations/` directory (Turso/SQLite); `/drizzle-planetscale/` (PostgreSQL)
-- **Naming**: `NNNN_description.sql` (e.g., `0056_add_snapshot_hour.sql`)
-- **Format**: Plain SQL with migration tracking at the end
+- **Schema source of truth:** `lib/db/planetscale/schema.ts`
+- **Migration files:** `/drizzle-planetscale/` (`NNNN_*.sql` + the `meta/` journal)
+- **Generate:** `npm run db:pg:generate` — diffs `schema.ts` against the recorded state and
+  writes a new migration SQL file.
+- **Apply:** `npm run db:pg:migrate` — applies pending migrations, tracked in the
+  `drizzle.__drizzle_migrations` table so each runs once per branch.
 
-## Migration Template
+> **Never use `drizzle-kit push`** — it does a destructive diff with no transaction or
+> validation (the migration-0016 failure mode). Always generate a migration file and apply it.
 
-```sql
--- Migration: Brief description of what this migration does
---
--- Details:
--- - What changes are being made
--- - Why these changes are needed
-
--- Your schema changes here
-ALTER TABLE example ADD COLUMN new_field TEXT;
-
--- Or for table recreation (see below for safe pattern)
-
--- Track migration (always include at end)
-CREATE TABLE IF NOT EXISTS migrations (
-  id TEXT PRIMARY KEY,
-  applied_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
-);
-INSERT INTO migrations (id) VALUES ('NNNN_description');
+```bash
+npm run db:pg:generate   # diff schema.ts -> new migration SQL in /drizzle-planetscale/
+npm run db:pg:migrate    # apply pending migrations (needs PLANETSCALE_DATABASE_URL_MIGRATIONS)
 ```
 
-## SQLite Limitations
+`db:pg:migrate` targets whatever `PLANETSCALE_DATABASE_URL_MIGRATIONS` (or the discrete `DB_*`
+vars) points at — **confirm the host/branch before applying**. Applying to a specific branch
+(`main` vs `sydney`), `pscale role` connections, and the table-ownership pitfall are covered in
+`CLAUDE.md` under "Applying Postgres (PlanetScale) migrations".
 
-### RAISE() Only Works in Triggers
+## Writing safe migrations
 
-**Problem**: `RAISE(ABORT, 'message')` only works inside trigger programs, NOT in regular SELECT statements.
-
-```sql
--- THIS DOES NOT WORK in SQLite outside of triggers:
-SELECT CASE
-  WHEN (SELECT COUNT(*) FROM old_table) != (SELECT COUNT(*) FROM new_table)
-  THEN RAISE(ABORT, 'Row count mismatch')
-END;
--- Error: RAISE() may only be used within a trigger-program
-```
-
-**Solution**: Validate row counts after migration via application code or manual verification, not in the SQL itself.
-
-### No Transactional DDL for All Operations
-
-SQLite's transaction support for DDL (CREATE, DROP, ALTER) is limited:
-
-- `CREATE TABLE` and `DROP TABLE` work in transactions
-- But `ALTER TABLE ... RENAME` commits implicitly in some cases
-
-**Best practice**: Don't rely on `BEGIN TRANSACTION` / `COMMIT` to roll back failed migrations. Instead, verify the migration worked after running it.
-
-## Safe Table Recreation Pattern
-
-When you need to change a primary key or make schema changes that ALTER TABLE can't handle:
+For destructive changes (recreate a table, change a primary key), use the
+CREATE-new → copy → **validate** → DROP-old → RENAME pattern, wrapped in a transaction:
 
 ```sql
--- 1. Create new table with desired schema
-CREATE TABLE example_new (
-  id INTEGER PRIMARY KEY,
-  new_column TEXT NOT NULL,
-  -- ... rest of schema
-);
+BEGIN;
 
--- 2. Copy data from old table
-INSERT INTO example_new SELECT
-  id,
-  COALESCE(old_column, 'default_value'),
-  -- ... handle each column
-FROM example;
+CREATE TABLE example_new ( ... );
 
--- 3. Drop old table
+INSERT INTO example_new SELECT ... FROM example;
+
+-- Validate before dropping. In PostgreSQL, RAISE EXCEPTION inside a DO block works:
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM example) <> (SELECT count(*) FROM example_new) THEN
+    RAISE EXCEPTION 'Row count mismatch - aborting migration';
+  END IF;
+END $$;
+
 DROP TABLE example;
-
--- 4. Rename new table
 ALTER TABLE example_new RENAME TO example;
 
--- 5. Recreate any indexes
+-- Recreate any indexes
 CREATE INDEX idx_example_column ON example(column);
 
--- 6. Track migration
-INSERT INTO migrations (id) VALUES ('NNNN_migration_name');
+COMMIT;
 ```
 
-**Important**: After running, verify the row count matches expectations manually.
-
-## Running Migrations
-
-### Development
-
-```bash
-sqlite3 dev.db < migrations/NNNN_migration.sql
-```
-
-### Production (Turso)
-
-```bash
-~/.turso/turso db shell liveone-tokyo < migrations/NNNN_migration.sql
-```
-
-## Checking Migration Status
-
-```bash
-# List applied migrations
-sqlite3 dev.db "SELECT id, datetime(applied_at/1000, 'unixepoch') as applied FROM migrations ORDER BY applied_at"
-
-# Check if specific migration was applied
-sqlite3 dev.db "SELECT * FROM migrations WHERE id = 'NNNN_migration_name'"
-
-# For production
-~/.turso/turso db shell liveone-tokyo "SELECT id FROM migrations ORDER BY id"
-```
+PostgreSQL has **transactional DDL**, so a failed migration inside `BEGIN`/`COMMIT` rolls back
+cleanly. Still verify row counts after applying.
 
 ## Pre-Migration Checklist
 
-1. **Backup production** before any migration
-2. **Test on dev** first
-3. **Verify row counts** before and after
-4. **Check indexes** are recreated if needed
-5. **Update application code** to use new schema
+1. **Back up production first** — PITR schedules run automatically; `pscale backup create`
+   makes a one-off base backup.
+2. **Test on a copy / non-prod branch** first.
+3. **Verify row counts** before and after (`SELECT relname, n_live_tup FROM pg_stat_user_tables`
+   for instant approximate counts; never `COUNT(*)` the big time-series tables).
+4. **Check indexes** are recreated if a table was rebuilt.
+5. **Sync `main` and re-check the migration number** before generating — parallel workspaces can
+   grab the same `NNNN`. If `main` already shipped your number, regenerate so yours lands as the
+   next free number.
 
 ## Deployment Verification
 
@@ -149,8 +95,8 @@ sqlite3 dev.db "SELECT * FROM migrations WHERE id = 'NNNN_migration_name'"
 - No explicit transaction
 - Foreign key constraints silently rejected rows
 
-### Migration 0056: RAISE() doesn't work
+### Migration 0056: validation must abort correctly
 
-- Attempted to use `RAISE(ABORT, ...)` in SELECT for validation
-- SQLite only allows RAISE in trigger programs
-- Solution: Remove validation from SQL, verify manually
+- An earlier attempt used `RAISE(ABORT, ...)` in a bare SELECT — that only works inside trigger
+  programs, so the validation silently did nothing. In PostgreSQL, do the row-count check in a
+  `DO` block with `RAISE EXCEPTION` (as in the pattern above), which aborts the transaction.

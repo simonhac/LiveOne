@@ -192,8 +192,7 @@ export async function GET(
       headers[`point_${p.index}`] = pointInfoObj;
     });
 
-    // Build dynamic SQL for pivot query based on data source. `pivotColumns` is dialect-agnostic
-    // (same column names in Turso and PG) so the PG shadow reuses it verbatim.
+    // Build dynamic SQL for pivot query based on data source.
     let pivotQuery: string;
     let pivotColumns = "";
 
@@ -326,8 +325,7 @@ export async function GET(
       `;
     }
 
-    // Transform raw pivot rows → the served `data` shape. Shared by the Turso (served) path and
-    // the PG shadow path so any divergence is purely in the data, not the transform.
+    // Transform raw pivot rows → the served `data` shape.
     const buildPivotData = (rows: any[]) =>
       rows.map((row: any) => {
         // Use session_label from the joined sessions table, or fallback to session_id if label is null
@@ -373,7 +371,7 @@ export async function GET(
       });
 
     // Serve the pivot from Postgres.
-    void pivotQuery; // the Turso pivot SQL is no longer executed (Phase 5)
+    void pivotQuery; // the legacy raw-SQL pivot is no longer executed (Phase 5)
     const t0 = Date.now();
     const result = await fetchAdminPivotRowsPg({
       systemId,

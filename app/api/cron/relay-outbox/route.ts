@@ -8,8 +8,7 @@
  * published once QStash accepts it. Running alongside the live direct enqueue
  * during the soak, it proves PG raw-durability is independent of the swallowed/
  * crashed-enqueue windows. READ-then-WRITE but idempotent + best-effort; the drain
- * itself never throws. See lib/observations/outbox.ts and
- * docs/turso-pg-migration.md Phase 4.
+ * itself never throws. See lib/observations/outbox.ts.
  *
  * Tuning via env: OUTBOX_RELAY_BATCH (rows/run, default 200), OUTBOX_GC_DAYS
  * (published-row retention, default 7).

@@ -29,10 +29,9 @@ export async function POST(request: NextRequest) {
     const userDisplay = await getUserDisplay(userId);
     console.log("TESLA: User disconnecting Tesla:", userDisplay);
 
-    // Read the user's systems from the SystemsManager cache (PG-served under
-    // CONFIG_SERVE_FROM_PG at cutover, so it reads the same store updateSystem writes),
-    // then mark each Tesla system removed via the flag-routed updateSystem (keyed by id)
-    // so the write honours CONFIG_WRITES_TO_PG instead of writing raw to Turso.
+    // Read the user's systems from the SystemsManager cache (PG-served, the same store
+    // updateSystem writes), then mark each Tesla system removed via updateSystem (keyed
+    // by id).
     const systemsManager = SystemsManager.getInstance();
     const allSystems = await systemsManager.getAllSystems();
     const teslaSystems = allSystems.filter(

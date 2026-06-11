@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeAll } from "@jest/globals";
 import { SystemsManager } from "@/lib/systems-manager";
-// Phase 5: Turso decommissioned. The point lookup now reads Postgres. The PG `pointInfo`
+// Phase 5: the legacy store was decommissioned. The point lookup now reads Postgres. The PG `pointInfo`
 // schema mirrors the same fields the seed uses (systemId, index, displayName, active,
 // transform), so this is a drop-in re-point of the same .select().from().where().limit()
 // query. See docs/deferred/postgres-integration-test-harness.md.

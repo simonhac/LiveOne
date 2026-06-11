@@ -36,7 +36,7 @@ import { publishObservationBatch } from "../observations/publisher";
  * The served point_info row shape. Postgres stores native `createdAt`/`updatedAt`
  * timestamps; this served shape exposes the epoch-ms `createdAtMs`/`updatedAtMs`
  * fields that `PointInfo.from()` and the rest of the codebase consume (unchanged
- * from the long-standing Turso row shape).
+ * from the long-standing legacy row shape).
  */
 export interface PointInfoRow {
   systemId: number;
@@ -588,7 +588,7 @@ export class PointManager {
         })
         .returning();
 
-      // Map the PG-shaped row back to the Turso row shape this method returns
+      // Map the PG-shaped row back to the legacy row shape this method returns
       // (epoch-ms columns) so downstream callers/pointMap are unchanged.
       newPoint = {
         systemId: pgRow.systemId,

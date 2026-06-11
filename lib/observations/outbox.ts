@@ -6,9 +6,8 @@
  * run by the minutely `app/api/cron/relay-outbox` cron — republishes unpublished
  * rows to QStash and marks them published once QStash accepts them, so an enqueue
  * that was swallowed or lost to a crash is retried from a committed row instead of
- * vanishing. This is what makes raw readings durable on Postgres without relying on
- * the inline Turso write. See docs/architecture/engine-web-separation.md §6.4 and
- * docs/turso-pg-migration.md Phase 4.
+ * vanishing. This is what makes raw readings durable on Postgres. See
+ * docs/architecture/engine-web-separation.md §6.4.
  *
  * Both functions are best-effort and never throw: the outbox is additive
  * durability and must never break a poll or a cron. Republishing is idempotent —

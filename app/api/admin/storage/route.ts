@@ -4,10 +4,10 @@ import { requireAdmin } from "@/lib/api-auth";
 /**
  * Storage breakdown.
  *
- * The Turso-era implementation read SQLite `dbstat`/page sizes and the
- * `TURSO_DATABASE_URL` — removed in the Phase 5 Turso decommission. Postgres
- * size info is available via `pg_total_relation_size`/`pg_database_size` if a
- * PG-native breakdown is needed later.
+ * The legacy SQLite implementation read `dbstat`/page sizes — removed in the
+ * Phase 5 decommission of the legacy store. Postgres size info is available via
+ * `pg_total_relation_size`/`pg_database_size` if a PG-native breakdown is needed
+ * later.
  */
 async function handleRequest(request: NextRequest) {
   const authResult = await requireAdmin(request);
@@ -15,7 +15,7 @@ async function handleRequest(request: NextRequest) {
   return NextResponse.json({
     success: true,
     retired: true,
-    message: "storage stats retired in Phase 5 (Turso SQLite-specific).",
+    message: "storage stats retired in Phase 5 (legacy SQLite-specific).",
   });
 }
 
