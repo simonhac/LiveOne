@@ -24,7 +24,7 @@ function envFlag(name: string): boolean {
  * Materialize the per-day directional energy-flow matrix in Postgres
  * (`point_readings_flow_1d`). When on, the daily cron recomputes each system/day's matrix
  * from PG `agg_5m` alongside the 1d recompute. Shadow-only: it just writes the table; serving
- * is gated separately by `FLOW_MATRIX_SERVE_FROM_PG`. See docs/architecture/ENERGY-FLOW-MATRIX.md.
+ * is gated separately by `FLOW_MATRIX_SERVE_FROM_PG`. See docs/architecture/energy-flow-matrix.md.
  */
 export const FLOW_MATRIX_COMPUTE_IN_PG = envFlag("FLOW_MATRIX_COMPUTE_IN_PG");
 

@@ -82,7 +82,7 @@ export function resolveSolarSources(solar: FlowSeries[]): FlowSeries[] {
  * Split one signed bidirectional power series into its two non-negative directional halves.
  * Positive values flow to `positivePath`, the magnitude of negative values to `negativePath`;
  * nulls are preserved on both sides (a gap integrates nowhere). Convention (see
- * docs/architecture/ENERGY-FLOW-MATRIX.md): battery positive = discharge (source), negative =
+ * docs/architecture/energy-flow-matrix.md): battery positive = discharge (source), negative =
  * charge (load); grid positive = import (source), negative = export (load).
  */
 export function splitSignedSeries(

@@ -5,7 +5,7 @@
  * `point_readings_flow_1d` from PG `point_readings_agg_5m`. Built FROM 5m (signed `avg` per
  * point) because that's where direction survives — `agg_1d.avg` cancels charge/discharge and
  * import/export. A multi-day range is then a plain `SUM(energy_kwh) GROUP BY (source_path,
- * load_path)`, since per-interval energy is additive. See docs/architecture/ENERGY-FLOW-MATRIX.md.
+ * load_path)`, since per-interval energy is additive. See docs/architecture/energy-flow-matrix.md.
  *
  * Driven by a LOGICAL SYSTEM (`lib/aggregation/logical-system.ts`) — the role→point mapping — so a
  * single physical system and a composite are handled identically: the recompute reads `agg_5m` for
