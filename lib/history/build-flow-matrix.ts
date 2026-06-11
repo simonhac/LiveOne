@@ -4,7 +4,7 @@
  * `point_readings_agg_5m` into `allRows` (the 30m bucketing happens *after*, in
  * `buildSeriesFromAggRows`), so the signed 5m series is in hand and the Sankey costs no extra query.
  * For 1d the history rows are daily averages that cancel direction — that path is served from the
- * materialized `point_readings_flow_1d` instead (see docs/architecture/ENERGY-FLOW-MATRIX.md).
+ * materialized `point_readings_flow_1d` instead (see docs/architecture/energy-flow-matrix.md).
  *
  * Parity: this mirrors the engine recompute (`lib/db/planetscale/flow-matrix-pg.ts`) — raw `avg`,
  * the same kW normalization, the same `buildFlowSeries`/`computeFlowMatrix` core — so the sub-daily

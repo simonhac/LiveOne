@@ -19,6 +19,7 @@
 - [architecture/authentication.md](architecture/authentication.md) — Clerk, roles, API auth functions
 - [architecture/kv-store.md](architecture/kv-store.md) — KV cache keys, subscription registry
 - [architecture/load-calcs.md](architecture/load-calcs.md) — "rest of house" load calculation
+- [architecture/energy-flow-matrix.md](architecture/energy-flow-matrix.md) — energy-flow (Sankey) matrix: logical systems, daily materialization, serving paths
 - [observations-qstash-payloads.md](observations-qstash-payloads.md) — queue message formats, receiver behaviour
 - [migrations.md](migrations.md) — migration safety practices and lessons learned
 - [amber-sync-plan.md](amber-sync-plan.md) — Amber sync/audit design

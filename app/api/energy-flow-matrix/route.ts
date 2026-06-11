@@ -14,7 +14,7 @@ import { resolveLogicalSystem } from "@/lib/aggregation/logical-system";
  * materialized `point_readings_flow_1d`, summing the completed local days in [start, end]
  * (`YYYY-MM-DD`, inclusive). `day` is stored as text and sorts chronologically, so a plain
  * range filter + `SUM(energy_kwh) GROUP BY (source_path, load_path)` gives the range matrix —
- * energy is additive across days (see docs/architecture/ENERGY-FLOW-MATRIX.md).
+ * energy is additive across days (see docs/architecture/energy-flow-matrix.md).
  *
  * v1: completed days only — the live partial "today so far" is NOT integrated here. Node
  * labels/colors resolve from the canonical paths via `lib/aggregation/flow-node-meta.ts`, so

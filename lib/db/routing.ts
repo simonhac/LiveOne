@@ -70,7 +70,7 @@ export const AGG_COMPUTE_IN_PG = envFlag("AGG_COMPUTE_IN_PG");
  * (`point_readings_flow_1d`). When on, the daily cron recomputes each system/day's matrix
  * from PG `agg_5m` alongside the 1d recompute (only meaningful with `AGG_COMPUTE_IN_PG` on,
  * which is what populates the 5m it reads). Shadow-only: it just writes the table; serving is
- * gated separately by `FLOW_MATRIX_SERVE_FROM_PG`. See docs/architecture/ENERGY-FLOW-MATRIX.md.
+ * gated separately by `FLOW_MATRIX_SERVE_FROM_PG`. See docs/architecture/energy-flow-matrix.md.
  */
 export const FLOW_MATRIX_COMPUTE_IN_PG = envFlag("FLOW_MATRIX_COMPUTE_IN_PG");
 
