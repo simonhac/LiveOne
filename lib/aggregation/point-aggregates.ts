@@ -2,12 +2,9 @@
  * Pure aggregation math for point readings — the single source of truth for how a
  * 5-minute (and daily) aggregate is derived from its inputs.
  *
- * This module has NO database imports. Both the Turso writers
- * (`updatePointAggregates5m`, `aggregateDailyPointData`) and the Postgres recompute
- * (`lib/db/planetscale/aggregate-points-pg.ts`, behind `AGG_COMPUTE_IN_PG`) call these
- * helpers so the two engines compute identical values by construction — which is what
- * `scripts/reconcile-agg-values.ts` must prove before the Turso aggregation publishers
- * are trimmed (PR-13).
+ * This module has NO database imports. The Postgres recompute
+ * (`lib/db/planetscale/aggregate-points-pg.ts`) calls these helpers, keeping the
+ * aggregation math in one place.
  *
  * The semantics intentionally mirror the original inline logic exactly:
  *  - 5m value placement by metric type / transform (avg/min/max/last/delta), and
@@ -45,7 +42,7 @@ export interface Point5mInput {
   /**
    * The previous interval's `last` value, for transform='d' points only. Undefined when
    * there is no previous value (first interval / gap), in which case delta stays null —
-   * exactly as the Turso path leaves it.
+   * exactly as the legacy path left it.
    */
   previousLast?: number;
 }
@@ -128,8 +125,7 @@ export interface Point1dInput {
 /**
  * Compute one point's daily aggregate from its 5m rows.
  *
- * Faithful port of the per-point logic in `aggregateDailyPointData`
- * (`lib/db/turso/aggregate-daily-points.ts`):
+ * Faithful port of the per-point logic in the legacy `aggregateDailyPointData`:
  *  - avg = mean of the non-null 5m avgs (null if none),
  *  - min = min of the non-null 5m mins, max = max of the non-null 5m maxs,
  *  - delta = Σ of the non-null 5m deltas (null if none),
@@ -179,8 +175,8 @@ export function intervalEndForMs(measurementTimeMs: number): number {
  * Convert a CalendarDate to the Unix timestamp range (seconds, UTC) that a daily
  * aggregate covers, in the system's local timezone: 00:05 of the given day to 00:00 of
  * the next day, inclusive — i.e. the 288 five-minute intervals (00:05, 00:10, …, 23:55,
- * 00:00). Shared by the Turso daily aggregation and the Postgres recompute so both use an
- * identical day boundary (and therefore identical 1d business keys).
+ * 00:00). Used by the Postgres recompute to fix the day boundary (and therefore the 1d
+ * business keys).
  *
  * @returns [startUnixSec, endUnixSec]
  */
@@ -191,7 +187,7 @@ export function dayToUnixRangeForAggregation(
   // Build the ±HH:MM offset. Compute hours/mins from the ABSOLUTE minutes so negative
   // fractional offsets (e.g. -330 → -05:30) are correct — `Math.floor(-330/60)` would
   // round toward -∞ to -6 and yield -06:30. (No such offset is in use today, but the math
-  // is shared with the Turso path, so it must be right for any tz.)
+  // must be right for any tz.)
   const sign = timezoneOffsetMin >= 0 ? "+" : "-";
   const absMinutes = Math.abs(timezoneOffsetMin);
   const offsetHours = Math.floor(absMinutes / 60);

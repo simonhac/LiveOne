@@ -303,7 +303,7 @@ async function loadLocalRecords(
 
     // 3. Fetch readings for filtered points only. PG stores interval_end as a native
     // timestamp; query with Date bounds, then map intervalEnd back to epoch-ms so the
-    // downstream batch builder keeps its Turso-era numeric shape.
+    // downstream batch builder keeps its legacy numeric shape.
     const pointIds = filteredPoints.map((p: PointInfo) => p.index);
     const pgReadings = await requirePlanetscaleDb()
       .select()

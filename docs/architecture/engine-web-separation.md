@@ -1,11 +1,10 @@
 # Engine / Web separation + the ingest durability model
 
 **Status: direction of travel (not yet built).** This is the intended architecture that the
-Turso→Postgres migration is the enabler for. The canonical migration status/plan lives in
+Turso→Postgres migration enabled. The historical migration record lives in
 [`../turso-pg-migration.md`](../turso-pg-migration.md); this doc owns the **target shape** (the
 engine/web split and its boundary contracts) and the **ingest durability decision** (how observations
-reach the stores). Locked decisions (F) Turso-as-backup and (G) engine/web-split are recorded in the
-migration doc; this doc expands them.
+reach the store).
 
 ---
 
@@ -30,7 +29,6 @@ clean: the web reads only Postgres + KV; the engine owns all writes.
 4. An engine **Control API** + a job queue for web→engine commands (below).
 
 No shared process, no shared in-memory cache, no synchronous web→engine call except the Control API.
-Turso is **not** a contract — it's an engine-internal, disposable backup (see §6).
 
 ## 3. FE→engine command pattern — "web brokers, engine executes"
 
@@ -90,7 +88,7 @@ This was assessed by a multi-agent review grounded in the code; all load-bearing
 Postgres readings/sessions are written in **exactly one place** — the QStash receiver
 (`app/api/observations/receive/route.ts`, all inserts in one session-first transaction). The poller is
 topology-blind to PG for readings. So "one idempotent ingest contract into PG" already exists, and the
-Turso→PG migration is the living proof of the payoff: PG was bootstrapped by **pointing the existing
+Turso→PG migration was the living proof of the payoff: PG was bootstrapped by **pointing the existing
 receiver at it**. Moving stores, teeing to a Sydney replica / analytics sink, or relocating the receiver
 across the engine/web boundary all reduce to "stand up another idempotent consumer." **Lock this in.**
 
@@ -101,14 +99,12 @@ across the engine/web boundary all reduce to "stand up another idempotent consum
   log** (read from offset 0, fan out, backfill). **QStash is not that**: it's an at-least-once HTTP task
   dispatcher (POST-with-retries → DLQ), ~1 MB messages, ~7-day retention, no seek/replay. Once a message
   is acked, it's gone. The DLQ `retry-all` only re-pushes _stranded_ messages within retention; it can't
-  reconstruct never-enqueued data. **Tell:** PG holes heal today by copying from **Turso** (a retained
-  store) via `scripts/gap-map-raw-readings.ts`, never by replaying the queue.
-- **"Never direct-insert" deletes the durability anchor.** The inline Turso write is the one
-  must-succeed step (`lib/point/point-manager.ts` raw insert is awaited, uncaught → a failure aborts the
-  poll). The enqueue is fire-and-forget: `lib/observations/publisher.ts:139-145` and the session-close
-  publish (`lib/session-manager.ts`) both `catch` and only `console.error`. **A swallowed enqueue is a
-  permanently lost reading.** The PollCollector also buffers in memory and publishes once at session
-  close — a crash mid-poll loses the whole poll from the queue's view.
+  reconstruct never-enqueued data. **Tell:** PG holes heal by replaying a retained store (the outbox / PG
+  itself), never by replaying the queue.
+- **"Never direct-insert" deletes the durability anchor.** A durable first-write is the one
+  must-succeed step. A bare fire-and-forget enqueue is not enough: **a swallowed enqueue is a
+  permanently lost reading**, and a poller that buffers in memory and publishes once at session close
+  loses the whole poll from the queue's view if it crashes mid-poll.
 - **This is the dual-write problem**, and no queue solves it — nothing can deliver a message that was
   never enqueued.
 
@@ -122,7 +118,7 @@ store, not between collection and **all** durability.
 
 ### 6.4 Recommended target for LiveOne
 
-1. **Make Postgres itself the outbox** (post-migration), carrying the **message** — not a serving-store
+1. **Postgres itself is the outbox**, carrying the **message** — not a serving-store
    write. The poll commits **one `observations_outbox` row holding the built `QueueMessage`** (the _same_
    payload that goes on the queue: `env, systemId, batchTime, observations?, session?`) and nothing else.
    **Collection never writes the serving store (`point_readings`/aggregates) directly** _(locked
@@ -137,12 +133,10 @@ store, not between collection and **all** durability.
 2. A **relay** drains the outbox → QStash → the existing idempotent **receiver, which materialises
    `point_readings` + aggregates** (the receiver stays the single writer of the source of truth). The
    enqueue is now derived from a committed row and retried until acked — closing the swallowed-enqueue and
-   crash-before-publish windows. This **is** the Phase-4 "raw durability off Turso" gate.
+   crash-before-publish windows. This is the raw-durability anchor.
 3. **Keep the queue as the fan-out / decoupling transport** — its value is real and unchanged. PG (with
-   PITR) becomes the replayable source-of-truth; "tee a new sink" = "replay the outbox/PG into it."
-4. **Keep Turso until raw-durability-on-PG is proven** (decision F). Turso + `gap-map` is already a
-   degenerate outbox (store + relay); we're moving that function into PG, not deleting it.
-5. Don't adopt a heavyweight log (Kafka/Kinesis) for one ordered consumer at this volume — a PG outbox
+   PITR) is the replayable source-of-truth; "tee a new sink" = "replay the outbox/PG into it."
+4. Don't adopt a heavyweight log (Kafka/Kinesis) for one ordered consumer at this volume — a PG outbox
    gives replay/rebuild for free. Keep a real log as a documented escape hatch only if high-volume
    _independent_ consumers ever materialise.
 
@@ -156,9 +150,8 @@ store, not between collection and **all** durability.
   automated drain/replay-from-source.
 - **SLOs + paging** on queue lag, DLQ depth, receiver success rate, raw-landing age — and ensure
   `OBSERVATIONS_ALERT_WEBHOOK_URL` is actually set (it's a no-op if unset).
-- **Read-after-write**: once Turso reads retire (Phase 2), pure queue→PG ingest adds visibility lag.
-  Interactive "poll now & show result" (Control API) needs a synchronous read path or bounded-lag
-  acceptance.
+- **Read-after-write**: pure queue→PG ingest adds visibility lag. Interactive "poll now & show result"
+  (Control API) needs a synchronous read path or bounded-lag acceptance.
 
 ### 6.6 Tradeoffs (honest)
 
@@ -205,14 +198,3 @@ system of record (ruled out in §6).
 The swap surface is small and centralised (`lib/qstash.ts`, `lib/observations/*`, the receiver, the
 poller), and the engine/web split (§1–§5) is what lets each be replaced independently without touching
 the FE.
-
----
-
-## 8. Turso status (locked 2026-06-06)
-
-Turso has **no special status** — it is a **transitional best-effort backup of raw `point_readings` +
-`sessions` only**, kept solely until PG is fully trusted, then dropped. **Postgres is THE store for
-everything** (config, aggregates, raw, sessions). Design as if PG is the only store; the inline Turso
-write is an extra best-effort backup deletable with zero architectural change. **Exit condition for
-dropping Turso = raw durability on PG** without the inline-Turso safety net — i.e. the outbox of §6.4.
-See the migration doc's Phase 4.

@@ -6,7 +6,7 @@ import type { SystemWithPolling } from "@/lib/systems-manager";
  * Regression guard for the observations ms-truncation bug: buildObservations must
  * serialize measurementTime/receivedTime with millisecond precision so the QStash
  * payload (and therefore PG point_readings) keeps sub-second precision, matching
- * Turso's inline write. See lib/date-utils.ts formatTime_fromJSDate(includeMillis).
+ * the legacy inline write. See lib/date-utils.ts formatTime_fromJSDate(includeMillis).
  */
 describe("buildObservations", () => {
   const system = {

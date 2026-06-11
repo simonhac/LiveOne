@@ -32,10 +32,9 @@ export async function POST(request: NextRequest) {
     // Note: We don't clear tokens anymore - systems are just marked as removed
     // and credentials are ignored for removed systems
 
-    // Read the user's systems from the SystemsManager cache (PG-served under
-    // CONFIG_SERVE_FROM_PG at cutover, so it reads the same store updateSystem writes),
-    // then mark each Enphase system removed via the flag-routed updateSystem (keyed by id)
-    // so the write honours CONFIG_WRITES_TO_PG instead of writing raw to Turso.
+    // Read the user's systems from the SystemsManager cache (PG-served, the same store
+    // updateSystem writes), then mark each Enphase system removed via updateSystem (keyed
+    // by id).
     const systemsManager = SystemsManager.getInstance();
     const allSystems = await systemsManager.getAllSystems();
     const enphaseSystems = allSystems.filter(

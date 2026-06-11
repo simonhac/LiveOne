@@ -281,8 +281,8 @@ async function insert1dObservations(
 /**
  * Insert session into sessions table.
  *
- * Preserves the Turso session id as the Postgres primary key so that
- * point_readings.sessionId (which carries the Turso id) joins sessions.id.
+ * Preserves the legacy session id as the Postgres primary key so that
+ * point_readings.sessionId (which carries the legacy id) joins sessions.id.
  * The consumer always supplies an explicit id, so the serial default never
  * fires and the sequence can't collide.
  */

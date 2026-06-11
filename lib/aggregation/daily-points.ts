@@ -1,8 +1,8 @@
 /**
  * Daily (1d) point aggregation — Postgres only.
  *
- * Replaces the former Turso writer (`lib/db/turso/aggregate-daily-points.ts`,
- * removed in the Phase 5 Turso decommission). The daily cron computes each
+ * Replaces the former legacy SQLite writer (removed in the Phase 5 decommission
+ * of the legacy store). The daily cron computes each
  * system/day's 1d aggregates in Postgres from PG `point_readings_agg_5m` via
  * `recomputeAgg1dForDay`, and materialises the energy-flow matrix per logical
  * system. Idempotent: re-running a day just heals it.

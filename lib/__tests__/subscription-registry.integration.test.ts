@@ -17,9 +17,9 @@ import {
   getLatestPointValues,
 } from "../kv-cache-manager";
 import { kv, kvKey } from "../kv";
-// TODO: re-point this integration harness to seed Postgres directly (Turso was
-// decommissioned in Phase 5). Cast to `any` so the legacy Turso-shaped seed values
-// still type-check until the harness is rewritten against the PG schema.
+// TODO: re-point this integration harness to seed Postgres directly (the legacy
+// store was decommissioned in Phase 5). Cast to `any` so the legacy-shaped seed
+// values still type-check until the harness is rewritten against the PG schema.
 import { planetscaleDb } from "@/lib/db/planetscale";
 import {
   systems as systemsTable,

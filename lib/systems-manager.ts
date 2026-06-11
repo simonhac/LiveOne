@@ -132,10 +132,7 @@ export class SystemsManager {
   /**
    * Load all systems with polling status into cache (called once on instantiation).
    *
-   * PR-8 (1A): the systems⋈polling_status read is funneled through `shadowReadConfig`.
-   * The SERVED rows are ALWAYS the Turso join; when `CONFIG_READS_FROM_PG` is on we
-   * additionally run the same join against Postgres, project both to a per-system Map,
-   * and log any divergence (best-effort; PG errors swallowed). See lib/db/config-shadow.ts.
+   * Reads the systems⋈polling_status join from Postgres (the only store).
    */
   private async loadSystems() {
     // Join systems with polling_status to get everything in one query.
@@ -359,12 +356,9 @@ export class SystemsManager {
   /**
    * Update an existing system and invalidate the cache.
    *
-   * PR-8 (1B): flag-routed on CONFIG_WRITES_TO_PG. OFF (default) = today's Turso
-   * UPDATE WHERE id=systemId, unchanged. ON = update Postgres ONLY (decision B:
-   * config writes are Postgres-only). The patch maps 1:1 — both schemas use the same
-   * field names, and PG jsonb/timestamp columns accept plain objects/Dates directly
-   * (the same Date values Turso's timestamp mode takes), so no per-field mapping is
-   * needed. `updatedAt` is always stamped to now regardless of the patch.
+   * Updates Postgres only (config writes are Postgres-only). The patch maps 1:1 —
+   * PG jsonb/timestamp columns accept plain objects/Dates directly, so no per-field
+   * mapping is needed. `updatedAt` is always stamped to now regardless of the patch.
    */
   async updateSystem(systemId: number, patch: Partial<System>): Promise<void> {
     // Never let the caller override the id or the freshly-stamped updatedAt.
@@ -382,8 +376,7 @@ export class SystemsManager {
   /**
    * Delete a system and invalidate the cache.
    *
-   * PR-8 (1B): flag-routed on CONFIG_WRITES_TO_PG. OFF (default) = today's Turso
-   * DELETE WHERE id=systemId. ON = delete from Postgres ONLY.
+   * Deletes from Postgres only.
    */
   async deleteSystem(systemId: number): Promise<void> {
     await requirePlanetscaleDb()
@@ -438,8 +431,8 @@ export class SystemsManager {
         })
         .returning();
 
-      // PG createdAt/updatedAt are Date-typed (same as Turso's timestamp mode); the row
-      // is structurally the System shape the caller expects.
+      // PG createdAt/updatedAt are Date-typed; the row is structurally the System
+      // shape the caller expects.
       return newSystem as unknown as System;
     } catch (e) {
       if (isPgUniqueViolation(e)) {

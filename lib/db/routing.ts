@@ -1,11 +1,11 @@
 /**
  * Database routing flags (Postgres-primary).
  *
- * Historically this was the env-driven seam for the staged Turso → Postgres
- * cutover. Phase 5 decommissioned Turso: config, readings, aggregation, and raw
- * durability are now unconditionally on Postgres, so the migration flags
- * (`CONFIG_*`, `READINGS_READS_FROM_PG`, `AGG_COMPUTE_IN_PG`, `WRITE_OUTBOX`)
- * have been retired and their Turso branches deleted.
+ * Historically this was the env-driven seam for the staged migration to
+ * Postgres. Phase 5 decommissioned the legacy store: config, readings,
+ * aggregation, and raw durability are now unconditionally on Postgres, so the
+ * migration flags (`CONFIG_*`, `READINGS_READS_FROM_PG`, `AGG_COMPUTE_IN_PG`,
+ * `WRITE_OUTBOX`) have been retired and their legacy branches deleted.
  *
  * The only remaining flags gate the energy-flow-matrix feature, which is a
  * separate, not-yet-enabled rollout. Flags are read once at module load.

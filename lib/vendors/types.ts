@@ -132,7 +132,7 @@ export interface VendorAdapter {
  * Stage timing information for Poll All modal
  * - login: Credential fetch (handled by cron route)
  * - fetch: API call to vendor (handled by base adapter)
- * - process: Insert to Turso + publish to QStash (handled by base adapter)
+ * - process: Insert readings + publish to QStash (handled by base adapter)
  */
 export interface PollStage {
   name: "login" | "fetch" | "process";

@@ -1,9 +1,7 @@
 /**
- * Postgres-side aggregation recompute (Move 1 / PR-11, behind `AGG_COMPUTE_IN_PG`).
+ * Postgres-side aggregation recompute.
  *
- * The end-state is Turso-free, so Postgres can't keep depending on Turso to compute and
- * ship the raw-vendor aggregates. This module rebuilds the 5m (and 1d) aggregates from
- * Postgres' OWN data:
+ * Postgres is the sole aggregator, rebuilding the 5m (and 1d) aggregates from its OWN data:
  *
  *  - 5m: when raw readings land in PG (the queue receiver), recompute the affected
  *    `(systemId, intervalEnd)` aggregates from PG `point_readings`. Only raw-vendor points
@@ -11,16 +9,13 @@
  *    flowing their pre-computed 5m through the queue and are never recomputed here.
  *  - 1d: the daily cron recomputes each day's aggregate from PG `point_readings_agg_5m`
  *    (which by then holds both the recomputed raw-vendor 5m and the queue-fed 5m-native
- *    5m), instead of mirroring the Turso-computed 1d over the queue.
+ *    5m).
  *
- * The per-point math is shared with the Turso path via `lib/aggregation/point-aggregates.ts`
- * so the two engines compute identical values by construction — which is what
- * `scripts/reconcile-agg-values.ts` proves before the Turso publishers are trimmed (PR-13).
+ * The per-point math is shared via `lib/aggregation/point-aggregates.ts`.
  *
- * SHADOW SAFETY: in PR-11 reads are still served from Turso, so nothing here is user-facing.
  * Every recompute is idempotent (`onConflictDoUpdate`, keyed by the business key) and the
  * live entry points are best-effort — a failure logs and is swallowed so it can never break
- * ingestion or the Turso aggregation it shadows.
+ * ingestion.
  */
 
 import { and, eq, gt, gte, lte, asc, sql } from "drizzle-orm";
@@ -53,7 +48,7 @@ type PgExecutor = PgDb | Parameters<Parameters<PgDb["transaction"]>[0]>[0];
  */
 const AGG5M_RECOMPUTE_LOCK_NS = 0x41475335; // ascii "AGS5"
 
-/** Minimal system shape the 1d recompute needs (Turso `systems` row satisfies it). */
+/** Minimal system shape the 1d recompute needs (a `systems` row satisfies it). */
 interface SystemForDailyAgg {
   id: number;
   timezoneOffsetMin: number;
@@ -97,13 +92,13 @@ export function withSuccessorIntervals(intervalEndsMs: number[]): number[] {
  * Recompute the raw-vendor 5m aggregates for the given `(systemId, intervalEnd)` pairs
  * from PG `point_readings`, upserting into PG `point_readings_agg_5m`.
  *
- * Mirrors `updatePointAggregates5m` (the Turso writer): for each interval, group the raw
+ * Mirrors the legacy `updatePointAggregates5m` writer: for each interval, group the raw
  * readings by point, then compute via the shared helper — including its granularity (only
  * the reading's own interval is recomputed, never a neighbour).
  *
  * The transform='d' `previousLast` is read from the previous interval's raw (the last
- * non-null reading), which equals the previous interval's stored `last`. This matches Turso's
- * `getPointsLastValues5m` value AND works at the flag-flip boundary, where the previous
+ * non-null reading), which equals the previous interval's stored `last`. This matches the
+ * legacy `getPointsLastValues5m` value AND works at the flag-flip boundary, where the previous
  * AGGREGATE row may not exist yet but the raw does.
  *
  * ORDER-INDEPENDENT (parallelism > 1 safe): callers pass each touched interval together with
@@ -221,13 +216,13 @@ async function recompute5mIntervalsWithin(
 
     const toUpsert: (typeof pointReadingsAgg5m.$inferInsert)[] = [];
     for (const [pointId, g] of groups) {
-      // Only points with a reading in the CURRENT interval get a row (matches Turso, which
-      // queries the current interval and creates a row per point present — incl. all-error).
+      // Only points with a reading in the CURRENT interval get a row (matches the legacy
+      // writer, which queries the current interval and creates a row per point present — incl.
+      // all-error).
       if (!g.hasCurrent) continue;
-      // If the point isn't in the PG point_info mirror we can't know its transform/metricType
-      // (Turso, where config is authoritative, always can). Defaulting to null/null would
-      // silently mis-compute energy/'d' points, so SKIP it — leaving the row absent (the
-      // reconciler treats only-in-Turso as non-failing) rather than writing a wrong value.
+      // If the point isn't in the point_info mirror we can't know its transform/metricType.
+      // Defaulting to null/null would silently mis-compute energy/'d' points, so SKIP it —
+      // leaving the row absent rather than writing a wrong value.
       // Normal, fully-mirrored systems skip nothing; this only guards a not-yet-mirrored
       // brand-new point.
       const m = meta.get(pointId);
@@ -295,7 +290,7 @@ async function recompute5mIntervalsWithin(
 
 /**
  * Recompute a system/day's 1d aggregates from PG `point_readings_agg_5m`, upserting into
- * PG `point_readings_agg_1d`. Mirrors `aggregateDailyPointData` (the Turso writer): the
+ * PG `point_readings_agg_1d`. Mirrors the legacy `aggregateDailyPointData` writer: the
  * day spans 00:05..00:00-next-day, and `last` is taken from the previous day's 00:00
  * interval.
  */
@@ -406,9 +401,8 @@ export async function recomputeAgg1dForDay(
 // Best-effort entry points for the live pipeline
 //
 // These grab the memoized PG client, no-op if PG isn't configured, and never throw — an
-// aggregation hiccup must not break ingestion (5m) or the Turso daily cron (1d) that this
-// shadows. Callers should still `await` them so the work completes before a serverless
-// function can freeze.
+// aggregation hiccup must not break ingestion (5m) or the daily cron (1d). Callers should
+// still `await` them so the work completes before a serverless function can freeze.
 // ============================================================================
 
 /**

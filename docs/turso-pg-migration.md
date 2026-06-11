@@ -50,7 +50,7 @@ data-collection **engine** from the **web/FE** — see [Direction of travel](#di
   (`config-shadow`/`readings-serve`) and the whole `lib/db/turso` module are deleted; the outbox tee is
   unconditional (durability anchor); sessions publish from an in-process pending-session registry; daily
   1d is computed in a PG-only module. Typecheck + 415 unit tests + `build:local` all green. **Remaining
-  manual / DB-touching ops:** apply the `0005` FK rebuild, optional session-FK NULL-then-VALIDATE, then
+  manual / DB-touching ops:** apply the `0006` FK rebuild, optional session-FK NULL-then-VALIDATE, then
   `turso db destroy liveone-tokyo` + its snapshots.
 - **Live pipeline healthy:** QStash lag 0 / DLQ 0; PG mirror response-presence 100%, raw landing
   < 1 min old. (Aggregation is order-independent, so queue parallelism may be raised safely.)
@@ -318,7 +318,7 @@ Once raw durability on PG is proven without the inline-Turso net:
   then retire `AGG_COMPUTE_IN_PG`, `CONFIG_WRITES_TO_PG`, `CONFIG_SERVE_FROM_PG`, `READINGS_READS_FROM_PG`,
   and the Turso read-fallback in `serveReadings`. (`CONFIG_READS_FROM_PG` + the config shadow-compare path
   are already inert — deletable any time as the smallest standalone cleanup.)
-- **Decommission-time hardening:** PG FK rebuild (staged `0004`), R4 Turso-FK drop, optional session-FK
+- **Decommission-time hardening:** PG FK rebuild (staged `0006`), R4 Turso-FK drop, optional session-FK
   validation, re-point the dev-seed (`db:sync-prod`) to seed from PG.
 - **Drop Turso:** `sessions_archive` / `*_backup` / legacy `readings*` tables; decommission `liveone-tokyo`.
 
@@ -369,18 +369,20 @@ constraints are **0-orphan → add + validate cleanly**. Row counts: `point_read
 VALID` + a separate `VALIDATE` (validating scan under non-blocking `SHARE UPDATE EXCLUSIVE`); the rest
 validate inline. **Re-run the audit immediately before executing** — 0-orphan is a point-in-time fact.
 
-**Execution (the `0003` precedent).** Update `lib/db/planetscale/schema.ts`
+**Execution (the `0003` precedent).** Updated `lib/db/planetscale/schema.ts`
 (`.references(…, {onDelete})` for #1/#2/#3, plain `.references()` for #4/#5, composite `foreignKey({…})`
-in the `point_readings*` table callbacks). Then `db:pg:generate`, **hand-edit** the generated
-`drizzle-planetscale/0005_*.sql` to split #4/#6/#7 into `NOT VALID` + `VALIDATE` and add `pg_constraint`
-re-run guards, then `db:pg:migrate`. Snapshot Turso + confirm PG PITR first. **Forbidden:** `push`.
-_(0004 is now the `observations_outbox` table — Phase 4a; the FK rebuild is the next migration, 0005.)_
+in the `point_readings*` table callbacks). Then `db:pg:generate` and **hand-edited** the generated
+`drizzle-planetscale/0006_same_mojo.sql` to split #4/#6/#7 into `NOT VALID` + `VALIDATE` and add `pg_constraint`
+re-run guards. **Not yet `db:pg:migrate`'d** — confirm PG PITR + a base backup first. **Forbidden:** `push`.
+_(0004 = `observations_outbox` (Phase 4a); 0005 = `point_readings_flow_1d` (flow matrix); the FK rebuild
+landed as the next free number, 0006 — the doc's earlier "0005" assumption was overtaken by the flow-1d
+migration.)_
 
-Staged SQL (reference — do **not** drop into `drizzle-planetscale/` or apply until the gate above; add
-`--> statement-breakpoint` between statements when promoting to a real migration):
+The migration is now **staged in the repo** as `drizzle-planetscale/0006_same_mojo.sql` (unapplied; journal
+entry + snapshot generated). Its content (the staged SQL below; `--> statement-breakpoint` between statements):
 
 ```sql
--- 0005_fk_rebuild.sql (STAGED). Pre-flight 2026-06-06: all 0-orphan.
+-- 0006_same_mojo.sql (STAGED, unapplied). Re-run the orphan pre-flight immediately before applying.
 -- Group A — trivial rows → systems (CASCADE / SET NULL) + small tables, validate inline
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='polling_status_system_id_systems_id_fk') THEN
@@ -605,7 +607,7 @@ One line per completed milestone — detail lives in git + the sections above.
   registry, moved daily 1d aggregation to a PG-only `lib/aggregation/daily-points.ts`, repointed all
   vendor/admin/leaf reads to Postgres, and stubbed the SQLite-specific ops routes (db-stats/storage/health)
   - the dev-seed. ~50 files; typecheck + 415 unit tests + `build:local` green. Remaining (manual,
-    DB-touching, post-merge): the `0005` FK rebuild, optional session-FK NULL-then-VALIDATE, and
+    DB-touching, post-merge): the `0006` FK rebuild, optional session-FK NULL-then-VALIDATE, and
     `turso db destroy liveone-tokyo` + snapshots.
 - **2026-06-11 — Phase 3 closeout + Turso tidy + off-site-backup decision.** Deleted the us-east `main` PG
   branch after a green ~26h burn-in (sydney now the standalone primary — lineage re-parented to

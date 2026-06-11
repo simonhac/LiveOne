@@ -6,7 +6,7 @@
  *
  * ## SQLite vs PostgreSQL Schema Comparison
  *
- * | Aspect              | SQLite (Turso)                    | PostgreSQL (PlanetScale)         |
+ * | Aspect              | SQLite (legacy)                   | PostgreSQL (PlanetScale)         |
  * |---------------------|-----------------------------------|----------------------------------|
  * | ORM module          | drizzle-orm/sqlite-core           | drizzle-orm/pg-core              |
  * | Auto-increment PK   | integer().primaryKey({autoIncr})  | serial()                         |
@@ -25,8 +25,10 @@
  *
  * 2. **JSON**: SQLite uses TEXT with mode:"json", PG uses native JSONB (faster queries)
  *
- * 3. **Foreign Keys**: Not defined here - tables are standalone for queue receiver.
- *    The receiver inserts data without FK validation for performance.
+ * 3. **Foreign Keys**: PG was built FK-less for receiver throughput; the relational
+ *    graph is restored by the decommission-time FK rebuild (migration `0006`). Large
+ *    tables (`point_readings`, `agg_5m`, `sessions`) are added `NOT VALID` then VALIDATEd
+ *    in a separate step (see the hand-edited migration SQL).
  *
  * 4. **Sequences**: PostgreSQL serial() auto-increments independently per table.
  *    Session IDs will diverge between SQLite and PG databases.
@@ -45,6 +47,7 @@ import {
   index,
   uniqueIndex,
   primaryKey,
+  foreignKey,
   timestamp,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -91,7 +94,9 @@ export const pollingStatus = pgTable(
   "polling_status",
   {
     id: serial("id").primaryKey(),
-    systemId: integer("system_id").notNull(),
+    systemId: integer("system_id")
+      .notNull()
+      .references(() => systems.id, { onDelete: "cascade" }),
     lastPollTime: timestamp("last_poll_time"),
     lastSuccessTime: timestamp("last_success_time"),
     lastErrorTime: timestamp("last_error_time"),
@@ -118,7 +123,9 @@ export const userSystems = pgTable(
   {
     id: serial("id").primaryKey(),
     clerkUserId: text("clerk_user_id").notNull(),
-    systemId: integer("system_id").notNull(),
+    systemId: integer("system_id")
+      .notNull()
+      .references(() => systems.id, { onDelete: "cascade" }),
     role: text("role").notNull().default("viewer"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -140,7 +147,9 @@ export const users = pgTable(
   "users",
   {
     clerkUserId: text("clerk_user_id").primaryKey(),
-    defaultSystemId: integer("default_system_id"),
+    defaultSystemId: integer("default_system_id").references(() => systems.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -161,7 +170,9 @@ export const sessions = pgTable(
     // Was `serial`; the receiver always supplies an explicit id.
     id: text("id").primaryKey(),
     sessionLabel: text("session_label"),
-    systemId: integer("system_id").notNull(),
+    systemId: integer("system_id")
+      .notNull()
+      .references(() => systems.id),
     cause: text("cause").notNull(),
     duration: integer("duration").notNull(), // milliseconds
     successful: boolean("successful"),
@@ -169,7 +180,7 @@ export const sessions = pgTable(
     error: text("error"),
     response: jsonb("response"),
     numRows: integer("num_rows").notNull(),
-    // Migration: import from turso.sessions.started
+    // Migration: import from the legacy store's sessions.started
     createdAt: timestamp("created_at").notNull(),
   },
   (table) => ({
@@ -190,7 +201,9 @@ export const pointInfo = pgTable(
   "point_info",
   {
     // Composite primary key (systemId, index)
-    systemId: integer("system_id").notNull(),
+    systemId: integer("system_id")
+      .notNull()
+      .references(() => systems.id),
     index: integer("id").notNull(), // Sequential per system
 
     // Paths
@@ -277,6 +290,11 @@ export const pointReadings = pgTable(
       table.measurementTime,
     ),
     createdAtIdx: index("pr_created_at_idx").on(table.createdAt),
+    pointInfoFk: foreignKey({
+      columns: [table.systemId, table.pointId],
+      foreignColumns: [pointInfo.systemId, pointInfo.index],
+      name: "point_readings_system_id_point_id_point_info_fk",
+    }),
   }),
 );
 
@@ -319,6 +337,11 @@ export const pointReadingsAgg5m = pgTable(
     ),
     intervalEndIdx: index("pr5m_interval_end_idx").on(table.intervalEnd),
     createdAtIdx: index("pr5m_created_at_idx").on(table.createdAt),
+    pointInfoFk: foreignKey({
+      columns: [table.systemId, table.pointId],
+      foreignColumns: [pointInfo.systemId, pointInfo.index],
+      name: "point_readings_agg_5m_system_id_point_id_point_info_fk",
+    }),
   }),
 );
 
@@ -350,6 +373,11 @@ export const pointReadingsAgg1d = pgTable(
     pk: primaryKey({ columns: [table.systemId, table.pointId, table.day] }),
     systemDayIdx: index("pr1d_system_day_idx").on(table.systemId, table.day),
     dayIdx: index("pr1d_day_idx").on(table.day),
+    pointInfoFk: foreignKey({
+      columns: [table.systemId, table.pointId],
+      foreignColumns: [pointInfo.systemId, pointInfo.index],
+      name: "point_readings_agg_1d_system_id_point_id_point_info_fk",
+    }),
   }),
 );
 
@@ -405,7 +433,7 @@ export const pointReadingsFlow1d = pgTable(
 
 // ============================================================================
 // Share tokens - view-only access links scoped to systems owned by the token's owner
-// (mirrors Turso `share_tokens`). Epoch-ms columns use bigint(mode:"number") so
+// (mirrors the legacy `share_tokens`). Epoch-ms columns use bigint(mode:"number") so
 // share-tokens.ts's `Date.now()` comparisons work unchanged against Postgres.
 // ============================================================================
 export const shareTokens = pgTable(
@@ -429,10 +457,9 @@ export const shareTokens = pgTable(
 //
 // A poll's built QueueMessage(s) are recorded here durably; a relay
 // (app/api/cron/relay-outbox) drains unpublished rows to QStash and marks them
-// published once accepted. This makes raw durability live on Postgres without
-// relying on the inline Turso write — see docs/architecture/engine-web-separation.md
-// §6.4 and docs/turso-pg-migration.md Phase 4. Gated by WRITE_OUTBOX; written in
-// parallel with (a tee of) the live direct enqueue during the soak.
+// published once accepted. This makes raw durability live on Postgres —
+// see docs/architecture/engine-web-separation.md §6.4. Gated by WRITE_OUTBOX; written
+// in parallel with (a tee of) the live direct enqueue during the soak.
 // ============================================================================
 export const observationsOutbox = pgTable(
   "observations_outbox",

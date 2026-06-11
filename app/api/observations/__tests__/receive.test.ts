@@ -245,7 +245,7 @@ describe("processQueueMessage (receiver transaction + dual-shape)", () => {
   });
 });
 
-// TODO(Phase 5 — Turso decommissioned / AGG_COMPUTE_IN_PG retired): with the flag gone, the
+// TODO(Phase 5 — legacy store decommissioned / AGG_COMPUTE_IN_PG retired): with the flag gone, the
 // receiver's raw-vendor 5m + all-1d trim is now UNCONDITIONAL (the prod flag-on behaviour became
 // permanent), so the "raw vendor 5m first-write-wins" and "1d stays upsert" assertions below — and
 // the whole flag-gated describe that followed (now removed) — no longer describe the post-Phase-5

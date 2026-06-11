@@ -979,6 +979,38 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 - **PR-13 burn-in GREEN**: queue lag 0 / DLQ 0 / presence 100% / raw landing < 2 min; reconciler `agg_5m --days=2` 20010/20010 and `agg_1d` (June) 261/261, **0 value-mismatches**
 - **Next**: Phase 3 — Sydney region move (Vercel `syd1` + PlanetScale `ap-southeast-2` + env re-point), then Phase 4 — Turso decommission (gated on raw-durability-off-Turso)
 
+## 10 June 2026
+
+### Phase 3 — Region move to Sydney (CUT OVER)
+
+- **PlanetScale → Sydney (#)**: Prod Postgres moved us-east → the 3-node HA `sydney` branch (`aws-ap-southeast-2`, PS-5 ARM, PG 17.10). Mechanism: paused the QStash queue (collection kept writing, QStash buffered) → `pg_dump -Fc`/`pg_restore` over the direct port 5432 → repointed prod `DB_*` to the Sydney pooler + redeploy → resumed → drained the backlog → recomputed the boundary day. Verified: row-parity 12/12 tables, 38/38 indexes, FK `NOT VALID` preserved; `gap-map` 0 deficits, `agg_5m`/`agg_1d` clean. us-east `main` kept hot as the burn-in rollback
+- **Order-independent aggregation**: Made the PG 5m recompute order-independent (successor recompute + per-system advisory lock) so QStash parallelism > 1 is safe
+- **Vercel compute → `syd1` (#31)**: Moved Vercel compute Tokyo → Sydney (`vercel.json` `regions`; confirmed by function region `syd1` on a live request) — engine now co-located with PG. Latency inverted: PG reads/writes local; the still-live inline best-effort backup write became the cross-region hop until decommission
+
+### Phase 4a — PG raw-durability transactional outbox (#32)
+
+- **The "PG bin before the queue"**: New `observations_outbox` table (migration `0004`) holding each poll's built `QueueMessage`. The publish seam tees the message into the outbox **in parallel with** the unchanged direct QStash enqueue; a minutely relay (`/api/cron/relay-outbox`, `drainOutbox` with `FOR UPDATE SKIP LOCKED` + per-row tx + GC) drains unpublished rows → QStash → the unchanged idempotent receiver. Closes the swallowed-enqueue and crash-at-session-close windows. Additive + reversible; the outbox carries the **message** (collection never writes the serving store — the receiver remains the single writer)
+- **Monitoring**: Outbox backlog/oldest-unpublished age surfaced by `monitor-observations`, `qstash-health`, and `/admin/observations`; Slack alerts via `OBSERVATIONS_ALERT_WEBHOOK_URL`
+
+## 11 June 2026
+
+### Phase 3 closeout + off-site backups
+
+- **us-east `main` decommissioned**: After a green ~26h burn-in, deleted the old us-east PG branch — `sydney` is now the standalone primary (one-off base backup taken first; all envs repointed off us-east)
+- **Off-site, provider-independent PG backups (decision H)**: Stood up a daily `pg_dump -Fc` of the Sydney branch shipped by **GitHub Actions → Cloudflare R2** (`pg-backup.yml`; versioned + 14-day WORM Object-Lock, client-side `age` encryption available, GFS retention ~13 months, Slack heartbeat). A weekly **restore-drill** (`pg-restore-drill.yml`) `pg_restore`s the latest object into a throwaway `postgres:17` and asserts the row count is ≥95% of live. Complements PlanetScale PITR (which is single-blast-radius on PlanetScale infra)
+
+### Phase 5 — Turso decommission (Postgres-only)
+
+- **Postgres is now the sole datastore.** Removed every Turso read/write: the inline raw/5m/1d writes, config dual-writes, and the entire `lib/db/turso` module
+- **Migration flags retired**: `CONFIG_*`, `READINGS_READS_FROM_PG`, `AGG_COMPUTE_IN_PG`, `WRITE_OUTBOX` (only `FLOW_MATRIX_*` remain); the dual-store seams (`config-shadow`/`readings-serve`) deleted
+- **Architecture simplified**: the outbox tee is now unconditional (the durability anchor); sessions publish from an in-process pending-session registry instead of a DB read-back; daily 1d aggregation moved to a PG-only module (`lib/aggregation/daily-points.ts`); the SQLite-specific ops routes (db-stats / storage / sync-database / health) were stubbed
+- **Cleanup PR**: scrubbed vestigial Turso/libsql references across code comments and docs; deleted the legacy plain-SQL `/migrations/` SQLite archive and the `db:sync-prod` dev-seed tool (`@libsql/client` dropped as a direct dependency); staged the `0006` FK-rebuild migration (unapplied)
+- **Remaining manual ops**: apply the `0006` FK rebuild, the optional session-FK validation, and `turso db destroy liveone-tokyo`
+
+### Current State (as of 2026-06-11)
+
+- **Postgres-only**: config, readings, and all aggregation served from PostgreSQL (PlanetScale `sydney`); Vercel compute in `syd1`; raw durability anchored by the PG transactional outbox + relay; off-site DR to R2. Turso is gone
+
 ---
 
 # Major Architectural Milestones
@@ -997,6 +1029,8 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 10. **PlanetScale Postgres schema** (29 November): Second store introduced; db dirs split turso/planetscale
 11. **Postgres-primary config cutover** (7 June 2026): PG becomes the config system-of-record; Turso → disposable backup
 12. **Postgres-primary readings cutover** (9 June 2026): PG serves all readings and is the sole raw-vendor aggregator; Turso → fallback only (raw + sessions best-effort backup)
+13. **Sydney region move + HA** (10 June 2026): PlanetScale → 3-node HA `sydney` branch (`ap-southeast-2`), Vercel compute → `syd1`; PG transactional outbox + relay for raw durability
+14. **Turso decommission — Postgres-only** (11 June 2026): every Turso read/write removed, `lib/db/turso` deleted, migration flags retired; PostgreSQL (PlanetScale Sydney) is the sole datastore, with off-site DR to Cloudflare R2
 
 ## Vendor Integration Timeline
 
@@ -1052,4 +1086,4 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 
 ---
 
-_This document chronicles the evolution of LiveOne from a single-vendor Selectronic monitor to a comprehensive multi-vendor solar monitoring platform with advanced features including composite systems, point-level granularity, real-time caching, and sophisticated aggregation pipelines. Its current chapter is the staged Turso → Postgres migration and the engine/web separation it enables — moving the platform toward a Postgres-primary store with an independently deployable data-collection engine._
+_This document chronicles the evolution of LiveOne from a single-vendor Selectronic monitor to a comprehensive multi-vendor solar monitoring platform with advanced features including composite systems, point-level granularity, real-time caching, and sophisticated aggregation pipelines. Its most recent chapter — the staged Turso → Postgres migration — is now complete: the platform runs Postgres-only (PlanetScale, Sydney), co-located with Vercel compute in `syd1`, with raw durability anchored by a transactional outbox and off-site DR to Cloudflare R2. The next chapter is the engine/web separation this migration enables: an independently deployable data-collection engine._

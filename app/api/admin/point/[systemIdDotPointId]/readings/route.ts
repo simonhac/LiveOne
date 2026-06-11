@@ -90,8 +90,7 @@ export async function GET(
       );
     }
 
-    // Serve the window from Postgres under READINGS_READS_FROM_PG, falling back to Turso on
-    // error/SHADOW_SKIP (PR-13a). With the flag off, Turso is served exactly as before.
+    // Serve the window from Postgres.
     let dailyStartDayStr: string | undefined;
     let dailyEndDayStr: string | undefined;
     if (source === "daily") {
@@ -102,8 +101,7 @@ export async function GET(
       dailyEndDayStr = formatDateYYYYMMDD(date.add({ days: 9 }));
     }
 
-    // Center the window on the target row (±5, widening to ±10 at the edges). Pure; shared by the
-    // PG served path and the Turso fallback path.
+    // Center the window on the target row (±5, widening to ±10 at the edges). Pure.
     const centerReadings = (allReadings: any[]): any[] => {
       let targetIndex: number;
       if (source === "daily") {
