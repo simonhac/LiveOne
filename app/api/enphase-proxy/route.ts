@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db/turso";
-import { systems } from "@/lib/db/turso/schema";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { systems } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
 import { getValidEnphaseToken } from "@/lib/vendors/enphase/enphase-auth";
 
@@ -51,7 +51,7 @@ async function handleRequest(request: NextRequest, defaultMethod: string) {
     }
 
     // Get system details
-    const [system] = await db
+    const [system] = await requirePlanetscaleDb()
       .select()
       .from(systems)
       .where(eq(systems.id, parseInt(systemId)))

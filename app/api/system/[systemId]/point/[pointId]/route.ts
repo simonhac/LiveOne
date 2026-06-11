@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db/turso";
-import { pointInfo } from "@/lib/db/turso/schema-monitoring-points";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { pointInfo } from "@/lib/db/planetscale/schema";
 import { eq, and } from "drizzle-orm";
 import { requireSystemAccess } from "@/lib/api-auth";
 import { isValidLogicalPathStem } from "@/lib/identifiers/logical-path";
@@ -43,7 +43,7 @@ export async function PATCH(
     const body = await request.json();
 
     // Validate the point exists
-    const [existingPoint] = await db
+    const [existingPoint] = await requirePlanetscaleDb()
       .select()
       .from(pointInfo)
       .where(
@@ -112,7 +112,7 @@ export async function PATCH(
     await pointManager.updatePoint(systemId, pointId, updateData);
 
     // Fetch the updated record
-    const [updatedPoint] = await db
+    const [updatedPoint] = await requirePlanetscaleDb()
       .select()
       .from(pointInfo)
       .where(
@@ -178,7 +178,7 @@ export async function GET(
     if (authResult instanceof NextResponse) return authResult;
     const { system } = authResult;
 
-    const [point] = await db
+    const [point] = await requirePlanetscaleDb()
       .select()
       .from(pointInfo)
       .where(

@@ -3,8 +3,8 @@ import type { TestConnectionResult, FetchContext, FetchResult } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { LatestReadingData } from "@/lib/types/readings";
 import { PointManager } from "@/lib/point/point-manager";
-import { db } from "@/lib/db/turso";
-import { pointReadingsAgg5m } from "@/lib/db/turso/schema-monitoring-points";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { pointReadingsAgg5m } from "@/lib/db/planetscale/schema";
 import { eq, and, desc } from "drizzle-orm";
 import {
   checkAndFetchYesterdayIfNeeded,
@@ -52,7 +52,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
     }
 
     // Get the latest 5-minute aggregate for this point
-    const [latestAgg] = await db
+    const [latestAgg] = await requirePlanetscaleDb()
       .select()
       .from(pointReadingsAgg5m)
       .where(

@@ -1,6 +1,5 @@
-import { db } from "@/lib/db/turso";
-import { systems } from "@/lib/db/turso/schema";
-import { pointReadingsAgg5m } from "@/lib/db/turso/schema-monitoring-points";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { systems, pointReadingsAgg5m } from "@/lib/db/planetscale/schema";
 import { eq, and, gte, lte } from "drizzle-orm";
 import { fetchWithEnphaseAuth } from "./enphase-auth";
 import { CalendarDate } from "@internationalized/date";
@@ -36,7 +35,7 @@ interface EnphaseProductionResponse {
  * Get and validate a system from the database
  */
 async function getValidatedEnphaseSystem(systemId: number) {
-  const [system] = await db
+  const [system] = await requirePlanetscaleDb()
     .select()
     .from(systems)
     .where(eq(systems.id, systemId))
@@ -300,15 +299,15 @@ export async function hasCompleteEveningData(
   const eveningEndMs = (dayEndUnix - 300) * 1000; // 23:55 (5 minutes before midnight)
 
   // Query for existing data in this range for the solar power point
-  const existingData = await db
+  const existingData = await requirePlanetscaleDb()
     .select()
     .from(pointReadingsAgg5m)
     .where(
       and(
         eq(pointReadingsAgg5m.systemId, systemId),
         eq(pointReadingsAgg5m.pointId, solarPoint.index),
-        gte(pointReadingsAgg5m.intervalEnd, eveningStartMs),
-        lte(pointReadingsAgg5m.intervalEnd, eveningEndMs),
+        gte(pointReadingsAgg5m.intervalEnd, new Date(eveningStartMs)),
+        lte(pointReadingsAgg5m.intervalEnd, new Date(eveningEndMs)),
       ),
     );
 

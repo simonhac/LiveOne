@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
-import { db } from "@/lib/db/turso";
-import { systems, userSystems } from "@/lib/db/turso/schema";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { systems, userSystems } from "@/lib/db/planetscale/schema";
 import { eq, and } from "drizzle-orm";
 import { SystemsManager } from "@/lib/systems-manager";
 import { grantUserSystem } from "@/lib/user-systems";
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if this system exists (vendor type + site ID is the unique combination)
-    const [existingSystem] = await db
+    const [existingSystem] = await requirePlanetscaleDb()
       .select()
       .from(systems)
       .where(
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
 
     if (existingSystem) {
       // Check if user already has access to this system
-      const [existingAccess] = await db
+      const [existingAccess] = await requirePlanetscaleDb()
         .select()
         .from(userSystems)
         .where(
@@ -115,7 +115,7 @@ export async function GET(request: NextRequest) {
     const { userId } = authResult;
 
     // Get all systems this user has access to
-    const userSystemRecords = await db
+    const userSystemRecords = await requirePlanetscaleDb()
       .select()
       .from(userSystems)
       .innerJoin(systems, eq(systems.id, userSystems.systemId))

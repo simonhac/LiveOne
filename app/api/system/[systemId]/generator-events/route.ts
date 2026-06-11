@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSystemAccess } from "@/lib/api-auth";
-import { rawClient } from "@/lib/db/turso";
+import { sql } from "drizzle-orm";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 
 interface GeneratorEvent {
   date: string;
@@ -41,18 +42,17 @@ export async function GET(
     const authResult = await requireSystemAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
 
+    const db = requirePlanetscaleDb();
+
     // Find the grid power point ID for this system
-    const pointResult = await rawClient.execute({
-      sql: `
+    const pointResult = await db.execute(sql`
         SELECT id
         FROM point_info
-        WHERE system_id = ?
+        WHERE system_id = ${systemId}
           AND metric_type = 'power'
           AND display_name = 'Grid'
         LIMIT 1
-      `,
-      args: [systemId],
-    });
+      `);
 
     if (pointResult.rows.length === 0) {
       return NextResponse.json({
@@ -63,21 +63,18 @@ export async function GET(
 
     const gridPowerPointId = Number(pointResult.rows[0].id);
 
-    // Query generator events from point_readings
-    // Note: measurement_time is in milliseconds, value is grid power in W
-    const result = await rawClient.execute({
-      sql: `
+    // Query generator events from point_readings. measurement_time is projected to
+    // epoch-ms; value is grid power in W.
+    const result = await db.execute(sql`
         SELECT
-          measurement_time,
+          (EXTRACT(EPOCH FROM measurement_time AT TIME ZONE 'UTC') * 1000) AS measurement_time,
           value
         FROM point_readings
-        WHERE system_id = ?
-          AND point_id = ?
+        WHERE system_id = ${systemId}
+          AND point_id = ${gridPowerPointId}
           AND value < -50
         ORDER BY measurement_time
-      `,
-      args: [systemId, gridPowerPointId],
-    });
+      `);
 
     // Group readings into events
     const events: GeneratorEvent[] = [];
@@ -121,40 +118,31 @@ export async function GET(
 
     // Calculate energy for each event
     // Get Import energy point for energy calculations
-    const importPointResult = await rawClient.execute({
-      sql: `
+    const importPointResult = await db.execute(sql`
         SELECT id
         FROM point_info
-        WHERE system_id = ?
+        WHERE system_id = ${systemId}
           AND metric_type = 'energy'
           AND display_name = 'Import'
         LIMIT 1
-      `,
-      args: [systemId],
-    });
+      `);
 
     if (importPointResult.rows.length > 0) {
       const importPointId = Number(importPointResult.rows[0].id);
 
       // For each event, get energy at start and end
       for (const event of events) {
-        const energyResult = await rawClient.execute({
-          sql: `
-            SELECT measurement_time, value
+        const energyResult = await db.execute(sql`
+            SELECT
+              (EXTRACT(EPOCH FROM measurement_time AT TIME ZONE 'UTC') * 1000) AS measurement_time,
+              value
             FROM point_readings
-            WHERE system_id = ?
-              AND point_id = ?
-              AND measurement_time >= ?
-              AND measurement_time <= ?
+            WHERE system_id = ${systemId}
+              AND point_id = ${importPointId}
+              AND measurement_time >= to_timestamp(${event.startTimeUnix! * 1000} / 1000.0)
+              AND measurement_time <= to_timestamp(${event.endTimeUnix! * 1000} / 1000.0)
             ORDER BY measurement_time
-          `,
-          args: [
-            systemId,
-            importPointId,
-            event.startTimeUnix! * 1000,
-            event.endTimeUnix! * 1000,
-          ],
-        });
+          `);
 
         if (energyResult.rows.length >= 2) {
           const startEnergy = Number(energyResult.rows[0].value);

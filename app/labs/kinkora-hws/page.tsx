@@ -1,8 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect, notFound } from "next/navigation";
-import { and, eq } from "drizzle-orm";
-import { db, rawClient } from "@/lib/db/turso";
-import { pointInfo } from "@/lib/db/turso/schema-monitoring-points";
+import { and, eq, sql } from "drizzle-orm";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { pointInfo } from "@/lib/db/planetscale/schema";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { modelHws, DEFAULT_HWS_MODEL_OPTIONS } from "@/lib/hws-model";
@@ -47,7 +47,7 @@ export default async function KinkoraHwsPage({
     if (!isOwner && !isAdmin) redirect("/dashboard");
   }
 
-  const hwsPoint = await db
+  const hwsPoint = await requirePlanetscaleDb()
     .select()
     .from(pointInfo)
     .where(
@@ -79,15 +79,14 @@ export default async function KinkoraHwsPage({
     Math.floor((nowMs + tz * 60_000) / DAY_MS) * DAY_MS - tz * 60_000;
   const displayStartMs = todayLocalMidnightMs - (DISPLAY_DAYS - 1) * DAY_MS;
 
-  const result = await rawClient.execute({
-    sql: `SELECT interval_end, avg
-          FROM point_readings_agg_5m
-          WHERE system_id = ? AND point_id = ? AND interval_end >= ?
-          ORDER BY interval_end ASC`,
-    args: [system.id, pointIndex, startMs],
-  });
+  const result = await requirePlanetscaleDb().execute(sql`
+        SELECT (EXTRACT(EPOCH FROM interval_end AT TIME ZONE 'UTC') * 1000) AS interval_end, avg
+        FROM point_readings_agg_5m
+        WHERE system_id = ${system.id} AND point_id = ${pointIndex}
+          AND interval_end >= to_timestamp(${startMs} / 1000.0)
+        ORDER BY interval_end ASC`);
 
-  const samples = result.rows.map((r) => ({
+  const samples = result.rows.map((r: any) => ({
     tsMs: Number(r.interval_end),
     powerW: r.avg === null ? null : Number(r.avg),
   }));

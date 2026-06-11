@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db/turso";
-import { systems } from "@/lib/db/turso/schema";
-import { pointInfo } from "@/lib/db/turso/schema-monitoring-points";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { systems } from "@/lib/db/planetscale/schema";
+import { pointInfo } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
@@ -23,7 +23,7 @@ export async function GET(
     }
 
     // Get the target system
-    const [targetSystem] = await db
+    const [targetSystem] = await requirePlanetscaleDb()
       .select()
       .from(systems)
       .where(eq(systems.id, systemId))
@@ -92,7 +92,7 @@ export async function PATCH(
     }
 
     // Get the target system
-    const [targetSystem] = await db
+    const [targetSystem] = await requirePlanetscaleDb()
       .select()
       .from(systems)
       .where(eq(systems.id, systemId))
@@ -182,7 +182,7 @@ export async function PATCH(
 
     // Fetch all referenced points from database
     if (allPointRefs.size > 0) {
-      const points = await db.select().from(pointInfo);
+      const points = await requirePlanetscaleDb().select().from(pointInfo);
 
       // Build map of "systemId.pointId" -> path
       const pointPaths = new Map<string, string>();

@@ -206,7 +206,7 @@ describe("processQueueMessage (receiver transaction + dual-shape)", () => {
     expect(stats.rawInserted).toBe(0); // fake returning() yields []
   });
 
-  it("routes raw / 5m / 1d observations to their tables, session first", async () => {
+  it("routes raw to point_readings (session first); raw-vendor 5m + all 1d are dropped", async () => {
     const { db, order } = makeFakeDb();
 
     const agg = {
@@ -231,19 +231,16 @@ describe("processQueueMessage (receiver transaction + dual-shape)", () => {
       }),
     );
 
+    // Phase 5: Postgres self-computes raw-vendor 5m (from raw) and 1d (daily cron),
+    // so the receiver inserts only the session + raw point_readings; a raw-vendor 5m
+    // straggler and any 1d are dropped.
     expect(order[0]).toBe("sessions");
     expect(order).toContain("point_readings");
-    expect(order).toContain("point_readings_agg_5m");
-    expect(order).toContain("point_readings_agg_1d");
-    // Every reading table comes after the session insert.
+    expect(order).not.toContain("point_readings_agg_5m");
+    expect(order).not.toContain("point_readings_agg_1d");
+    // The reading table comes after the session insert.
     expect(order.indexOf("sessions")).toBeLessThan(
       order.indexOf("point_readings"),
-    );
-    expect(order.indexOf("sessions")).toBeLessThan(
-      order.indexOf("point_readings_agg_5m"),
-    );
-    expect(order.indexOf("sessions")).toBeLessThan(
-      order.indexOf("point_readings_agg_1d"),
     );
   });
 });

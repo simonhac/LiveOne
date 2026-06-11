@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db/turso";
-import { systems } from "@/lib/db/turso/schema";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { systems } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { clearDefaultForAllUsers } from "@/lib/user-preferences";
@@ -35,7 +35,7 @@ export async function PATCH(
 
     // Confirm the system exists before updating (preserves the prior 404 that the
     // .returning() row count provided — updateSystem returns void).
-    const [existingSystem] = await db
+    const [existingSystem] = await requirePlanetscaleDb()
       .select()
       .from(systems)
       .where(eq(systems.id, systemId))

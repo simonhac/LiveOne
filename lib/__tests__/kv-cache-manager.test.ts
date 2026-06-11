@@ -20,27 +20,28 @@ jest.mock("../kv", () => ({
   kvKey: jest.fn((pattern: string) => `test:${pattern}`),
 }));
 
-// Mock the database
-jest.mock("../db/turso", () => ({
-  db: {
-    select: jest.fn(() => ({
-      from: jest.fn(() => ({
-        where: jest.fn(() => ({
-          orderBy: jest.fn(() => Promise.resolve([])),
-        })),
+// Mock the database (Postgres)
+const mockDb = {
+  select: jest.fn(() => ({
+    from: jest.fn(() => ({
+      where: jest.fn(() => ({
+        orderBy: jest.fn(() => Promise.resolve([])),
       })),
     })),
+  })),
+};
+jest.mock("@/lib/db/planetscale", () => ({
+  requirePlanetscaleDb: () => mockDb,
+  get planetscaleDb() {
+    return mockDb;
   },
 }));
 
 // Mock the schema
-jest.mock("../db/turso/schema", () => ({
+jest.mock("@/lib/db/planetscale/schema", () => ({
   systems: {
     vendorType: "vendorType",
   },
-}));
-
-jest.mock("../db/turso/schema-monitoring-points", () => ({
   pointInfo: {
     systemId: "systemId",
     index: "index",
@@ -208,7 +209,8 @@ describe("kv-cache-manager", () => {
 
   describe("buildSubscriptionRegistry", () => {
     it("should build reverse mapping from source systems to composite systems", async () => {
-      const { db } = await import("../db/turso");
+      const { requirePlanetscaleDb } = await import("@/lib/db/planetscale");
+      const db = requirePlanetscaleDb();
       const { kv } = await import("../kv");
 
       // Mock composite systems in database
@@ -270,7 +272,8 @@ describe("kv-cache-manager", () => {
     });
 
     it("should skip composite systems with invalid metadata", async () => {
-      const { db } = await import("../db/turso");
+      const { requirePlanetscaleDb } = await import("@/lib/db/planetscale");
+      const db = requirePlanetscaleDb();
       const { kv } = await import("../kv");
 
       const mockCompositeSystems = [

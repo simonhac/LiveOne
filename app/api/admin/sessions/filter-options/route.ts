@@ -1,26 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { rawClient } from "@/lib/db/turso";
+import { SystemsManager } from "@/lib/systems-manager";
 
 export async function GET(request: NextRequest) {
   try {
     const authResult = await requireAdmin(request);
     if (authResult instanceof NextResponse) return authResult;
 
-    // Query systems table directly (9 rows) instead of scanning 118K sessions
-    const systemNamesResult = await rawClient.execute(
-      "SELECT display_name FROM systems ORDER BY display_name",
-    );
-    const vendorTypesResult = await rawClient.execute(
-      "SELECT DISTINCT vendor_type FROM systems ORDER BY vendor_type",
-    );
-
-    const systemNames = systemNamesResult.rows.map(
-      (r: any) => r.display_name as string,
-    );
-    const vendorTypes = vendorTypesResult.rows.map(
-      (r: any) => r.vendor_type as string,
-    );
+    // Derive from the in-memory systems registry (Postgres-backed) — only ~9 rows.
+    const allSystems = await SystemsManager.getInstance().getAllSystems();
+    const systemNames = [
+      ...new Set(allSystems.map((s) => s.displayName)),
+    ].sort();
+    const vendorTypes = [
+      ...new Set(allSystems.map((s) => s.vendorType)),
+    ].sort();
     // Hardcoded - these are finite values defined in code
     const causes = ["ADMIN", "CRON", "POLL", "PUSH", "USER", "USER-TEST"];
     // Hardcoded - only 3 possible states: null=pending, true=success, false=failed

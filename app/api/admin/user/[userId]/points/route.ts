@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db/turso";
-import { pointInfo } from "@/lib/db/turso/schema-monitoring-points";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { pointInfo } from "@/lib/db/planetscale/schema";
 import { eq, and } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -38,10 +38,16 @@ export async function GET(
 
     // Get all active points from these systems
     const systemIds = nonCompositeSystems.map((s) => s.id);
-    const points = await db
+    const pgPoints = await requirePlanetscaleDb()
       .select()
       .from(pointInfo)
       .where(and(eq(pointInfo.active, true)));
+    // Map PG rows (native timestamps) to the served shape PointInfo.from() expects.
+    const points = pgPoints.map((p) => ({
+      ...p,
+      createdAtMs: p.createdAt ? p.createdAt.getTime() : 0,
+      updatedAtMs: p.updatedAt ? p.updatedAt.getTime() : null,
+    }));
 
     // Filter to only points from the owner's systems and build the response
     const availablePoints: Array<{

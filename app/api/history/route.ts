@@ -401,7 +401,7 @@ async function getSystemHistoryInOpenNEMFormat(
   });
   if (computeSankey)
     flowMatrix = buildFlowMatrixFromAggRows(rows, sankey!.logicalSystem);
-  const series = buildSeriesFromAggRows(
+  const series = await buildSeriesFromAggRows(
     rows,
     seriesInfos,
     interval,

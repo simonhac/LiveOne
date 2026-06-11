@@ -6,6 +6,10 @@ jest.mock("../index", () => ({
   get planetscaleDb() {
     return mockDb;
   },
+  requirePlanetscaleDb() {
+    if (!mockDb) throw new Error("[PlanetScale] not configured (test)");
+    return mockDb;
+  },
 }));
 
 import {
