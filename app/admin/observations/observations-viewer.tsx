@@ -324,7 +324,8 @@ export default function ObservationsViewer() {
   // each message batches many observations, so we estimate from the sampled bodies
   // (the /messages endpoint returns up to 50). Exact when the whole backlog is sampled.
   const queued = useMemo(() => {
-    const lag = queue?.lag ?? 0;
+    if (!queue) return null; // queue stats not loaded yet — show "—", not a misleading 0
+    const lag = queue.lag;
     if (lag === 0) return { value: 0, exact: true, perMsg: 0 };
     if (!messages.length) return null;
     let obs = 0;
@@ -493,21 +494,34 @@ function Stat({
   hint,
   valueClass = "text-white",
   hintClass = "text-gray-500",
+  loading = false,
 }: {
   label: string;
   value: string;
   hint?: string;
   valueClass?: string;
   hintClass?: string;
+  // When the underlying value isn't known yet, show a sweeping shimmer
+  // skeleton instead of a placeholder number/dash.
+  loading?: boolean;
 }) {
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900/40 p-3">
       <div className="text-xs text-gray-400">{label}</div>
-      <div className={`text-2xl font-semibold mt-0.5 ${valueClass}`}>
-        {value}
-      </div>
-      {hint && (
-        <div className={`text-xs mt-0.5 truncate ${hintClass}`}>{hint}</div>
+      {loading ? (
+        <div aria-hidden className="mt-1.5 space-y-1.5">
+          <div className="shimmer h-6 w-20 rounded" />
+          {hint && <div className="shimmer h-3 w-28 rounded" />}
+        </div>
+      ) : (
+        <>
+          <div className={`text-2xl font-semibold mt-0.5 ${valueClass}`}>
+            {value}
+          </div>
+          {hint && (
+            <div className={`text-xs mt-0.5 truncate ${hintClass}`}>{hint}</div>
+          )}
+        </>
       )}
     </div>
   );
@@ -545,10 +559,12 @@ function StatCards({
               : "no sample"
         }
         valueClass={queued && queued.value > 0 ? "text-sky-300" : "text-white"}
+        loading={queued === null}
       />
       <Stat
         label="Queued messages"
         value={queue ? queue.lag.toLocaleString() : "—"}
+        loading={!queue}
         hint={
           queue?.paused
             ? "paused"
@@ -565,10 +581,12 @@ function StatCards({
           dlqCount && dlqCount >= 50 ? "showing first 50" : "failed deliveries"
         }
         hintClass={dlqCount && dlqCount > 0 ? "text-red-400" : "text-gray-500"}
+        loading={dlqCount === null}
       />
       <Stat
         label="Observations (24h)"
         value={totalObs24h === null ? "—" : totalObs24h.toLocaleString()}
+        loading={totalObs24h === null}
         hint={
           summary
             ? `${summary.raw24h.toLocaleString()} raw · ${summary.agg5m24h.toLocaleString()} 5m`
@@ -585,16 +603,19 @@ function StatCards({
               }).display
             : ""
         }
+        loading={!summary}
       />
       <Stat
         label="Sessions (24h)"
         value={summary ? summary.sessions24h.toLocaleString() : "—"}
         hint="polls recorded"
+        loading={!summary}
       />
       <Stat
         label="Systems active (24h)"
         value={summary ? summary.systems24h.toLocaleString() : "—"}
         hint="distinct systems"
+        loading={!summary}
       />
       <Stat
         label="Queue"
@@ -607,6 +628,7 @@ function StatCards({
               : "text-green-400"
             : undefined
         }
+        loading={!queue}
       />
       <Stat
         label="Postgres"
@@ -619,6 +641,7 @@ function StatCards({
               : "text-amber-400"
             : undefined
         }
+        loading={!stats}
       />
     </div>
   );

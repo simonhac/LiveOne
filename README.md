@@ -109,7 +109,7 @@ For the full picture, see [`docs/architecture/overview.md`](docs/architecture/ov
 
 ## Getting started
 
-**Prerequisites:** Node.js 18+, plus accounts for Clerk (auth), PlanetScale (Postgres), and Vercel (hosting). A Vercel KV cache is recommended but optional.
+**Prerequisites:** Node.js 18+, plus accounts for Clerk (auth), PlanetScale (Postgres), and Vercel (hosting). A Vercel KV cache is optional but recommended: without it the app still works, falling back to Postgres for latest values instead of serving them from cache.
 
 ```bash
 git clone https://github.com/simonhac/liveone.git
