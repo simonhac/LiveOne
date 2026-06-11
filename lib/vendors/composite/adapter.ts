@@ -7,7 +7,7 @@ import { VendorRegistry } from "@/lib/vendors/registry";
 /**
  * Composite system metadata
  *
- * Example 1 - CraigHack:
+ * Example 1 - Craig Unified (system 7):
  * {
  *   "base_system": 2,      // Selectronic for battery, load, grid
  *   "overrides": {

@@ -3,17 +3,9 @@ import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { requireSystemAccess } from "@/lib/api-auth";
 import { parseDateRange } from "@/lib/date-utils";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { pointReadingsFlow1d, pointInfo } from "@/lib/db/planetscale/schema";
-import {
-  colorForFlowPath,
-  labelForFlowPath,
-  compareSourcePaths,
-  compareLoadPaths,
-} from "@/lib/aggregation/flow-node-meta";
-import type {
-  EnergyFlowMatrix,
-  EnergyFlowNode,
-} from "@/lib/energy-flow-matrix";
+import { pointReadingsFlow1d } from "@/lib/db/planetscale/schema";
+import { toEnergyFlowMatrix } from "@/lib/aggregation/flow-node-meta";
+import { resolveLogicalSystem } from "@/lib/aggregation/logical-system";
 
 /**
  * GET /api/energy-flow-matrix?systemId=&start=&end=
@@ -92,64 +84,50 @@ export async function GET(request: NextRequest) {
       )
       .groupBy(pointReadingsFlow1d.sourcePath, pointReadingsFlow1d.loadPath);
 
-    // Configured display names by logical-path stem (for sub-meters / master load / solar).
-    const points = await planetscaleDb
-      .select({
-        stem: pointInfo.logicalPathStem,
-        displayName: pointInfo.displayName,
-      })
-      .from(pointInfo)
-      .where(eq(pointInfo.systemId, systemId));
+    // Resolve the logical system for display names (keyed by stem; works for composites, whose
+    // points live on child systems) and to explain an empty result.
+    const logicalSystem = await resolveLogicalSystem(systemId);
     const displayNameByStem = new Map<string, string>();
-    for (const p of points) {
-      if (p.stem && !displayNameByStem.has(p.stem)) {
+    for (const p of logicalSystem?.points ?? []) {
+      if (!displayNameByStem.has(p.stem)) {
         displayNameByStem.set(p.stem, p.displayName);
       }
     }
 
-    // Distinct, canonically-ordered source/load paths.
-    const sourcePaths = [...new Set(rows.map((r) => r.sourcePath))].sort(
-      compareSourcePaths,
-    );
-    const loadPaths = [...new Set(rows.map((r) => r.loadPath))].sort(
-      compareLoadPaths,
-    );
+    // Empty is ambiguous — say why, so a blank Sankey isn't read as "no energy".
+    if (rows.length === 0) {
+      const reason =
+        !logicalSystem || !logicalSystem.isComplete
+          ? "not-a-logical-system"
+          : "not-materialized";
+      return NextResponse.json({
+        sources: [],
+        loads: [],
+        matrix: [],
+        sourceTotals: [],
+        loadTotals: [],
+        totalEnergy: 0,
+        reason,
+      });
+    }
+
+    // Build the dense (unsorted) summed matrix from the grouped rows; the shared presenter sorts
+    // canonically, resolves node labels/colors, and computes totals — same as the sub-daily path.
+    const sourcePaths = [...new Set(rows.map((r) => r.sourcePath))];
+    const loadPaths = [...new Set(rows.map((r) => r.loadPath))];
     const sourceIdx = new Map(sourcePaths.map((p, i) => [p, i]));
     const loadIdx = new Map(loadPaths.map((p, i) => [p, i]));
-
-    // Dense matrix + totals.
     const matrix: number[][] = sourcePaths.map(() =>
       new Array<number>(loadPaths.length).fill(0),
     );
-    const sourceTotals = new Array<number>(sourcePaths.length).fill(0);
-    const loadTotals = new Array<number>(loadPaths.length).fill(0);
-    let totalEnergy = 0;
     for (const r of rows) {
-      const s = sourceIdx.get(r.sourcePath)!;
-      const l = loadIdx.get(r.loadPath)!;
-      const energy = Number(r.energyKwh) || 0;
-      matrix[s][l] = energy;
-      sourceTotals[s] += energy;
-      loadTotals[l] += energy;
-      totalEnergy += energy;
+      matrix[sourceIdx.get(r.sourcePath)!][loadIdx.get(r.loadPath)!] =
+        Number(r.energyKwh) || 0;
     }
 
-    const toNode = (path: string): EnergyFlowNode => ({
-      id: path,
-      label: labelForFlowPath(path, displayNameByStem),
-      color: colorForFlowPath(path),
-    });
-
-    const result: EnergyFlowMatrix = {
-      sources: sourcePaths.map(toNode),
-      loads: loadPaths.map(toNode),
-      matrix,
-      sourceTotals,
-      loadTotals,
-      totalEnergy,
-    };
-
-    return NextResponse.json(result);
+    return NextResponse.json(
+      toEnergyFlowMatrix(sourcePaths, loadPaths, matrix, displayNameByStem),
+    );
   } catch (error) {
     console.error("[energy-flow-matrix] error:", error);
     return NextResponse.json(

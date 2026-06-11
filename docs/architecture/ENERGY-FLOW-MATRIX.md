@@ -43,15 +43,22 @@ Nodes are keyed by **canonical path string**, not point id — so aggregated sol
 
 No foreign keys (consistent with the rest of the PG schema); writes are idempotent `onConflictDoUpdate` on the primary key.
 
+## Logical systems
+
+The unit a Sankey is computed over is a **logical system** (`lib/aggregation/logical-system.ts`, `resolveLogicalSystem`): the role→point mapping that has both a source and a load role. It is either a single physical system whose own points cover the roles, OR a **composite** (`vendor_type='composite'`) whose points are drawn from CHILD systems via `systems.metadata`. One resolver feeds every path — the engine recompute, the sub‑daily history compute, and the FE — so role classification isn't re‑derived independently. A composite's `flow_1d` rows are written under the composite's id with cross‑system origin collapsed into that view (a composite and its children each get their own rows — never sum both in a rollup).
+
 ## Compute (engine)
 
-The daily cron recomputes each system/day's matrix from `agg_5m` immediately after the `agg_1d` recompute, sharing the same per‑day loop and idempotency (`lib/db/planetscale/flow-matrix-pg.ts`). The math is the **shared pure core** `computeFlowMatrix` (`lib/aggregation/flow-matrix-core.ts`) — no DB or UI imports — so the engine and the live browser path compute identical values by construction. Late or out‑of‑order `agg_5m` corrections heal on the next recompute of that day. Gated by `FLOW_MATRIX_COMPUTE_IN_PG`.
+After the daily `agg_1d` pass, the cron recomputes the matrix **per logical system** from `agg_5m` (`lib/db/planetscale/flow-matrix-pg.ts`, driven by `listCompleteLogicalSystems`), reading each one's (possibly cross‑system) point refs and writing under its logical‑system id. Driving from the logical‑system registry — not the `DISTINCT system_id FROM agg_5m` physical‑system list — is what lets composites materialize at all. The math is the **shared pure core** `computeFlowMatrix` (`lib/aggregation/flow-matrix-core.ts`) — no DB or UI imports — so the engine and the live browser/history paths compute identical values by construction. Late or out‑of‑order `agg_5m` corrections heal on the next recompute of that day. Gated by `FLOW_MATRIX_COMPUTE_IN_PG`.
 
 ## Read (web)
 
-`GET /api/energy-flow-matrix?systemId&start&end` returns the `EnergyFlowMatrix` for the range: summed completed days from `point_readings_flow_1d` plus the live partial day. The dashboard uses it for 30‑day, calendar‑month, and arbitrary ranges; 1D/7D are computed client‑side from 5‑minute data. Gated by `FLOW_MATRIX_SERVE_FROM_PG`.
+Two serving paths, one shared computation:
 
-Both gates default off, in which case behaviour is identical to the pre‑materialization path; rollback is a flag flip.
+- **Long‑range (30‑day / month / arbitrary)** — `GET /api/energy-flow-matrix?systemId&start&end` returns summed completed days from `point_readings_flow_1d` plus the live partial day.
+- **Sub‑daily (1D/7D)** — bundled with the history payload via `GET /api/history?include=sankey`, computed on the fly from the **same signed 5‑minute rows the history read already loads** (5m and 30m both read `agg_5m`; the matrix is built before 30m bucketing, so 7D stays 5m‑accurate) — no extra query. Refused for `1d` and for filtered requests that don't cover the role set.
+
+Both are presented through the shared `toEnergyFlowMatrix` (`lib/aggregation/flow-node-meta.ts`). Gated by `FLOW_MATRIX_SERVE_FROM_PG`; off → the dashboard computes sub‑daily client‑side and 30D shows the old client path. `FLOW_MATRIX_COMPUTE_IN_PG` (materialization) and `FLOW_MATRIX_SERVE_FROM_PG` (serving) are independent; rollback is a flag flip.
 
 ## Invariants
 
@@ -65,7 +72,10 @@ Both gates default off, in which case behaviour is identical to the pre‑materi
 
 - `lib/aggregation/flow-matrix-core.ts` — pure integrator (`computeFlowMatrix`).
 - `lib/aggregation/flow-series.ts` — solar leaf/residual resolution and other shared series helpers.
+- `lib/aggregation/logical-system.ts` — role→point resolver (`resolveLogicalSystem`, `listCompleteLogicalSystems`).
+- `lib/aggregation/flow-node-meta.ts` — node label/color/order + the shared `toEnergyFlowMatrix` presenter.
 - `lib/energy-flow-matrix.ts` — browser adapter (`calculateEnergyFlowMatrix`).
+- `lib/history/build-flow-matrix.ts` — sub-daily compute from in-hand 5m rows (`buildFlowMatrixFromAggRows`).
 - `lib/db/planetscale/schema.ts` — `point_readings_flow_1d`.
-- `lib/db/planetscale/flow-matrix-pg.ts` — engine daily recompute.
-- `app/api/energy-flow-matrix/route.ts` — read endpoint.
+- `lib/db/planetscale/flow-matrix-pg.ts` — engine daily recompute (logical-system-driven).
+- `app/api/energy-flow-matrix/route.ts` — long-range read endpoint; `app/api/history/route.ts` — sub-daily `?include=sankey`.

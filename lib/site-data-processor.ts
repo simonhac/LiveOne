@@ -4,6 +4,7 @@ import {
   generateSeriesConfig,
 } from "@/components/SitePowerChart";
 import { getColorForPath } from "@/lib/chart-colors";
+import type { EnergyFlowMatrix } from "./energy-flow-matrix";
 import { SeriesPath } from "@/lib/identifiers";
 import { matchesLogicalPath, stemSplit } from "@/lib/identifiers/logical-path";
 import { parseAbsolute, parseDate, toZoned } from "@internationalized/date";
@@ -14,6 +15,8 @@ export interface ProcessedSiteData {
   generation: ChartData | null;
   requestStart?: string;
   requestEnd?: string;
+  /** Server-computed sub-daily energy-flow matrix (when served), else null → compute client-side. */
+  flowMatrix?: EnergyFlowMatrix | null;
 }
 
 /**
@@ -51,6 +54,7 @@ async function fetchHistoryData(
   series: ParsedSeries[];
   requestStart?: string;
   requestEnd?: string;
+  flowMatrix?: EnergyFlowMatrix | null;
 }> {
   // Build API URL - use absolute time if provided, otherwise use relative
   let apiUrl: string;
@@ -86,6 +90,11 @@ async function fetchHistoryData(
     apiUrl = `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId}&series=${seriesFilter}`;
   }
 
+  // Ask the history endpoint to bundle the energy-flow matrix from the same hi-res rows (sub-daily
+  // only; 1d/long-range is served from the flow_1d endpoint). Server-gated by FLOW_MATRIX_SERVE_FROM_PG
+  // — when off it simply isn't returned and we fall back to the client-side calc.
+  if (requestInterval !== "1d") apiUrl += "&include=sankey";
+
   const response = await fetch(apiUrl, {
     credentials: "same-origin",
   });
@@ -103,6 +112,7 @@ async function fetchHistoryData(
       series: [],
       requestStart: data?.requestStart,
       requestEnd: data?.requestEnd,
+      flowMatrix: data?.flowMatrix ?? null,
     };
   }
 
@@ -117,6 +127,7 @@ async function fetchHistoryData(
     series: parsedSeries,
     requestStart: data.requestStart,
     requestEnd: data.requestEnd,
+    flowMatrix: data.flowMatrix ?? null,
   };
 }
 
@@ -132,6 +143,8 @@ interface FetchedSiteData {
   requestInterval: string;
   requestStart?: string;
   requestEnd?: string;
+  /** Server-computed sub-daily energy-flow matrix (when ?include=sankey is served), else null. */
+  flowMatrix?: EnergyFlowMatrix | null;
 }
 
 /**
@@ -322,6 +335,7 @@ async function fetchSiteData(
     series: allSeries,
     requestStart,
     requestEnd,
+    flowMatrix,
   } = await fetchHistoryData(
     systemId,
     requestInterval,
@@ -372,6 +386,7 @@ async function fetchSiteData(
     requestInterval,
     requestStart,
     requestEnd,
+    flowMatrix,
   };
 }
 
@@ -674,6 +689,7 @@ function processSiteData(fetchedData: FetchedSiteData): ProcessedSiteData {
     requestInterval,
     requestStart,
     requestEnd,
+    flowMatrix,
   } = fetchedData;
 
   const processedData: ProcessedSiteData = {
@@ -681,6 +697,7 @@ function processSiteData(fetchedData: FetchedSiteData): ProcessedSiteData {
     generation: null,
     requestStart,
     requestEnd,
+    flowMatrix,
   };
 
   // Process generation FIRST (needed for load Case 3)
