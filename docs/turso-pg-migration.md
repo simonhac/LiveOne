@@ -17,7 +17,7 @@ it; move the config tables to it), demote **Turso to a transitional best-effort 
 (ap-southeast-2 / `syd1`)**. Staged, flag-gated, multi-PR. The deeper reason is to cleanly separate the
 data-collection **engine** from the **web/FE** — see [Direction of travel](#direction-of-travel--engineweb-separation).
 
-## Current status (2026-06-10)
+## Current status (2026-06-11)
 
 - **Phase 1 — config authority on PG: ✅ LIVE** (cut over 2026-06-07). PG is the system of record for
   config (`systems`, `point_info`, `users`, `user_systems`, `polling_status`, `share_tokens`); Turso
@@ -34,8 +34,10 @@ data-collection **engine** from the **web/FE** — see [Direction of travel](#di
   - **PR-13 (trim raw-vendor 5m/1d double-write) ✅ LIVE** — merged `#26`; PG is the sole raw-vendor
     aggregator. Burn-in GREEN 2026-06-09 (queue resumed → lag 0; reconciler `agg_5m --days=2`
     20010/20010, `agg_1d` June 261/261, 0 mismatches).
-- **Phase 3 — PlanetScale → Sydney: ✅ LIVE** (cut over 2026-06-10). Prod PG is now the 3-node HA
-  `sydney` branch (`aws-ap-southeast-2`); us-east `main` is the hot-standby rollback for the burn-in.
+- **Phase 3 — PlanetScale → Sydney: ✅ DONE** (cut over 2026-06-10; closed out 2026-06-11). Prod PG is the
+  3-node HA `sydney` branch (`aws-ap-southeast-2`), now the **standalone primary** — us-east `main`
+  **decommissioned 2026-06-11** after a green ~26h burn-in (one-off `pscale backup create` taken first; all
+  envs repointed off us-east).
   **Vercel compute → `syd1` ✅ LIVE 2026-06-10** (PR #31; confirmed by function region `syd1` on a live
   request) — engine co-located with PG; the still-live Turso inline write is now the cross-region hop
   (R8) until Phase 5.
@@ -60,15 +62,17 @@ chunked by month/quarter because one multi-month Turso response exceeds the libs
 
 ## What's next (ordered by dependency)
 
-1. **Phase 3 tail — close out the region move.** PlanetScale→Sydney ✅ live and **Vercel→`syd1` ✅ live**
-   (both 2026-06-10). Remaining: finish the 24–48h burn-in green, then decommission us-east `main` (one-off
-   `pscale backup create` first). `main` is purely the region-move rollback (rollback = repoint `DB_*` +
-   redeploy, then heal `main` from Turso since it stopped receiving at cutover) — decoupled from Turso.
-   _(Planned tomorrow, ~30h after cutover.)_
+1. **Off-site, provider-independent PG backups (decision H) — before Phase 5.** PlanetScale PITR/base
+   backups all live on PlanetScale infra (single blast radius). Stand up a daily `pg_dump -Fc` of the
+   Sydney branch shipped by **GitHub Actions → Cloudflare R2** (versioned + Object-Lock, encrypted, GFS
+   retention, Slack alerting, periodic test-restore). Must be live before Phase 5 removes the accidental
+   Turso offsite copy of raw+sessions. Workflow + script TODO. See
+   [Off-site backup](#off-site-backup--provider-independent-dr).
 2. **Phase 4 — PG raw durability (non-destructive).** **4a outbox + relay ✅ DEPLOYED** (merged `#32`,
-   `WRITE_OUTBOX=true` flipped on 2026-06-10); **soak in progress** — running ~30h alongside the Turso
+   `WRITE_OUTBOX=true` flipped on 2026-06-10); **soak green and ongoing** — running alongside the Turso
    inline write, proving zero loss and an ≈0 relay backlog. Remaining: complete the green soak window,
-   then Phase 5. Fully reversible (`WRITE_OUTBOX=false`). This is the gate for Phase 5.
+   then the relay-primary cutover (drop the parallel direct enqueue), then Phase 5. Fully reversible
+   (`WRITE_OUTBOX=false`). This is the gate for Phase 5.
 3. **Phase 5 — Turso decommission (destructive).** Cut the ungated Turso writes (raw, sessions, local
    agg), fold in the deferred dead-publisher cleanup (`publishObservationBatch` + its no-collector arms,
    the gated 1d Turso→PG mirror — kept until now as the `AGG_COMPUTE_IN_PG=false` rollback path), retire
@@ -102,6 +106,12 @@ chunked by month/quarter because one multi-month Turso response exceeds the libs
 - **(G) Engine/web separation is the end goal** _(2026-06-06)_ — two independently deployable units
   (collection engine vs web/FE); Postgres + KV + QStash + an engine Control API are the only
   cross-boundary contracts. See [Direction of travel](#direction-of-travel--engineweb-separation).
+- **(H) Off-site, provider-independent PG backups** _(2026-06-11)_ — PlanetScale PITR/base backups all live
+  on PlanetScale infra (one blast radius). Add a daily logical `pg_dump -Fc` of the Sydney branch, shipped
+  by **GitHub Actions** to **Cloudflare R2** (separate provider/account; versioned + Object-Lock immutable;
+  client-side encrypted; GFS retention; Slack alert on failure/staleness; periodic test-restore).
+  Complements — does not replace — PlanetScale PITR. **Live before Phase 5** (which removes the accidental
+  Turso offsite copy). See [Off-site backup](#off-site-backup--provider-independent-dr).
 
 ## Two table classes (until Turso decommission)
 
@@ -402,6 +412,36 @@ ALTER TABLE point_readings_agg_5m VALIDATE CONSTRAINT point_readings_agg_5m_syst
 **Rollback:** `ALTER TABLE <child> DROP CONSTRAINT IF EXISTS <name>;` — mutates no rows, no data risk
 (adding a constraint never fires a cascade). Removal = a new forward migration.
 
+## Off-site backup — provider-independent DR
+
+PlanetScale PITR + base backups all live on PlanetScale's own infra — fast in-provider recovery, but a
+single blast radius (account suspension, billing lapse, fat-finger DB delete, compromised token, provider
+outage). Best practice is **3-2-1-1-0**: ≥3 copies, 2 media, 1 offsite, 1 immutable, 0 restore errors. The
+missing leg is an independent copy PlanetScale can't reach. _(Until Phase 5, `liveone-tokyo` on Turso is an
+accidental offsite copy of raw+sessions on a different provider — partial, no aggregates, stale config —
+hence the "before Phase 5" gate.)_
+
+**Design (decision H) — R2 + GitHub Actions:**
+
+- **Dump:** daily `pg_dump -Fc` of the Sydney branch over the **direct port 5432** (the 6432 pooler rejects
+  `pg_dump`/`pg_restore`) — the path proven by the Sydney cutover. ~1.1 GB compressed.
+- **Runner:** a scheduled **GitHub Actions** workflow (`.github/workflows/pg-backup.yml`) — independent
+  infra with the disk + minutes a Vercel function can't give. Mirrors `scripts/utils/backup-prod-db.sh`'s
+  shape (the Turso file-export script) but for PG, pushing offsite instead of to a laptop.
+- **Store:** **Cloudflare R2** in a **separate account** (different provider than PlanetScale's AWS
+  footprint; zero egress). **Versioning + Object Lock (WORM)** for the retention window so a leaked
+  write-key can't delete history; **client-side encryption** (age/gpg) before upload.
+- **Retention:** GFS via lifecycle — e.g. 7 daily / 8 weekly / 12 monthly (~30 GB ≈ $0.45/mo).
+- **Monitoring:** reuse `OBSERVATIONS_ALERT_WEBHOOK_URL` (Slack) — alert on job failure **and** staleness
+  (no new object in >26 h).
+- **Restore drill:** periodically `pg_restore` a dump into a throwaway branch / local PG + a
+  row-count/parity check — a backup isn't real until restored.
+- **Keep PITR:** complementary, not a replacement — PlanetScale PITR = fine-grained in-provider recovery;
+  the R2 dump = provider-loss insurance.
+
+**Status:** decided 2026-06-11 (R2 + GitHub Actions). Workflow + script **TODO**; needs an R2 bucket + a
+scoped write-only key. Stand up before Phase 5.
+
 ## Top risks & how they're handled
 
 - **R3 + R7 — combined message at close + session FK** _[done — PR-7]_: a poll buffers its readings and
@@ -539,6 +579,14 @@ confirmed during the relevant PR.
 
 One line per completed milestone — detail lives in git + the sections above.
 
+- **2026-06-11 — Phase 3 closeout + Turso tidy + off-site-backup decision.** Deleted the us-east `main` PG
+  branch after a green ~26h burn-in (sydney now the standalone primary — lineage re-parented to
+  sydney→root, main→leaf; one-off base backup `pre-decommission-main-20260611` taken first). Repointed all
+  envs off us-east → Sydney (`DB_*` + `PLANETSCALE_DATABASE_URL_MIGRATIONS`, direct 5432; psql-verified).
+  Pruned Turso 37→3 databases (kept `liveone-tokyo`, snapshot `liveone-snapshot-20260611-113738`, and the
+  separate live `amber-electric`); the migration-era snapshots/checkpoints were redundant vs PG (verified
+  whole-history parity) + the live Turso superset. Decided off-site provider-independent PG backups via
+  R2 + GitHub Actions (decision H).
 - **2026-06-10 — Vercel→`syd1` LIVE + Phase 4a outbox DEPLOYED + SOAKING.** Moved Vercel compute Tokyo→Sydney (PR #31,
   `vercel.json` `regions`; confirmed by function region `syd1` on a live request) — engine co-located with
   PG. Built the Phase-4a transactional outbox (gated `WRITE_OUTBOX`): `observations_outbox` (migration
