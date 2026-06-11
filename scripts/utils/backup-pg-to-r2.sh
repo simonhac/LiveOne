@@ -85,7 +85,8 @@ export RCLONE_CONFIG_R2_PROVIDER=Cloudflare
 export RCLONE_CONFIG_R2_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
 export RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
 export RCLONE_CONFIG_R2_ENDPOINT="$ENDPOINT"
-export RCLONE_CONFIG_R2_ACL=private
+# Don't set an ACL — R2 doesn't support S3 ACLs and returns NotImplemented (rclone then retries
+# without it). The rclone "Cloudflare" provider already omits the unsupported headers.
 rclone copyto "$OUT" "r2:${R2_BUCKET}/${KEY}" --s3-no-check-bucket --stats-one-line \
   || fail "R2 upload failed"
 
