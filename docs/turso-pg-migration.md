@@ -423,24 +423,35 @@ hence the "before Phase 5" gate.)_
 
 **Design (decision H) — R2 + GitHub Actions:**
 
-- **Dump:** daily `pg_dump -Fc` of the Sydney branch over the **direct port 5432** (the 6432 pooler rejects
-  `pg_dump`/`pg_restore`) — the path proven by the Sydney cutover. ~1.1 GB compressed.
+- **Dump:** daily `pg_dump -Fc` (`--no-owner --no-privileges`, excludes the platform `pscale_extensions`
+  schema) of the Sydney branch over the **direct port 5432** (the 6432 pooler rejects `pg_dump`/`pg_restore`;
+  needs the **v17 client** — `pg_wrapper` otherwise defaults to the runner's PG16) → gzip → `rclone`
+  multipart upload to R2. ~214 MB (data only, ~11× compression; the 3.7 GB physical DB is mostly indexes,
+  which a logical dump omits).
 - **Runner:** a scheduled **GitHub Actions** workflow (`.github/workflows/pg-backup.yml`) — independent
   infra with the disk + minutes a Vercel function can't give. Mirrors `scripts/utils/backup-prod-db.sh`'s
   shape (the Turso file-export script) but for PG, pushing offsite instead of to a laptop.
-- **Store:** **Cloudflare R2** in a **separate account** (different provider than PlanetScale's AWS
-  footprint; zero egress). **Versioning + Object Lock (WORM)** for the retention window so a leaked
-  write-key can't delete history; **client-side encryption** (age/gpg) before upload.
-- **Retention:** GFS via lifecycle — e.g. 7 daily / 8 weekly / 12 monthly (~30 GB ≈ $0.45/mo).
-- **Monitoring:** reuse `OBSERVATIONS_ALERT_WEBHOOK_URL` (Slack) — alert on job failure **and** staleness
-  (no new object in >26 h).
-- **Restore drill:** periodically `pg_restore` a dump into a throwaway branch / local PG + a
-  row-count/parity check — a backup isn't real until restored.
+- **Store:** **Cloudflare R2** bucket `liveone-pg-backups` (apac; different provider than PlanetScale's AWS
+  footprint; zero egress). A **14-day WORM bucket lock** (+ unique time-stamped keys) makes recent backups
+  undeletable even by a leaked write key. **Client-side `age` encryption** is wired but off by default
+  (set the `AGE_RECIPIENT` repo variable); R2 still encrypts at rest.
+- **Retention:** GFS by key prefix — the script tiers each run (1st-of-month → `monthly/`, Sunday →
+  `weekly/`, else `daily/`), with R2 lifecycle expiry **daily 21d / weekly 70d / monthly 400d** (+ abort
+  stale multipart). ~13 months of coverage for ~$1/mo.
+- **Monitoring:** reuse `OBSERVATIONS_ALERT_WEBHOOK_URL` (Slack). **Heartbeat on every run** — backup posts
+  `✅ … <MB> MB` and the drill posts `✅ … point_readings <n>`; failures post `🔴` (and GitHub emails the
+  failed run as a backstop for failures before the script runs). A missing daily heartbeat is itself the
+  staleness signal, pending a dedicated "no new object in >26 h" check.
+- **Restore drill:** a weekly workflow (`.github/workflows/pg-restore-drill.yml`,
+  `scripts/utils/restore-drill-pg.sh`) pulls the latest object, `pg_restore`s it into a throwaway
+  `postgres:17` service container, and asserts the restored `point_readings` count is ≥ 95 % of Sydney's
+  live count (catches both truncation and a stale/stuck backup) — a backup isn't real until restored.
 - **Keep PITR:** complementary, not a replacement — PlanetScale PITR = fine-grained in-provider recovery;
   the R2 dump = provider-loss insurance.
 
-**Status:** decided 2026-06-11 (R2 + GitHub Actions). Workflow + script **TODO**; needs an R2 bucket + a
-scoped write-only key. Stand up before Phase 5.
+**Status:** ✅ LIVE 2026-06-11 (R2 + GitHub Actions). Bucket + 14-day WORM lock + GFS lifecycle provisioned,
+secrets set, first backup verified in R2 (`pg/sydney/daily/…`, 214 MB, pg_dump 17.10). Daily 02:17 Sydney.
+Remaining: the weekly restore-drill's first green run, and a staleness alert (no new object in > 26 h).
 
 ## Top risks & how they're handled
 

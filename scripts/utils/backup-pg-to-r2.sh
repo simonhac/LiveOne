@@ -48,12 +48,12 @@ ENDPOINT="https://${R2_ACCOUNT_ID:?set R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 OUT="$TMP/backup.${EXT}"
 
-alert() {
+notify() {  # best-effort webhook post (Slack-compatible); never fails the run
   [ -n "${ALERT_WEBHOOK_URL:-}" ] || return 0
   curl -fsS -X POST -H 'Content-Type: application/json' \
-    -d "{\"text\":\"🔴 PG→R2 backup FAILED: $1\"}" "$ALERT_WEBHOOK_URL" >/dev/null 2>&1 || true
+    -d "{\"text\":\"$1\"}" "$ALERT_WEBHOOK_URL" >/dev/null 2>&1 || true
 }
-fail() { echo "ERROR: $1" >&2; alert "$1"; exit 1; }
+fail() { echo "ERROR: $1" >&2; notify "🔴 PG→R2 backup FAILED: $1"; exit 1; }
 
 command -v pg_dump >/dev/null || fail "pg_dump not found"
 command -v rclone  >/dev/null || fail "rclone not found"
@@ -90,4 +90,6 @@ export RCLONE_CONFIG_R2_ENDPOINT="$ENDPOINT"
 rclone copyto "$OUT" "r2:${R2_BUCKET}/${KEY}" --s3-no-check-bucket --stats-one-line \
   || fail "R2 upload failed"
 
+MB=$(( SIZE / 1024 / 1024 ))
 echo "✓ Backup complete: r2://${R2_BUCKET}/${KEY} (${SIZE} bytes)"
+notify "✅ PG→R2 backup OK — ${MB} MB — ${KEY}"

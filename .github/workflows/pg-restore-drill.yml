@@ -1,0 +1,57 @@
+name: PG restore drill
+
+# Weekly proof that the latest off-site R2 dump actually restores — the "0 restore errors" leg of
+# 3-2-1-1-0. Pulls the newest object, pg_restores into a throwaway postgres:17 service, and asserts
+# the restored point_readings count is within tolerance of Sydney's. See
+# docs/turso-pg-migration.md → "Off-site backup — provider-independent DR".
+
+on:
+  schedule:
+    - cron: "37 17 * * 1" # Mondays 17:37 UTC ≈ Tue 03:37 Sydney
+  workflow_dispatch: {}
+
+concurrency:
+  group: pg-restore-drill
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      pg:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: drill
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pg client 17, rclone, age
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 rclone age
+          # pg_restore must be >= the 17.10 server; pg_wrapper otherwise picks the runner's PG16.
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Restore drill
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          DRILL_DATABASE_URL: postgres://postgres:drill@localhost:5432/postgres?sslmode=disable
+          PG_LIVE_DATABASE_URL: ${{ secrets.PG_BACKUP_DATABASE_URL }}
+          AGE_IDENTITY: ${{ secrets.AGE_IDENTITY }} # optional; only if backups are age-encrypted
+          ALERT_WEBHOOK_URL: ${{ secrets.OBSERVATIONS_ALERT_WEBHOOK_URL }}
+        run: bash scripts/utils/restore-drill-pg.sh
