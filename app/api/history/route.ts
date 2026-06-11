@@ -21,6 +21,13 @@ import {
 } from "@/lib/history/build-series";
 import { fetchAggRowsPg } from "@/lib/history/readings-pg";
 import { serveReadings, SHADOW_SKIP } from "@/lib/db/readings-serve";
+import {
+  resolveLogicalSystem,
+  type LogicalSystem,
+} from "@/lib/aggregation/logical-system";
+import { buildFlowMatrixFromAggRows } from "@/lib/history/build-flow-matrix";
+import { FLOW_MATRIX_SERVE_FROM_PG } from "@/lib/db/routing";
+import type { EnergyFlowMatrix } from "@/lib/energy-flow-matrix";
 
 // Initialize manager instances
 const pointManager = PointManager.getInstance();
@@ -294,11 +301,14 @@ async function getSystemHistoryInOpenNEMFormat(
   interval: "5m" | "30m" | "1d",
   filterPatterns?: string[],
   enableDebug?: boolean,
+  sankey?: { logicalSystem: LogicalSystem },
 ): Promise<{
   series: OpenNEMDataSeries[];
   debug?: HistoryDebugInfo;
   dataSource?: string;
   sqlQueries?: string[];
+  flowMatrix?: EnergyFlowMatrix | null;
+  flowMatrixOmittedReason?: string;
 }> {
   // Get filtered SeriesInfo[] from PointManager
   // Note: PointManager only supports "5m" | "1d" intervals, so for "30m" we use "5m"
@@ -311,7 +321,10 @@ async function getSystemHistoryInOpenNEMFormat(
   );
 
   if (seriesInfos.length === 0) {
-    return { series: [] };
+    return {
+      series: [],
+      flowMatrixOmittedReason: sankey ? "no-series" : undefined,
+    };
   }
 
   const aggTable =
@@ -346,6 +359,27 @@ async function getSystemHistoryInOpenNEMFormat(
     const [systemId, pointId] = pair.split(",").map(Number);
     return [systemId, pointId] as [number, number];
   });
+
+  // Sub-daily Sankey: compute the energy-flow matrix from the SAME signed 5m rows this fetch loads
+  // (5m/30m only — for 30m the rows are still raw 5m, bucketed later), so it costs no extra query.
+  // Refuse if the fetched series don't cover every role point (a filtered request would otherwise
+  // silently mis-derive rest-of-house / residual). The matrix is captured from whichever serve path
+  // produces the rows below.
+  let flowMatrix: EnergyFlowMatrix | null | undefined;
+  let flowMatrixOmittedReason: string | undefined;
+  if (sankey) {
+    const fetchedAvgPoints = new Set(
+      seriesInfos
+        .filter((s) => s.aggregationField === "avg")
+        .map((s) => `${s.point.systemId}.${s.point.index}`),
+    );
+    const coversRoleSet = sankey.logicalSystem.points.every((p) =>
+      fetchedAvgPoints.has(`${p.ref.systemId}.${p.ref.pointId}`),
+    );
+    if (!coversRoleSet) flowMatrixOmittedReason = "incomplete-series-set";
+  }
+  const computeSankey =
+    sankey !== undefined && flowMatrixOmittedReason === undefined;
 
   // Time window: 1d uses YYYY-MM-DD day strings; 5m/30m uses an epoch-ms dense timeline.
   // When aggregating 5m → 30m we fetch 25 min earlier (a 30m bucket needs six 5m readings).
@@ -465,6 +499,8 @@ async function getSystemHistoryInOpenNEMFormat(
   const tursoServe = async (): Promise<OpenNEMDataSeries[]> => {
     const { rows, debugQuery } = await fetchAggRowsTurso();
     if (debug && debugQuery) debug.query.push(debugQuery);
+    if (computeSankey)
+      flowMatrix = buildFlowMatrixFromAggRows(rows, sankey!.logicalSystem);
     return buildSeriesFromAggRows(
       rows,
       seriesInfos,
@@ -491,6 +527,8 @@ async function getSystemHistoryInOpenNEMFormat(
       endDate,
     });
     if (rows === SHADOW_SKIP) return SHADOW_SKIP;
+    if (computeSankey)
+      flowMatrix = buildFlowMatrixFromAggRows(rows, sankey!.logicalSystem);
     return buildSeriesFromAggRows(
       rows,
       seriesInfos,
@@ -512,6 +550,8 @@ async function getSystemHistoryInOpenNEMFormat(
     series,
     dataSource: aggTable,
     debug,
+    flowMatrix,
+    flowMatrixOmittedReason,
   };
 }
 
@@ -530,6 +570,8 @@ function buildResponse(
   debug?: any,
   seriesPatterns?: string[],
   sqlQueries?: string[],
+  flowMatrix?: EnergyFlowMatrix | null,
+  flowMatrixOmittedReason?: string,
 ): NextResponse {
   // Format date strings based on interval type
   let requestStartStr: string;
@@ -580,6 +622,14 @@ function buildResponse(
   // Add SQL queries if provided (legacy support)
   if (sqlQueries && sqlQueries.length > 0) {
     response.sqlQueries = sqlQueries;
+  }
+
+  // Add the sub-daily energy-flow matrix (or why it was omitted) when ?include=sankey was requested.
+  if (flowMatrix) {
+    response.flowMatrix = flowMatrix;
+    response.flowMatrixResolution = "5m";
+  } else if (flowMatrixOmittedReason) {
+    response.flowMatrixOmittedReason = flowMatrixOmittedReason;
   }
 
   const jsonStr = formatOpenNEMResponse(response);
@@ -657,19 +707,51 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const interval = basicParams.interval as "5m" | "30m" | "1d";
+
+    // Optional energy-flow Sankey bundled with the history payload (?include=sankey). Gated by the
+    // single serve flag. Only sub-daily intervals are computed here (the in-hand signed 5m rows);
+    // 1d / long-range is served from the materialized flow_1d endpoint instead.
+    const includeParam = searchParams.get("include");
+    const includeSankey = includeParam
+      ? includeParam
+          .split(",")
+          .map((s) => s.trim())
+          .includes("sankey")
+      : false;
+    let sankey: { logicalSystem: LogicalSystem } | undefined;
+    let sankeyOmittedReason: string | undefined;
+    if (includeSankey) {
+      if (!FLOW_MATRIX_SERVE_FROM_PG) {
+        sankeyOmittedReason = "serving-disabled";
+      } else if (interval === "1d") {
+        sankeyOmittedReason = "1d-served-from-flow-matrix-endpoint";
+      } else {
+        const logicalSystem = await resolveLogicalSystem(basicParams.systemId!);
+        if (!logicalSystem || !logicalSystem.isComplete) {
+          sankeyOmittedReason = "not-a-logical-system";
+        } else {
+          sankey = { logicalSystem };
+        }
+      }
+    }
+
     // Fetch data using point readings provider
     const {
       series: dataSeries,
       dataSource,
       debug,
       sqlQueries,
+      flowMatrix,
+      flowMatrixOmittedReason,
     } = await getSystemHistoryInOpenNEMFormat(
       system,
       timeRange.startTime!,
       timeRange.endTime!,
-      basicParams.interval as "5m" | "30m" | "1d",
+      interval,
       seriesPatterns.length > 0 ? seriesPatterns : undefined,
       basicParams.enableDebug,
+      sankey,
     );
 
     // Build and return response
@@ -678,13 +760,17 @@ export async function GET(request: NextRequest) {
       dataSeries,
       timeRange.startTime!,
       timeRange.endTime!,
-      basicParams.interval as "5m" | "30m" | "1d",
+      interval,
       durationMs,
       system.displayTimezone,
       dataSource,
       debug,
       seriesPatterns.length > 0 ? seriesPatterns : undefined,
       sqlQueries,
+      flowMatrix,
+      includeSankey
+        ? (sankeyOmittedReason ?? flowMatrixOmittedReason)
+        : undefined,
     );
   } catch (error) {
     console.error("Error fetching historical data:", error);

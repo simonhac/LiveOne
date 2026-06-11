@@ -15,6 +15,10 @@
  */
 
 import { getColorForPath } from "@/lib/chart-colors";
+import type {
+  EnergyFlowMatrix,
+  EnergyFlowNode,
+} from "@/lib/energy-flow-matrix";
 
 /**
  * Normalize a directional flow path to the underlying device stem so color/label lookups that
@@ -116,4 +120,50 @@ export function compareLoadPaths(a: string, b: string): number {
   const ra = loadRank(a);
   const rb = loadRank(b);
   return ra !== rb ? ra - rb : a.localeCompare(b);
+}
+
+/**
+ * Assemble the served `EnergyFlowMatrix` from a computed (source-path, load-path, energy) matrix:
+ * sort source/load paths canonically, remap the matrix, recompute totals, and resolve each node's
+ * `{id, label, color}`. Shared by the on-the-fly history compute and the `flow_1d` read endpoint so
+ * both present identical node identity/order. `sources`/`loads`/`matrix` are aligned (matrix is
+ * `[sourceIdx][loadIdx]`); ordering of the inputs is irrelevant since this re-sorts.
+ */
+export function toEnergyFlowMatrix(
+  sources: string[],
+  loads: string[],
+  matrix: number[][],
+  displayNameByStem: Map<string, string>,
+): EnergyFlowMatrix {
+  const sOrder = sources
+    .map((_, i) => i)
+    .sort((a, b) => compareSourcePaths(sources[a], sources[b]));
+  const lOrder = loads
+    .map((_, i) => i)
+    .sort((a, b) => compareLoadPaths(loads[a], loads[b]));
+
+  const sortedSources = sOrder.map((i) => sources[i]);
+  const sortedLoads = lOrder.map((i) => loads[i]);
+  const m = sOrder.map((si) => lOrder.map((li) => matrix[si][li]));
+
+  const sourceTotals = m.map((row) => row.reduce((sum, v) => sum + v, 0));
+  const loadTotals = sortedLoads.map((_, li) =>
+    m.reduce((sum, row) => sum + row[li], 0),
+  );
+  const totalEnergy = sourceTotals.reduce((sum, v) => sum + v, 0);
+
+  const node = (path: string): EnergyFlowNode => ({
+    id: path,
+    label: labelForFlowPath(path, displayNameByStem),
+    color: colorForFlowPath(path),
+  });
+
+  return {
+    sources: sortedSources.map(node),
+    loads: sortedLoads.map(node),
+    matrix: m,
+    sourceTotals,
+    loadTotals,
+    totalEnergy,
+  };
 }

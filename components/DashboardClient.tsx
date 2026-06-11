@@ -280,6 +280,7 @@ export default function DashboardClient({
     generation: ChartData | null;
     requestStart?: string;
     requestEnd?: string;
+    flowMatrix?: EnergyFlowMatrix | null;
   }>({ load: null, generation: null });
   // Energy-flow matrix served from PG for the long-range (30D) Sankey (gated by
   // serveFlowFromPg). null = not loaded / not applicable → fall back to client-side calc.
@@ -1428,18 +1429,22 @@ export default function DashboardClient({
                           {processedHistoryData.generation &&
                             processedHistoryData.load &&
                             (() => {
-                              // Long-range 30D Sankey is served from PG when the gate is on and
-                              // the materialized matrix has loaded; otherwise compute client-side.
+                              // Sankey served from the server when available: 30D from the
+                              // materialized flow_1d endpoint, 1D/7D bundled with the history
+                              // response (processedHistoryData.flowMatrix). Falls back to the
+                              // client-side calc when neither is present (flag off / not loaded).
                               const usePg =
                                 serveFlowFromPg && sitePeriod === "30D";
                               const matrix =
                                 usePg && pgFlowMatrix
                                   ? pgFlowMatrix
-                                  : calculateEnergyFlowMatrix({
-                                      generation:
-                                        processedHistoryData.generation,
-                                      load: processedHistoryData.load,
-                                    });
+                                  : processedHistoryData.flowMatrix
+                                    ? processedHistoryData.flowMatrix
+                                    : calculateEnergyFlowMatrix({
+                                        generation:
+                                          processedHistoryData.generation,
+                                        load: processedHistoryData.load,
+                                      });
                               return matrix ? (
                                 <div className="sm:p-4">
                                   <h3 className="text-base font-semibold text-gray-300 mb-2 px-2 sm:px-0">
