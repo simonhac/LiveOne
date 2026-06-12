@@ -229,8 +229,13 @@ export class TeslaClient implements ITeslaClient {
       });
 
       if (!response.ok) {
-        console.error("TESLA: Failed to fetch vehicles:", response.status);
-        throw new Error(`Failed to fetch vehicles: ${response.status}`);
+        const body = await response.text();
+        console.error(
+          "TESLA: Failed to fetch vehicles:",
+          response.status,
+          body,
+        );
+        throw new Error(`Failed to fetch vehicles: ${response.status} ${body}`);
       }
 
       const data = await response.json();
