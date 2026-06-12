@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/queries";
 import { X, Shield } from "lucide-react";
 import { useModalContext } from "@/contexts/ModalContext";
 import PointsTab from "./PointsTab";
@@ -35,7 +37,7 @@ export default function SystemSettingsDialog({
   onUpdate,
 }: SystemSettingsDialogProps) {
   const router = useRouter();
-  const [isLoading, setIsLoading] = useState(false);
+  const queryClient = useQueryClient();
   const [displayName, setDisplayName] = useState("");
   const [alias, setAlias] = useState("");
   const [displayTimezone, setDisplayTimezone] = useState("");
@@ -52,7 +54,6 @@ export default function SystemSettingsDialog({
   const [isDefaultSystem, setIsDefaultSystem] = useState(false);
   const [originalIsDefault, setOriginalIsDefault] = useState(false);
   const [isDefaultDirty, setIsDefaultDirty] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<
     "general" | "points" | "composite" | "admin"
   >("general");
@@ -68,74 +69,88 @@ export default function SystemSettingsDialog({
     }
   }, [isOpen, registerModal, unregisterModal]);
 
-  // Fetch settings when modal opens
+  // Reset tab to general when modal closes (prevents flash on next open)
   useEffect(() => {
-    if (!isOpen || !systemId) {
-      // Reset tab to general when modal closes (prevents flash on next open)
-      if (!isOpen) {
-        setActiveTab("general");
-      }
-      return;
+    if (!isOpen) {
+      setActiveTab("general");
     }
+  }, [isOpen]);
 
-    const fetchSettings = async () => {
-      setIsLoading(true);
+  // Fetch settings + user preferences when modal opens
+  const {
+    data: settingsData,
+    isPending: isSettingsPending,
+    isFetching: isSettingsFetching,
+  } = useQuery({
+    queryKey: ["system", systemId, "settings"],
+    queryFn: async () => {
+      const settings = await fetchJson<{
+        success: boolean;
+        settings?: {
+          displayName?: string | null;
+          alias?: string | null;
+          displayTimezone?: string | null;
+        };
+      }>(`/api/admin/systems/${systemId}/settings`);
+
+      // Fetch user preferences to check if this is the default system
+      let isCurrentDefault = false;
       try {
-        const response = await fetch(`/api/admin/systems/${systemId}/settings`);
-
-        if (!response.ok) {
-          throw new Error("Failed to fetch system settings");
-        }
-
-        const data = await response.json();
-
-        if (data.success && data.settings) {
-          const {
-            displayName: fetchedName,
-            alias: fetchedAlias,
-            displayTimezone: fetchedTimezone,
-          } = data.settings;
-
-          // Store original values
-          setDisplayName(fetchedName || "");
-          setAlias(fetchedAlias || "");
-          setDisplayTimezone(fetchedTimezone || "");
-
-          // Initialize edited values
-          setEditedDisplayName(fetchedName || "");
-          setEditedAlias(fetchedAlias || "");
-          setEditedTimezone(fetchedTimezone || "");
-
-          // Reset dirty flags
-          setIsDisplayNameDirty(false);
-          setIsAliasDirty(false);
-          setIsTimezoneDirty(false);
-          setIsCompositeDirty(false);
-          setIsAdminDirty(false);
-          setAliasError(null);
-        }
-
-        // Fetch user preferences to check if this is the default system
-        const prefsResponse = await fetch("/api/user/preferences");
-        if (prefsResponse.ok) {
-          const prefsData = await prefsResponse.json();
-          if (prefsData.success && prefsData.preferences) {
-            const isCurrentDefault =
-              prefsData.preferences.defaultSystemId === systemId;
-            setIsDefaultSystem(isCurrentDefault);
-            setOriginalIsDefault(isCurrentDefault);
-            setIsDefaultDirty(false);
-          }
+        const prefs = await fetchJson<{
+          success: boolean;
+          preferences?: { defaultSystemId?: number | null };
+        }>("/api/user/preferences");
+        if (prefs.success && prefs.preferences) {
+          isCurrentDefault = prefs.preferences.defaultSystemId === systemId;
         }
       } catch (error) {
-        console.error("Error fetching system settings:", error);
-      } finally {
-        setIsLoading(false);
+        console.error("Error fetching user preferences:", error);
       }
-    };
 
-    fetchSettings();
-  }, [isOpen, systemId]);
+      return { settings, isCurrentDefault };
+    },
+    enabled: isOpen && !!systemId,
+  });
+
+  const isLoading =
+    isOpen && !!systemId && (isSettingsPending || isSettingsFetching);
+
+  // Populate form state from fetched settings
+  useEffect(() => {
+    if (!settingsData) return;
+
+    const { settings: data, isCurrentDefault } = settingsData;
+
+    if (data.success && data.settings) {
+      const {
+        displayName: fetchedName,
+        alias: fetchedAlias,
+        displayTimezone: fetchedTimezone,
+      } = data.settings;
+
+      // Store original values
+      setDisplayName(fetchedName || "");
+      setAlias(fetchedAlias || "");
+      setDisplayTimezone(fetchedTimezone || "");
+
+      // Initialize edited values
+      setEditedDisplayName(fetchedName || "");
+      setEditedAlias(fetchedAlias || "");
+      setEditedTimezone(fetchedTimezone || "");
+
+      // Reset dirty flags
+      setIsDisplayNameDirty(false);
+      setIsAliasDirty(false);
+      setIsTimezoneDirty(false);
+      setIsCompositeDirty(false);
+      setIsAdminDirty(false);
+      setAliasError(null);
+    }
+
+    setIsDefaultSystem(isCurrentDefault);
+    setOriginalIsDefault(isCurrentDefault);
+    setIsDefaultDirty(false);
+  }, [settingsData]);
 
   const validateAlias = (value: string): string | null => {
     if (!value) return null; // Empty is valid (optional field)
@@ -174,11 +189,8 @@ export default function SystemSettingsDialog({
   const hasGeneralChanges =
     isDisplayNameDirty || isAliasDirty || isTimezoneDirty || isDefaultDirty;
 
-  const handleSave = useCallback(async () => {
-    if (!hasChanges || !systemId || aliasError) return;
-
-    setIsSaving(true);
-    try {
+  const saveMutation = useMutation({
+    mutationFn: async () => {
       // Save regular settings (displayName, alias, displayTimezone)
       if (isDisplayNameDirty || isAliasDirty || isTimezoneDirty) {
         const settings: {
@@ -284,6 +296,9 @@ export default function SystemSettingsDialog({
       if (isDisplayNameDirty) updates.displayName = editedDisplayName;
       if (isAliasDirty) updates.alias = editedAlias || null;
 
+      return updates;
+    },
+    onSuccess: async (updates) => {
       // Reset dirty flags
       setIsDisplayNameDirty(false);
       setIsAliasDirty(false);
@@ -293,6 +308,11 @@ export default function SystemSettingsDialog({
       setIsDefaultDirty(false);
       setOriginalIsDefault(isDefaultSystem);
 
+      // Refresh this dialog's settings query so a reopen shows the saved values
+      queryClient.invalidateQueries({
+        queryKey: ["system", systemId, "settings"],
+      });
+
       // Close modal
       onClose();
 
@@ -300,32 +320,22 @@ export default function SystemSettingsDialog({
       if (onUpdate) {
         await onUpdate(updates);
       }
-    } catch (error) {
+    },
+    onError: (error) => {
       console.error("Failed to update system settings:", error);
       // Check if it's a uniqueness error
       if (error instanceof Error && error.message.includes("already in use")) {
         setAliasError(`Alias "${editedAlias}" is already in use`);
       }
-    } finally {
-      setIsSaving(false);
-    }
-  }, [
-    hasChanges,
-    systemId,
-    aliasError,
-    isDisplayNameDirty,
-    isAliasDirty,
-    isTimezoneDirty,
-    editedDisplayName,
-    editedAlias,
-    editedTimezone,
-    onUpdate,
-    isCompositeDirty,
-    isAdminDirty,
-    isDefaultDirty,
-    isDefaultSystem,
-    onClose,
-  ]);
+    },
+  });
+
+  const isSaving = saveMutation.isPending;
+
+  const handleSave = useCallback(() => {
+    if (!hasChanges || !systemId || aliasError) return;
+    saveMutation.mutate();
+  }, [hasChanges, systemId, aliasError, saveMutation]);
 
   const handleCancel = useCallback(() => {
     setEditedDisplayName(displayName);

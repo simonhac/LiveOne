@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/queries";
 import { formatDateTime } from "@/lib/fe-date-format";
 import {
   RefreshCw,
@@ -215,27 +217,10 @@ function TimeFilter({
 export default function ActivityViewer() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
   const [rotateKey, setRotateKey] = useState(0);
-
-  // Filter options (all possible values from database)
-  const [filterOptions, setFilterOptions] = useState<{
-    systemName: string[];
-    vendorType: string[];
-    cause: string[];
-    successful: boolean[];
-  }>({
-    systemName: [],
-    vendorType: [],
-    cause: [],
-    successful: [],
-  });
 
   // Initialize sorting from URL
   const [sorting, setSorting] = useState<SortingState>(() => {
@@ -274,7 +259,6 @@ export default function ActivityViewer() {
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(0);
-  const [totalCount, setTotalCount] = useState<number | null>(null);
   const pageSize = 100;
 
   // Track modifier key for pagination jump behavior
@@ -503,6 +487,91 @@ export default function ActivityViewer() {
     [],
   );
 
+  // Build query params for server-side filtering/sorting/pagination. Memoized so
+  // it can serve as the React Query key — changing it triggers a refetch.
+  const sessionsParams = useMemo(() => {
+    const params = new URLSearchParams();
+
+    // Add sorting
+    if (sorting.length > 0) {
+      const { id, desc } = sorting[0];
+      params.set("sort", `${id}.${desc ? "desc" : "asc"}`);
+    }
+
+    // Add filters
+    columnFilters.forEach((filter) => {
+      if (Array.isArray(filter.value) && filter.value.length > 0) {
+        const key = {
+          vendorType: "vendor",
+          systemName: "system",
+          cause: "cause",
+          successful: "status",
+        }[filter.id];
+
+        if (key) {
+          if (filter.id === "successful") {
+            const statusValues = (filter.value as boolean[]).map((v) =>
+              v ? "success" : "error",
+            );
+            params.set(key, statusValues.join(","));
+          } else {
+            params.set(key, (filter.value as string[]).join(","));
+          }
+        }
+      }
+    });
+
+    // Add time range
+    if (timeRange) {
+      params.set("timeRange", timeRange);
+    }
+
+    // Add pagination
+    params.set("page", currentPage.toString());
+    params.set("pageSize", pageSize.toString());
+
+    return params.toString();
+  }, [sorting, columnFilters, timeRange, currentPage, pageSize]);
+
+  const sessionsQuery = useQuery({
+    queryKey: ["admin", "sessions", sessionsParams],
+    queryFn: () =>
+      fetchJson<{ sessions: Session[]; totalCount?: number }>(
+        `/api/admin/sessions?${sessionsParams}`,
+      ),
+    placeholderData: (prev) => prev,
+  });
+
+  const sessions = sessionsQuery.data?.sessions ?? [];
+  const totalCount = sessionsQuery.data?.totalCount ?? null;
+  const loading = sessionsQuery.isPending;
+  const refreshing = sessionsQuery.isFetching;
+  const error = sessionsQuery.isError
+    ? sessionsQuery.error instanceof Error
+      ? sessionsQuery.error.message
+      : "Failed to load sessions"
+    : null;
+
+  const filterOptionsQuery = useQuery({
+    queryKey: ["admin", "sessions", "filter-options"],
+    queryFn: () =>
+      fetchJson<{
+        filterOptions: {
+          systemName: string[];
+          vendorType: string[];
+          cause: string[];
+          successful: boolean[];
+        };
+      }>("/api/admin/sessions/filter-options"),
+  });
+
+  const filterOptions = filterOptionsQuery.data?.filterOptions ?? {
+    systemName: [],
+    vendorType: [],
+    cause: [],
+    successful: [],
+  };
+
   const table = useReactTable({
     data: sessions,
     columns,
@@ -520,96 +589,9 @@ export default function ActivityViewer() {
     pageCount: totalCount ? Math.ceil(totalCount / pageSize) : -1,
   });
 
-  // Fetch filter options on mount
-  useEffect(() => {
-    const fetchFilterOptions = async () => {
-      try {
-        const response = await fetch("/api/admin/sessions/filter-options");
-        if (response.ok) {
-          const data = await response.json();
-          setFilterOptions(data.filterOptions);
-        }
-      } catch (error) {
-        console.error("Failed to fetch filter options:", error);
-      }
-    };
-
-    fetchFilterOptions();
-  }, []);
-
-  const fetchSessions = useCallback(async () => {
-    try {
-      setRefreshing(true);
-
-      // Build query params for server-side filtering/sorting
-      const params = new URLSearchParams();
-
-      // Add sorting
-      if (sorting.length > 0) {
-        const { id, desc } = sorting[0];
-        params.set("sort", `${id}.${desc ? "desc" : "asc"}`);
-      }
-
-      // Add filters
-      columnFilters.forEach((filter) => {
-        if (Array.isArray(filter.value) && filter.value.length > 0) {
-          const key = {
-            vendorType: "vendor",
-            systemName: "system",
-            cause: "cause",
-            successful: "status",
-          }[filter.id];
-
-          if (key) {
-            if (filter.id === "successful") {
-              const statusValues = (filter.value as boolean[]).map((v) =>
-                v ? "success" : "error",
-              );
-              params.set(key, statusValues.join(","));
-            } else {
-              params.set(key, (filter.value as string[]).join(","));
-            }
-          }
-        }
-      });
-
-      // Add time range
-      if (timeRange) {
-        params.set("timeRange", timeRange);
-      }
-
-      // Add pagination
-      params.set("page", currentPage.toString());
-      params.set("pageSize", pageSize.toString());
-
-      const url = `/api/admin/sessions?${params.toString()}`;
-      const response = await fetch(url);
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch sessions: ${response.status}`);
-      }
-
-      const data = await response.json();
-      setSessions(data.sessions);
-      setTotalCount(data.totalCount ?? null);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load sessions");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [sorting, columnFilters, timeRange, currentPage, pageSize]);
-
-  // Fetch sessions when filters, sorting, or pagination changes
-  useEffect(() => {
-    fetchSessions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sorting, columnFilters, timeRange, currentPage]);
-
   const handleRefresh = () => {
     setRotateKey((prev) => prev + 1);
-    fetchSessions();
+    sessionsQuery.refetch();
   };
 
   // Handle modal close on Escape key
@@ -654,7 +636,7 @@ export default function ActivityViewer() {
       <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4">
         <p className="text-red-400">Error: {error}</p>
         <button
-          onClick={() => fetchSessions()}
+          onClick={() => sessionsQuery.refetch()}
           className="mt-2 px-3 py-1 text-sm bg-red-500/20 hover:bg-red-500/30 rounded transition-colors"
         >
           Retry

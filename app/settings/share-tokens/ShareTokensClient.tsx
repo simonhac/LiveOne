@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/queries";
 import { Button } from "@/components/ui/button";
 
 interface TokenRow {
@@ -44,39 +46,41 @@ function formatExpiry(ms: number | null, nowMs: number): string {
   return `in ${formatRelative(ms, nowMs).replace("in ", "")}`;
 }
 
+interface TokensResponse {
+  tokens: TokenRow[];
+}
+
 export default function ShareTokensClient() {
-  const [tokens, setTokens] = useState<TokenRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [expiry, setExpiry] = useState<number | null>(30);
   const [label, setLabel] = useState("");
-  const [creating, setCreating] = useState(false);
   const [origin, setOrigin] = useState("");
 
   useEffect(() => {
     setOrigin(window.location.origin);
-    refresh();
   }, []);
 
-  async function refresh() {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/share-tokens", { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setTokens(data.tokens);
-    } catch (e: any) {
-      setError(e.message ?? String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
+  const {
+    data,
+    isPending,
+    isError,
+    error: queryError,
+  } = useQuery({
+    queryKey: ["settings", "share-tokens"],
+    queryFn: () => fetchJson<TokensResponse>("/api/share-tokens"),
+  });
 
-  async function createToken() {
-    setCreating(true);
-    setError(null);
-    try {
+  const tokens = data?.tokens ?? [];
+  const loading = isPending;
+  const loadError = isError
+    ? queryError instanceof Error
+      ? queryError.message
+      : String(queryError)
+    : null;
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
       const res = await fetch("/api/share-tokens", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -89,19 +93,15 @@ export default function ShareTokensClient() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
+    },
+    onSuccess: () => {
       setLabel("");
-      await refresh();
-    } catch (e: any) {
-      setError(e.message ?? String(e));
-    } finally {
-      setCreating(false);
-    }
-  }
+      queryClient.invalidateQueries({ queryKey: ["settings", "share-tokens"] });
+    },
+  });
 
-  async function revoke(token: string) {
-    if (!confirm(`Revoke token ${token}?`)) return;
-    setError(null);
-    try {
+  const revokeMutation = useMutation({
+    mutationFn: async (token: string) => {
       const res = await fetch(`/api/share-tokens/${token}`, {
         method: "DELETE",
       });
@@ -109,10 +109,27 @@ export default function ShareTokensClient() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
-      await refresh();
-    } catch (e: any) {
-      setError(e.message ?? String(e));
-    }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["settings", "share-tokens"] });
+    },
+  });
+
+  const creating = createMutation.isPending;
+
+  function createToken() {
+    setError(null);
+    createMutation.mutate(undefined, {
+      onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+    });
+  }
+
+  function revoke(token: string) {
+    if (!confirm(`Revoke token ${token}?`)) return;
+    setError(null);
+    revokeMutation.mutate(token, {
+      onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+    });
   }
 
   function copy(text: string) {
@@ -125,9 +142,9 @@ export default function ShareTokensClient() {
 
   return (
     <div className="space-y-8">
-      {error && (
+      {(error ?? loadError) && (
         <div className="rounded border border-red-700 bg-red-950/50 px-3 py-2 text-sm text-red-300">
-          {error}
+          {error ?? loadError}
         </div>
       )}
 

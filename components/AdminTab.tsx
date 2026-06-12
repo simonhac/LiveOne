@@ -1,4 +1,6 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/queries";
 import { Plus, X, Eye, Crown } from "lucide-react";
 import { createPortal } from "react-dom";
 
@@ -23,6 +25,23 @@ interface AdminData {
   viewers: Viewer[];
 }
 
+interface UsersResponse {
+  success: boolean;
+  users: Array<{
+    clerkUserId: string;
+    email?: string;
+    firstName?: string;
+    lastName?: string;
+    username?: string;
+  }>;
+}
+
+interface AdminSettingsResponse {
+  success: boolean;
+  ownerClerkUserId: string | null;
+  viewers?: Viewer[];
+}
+
 interface AdminTabProps {
   systemId: number;
   shouldLoad?: boolean;
@@ -40,69 +59,52 @@ export default function AdminTab({
   const [viewers, setViewers] = useState<Viewer[]>([]);
   const [initialOwner, setInitialOwner] = useState<string | null>(null);
   const [initialViewers, setInitialViewers] = useState<Viewer[]>([]);
-  const [allUsers, setAllUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [hasLoaded, setHasLoaded] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [menuButtonRef, setMenuButtonRef] = useState<HTMLButtonElement | null>(
     null,
   );
-  const fetchingRef = useRef(false);
 
-  // Reset hasLoaded when modal closes
-  useEffect(() => {
-    if (!shouldLoad && hasLoaded) {
-      setHasLoaded(false);
-      setLoading(true);
-      fetchingRef.current = false;
-    }
-  }, [shouldLoad, hasLoaded]);
+  // Fetch all users
+  const usersQuery = useQuery({
+    queryKey: ["admin", "users"],
+    queryFn: () => fetchJson<UsersResponse>("/api/admin/users"),
+    enabled: shouldLoad,
+  });
 
-  const fetchAdminData = useCallback(async () => {
-    fetchingRef.current = true;
-    try {
-      // Fetch all users
-      const usersResponse = await fetch("/api/admin/users");
-      const usersData = await usersResponse.json();
-
-      if (usersData.success) {
-        setAllUsers(
-          usersData.users.map((u: any) => ({
-            clerkUserId: u.clerkUserId,
-            email: u.email,
-            firstName: u.firstName,
-            lastName: u.lastName,
-            username: u.username,
-          })),
-        );
-      }
-
-      // Fetch current admin settings for this system
-      const systemResponse = await fetch(
+  // Fetch current admin settings for this system
+  const settingsQuery = useQuery({
+    queryKey: ["system", systemId, "admin-config"],
+    queryFn: () =>
+      fetchJson<AdminSettingsResponse>(
         `/api/admin/systems/${systemId}/admin-settings`,
-      );
-      const systemData = await systemResponse.json();
+      ),
+    enabled: shouldLoad,
+  });
 
-      if (systemData.success) {
-        setOwnerClerkUserId(systemData.ownerClerkUserId);
-        setInitialOwner(systemData.ownerClerkUserId);
-        setViewers(systemData.viewers || []);
-        setInitialViewers(JSON.parse(JSON.stringify(systemData.viewers || [])));
-        setHasLoaded(true);
-      }
-    } catch (error) {
-      console.error("Failed to fetch admin data:", error);
-    } finally {
-      setLoading(false);
-      fetchingRef.current = false;
-    }
-  }, [systemId]);
+  const allUsers = useMemo<User[]>(() => {
+    if (!usersQuery.data?.success) return [];
+    return usersQuery.data.users.map((u) => ({
+      clerkUserId: u.clerkUserId,
+      email: u.email,
+      firstName: u.firstName,
+      lastName: u.lastName,
+      username: u.username,
+    }));
+  }, [usersQuery.data]);
 
+  const loading = usersQuery.isPending || settingsQuery.isPending;
+
+  // Seed editable form state from the fetched admin settings (replaces the
+  // in-fetch seeding); re-seeds whenever fresh server data arrives.
+  const settingsData = settingsQuery.data;
   useEffect(() => {
-    if (shouldLoad && !hasLoaded && !fetchingRef.current) {
-      fetchAdminData();
+    if (settingsData?.success) {
+      setOwnerClerkUserId(settingsData.ownerClerkUserId);
+      setInitialOwner(settingsData.ownerClerkUserId);
+      setViewers(settingsData.viewers || []);
+      setInitialViewers(JSON.parse(JSON.stringify(settingsData.viewers || [])));
     }
-  }, [systemId, shouldLoad, hasLoaded, fetchAdminData]);
+  }, [settingsData]);
 
   // Check if data is dirty
   const isDirty = useMemo(() => {

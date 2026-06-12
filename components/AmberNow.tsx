@@ -1,6 +1,5 @@
 "use client";
 
-import { useDashboardRefresh } from "@/hooks/useDashboardRefresh";
 import { ttInterphases } from "@/lib/fonts/amber";
 import {
   type LatestValue,
@@ -44,11 +43,6 @@ export default function AmberNow({ latest }: AmberNowProps) {
   const priceLevel = descriptor
     ? descriptorToPriceLevel(descriptor)
     : getPriceLevel(importPrice);
-
-  // Listen for dashboard refresh events
-  useDashboardRefresh(() => {
-    // Component will re-render when parent refreshes data
-  });
 
   // Don't render if no data available
   if (importPrice === null) {

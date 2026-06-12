@@ -1,24 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { formatRelativeTime, formatDateTime } from "@/lib/fe-date-format";
 import { getUnitDisplay } from "@/lib/point/unit-display";
-import { useDashboardRefresh } from "@/hooks/useDashboardRefresh";
+import { latestReadingsQuery } from "@/lib/queries";
 import SessionInfoModal from "@/components/SessionInfoModal";
-
-interface LatestValue {
-  value?: number | string | boolean;
-  physicalPath: string;
-  logicalPath: string | null;
-  pointReference?: string; // Format: "systemId.pointId"
-  measurementTime?: string; // ISO8601 datetime (from jsonResponse transform)
-  receivedTime?: string; // ISO8601 datetime (from jsonResponse transform)
-  metricUnit: string;
-  pointName: string;
-  sessionId?: string; // Session that wrote this value (UUIDv7 text)
-  sessionLabel?: string; // Session label/name for display
-}
 
 interface AvailableSystem {
   id: number;
@@ -114,48 +102,25 @@ export default function LatestReadingsClient({
     availableSystems.map((s) => [s.id, s.displayName]),
   );
 
-  const [values, setValues] = useState<LatestValue[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastFetched, setLastFetched] = useState<Date | null>(null);
   const [showSpinner, setShowSpinner] = useState(false);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
   const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
 
-  // Fetch latest values - extracted to useCallback so it can be called from refresh hook
-  const fetchLatest = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const response = await fetch(`/api/system/${systemId}/latest`);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      setValues(data.values || []);
-      setLastFetched(new Date());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      setLoading(false);
-    }
-  }, [systemId]);
-
-  // Initial fetch and periodic refresh
-  useEffect(() => {
-    fetchLatest();
-
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchLatest, 30000);
-    return () => clearInterval(interval);
-  }, [fetchLatest]);
-
-  // Listen for dashboard refresh events (e.g., after "Poll Now" completes)
-  useDashboardRefresh(fetchLatest);
+  // Latest values via React Query — polls every 30s and refetches on focus. A manual
+  // Poll-Now invalidates ['latest', systemId] through the shared client, so no event bus.
+  const { data, isPending, isError, error, dataUpdatedAt } = useQuery(
+    latestReadingsQuery(systemId),
+  );
+  const values = data?.values ?? [];
+  const loading = isPending;
+  const errorMessage = isError
+    ? error instanceof Error
+      ? error.message
+      : "Unknown error"
+    : null;
+  const lastFetched = dataUpdatedAt ? new Date(dataUpdatedAt) : null;
 
   // Handle escape key to close modal
   useEffect(() => {
@@ -194,10 +159,10 @@ export default function LatestReadingsClient({
     return <div className="flex-1 min-h-[400px]" />;
   }
 
-  if (error) {
+  if (errorMessage) {
     return (
       <div className="p-4">
-        <div className="text-destructive">Error: {error}</div>
+        <div className="text-destructive">Error: {errorMessage}</div>
       </div>
     );
   }

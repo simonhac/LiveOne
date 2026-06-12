@@ -3,7 +3,8 @@
 import { formatDateTime } from "@/lib/fe-date-format";
 import { AlertCircle, X } from "lucide-react";
 import JsonViewer from "@/components/JsonViewer";
-import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/queries";
 
 interface Session {
   id: number;
@@ -56,41 +57,29 @@ export default function SessionInfoModal({
   onClose,
   sessionId,
 }: SessionInfoModalProps) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   // Fetch session details when modal opens
-  useEffect(() => {
-    if (isOpen && sessionId) {
-      setLoading(true);
-      setError(null);
-      fetch(`/api/admin/sessions/${sessionId}`)
-        .then((res) => {
-          if (!res.ok) {
-            throw new Error(`Failed to fetch session: ${res.status}`);
-          }
-          return res.json();
-        })
-        .then((data) => {
-          if (data.success) {
-            setSession(data.session);
-          } else {
-            setError("Failed to load session data");
-          }
-        })
-        .catch((err) => {
-          console.error("Failed to fetch session details:", err);
-          setError(err.message || "Failed to load session data");
-        })
-        .finally(() => {
-          setLoading(false);
-        });
-    } else {
-      setSession(null);
-      setError(null);
-    }
-  }, [isOpen, sessionId]);
+  const {
+    data,
+    isPending,
+    error: queryError,
+  } = useQuery({
+    queryKey: ["session", sessionId],
+    queryFn: () =>
+      fetchJson<{ success: boolean; session: Session }>(
+        `/api/admin/sessions/${sessionId}`,
+      ),
+    enabled: isOpen && !!sessionId,
+  });
+
+  const session: Session | null = data && data.success ? data.session : null;
+  const loading = isOpen && !!sessionId && isPending;
+  const error: string | null = queryError
+    ? queryError instanceof Error
+      ? queryError.message
+      : "Failed to load session data"
+    : data && !data.success
+      ? "Failed to load session data"
+      : null;
 
   if (!isOpen) return null;
 

@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { HttpError } from "@/lib/queries";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -134,6 +136,23 @@ interface HeatmapData {
   yLabels: string[]; // Date labels
 }
 
+/** Raw fetch result carried in the React Query cache; transformed into `HeatmapData`
+ *  in a `useMemo` so the derived arrays stay referentially stable across refetches. */
+interface HeatmapFetchResult {
+  result: any;
+  fetchStartTime: ZonedDateTime;
+  fetchEndTime: ZonedDateTime;
+}
+
+/** Thrown when the API replies with an HTML page (e.g. an expired session), so the
+ *  caller can surface the "connection" modal instead of a generic server error. */
+class HeatmapHtmlError extends Error {
+  constructor() {
+    super("Session may have expired. Please refresh the page.");
+    this.name = "HeatmapHtmlError";
+  }
+}
+
 export default function HeatmapChart({
   systemId,
   pointPath,
@@ -144,9 +163,6 @@ export default function HeatmapChart({
   className = "",
   onFetchInfo,
 }: HeatmapChartProps) {
-  const [heatmapData, setHeatmapData] = useState<HeatmapData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
   const [errorType, setErrorType] = useState<"connection" | "server" | null>(
     null,
@@ -156,206 +172,251 @@ export default function HeatmapChart({
   );
   const chartContainerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
+  // Fetch 30 days of half-hourly data for the selected point. The query carries the raw
+  // payload + the computed range; the heatmap grid is derived in a useMemo below so the
+  // arrays stay referentially stable across refetches.
+  const {
+    data: fetchResult,
+    isPending,
+    isError,
+    error: queryError,
+  } = useQuery<HeatmapFetchResult>({
+    queryKey: ["system", systemId, "heatmap", pointPath, timezone],
+    queryFn: async () => {
       // Hide tooltip when starting to load new data
       const tooltipEl = document.getElementById("chartjs-tooltip");
       if (tooltipEl) {
         tooltipEl.style.opacity = "0";
       }
 
-      setLoading(true);
-      setError(null);
+      // Calculate date range using @internationalized/date
+      // End: midnight tomorrow (00:00 tomorrow in AEST)
+      const nowAEST = now(timezone);
+      const tomorrowDate = toCalendarDate(nowAEST).add({ days: 1 });
+      const fetchEndTime = nowAEST.set({
+        year: tomorrowDate.year,
+        month: tomorrowDate.month,
+        day: tomorrowDate.day,
+        hour: 0,
+        minute: 0,
+        second: 0,
+        millisecond: 0,
+      });
 
-      try {
-        // Calculate date range using @internationalized/date
-        // End: midnight tomorrow (00:00 tomorrow in AEST)
-        const nowAEST = now(timezone);
-        const tomorrowDate = toCalendarDate(nowAEST).add({ days: 1 });
-        const fetchEndTime = nowAEST.set({
-          year: tomorrowDate.year,
-          month: tomorrowDate.month,
-          day: tomorrowDate.day,
-          hour: 0,
-          minute: 0,
-          second: 0,
-          millisecond: 0,
-        });
+      // Start: 30 days before end, plus 30 minutes
+      const fetchStartTime = fetchEndTime
+        .subtract({ days: 30 })
+        .add({ minutes: 30 });
 
-        // Start: 30 days before end, plus 30 minutes
-        const fetchStartTime = fetchEndTime
-          .subtract({ days: 30 })
-          .add({ minutes: 30 });
+      // Encode times as URL-safe strings (with embedded timezone)
+      const startTimeEncoded = encodeI18nToUrlSafeString(fetchStartTime, true);
+      const endTimeEncoded = encodeI18nToUrlSafeString(fetchEndTime, true);
 
-        // Encode times as URL-safe strings (with embedded timezone)
-        const startTimeEncoded = encodeI18nToUrlSafeString(
-          fetchStartTime,
-          true,
-        );
-        const endTimeEncoded = encodeI18nToUrlSafeString(fetchEndTime, true);
+      // Fetch 30 days of data at 30-minute intervals
+      // Use preferred aggregation based on metric type (energy: delta, soc: last, others: avg)
+      const seriesSuffix =
+        PointInfo.getPreferredAggregationForMetricType(metricType);
+      const url = `/api/history?interval=30m&startTime=${startTimeEncoded}&endTime=${endTimeEncoded}&systemId=${systemId}&series=${pointPath}.${seriesSuffix}`;
+      console.log("[HeatmapChart] Fetching:", url);
+      console.log(
+        "[HeatmapChart] Calculated range - Start:",
+        formatTimeAEST(fetchStartTime),
+        "End:",
+        formatTimeAEST(fetchEndTime),
+      );
 
-        // Fetch 30 days of data at 30-minute intervals
-        // Use preferred aggregation based on metric type (energy: delta, soc: last, others: avg)
-        const seriesSuffix =
-          PointInfo.getPreferredAggregationForMetricType(metricType);
-        const url = `/api/history?interval=30m&startTime=${startTimeEncoded}&endTime=${endTimeEncoded}&systemId=${systemId}&series=${pointPath}.${seriesSuffix}`;
-        console.log("[HeatmapChart] Fetching:", url);
-        console.log(
-          "[HeatmapChart] Calculated range - Start:",
-          formatTimeAEST(fetchStartTime),
-          "End:",
-          formatTimeAEST(fetchEndTime),
-        );
+      const response = await fetch(url, {
+        credentials: "same-origin",
+      });
 
-        const response = await fetch(url, {
-          credentials: "same-origin",
-        });
-
-        if (!response.ok) {
-          const contentType = response.headers.get("content-type");
-          if (contentType && contentType.includes("text/html")) {
-            setIsErrorModalOpen(true);
-            setErrorType("connection");
-            setErrorDetails(
-              "Session may have expired. Please refresh the page.",
-            );
-            setLoading(false);
-            return;
-          }
-          throw new Error(`HTTP error! status: ${response.status}`);
+      if (!response.ok) {
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("text/html")) {
+          throw new HeatmapHtmlError();
         }
+        throw new HttpError(response.status, response.statusText);
+      }
 
-        const result = await response.json();
-        console.log("[HeatmapChart] Response:", result);
-        console.log("[HeatmapChart] result.data:", result.data);
+      const result = await response.json();
+      console.log("[HeatmapChart] Response:", result);
+      console.log("[HeatmapChart] result.data:", result.data);
 
-        // Find the series for the requested point
-        // Use .delta for energy metrics, .avg for others (same as request)
-        const expectedSeriesPath = `${pointPath}.${seriesSuffix}`;
-        const series = result.data?.find((s: any) => {
-          const seriesPath = s.path || s.id?.split(".").slice(2).join(".");
-          console.log(
-            "[HeatmapChart] Checking series:",
-            s.id,
-            "path:",
-            seriesPath,
-            "looking for:",
-            expectedSeriesPath,
-          );
-          return seriesPath === expectedSeriesPath;
+      return { result, fetchStartTime, fetchEndTime };
+    },
+    staleTime: 60_000,
+    enabled: !!systemId,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+
+  // Send fetch info to parent whenever a new range is fetched.
+  useEffect(() => {
+    if (fetchResult && onFetchInfo) {
+      onFetchInfo({
+        interval: "30m",
+        duration: "30d",
+        startTime: fetchResult.fetchStartTime,
+        endTime: fetchResult.fetchEndTime,
+      });
+    }
+    // onFetchInfo is a stable setter from the parent; depend on the fetched range only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchResult]);
+
+  // Transform the raw payload into the heatmap grid. Returns null if the series/history
+  // is missing (surfaced as a "No data found for this point" error below).
+  const heatmapData = useMemo<HeatmapData | null>(() => {
+    if (!fetchResult) return null;
+    const { result } = fetchResult;
+
+    // Find the series for the requested point
+    // Use .delta for energy metrics, .avg for others (same as request)
+    const seriesSuffix =
+      PointInfo.getPreferredAggregationForMetricType(metricType);
+    const expectedSeriesPath = `${pointPath}.${seriesSuffix}`;
+    const series = result.data?.find((s: any) => {
+      const seriesPath = s.path || s.id?.split(".").slice(2).join(".");
+      console.log(
+        "[HeatmapChart] Checking series:",
+        s.id,
+        "path:",
+        seriesPath,
+        "looking for:",
+        expectedSeriesPath,
+      );
+      return seriesPath === expectedSeriesPath;
+    });
+    console.log("[HeatmapChart] Found series:", series);
+
+    if (!series || !series.history) {
+      console.error(
+        "[HeatmapChart] No series or history found. series:",
+        series,
+      );
+      return null;
+    }
+
+    // Process the data
+    const { firstInterval, interval, data } = series.history;
+    const startTime = new Date(firstInterval).getTime();
+    const intervalMs = parseInterval(interval);
+
+    // Generate time labels (48 half-hour slots: 00:00, 00:30, ..., 23:30)
+    const timeLabels: string[] = [];
+    for (let h = 0; h < 24; h++) {
+      timeLabels.push(`${String(h).padStart(2, "0")}:00`);
+      timeLabels.push(`${String(h).padStart(2, "0")}:30`);
+    }
+
+    // Group data by date and time
+    const dataByDate = new Map<string, Map<string, number | null>>();
+    const dates = new Set<string>();
+
+    data.forEach((value: number | null, index: number) => {
+      // startTime is the end of the first interval
+      const intervalEndTimestamp = startTime + index * intervalMs;
+      const intervalStartTimestamp = intervalEndTimestamp - intervalMs;
+
+      // Use interval START time for the time slot (e.g., 00:00 for the 00:00-00:30 interval)
+      const jsDateForTime = new Date(intervalStartTimestamp);
+      const zonedDateForTime = fromDate(jsDateForTime, timezone);
+      const timeKey = `${String(zonedDateForTime.hour).padStart(2, "0")}:${String(zonedDateForTime.minute).padStart(2, "0")}`;
+
+      // Use interval START time for the date (consistent with time key)
+      const jsDateForDate = new Date(intervalStartTimestamp);
+      const zonedDateForDate = fromDate(jsDateForDate, timezone);
+      const dateKey = `${zonedDateForDate.year}-${String(zonedDateForDate.month).padStart(2, "0")}-${String(zonedDateForDate.day).padStart(2, "0")}`;
+
+      dates.add(dateKey);
+
+      if (!dataByDate.has(dateKey)) {
+        dataByDate.set(dateKey, new Map());
+      }
+      // Store null values as well
+      dataByDate.get(dateKey)!.set(timeKey, value);
+    });
+
+    // Sort dates (most recent first)
+    const sortedDates = Array.from(dates).sort().reverse();
+
+    // Build heatmap data points
+    const heatmapPoints: HeatmapDataPoint[] = [];
+    let min = Infinity;
+    let max = -Infinity;
+
+    sortedDates.forEach((dateKey) => {
+      const timeData = dataByDate.get(dateKey)!;
+      timeLabels.forEach((timeKey) => {
+        const value = timeData.get(timeKey) ?? null;
+        heatmapPoints.push({
+          x: timeKey,
+          y: dateKey,
+          v: value,
         });
-        console.log("[HeatmapChart] Found series:", series);
 
-        if (!series || !series.history) {
-          console.error(
-            "[HeatmapChart] No series or history found. series:",
-            series,
-          );
-          throw new Error("No data found for this point");
+        if (value !== null) {
+          min = Math.min(min, value);
+          max = Math.max(max, value);
         }
+      });
+    });
 
-        // Process the data
-        const { firstInterval, interval, data } = series.history;
-        const startTime = new Date(firstInterval).getTime();
-        const intervalMs = parseInterval(interval);
+    // Handle case where all values are null
+    if (min === Infinity || max === -Infinity) {
+      min = 0;
+      max = 1;
+    }
 
-        // Send fetch info to parent (using the calculated times from above)
-        if (onFetchInfo) {
-          onFetchInfo({
-            interval: "30m",
-            duration: "30d",
-            startTime: fetchStartTime,
-            endTime: fetchEndTime,
-          });
-        }
+    console.log("[HeatmapChart] Data processed");
+    return {
+      data: heatmapPoints,
+      min,
+      max,
+      xLabels: timeLabels,
+      yLabels: sortedDates,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchResult, pointPath, metricType, timezone]);
 
-        // Generate time labels (48 half-hour slots: 00:00, 00:30, ..., 23:30)
-        const timeLabels: string[] = [];
-        for (let h = 0; h < 24; h++) {
-          timeLabels.push(`${String(h).padStart(2, "0")}:00`);
-          timeLabels.push(`${String(h).padStart(2, "0")}:30`);
-        }
+  // Initial-load spinner vs. refetch overlay (preserves the original `loading` gate).
+  // A successful fetch whose series is missing is an error state, not still-loading.
+  const loading = isPending;
 
-        // Group data by date and time
-        const dataByDate = new Map<string, Map<string, number | null>>();
-        const dates = new Set<string>();
+  // Derived error string for the inline error UI.
+  const error =
+    isError && !(queryError instanceof HeatmapHtmlError)
+      ? queryError instanceof Error
+        ? queryError.message
+        : "Unknown error"
+      : fetchResult && !heatmapData
+        ? "No data found for this point"
+        : null;
 
-        data.forEach((value: number | null, index: number) => {
-          // startTime is the end of the first interval
-          const intervalEndTimestamp = startTime + index * intervalMs;
-          const intervalStartTimestamp = intervalEndTimestamp - intervalMs;
-
-          // Use interval START time for the time slot (e.g., 00:00 for the 00:00-00:30 interval)
-          const jsDateForTime = new Date(intervalStartTimestamp);
-          const zonedDateForTime = fromDate(jsDateForTime, timezone);
-          const timeKey = `${String(zonedDateForTime.hour).padStart(2, "0")}:${String(zonedDateForTime.minute).padStart(2, "0")}`;
-
-          // Use interval START time for the date (consistent with time key)
-          const jsDateForDate = new Date(intervalStartTimestamp);
-          const zonedDateForDate = fromDate(jsDateForDate, timezone);
-          const dateKey = `${zonedDateForDate.year}-${String(zonedDateForDate.month).padStart(2, "0")}-${String(zonedDateForDate.day).padStart(2, "0")}`;
-
-          dates.add(dateKey);
-
-          if (!dataByDate.has(dateKey)) {
-            dataByDate.set(dateKey, new Map());
-          }
-          // Store null values as well
-          dataByDate.get(dateKey)!.set(timeKey, value);
-        });
-
-        // Sort dates (most recent first)
-        const sortedDates = Array.from(dates).sort().reverse();
-
-        // Build heatmap data points
-        const heatmapPoints: HeatmapDataPoint[] = [];
-        let min = Infinity;
-        let max = -Infinity;
-
-        sortedDates.forEach((dateKey) => {
-          const timeData = dataByDate.get(dateKey)!;
-          timeLabels.forEach((timeKey) => {
-            const value = timeData.get(timeKey) ?? null;
-            heatmapPoints.push({
-              x: timeKey,
-              y: dateKey,
-              v: value,
-            });
-
-            if (value !== null) {
-              min = Math.min(min, value);
-              max = Math.max(max, value);
-            }
-          });
-        });
-
-        // Handle case where all values are null
-        if (min === Infinity || max === -Infinity) {
-          min = 0;
-          max = 1;
-        }
-
-        setHeatmapData({
-          data: heatmapPoints,
-          min,
-          max,
-          xLabels: timeLabels,
-          yLabels: sortedDates,
-        });
-        console.log("[HeatmapChart] Data processed, setting loading=false");
-        setLoading(false);
-      } catch (err) {
-        console.error("Error fetching heatmap data:", err);
-        setError(err instanceof Error ? err.message : "Unknown error");
+  // Map query/transform failures onto the error modal (connection vs. server),
+  // matching the original try/catch behaviour.
+  useEffect(() => {
+    if (isError) {
+      if (queryError instanceof HeatmapHtmlError) {
+        setIsErrorModalOpen(true);
+        setErrorType("connection");
+        setErrorDetails(queryError.message);
+      } else {
+        console.error("Error fetching heatmap data:", queryError);
+        const msg =
+          queryError instanceof Error ? queryError.message : "Unknown error";
         setIsErrorModalOpen(true);
         setErrorType("server");
-        setErrorDetails(err instanceof Error ? err.message : "Unknown error");
-        setLoading(false);
+        setErrorDetails(msg);
       }
-    };
-
-    fetchData();
-  }, [systemId, pointPath, timezone]);
+    } else if (fetchResult && !heatmapData) {
+      // Fetched OK but the requested series/history was absent.
+      const msg = "No data found for this point";
+      console.error("Error fetching heatmap data:", msg);
+      setIsErrorModalOpen(true);
+      setErrorType("server");
+      setErrorDetails(msg);
+    }
+  }, [isError, queryError, fetchResult, heatmapData]);
 
   // Cleanup tooltip on unmount
   useEffect(() => {
