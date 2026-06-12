@@ -41,7 +41,35 @@ PLANETSCALE_PRODUCTION_HOST=<prod host>                        # arms the dev gu
 # Vercel KV (for latest point values cache)
 KV_REST_API_URL=<your-kv-url>
 KV_REST_API_TOKEN=<your-kv-token>
+
+# Tesla Fleet API (monitoring + charge control). Required for any Tesla connection —
+# the legacy Owner API path is removed (see docs/tesla-api-brief.md).
+TESLA_CLIENT_ID=<developer.tesla.com app client id>
+TESLA_CLIENT_SECRET=<developer.tesla.com app client secret>
+TESLA_REDIRECT_URI=https://liveone.energy/api/auth/tesla/callback
+TESLA_PUBLIC_KEY_PEM=<EC P-256 public key PEM; served at /.well-known/appspecific/com.tesla.3p.public-key.pem>
+TESLA_PRIVATE_KEY_PEM=<EC P-256 private key PEM; reserved for Phase 2 command signing>
 ```
+
+#### Setting up Tesla Fleet API
+
+The Tesla integration uses the Fleet API (the Owner API auth path is de-registered).
+See `docs/tesla-api-brief.md` for the full rationale. One-time setup:
+
+1. **Register an app** at `developer.tesla.com` (MFA account) → `TESLA_CLIENT_ID` +
+   `TESLA_CLIENT_SECRET`. Redirect URI `https://liveone.energy/api/auth/tesla/callback`;
+   scopes `openid offline_access vehicle_device_data vehicle_location vehicle_charging_cmds`.
+2. **Configure billing** on the developer account (pay-per-use; ~$10/mo discount).
+3. **Generate the keypair**: `./scripts/utils/tesla-generate-keypair.sh` → set
+   `TESLA_PUBLIC_KEY_PEM` / `TESLA_PRIVATE_KEY_PEM`. The public key is served at
+   `/.well-known/appspecific/com.tesla.3p.public-key.pem`.
+4. **Register the partner account** (once per env, after the public key is live):
+   `curl -X POST https://liveone.energy/api/admin/tesla/register-partner` (admin auth;
+   in dev use `-H "x-claude: true"`).
+
+Pre-2021 Model S/X are exempt from command signing, so charge commands work over direct
+REST. 2021+ vehicles need a signing proxy/SDK (Phase 2) — the command layer is built with
+a pluggable signer so that's a config/infra add, not a rewrite.
 
 #### Setting up Vercel KV
 

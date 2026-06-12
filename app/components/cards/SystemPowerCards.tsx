@@ -26,6 +26,10 @@ interface SystemPowerCardsProps {
   layout?: "horizontal" | "sidebar";
   /** Additional CSS classes for the outer container */
   className?: string;
+  /** System id — enables the Tesla charge-control dialog. */
+  systemId?: number;
+  /** Whether the current user may control the Tesla (owner or admin). */
+  canControl?: boolean;
 }
 
 interface LoadPoint {
@@ -355,6 +359,8 @@ export default function SystemPowerCards({
   showGrid,
   layout = "horizontal",
   className,
+  systemId,
+  canControl,
 }: SystemPowerCardsProps) {
   // Helper to format power value (number only, no unit)
   const formatPowerValue = (watts: number) => {
@@ -720,7 +726,13 @@ export default function SystemPowerCards({
         {hasAmberData && <AmberSmallCard latest={latest} />}
 
         {/* Tesla EV Card - only show if Tesla data available */}
-        {hasTeslaData && <TeslaSmallCard latest={latest} />}
+        {hasTeslaData && (
+          <TeslaSmallCard
+            latest={latest}
+            systemId={systemId}
+            canControl={canControl}
+          />
+        )}
       </div>
     </div>
   );

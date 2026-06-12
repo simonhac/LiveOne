@@ -72,4 +72,27 @@ export interface TeslaCredentials {
   refresh_token: string;
   expires_at: Date | string;
   vehicle_id: string; // Tesla vehicle ID (stored as string for consistency)
+  // Region-specific Fleet API base URL (from GET /api/1/users/region). Optional for
+  // legacy Owner API credentials; Fleet onboarding persists it so polling/commands hit
+  // the right regional host instead of assuming NA.
+  fleet_api_base_url?: string;
+}
+
+// Result of GET /api/1/users/region
+export interface TeslaRegion {
+  region: string; // e.g. "na", "eu"
+  fleet_api_base_url: string;
+}
+
+// Charge-control commands supported on the Fleet API.
+export type TeslaChargeCommand =
+  | "charge_start"
+  | "charge_stop"
+  | "set_charge_limit"
+  | "set_charging_amps";
+
+// Parsed result of a Tesla command POST ({ response: { result, reason } }).
+export interface TeslaCommandResult {
+  result: boolean;
+  reason: string;
 }

@@ -10,15 +10,7 @@ import {
   storeSystemCredentials,
 } from "@/lib/secure-credentials";
 import { getTeslaClient } from "./tesla-client";
-import { refreshOwnerApiTokens } from "./tesla-sso-client";
 import type { TeslaCredentials, TeslaTokens } from "./types";
-
-// Check if Fleet API is configured (needed for token refresh)
-const hasFleetApiConfig = !!(
-  process.env.TESLA_CLIENT_ID &&
-  process.env.TESLA_CLIENT_SECRET &&
-  process.env.TESLA_REDIRECT_URI
-);
 
 export interface TeslaAuthResult {
   accessToken: string;
@@ -26,19 +18,22 @@ export interface TeslaAuthResult {
 }
 
 /**
- * Convert OAuth tokens to our credential format and store them
+ * Convert OAuth tokens to our credential format and store them.
+ * @param fleetApiBaseUrl - region-specific Fleet host to persist (preserve across refreshes).
  */
 export async function storeTeslaTokens(
   userId: string,
   tokens: TeslaTokens,
   systemId: number,
   vehicleId: string,
+  fleetApiBaseUrl?: string,
 ) {
-  const credentials = {
+  const credentials: TeslaCredentials = {
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
     expires_at: new Date(Date.now() + tokens.expires_in * 1000),
     vehicle_id: vehicleId,
+    ...(fleetApiBaseUrl ? { fleet_api_base_url: fleetApiBaseUrl } : {}),
   };
 
   return storeSystemCredentials(userId, systemId, "tesla", credentials);
@@ -84,27 +79,23 @@ export async function getValidTeslaToken(
     };
   }
 
-  // Token is expiring soon, refresh it. Owner API systems (the default, no Fleet env
-  // vars) refresh via the secret-less `ownerapi` client; Fleet-configured systems use
-  // the Fleet client. Either way an Owner API access token only lasts ~8h, so this
-  // refresh is what keeps polling alive.
+  // Token is expiring soon, refresh it via the Fleet client.
   console.log(
-    `[Tesla] Token expiring soon for system ${systemId}, refreshing (${
-      hasFleetApiConfig ? "fleet" : "ownerapi"
-    })...`,
+    `[Tesla] Token expiring soon for system ${systemId}, refreshing...`,
   );
 
   try {
-    const newTokens: TeslaTokens = hasFleetApiConfig
-      ? await getTeslaClient().refreshTokens(teslaCredentials.refresh_token)
-      : await refreshOwnerApiTokens(teslaCredentials.refresh_token);
+    const newTokens: TeslaTokens = await getTeslaClient().refreshTokens(
+      teslaCredentials.refresh_token,
+    );
 
-    // Store the new tokens
+    // Store the new tokens (preserving the persisted regional Fleet host)
     const storeResult = await storeTeslaTokens(
       userId,
       newTokens,
       systemId,
       teslaCredentials.vehicle_id,
+      teslaCredentials.fleet_api_base_url,
     );
     if (!storeResult.success) {
       throw new Error(storeResult.error || "Failed to store refreshed tokens");
@@ -120,6 +111,7 @@ export async function getValidTeslaToken(
         access_token: newTokens.access_token,
         refresh_token: newTokens.refresh_token,
         expires_at: new Date(Date.now() + newTokens.expires_in * 1000),
+        fleet_api_base_url: teslaCredentials.fleet_api_base_url,
       },
     };
   } catch (error) {

@@ -7,8 +7,10 @@ import {
   BatteryCharging,
   ChevronLeft,
   ChevronsLeft,
+  Settings,
 } from "lucide-react";
 import { ttInterphases } from "@/lib/fonts/amber";
+import TeslaControlDialog from "@/components/TeslaControlDialog";
 
 interface LatestValue {
   value: number | string | boolean;
@@ -22,6 +24,10 @@ interface TeslaSmallCardProps {
    * Latest values from KV cache, keyed by logical path
    */
   latest: Record<string, LatestValue | null> | null;
+  /** System id — required to enable the charge-control dialog. */
+  systemId?: number;
+  /** Whether the current user may issue charge commands (owner or admin). */
+  canControl?: boolean;
 }
 
 /**
@@ -88,13 +94,20 @@ function getBatteryColor(soc: number): string {
  * | 120px+   | 110px  | 8px     | 80       | 36px     | 16px    | 10px        |
  * | 180px+   | 180px  | 12px    | 120      | 45px     | 20px    | 14px (sm)   |
  */
-export default function TeslaSmallCard({ latest }: TeslaSmallCardProps) {
+export default function TeslaSmallCard({
+  latest,
+  systemId,
+  canControl,
+}: TeslaSmallCardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState<{
     width: number;
     height: number;
   }>({ width: 0, height: 0 });
   const [showDebug, setShowDebug] = useState(false);
+  const [controlsOpen, setControlsOpen] = useState(false);
+
+  const showControls = canControl && systemId != null;
 
   // Show debug indicator only when ?debug is in URL
   useEffect(() => {
@@ -172,6 +185,27 @@ export default function TeslaSmallCard({ latest }: TeslaSmallCardProps) {
         <div className="absolute top-0 right-0 bg-red-500 text-white text-[10px] px-1 rounded-bl z-50">
           {containerSize.width}w {containerSize.height}h
         </div>
+      )}
+
+      {/* Charge-control cog — owner/admin only, shown once the card is wide enough */}
+      {showControls && (
+        <button
+          type="button"
+          onClick={() => setControlsOpen(true)}
+          aria-label="Charging controls"
+          className="hidden @[120px]:flex absolute top-2 right-2 z-40 items-center justify-center text-gray-500 hover:text-gray-200 transition-colors"
+        >
+          <Settings className="w-4 h-4 @[180px]:w-[18px] @[180px]:h-[18px]" />
+        </button>
+      )}
+
+      {showControls && (
+        <TeslaControlDialog
+          systemId={systemId as number}
+          open={controlsOpen}
+          onOpenChange={setControlsOpen}
+          latest={latest}
+        />
       )}
 
       {/* Compact layout - shown when card < 180px */}
