@@ -1,119 +1,63 @@
 # Tesla Integration
 
-> **Status:** current — last verified 2026-06-10.
+> **Status:** current — in-app Owner API onboarding (redirect + paste-back).
 
 ## Overview
 
-The Tesla adapter polls vehicle data including:
+Users add a Tesla from the **Add System** dialog. The adapter polls vehicle data:
 
 - Battery SoC
 - Charging state (Disconnected, Charging, Complete, etc.)
 - Charge power, current, rate
 - Time to full charge
 - Speed
-- Location (lat/lon as JSON)
+- Odometer
 
 **Polling intervals:**
 
 - Default: 15 minutes
 - When charging: 5 minutes
 
-## Environment Variables
+## How onboarding works (Owner API, no local tooling)
 
-```bash
-TESLA_CLIENT_ID=<from Tesla developer portal>
-TESLA_CLIENT_SECRET=<from Tesla developer portal>
-TESLA_REDIRECT_URI=https://liveone.vercel.app/api/auth/tesla/callback
-```
+Tesla is onboarded via the legacy **`ownerapi`** OAuth client, which only ever redirects to
+`https://auth.tesla.com/void/callback` — Tesla does **not** allow a custom redirect URI for it. So we
+can't bounce the user straight back into the app; instead we use a **redirect + paste-back** flow:
 
-## Bootstrapping in Development
+1. In **Add System**, the user picks **Tesla** and clicks **Connect with Tesla**.
+2. `POST /api/auth/tesla/connect` generates PKCE + a random `state`, stores the `code_verifier` in
+   Vercel KV (`tesla:oauth:<state>`, 15-min TTL, bound to the Clerk user), and returns the Tesla
+   authorization URL. The verifier never reaches the browser.
+3. Tesla's login opens in a new tab. The user signs in (handling their own MFA/captcha) and lands on a
+   blank **"Page Not Found"** at `auth.tesla.com/void/callback?code=…`.
+4. The user copies that page's URL and pastes it back into the dialog → `POST /api/auth/tesla/complete`.
+5. The server validates the URL host, looks up the verifier by `state` (single-use), exchanges the code
+   for tokens (`client_id=ownerapi`, no secret), discovers vehicles via the Owner API
+   (`owner-api.teslamotors.com/api/1/products`), creates the `tesla` system, and stores the tokens in
+   Clerk. Multiple vehicles → the dialog shows a picker (tokens stashed briefly under
+   `tesla:pending:<token>`).
 
-Since OAuth requires a public callback URL, use the bootstrap endpoint with your existing Python CLI credentials.
-
-### Prerequisites
-
-1. Have the Tesla Python CLI set up with valid credentials in `~/.tesla_cache.json`
-2. Dev server running on `localhost:3000`
-3. Be logged in to the app
-
-### Steps
-
-**1. Check if cached credentials exist:**
-
-```bash
-curl http://localhost:3000/api/admin/bootstrap-tesla
-```
-
-Response:
-
-```json
-{
-  "found": true,
-  "email": "your@email.com",
-  "expiresAt": "2025-11-29T16:04:21.000Z",
-  "isExpired": false
-}
-```
-
-**2. If tokens are expired, refresh via Python CLI:**
-
-```bash
-cd /path/to/tezman
-python tez.py --stats
-```
-
-This refreshes the tokens in `~/.tesla_cache.json`.
-
-**3. Bootstrap the Tesla system:**
-
-```bash
-curl -X POST -H "x-claude: true" http://localhost:3000/api/admin/bootstrap-tesla
-```
-
-Response:
-
-```json
-{
-  "success": true,
-  "systemId": 5,
-  "vehicleId": "1234567890",
-  "vehicleName": "My Tesla",
-  "vin": "5YJ3E1...",
-  "state": "online",
-  "message": "Tesla system bootstrapped successfully"
-}
-```
-
-**4. Trigger a poll:**
-
-```bash
-curl -X POST -H "x-claude: true" "http://localhost:3000/api/cron/minutely?force=true"
-```
-
-## Production OAuth Flow
-
-In production, users connect via the standard OAuth flow:
-
-1. User clicks "Connect Tesla" button
-2. Frontend calls `POST /api/auth/tesla/connect`
-3. User redirected to `auth.tesla.com` to authorize
-4. Tesla redirects to `/api/auth/tesla/callback`
-5. Callback creates system, stores credentials
-6. User redirected to `/auth/tesla/result`
+This works identically in development and production — there are no Tesla env vars or local files
+involved. (Access tokens last ~8h and are auto-refreshed via the `ownerapi` refresh grant in
+`lib/vendors/tesla/tesla-auth.ts`.)
 
 ## Data Points
 
-| Field          | Logical Path          | Type     | Unit    |
-| -------------- | --------------------- | -------- | ------- |
-| Battery SoC    | `ev.battery/soc`      | soc      | %       |
-| Plugged In     | `ev.charge/engaged`   | status   | boolean |
-| Charging State | `ev.charge/state`     | status   | string  |
-| Charge Current | `ev.charge/current`   | current  | A       |
-| Charge Power   | `ev.charge/power`     | power    | kW      |
-| Charge Rate    | `ev.charge/rate`      | rate     | mi/hr   |
-| Time to Full   | `ev.charge/remaining` | duration | hours   |
-| Speed          | `ev/speed`            | speed    | mph     |
-| Location       | `ev/location`         | location | JSON    |
+| Field                | Logical Path              | Type      | Unit    |
+| -------------------- | ------------------------- | --------- | ------- |
+| Battery SoC          | `ev.battery/soc`          | soc       | %       |
+| Charge Limit         | `ev.charge.limit/soc`     | soc       | %       |
+| Plugged In           | `ev.charge/engaged`       | engaged   | boolean |
+| Charging State       | `ev.charge/state`         | state     | text    |
+| Charge Limit Current | `ev.charge.limit/current` | current   | A       |
+| Charge Current       | `ev.charge/current`       | current   | A       |
+| Charge Power         | `ev.charge/power`         | power     | kW      |
+| Charge Rate          | `ev.charge/rate`          | rate      | mi/hr   |
+| Time to Full         | `ev.charge/remaining`     | remaining | hours   |
+| Speed                | `ev/speed`                | speed     | mph     |
+| Odometer             | `ev/odometer`             | odometer  | miles   |
+
+> Location (lat/lon) is fetched in `vehicle_data` but not yet stored as a point.
 
 ## Charging States
 
@@ -131,16 +75,27 @@ In production, users connect via the standard OAuth flow:
 Tesla vehicles sleep to conserve battery. The adapter:
 
 1. Checks vehicle state before fetching data
-2. If asleep, sends wake_up command
-3. Waits up to 30 seconds for vehicle to come online
-4. Skips poll if vehicle doesn't wake (preserves 12V battery)
+2. If asleep, sends `wake_up`
+3. Waits up to 30 seconds for the vehicle to come online
+4. Skips the poll if the vehicle doesn't wake (preserves the 12V battery)
 
 ## Files
 
-- `lib/vendors/tesla/adapter.ts` - Main adapter
-- `lib/vendors/tesla/tesla-client.ts` - OAuth + API client
-- `lib/vendors/tesla/tesla-auth.ts` - Token management
-- `lib/vendors/tesla/point-metadata.ts` - Data point definitions
-- `lib/vendors/tesla/types.ts` - TypeScript interfaces
-- `app/api/auth/tesla/` - OAuth routes
-- `app/api/admin/bootstrap-tesla/` - Dev bootstrap endpoint
+- `lib/vendors/tesla/adapter.ts` — polling adapter (15/5-min schedule, wake-up, point extraction)
+- `lib/vendors/tesla/tesla-sso-client.ts` — `ownerapi` OAuth (authorize/exchange/refresh, no secret)
+- `lib/vendors/tesla/tesla-owner-client.ts` — Owner API data calls (`owner-api.teslamotors.com`)
+- `lib/vendors/tesla/tesla-auth.ts` — token storage + auto-refresh
+- `lib/vendors/tesla/tesla-oauth-state.ts` — KV-backed PKCE state for the paste-back flow
+- `lib/vendors/tesla/point-metadata.ts` — data point definitions
+- `lib/vendors/tesla/types.ts` — TypeScript interfaces
+- `app/api/auth/tesla/connect` · `complete` · `disconnect` — onboarding routes
+- `components/TeslaConnectFlow.tsx` — the in-dialog connect UI
+- `components/TeslaSmallCard.tsx` — dashboard battery/charge card
+
+## Fleet API (not used)
+
+`lib/vendors/tesla/tesla-client.ts` and `app/api/auth/tesla/callback` implement the modern **Fleet API**
+OAuth path (requires `TESLA_CLIENT_ID`/`TESLA_CLIENT_SECRET`/`TESLA_REDIRECT_URI`, partner registration,
+and a `.well-known` public key). They're left in place as the basis for a future Fleet option but are
+**not wired** into onboarding. If pursued, fix the hardcoded NA region in `tesla-client.ts`
+(`FLEET_API_BASE_URL`) via `/api/1/users/region` discovery.

@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { getTeslaClient, generatePKCE } from "@/lib/vendors/tesla/tesla-client";
+import crypto from "crypto";
+import { kv } from "@/lib/kv";
+import {
+  generatePKCE,
+  getOwnerApiAuthorizationUrl,
+} from "@/lib/vendors/tesla/tesla-sso-client";
+import {
+  teslaOAuthStateKey,
+  TESLA_OAUTH_STATE_TTL_SECONDS,
+  type TeslaOAuthState,
+} from "@/lib/vendors/tesla/tesla-oauth-state";
 
 async function getUserDisplay(userId: string): Promise<string> {
   try {
@@ -18,7 +28,6 @@ export async function POST(request: NextRequest) {
   console.log("TESLA: Connect endpoint called");
 
   try {
-    // Check authentication
     const { userId } = await auth();
     if (!userId) {
       console.log("TESLA: Unauthorized connect attempt");
@@ -26,24 +35,32 @@ export async function POST(request: NextRequest) {
     }
 
     const userDisplay = await getUserDisplay(userId);
-    console.log("TESLA: User initiating connection:", userDisplay);
+    console.log("TESLA: User initiating Owner API connection:", userDisplay);
 
-    // Generate PKCE code verifier and challenge
+    // Optional email hint to prefill Tesla's login form.
+    let loginHint: string | undefined;
+    try {
+      const body = await request.json().catch(() => null);
+      if (body && typeof body.email === "string") loginHint = body.email;
+    } catch {
+      // no body — fine
+    }
+
+    // PKCE + opaque state. The verifier stays server-side (in KV); only the challenge
+    // and state are exposed in the authorization URL.
     const { codeVerifier, codeChallenge } = generatePKCE();
+    const state = crypto.randomBytes(16).toString("hex");
 
-    // Create state with userId, timestamp, and code_verifier
-    // Note: code_verifier is included in state (base64 encoded) to be retrieved in callback
-    const stateData = Buffer.from(
-      JSON.stringify({
-        userId,
-        timestamp: Date.now(),
-        codeVerifier, // Include for retrieval in callback
-      }),
-    ).toString("base64");
+    const stateValue: TeslaOAuthState = { userId, codeVerifier };
+    await kv.set(teslaOAuthStateKey(state), stateValue, {
+      ex: TESLA_OAUTH_STATE_TTL_SECONDS,
+    });
 
-    // Get the Tesla client and generate authorization URL
-    const client = getTeslaClient();
-    const authUrl = client.getAuthorizationUrl(stateData, codeChallenge);
+    const authUrl = getOwnerApiAuthorizationUrl(
+      state,
+      codeChallenge,
+      loginHint,
+    );
 
     console.log("TESLA: Authorization URL generated for user:", userDisplay);
 
