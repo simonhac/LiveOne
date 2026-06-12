@@ -1,4 +1,6 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/queries";
 import { Plus, X, Sun, Home, Battery, Zap, Car } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useUser } from "@clerk/nextjs";
@@ -15,6 +17,26 @@ interface AvailablePoint {
   systemId: number;
   systemName: string;
 }
+
+interface PointsResponse {
+  success: boolean;
+  availablePoints?: AvailablePoint[];
+}
+
+interface CompositeConfigResponse {
+  success: boolean;
+  metadata?: {
+    mappings?: CompositeMapping;
+  };
+}
+
+const EMPTY_MAPPINGS = (): CompositeMapping => ({
+  solar: [],
+  battery: [],
+  load: [],
+  grid: [],
+  ev: [],
+});
 
 interface CompositeTabProps {
   systemId: number;
@@ -70,28 +92,70 @@ export default function CompositeTab({
   ownerUserId,
 }: CompositeTabProps) {
   const { user } = useUser();
-  const [mappings, setMappings] = useState<CompositeMapping>({
-    solar: [],
-    battery: [],
-    load: [],
-    grid: [],
-    ev: [],
-  });
-  const [initialMappings, setInitialMappings] = useState<CompositeMapping>({
-    solar: [],
-    battery: [],
-    load: [],
-    grid: [],
-    ev: [],
-  });
-  const [availablePoints, setAvailablePoints] = useState<AvailablePoint[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [hasLoaded, setHasLoaded] = useState(false);
+  const [mappings, setMappings] = useState<CompositeMapping>(EMPTY_MAPPINGS);
+  const [initialMappings, setInitialMappings] =
+    useState<CompositeMapping>(EMPTY_MAPPINGS);
   const [addingToCategory, setAddingToCategory] = useState<string | null>(null);
   const [menuButtonRef, setMenuButtonRef] = useState<HTMLButtonElement | null>(
     null,
   );
-  const fetchingRef = useRef(false);
+
+  // Determine which user ID to use for fetching points
+  // Priority: ownerUserId prop > current user ID
+  const userId = ownerUserId || user?.id;
+
+  // Fetch available points from user's systems
+  const pointsQuery = useQuery({
+    queryKey: ["composite", "available-points", userId],
+    queryFn: () =>
+      fetchJson<PointsResponse>(`/api/admin/user/${userId}/points`),
+    enabled: shouldLoad && !!userId,
+  });
+
+  // For existing systems, fetch their composite configuration
+  const configQuery = useQuery({
+    queryKey: ["system", systemId, "composite-config"],
+    queryFn: () =>
+      fetchJson<CompositeConfigResponse>(
+        `/api/admin/systems/${systemId}/composite-config`,
+      ),
+    enabled: shouldLoad && !!userId && systemId !== -1,
+  });
+
+  const availablePoints = useMemo<AvailablePoint[]>(
+    () => pointsQuery.data?.availablePoints || [],
+    [pointsQuery.data],
+  );
+
+  // Loading mirrors the original: points must resolve, and (for existing
+  // systems) the config too. With no userId the original bailed out of loading.
+  const loading = !userId
+    ? false
+    : pointsQuery.isPending || (systemId !== -1 && configQuery.isPending);
+
+  // Seed editable mappings from the fetched config (replaces the in-fetch
+  // seeding); re-seeds whenever fresh server data arrives.
+  const pointsData = pointsQuery.data;
+  const configData = configQuery.data;
+  useEffect(() => {
+    if (systemId === -1) {
+      // For new systems, initialize with empty mappings (once points load)
+      if (pointsData?.success) {
+        const emptyMappings = EMPTY_MAPPINGS();
+        setMappings(emptyMappings);
+        setInitialMappings(JSON.parse(JSON.stringify(emptyMappings)));
+      }
+      return;
+    }
+    // For existing systems, seed from their composite configuration
+    if (pointsData?.success && configData?.success) {
+      const metadata = configData.metadata || {};
+      const currentMappings: CompositeMapping =
+        metadata.mappings || EMPTY_MAPPINGS();
+      setMappings(currentMappings);
+      setInitialMappings(JSON.parse(JSON.stringify(currentMappings)));
+    }
+  }, [systemId, pointsData, configData]);
 
   // Handle Escape key to close menu
   useEffect(() => {
@@ -109,90 +173,6 @@ export default function CompositeTab({
       };
     }
   }, [addingToCategory]);
-
-  // Reset hasLoaded when modal closes
-  useEffect(() => {
-    if (!shouldLoad && hasLoaded) {
-      setHasLoaded(false);
-      setLoading(true);
-      fetchingRef.current = false;
-    }
-  }, [shouldLoad, hasLoaded]);
-
-  const fetchCompositeConfig = useCallback(async () => {
-    fetchingRef.current = true;
-    try {
-      // Determine which user ID to use for fetching points
-      // Priority: ownerUserId prop > current user ID
-      const userId = ownerUserId || user?.id;
-
-      if (!userId) {
-        console.error("No user ID available to fetch points");
-        setLoading(false);
-        fetchingRef.current = false;
-        return;
-      }
-
-      // Fetch available points from user's systems
-      const pointsResponse = await fetch(`/api/admin/user/${userId}/points`);
-      const pointsData = await pointsResponse.json();
-
-      if (!pointsData.success) {
-        console.error("Failed to fetch available points");
-        return;
-      }
-
-      setAvailablePoints(pointsData.availablePoints || []);
-
-      // For new systems (systemId=-1), initialize with empty mappings
-      if (systemId === -1) {
-        const emptyMappings: CompositeMapping = {
-          solar: [],
-          battery: [],
-          load: [],
-          grid: [],
-          ev: [],
-        };
-
-        setMappings(emptyMappings);
-        setInitialMappings(JSON.parse(JSON.stringify(emptyMappings)));
-        setHasLoaded(true);
-      } else {
-        // For existing systems, fetch their composite configuration
-        const configResponse = await fetch(
-          `/api/admin/systems/${systemId}/composite-config`,
-        );
-        const configData = await configResponse.json();
-
-        if (configData.success) {
-          // Parse existing mappings from metadata
-          const metadata = configData.metadata || {};
-          const currentMappings: CompositeMapping = metadata.mappings || {
-            solar: [],
-            battery: [],
-            load: [],
-            grid: [],
-            ev: [],
-          };
-
-          setMappings(currentMappings);
-          setInitialMappings(JSON.parse(JSON.stringify(currentMappings)));
-          setHasLoaded(true);
-        }
-      }
-    } catch (error) {
-      console.error("Failed to fetch composite config:", error);
-    } finally {
-      setLoading(false);
-      fetchingRef.current = false;
-    }
-  }, [systemId, ownerUserId, user?.id]);
-
-  useEffect(() => {
-    if (shouldLoad && !hasLoaded && !fetchingRef.current) {
-      fetchCompositeConfig();
-    }
-  }, [systemId, shouldLoad, hasLoaded, fetchCompositeConfig]);
 
   // Check if mappings are dirty
   const isDirty = useMemo(() => {

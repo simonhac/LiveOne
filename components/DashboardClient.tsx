@@ -1,15 +1,21 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useModalContext } from "@/contexts/ModalContext";
+import {
+  dashboardDataQuery,
+  siteDataQuery,
+  flowMatrixQuery,
+} from "@/lib/queries";
 import EnergyChart from "@/components/EnergyChart";
 import AmberCard from "@/components/AmberCard";
 import AmberNow from "@/components/AmberNow";
 import AmberSmallCard from "@/components/AmberSmallCard";
 import SitePowerChart, { type ChartData } from "@/components/SitePowerChart";
 import EnergyTable from "@/components/EnergyTable";
-import { fetchAndProcessSiteData } from "@/lib/site-data-processor";
+import type { ProcessedSiteData } from "@/lib/site-data-processor";
 import EnergyFlowSankey from "@/components/EnergyFlowSankey";
 import {
   calculateEnergyFlowMatrix,
@@ -18,9 +24,8 @@ import {
 import SystemPowerCards from "@/app/components/cards/SystemPowerCards";
 import PeriodSwitcher from "@/components/PeriodSwitcher";
 import { formatDateTime, formatDateTimeRange } from "@/lib/fe-date-format";
-import { fromUnixTimestamp, getNextMinuteBoundary } from "@/lib/date-utils";
+import { fromUnixTimestamp } from "@/lib/date-utils";
 import type { LatestPointValues } from "@/lib/types/api";
-import { parseJsonWithDates } from "@/lib/json";
 import {
   encodeUrlDate,
   decodeUrlDate,
@@ -150,11 +155,6 @@ export default function DashboardClient({
 }: DashboardClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [isAdmin, setIsAdmin] = useState(isAdminProp);
   const [currentDisplayName, setCurrentDisplayName] = useState(
     system?.displayName || "",
@@ -166,6 +166,34 @@ export default function DashboardClient({
 
   // Get modal context to pause polling when modals are open
   const { isAnyModalOpen } = useModalContext();
+
+  // Main dashboard payload via React Query (latest values + system + available systems).
+  // Polls every 30s and on focus; paused while a modal is open. A manual Poll-Now
+  // invalidates ['data', systemId] through the shared client.
+  const {
+    data: queryData,
+    isPending,
+    isError,
+    error: dataError,
+  } = useQuery(dashboardDataQuery(systemId ?? "", { paused: isAnyModalOpen }));
+  const data = (queryData ?? null) as DashboardData | null;
+  const systemInfo =
+    (queryData as { systemInfo?: SystemInfo } | undefined)?.systemInfo ?? null;
+
+  // Derive the display error from the query result, preserving the original branches:
+  // connection failure, an explicit `error` body, or the "system exists but no charts" marker.
+  const error = useMemo(() => {
+    if (isError) {
+      return dataError instanceof TypeError
+        ? "Unable to connect to server"
+        : "Failed to fetch data";
+    }
+    if (!queryData) return "";
+    const r = queryData as { latest?: unknown; error?: string };
+    if (r.latest) return "";
+    if (r.error) return r.error;
+    return system?.status !== "removed" ? "POINT_READINGS_NO_CHARTS" : "";
+  }, [isError, dataError, queryData, system?.status]);
 
   // Helper function to safely get a point value
   // Helper function to get a point (contains value and measurementTime)
@@ -274,20 +302,6 @@ export default function DashboardClient({
     [historyTimeRange],
   );
 
-  const [historyFetchTrigger, setHistoryFetchTrigger] = useState(0);
-  const [processedHistoryData, setProcessedHistoryData] = useState<{
-    load: ChartData | null;
-    generation: ChartData | null;
-    requestStart?: string;
-    requestEnd?: string;
-    flowMatrix?: EnergyFlowMatrix | null;
-  }>({ load: null, generation: null });
-  // Energy-flow matrix served from PG for the long-range (30D) Sankey (gated by
-  // serveFlowFromPg). null = not loaded / not applicable → fall back to client-side calc.
-  const [pgFlowMatrix, setPgFlowMatrix] = useState<EnergyFlowMatrix | null>(
-    null,
-  );
-  const [historyLoading, setHistoryLoading] = useState(false);
   const [loadChartData, setLoadChartData] = useState<ChartData | null>(null);
   const [generationChartData, setGenerationChartData] =
     useState<ChartData | null>(null);
@@ -302,107 +316,6 @@ export default function DashboardClient({
     Set<string>
   >(new Set());
 
-  // Function to fetch data from API
-  const fetchData = useCallback(async () => {
-    try {
-      // systemId is now required
-      if (!systemId) {
-        setError("No system ID provided");
-        setLoading(false);
-        return;
-      }
-      const url = `/api/data?systemId=${systemId}`;
-      const response = await fetch(url);
-
-      // Check for token expiration specifically
-      if (response.status === 404) {
-        // Check the Clerk auth headers to see if this is due to token expiration
-        const authStatus = response.headers.get("x-clerk-auth-status");
-        const authReason = response.headers.get("x-clerk-auth-reason");
-        const authMessage = response.headers.get("x-clerk-auth-message");
-
-        if (
-          authStatus === "signed-out" ||
-          authReason?.includes("token-expired") ||
-          authMessage?.includes("expired")
-        ) {
-          console.log("Session token expired");
-          console.log("Auth message:", authMessage);
-          // Session expired - reload will redirect to sign in
-          setLoading(false);
-          return;
-        }
-        // Otherwise it's a real 404 - system doesn't exist
-      }
-
-      // Check for other non-OK responses
-      if (!response.ok) {
-        // Check if the response is HTML (like a 404 page) instead of JSON
-        const contentType = response.headers.get("content-type");
-        if (contentType && !contentType.includes("application/json")) {
-          // If we get an HTML response, it's likely a token expiration that wasn't caught above
-          console.log("Non-JSON response received, likely token expired");
-          setLoading(false);
-          return;
-        }
-        throw new Error(`Failed to fetch data: ${response.status}`);
-      }
-
-      // Parse JSON with automatic date deserialization
-      const result = await parseJsonWithDates(response);
-
-      // Check if we have latest data (system info is always present)
-      if (result.latest) {
-        setData(result);
-
-        // Find most recent measurement time from all points
-        const timestamps = Object.values(result.latest as LatestPointValues)
-          .map((point) => point?.measurementTime)
-          .filter((time): time is Date => time instanceof Date);
-
-        const dataTimestamp =
-          timestamps.length > 0
-            ? new Date(Math.max(...timestamps.map((t) => t.getTime())))
-            : new Date();
-
-        setLastUpdate(dataTimestamp);
-
-        setSystemInfo(result.systemInfo || null);
-        setError("");
-        setLoading(false);
-      } else if (result.error) {
-        setError(result.error);
-        setLoading(false);
-      } else {
-        // We have system info but no readings yet
-        setData(result);
-        setSystemInfo(result.systemInfo || null);
-        // Don't show error for removed systems
-        if (system?.status !== "removed") {
-          setError("POINT_READINGS_NO_CHARTS"); // Special marker for point_readings systems
-        }
-        setLoading(false);
-      }
-    } catch (err) {
-      console.error("Error fetching data:", err);
-
-      // Check if error message indicates a 404 (which might mean token expired)
-      if (err instanceof Error && err.message.includes("404")) {
-        console.log("Session might be expired (404 error)");
-        setLoading(false);
-        return;
-      }
-
-      // Check if it's a network/connection error
-      if (err instanceof TypeError && err.message === "Failed to fetch") {
-        setError("Unable to connect to server");
-      } else {
-        setError("Failed to fetch data");
-      }
-      setLoading(false);
-    }
-  }, [systemId, system?.status]);
-
   // Sync local state with data when loaded (unless user has manually updated)
   useEffect(() => {
     if (data?.system?.displayName && !currentDisplayName) {
@@ -416,208 +329,78 @@ export default function DashboardClient({
     }
   }, [data?.system?.displayTimezone, currentDisplayTimezone]);
 
+  // Mondo/composite "site" history via React Query. A live window refetches on the 5-min
+  // boundary; an explicit historical window (prev/next navigation) is settled (no polling).
+  // Fetch + process + windowing happen inside the query factory, so `processedHistoryData`
+  // is referentially stable between renders and slides forward only on each refetch.
+  const isSiteVendor =
+    system?.vendorType === "mondo" || system?.vendorType === "composite";
+  const { data: siteData, isLoading: historyLoading } = useQuery(
+    siteDataQuery({
+      systemId: systemId ?? "",
+      period: sitePeriod,
+      start: historyTimeRange.start,
+      end: historyTimeRange.end,
+      timezoneOffsetMin: system?.timezoneOffsetMin ?? 0,
+      paused: isAnyModalOpen,
+      enabled: isSiteVendor && !!systemId,
+    }),
+  );
+  const processedHistoryData = useMemo<ProcessedSiteData>(
+    () => siteData ?? { load: null, generation: null },
+    [siteData],
+  );
+
+  // Mirror the latest site fetch into the chart-data state the EnergyTable reads
+  // (SitePowerChart's onDataChange keeps these in sync as it renders, too).
   useEffect(() => {
-    // Initial fetch
-    fetchData();
-
-    // Set up polling interval (30 seconds) - but skip if modal is open
-    const interval = setInterval(() => {
-      if (!isAnyModalOpen) {
-        fetchData();
-      }
-    }, 30000);
-
-    // Cleanup on unmount
-    return () => {
-      clearInterval(interval);
-    };
-  }, [fetchData, isAnyModalOpen]);
-
-  // Update seconds since last update and trigger refresh at 70 seconds
-  // Trigger refresh 70 seconds after last update (unless modal is open)
-  useEffect(() => {
-    if (!lastUpdate || isAnyModalOpen) return;
-
-    const msUntil70s = 70000 - (Date.now() - lastUpdate.getTime());
-    if (msUntil70s <= 0) return; // Already past 70 seconds
-
-    const timeout = setTimeout(() => {
-      if (!isAnyModalOpen) {
-        fetchData();
-      }
-    }, msUntil70s);
-
-    return () => clearTimeout(timeout);
-  }, [lastUpdate, fetchData, isAnyModalOpen]);
-
-  // Fetch and process Mondo/Composite history data when needed
-  useEffect(() => {
-    if (
-      (system?.vendorType !== "mondo" && system?.vendorType !== "composite") ||
-      !systemId
-    )
-      return;
-
-    let abortController = new AbortController();
-    let timeoutId: NodeJS.Timeout | null = null;
-
-    const fetchSiteData = async () => {
-      setHistoryLoading(true);
-      try {
-        const processedData = await fetchAndProcessSiteData(
-          systemId as string,
-          sitePeriod,
-          historyTimeRange.start,
-          historyTimeRange.end,
-        );
-
-        if (!abortController.signal.aborted) {
-          setProcessedHistoryData(processedData);
-          setLoadChartData(processedData.load);
-          setGenerationChartData(processedData.generation);
-          // Store the request timestamps for navigation (only when in historical mode)
-          if (
-            processedData.requestStart &&
-            processedData.requestEnd &&
-            isHistoricalMode
-          ) {
-            setHistoryTimeRange({
-              start: processedData.requestStart,
-              end: processedData.requestEnd,
-            });
-          }
-        }
-      } catch (err) {
-        console.error("Failed to fetch Mondo history data:", err);
-        if (!abortController.signal.aborted) {
-          setProcessedHistoryData({ load: null, generation: null });
-          setLoadChartData(null);
-          setGenerationChartData(null);
-        }
-      } finally {
-        if (!abortController.signal.aborted) {
-          setHistoryLoading(false);
-        }
-      }
-    };
-
-    const scheduleNextFetch = () => {
-      // Get next 5-minute boundary
-      const nextBoundary = getNextMinuteBoundary(
-        5,
-        system?.timezoneOffsetMin || 0,
-      );
-
-      // Add 15 seconds to the boundary
-      const targetTime = new Date(nextBoundary.toDate().getTime() + 15000);
-
-      // Calculate delay from now
-      const now = new Date();
-      const delay = targetTime.getTime() - now.getTime();
-
-      // Log scheduling details
-      console.log(
-        `Scheduling site history fetch for ${targetTime.toLocaleTimeString()} (${Math.round(delay / 1000)} seconds from now)`,
-      );
-
-      // Schedule the fetch (but not if delay is negative or too far in future)
-      if (delay > 0 && delay < 5 * 60 * 1000) {
-        timeoutId = setTimeout(() => {
-          console.log(
-            `Fetching Mondo data at ${new Date().toLocaleTimeString()} for system ${systemId}`,
-          );
-          fetchSiteData();
-          // Schedule the next fetch after this one
-          scheduleNextFetch();
-        }, delay);
-      } else {
-        // If something's wrong with timing, just schedule for 5 minutes
-        console.warn(
-          "Delay out of expected range, falling back to 5-minute interval",
-          { delay },
-        );
-        timeoutId = setTimeout(
-          () => {
-            fetchSiteData();
-            scheduleNextFetch();
-          },
-          5 * 60 * 1000,
-        );
-      }
-    };
-
-    // Initial fetch
-    fetchSiteData();
-
-    // Only schedule subsequent fetches if we're not viewing historical data
-    // (i.e., no start/end URL parameters)
-    if (!historyTimeRange.start && !historyTimeRange.end) {
-      scheduleNextFetch();
+    if (siteData) {
+      setLoadChartData(siteData.load);
+      setGenerationChartData(siteData.generation);
     }
+  }, [siteData]);
 
-    return () => {
-      abortController.abort();
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    };
-  }, [
-    systemId,
-    system?.vendorType,
-    system?.timezoneOffsetMin,
-    sitePeriod,
-    historyFetchTrigger,
-    historyTimeRange.start,
-    historyTimeRange.end,
-    isHistoricalMode,
-  ]);
-
-  // Long-range Sankey served from Postgres (point_readings_flow_1d), gated by
-  // FLOW_MATRIX_SERVE_FROM_PG. v1: 30D only, completed days summed server-side. Reuses the
-  // history fetch's request window; today contributes nothing until it materializes at midnight.
+  // In historical mode, normalize the window to the server-aligned request window so prev/next
+  // navigation steps from the actual fetched range. Guarded by equality so it converges.
   useEffect(() => {
-    if (!serveFlowFromPg || sitePeriod !== "30D" || !systemId) {
-      setPgFlowMatrix(null);
-      return;
-    }
-    const start = processedHistoryData.requestStart;
-    const end = processedHistoryData.requestEnd;
-    if (!start || !end) {
-      setPgFlowMatrix(null);
-      return;
-    }
-    const offsetMin = system?.timezoneOffsetMin || 0;
-    const toLocalYMD = (iso: string) =>
-      new Date(new Date(iso).getTime() + offsetMin * 60000)
-        .toISOString()
-        .slice(0, 10);
+    if (!siteData || !isHistoricalMode) return;
+    const { requestStart, requestEnd } = siteData;
+    if (!requestStart || !requestEnd) return;
+    setHistoryTimeRange((prev) =>
+      prev.start === requestStart && prev.end === requestEnd
+        ? prev
+        : { start: requestStart, end: requestEnd },
+    );
+  }, [siteData, isHistoricalMode]);
 
-    const abort = new AbortController();
-    (async () => {
-      try {
-        const res = await fetch(
-          `/api/energy-flow-matrix?systemId=${systemId}&start=${toLocalYMD(start)}&end=${toLocalYMD(end)}`,
-          { signal: abort.signal },
-        );
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const matrix = (await res.json()) as EnergyFlowMatrix;
-        if (!abort.signal.aborted) setPgFlowMatrix(matrix);
-      } catch (err) {
-        if (!abort.signal.aborted) {
-          console.error("Failed to fetch energy flow matrix from PG:", err);
-          setPgFlowMatrix(null); // graceful fall back to client-side calc
-        }
-      }
-    })();
-    return () => abort.abort();
-  }, [
-    serveFlowFromPg,
-    sitePeriod,
-    systemId,
-    system?.timezoneOffsetMin,
-    processedHistoryData.requestStart,
-    processedHistoryData.requestEnd,
-  ]);
+  // Long-range Sankey from Postgres (point_readings_flow_1d), gated by FLOW_MATRIX_SERVE_FROM_PG.
+  // 30D only; a dependent query keyed on the site fetch's request window. When disabled / not yet
+  // loaded / errored, pgFlowMatrix stays null and the render falls back to the client-side calc.
+  const flowOffsetMin = system?.timezoneOffsetMin || 0;
+  const toLocalYMD = (iso: string) =>
+    new Date(new Date(iso).getTime() + flowOffsetMin * 60000)
+      .toISOString()
+      .slice(0, 10);
+  const flowEnabled =
+    serveFlowFromPg &&
+    sitePeriod === "30D" &&
+    !!systemId &&
+    !!processedHistoryData.requestStart &&
+    !!processedHistoryData.requestEnd;
+  const { data: pgFlowMatrixData } = useQuery(
+    flowMatrixQuery({
+      systemId: systemId ?? "",
+      startYMD: processedHistoryData.requestStart
+        ? toLocalYMD(processedHistoryData.requestStart)
+        : "",
+      endYMD: processedHistoryData.requestEnd
+        ? toLocalYMD(processedHistoryData.requestEnd)
+        : "",
+      timezoneOffsetMin: flowOffsetMin,
+      enabled: flowEnabled,
+    }),
+  );
+  const pgFlowMatrix = flowEnabled ? (pgFlowMatrixData ?? null) : null;
 
   // Ensure period is always in the URL
   useEffect(() => {
@@ -648,7 +431,6 @@ export default function DashboardClient({
       if (newEnd.getTime() > now.getTime() - intervalMs) {
         // Revert to live mode - clear start/end/offset from URL
         setHistoryTimeRange({});
-        setHistoryFetchTrigger((prev) => prev + 1);
 
         const params = new URLSearchParams(searchParams.toString());
         params.delete("start");
@@ -665,7 +447,6 @@ export default function DashboardClient({
         start: newStartISO,
         end: newEndISO,
       });
-      setHistoryFetchTrigger((prev) => prev + 1);
 
       // Update URL with only start (period is already in URL, end can be calculated)
       const offsetMin = system.timezoneOffsetMin ?? 600;
@@ -721,7 +502,6 @@ export default function DashboardClient({
       start: newStartISO,
       end: newEndISO,
     });
-    setHistoryFetchTrigger((prev) => prev + 1);
 
     // Update URL with only start (period is already in URL, end can be calculated)
     const offsetMin = system.timezoneOffsetMin ?? 600;
@@ -933,7 +713,7 @@ export default function DashboardClient({
     }
   };
 
-  if (!data && loading) {
+  if (!data && isPending) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-center">
@@ -1292,7 +1072,6 @@ export default function DashboardClient({
                                   onChange={(newPeriod) => {
                                     setSitePeriod(newPeriod);
                                     setHistoryTimeRange({}); // Reset to current when period changes
-                                    setHistoryFetchTrigger((prev) => prev + 1); // Trigger data refetch
                                     const params = new URLSearchParams(
                                       searchParams.toString(),
                                     );

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useMemo } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   RefreshCw,
   Play,
@@ -112,125 +113,155 @@ function formatTimestamp(ts: number): string {
   return formatDateTime(new Date(ts), { includeSeconds: false }).display;
 }
 
+interface ObservationsData {
+  stats: Stats | null;
+  queue: QueueInfo | null;
+  messages: PendingMessage[];
+  dlqMessages: DLQMessage[];
+  dlqCount: number | null;
+}
+
+async function fetchObservations(): Promise<ObservationsData> {
+  const [statsRes, infoRes, dlqRes, msgRes] = await Promise.all([
+    fetch("/api/admin/observations/stats"),
+    fetch("/api/admin/observations/info"),
+    fetch("/api/admin/observations/dlq"),
+    fetch("/api/admin/observations/messages"),
+  ]);
+  const data: ObservationsData = {
+    stats: statsRes.ok ? await statsRes.json() : null,
+    queue: infoRes.ok ? await infoRes.json() : null,
+    messages: msgRes.ok ? ((await msgRes.json()).messages ?? []) : [],
+    dlqMessages: [],
+    dlqCount: null,
+  };
+  if (dlqRes.ok) {
+    const d = await dlqRes.json();
+    data.dlqMessages = d.messages ?? [];
+    data.dlqCount = d.count ?? d.messages?.length ?? 0;
+  }
+  return data;
+}
+
 export default function ObservationsViewer() {
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [queue, setQueue] = useState<QueueInfo | null>(null);
-  const [messages, setMessages] = useState<PendingMessage[]>([]);
-  const [dlqMessages, setDlqMessages] = useState<DLQMessage[]>([]);
-  const [dlqCount, setDlqCount] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const queryClient = useQueryClient();
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
 
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [statsRes, infoRes, dlqRes, msgRes] = await Promise.all([
-        fetch("/api/admin/observations/stats"),
-        fetch("/api/admin/observations/info"),
-        fetch("/api/admin/observations/dlq"),
-        fetch("/api/admin/observations/messages"),
-      ]);
-      setStats(statsRes.ok ? await statsRes.json() : null);
-      setQueue(infoRes.ok ? await infoRes.json() : null);
-      setMessages(msgRes.ok ? ((await msgRes.json()).messages ?? []) : []);
-      if (dlqRes.ok) {
-        const d = await dlqRes.json();
-        setDlqMessages(d.messages ?? []);
-        setDlqCount(d.count ?? d.messages?.length ?? 0);
-      } else {
-        setDlqMessages([]);
-        setDlqCount(null);
-      }
-      setLastUpdated(new Date());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const {
+    data,
+    isPending,
+    isError,
+    error: queryError,
+    dataUpdatedAt,
+    refetch,
+  } = useQuery({
+    queryKey: ["admin", "observations"],
+    queryFn: fetchObservations,
+    refetchInterval: autoRefresh ? 60000 : false,
+  });
 
-  useEffect(() => {
-    fetchAll();
-  }, [fetchAll]);
+  const stats = data?.stats ?? null;
+  const queue = data?.queue ?? null;
+  // Stable identity for the empty fallback so the downstream useMemo doesn't churn each render.
+  const messages = useMemo(() => data?.messages ?? [], [data]);
+  const dlqMessages = data?.dlqMessages ?? [];
+  const dlqCount = data?.dlqCount ?? null;
+  const loading = isPending;
+  const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt) : null;
+  const error =
+    actionError ??
+    (isError
+      ? queryError instanceof Error
+        ? queryError.message
+        : "Failed to load"
+      : null);
 
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const id = setInterval(fetchAll, 60000);
-    return () => clearInterval(id);
-  }, [autoRefresh, fetchAll]);
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ["admin", "observations"] });
 
-  const togglePause = async () => {
-    if (!queue) return;
-    setActionLoading(true);
-    try {
+  const togglePauseMutation = useMutation({
+    mutationFn: async (paused: boolean) => {
       await fetch("/api/admin/observations/info", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: queue.paused ? "resume" : "pause" }),
+        body: JSON.stringify({ action: paused ? "resume" : "pause" }),
       });
-      await fetchAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Action failed");
-    } finally {
-      setActionLoading(false);
-    }
-  };
+    },
+    onSuccess: invalidate,
+    onError: (err) =>
+      setActionError(err instanceof Error ? err.message : "Action failed"),
+  });
 
-  const setParallelism = async (n: number) => {
-    setActionLoading(true);
-    try {
+  const setParallelismMutation = useMutation({
+    mutationFn: async (n: number) => {
       await fetch("/api/admin/observations/info", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "set-parallelism", parallelism: n }),
       });
-      await fetchAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Action failed");
-    } finally {
-      setActionLoading(false);
-    }
-  };
+    },
+    onSuccess: invalidate,
+    onError: (err) =>
+      setActionError(err instanceof Error ? err.message : "Action failed"),
+  });
 
-  const retryDlq = async () => {
-    setActionLoading(true);
-    try {
+  const retryDlqMutation = useMutation({
+    mutationFn: async () => {
       const response = await fetch("/api/admin/observations/dlq", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "retry-all" }),
       });
       if (!response.ok) throw new Error(`Action failed: ${response.status}`);
-      await fetchAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Action failed");
-    } finally {
-      setActionLoading(false);
-    }
-  };
+    },
+    onSuccess: invalidate,
+    onError: (err) =>
+      setActionError(err instanceof Error ? err.message : "Action failed"),
+  });
 
-  const emptyDlq = async () => {
-    setActionLoading(true);
-    try {
+  const emptyDlqMutation = useMutation({
+    mutationFn: async () => {
       const response = await fetch("/api/admin/observations/dlq", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "delete-all" }),
       });
       if (!response.ok) throw new Error(`Action failed: ${response.status}`);
-      await fetchAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Action failed");
-    } finally {
-      setActionLoading(false);
-    }
+    },
+    onSuccess: invalidate,
+    onError: (err) =>
+      setActionError(err instanceof Error ? err.message : "Action failed"),
+  });
+
+  const actionLoading =
+    togglePauseMutation.isPending ||
+    setParallelismMutation.isPending ||
+    retryDlqMutation.isPending ||
+    emptyDlqMutation.isPending;
+
+  const togglePause = () => {
+    if (!queue) return;
+    setActionError(null);
+    togglePauseMutation.mutate(queue.paused);
+  };
+
+  const setParallelism = (n: number) => {
+    setActionError(null);
+    setParallelismMutation.mutate(n);
+  };
+
+  const retryDlq = () => {
+    setActionError(null);
+    retryDlqMutation.mutate();
+  };
+
+  const emptyDlq = () => {
+    setActionError(null);
+    emptyDlqMutation.mutate();
   };
 
   // Build a continuous 24h x 1-minute timeline, filling gaps with 0 so downtime
@@ -414,7 +445,7 @@ export default function ObservationsViewer() {
               </button>
             ))}
           <button
-            onClick={fetchAll}
+            onClick={() => refetch()}
             disabled={loading}
             className="flex items-center justify-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm disabled:opacity-50"
           >

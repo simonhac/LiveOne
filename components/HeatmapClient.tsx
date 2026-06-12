@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/queries";
 import HeatmapChart from "@/components/HeatmapChart";
 import {
   Select,
@@ -56,20 +58,53 @@ export default function HeatmapClient({
   const systemId = system.id;
   const searchParams = useSearchParams();
 
-  const [points, setPoints] = useState<PointListItem[]>([]);
   const [selectedPoint, setSelectedPoint] = useState<string | undefined>(
     undefined,
   );
   const [selectedPalette, setSelectedPalette] =
     useState<HeatmapPaletteKey>("viridis");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [fetchInfo, setFetchInfo] = useState<{
     interval: string;
     duration: string;
     startTime: ZonedDateTime | null;
     endTime: ZonedDateTime | null;
   } | null>(null);
+
+  // Fetch system points on mount (one-shot)
+  const {
+    data: pointsData,
+    isPending,
+    isError,
+    error: queryError,
+  } = useQuery({
+    queryKey: ["system", systemId, "points"],
+    queryFn: () =>
+      fetchJson<{ points: PointListItem[] }>(`/api/system/${systemId}/points`),
+    staleTime: 60_000,
+    enabled: !!systemId,
+  });
+
+  const points = useMemo<PointListItem[]>(
+    () => pointsData?.points ?? [],
+    [pointsData],
+  );
+
+  // Preserve original loading / error semantics:
+  //  - invalid system id  → immediate error
+  //  - fetch failure       → derived from the query error
+  //  - empty points        → "No points found for this system"
+  const loading = !!systemId && isPending;
+  let error: string | null = null;
+  if (!systemId) {
+    error = "Invalid system ID";
+  } else if (isError) {
+    error =
+      queryError instanceof Error
+        ? `Failed to fetch points: ${queryError.message}`
+        : "Unknown error";
+  } else if (pointsData && points.length === 0) {
+    error = "No points found for this system";
+  }
 
   // Sort points by logical path (used for both menu display and keyboard navigation)
   const sortedPoints = useMemo(
@@ -124,48 +159,6 @@ export default function HeatmapClient({
     },
     [selectedPoint, updateUrlParams],
   );
-
-  // Fetch system info and points on mount
-  useEffect(() => {
-    const fetchData = async () => {
-      if (!systemId) {
-        setError("Invalid system ID");
-        setLoading(false);
-        return;
-      }
-
-      try {
-        setLoading(true);
-        setError(null);
-
-        // Fetch points using numeric systemId
-        const pointsResponse = await fetch(`/api/system/${systemId}/points`, {
-          credentials: "same-origin",
-        });
-
-        if (!pointsResponse.ok) {
-          throw new Error(
-            `Failed to fetch points: ${pointsResponse.statusText}`,
-          );
-        }
-
-        const pointsData = await pointsResponse.json();
-
-        if (!pointsData.points || pointsData.points.length === 0) {
-          throw new Error("No points found for this system");
-        }
-
-        setPoints(pointsData.points);
-        setLoading(false);
-      } catch (err) {
-        console.error("Error fetching data:", err);
-        setError(err instanceof Error ? err.message : "Unknown error");
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-  }, [systemId]);
 
   // Auto-select first point if none selected
   useEffect(() => {

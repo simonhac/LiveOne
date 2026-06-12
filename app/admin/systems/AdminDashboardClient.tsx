@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import {
   Clock,
@@ -112,12 +113,7 @@ export default function AdminDashboardClient({
   initialSystems,
   latestValuesIncluded,
 }: AdminDashboardClientProps) {
-  // Initialize with server-side data - no loading state needed
-  const [systems, setSystems] = useState<SystemData[]>(
-    initialSystems as unknown as SystemData[],
-  );
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   // Track if we need to fetch latest values
   const [needsLatestValues, setNeedsLatestValues] =
     useState(!latestValuesIncluded);
@@ -245,7 +241,7 @@ export default function AdminDashboardClient({
     disconnectPolling();
     resetPolling();
     // Refresh systems list after poll
-    fetchSystems();
+    refetchSystems();
   };
 
   // Track if any modal is open
@@ -267,39 +263,52 @@ export default function AdminDashboardClient({
     pollAllModalOpen,
   ]);
 
-  const fetchSystems = useCallback(async () => {
-    // Skip fetch if any modal is open
-    if (isAnyModalOpen()) {
-      console.log("[AdminDashboard] Skipping fetch - modal is open");
-      return;
-    }
+  const modalOpen = isAnyModalOpen();
 
-    try {
+  // Auto-refreshing systems list (30s), seeded from server-rendered data. The poll
+  // is paused while any modal is open (refetchInterval false) so an open dialog
+  // isn't disturbed by a background refresh — matching the legacy interval logic.
+  const { data: systemsData, error: queryError } = useQuery({
+    queryKey: ["admin", "systems"],
+    queryFn: async () => {
       const response = await fetch("/api/admin/systems");
 
       if (!response.ok) {
         if (response.status === 401) {
           window.location.href = "/sign-in";
-          return;
         }
         throw new Error("Failed to fetch systems");
       }
 
       const data = await response.json();
 
-      if (data.success) {
-        setSystems(data.systems || []);
-        setError(null);
-      } else {
-        setError(data.error || "Failed to load systems");
+      if (!data.success) {
+        throw new Error(data.error || "Failed to load systems");
       }
-    } catch (err) {
-      console.error("Error fetching systems:", err);
-      setError("Failed to connect to server");
-    } finally {
-      setLoading(false);
+
+      return (data.systems || []) as SystemData[];
+    },
+    initialData: initialSystems as unknown as SystemData[],
+    refetchInterval: modalOpen ? false : 30000,
+    refetchOnWindowFocus: false,
+  });
+
+  const systems = systemsData ?? [];
+  const fetchError = queryError
+    ? queryError instanceof Error &&
+      queryError.message !== "Failed to fetch systems"
+      ? queryError.message
+      : "Failed to connect to server"
+    : null;
+  const displayError = fetchError;
+
+  const refetchSystems = useCallback(() => {
+    if (isAnyModalOpen()) {
+      console.log("[AdminDashboard] Skipping fetch - modal is open");
+      return;
     }
-  }, [isAnyModalOpen]);
+    queryClient.invalidateQueries({ queryKey: ["admin", "systems"] });
+  }, [isAnyModalOpen, queryClient]);
 
   const updateSystemStatus = async (
     systemId: number,
@@ -321,9 +330,9 @@ export default function AdminDashboardClient({
 
       const result = await response.json();
 
-      // Update local state
-      setSystems((prevSystems) =>
-        prevSystems.map((sys) =>
+      // Optimistically patch the cached systems list (matches the legacy local update)
+      queryClient.setQueryData<SystemData[]>(["admin", "systems"], (prev) =>
+        (prev ?? []).map((sys) =>
           sys.systemId === systemId ? { ...sys, status: newStatus } : sys,
         ),
       );
@@ -339,79 +348,37 @@ export default function AdminDashboardClient({
 
   const updateSystem = async () => {
     // Refetch systems after update
-    await fetchSystems();
+    refetchSystems();
   };
 
-  // Use ref to store interval ID so we can access it in cleanup
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const hasFetchedLatestValues = useRef(false);
-
+  // Fetch latest values once if the server-side render timed out before including them.
   useEffect(() => {
-    // If we have initial data but need latest values, fetch them once
-    if (needsLatestValues && !hasFetchedLatestValues.current) {
-      hasFetchedLatestValues.current = true;
+    if (needsLatestValues) {
       console.log(
         "[AdminDashboard] Fetching latest values (server-side timed out)",
       );
-      fetchSystems();
+      queryClient.invalidateQueries({ queryKey: ["admin", "systems"] });
       setNeedsLatestValues(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsLatestValues]);
 
-    // Set up periodic refresh (every 30 seconds)
-    intervalRef.current = setInterval(fetchSystems, 30000);
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, [fetchSystems, needsLatestValues]);
-
-  // Pause/resume fetching based on modal state
+  // When all modals close, refetch immediately (the legacy interval did a fetch on
+  // resume); while a modal is open the poll is paused via refetchInterval above.
   useEffect(() => {
-    if (isAnyModalOpen()) {
-      // Modal opened - clear interval
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-        console.log("[AdminDashboard] Paused auto-refresh - modal opened");
-      }
-    } else {
-      // No modals open - restart interval if it's not running
-      if (!intervalRef.current) {
-        fetchSystems(); // Fetch immediately
-        intervalRef.current = setInterval(fetchSystems, 30000);
-        console.log("[AdminDashboard] Resumed auto-refresh - modals closed");
-      }
+    if (!modalOpen) {
+      queryClient.invalidateQueries({ queryKey: ["admin", "systems"] });
     }
-  }, [
-    testModal.isOpen,
-    pollingStatsModal.isOpen,
-    settingsModal.isOpen,
-    pollNowModal.isOpen,
-    viewDataModal.isOpen,
-    fetchSystems,
-    isAnyModalOpen,
-  ]);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-400 text-lg">Loading admin dashboard...</p>
-        </div>
-      </div>
-    );
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalOpen]);
 
   return (
     <>
       <div className="flex flex-col">
         <div className="px-0 md:px-6 pt-3 pb-0 flex flex-col">
-          {error && (
+          {displayError && (
             <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded mb-4">
-              {error}
+              {displayError}
             </div>
           )}
 

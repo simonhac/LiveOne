@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/queries";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 import { useModalContext } from "@/contexts/ModalContext";
 import {
@@ -8,7 +10,7 @@ import {
   formatDate,
   formatDateTimeRange,
 } from "@/lib/fe-date-format";
-import { parseDateISO, formatTimeAEST, formatDateAEST } from "@/lib/date-utils";
+import { parseDateISO } from "@/lib/date-utils";
 import {
   parseAbsolute,
   toZoned,
@@ -87,6 +89,32 @@ interface ViewDataModalProps {
   timezoneOffsetMin: number;
 }
 
+// Cursor carried by useInfiniteQuery's pageParam — API-shaped (string cursor + direction).
+type PageParam = {
+  cursor: string | null;
+  direction: "older" | "newer";
+};
+
+type ParsedPagination = {
+  firstCursor: ZonedDateTime | CalendarDate | null;
+  lastCursor: ZonedDateTime | CalendarDate | null;
+  hasOlder: boolean;
+  hasNewer: boolean;
+  limit: number;
+};
+
+// A single fetched window of data, already normalized for rendering.
+type ViewDataPage = {
+  headers: Map<string, PointInfo | null>;
+  data: any[];
+  metadata: any;
+  pagination: ParsedPagination | null;
+  // Raw API pagination cursors (strings), used to build the next/prev pageParam.
+  rawFirstCursor: string | null;
+  rawLastCursor: string | null;
+  hasAlternativeData: boolean;
+};
+
 export default function ViewDataModal({
   isOpen,
   onClose,
@@ -96,14 +124,7 @@ export default function ViewDataModal({
   vendorSiteId,
   timezoneOffsetMin,
 }: ViewDataModalProps) {
-  const [headers, setHeaders] = useState<Map<string, PointInfo | null>>(
-    new Map(),
-  );
-  const [data, setData] = useState<any[]>([]);
-  const [metadata, setMetadata] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [initialLoad, setInitialLoad] = useState(true);
-  const fetchingRef = useRef(false);
+  const queryClient = useQueryClient();
   const [selectedSystem, setSelectedSystem] = useState<{
     id: number;
     vendorType: string;
@@ -128,19 +149,6 @@ export default function ViewDataModal({
   );
   const [isSessionInfoModalOpen, setIsSessionInfoModalOpen] = useState(false);
   const [rawDataUnavailable, setRawDataUnavailable] = useState(false);
-  const [pagination, setPagination] = useState<{
-    firstCursor: ZonedDateTime | CalendarDate | null;
-    lastCursor: ZonedDateTime | CalendarDate | null;
-    hasOlder: boolean;
-    hasNewer: boolean;
-    limit: number;
-  } | null>(null);
-  const [currentCursor, setCurrentCursor] = useState<
-    ZonedDateTime | CalendarDate | null
-  >(null);
-  const [cursorDirection, setCursorDirection] = useState<"older" | "newer">(
-    "newer",
-  );
 
   // Register this modal with the global modal context
   const { registerModal, unregisterModal } = useModalContext();
@@ -158,18 +166,27 @@ export default function ViewDataModal({
     return "day" in cursor && !("hour" in cursor);
   };
 
-  const fetchData = useCallback(async () => {
-    // Prevent duplicate fetches
-    if (fetchingRef.current) {
-      console.log("[ViewDataModal] Skipping duplicate fetch");
-      return;
-    }
+  // Tracks which end of the page list holds the most-recently-fetched window:
+  // "next"/initial → last element, "previous" → first element.
+  const lastDirectionRef = useRef<"next" | "previous">("next");
 
-    try {
-      fetchingRef.current = true;
-      setLoading(true);
+  // Paginated fetch of the visible 200-row window. The "next" page goes OLDER
+  // (back in time, via the response's lastCursor); the "previous" page goes
+  // NEWER (forward in time, via firstCursor). Only the most-recently-fetched
+  // page is shown — paging replaces the window rather than accumulating rows.
+  const {
+    data: infiniteData,
+    isFetching,
+    fetchNextPage,
+    fetchPreviousPage,
+    refetch,
+  } = useInfiniteQuery({
+    queryKey: ["viewData", systemId, source, timezoneOffsetMin],
+    enabled: isOpen,
+    initialPageParam: { cursor: null, direction: "newer" } as PageParam,
+    queryFn: async ({ pageParam }): Promise<ViewDataPage> => {
+      const { cursor, direction } = pageParam;
 
-      // Build URL with pagination parameters
       const params = new URLSearchParams({
         limit: "200",
         source,
@@ -180,22 +197,14 @@ export default function ViewDataModal({
         params.set("offset", `${timezoneOffsetMin}m`); // Send as "600m" format
       }
 
-      if (currentCursor !== null) {
-        // Convert typed cursor to API format
-        const cursorStr = isCalendarDate(currentCursor)
-          ? formatDateAEST(currentCursor) // CalendarDate → "2025-11-09"
-          : formatTimeAEST(currentCursor); // ZonedDateTime → "2025-11-09T14:30:00+10:00"
-
-        params.set("cursor", cursorStr);
-        params.set("direction", cursorDirection);
+      if (cursor !== null) {
+        params.set("cursor", cursor);
+        params.set("direction", direction);
       }
 
-      const response = await fetch(
+      const result = await fetchJson<any>(
         `/api/admin/systems/${systemId}/point-readings?${params}`,
       );
-      if (!response.ok) throw new Error("Failed to fetch data");
-
-      const result = await response.json();
 
       // Convert headers object to Map
       const headersMap = new Map<string, PointInfo | null>();
@@ -205,110 +214,108 @@ export default function ViewDataModal({
         });
       }
 
-      setHeaders(headersMap);
-      setData(result.data || []);
-      setMetadata(result.metadata || null);
+      const rawFirstCursor = result.pagination?.firstCursor ?? null;
+      const rawLastCursor = result.pagination?.lastCursor ?? null;
 
       // Parse pagination cursors from API (string → ZonedDateTime | CalendarDate)
+      let parsedPagination: ParsedPagination | null = null;
       if (result.pagination) {
-        const parsedPagination = {
+        parsedPagination = {
           ...result.pagination,
-          firstCursor: result.pagination.firstCursor
+          firstCursor: rawFirstCursor
             ? source === "daily"
-              ? parseDateISO(result.pagination.firstCursor) // "2025-11-09" → CalendarDate
+              ? parseDateISO(rawFirstCursor) // "2025-11-09" → CalendarDate
               : toZoned(
-                  parseAbsolute(result.pagination.firstCursor, "UTC"),
+                  parseAbsolute(rawFirstCursor, "UTC"),
                   "Australia/Sydney",
                 ) // ISO8601 → ZonedDateTime
             : null,
-          lastCursor: result.pagination.lastCursor
+          lastCursor: rawLastCursor
             ? source === "daily"
-              ? parseDateISO(result.pagination.lastCursor)
-              : toZoned(
-                  parseAbsolute(result.pagination.lastCursor, "UTC"),
-                  "Australia/Sydney",
-                )
+              ? parseDateISO(rawLastCursor)
+              : toZoned(parseAbsolute(rawLastCursor, "UTC"), "Australia/Sydney")
             : null,
         };
-        setPagination(parsedPagination);
-      } else {
-        setPagination(null);
       }
 
-      setInitialLoad(false); // Mark initial load as complete
+      return {
+        headers: headersMap,
+        data: result.data || [],
+        metadata: result.metadata || null,
+        pagination: parsedPagination,
+        rawFirstCursor,
+        rawLastCursor,
+        hasAlternativeData: result.metadata?.hasAlternativeData === true,
+      };
+    },
+    // "next" = older data (back in time) via lastCursor.
+    getNextPageParam: (lastPage) =>
+      lastPage.pagination?.hasOlder && lastPage.rawLastCursor
+        ? { cursor: lastPage.rawLastCursor, direction: "older" as const }
+        : undefined,
+    // "previous" = newer data (forward in time) via firstCursor.
+    getPreviousPageParam: (firstPage) =>
+      firstPage.pagination?.hasNewer && firstPage.rawFirstCursor
+        ? { cursor: firstPage.rawFirstCursor, direction: "newer" as const }
+        : undefined,
+  });
 
-      // If no data in current view but alternative has data, switch views
-      // Only auto-switch between raw and 5m views, not daily
-      if (
-        result.data.length === 0 &&
-        result.metadata?.hasAlternativeData === true &&
-        source !== "daily"
-      ) {
-        console.log(
-          `[ViewDataModal] No ${source} data but alternative has data, switching views`,
-        );
-        // Track if raw data is unavailable so we can disable the button
-        if (source === "raw") {
-          setRawDataUnavailable(true);
-        }
-        setSource(source === "raw" ? "5m" : "raw");
-      }
-    } catch (error) {
-      console.error("Error fetching point readings:", error);
-    } finally {
-      setLoading(false);
-      fetchingRef.current = false;
-    }
-  }, [systemId, source, currentCursor, cursorDirection, timezoneOffsetMin]);
+  // Only the latest fetched window is displayed (paging replaces, not appends).
+  // fetchNextPage appends (last), fetchPreviousPage prepends (first).
+  const pages = infiniteData?.pages;
+  const currentPage = pages
+    ? lastDirectionRef.current === "previous"
+      ? pages[0]
+      : pages[pages.length - 1]
+    : null;
+  const headers = currentPage?.headers ?? new Map<string, PointInfo | null>();
+  // Stable identity for the empty fallback so the downstream useMemo doesn't churn each render.
+  const data = useMemo(() => currentPage?.data ?? [], [currentPage]);
+  const metadata = currentPage?.metadata ?? null;
+  const pagination = currentPage?.pagination ?? null;
+  const loading = isOpen && isFetching;
 
+  // Reset transient view state when the modal closes.
   useEffect(() => {
-    if (isOpen) {
-      setInitialLoad(true);
-      fetchData();
-    } else {
-      // Reset state when modal closes
-      setInitialLoad(true);
-      fetchingRef.current = false; // Reset fetch guard
+    if (!isOpen) {
       setRawDataUnavailable(false); // Reset raw data unavailable flag
       setSource("raw"); // Reset to default view
-      setCurrentCursor(null); // Reset pagination
-      setCursorDirection("newer");
-      setPagination(null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]); // Intentionally exclude fetchData to prevent double calls
+  }, [isOpen]);
 
-  // Refetch when source changes
+  // Auto-switch source when the current view is empty but the alternative has data.
+  // Only auto-switch between raw and 5m views, not daily.
   useEffect(() => {
-    if (isOpen) {
-      fetchData();
+    if (
+      currentPage &&
+      currentPage.data.length === 0 &&
+      currentPage.hasAlternativeData &&
+      source !== "daily"
+    ) {
+      console.log(
+        `[ViewDataModal] No ${source} data but alternative has data, switching views`,
+      );
+      // Track if raw data is unavailable so we can disable the button
+      if (source === "raw") {
+        setRawDataUnavailable(true);
+      }
+      setSource(source === "raw" ? "5m" : "raw");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source]);
-
-  // Refetch when pagination changes
-  useEffect(() => {
-    if (isOpen && (currentCursor !== null || cursorDirection !== "newer")) {
-      fetchData();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentCursor, cursorDirection]);
+  }, [currentPage, source]);
 
   const handlePageOlder = useCallback(() => {
-    if (pagination?.lastCursor) {
-      setCurrentCursor(pagination.lastCursor);
-      setCursorDirection("older");
-      setLoading(true);
+    if (pagination?.hasOlder) {
+      lastDirectionRef.current = "next";
+      fetchNextPage();
     }
-  }, [pagination?.lastCursor]);
+  }, [pagination?.hasOlder, fetchNextPage]);
 
   const handlePageNewer = useCallback(() => {
-    if (pagination?.firstCursor) {
-      setCurrentCursor(pagination.firstCursor);
-      setCursorDirection("newer");
-      setLoading(true);
+    if (pagination?.hasNewer) {
+      lastDirectionRef.current = "previous";
+      fetchPreviousPage();
     }
-  }, [pagination?.firstCursor]);
+  }, [pagination?.hasNewer, fetchPreviousPage]);
 
   // Handle escape key
   useEffect(() => {
@@ -350,14 +357,11 @@ export default function ViewDataModal({
   ]);
 
   const handleSourceChange = (newSource: "raw" | "5m" | "daily") => {
-    // Set loading state immediately for instant UI feedback
     if (newSource !== source) {
-      setLoading(true);
+      // Switching source changes the query key, which restarts pagination
+      // from the initial (newest) window automatically.
+      lastDirectionRef.current = "next";
       setSource(newSource);
-      // Reset pagination when switching data sources
-      setCurrentCursor(null);
-      setCursorDirection("newer");
-      setPagination(null);
     }
   };
 
@@ -413,7 +417,7 @@ export default function ViewDataModal({
       if (!response.ok) throw new Error("Failed to update point info");
 
       // Refresh data to show updated values
-      await fetchData();
+      await refetch();
     } catch (error) {
       console.error("Error updating point info:", error);
       throw error;

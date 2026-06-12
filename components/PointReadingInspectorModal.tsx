@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/queries";
 import SessionInfoModal from "./SessionInfoModal";
 import { formatDateTime, formatDate } from "@/lib/fe-date-format";
 import { encodeUrlOffset, encodeUrlDate } from "@/lib/url-date";
@@ -60,119 +62,95 @@ export default function PointReadingInspectorModal({
   system,
 }: PointReadingInspectorModalProps) {
   const [source, setSource] = useState<"raw" | "5m" | "daily">(initialSource);
-  const [readings, setReadings] = useState<ReadingData[]>([]);
-  const [loading, setLoading] = useState(false);
   const [showSpinner, setShowSpinner] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
   const [isSessionInfoModalOpen, setIsSessionInfoModalOpen] = useState(false);
 
-  useEffect(() => {
-    if (!isOpen) {
-      setReadings([]);
-      setError(null);
-      return;
-    }
+  const pointIdentifier = `${pointInfo.systemId}.${pointInfo.index}`;
 
-    let cancelled = false;
-    let spinnerTimeout: NodeJS.Timeout;
-
-    const fetchReadings = async () => {
-      setLoading(true);
-      setShowSpinner(false);
-      setError(null);
-
-      // Delay showing spinner for 1000ms
-      spinnerTimeout = setTimeout(() => {
-        if (!cancelled) {
-          setShowSpinner(true);
-        }
-      }, 1000);
-
-      try {
-        // Convert typed timestamp to API format
-        let encodedTime: string;
-        if (source === "daily") {
-          // For daily data, we need just the date (YYYY-MM-DD)
-          // If switching from raw/5m to daily, extract date from targetTime
-          if (targetDate) {
-            encodedTime = formatDateAEST(targetDate);
-          } else if (targetTime) {
-            // Extract date from ZonedDateTime
-            encodedTime = `${targetTime.year}-${String(targetTime.month).padStart(2, "0")}-${String(targetTime.day).padStart(2, "0")}`;
-          } else {
-            throw new Error("No target time or date provided");
-          }
+  const {
+    data,
+    isFetching,
+    error: queryError,
+  } = useQuery({
+    queryKey: [
+      "pointReading",
+      pointInfo.systemId,
+      pointInfo.index,
+      source,
+      targetTime ? formatTimeAEST(targetTime) : null,
+      targetDate ? formatDateAEST(targetDate) : null,
+      system.timezoneOffsetMin,
+    ],
+    queryFn: () => {
+      // Convert typed timestamp to API format
+      let encodedTime: string;
+      if (source === "daily") {
+        // For daily data, we need just the date (YYYY-MM-DD)
+        // If switching from raw/5m to daily, extract date from targetTime
+        if (targetDate) {
+          encodedTime = formatDateAEST(targetDate);
+        } else if (targetTime) {
+          // Extract date from ZonedDateTime
+          encodedTime = `${targetTime.year}-${String(targetTime.month).padStart(2, "0")}-${String(targetTime.day).padStart(2, "0")}`;
         } else {
-          // For raw/5m data, use URL-encoded time format
-          if (targetTime) {
-            // ZonedDateTime → "2025-11-09_14.30" (URL-encoded format)
-            encodedTime = encodeUrlDate(
-              formatTimeAEST(targetTime),
-              system.timezoneOffsetMin,
-              false,
-            );
-          } else if (targetDate) {
-            // CalendarDate - convert to start of day
-            encodedTime = encodeUrlDate(
-              `${targetDate.year}-${String(targetDate.month).padStart(2, "0")}-${String(targetDate.day).padStart(2, "0")}T00:00:00Z`,
-              system.timezoneOffsetMin,
-              false,
-            );
-          } else {
-            throw new Error("No target time or date provided");
-          }
+          throw new Error("No target time or date provided");
         }
-
-        const encodedOffset = encodeUrlOffset(system.timezoneOffsetMin);
-        // Use "date" parameter for daily data, "time" for raw/5m
-        const timeParam = source === "daily" ? "date" : "time";
-        // Use numeric format: systemId.pointId
-        const pointIdentifier = `${pointInfo.systemId}.${pointInfo.index}`;
-        const response = await fetch(
-          `/api/admin/point/${pointIdentifier}/readings?${timeParam}=${encodedTime}&offset=${encodedOffset}&source=${source}`,
-        );
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch readings: ${response.status}`);
-        }
-
-        const data = await response.json();
-        if (!cancelled) {
-          setReadings(data.readings || []);
-        }
-      } catch (err) {
-        console.error("Error fetching point readings:", err);
-        if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Failed to load readings",
+      } else {
+        // For raw/5m data, use URL-encoded time format
+        if (targetTime) {
+          // ZonedDateTime → "2025-11-09_14.30" (URL-encoded format)
+          encodedTime = encodeUrlDate(
+            formatTimeAEST(targetTime),
+            system.timezoneOffsetMin,
+            false,
           );
-        }
-      } finally {
-        clearTimeout(spinnerTimeout);
-        if (!cancelled) {
-          setLoading(false);
-          setShowSpinner(false);
+        } else if (targetDate) {
+          // CalendarDate - convert to start of day
+          encodedTime = encodeUrlDate(
+            `${targetDate.year}-${String(targetDate.month).padStart(2, "0")}-${String(targetDate.day).padStart(2, "0")}T00:00:00Z`,
+            system.timezoneOffsetMin,
+            false,
+          );
+        } else {
+          throw new Error("No target time or date provided");
         }
       }
-    };
 
-    fetchReadings();
+      const encodedOffset = encodeUrlOffset(system.timezoneOffsetMin);
+      // Use "date" parameter for daily data, "time" for raw/5m
+      const timeParam = source === "daily" ? "date" : "time";
+      // Use numeric format: systemId.pointId
+      return fetchJson<{ readings?: ReadingData[] }>(
+        `/api/admin/point/${pointIdentifier}/readings?${timeParam}=${encodedTime}&offset=${encodedOffset}&source=${source}`,
+      );
+    },
+    enabled: isOpen,
+  });
 
-    return () => {
-      cancelled = true;
-      clearTimeout(spinnerTimeout);
-    };
-  }, [
-    isOpen,
-    pointInfo,
-    targetTime,
-    targetDate,
-    source,
-    system.timezoneOffsetMin,
-  ]);
+  const readings: ReadingData[] = isOpen ? (data?.readings ?? []) : [];
+  const loading = isOpen && isFetching;
+  const error: string | null =
+    isOpen && queryError
+      ? queryError instanceof Error
+        ? queryError.message
+        : "Failed to load readings"
+      : null;
+
+  // Delay showing the spinner for 1000ms while a fetch is in flight.
+  const spinnerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (loading) {
+      setShowSpinner(false);
+      spinnerTimeoutRef.current = setTimeout(() => setShowSpinner(true), 1000);
+      return () => {
+        if (spinnerTimeoutRef.current) clearTimeout(spinnerTimeoutRef.current);
+      };
+    }
+    setShowSpinner(false);
+  }, [loading]);
 
   const handleSessionClick = (sessionId: string | null) => {
     if (sessionId === null) return;

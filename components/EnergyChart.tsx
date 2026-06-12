@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
+import { historyQuery } from "@/lib/queries";
 import ChartTooltip from "./ChartTooltip";
 import PeriodSwitcher from "./PeriodSwitcher";
 import ServerErrorModal from "./ServerErrorModal";
@@ -60,6 +62,148 @@ interface ChartData {
   mode: "power" | "energy"; // Mode based on interval: power (≤30m) or energy (≥1d)
 }
 
+// Series patterns to request for a given period (energy mode = 30D/1d, else power mode).
+function buildSeriesParam(isEnergyMode: boolean): string {
+  if (isEnergyMode) {
+    return [
+      "source.solar/energy.delta",
+      "load*/energy.delta",
+      "bidi.grid/energy.delta",
+      "bidi.battery/soc.{avg,min,max}",
+    ].join(",");
+  }
+  return [
+    "source.solar/power.avg",
+    "load*/power.avg",
+    "bidi.battery/power.avg",
+    "bidi.grid/power.avg",
+    "bidi.battery/soc.last",
+  ].join(",");
+}
+
+/**
+ * Pure transform: raw OpenNEM payload → windowed, unit-converted ChartData. Runs in a
+ * component useMemo (not select), so it recomputes only on refetch or period change — the
+ * `new Date()` window is therefore evaluated once per data change, keeping arrays stable.
+ */
+function buildChartData(
+  rawHistory: any,
+  timeRange: "1D" | "7D" | "30D",
+): ChartData | null {
+  if (!rawHistory || !Array.isArray(rawHistory.data)) return null;
+  const isEnergyMode = timeRange === "30D";
+
+  const findSeries = (pattern: string) =>
+    rawHistory.data.find((d: any) => {
+      const slashIndex = d.id.indexOf("/");
+      if (slashIndex === -1) return false;
+      const seriesPath = d.id.substring(slashIndex + 1);
+      return micromatch.isMatch(seriesPath, pattern);
+    });
+
+  let solarData,
+    loadData,
+    batteryWData,
+    batterySOCData,
+    batterySOCMinData,
+    batterySOCMaxData,
+    gridData;
+
+  if (isEnergyMode) {
+    solarData =
+      findSeries("source.solar*/energy.delta") ||
+      findSeries("solar*/energy.delta");
+    loadData = findSeries("load/energy.delta");
+    batteryWData = null;
+    batterySOCData = findSeries("bidi.battery/soc.avg");
+    batterySOCMinData = findSeries("bidi.battery/soc.min");
+    batterySOCMaxData = findSeries("bidi.battery/soc.max");
+    gridData = findSeries("bidi.grid/energy.delta");
+  } else {
+    solarData =
+      findSeries("source.solar*/power.avg") || findSeries("solar*/power.avg");
+    loadData = findSeries("load/power.avg");
+    batteryWData = findSeries("bidi.battery/power.avg");
+    batterySOCData = findSeries("bidi.battery/soc.last");
+    batterySOCMinData = null;
+    batterySOCMaxData = null;
+    gridData = findSeries("bidi.grid/power.avg");
+  }
+
+  const primaryData =
+    solarData || loadData || batteryWData || batterySOCData || gridData;
+  if (!primaryData) return null;
+
+  const startTime = new Date(primaryData.history.firstInterval);
+  const interval = primaryData.history.interval;
+  if (!interval) throw new Error("No interval specified in API response");
+
+  let intervalMs: number;
+  if (interval === "1d") intervalMs = 24 * 60 * 60000;
+  else if (interval === "30m") intervalMs = 30 * 60000;
+  else if (interval === "5m") intervalMs = 5 * 60000;
+  else if (interval === "1m") intervalMs = 60000;
+  else throw new Error(`Unsupported interval: ${interval}`);
+
+  const timestamps: Date[] = primaryData.history.data.map(
+    (_: any, index: number) =>
+      new Date(startTime.getTime() + index * intervalMs),
+  );
+
+  const currentTime = new Date();
+  const windowHours =
+    timeRange === "1D" ? 24 : timeRange === "7D" ? 24 * 7 : 24 * 30;
+  const windowStart = new Date(
+    currentTime.getTime() - windowHours * 60 * 60 * 1000,
+  );
+
+  const selectedIndices = timestamps
+    .map((t, i) => ({ time: t, index: i }))
+    .filter(({ time }) => time >= windowStart && time <= currentTime)
+    .map(({ index }) => index);
+
+  const convertToKw = (value: number | null, units: string): number | null => {
+    if (value === null) return null;
+    const unitsLower = units?.toLowerCase() || "";
+    if (unitsLower === "w" || unitsLower === "wh") return value / 1000;
+    return value;
+  };
+
+  return {
+    timestamps: selectedIndices.map((i) => timestamps[i]),
+    solar: solarData
+      ? selectedIndices.map((i) =>
+          convertToKw(solarData.history.data[i], solarData.units),
+        )
+      : selectedIndices.map(() => null),
+    load: loadData
+      ? selectedIndices.map((i) =>
+          convertToKw(loadData.history.data[i], loadData.units),
+        )
+      : selectedIndices.map(() => null),
+    batteryW: batteryWData
+      ? selectedIndices.map((i) =>
+          convertToKw(batteryWData.history.data[i], batteryWData.units),
+        )
+      : selectedIndices.map(() => null),
+    batterySOC: batterySOCData
+      ? selectedIndices.map((i) => batterySOCData.history.data[i])
+      : selectedIndices.map(() => null),
+    batterySOCMin: batterySOCMinData
+      ? selectedIndices.map((i) => batterySOCMinData.history.data[i])
+      : undefined,
+    batterySOCMax: batterySOCMaxData
+      ? selectedIndices.map((i) => batterySOCMaxData.history.data[i])
+      : undefined,
+    grid: gridData
+      ? selectedIndices.map((i) =>
+          convertToKw(gridData.history.data[i], gridData.units),
+        )
+      : undefined,
+    mode: isEnergyMode ? "energy" : "power",
+  } as ChartData;
+}
+
 export default function EnergyChart({
   className = "",
   maxPowerHint,
@@ -68,16 +212,10 @@ export default function EnergyChart({
 }: EnergyChartProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [chartData, setChartData] = useState<ChartData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [serverError, setServerError] = useState<{
     type: "connection" | "server" | null;
     details?: string;
   }>({ type: null });
-
-  // Track if a fetch is in progress to prevent duplicate fetches
-  const fetchInProgressRef = useRef(false);
 
   // Initialize timeRange from URL param or prop
   const getInitialTimeRange = () => {
@@ -107,6 +245,47 @@ export default function EnergyChart({
     timestamp: null,
   });
   const chartRef = useRef<any>(null);
+
+  // History data via React Query. The raw OpenNEM payload is cached; the windowing +
+  // unit-conversion transform runs in a useMemo so the derived ChartData stays referentially
+  // stable between renders and recomputes only on refetch (boundary-aligned) or period change.
+  const requestInterval: "5m" | "30m" | "1d" =
+    timeRange === "1D" ? "5m" : timeRange === "7D" ? "30m" : "1d";
+  const duration =
+    timeRange === "1D" ? "24h" : timeRange === "7D" ? "168h" : "30d";
+
+  const {
+    data: rawHistory,
+    isPending,
+    isError,
+    error: queryError,
+  } = useQuery(
+    historyQuery({
+      systemId,
+      interval: requestInterval,
+      last: duration,
+      series: buildSeriesParam(requestInterval === "1d"),
+    }),
+  );
+
+  const chartData = useMemo<ChartData | null>(
+    () => buildChartData(rawHistory, timeRange),
+    [rawHistory, timeRange],
+  );
+
+  const loading = isPending;
+  const error = isError
+    ? queryError instanceof Error
+      ? queryError.message
+      : "Failed to load chart data"
+    : null;
+
+  // Connection failures get the modal; HTTP errors show inline only (matches prior behavior).
+  useEffect(() => {
+    if (isError && queryError instanceof TypeError) {
+      setServerError({ type: "connection" });
+    }
+  }, [isError, queryError]);
 
   // Define callbacks before any conditional returns
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -397,319 +576,6 @@ export default function EnergyChart({
       }
     };
   }, []);
-
-  // Helper function to build history API URL with series patterns
-  const buildHistoryUrl = (
-    requestInterval: string,
-    duration: string,
-    systemId: number,
-  ): string => {
-    // Build series patterns based on what data we need
-    const isEnergyMode = requestInterval === "1d";
-    const seriesPatterns: string[] = [];
-
-    if (isEnergyMode) {
-      // Daily energy mode - request specific series we use
-      seriesPatterns.push(
-        "source.solar/energy.delta", // Solar energy
-        "load*/energy.delta", // Load energy (includes load, load.hvac, etc.)
-        "bidi.grid/energy.delta", // Grid energy
-        "bidi.battery/soc.{avg,min,max}", // Battery SOC stats
-      );
-    } else {
-      // 5m/30m power mode - request specific series we use
-      seriesPatterns.push(
-        "source.solar/power.avg", // Solar power
-        "load*/power.avg", // Load power (includes load, load.hvac, etc.)
-        "bidi.battery/power.avg", // Battery power
-        "bidi.grid/power.avg", // Grid power
-        "bidi.battery/soc.last", // Battery SOC
-      );
-    }
-
-    // Build URL with series patterns (comma-separated)
-    // Construct manually to avoid encoding / and , characters
-    const seriesParam = seriesPatterns.join(",");
-    return `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId}&series=${seriesParam}`;
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const fetchData = async () => {
-      try {
-        // Fetch will automatically include cookies
-        // Use different intervals based on time range
-        let requestInterval: string;
-        let duration: string;
-
-        if (timeRange === "1D") {
-          requestInterval = "5m";
-          duration = "24h"; // 24h for 1D
-        } else if (timeRange === "7D") {
-          requestInterval = "30m";
-          duration = "168h"; // 7*24 for 7D
-        } else {
-          // 30D
-          requestInterval = "1d";
-          duration = "30d"; // 30 days
-        }
-
-        const isEnergyMode = requestInterval === "1d";
-
-        // Build the URL using the helper function
-        const url = buildHistoryUrl(requestInterval, duration, systemId);
-
-        const response = await fetch(url, {
-          credentials: "same-origin", // Include cookies
-        });
-
-        if (!response.ok) {
-          // Check if the response is HTML (like a 404 page) instead of JSON
-          const contentType = response.headers.get("content-type");
-          if (contentType && !contentType.includes("application/json")) {
-            // If we get an HTML response, it's likely a token expiration
-            console.log(
-              "Non-JSON response received in chart fetch, likely token expired",
-            );
-            throw new Error("Session expired - please refresh the page");
-          }
-          if (response.status === 401) {
-            throw new Error("Not authenticated - please log in");
-          }
-          throw new Error(`Failed to fetch data: ${response.status}`);
-        }
-
-        const data = await response.json();
-
-        // Ignore response if this effect has been cancelled
-        if (cancelled) return;
-
-        // Helper to find series by pattern (glob-style)
-        // Pattern format: "bidi.battery/power.avg" or "source.solar*/power.avg"
-        const findSeries = (pattern: string) => {
-          return data.data.find((d: any) => {
-            // Series ID format: {systemId}/{pointPath/metric.aggregation}
-            // e.g., "10000/bidi.battery/power.avg" or "daylesford/source.solar.local/power.avg"
-            // Extract the series path part (everything after systemId/)
-            const slashIndex = d.id.indexOf("/");
-            if (slashIndex === -1) return false;
-            const seriesPath = d.id.substring(slashIndex + 1);
-            return micromatch.isMatch(seriesPath, pattern);
-          });
-        };
-
-        // Extract series based on mode (energy vs power)
-        let solarData,
-          loadData,
-          batteryWData,
-          batterySOCData,
-          batterySOCMinData,
-          batterySOCMaxData,
-          gridData;
-
-        if (isEnergyMode) {
-          // Daily energy mode - use energy.delta and SOC stats
-          // Use wildcards to match any solar extension (local, remote, etc.)
-          solarData =
-            findSeries("source.solar*/energy.delta") ||
-            findSeries("solar*/energy.delta");
-          loadData = findSeries("load/energy.delta");
-          batteryWData = null;
-          batterySOCData = findSeries("bidi.battery/soc.avg");
-          batterySOCMinData = findSeries("bidi.battery/soc.min");
-          batterySOCMaxData = findSeries("bidi.battery/soc.max");
-          gridData = findSeries("bidi.grid/energy.delta");
-        } else {
-          // 5m/30m power mode - use power.avg and SOC.last
-          // Use wildcards to match any solar extension (local, remote, etc.)
-          solarData =
-            findSeries("source.solar*/power.avg") ||
-            findSeries("solar*/power.avg");
-          loadData = findSeries("load/power.avg");
-          batteryWData = findSeries("bidi.battery/power.avg");
-          batterySOCData = findSeries("bidi.battery/soc.last");
-          batterySOCMinData = null;
-          batterySOCMaxData = null;
-          gridData = findSeries("bidi.grid/power.avg");
-        }
-
-        // Find a primary data series for timestamps (use first available)
-        // Solar, load, battery, or grid can all be used for timing
-        const primaryData =
-          solarData || loadData || batteryWData || batterySOCData || gridData;
-
-        if (!primaryData) {
-          // No chart data available for this system (e.g., Tesla-only systems)
-          setChartData(null);
-          setLoading(false);
-          fetchInProgressRef.current = false;
-          return;
-        }
-
-        // Parse the start time - the API returns timestamps like "2025-08-16T12:17:53+10:00"
-        const startTimeString = primaryData.history.firstInterval;
-
-        // JavaScript Date constructor handles timezone offsets correctly
-        const startTime = new Date(startTimeString);
-
-        // Parse the interval from the response (e.g., "5m", "1m")
-        const interval = primaryData.history.interval;
-        if (!interval) {
-          throw new Error("No interval specified in API response");
-        }
-
-        let intervalMs: number;
-
-        if (interval === "1d") {
-          intervalMs = 24 * 60 * 60000; // 1 day
-        } else if (interval === "30m") {
-          intervalMs = 30 * 60000; // 30 minutes
-        } else if (interval === "5m") {
-          intervalMs = 5 * 60000; // 5 minutes
-        } else if (interval === "1m") {
-          intervalMs = 60000; // 1 minute
-        } else {
-          throw new Error(`Unsupported interval: ${interval}`);
-        }
-
-        // Calculate timestamps based on start time and actual interval
-        const timestamps = primaryData.history.data.map(
-          (_: any, index: number) =>
-            new Date(startTime.getTime() + index * intervalMs),
-        );
-
-        // Get data for selected time range
-        const currentTime = new Date();
-        let windowHours: number;
-        if (timeRange === "1D") {
-          windowHours = 24;
-        } else if (timeRange === "7D") {
-          windowHours = 24 * 7;
-        } else {
-          // 30D
-          windowHours = 24 * 30;
-        }
-        const windowStart = new Date(
-          currentTime.getTime() - windowHours * 60 * 60 * 1000,
-        );
-
-        // Filter to selected time range
-        const selectedIndices = timestamps
-          .map((t: Date, i: number) => ({ time: t, index: i }))
-          .filter(
-            ({ time }: { time: Date; index: number }) =>
-              time >= windowStart && time <= currentTime,
-          )
-          .map(({ index }: { time: Date; index: number }) => index);
-
-        // Helper function to convert values based on units
-        const convertToKw = (
-          value: number | null,
-          units: string,
-        ): number | null => {
-          if (value === null) return null;
-          const unitsLower = units?.toLowerCase() || "";
-          // Convert W to kW or Wh to kWh
-          if (unitsLower === "w" || unitsLower === "wh") {
-            return value / 1000;
-          }
-          // Already in kW or kWh
-          return value;
-        };
-
-        setChartData({
-          timestamps: selectedIndices.map((i: number) => timestamps[i]),
-          solar: solarData
-            ? selectedIndices.map((i: number) =>
-                convertToKw(solarData.history.data[i], solarData.units),
-              )
-            : selectedIndices.map(() => null),
-          load: loadData
-            ? selectedIndices.map((i: number) =>
-                convertToKw(loadData.history.data[i], loadData.units),
-              )
-            : selectedIndices.map(() => null),
-          batteryW: batteryWData
-            ? selectedIndices.map((i: number) =>
-                convertToKw(batteryWData.history.data[i], batteryWData.units),
-              )
-            : selectedIndices.map(() => null),
-          batterySOC: batterySOCData
-            ? selectedIndices.map((i: number) => batterySOCData.history.data[i])
-            : selectedIndices.map(() => null),
-          batterySOCMin: batterySOCMinData
-            ? selectedIndices.map(
-                (i: number) => batterySOCMinData.history.data[i],
-              )
-            : undefined,
-          batterySOCMax: batterySOCMaxData
-            ? selectedIndices.map(
-                (i: number) => batterySOCMaxData.history.data[i],
-              )
-            : undefined,
-          grid: gridData
-            ? selectedIndices.map((i: number) =>
-                convertToKw(gridData.history.data[i], gridData.units),
-              )
-            : undefined,
-          mode: isEnergyMode ? "energy" : "power",
-        });
-        setLoading(false);
-        fetchInProgressRef.current = false; // Mark fetch as complete
-      } catch (err: any) {
-        // Ignore errors if this effect has been cancelled
-        if (cancelled) return;
-
-        console.error("Error fetching chart data:", err);
-
-        // Check if it's a network/connection error
-        if (err instanceof TypeError && err.message === "Failed to fetch") {
-          setServerError({ type: "connection" });
-          setError("Unable to connect to server");
-        } else if (
-          err instanceof Error &&
-          err.message.includes("Failed to fetch data:")
-        ) {
-          // HTTP error (404, 500, etc.)
-          setError(err.message);
-        } else {
-          setError(
-            err instanceof Error ? err.message : "Failed to load chart data",
-          );
-        }
-        setLoading(false);
-        fetchInProgressRef.current = false; // Mark fetch as complete even on error
-      }
-    };
-
-    // Check if fetch is already in progress before starting
-    if (fetchInProgressRef.current) {
-      console.log("[EnergyChart] Skipping initial fetch - already in progress");
-    } else {
-      fetchInProgressRef.current = true;
-      fetchData();
-    }
-
-    // Refresh every minute
-    const interval = setInterval(() => {
-      if (fetchInProgressRef.current) {
-        console.log(
-          "[EnergyChart] Skipping interval fetch - already in progress",
-        );
-      } else {
-        fetchInProgressRef.current = true;
-        fetchData();
-      }
-    }, 60000);
-
-    // Cleanup function
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-      fetchInProgressRef.current = false; // Reset for next effect run
-    };
-  }, [timeRange, systemId]);
 
   // For energy mode, pad the SOC data to extend the fill to chart edges
   const paddedSOCData =

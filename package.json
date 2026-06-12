@@ -37,6 +37,7 @@
     "@radix-ui/react-select": "^2.2.6",
     "@radix-ui/react-slot": "^1.2.3",
     "@tailwindcss/postcss": "^4.1.12",
+    "@tanstack/react-query": "^5.101.0",
     "@tanstack/react-table": "^8.21.3",
     "@types/cheerio": "^0.22.35",
     "@types/d3-interpolate": "^3.0.4",
@@ -92,6 +93,7 @@
     "uuidv7": "^1.0.2"
   },
   "devDependencies": {
+    "@tanstack/react-query-devtools": "^5.101.0",
     "@types/d3-array": "^3.2.2",
     "@types/d3-sankey": "^0.12.4",
     "@types/d3-scale-chromatic": "^3.1.0",

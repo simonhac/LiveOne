@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 interface GeneratorEvent {
   date: string;
@@ -44,41 +44,41 @@ export default function GeneratorClient({
   availableSystems,
 }: GeneratorClientProps) {
   const propSystemId = system.id;
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [generatorData, setGeneratorData] = useState<GeneratorData | null>(
-    null,
-  );
 
-  useEffect(() => {
-    const fetchGeneratorData = async () => {
-      try {
-        setLoading(true);
-        setError(null);
+  // NOTE: this is a (known-suboptimal) unbounded fetch of all generator events — preserved
+  // as-is; only the bespoke fetch was moved into React Query. A non-ok response yields null
+  // (rendered as "no events"), matching the original `if (generatorResponse.ok)` behaviour.
+  const {
+    data: generatorData,
+    isPending,
+    isError,
+    error: queryError,
+  } = useQuery<GeneratorData | null>({
+    queryKey: ["system", propSystemId, "generator-events"],
+    queryFn: async () => {
+      const generatorResponse = await fetch(
+        `/api/system/${propSystemId}/generator-events`,
+        {
+          credentials: "same-origin",
+        },
+      );
 
-        // Fetch generator events
-        const generatorResponse = await fetch(
-          `/api/system/${propSystemId}/generator-events`,
-          {
-            credentials: "same-origin",
-          },
-        );
-
-        if (generatorResponse.ok) {
-          const data = await generatorResponse.json();
-          setGeneratorData(data);
-        }
-
-        setLoading(false);
-      } catch (err) {
-        console.error("Error fetching generator data:", err);
-        setError(err instanceof Error ? err.message : "Unknown error");
-        setLoading(false);
+      if (generatorResponse.ok) {
+        return (await generatorResponse.json()) as GeneratorData;
       }
-    };
+      // Non-ok: original left generatorData null without surfacing an error.
+      return null;
+    },
+    staleTime: 60_000,
+    enabled: !!propSystemId,
+  });
 
-    fetchGeneratorData();
-  }, [propSystemId]);
+  const loading = isPending;
+  const error = isError
+    ? queryError instanceof Error
+      ? queryError.message
+      : "Unknown error"
+    : null;
 
   if (loading) {
     return (

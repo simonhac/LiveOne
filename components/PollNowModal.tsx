@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useModalContext } from "@/contexts/ModalContext";
-import { triggerDashboardRefresh } from "@/hooks/useDashboardRefresh";
+import { invalidateSystem } from "@/lib/queries";
 import {
   X,
   Check,
@@ -36,6 +37,7 @@ export default function PollNowModal({
   onClose,
 }: PollNowModalProps) {
   const hasInitiatedPoll = useRef(false);
+  const queryClient = useQueryClient();
 
   // Use shared polling state manager
   const {
@@ -76,12 +78,12 @@ export default function PollNowModal({
     };
   }, [disconnect, reset]);
 
-  // Trigger dashboard refresh when polling completes
+  // Refresh the dashboard's queries when polling completes (replaces the old event bus).
   useEffect(() => {
     if (isComplete && !dryRun) {
-      triggerDashboardRefresh();
+      invalidateSystem(queryClient, systemId);
     }
-  }, [isComplete, dryRun]);
+  }, [isComplete, dryRun, queryClient, systemId]);
 
   // Start polling on mount
   useEffect(() => {

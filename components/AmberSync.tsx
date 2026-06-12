@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { triggerDashboardRefresh } from "@/hooks/useDashboardRefresh";
+import { useQueryClient } from "@tanstack/react-query";
+import { invalidateSystem } from "@/lib/queries";
 
 interface AvailableSystem {
   id: number;
@@ -30,6 +31,7 @@ export default function AmberSync({
   isAdmin,
   availableSystems,
 }: AmberSyncProps) {
+  const queryClient = useQueryClient();
   const [action, setAction] = useState<"usage" | "pricing" | "both">("both");
   const [startDate, setStartDate] = useState(() => {
     // Get today's date in AEST (UTC+10)
@@ -164,8 +166,9 @@ export default function AmberSync({
       ]);
     } finally {
       setIsRunning(false);
-      // Notify dashboard cards that new data may be available
-      triggerDashboardRefresh();
+      // Invalidate the system's queries (incl. ['amber', id]) so retroactively-upgraded
+      // billable data surfaces on the dashboard cards and timeline.
+      invalidateSystem(queryClient, system.id);
     }
   };
 

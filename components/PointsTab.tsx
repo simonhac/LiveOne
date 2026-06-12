@@ -1,4 +1,6 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useMemo, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/queries";
 import { Sun, Battery, Zap, Home, Activity } from "lucide-react";
 import { getLogicalPathStem } from "@/lib/identifiers/logical-path";
 import micromatch from "micromatch";
@@ -8,6 +10,15 @@ interface ParsedPoint {
   name: string;
   metricType: string;
   metricUnit: string;
+}
+
+interface PointsResponse {
+  points?: Array<{
+    logicalPath: string;
+    name: string;
+    metricType: string;
+    metricUnit: string;
+  }>;
 }
 
 const SUBSYSTEM_CONFIG = {
@@ -64,57 +75,30 @@ export default function PointsTab({
   systemId,
   shouldLoad = false,
 }: PointsTabProps) {
-  const [points, setPoints] = useState<ParsedPoint[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [hasLoaded, setHasLoaded] = useState(false);
-  const fetchingRef = useRef(false);
+  const { data, isPending } = useQuery({
+    queryKey: ["system", systemId, "points"],
+    queryFn: () => fetchJson<PointsResponse>(`/api/system/${systemId}/points`),
+    enabled: shouldLoad,
+  });
 
-  // Reset hasLoaded when modal closes so it will reload next time
-  useEffect(() => {
-    if (!shouldLoad && hasLoaded) {
-      setHasLoaded(false);
-      setLoading(true);
-      fetchingRef.current = false;
-    }
-  }, [shouldLoad, hasLoaded]);
+  // Extract stems at serialization boundary
+  const points = useMemo<ParsedPoint[]>(() => {
+    if (!data?.points || !Array.isArray(data.points)) return [];
+    return data.points
+      .map((p: any) => {
+        const stem = getLogicalPathStem(p.logicalPath);
+        if (!stem) return null;
+        return {
+          stem,
+          name: p.name,
+          metricType: p.metricType,
+          metricUnit: p.metricUnit,
+        };
+      })
+      .filter((p: ParsedPoint | null): p is ParsedPoint => p !== null);
+  }, [data]);
 
-  const fetchPoints = useCallback(async () => {
-    fetchingRef.current = true;
-    try {
-      const response = await fetch(`/api/system/${systemId}/points`);
-      const data = await response.json();
-
-      if (data.points && Array.isArray(data.points)) {
-        // Extract stems at serialization boundary
-        const parsedPoints: ParsedPoint[] = data.points
-          .map((p: any) => {
-            const stem = getLogicalPathStem(p.logicalPath);
-            if (!stem) return null;
-            return {
-              stem,
-              name: p.name,
-              metricType: p.metricType,
-              metricUnit: p.metricUnit,
-            };
-          })
-          .filter((p: ParsedPoint | null): p is ParsedPoint => p !== null);
-
-        setPoints(parsedPoints);
-        setHasLoaded(true);
-      }
-    } catch (error) {
-      console.error("Failed to fetch points:", error);
-    } finally {
-      setLoading(false);
-      fetchingRef.current = false;
-    }
-  }, [systemId]);
-
-  useEffect(() => {
-    if (shouldLoad && !hasLoaded && !fetchingRef.current) {
-      fetchPoints();
-    }
-  }, [systemId, shouldLoad, hasLoaded, fetchPoints]);
+  const loading = isPending;
 
   // Filter points by pattern
   const filterPoints = useCallback(

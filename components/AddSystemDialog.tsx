@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/queries";
 import { useModalContext } from "@/contexts/ModalContext";
 import {
   Dialog,
@@ -54,12 +56,8 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
   const [compositeName, setCompositeName] = useState("");
   const [isCompositeDirty, setIsCompositeDirty] = useState(false);
   const compositeSaveRef = useRef<(() => Promise<any>) | null>(null);
-  const [vendors, setVendors] = useState<VendorInfo[]>([]);
   const [selectedVendor, setSelectedVendor] = useState<string>("");
   const [credentials, setCredentials] = useState<Record<string, string>>({});
-  const [isLoading, setIsLoading] = useState(false);
-  const [isTesting, setIsTesting] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testSuccess, setTestSuccess] = useState(false);
   const [systemInfo, setSystemInfo] = useState<any>(null);
@@ -94,28 +92,20 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
     onOpenChange(newOpen);
   };
 
-  // Fetch available vendors
-  useEffect(() => {
-    async function fetchVendors() {
-      try {
-        const response = await fetch("/api/vendors");
-        if (response.ok) {
-          const data = await response.json();
-          setVendors(
-            data.vendors.filter(
-              (v: VendorInfo) =>
-                v.credentialFields && v.credentialFields.length > 0,
-            ),
-          );
-        }
-      } catch (err) {
-        console.error("Failed to fetch vendors:", err);
-      }
-    }
+  // Fetch available vendors when the dialog opens
+  const { data: vendorsData } = useQuery({
+    queryKey: ["addSystem", "options"],
+    queryFn: () => fetchJson<{ vendors: VendorInfo[] }>("/api/vendors"),
+    enabled: open,
+  });
 
+  const vendors = (vendorsData?.vendors ?? []).filter(
+    (v) => v.credentialFields && v.credentialFields.length > 0,
+  );
+
+  // Reset state when dialog opens
+  useEffect(() => {
     if (open) {
-      fetchVendors();
-      // Reset state when dialog opens
       setCompositeName("");
       setIsCompositeDirty(false);
       setSelectedVendor("");
@@ -154,14 +144,8 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
       .every((f) => credentials[f.name]?.trim());
   };
 
-  const handleTestConnection = async () => {
-    if (!canTestConnection()) return;
-
-    setIsTesting(true);
-    setError(null);
-    setTestSuccess(false);
-
-    try {
+  const testMutation = useMutation({
+    mutationFn: async () => {
       console.log("[Test Connection] Sending request with:", {
         vendorType: selectedVendor,
         credentials: Object.keys(credentials),
@@ -180,29 +164,29 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
       console.log("[Test Connection] Response:", response.status, data);
 
       if (response.ok && data.success) {
-        setTestSuccess(true);
-        setSystemInfo(data.systemInfo);
-      } else {
-        setError(data.error || "Connection test failed");
+        return data;
       }
-    } catch (err) {
-      setError("Failed to test connection. Please try again.");
-    } finally {
-      setIsTesting(false);
-    }
-  };
+      throw new Error(data.error || "Connection test failed");
+    },
+    onMutate: () => {
+      setError(null);
+      setTestSuccess(false);
+    },
+    onSuccess: (data) => {
+      setTestSuccess(true);
+      setSystemInfo(data.systemInfo);
+    },
+    onError: (err) => {
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to test connection. Please try again.",
+      );
+    },
+  });
 
-  const handleCreateSystem = async () => {
-    if (isComposite) {
-      return handleCreateCompositeSystem();
-    }
-
-    if (!testSuccess || !selectedVendorInfo) return;
-
-    setIsCreating(true);
-    setError(null);
-
-    try {
+  const createMutation = useMutation({
+    mutationFn: async () => {
       const response = await fetch("/api/systems", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -216,29 +200,32 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
       const data = await response.json();
 
       if (response.ok && data.success) {
-        // Success! Navigate to the new system
-        onOpenChange(false);
-        router.push(`/dashboard/${data.systemId}`);
-        router.refresh();
-      } else {
-        setError(data.error || "Failed to create system");
+        return data;
       }
-    } catch (err) {
-      setError("Failed to create system. Please try again.");
-    } finally {
-      setIsCreating(false);
-    }
-  };
+      throw new Error(data.error || "Failed to create system");
+    },
+    onMutate: () => {
+      setError(null);
+    },
+    onSuccess: (data) => {
+      // Success! Navigate to the new system
+      onOpenChange(false);
+      router.push(`/dashboard/${data.systemId}`);
+      router.refresh();
+    },
+    onError: (err) => {
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to create system. Please try again.",
+      );
+    },
+  });
 
-  const handleCreateCompositeSystem = async () => {
-    if (!compositeName.trim() || !compositeSaveRef.current) return;
-
-    setIsCreating(true);
-    setError(null);
-
-    try {
+  const createCompositeMutation = useMutation({
+    mutationFn: async () => {
       // Get composite mappings from CompositeTab
-      const compositeMappings = await compositeSaveRef.current();
+      const compositeMappings = await compositeSaveRef.current!();
 
       const response = await fetch("/api/systems", {
         method: "POST",
@@ -255,18 +242,48 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
       const data = await response.json();
 
       if (response.ok && data.success) {
-        // Success! Navigate to the new system
-        onOpenChange(false);
-        router.push(`/dashboard/${data.systemId}`);
-        router.refresh();
-      } else {
-        setError(data.error || "Failed to create composite system");
+        return data;
       }
-    } catch (err) {
-      setError("Failed to create composite system. Please try again.");
-    } finally {
-      setIsCreating(false);
+      throw new Error(data.error || "Failed to create composite system");
+    },
+    onMutate: () => {
+      setError(null);
+    },
+    onSuccess: (data) => {
+      // Success! Navigate to the new system
+      onOpenChange(false);
+      router.push(`/dashboard/${data.systemId}`);
+      router.refresh();
+    },
+    onError: (err) => {
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to create composite system. Please try again.",
+      );
+    },
+  });
+
+  const isTesting = testMutation.isPending;
+  const isCreating =
+    createMutation.isPending || createCompositeMutation.isPending;
+
+  const handleTestConnection = () => {
+    if (!canTestConnection()) return;
+    testMutation.mutate();
+  };
+
+  const handleCreateSystem = () => {
+    if (isComposite) {
+      return handleCreateCompositeSystem();
     }
+    if (!testSuccess || !selectedVendorInfo) return;
+    createMutation.mutate();
+  };
+
+  const handleCreateCompositeSystem = () => {
+    if (!compositeName.trim() || !compositeSaveRef.current) return;
+    createCompositeMutation.mutate();
   };
 
   return (

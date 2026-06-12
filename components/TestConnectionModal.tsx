@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { useModalContext } from "@/contexts/ModalContext";
 import {
   CheckCircle,
@@ -71,11 +72,9 @@ export default function TestConnectionModal({
   vendorType,
   onClose,
 }: TestConnectionModalProps) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<any>(null);
   const [vendorResponse, setVendorResponse] = useState<any>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const hasInitiatedTest = useRef(false);
 
   // Register this modal with the global modal context
@@ -96,26 +95,17 @@ export default function TestConnectionModal({
     return () => document.removeEventListener("keydown", handleEscape);
   }, [onClose]);
 
-  const testConnection = async (isRefresh: boolean = false) => {
-    if (isRefresh) {
-      setIsRefreshing(true);
-    } else {
-      setLoading(true);
-      setData(null);
-    }
-    setError(null);
+  const testMutation = useMutation({
+    mutationFn: async ({ isRefresh }: { isRefresh: boolean }) => {
+      if (!systemId) {
+        throw new Error("No system ID provided");
+      }
 
-    if (!systemId) {
-      setError("No system ID provided");
-      return;
-    }
+      console.log("[TestConnectionModal] Testing connection for system:", {
+        id: systemId,
+        displayName: displayName,
+      });
 
-    console.log("[TestConnectionModal] Testing connection for system:", {
-      id: systemId,
-      displayName: displayName,
-    });
-
-    try {
       const response = await fetch("/api/test-connection", {
         method: "POST",
         headers: {
@@ -140,20 +130,28 @@ export default function TestConnectionModal({
       if (result.success && result.latest) {
         // Log raw response to browser console for debugging
         console.log("[TestConnectionModal] Success! Raw response:", result);
-
-        // Store vendor's raw response for details panel
-        setVendorResponse(result.vendorResponse);
-
-        setData({
-          latest: result.latest,
-          systemInfo: result.systemInfo,
-        });
-        setError(null);
-      } else {
-        console.log("[TestConnectionModal] No data received. Result:", result);
-        throw new Error(result.error || "No data received");
+        return result;
       }
-    } catch (err) {
+
+      console.log("[TestConnectionModal] No data received. Result:", result);
+      throw new Error(result.error || "No data received");
+    },
+    onMutate: ({ isRefresh }) => {
+      if (!isRefresh) {
+        setData(null);
+      }
+      setError(null);
+    },
+    onSuccess: (result) => {
+      // Store vendor's raw response for details panel
+      setVendorResponse(result.vendorResponse);
+      setData({
+        latest: result.latest,
+        systemInfo: result.systemInfo,
+      });
+      setError(null);
+    },
+    onError: (err, { isRefresh }) => {
       console.log(
         "[TestConnectionModal] Test connection issue:",
         err instanceof Error ? err.message : "Connection test failed",
@@ -162,14 +160,16 @@ export default function TestConnectionModal({
       if (!isRefresh) {
         setData(null);
       }
-    } finally {
-      setLoading(false);
-      setIsRefreshing(false);
-    }
-  };
+    },
+  });
+
+  const isRefreshing =
+    testMutation.isPending && testMutation.variables?.isRefresh === true;
+  const loading =
+    testMutation.isPending && testMutation.variables?.isRefresh !== true;
 
   const refreshTest = () => {
-    testConnection(true);
+    testMutation.mutate({ isRefresh: true });
   };
 
   // Test connection when modal opens - but only once
@@ -177,7 +177,7 @@ export default function TestConnectionModal({
     // Use ref to ensure test only happens once, even in StrictMode
     if (!hasInitiatedTest.current) {
       hasInitiatedTest.current = true;
-      testConnection(false);
+      testMutation.mutate({ isRefresh: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Empty dependency array means this runs once on mount
