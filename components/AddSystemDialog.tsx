@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import CompositeTab from "./CompositeTab";
+import TeslaConnectFlow from "./TeslaConnectFlow";
 
 interface CredentialField {
   name: string;
@@ -44,6 +45,7 @@ interface VendorInfo {
   vendorType: string;
   displayName: string;
   credentialFields: CredentialField[];
+  addSystemFlow?: "credentials" | "oauth-paste";
 }
 
 interface AddSystemDialogProps {
@@ -100,7 +102,9 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
   });
 
   const vendors = (vendorsData?.vendors ?? []).filter(
-    (v) => v.credentialFields && v.credentialFields.length > 0,
+    (v) =>
+      v.addSystemFlow === "oauth-paste" ||
+      (v.credentialFields && v.credentialFields.length > 0),
   );
 
   // Reset state when dialog opens
@@ -131,6 +135,13 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
   };
 
   const isComposite = selectedVendor === "composite";
+  const isOAuthPaste = selectedVendorInfo?.addSystemFlow === "oauth-paste";
+
+  const handleOAuthConnected = (systemId: number) => {
+    onOpenChange(false);
+    router.push(`/dashboard/${systemId}`);
+    router.refresh();
+  };
 
   const handleFieldChange = (fieldName: string, value: string) => {
     setCredentials((prev) => ({ ...prev, [fieldName]: value }));
@@ -362,8 +373,16 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
             </>
           )}
 
+          {/* OAuth paste-back flow (Tesla) */}
+          {selectedVendorInfo && isOAuthPaste && (
+            <TeslaConnectFlow
+              onConnected={handleOAuthConnected}
+              disabled={isCreating}
+            />
+          )}
+
           {/* Dynamic Credential Fields */}
-          {selectedVendorInfo && (
+          {selectedVendorInfo && !isOAuthPaste && (
             <div className="space-y-5 mt-9">
               {selectedVendorInfo.credentialFields.map((field) => (
                 <div key={field.name} className="mt-[10px]">
@@ -438,54 +457,55 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
             Cancel
           </Button>
 
-          {isComposite ? (
-            <Button
-              onClick={handleCreateSystem}
-              disabled={
-                !compositeName.trim() || !isCompositeDirty || isCreating
-              }
-              className="bg-green-600 hover:bg-green-700 w-[140px]"
-            >
-              {isCreating ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Creating System
-                </>
-              ) : (
-                "Create System"
-              )}
-            </Button>
-          ) : !testSuccess ? (
-            <Button
-              onClick={handleTestConnection}
-              disabled={!canTestConnection() || isTesting || isCreating}
-              className="w-[140px]"
-            >
-              {isTesting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Testing Connection
-                </>
-              ) : (
-                "Test Connection"
-              )}
-            </Button>
-          ) : (
-            <Button
-              onClick={handleCreateSystem}
-              disabled={isCreating}
-              className="bg-green-600 hover:bg-green-700 w-[140px]"
-            >
-              {isCreating ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Creating System
-                </>
-              ) : (
-                "Create System"
-              )}
-            </Button>
-          )}
+          {!isOAuthPaste &&
+            (isComposite ? (
+              <Button
+                onClick={handleCreateSystem}
+                disabled={
+                  !compositeName.trim() || !isCompositeDirty || isCreating
+                }
+                className="bg-green-600 hover:bg-green-700 w-[140px]"
+              >
+                {isCreating ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creating System
+                  </>
+                ) : (
+                  "Create System"
+                )}
+              </Button>
+            ) : !testSuccess ? (
+              <Button
+                onClick={handleTestConnection}
+                disabled={!canTestConnection() || isTesting || isCreating}
+                className="w-[140px]"
+              >
+                {isTesting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Testing Connection
+                  </>
+                ) : (
+                  "Test Connection"
+                )}
+              </Button>
+            ) : (
+              <Button
+                onClick={handleCreateSystem}
+                disabled={isCreating}
+                className="bg-green-600 hover:bg-green-700 w-[140px]"
+              >
+                {isCreating ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creating System
+                  </>
+                ) : (
+                  "Create System"
+                )}
+              </Button>
+            ))}
         </div>
       </DialogContent>
     </Dialog>

@@ -46,7 +46,9 @@ export class TeslaAdapter extends BaseVendorAdapter {
   readonly vendorType = "tesla";
   readonly displayName = "Tesla";
   readonly dataSource = "poll" as const;
-  readonly supportsAddSystem = false; // Uses OAuth flow
+  // Onboarded via an in-dialog OAuth redirect + paste-back flow (no credential fields).
+  readonly supportsAddSystem = true;
+  readonly addSystemFlow = "oauth-paste" as const;
 
   protected pollIntervalMinutes = DEFAULT_POLL_INTERVAL;
   protected toleranceSeconds = 60;

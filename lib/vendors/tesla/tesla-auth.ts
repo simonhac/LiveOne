@@ -10,6 +10,7 @@ import {
   storeSystemCredentials,
 } from "@/lib/secure-credentials";
 import { getTeslaClient } from "./tesla-client";
+import { refreshOwnerApiTokens } from "./tesla-sso-client";
 import type { TeslaCredentials, TeslaTokens } from "./types";
 
 // Check if Fleet API is configured (needed for token refresh)
@@ -83,31 +84,20 @@ export async function getValidTeslaToken(
     };
   }
 
-  // Token is expiring soon, refresh it
+  // Token is expiring soon, refresh it. Owner API systems (the default, no Fleet env
+  // vars) refresh via the secret-less `ownerapi` client; Fleet-configured systems use
+  // the Fleet client. Either way an Owner API access token only lasts ~8h, so this
+  // refresh is what keeps polling alive.
   console.log(
-    `[Tesla] Token expiring soon for system ${systemId}, refreshing...`,
+    `[Tesla] Token expiring soon for system ${systemId}, refreshing (${
+      hasFleetApiConfig ? "fleet" : "ownerapi"
+    })...`,
   );
 
-  // If Fleet API isn't configured, we can't refresh tokens automatically
-  // User must refresh via TeslaPy manually
-  if (!hasFleetApiConfig) {
-    console.warn(
-      `[Tesla] Fleet API not configured - cannot auto-refresh tokens. Using existing token.`,
-    );
-    console.warn(
-      `[Tesla] To refresh, run: cd ~/dev/tezman && python tez.py --stats`,
-    );
-    return {
-      accessToken: teslaCredentials.access_token,
-      credentials: teslaCredentials,
-    };
-  }
-
   try {
-    const client = getTeslaClient();
-    const newTokens = await client.refreshTokens(
-      teslaCredentials.refresh_token,
-    );
+    const newTokens: TeslaTokens = hasFleetApiConfig
+      ? await getTeslaClient().refreshTokens(teslaCredentials.refresh_token)
+      : await refreshOwnerApiTokens(teslaCredentials.refresh_token);
 
     // Store the new tokens
     const storeResult = await storeTeslaTokens(
