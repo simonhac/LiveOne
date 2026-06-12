@@ -11,6 +11,7 @@ import { createRouteMatcher } from "@clerk/nextjs/server";
 export const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
+  "/.well-known(.*)", // Tesla partner public key (.pem) — Tesla fetches it unauthenticated
   "/api/health", // Health check endpoint for monitoring
   "/api/cron(.*)", // Cron endpoints have their own authentication via CRON_SECRET
   "/api/push(.*)", // Push endpoints authenticate via API key in request body

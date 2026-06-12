@@ -15,6 +15,7 @@ describe("isPublicRoute — middleware allow-list", () => {
     "/sign-in",
     "/sign-in/factor-one",
     "/sign-up",
+    "/.well-known/appspecific/com.tesla.3p.public-key.pem", // Tesla fetches the key unauthenticated
     "/api/health",
     "/api/cron/db-stats",
     "/api/cron/monitor-observations",
@@ -51,7 +52,9 @@ describe("isPublicRoute — middleware allow-list", () => {
 
 describe("hasAccessToken — share-link bypass (presence-only)", () => {
   it("is true when ?access=<token> is present", () => {
-    expect(hasAccessToken(req("/labs/kinkora-hws?access=keen-fruity-tapir"))).toBe(true);
+    expect(
+      hasAccessToken(req("/labs/kinkora-hws?access=keen-fruity-tapir")),
+    ).toBe(true);
   });
   it("is true even when ?access= is empty (presence-only — token validated downstream)", () => {
     expect(hasAccessToken(req("/labs/kinkora-hws?access="))).toBe(true);
