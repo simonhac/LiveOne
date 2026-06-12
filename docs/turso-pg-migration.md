@@ -17,7 +17,7 @@ it; move the config tables to it), demote **Turso to a transitional best-effort 
 (ap-southeast-2 / `syd1`)**. Staged, flag-gated, multi-PR. The deeper reason is to cleanly separate the
 data-collection **engine** from the **web/FE** — see [Direction of travel](#direction-of-travel--engineweb-separation).
 
-## Current status (2026-06-11)
+## Current status (2026-06-12)
 
 - **Phase 1 — config authority on PG: ✅ LIVE** (cut over 2026-06-07). PG is the system of record for
   config (`systems`, `point_info`, `users`, `user_systems`, `polling_status`, `share_tokens`); Turso
@@ -44,14 +44,17 @@ data-collection **engine** from the **web/FE** — see [Direction of travel](#di
 - **Phase 4a — PG raw-durability outbox: ✅ DEPLOYED + SOAKING** (merged `#32`; migration `0004` applied
   to prod Sydney PG; `WRITE_OUTBOX=true` flipped on 2026-06-10; relay draining, backlog ~0; Slack alerts
   wired). ~30h soak in progress. See [Phase 4](#phase-4--pg-raw-durability-non-destructive-turso-untouched).
-- **Phase 5 — Turso decommission: ✅ CODE-COMPLETE (this PR), pending manual ops.** Every Turso read/write
+- **Phase 5 — Turso decommission: ✅ MERGED (#42 + #43).** Every Turso read/write
   removed; **Postgres is the sole store**. Migration flags retired (`CONFIG_*`, `READINGS_READS_FROM_PG`,
   `AGG_COMPUTE_IN_PG`, `WRITE_OUTBOX` — only `FLOW_MATRIX_*` remain); the dual-store seams
   (`config-shadow`/`readings-serve`) and the whole `lib/db/turso` module are deleted; the outbox tee is
   unconditional (durability anchor); sessions publish from an in-process pending-session registry; daily
-  1d is computed in a PG-only module. Typecheck + 415 unit tests + `build:local` all green. **Remaining
-  manual / DB-touching ops:** apply the `0006` FK rebuild, optional session-FK NULL-then-VALIDATE, then
-  `turso db destroy liveone-tokyo` + its snapshots.
+  1d is computed in a PG-only module. Typecheck + 415 unit tests + `build:local` all green. The `0006` FK
+  rebuild is **✅ applied to prod Sydney (2026-06-11; all 8 constraints validated).** **Remaining
+  manual / DB-touching ops:** only the optional session-FK NULL-then-VALIDATE.
+  **`liveone-tokyo` is NOT destroyed** — downgraded to Turso's free Starter plan and **kept as a frozen,
+  no-longer-written cold archive** of raw + sessions up to the Phase-5 cutover (no aggregates, stale
+  config); it's a bonus extra offsite copy, not a relied-upon backup (that's the R2 dump below).
 - **Live pipeline healthy:** QStash lag 0 / DLQ 0; PG mirror response-presence 100%, raw landing
   < 1 min old. (Aggregation is order-independent, so queue parallelism may be raised safely.)
 
@@ -70,11 +73,12 @@ chunked by month/quarter because one multi-month Turso response exceeds the libs
 
 ## What's next (ordered by dependency)
 
-1. **Off-site, provider-independent PG backups (decision H) — before Phase 5.** PlanetScale PITR/base
-   backups all live on PlanetScale infra (single blast radius). Stand up a daily `pg_dump -Fc` of the
-   Sydney branch shipped by **GitHub Actions → Cloudflare R2** (versioned + Object-Lock, encrypted, GFS
-   retention, Slack alerting, periodic test-restore). Must be live before Phase 5 removes the accidental
-   Turso offsite copy of raw+sessions. Workflow + script TODO. See
+1. **Off-site, provider-independent PG backups (decision H): ✅ LIVE.** PlanetScale PITR/base
+   backups all live on PlanetScale infra (single blast radius). A daily `pg_dump -Fc` of the
+   Sydney branch is shipped by **GitHub Actions → Cloudflare R2** (versioned + Object-Lock, encrypted, GFS
+   retention, Slack alerting, periodic test-restore). Daily backup verified healthy; the weekly
+   restore-drill's first scheduled run is Mon 2026-06-15. (The "before Phase 5" gate is moot — R2 shipped
+   before #42, and `liveone-tokyo` is retained anyway, frozen.) See
    [Off-site backup](#off-site-backup--provider-independent-dr).
 2. **Phase 4 — PG raw durability (non-destructive).** **4a outbox + relay ✅ DEPLOYED** (merged `#32`,
    `WRITE_OUTBOX=true` flipped on 2026-06-10); **soak green and ongoing** — running alongside the Turso
@@ -110,7 +114,9 @@ chunked by month/quarter because one multi-month Turso response exceeds the libs
 - **(F) Turso = transitional backup of raw + sessions only** _(2026-06-06)_ — no lasting status. Config
   **and** all aggregates leave Turso entirely (PG is the sole aggregator); design as if **PG is the only
   store**, with the inline Turso write an extra best-effort backup deletable with zero architectural
-  change. Retire Turso once **raw-durability-on-PG** is proven — not on any feature it provides.
+  change. Retired once **raw-durability-on-PG** was proven — not on any feature it provides. _(2026-06-12:
+  Turso writes are gone (Phase 5); `liveone-tokyo` is **kept** on the free Starter plan as a frozen cold
+  archive rather than destroyed — a bonus extra offsite copy, not relied upon.)_
 - **(G) Engine/web separation is the end goal** _(2026-06-06)_ — two independently deployable units
   (collection engine vs web/FE); Postgres + KV + QStash + an engine Control API are the only
   cross-boundary contracts. See [Direction of travel](#direction-of-travel--engineweb-separation).
@@ -118,8 +124,9 @@ chunked by month/quarter because one multi-month Turso response exceeds the libs
   on PlanetScale infra (one blast radius). Add a daily logical `pg_dump -Fc` of the Sydney branch, shipped
   by **GitHub Actions** to **Cloudflare R2** (separate provider/account; versioned + Object-Lock immutable;
   client-side encrypted; GFS retention; Slack alert on failure/staleness; periodic test-restore).
-  Complements — does not replace — PlanetScale PITR. **Live before Phase 5** (which removes the accidental
-  Turso offsite copy). See [Off-site backup](#off-site-backup--provider-independent-dr).
+  Complements — does not replace — PlanetScale PITR. **✅ LIVE** (shipped before Phase 5). The accidental
+  Turso offsite copy is now retained (frozen) rather than removed, but it's partial/stale — R2 is the
+  deliberate provider-independent leg. See [Off-site backup](#off-site-backup--provider-independent-dr).
 
 ## Two table classes (until Turso decommission)
 
@@ -318,9 +325,12 @@ Once raw durability on PG is proven without the inline-Turso net:
   then retire `AGG_COMPUTE_IN_PG`, `CONFIG_WRITES_TO_PG`, `CONFIG_SERVE_FROM_PG`, `READINGS_READS_FROM_PG`,
   and the Turso read-fallback in `serveReadings`. (`CONFIG_READS_FROM_PG` + the config shadow-compare path
   are already inert — deletable any time as the smallest standalone cleanup.)
-- **Decommission-time hardening:** PG FK rebuild (staged `0006`), R4 Turso-FK drop, optional session-FK
+- **Decommission-time hardening:** PG FK rebuild (`0006`, ✅ applied), R4 Turso-FK drop, optional session-FK
   validation, re-point the dev-seed (`db:sync-prod`) to seed from PG.
-- **Drop Turso:** `sessions_archive` / `*_backup` / legacy `readings*` tables; decommission `liveone-tokyo`.
+- **Turso:** writes are gone, so `liveone-tokyo` is **kept** on the free Starter plan as a frozen,
+  no-longer-written cold archive (tables left as-is — `sessions_archive` / `*_backup` / legacy `readings*`
+  and the live `point_readings`/sessions), **not** destroyed. _(2026-06-12 — superseded the original
+  `turso db destroy liveone-tokyo` step.)_
 
 ### Loose ends / hardening (independent of the phases)
 
@@ -373,16 +383,18 @@ validate inline. **Re-run the audit immediately before executing** — 0-orphan 
 (`.references(…, {onDelete})` for #1/#2/#3, plain `.references()` for #4/#5, composite `foreignKey({…})`
 in the `point_readings*` table callbacks). Then `db:pg:generate` and **hand-edited** the generated
 `drizzle-planetscale/0006_same_mojo.sql` to split #4/#6/#7 into `NOT VALID` + `VALIDATE` and add `pg_constraint`
-re-run guards. **Not yet `db:pg:migrate`'d** — confirm PG PITR + a base backup first. **Forbidden:** `push`.
+re-run guards. **✅ Applied to prod Sydney via `db:pg:migrate` 2026-06-11** (journal id=7, hash `23e481e5…`
+matching the repo file; all 8 constraints present + `convalidated`, incl. the three large `VALIDATE`d ones).
+**Forbidden:** `push`.
 _(0004 = `observations_outbox` (Phase 4a); 0005 = `point_readings_flow_1d` (flow matrix); the FK rebuild
 landed as the next free number, 0006 — the doc's earlier "0005" assumption was overtaken by the flow-1d
 migration.)_
 
-The migration is now **staged in the repo** as `drizzle-planetscale/0006_same_mojo.sql` (unapplied; journal
-entry + snapshot generated). Its content (the staged SQL below; `--> statement-breakpoint` between statements):
+The migration lives in the repo as `drizzle-planetscale/0006_same_mojo.sql` (**applied** to prod Sydney
+2026-06-11). Its content (the SQL below; `--> statement-breakpoint` between statements):
 
 ```sql
--- 0006_same_mojo.sql (STAGED, unapplied). Re-run the orphan pre-flight immediately before applying.
+-- 0006_same_mojo.sql (APPLIED to prod Sydney 2026-06-11). Re-run the orphan pre-flight before any re-apply.
 -- Group A — trivial rows → systems (CASCADE / SET NULL) + small tables, validate inline
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='polling_status_system_id_systems_id_fk') THEN
@@ -427,9 +439,10 @@ ALTER TABLE point_readings_agg_5m VALIDATE CONSTRAINT point_readings_agg_5m_syst
 PlanetScale PITR + base backups all live on PlanetScale's own infra — fast in-provider recovery, but a
 single blast radius (account suspension, billing lapse, fat-finger DB delete, compromised token, provider
 outage). Best practice is **3-2-1-1-0**: ≥3 copies, 2 media, 1 offsite, 1 immutable, 0 restore errors. The
-missing leg is an independent copy PlanetScale can't reach. _(Until Phase 5, `liveone-tokyo` on Turso is an
-accidental offsite copy of raw+sessions on a different provider — partial, no aggregates, stale config —
-hence the "before Phase 5" gate.)_
+missing leg is an independent copy PlanetScale can't reach. _(`liveone-tokyo` on Turso is an accidental
+offsite copy of raw+sessions on a different provider — partial, no aggregates, stale config. Post-Phase-5
+it's frozen (no longer written) and retained on the free Starter plan; a bonus, not relied upon — R2 is the
+deliberate leg.)_
 
 **Design (decision H) — R2 + GitHub Actions:**
 
@@ -460,8 +473,12 @@ hence the "before Phase 5" gate.)_
   the R2 dump = provider-loss insurance.
 
 **Status:** ✅ LIVE 2026-06-11 (R2 + GitHub Actions). Bucket + 14-day WORM lock + GFS lifecycle provisioned,
-secrets set, first backup verified in R2 (`pg/sydney/daily/…`, 214 MB, pg_dump 17.10). Daily 02:17 Sydney.
-Remaining: the weekly restore-drill's first green run, and a staleness alert (no new object in > 26 h).
+secrets set. Daily 02:17 Sydney (cron `17 16 * * *`). **Verified healthy 2026-06-12:** the latest scheduled
+run (2026-06-11 17:30 UTC) succeeded — 215 MB `pg_dump -Fc` 17.10 → `pg/sydney/daily/liveone-20260611T173041Z.dump.gz`
+(226 MB). (rclone logs a benign transient `501 NotImplemented` on attempt 1, succeeds on attempt 2 — R2
+rejecting the `x-amz-checksum-crc32` integrity header the AWS SDK now sends, not a failure.) Remaining: the
+weekly restore-drill's first green run (first scheduled run
+Mon 2026-06-15 17:37 UTC), and a staleness alert (no new object in > 26 h).
 
 ## Top risks & how they're handled
 
@@ -600,6 +617,13 @@ confirmed during the relevant PR.
 
 One line per completed milestone — detail lives in git + the sections above.
 
+- **2026-06-12 — Turso retained (not destroyed); R2 backups + `0006` FK rebuild verified.** `liveone-tokyo`
+  downgraded to Turso's free Starter plan and **kept** as a frozen, no-longer-written cold archive of
+  raw+sessions (no aggregates, stale config) — superseding the planned `turso db destroy`. Off-site PG→R2
+  backup confirmed healthy: latest daily run (2026-06-11 17:30 UTC) succeeded, 215 MB `pg_dump -Fc` 17.10
+  (benign rclone 501-retry); weekly restore-drill first scheduled run Mon 2026-06-15. Confirmed the `0006`
+  FK rebuild is **applied to prod Sydney** (journal id=7 hash matches the repo file; all 8 constraints
+  present + validated) — only the optional session-FK NULL-then-VALIDATE remains.
 - **2026-06-11 — Phase 5 (Turso decommission) CODE-COMPLETE.** Removed every Turso read/write: cut the
   inline raw/5m/1d writes + config dual-writes, retired the migration flags (only `FLOW_MATRIX_*` remain),
   deleted the dual-store seams (`config-shadow`/`readings-serve`) and the entire `lib/db/turso` module,
