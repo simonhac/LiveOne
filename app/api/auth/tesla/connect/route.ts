@@ -2,15 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import crypto from "crypto";
 import { kv } from "@/lib/kv";
-import {
-  generatePKCE,
-  getOwnerApiAuthorizationUrl,
-} from "@/lib/vendors/tesla/tesla-sso-client";
+import { generatePKCE, getTeslaClient } from "@/lib/vendors/tesla/tesla-client";
 import {
   teslaOAuthStateKey,
   TESLA_OAUTH_STATE_TTL_SECONDS,
   type TeslaOAuthState,
 } from "@/lib/vendors/tesla/tesla-oauth-state";
+
+// The Fleet API is the only supported path (the Owner API `void/callback` redirect is
+// de-registered). Without these env vars there is no working Tesla onboarding.
+const hasFleetApiConfig = !!(
+  process.env.TESLA_CLIENT_ID &&
+  process.env.TESLA_CLIENT_SECRET &&
+  process.env.TESLA_REDIRECT_URI
+);
 
 async function getUserDisplay(userId: string): Promise<string> {
   try {
@@ -24,7 +29,7 @@ async function getUserDisplay(userId: string): Promise<string> {
   }
 }
 
-export async function POST(request: NextRequest) {
+export async function POST(_request: NextRequest) {
   console.log("TESLA: Connect endpoint called");
 
   try {
@@ -34,20 +39,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const userDisplay = await getUserDisplay(userId);
-    console.log("TESLA: User initiating Owner API connection:", userDisplay);
-
-    // Optional email hint to prefill Tesla's login form.
-    let loginHint: string | undefined;
-    try {
-      const body = await request.json().catch(() => null);
-      if (body && typeof body.email === "string") loginHint = body.email;
-    } catch {
-      // no body — fine
+    if (!hasFleetApiConfig) {
+      console.error("TESLA: Fleet API not configured; cannot start connect");
+      return NextResponse.json(
+        {
+          error:
+            "Tesla integration is not configured (Fleet API credentials missing).",
+        },
+        { status: 503 },
+      );
     }
 
+    const userDisplay = await getUserDisplay(userId);
+    console.log("TESLA: User initiating Fleet API connection:", userDisplay);
+
     // PKCE + opaque state. The verifier stays server-side (in KV); only the challenge
-    // and state are exposed in the authorization URL.
+    // and state are exposed in the authorization URL. The `state` round-trips through
+    // Tesla and is how the callback looks the verifier back up.
     const { codeVerifier, codeChallenge } = generatePKCE();
     const state = crypto.randomBytes(16).toString("hex");
 
@@ -56,11 +64,7 @@ export async function POST(request: NextRequest) {
       ex: TESLA_OAUTH_STATE_TTL_SECONDS,
     });
 
-    const authUrl = getOwnerApiAuthorizationUrl(
-      state,
-      codeChallenge,
-      loginHint,
-    );
+    const authUrl = getTeslaClient().getAuthorizationUrl(state, codeChallenge);
 
     console.log("TESLA: Authorization URL generated for user:", userDisplay);
 

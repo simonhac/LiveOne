@@ -100,9 +100,9 @@ export interface VendorAdapter {
   readonly credentialFields?: CredentialField[];
   readonly supportsAddSystem?: boolean; // Whether this vendor supports the Add System flow
   // How the Add System dialog onboards this vendor. "credentials" (default) collects
-  // credentialFields + Test Connection; "oauth-paste" runs an in-dialog OAuth
-  // redirect + paste-back flow (Tesla Owner API) with no credential fields.
-  readonly addSystemFlow?: "credentials" | "oauth-paste";
+  // credentialFields + Test Connection; "oauth-redirect" runs an in-dialog OAuth
+  // redirect (Tesla Fleet API) with no credential fields.
+  readonly addSystemFlow?: "credentials" | "oauth-redirect";
 
   // Check if system should be polled based on schedule
   shouldPoll(

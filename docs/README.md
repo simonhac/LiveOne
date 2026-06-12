@@ -24,6 +24,7 @@
 - [migrations.md](migrations.md) — migration safety practices and lessons learned
 - [amber-sync-plan.md](amber-sync-plan.md) — Amber sync/audit design
 - [tesla.md](tesla.md) — Tesla vendor adapter spec
+- [tesla-api-brief.md](tesla-api-brief.md) — Owner API → Fleet API re-platform decision brief (signing exemption, charge-control path)
 - [old-database-admin.md](old-database-admin.md) — historical notes for rebuilding the stripped `/admin/readings` database admin tools
 - vendors/ — [enphase-api.md](vendors/enphase-api.md) · [enphase-integration.md](vendors/enphase-integration.md) · [enphase-testing.md](vendors/enphase-testing.md) (historical — mock removed 2026-06-10) · [fronius-push-spec.md](vendors/fronius-push-spec.md) · [selectronic.md](vendors/selectronic.md)
 

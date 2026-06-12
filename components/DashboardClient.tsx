@@ -857,6 +857,11 @@ export default function DashboardClient({
                         showGrid={showGrid}
                         layout="sidebar"
                         className="lg:h-full"
+                        systemId={data.system.id}
+                        canControl={
+                          isAdmin ||
+                          (!!userId && data.system.ownerClerkUserId === userId)
+                        }
                       />
                     </div>
                   )}
@@ -882,6 +887,12 @@ export default function DashboardClient({
                             vendorType={data.system.vendorType}
                             getStaleThreshold={getStaleThreshold}
                             showGrid={showGrid}
+                            systemId={data.system.id}
+                            canControl={
+                              isAdmin ||
+                              (!!userId &&
+                                data.system.ownerClerkUserId === userId)
+                            }
                           />
                         )}
 

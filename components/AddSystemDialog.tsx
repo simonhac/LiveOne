@@ -45,7 +45,7 @@ interface VendorInfo {
   vendorType: string;
   displayName: string;
   credentialFields: CredentialField[];
-  addSystemFlow?: "credentials" | "oauth-paste";
+  addSystemFlow?: "credentials" | "oauth-redirect";
 }
 
 interface AddSystemDialogProps {
@@ -103,7 +103,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
 
   const vendors = (vendorsData?.vendors ?? []).filter(
     (v) =>
-      v.addSystemFlow === "oauth-paste" ||
+      v.addSystemFlow === "oauth-redirect" ||
       (v.credentialFields && v.credentialFields.length > 0),
   );
 
@@ -135,7 +135,8 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
   };
 
   const isComposite = selectedVendor === "composite";
-  const isOAuthPaste = selectedVendorInfo?.addSystemFlow === "oauth-paste";
+  const isOAuthRedirect =
+    selectedVendorInfo?.addSystemFlow === "oauth-redirect";
 
   const handleOAuthConnected = (systemId: number) => {
     onOpenChange(false);
@@ -373,8 +374,8 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
             </>
           )}
 
-          {/* OAuth paste-back flow (Tesla) */}
-          {selectedVendorInfo && isOAuthPaste && (
+          {/* OAuth redirect flow (Tesla Fleet API) */}
+          {selectedVendorInfo && isOAuthRedirect && (
             <TeslaConnectFlow
               onConnected={handleOAuthConnected}
               disabled={isCreating}
@@ -382,7 +383,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
           )}
 
           {/* Dynamic Credential Fields */}
-          {selectedVendorInfo && !isOAuthPaste && (
+          {selectedVendorInfo && !isOAuthRedirect && (
             <div className="space-y-5 mt-9">
               {selectedVendorInfo.credentialFields.map((field) => (
                 <div key={field.name} className="mt-[10px]">
@@ -457,7 +458,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
             Cancel
           </Button>
 
-          {!isOAuthPaste &&
+          {!isOAuthRedirect &&
             (isComposite ? (
               <Button
                 onClick={handleCreateSystem}

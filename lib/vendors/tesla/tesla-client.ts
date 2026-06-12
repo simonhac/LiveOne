@@ -6,11 +6,22 @@
  */
 
 import crypto from "crypto";
-import type { TeslaTokens, TeslaVehicle, TeslaVehicleData } from "./types";
+import type {
+  TeslaCommandResult,
+  TeslaRegion,
+  TeslaTokens,
+  TeslaVehicle,
+  TeslaVehicleData,
+} from "./types";
+import { directCommandSigner, type TeslaCommandSigner } from "./command-signer";
 
 // Tesla API endpoints
 const AUTH_BASE_URL = "https://auth.tesla.com";
-const FLEET_API_BASE_URL = "https://fleet-api.prd.na.vn.cloud.tesla.com";
+// Default regional Fleet host. AU accounts are served by the Asia-Pacific region,
+// which is the `na` host; we still confirm per-user via GET /api/1/users/region and
+// persist the result, so this is only the bootstrap/fallback value.
+export const DEFAULT_FLEET_API_BASE_URL =
+  "https://fleet-api.prd.na.vn.cloud.tesla.com";
 
 // OAuth scopes needed for vehicle data
 const OAUTH_SCOPES = [
@@ -59,8 +70,10 @@ export class TeslaClient implements ITeslaClient {
   private clientId: string;
   private clientSecret: string;
   private redirectUri: string;
+  private fleetBaseUrl: string;
+  private signer: TeslaCommandSigner;
 
-  constructor() {
+  constructor(options?: { baseUrl?: string; signer?: TeslaCommandSigner }) {
     const clientId = process.env.TESLA_CLIENT_ID;
     const clientSecret = process.env.TESLA_CLIENT_SECRET;
     const redirectUri = process.env.TESLA_REDIRECT_URI;
@@ -83,6 +96,8 @@ export class TeslaClient implements ITeslaClient {
     this.clientId = clientId;
     this.clientSecret = clientSecret;
     this.redirectUri = redirectUri;
+    this.fleetBaseUrl = options?.baseUrl || DEFAULT_FLEET_API_BASE_URL;
+    this.signer = options?.signer || directCommandSigner;
   }
 
   /**
@@ -207,7 +222,7 @@ export class TeslaClient implements ITeslaClient {
    */
   async getVehicles(accessToken: string): Promise<TeslaVehicle[]> {
     try {
-      const response = await fetch(`${FLEET_API_BASE_URL}/api/1/vehicles`, {
+      const response = await fetch(`${this.fleetBaseUrl}/api/1/vehicles`, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
         },
@@ -240,7 +255,7 @@ export class TeslaClient implements ITeslaClient {
     try {
       // Send wake_up command
       const wakeResponse = await fetch(
-        `${FLEET_API_BASE_URL}/api/1/vehicles/${vehicleId}/wake_up`,
+        `${this.fleetBaseUrl}/api/1/vehicles/${vehicleId}/wake_up`,
         {
           method: "POST",
           headers: {
@@ -289,7 +304,7 @@ export class TeslaClient implements ITeslaClient {
   ): Promise<TeslaVehicleData> {
     try {
       const response = await fetch(
-        `${FLEET_API_BASE_URL}/api/1/vehicles/${vehicleId}/vehicle_data`,
+        `${this.fleetBaseUrl}/api/1/vehicles/${vehicleId}/vehicle_data`,
         {
           headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -311,11 +326,152 @@ export class TeslaClient implements ITeslaClient {
       throw error;
     }
   }
+
+  /**
+   * Resolve the user's regional Fleet API base URL.
+   * Called once after OAuth so we persist the right host instead of assuming NA.
+   */
+  async getUserRegion(accessToken: string): Promise<TeslaRegion> {
+    const response = await fetch(`${this.fleetBaseUrl}/api/1/users/region`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("TESLA: Failed to fetch user region:", response.status);
+      throw new Error(
+        `Failed to fetch user region: ${response.status} ${errorText}`,
+      );
+    }
+
+    const data = await response.json();
+    const region = data.response;
+    return {
+      region: region?.region ?? "",
+      fleet_api_base_url: region?.fleet_api_base_url || this.fleetBaseUrl,
+    };
+  }
+
+  // ==========================================================================
+  // Charge-control commands (Fleet API). Routed through the pluggable signer so
+  // signing-exempt cars (our 2018 Model X) use direct REST and 2021+ cars can later
+  // use a proxy/SDK signer without changing these methods. See command-signer.ts.
+  // ==========================================================================
+
+  /** Start charging. */
+  async chargeStart(
+    accessToken: string,
+    vehicleId: string,
+  ): Promise<TeslaCommandResult> {
+    return this.sendCommand(accessToken, vehicleId, "charge_start");
+  }
+
+  /** Stop charging. */
+  async chargeStop(
+    accessToken: string,
+    vehicleId: string,
+  ): Promise<TeslaCommandResult> {
+    return this.sendCommand(accessToken, vehicleId, "charge_stop");
+  }
+
+  /** Set the target charge limit (SoC %). Tesla accepts 50–100. */
+  async setChargeLimit(
+    accessToken: string,
+    vehicleId: string,
+    percent: number,
+  ): Promise<TeslaCommandResult> {
+    const clamped = Math.round(Math.min(100, Math.max(50, percent)));
+    return this.sendCommand(accessToken, vehicleId, "set_charge_limit", {
+      percent: clamped,
+    });
+  }
+
+  /** Set the charging current limit (amps). Caller should bound by the vehicle max. */
+  async setChargingAmps(
+    accessToken: string,
+    vehicleId: string,
+    amps: number,
+  ): Promise<TeslaCommandResult> {
+    const clamped = Math.round(Math.max(0, amps));
+    return this.sendCommand(accessToken, vehicleId, "set_charging_amps", {
+      charging_amps: clamped,
+    });
+  }
+
+  private async sendCommand(
+    accessToken: string,
+    vehicleId: string,
+    command: string,
+    body?: Record<string, unknown>,
+  ): Promise<TeslaCommandResult> {
+    return this.signer.send({
+      baseUrl: this.fleetBaseUrl,
+      accessToken,
+      vehicleId,
+      command,
+      body,
+    });
+  }
 }
 
 /**
- * Factory function to get the Tesla client
+ * Factory function to get the Tesla Fleet client.
+ * @param baseUrl - the system's persisted regional Fleet host (falls back to NA).
  */
-export function getTeslaClient(): ITeslaClient {
-  return new TeslaClient();
+export function getTeslaClient(baseUrl?: string): TeslaClient {
+  return new TeslaClient({ baseUrl });
+}
+
+// Scopes requested for the app-level (client_credentials) partner token.
+const PARTNER_SCOPES =
+  "openid vehicle_device_data vehicle_location vehicle_charging_cmds";
+
+/**
+ * One-time Fleet API partner registration. Mints an app-level `client_credentials`
+ * token (no user involved) and registers our domain via POST /api/1/partner_accounts.
+ * Required before any user OAuth works — even read-only — and depends on the public key
+ * being served at /.well-known/appspecific/com.tesla.3p.public-key.pem.
+ */
+export async function registerTeslaPartner(options: {
+  domain: string;
+  baseUrl?: string;
+}): Promise<{ status: number; body: unknown }> {
+  const clientId = process.env.TESLA_CLIENT_ID;
+  const clientSecret = process.env.TESLA_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    throw new Error("Missing TESLA_CLIENT_ID / TESLA_CLIENT_SECRET");
+  }
+  const baseUrl = options.baseUrl || DEFAULT_FLEET_API_BASE_URL;
+
+  // 1. App-level partner token (audience = regional Fleet host).
+  const tokenResponse = await fetch(`${AUTH_BASE_URL}/oauth2/v3/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: clientId,
+      client_secret: clientSecret,
+      scope: PARTNER_SCOPES,
+      audience: baseUrl,
+    }),
+  });
+  if (!tokenResponse.ok) {
+    const text = await tokenResponse.text();
+    throw new Error(
+      `Partner token request failed: ${tokenResponse.status} ${text}`,
+    );
+  }
+  const { access_token: partnerToken } = await tokenResponse.json();
+
+  // 2. Register the domain.
+  const registerResponse = await fetch(`${baseUrl}/api/1/partner_accounts`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${partnerToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ domain: options.domain }),
+  });
+  const body = await registerResponse.json().catch(() => null);
+  return { status: registerResponse.status, body };
 }

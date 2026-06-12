@@ -10,33 +10,10 @@ import { BaseVendorAdapter, type ScheduleEvaluation } from "../base-adapter";
 import type { FetchContext, FetchResult, TestConnectionResult } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
-import { getTeslaClient, type ITeslaClient } from "./tesla-client";
-import {
-  getTeslaOwnerClient,
-  type TeslaOwnerClient,
-} from "./tesla-owner-client";
+import { getTeslaClient } from "./tesla-client";
 import { getValidTeslaToken } from "./tesla-auth";
 import { TESLA_POINTS } from "./point-metadata";
 import type { TeslaCredentials, TeslaVehicleData } from "./types";
-
-// Check if Fleet API is configured
-const hasFleetApiConfig = !!(
-  process.env.TESLA_CLIENT_ID &&
-  process.env.TESLA_CLIENT_SECRET &&
-  process.env.TESLA_REDIRECT_URI
-);
-
-/**
- * Get the appropriate Tesla client based on configuration.
- * Uses Fleet API client if credentials are configured, otherwise falls back to Owner API.
- */
-function getClient(): ITeslaClient | TeslaOwnerClient {
-  if (hasFleetApiConfig) {
-    return getTeslaClient();
-  }
-  console.log("[Tesla] Using Owner API client (Fleet API not configured)");
-  return getTeslaOwnerClient();
-}
 
 // Polling intervals in minutes
 const DEFAULT_POLL_INTERVAL = 15;
@@ -46,9 +23,9 @@ export class TeslaAdapter extends BaseVendorAdapter {
   readonly vendorType = "tesla";
   readonly displayName = "Tesla";
   readonly dataSource = "poll" as const;
-  // Onboarded via an in-dialog OAuth redirect + paste-back flow (no credential fields).
+  // Onboarded via an in-dialog Fleet API OAuth redirect (no credential fields).
   readonly supportsAddSystem = true;
-  readonly addSystemFlow = "oauth-paste" as const;
+  readonly addSystemFlow = "oauth-redirect" as const;
 
   protected pollIntervalMinutes = DEFAULT_POLL_INTERVAL;
   protected toleranceSeconds = 60;
@@ -137,7 +114,9 @@ export class TeslaAdapter extends BaseVendorAdapter {
         await getValidTeslaToken(system.ownerClerkUserId, system.id);
 
       const vehicleId = (teslaCredentials as TeslaCredentials).vehicle_id;
-      const client = getClient();
+      const client = getTeslaClient(
+        (teslaCredentials as TeslaCredentials).fleet_api_base_url,
+      );
 
       // Check vehicle state and wake if needed
       const vehicles = await client.getVehicles(accessToken);
@@ -252,7 +231,9 @@ export class TeslaAdapter extends BaseVendorAdapter {
         await getValidTeslaToken(system.ownerClerkUserId, system.id);
 
       const vehicleId = (teslaCredentials as TeslaCredentials).vehicle_id;
-      const client = getClient();
+      const client = getTeslaClient(
+        (teslaCredentials as TeslaCredentials).fleet_api_base_url,
+      );
 
       // Get vehicles to verify connection
       const vehicles = await client.getVehicles(accessToken);

@@ -3,6 +3,11 @@ import { getTeslaClient } from "@/lib/vendors/tesla/tesla-client";
 import { storeTeslaTokens } from "@/lib/vendors/tesla/tesla-auth";
 import { clerkClient } from "@clerk/nextjs/server";
 import { SystemsManager } from "@/lib/systems-manager";
+import { kv } from "@/lib/kv";
+import {
+  teslaOAuthStateKey,
+  type TeslaOAuthState,
+} from "@/lib/vendors/tesla/tesla-oauth-state";
 
 async function getUserDisplay(userId: string): Promise<string> {
   try {
@@ -48,40 +53,39 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Decode and validate state
-    const stateData = JSON.parse(Buffer.from(state, "base64").toString());
-    const { userId, timestamp, codeVerifier } = stateData;
+    // Look the PKCE verifier up from KV by the opaque `state` (stored by /connect).
+    // The verifier never touches the browser; the KV entry is single-use and TTL-bound,
+    // which also enforces the 15-minute window (expired => no entry).
+    const stateKey = teslaOAuthStateKey(state);
+    const stored = (await kv.get(stateKey)) as TeslaOAuthState | null;
 
-    console.log("TESLA: Decoded state:", {
-      userId: userId ? `${userId.substring(0, 10)}...XXXXXX` : null,
-      timestamp: timestamp,
-      age: Date.now() - timestamp,
-      ageMinutes: Math.round((Date.now() - timestamp) / 60000),
-      hasCodeVerifier: !!codeVerifier,
-    });
-
-    // Check if state is not too old (15 minutes)
-    if (Date.now() - timestamp > 15 * 60 * 1000) {
-      const userDisplay = await getUserDisplay(userId);
-      console.error("TESLA: State expired for user:", userDisplay);
+    if (!stored || !stored.userId || !stored.codeVerifier) {
+      console.error("TESLA: No/expired OAuth state for callback");
       return NextResponse.redirect(
         new URL("/auth/tesla/result?error=state_expired", request.url),
       );
     }
+    await kv.del(stateKey); // single-use
 
-    if (!codeVerifier) {
-      console.error("TESLA: Missing code verifier in state");
-      return NextResponse.redirect(
-        new URL("/auth/tesla/result?error=invalid_state", request.url),
-      );
-    }
+    const { userId, codeVerifier } = stored;
 
     const userDisplay = await getUserDisplay(userId);
     console.log("TESLA: Processing callback for user:", userDisplay);
 
-    // Exchange code for tokens
+    // Exchange code for tokens (default NA host is fine for auth + region lookup).
     const client = getTeslaClient();
     const tokens = await client.exchangeCodeForTokens(code, codeVerifier);
+
+    // Resolve the user's regional Fleet host and use it for all subsequent calls.
+    let fleetApiBaseUrl: string | undefined;
+    try {
+      const region = await client.getUserRegion(tokens.access_token);
+      fleetApiBaseUrl = region.fleet_api_base_url;
+      console.log("TESLA: Resolved region host:", fleetApiBaseUrl);
+    } catch (e) {
+      console.warn("TESLA: Region lookup failed, using default host:", e);
+    }
+    const regionClient = getTeslaClient(fleetApiBaseUrl);
 
     // Log token response (mask sensitive data)
     console.log("TESLA: Tokens obtained:", {
@@ -98,7 +102,7 @@ export async function GET(request: NextRequest) {
     console.log("TESLA: Fetching vehicles from Tesla API");
 
     // Get user's Tesla vehicles
-    const teslaVehicles = await client.getVehicles(tokens.access_token);
+    const teslaVehicles = await regionClient.getVehicles(tokens.access_token);
 
     if (!teslaVehicles || teslaVehicles.length === 0) {
       console.error("TESLA: No vehicles found for user:", userDisplay);
@@ -157,6 +161,7 @@ export async function GET(request: NextRequest) {
         tokens,
         newSystem.id,
         vehicleId,
+        fleetApiBaseUrl,
       );
       if (!storeResult.success) {
         throw new Error(storeResult.error || "Failed to store tokens");
@@ -178,6 +183,7 @@ export async function GET(request: NextRequest) {
         tokens,
         existingSystem.id,
         vehicleId,
+        fleetApiBaseUrl,
       );
       if (!storeResult.success) {
         throw new Error(storeResult.error || "Failed to store tokens");
