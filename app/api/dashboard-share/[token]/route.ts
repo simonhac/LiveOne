@@ -6,6 +6,7 @@ import {
 import { getDashboardById } from "@/lib/dashboard/store";
 import { resolveDashboardReadPoints } from "@/lib/dashboard/access";
 import { SystemsManager } from "@/lib/systems-manager";
+import { getLatestPointValues } from "@/lib/kv-cache-manager";
 
 /**
  * Public consumption of a per-dashboard share token (P4) — the not-previously-built share-token GET
@@ -47,6 +48,9 @@ export async function GET(
   }
 
   const access = await resolveDashboardReadPoints(dashboard.systemId);
+  // The system's latest map IS the dashboard's (1:1), so this is already scoped — a self-contained,
+  // renderable payload (descriptor + live values + scope) with no general system access granted.
+  const latest = await getLatestPointValues(dashboard.systemId);
 
   return NextResponse.json({
     systemId: dashboard.systemId,
@@ -59,5 +63,6 @@ export async function GET(
     descriptor: dashboard.descriptor,
     systemIds: access.systemIds,
     points: access.points,
+    latest,
   });
 }
