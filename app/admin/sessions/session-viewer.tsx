@@ -539,7 +539,18 @@ export default function ActivityViewer() {
       fetchJson<{ sessions: Session[]; totalCount?: number }>(
         `/api/admin/sessions?${sessionsParams}`,
       ),
-    placeholderData: (prev) => prev,
+    placeholderData: (prev, prevQuery) => {
+      const prevParams = prevQuery?.queryKey?.[2] as string | undefined;
+      if (!prevParams) return prev;
+      const stripPage = (s: string) => {
+        const p = new URLSearchParams(s);
+        p.delete("page");
+        return p.toString();
+      };
+      // Keep prior rows only while paginating the same filter set; on a
+      // filter/sort/time change, drop them so we never render the old vendor's rows.
+      return stripPage(prevParams) === stripPage(sessionsParams) ? prev : undefined;
+    },
   });
 
   const sessions = sessionsQuery.data?.sessions ?? [];
@@ -751,7 +762,13 @@ export default function ActivityViewer() {
         </div>
 
         {/* Table */}
-        <div className="overflow-x-auto overflow-y-visible flex-1">
+        <div
+          className={`overflow-x-auto overflow-y-visible flex-1 transition-opacity ${
+            sessionsQuery.isPlaceholderData && refreshing
+              ? "opacity-60 pointer-events-none"
+              : ""
+          }`}
+        >
           <table className="w-full">
             <thead className="sticky top-0 z-20 bg-gray-800">
               {table.getHeaderGroups().map((headerGroup) => (
