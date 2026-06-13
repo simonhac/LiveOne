@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/queries";
-import { X, Shield } from "lucide-react";
+import { X, Shield, Loader2 } from "lucide-react";
 import { useModalContext } from "@/contexts/ModalContext";
 import PointsTab from "./PointsTab";
 import CompositeTab from "./CompositeTab";
@@ -196,6 +196,8 @@ export default function SystemSettingsDialog({
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      const startedAt = performance.now();
+
       // Save regular settings (displayName, alias, displayTimezone)
       if (isDisplayNameDirty || isAliasDirty || isTimezoneDirty) {
         const settings: {
@@ -323,6 +325,14 @@ export default function SystemSettingsDialog({
       if (isDisplayNameDirty) updates.displayName = editedDisplayName;
       if (isAliasDirty) updates.alias = editedAlias || null;
 
+      // Floor the perceived save at 500ms so a near-instant save shows a real spinner
+      // instead of an imperceptible flash. Log the actual (pre-floor) save time.
+      const elapsed = performance.now() - startedAt;
+      console.log(`[SystemSettings] Save took ${Math.round(elapsed)}ms`);
+      if (elapsed < 500) {
+        await new Promise((resolve) => setTimeout(resolve, 500 - elapsed));
+      }
+
       return updates;
     },
     onSuccess: async (updates) => {
@@ -397,7 +407,7 @@ export default function SystemSettingsDialog({
     if (!isOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && !isSaving) {
         e.preventDefault();
         handleCancel();
       } else if (e.key === "Enter" && hasChanges && !isSaving && !aliasError) {
@@ -427,7 +437,8 @@ export default function SystemSettingsDialog({
             </h2>
             <button
               onClick={onClose}
-              className="p-1 hover:bg-gray-700 rounded transition-colors"
+              disabled={isSaving}
+              className="p-1 hover:bg-gray-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <X className="w-5 h-5 text-gray-400" />
             </button>
@@ -680,21 +691,31 @@ export default function SystemSettingsDialog({
           </div>
 
           {/* Footer */}
-          <div className="px-6 py-4 border-t border-gray-700 flex justify-end gap-3">
-            <button
-              onClick={handleCancel}
-              className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-gray-100 rounded-md transition-colors min-w-[100px]"
-              disabled={isSaving}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={!hasChanges || isSaving || !!aliasError}
-              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-w-[100px]"
-            >
-              {isSaving ? "Saving..." : "Save"}
-            </button>
+          <div className="px-6 py-4 border-t border-gray-700 flex items-center justify-between gap-3">
+            <p className="text-sm text-red-400 min-w-0 truncate">
+              {saveMutation.isError && !aliasError
+                ? saveMutation.error instanceof Error
+                  ? saveMutation.error.message
+                  : "Failed to save"
+                : ""}
+            </p>
+            <div className="flex gap-3 shrink-0">
+              <button
+                onClick={handleCancel}
+                className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-gray-100 rounded-md transition-colors min-w-[100px]"
+                disabled={isSaving}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={!hasChanges || isSaving || !!aliasError}
+                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-w-[100px] flex items-center justify-center gap-2"
+              >
+                {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+                {isSaving ? "Saving..." : "Save"}
+              </button>
+            </div>
           </div>
         </div>
       </div>
