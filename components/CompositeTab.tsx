@@ -2,9 +2,11 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/queries";
 import { Plus, X, Sun, Home, Battery, Zap, Car } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useUser } from "@clerk/nextjs";
 import { stemSplit } from "@/lib/identifiers/logical-path";
+import { ROLE_IDS, ROLES, type RoleId } from "@/lib/roles/registry";
 
 interface CompositeMapping {
   [key: string]: string[]; // Allow any category keys
@@ -30,13 +32,10 @@ interface CompositeConfigResponse {
   };
 }
 
-const EMPTY_MAPPINGS = (): CompositeMapping => ({
-  solar: [],
-  battery: [],
-  load: [],
-  grid: [],
-  ev: [],
-});
+const EMPTY_MAPPINGS = (): CompositeMapping =>
+  Object.fromEntries(
+    ROLE_IDS.map((id) => [id, [] as string[]]),
+  ) as CompositeMapping;
 
 interface CompositeTabProps {
   systemId: number;
@@ -46,43 +45,59 @@ interface CompositeTabProps {
   ownerUserId?: string; // Optional: owner user ID for fetching points (for new systems)
 }
 
-const CATEGORY_CONFIG = {
+// Presentation (icon + colors) per role; labels come from the role registry. The category list,
+// ordering, and labels are now sourced from lib/roles/registry.ts.
+const ROLE_PRESENTATION: Record<
+  RoleId,
+  { icon: LucideIcon; iconColor: string; bgColor: string; borderColor: string }
+> = {
   solar: {
-    label: "Solar",
     icon: Sun,
     iconColor: "text-yellow-400",
     bgColor: "bg-yellow-500/10",
     borderColor: "border-yellow-500/30",
   },
   battery: {
-    label: "Battery",
     icon: Battery,
     iconColor: "text-blue-400",
     bgColor: "bg-blue-500/10",
     borderColor: "border-blue-500/30",
   },
   load: {
-    label: "Load",
     icon: Home,
     iconColor: "text-red-400",
     bgColor: "bg-red-500/10",
     borderColor: "border-red-500/30",
   },
   grid: {
-    label: "Grid",
     icon: Zap,
     iconColor: "text-green-400",
     bgColor: "bg-green-500/10",
     borderColor: "border-green-500/30",
   },
   ev: {
-    label: "EV",
     icon: Car,
     iconColor: "text-purple-400",
     bgColor: "bg-purple-500/10",
     borderColor: "border-purple-500/30",
   },
 };
+
+const CATEGORY_CONFIG = Object.fromEntries(
+  ROLE_IDS.map((id) => [
+    id,
+    { label: ROLES[id].label, ...ROLE_PRESENTATION[id] },
+  ]),
+) as Record<
+  RoleId,
+  {
+    label: string;
+    icon: LucideIcon;
+    iconColor: string;
+    bgColor: string;
+    borderColor: string;
+  }
+>;
 
 export default function CompositeTab({
   systemId,
@@ -284,14 +299,10 @@ export default function CompositeTab({
 
   // Filter available points for selection
   const getAvailableForCategory = (category: string): AvailablePoint[] => {
-    // Map UI categories to series ID path patterns
-    const categoryPatterns: Record<string, string> = {
-      solar: "source.solar",
-      battery: "bidi.battery",
-      load: "load",
-      grid: "bidi.grid",
-      ev: "ev",
-    };
+    // Map UI categories to series ID path patterns, sourced from the role registry.
+    const categoryPatterns: Record<string, string> = Object.fromEntries(
+      ROLE_IDS.map((id) => [id, ROLES[id].stem]),
+    );
 
     // Get already-added point IDs for this category
     const addedIds = new Set(mappings[category] || []);
