@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Clock, Zap } from "lucide-react";
 import { ttInterphases } from "@/lib/fonts/amber";
-import type { GridLiveValues } from "@/lib/queries/grid";
+import type { GridLiveValues } from "@/lib/grid/latest";
 
 export interface GridSignalsCardProps {
   regionLabel: string;

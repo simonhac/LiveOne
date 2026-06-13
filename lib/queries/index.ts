@@ -10,7 +10,6 @@ export { historyQuery, type HistoryQueryParams } from "./history";
 export { siteDataQuery, type SiteDataQueryParams } from "./siteData";
 export { flowMatrixQuery, type FlowMatrixQueryParams } from "./flowMatrix";
 export { amberQuery, type AmberQueryParams } from "./amber";
-export { gridLiveQuery, type GridLiveValues } from "./grid";
 export {
   dashboardDescriptorQuery,
   type DashboardDescriptorResponse,

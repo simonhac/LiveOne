@@ -10,7 +10,7 @@ import {
   flowMatrixQuery,
   dashboardDescriptorQuery,
 } from "@/lib/queries";
-import { gridLiveQuery, type GridLiveValues } from "@/lib/queries/grid";
+import { gridLatestFromData } from "@/lib/grid/latest";
 import GridSignalsCard from "@/components/GridSignalsCard";
 import { nemRegionShortLabel } from "@/lib/vendors/openelectricity/region";
 import type { GridContext } from "@/lib/grid/types";
@@ -222,13 +222,18 @@ export default function DashboardClient({
   const systemInfo =
     (queryData as { systemInfo?: SystemInfo } | undefined)?.systemInfo ?? null;
 
-  // "Local Grid (NEM)" card: live signals for the household's NEM region, read cross-system from
-  // the public OpenElectricity region system (gridContext.regionSystemId). Disabled (id "") when no
-  // region resolves, so a null gridContext is safe. Paused while a modal is open like the others.
-  const gridValuesQuery = useQuery(
-    gridLiveQuery(gridContext?.regionSystemId ?? "", {
+  // "Local Grid (NEM)" card: live signals for the household's NEM region. Read cross-system from the
+  // public OpenElectricity region system (gridContext.regionSystemId) using the SAME generic
+  // dashboardDataQuery every other live card uses — just keyed on that system. Disabled (id "") when
+  // no region resolves, so a null gridContext is safe. Paused while a modal is open like the others.
+  const { data: gridRegionData } = useQuery(
+    dashboardDataQuery(gridContext?.regionSystemId ?? "", {
       paused: isAnyModalOpen,
     }),
+  );
+  const gridValues = useMemo(
+    () => gridLatestFromData(gridRegionData),
+    [gridRegionData],
   );
 
   // P2: persisted/customizable dashboard descriptor. The descriptor query is disabled (systemId "")
@@ -1048,11 +1053,7 @@ export default function DashboardClient({
                       {gridContext && cardVisible("grid-signals") && (
                         <GridSignalsCard
                           regionLabel={nemRegionShortLabel(gridContext.region)}
-                          values={
-                            (gridValuesQuery.data as
-                              | GridLiveValues
-                              | undefined) ?? null
-                          }
+                          values={gridValues}
                         />
                       )}
                     </div>
@@ -1092,11 +1093,7 @@ export default function DashboardClient({
                       <div className="mt-4">
                         <GridSignalsCard
                           regionLabel={nemRegionShortLabel(gridContext.region)}
-                          values={
-                            (gridValuesQuery.data as
-                              | GridLiveValues
-                              | undefined) ?? null
-                          }
+                          values={gridValues}
                         />
                       </div>
                     )}
