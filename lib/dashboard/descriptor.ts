@@ -1,26 +1,39 @@
 /**
- * Dashboard descriptor — the ordered set of cards + layout that drives DashboardClient.
+ * Dashboard descriptor — the ordered set of cards + layout that drives the dashboard.
  *
  * `buildDefaultDescriptor()` generates the descriptor on the fly from a system, reproducing the
- * vendor_type if/else ladder exactly so the descriptor-driven render is identical to today's. In
- * P2 a user's saved descriptor (forked from this default) is loaded instead. See
- * docs/architecture/areas-and-dashboards.md.
+ * vendor_type if/else ladder. `normalizeDescriptor()` reconciles a user's saved descriptor (P2,
+ * persisted in the `dashboards` table) with the current default so the catalog can evolve without
+ * orphaning saved customizations. See docs/architecture/areas-and-dashboards.md.
  */
 
 import type { LatestPointValues } from "@/lib/types/api";
 import {
   getLayout,
+  POWER_CARD_IDS,
   type DashboardCardType,
   type DashboardLayout,
+  type PowerCardId,
 } from "./cards";
 
-export interface DashboardCardInstance {
+/** Per-card customization for the power mini-cards inside the `power-cards` module. */
+export interface PowerCardsConfig {
+  order: PowerCardId[];
+  hidden: PowerCardId[];
+}
+
+export interface ModuleCardInstance {
   type: DashboardCardType;
+  /** Hidden module cards are persisted but not rendered (re-addable from the gallery). */
+  hidden?: boolean;
+  /** Only meaningful for type === "power-cards". */
+  powerCards?: PowerCardsConfig;
 }
 
 export interface DashboardDescriptor {
+  version: 2;
   layout: DashboardLayout;
-  cards: DashboardCardInstance[];
+  cards: ModuleCardInstance[];
 }
 
 /** Cards each layout shows by default — the exact set the vendor_type ladder renders today. */
@@ -30,10 +43,14 @@ const CARDS_BY_LAYOUT: Record<DashboardLayout, DashboardCardType[]> = {
   sidebar: ["power-cards", "energy-chart"],
 };
 
+function defaultPowerCardsConfig(): PowerCardsConfig {
+  return { order: [...POWER_CARD_IDS], hidden: [] };
+}
+
 /**
- * Generate the default dashboard descriptor for a system. Layout and card set depend only on the
+ * Generate the default dashboard descriptor for a system. Layout + card set depend only on the
  * vendor type (as the ladder does today); `latest` is accepted for forward-compatibility with the
- * P2 per-card eligibility pass but is not used here.
+ * per-card eligibility pass but is not used here.
  */
 export function buildDefaultDescriptor(
   system: { vendorType: string },
@@ -41,7 +58,82 @@ export function buildDefaultDescriptor(
 ): DashboardDescriptor {
   const layout = getLayout(system.vendorType);
   return {
+    version: 2,
     layout,
-    cards: CARDS_BY_LAYOUT[layout].map((type) => ({ type })),
+    cards: CARDS_BY_LAYOUT[layout].map((type) =>
+      type === "power-cards"
+        ? { type, powerCards: defaultPowerCardsConfig() }
+        : { type },
+    ),
   };
+}
+
+function normalizePowerCards(
+  saved: unknown,
+  def: PowerCardsConfig,
+): PowerCardsConfig {
+  const s = saved as Partial<PowerCardsConfig> | undefined;
+  if (!s || !Array.isArray(s.order)) return def;
+  const valid = new Set<PowerCardId>(def.order);
+  const order = s.order.filter((id): id is PowerCardId =>
+    valid.has(id as PowerCardId),
+  );
+  // Append any newly-introduced power cards not present in the saved order.
+  for (const id of def.order) if (!order.includes(id)) order.push(id);
+  const hidden = (Array.isArray(s.hidden) ? s.hidden : []).filter(
+    (id): id is PowerCardId => valid.has(id as PowerCardId),
+  );
+  return { order, hidden };
+}
+
+/**
+ * Reconcile a saved descriptor with the current default. Discards the save if the layout changed
+ * (e.g. the system's vendor type changed); otherwise keeps the saved hidden/order, adds module/power
+ * cards introduced since, and drops any that no longer exist. Returns the default if `saved` is
+ * missing or malformed.
+ */
+export function normalizeDescriptor(
+  saved: unknown,
+  def: DashboardDescriptor,
+): DashboardDescriptor {
+  const s = saved as Partial<DashboardDescriptor> | null | undefined;
+  if (
+    !s ||
+    typeof s !== "object" ||
+    s.layout !== def.layout ||
+    !Array.isArray(s.cards)
+  ) {
+    return def;
+  }
+  const savedByType = new Map(s.cards.map((c) => [c.type, c]));
+  const cards: ModuleCardInstance[] = def.cards.map((defCard) => {
+    const sc = savedByType.get(defCard.type);
+    if (!sc) return defCard; // module card introduced since the save → default (visible)
+    const card: ModuleCardInstance = {
+      type: defCard.type,
+      hidden: !!sc.hidden,
+    };
+    if (defCard.type === "power-cards") {
+      card.powerCards = normalizePowerCards(sc.powerCards, defCard.powerCards!);
+    }
+    return card;
+  });
+  return { version: 2, layout: def.layout, cards };
+}
+
+/** The power-cards module's config from a descriptor (or a default if absent). */
+export function powerCardsConfigOf(
+  descriptor: DashboardDescriptor,
+): PowerCardsConfig {
+  const card = descriptor.cards.find((c) => c.type === "power-cards");
+  return card?.powerCards ?? defaultPowerCardsConfig();
+}
+
+/** Whether a module card is present and not hidden. */
+export function isCardVisible(
+  descriptor: DashboardDescriptor,
+  type: DashboardCardType,
+): boolean {
+  const card = descriptor.cards.find((c) => c.type === type);
+  return !!card && !card.hidden;
 }

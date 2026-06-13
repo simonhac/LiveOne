@@ -15,3 +15,10 @@ function envFlag(name: string): boolean {
  * docs/architecture/areas-and-dashboards.md.
  */
 export const DECLARATIVE_DASHBOARD = envFlag("DECLARATIVE_DASHBOARD");
+
+/**
+ * Persist + customize dashboards (P2): load the user's saved descriptor (else the default) and
+ * enable Customize mode (reorder/hide/add cards, Reset to default). Implies the descriptor render
+ * path. Off → identical to the previous behaviour. See docs/architecture/areas-and-dashboards.md.
+ */
+export const DASHBOARD_PERSISTENCE = envFlag("DASHBOARD_PERSISTENCE");

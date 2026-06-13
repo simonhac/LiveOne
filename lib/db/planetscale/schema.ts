@@ -494,6 +494,37 @@ export const observationsOutbox = pgTable(
 );
 
 // ============================================================================
+// Dashboards - per-user, per-system presentation layer (P2).
+//
+// One row per (user, system): the user's forked/customized DashboardDescriptor
+// (card order + hidden flags), stored as JSONB. Absent row → the dashboard is
+// auto-generated from buildDefaultDescriptor (lib/dashboard). The descriptor's
+// internal shape is owned by lib/dashboard and intentionally opaque to the DB.
+// See docs/architecture/areas-and-dashboards.md. Normalising into a separate
+// `dashboard_cards` table is deferred to P3.
+// ============================================================================
+export const dashboards = pgTable(
+  "dashboards",
+  {
+    id: serial("id").primaryKey(),
+    clerkUserId: text("clerk_user_id").notNull(),
+    systemId: integer("system_id")
+      .notNull()
+      .references(() => systems.id, { onDelete: "cascade" }),
+    descriptor: jsonb("descriptor").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    userSystemUnique: uniqueIndex("dashboards_user_system_unique").on(
+      table.clerkUserId,
+      table.systemId,
+    ),
+    userIdx: index("dashboards_user_idx").on(table.clerkUserId),
+  }),
+);
+
+// ============================================================================
 // Type exports
 // ============================================================================
 export type System = typeof systems.$inferSelect;
@@ -520,3 +551,5 @@ export type ShareToken = typeof shareTokens.$inferSelect;
 export type NewShareToken = typeof shareTokens.$inferInsert;
 export type ObservationsOutbox = typeof observationsOutbox.$inferSelect;
 export type NewObservationsOutbox = typeof observationsOutbox.$inferInsert;
+export type Dashboard = typeof dashboards.$inferSelect;
+export type NewDashboard = typeof dashboards.$inferInsert;

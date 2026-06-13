@@ -50,6 +50,13 @@
       "when": 1781185164831,
       "tag": "0006_same_mojo",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1781322214080,
+      "tag": "0007_flaky_onslaught",
+      "breakpoints": true
     }
   ]
 }

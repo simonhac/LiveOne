@@ -5,6 +5,7 @@ import PowerCard from "@/components/PowerCard";
 import AmberSmallCard from "@/components/AmberSmallCard";
 import TeslaSmallCard from "@/components/TeslaSmallCard";
 import { stemSplit, getMetricType } from "@/lib/identifiers/logical-path";
+import { POWER_CARD_IDS, type PowerCardId } from "@/lib/dashboard/cards";
 import type { LatestPointValues, LatestPointValue } from "@/lib/types/api";
 import {
   Sun,
@@ -30,6 +31,10 @@ interface SystemPowerCardsProps {
   systemId?: number;
   /** Whether the current user may control the Tesla (owner or admin). */
   canControl?: boolean;
+  /** Display order of the mini-cards (P2 customization). Defaults to POWER_CARD_IDS. */
+  order?: PowerCardId[];
+  /** Mini-cards explicitly hidden by the user (P2 customization). */
+  hidden?: PowerCardId[];
 }
 
 interface LoadPoint {
@@ -361,6 +366,8 @@ export default function SystemPowerCards({
   className,
   systemId,
   canControl,
+  order,
+  hidden = [],
 }: SystemPowerCardsProps) {
   // Helper to format power value (number only, no unit)
   const formatPowerValue = (watts: number) => {
@@ -513,15 +520,23 @@ export default function SystemPowerCards({
   // Determine if we should show the load card
   const hasLoadData = allLoads.length > 0;
 
-  // Count how many cards will be displayed
-  const cardCount = [
-    solarValue !== null,
-    hasLoadData,
-    batterySoc !== null,
-    showGrid && getPointValue("bidi.grid/power") !== null,
-    hasAmberData,
-    hasTeslaData,
-  ].filter(Boolean).length;
+  // Which power cards have data (the authoritative availability).
+  const available: Record<PowerCardId, boolean> = {
+    solar: solarValue !== null,
+    load: hasLoadData,
+    battery: batterySoc !== null,
+    grid: showGrid && getPointValue("bidi.grid/power") !== null,
+    amber: hasAmberData,
+    ev: hasTeslaData,
+  };
+
+  // Render in the configured order, skipping hidden and unavailable cards. With the default
+  // order and no hidden set this is exactly the historical card set/order.
+  const hiddenSet = new Set<PowerCardId>(hidden);
+  const renderOrder = (order ?? POWER_CARD_IDS).filter(
+    (id) => available[id] && !hiddenSet.has(id),
+  );
+  const cardCount = renderOrder.length;
 
   // Determine grid columns based on layout mode
   const getGridClass = () => {
@@ -542,6 +557,182 @@ export default function SystemPowerCards({
     return "grid-cols-4 lg:grid-cols-6";
   };
 
+  // Each mini-card's node, keyed by id, so the dashboard can render them in any order/subset.
+  // Nodes for unavailable cards are still built (cheaply) but never end up in `renderOrder`.
+  const cardNodes: Record<PowerCardId, React.ReactNode> = {
+    solar: (
+      <PowerCard
+        title="Solar"
+        value={formatPowerValue(solarValue ?? 0)}
+        unit="kW"
+        icon={<Sun className="w-6 h-6" />}
+        iconColor="text-yellow-400"
+        bgColor="bg-yellow-900/20"
+        borderColor="border-yellow-700"
+        staleThresholdSeconds={getStaleThreshold(vendorType)}
+        measurementTime={
+          getMeasurementTime("source.solar/power") ||
+          getMeasurementTime("source.solar.local/power") ||
+          getMeasurementTime("source.solar.remote/power") ||
+          undefined
+        }
+        extra={
+          showBreakdown ? (
+            <div className="text-xs text-gray-400 space-y-0.5">
+              {solarLocal !== null && (
+                <div>Local: {formatPowerSmallUnit(solarLocal)}</div>
+              )}
+              {solarRemote !== null && (
+                <div>Remote: {formatPowerSmallUnit(solarRemote)}</div>
+              )}
+            </div>
+          ) : undefined
+        }
+      />
+    ),
+    load: (
+      <PowerCard
+        title="Load"
+        value={formatPowerValue(totalLoad)}
+        unit="kW"
+        icon={<Home className="w-6 h-6" />}
+        iconColor="text-blue-400"
+        bgColor="bg-blue-900/20"
+        borderColor="border-blue-700"
+        staleThresholdSeconds={getStaleThreshold(vendorType)}
+        measurementTime={loadMeasurementTime || undefined}
+        extra={
+          top2Loads.length > 0 ? (
+            <div className="text-xs text-gray-400 space-y-0.5">
+              {top2Loads.map((load) => (
+                <div key={load.path}>
+                  {load.label}: {formatPowerSmallUnit(load.value)}
+                </div>
+              ))}
+            </div>
+          ) : undefined
+        }
+      />
+    ),
+    battery: (
+      <PowerCard
+        title="Battery"
+        value={(batterySoc ?? 0).toFixed(1)}
+        unit="%"
+        icon={
+          <span className="inline-flex items-center h-6 flex-row-reverse md:flex-row">
+            {getFlowChevron(
+              batteryPower,
+              batteryPower < 0, // negative = charging = into battery
+              batteryPower < 0
+                ? "text-green-400"
+                : batteryPower > 0
+                  ? "text-orange-400"
+                  : "text-gray-400",
+            )}
+            <Battery className="w-6 h-6" />
+          </span>
+        }
+        iconColor={
+          batteryPower < 0
+            ? "text-green-400"
+            : batteryPower > 0
+              ? "text-orange-400"
+              : "text-gray-400"
+        }
+        bgColor={
+          batteryPower < 0
+            ? "bg-green-900/20"
+            : batteryPower > 0
+              ? "bg-orange-900/20"
+              : "bg-gray-900/20"
+        }
+        borderColor={
+          batteryPower < 0
+            ? "border-green-700"
+            : batteryPower > 0
+              ? "border-orange-700"
+              : "border-gray-700"
+        }
+        staleThresholdSeconds={getStaleThreshold(vendorType)}
+        measurementTime={getMeasurementTime("bidi.battery/soc") || undefined}
+        extra={
+          Math.abs(batteryPower) >= 100 ? (
+            <div className="text-xs text-gray-400">
+              {batteryPower < 0 ? "Charging" : "Discharging"}{" "}
+              {formatPowerSmallUnit(Math.abs(batteryPower))}
+            </div>
+          ) : (
+            <div className="text-xs text-gray-400">Idle</div>
+          )
+        }
+      />
+    ),
+    grid: (
+      <PowerCard
+        title="Grid"
+        value={
+          Math.abs(gridPower) < 100
+            ? "Idle"
+            : formatPowerValue(Math.abs(gridPower))
+        }
+        unit={Math.abs(gridPower) < 100 ? undefined : "kW"}
+        icon={
+          <span className="inline-flex items-center h-6 flex-row-reverse md:flex-row">
+            {getFlowChevron(
+              gridPower,
+              gridPower < 0, // negative = exporting = into grid
+              gridPower >= 100
+                ? "text-red-400"
+                : gridPower <= -100
+                  ? "text-green-400"
+                  : "text-gray-400",
+            )}
+            <Zap className="w-6 h-6" />
+          </span>
+        }
+        iconColor={
+          gridPower >= 100
+            ? "text-red-400"
+            : gridPower <= -100
+              ? "text-green-400"
+              : "text-gray-400"
+        }
+        bgColor={
+          gridPower >= 100
+            ? "bg-red-900/20"
+            : gridPower <= -100
+              ? "bg-green-900/20"
+              : "bg-gray-900/20"
+        }
+        borderColor={
+          gridPower >= 100
+            ? "border-red-700"
+            : gridPower <= -100
+              ? "border-green-700"
+              : "border-gray-700"
+        }
+        staleThresholdSeconds={getStaleThreshold(vendorType)}
+        measurementTime={getMeasurementTime("bidi.grid/power") || undefined}
+        extraInfo={
+          gridPower >= 100
+            ? "Importing"
+            : gridPower <= -100
+              ? "Exporting"
+              : undefined
+        }
+      />
+    ),
+    amber: <AmberSmallCard latest={latest} />,
+    ev: (
+      <TeslaSmallCard
+        latest={latest}
+        systemId={systemId}
+        canControl={canControl}
+      />
+    ),
+  };
+
   return (
     <div
       className={`px-1 ${layout === "sidebar" ? "h-full" : "mb-4"} ${className || ""}`}
@@ -549,190 +740,9 @@ export default function SystemPowerCards({
       <div
         className={`grid gap-2 lg:gap-4 ${getGridClass()} ${layout === "sidebar" ? "h-full lg:content-between" : ""}`}
       >
-        {/* Solar Card */}
-        {solarValue !== null && (
-          <PowerCard
-            title="Solar"
-            value={formatPowerValue(solarValue)}
-            unit="kW"
-            icon={<Sun className="w-6 h-6" />}
-            iconColor="text-yellow-400"
-            bgColor="bg-yellow-900/20"
-            borderColor="border-yellow-700"
-            staleThresholdSeconds={getStaleThreshold(vendorType)}
-            measurementTime={
-              getMeasurementTime("source.solar/power") ||
-              getMeasurementTime("source.solar.local/power") ||
-              getMeasurementTime("source.solar.remote/power") ||
-              undefined
-            }
-            extra={
-              showBreakdown ? (
-                <div className="text-xs text-gray-400 space-y-0.5">
-                  {solarLocal !== null && (
-                    <div>Local: {formatPowerSmallUnit(solarLocal)}</div>
-                  )}
-                  {solarRemote !== null && (
-                    <div>Remote: {formatPowerSmallUnit(solarRemote)}</div>
-                  )}
-                </div>
-              ) : undefined
-            }
-          />
-        )}
-
-        {/* Load Card */}
-        {hasLoadData && (
-          <PowerCard
-            title="Load"
-            value={formatPowerValue(totalLoad)}
-            unit="kW"
-            icon={<Home className="w-6 h-6" />}
-            iconColor="text-blue-400"
-            bgColor="bg-blue-900/20"
-            borderColor="border-blue-700"
-            staleThresholdSeconds={getStaleThreshold(vendorType)}
-            measurementTime={loadMeasurementTime || undefined}
-            extra={
-              top2Loads.length > 0 ? (
-                <div className="text-xs text-gray-400 space-y-0.5">
-                  {top2Loads.map((load) => (
-                    <div key={load.path}>
-                      {load.label}: {formatPowerSmallUnit(load.value)}
-                    </div>
-                  ))}
-                </div>
-              ) : undefined
-            }
-          />
-        )}
-
-        {/* Battery Card */}
-        {batterySoc !== null && (
-          <PowerCard
-            title="Battery"
-            value={batterySoc.toFixed(1)}
-            unit="%"
-            icon={
-              <span className="inline-flex items-center h-6 flex-row-reverse md:flex-row">
-                {getFlowChevron(
-                  batteryPower,
-                  batteryPower < 0, // negative = charging = into battery
-                  batteryPower < 0
-                    ? "text-green-400"
-                    : batteryPower > 0
-                      ? "text-orange-400"
-                      : "text-gray-400",
-                )}
-                <Battery className="w-6 h-6" />
-              </span>
-            }
-            iconColor={
-              batteryPower < 0
-                ? "text-green-400"
-                : batteryPower > 0
-                  ? "text-orange-400"
-                  : "text-gray-400"
-            }
-            bgColor={
-              batteryPower < 0
-                ? "bg-green-900/20"
-                : batteryPower > 0
-                  ? "bg-orange-900/20"
-                  : "bg-gray-900/20"
-            }
-            borderColor={
-              batteryPower < 0
-                ? "border-green-700"
-                : batteryPower > 0
-                  ? "border-orange-700"
-                  : "border-gray-700"
-            }
-            staleThresholdSeconds={getStaleThreshold(vendorType)}
-            measurementTime={
-              getMeasurementTime("bidi.battery/soc") || undefined
-            }
-            extra={
-              Math.abs(batteryPower) >= 100 ? (
-                <div className="text-xs text-gray-400">
-                  {batteryPower < 0 ? "Charging" : "Discharging"}{" "}
-                  {formatPowerSmallUnit(Math.abs(batteryPower))}
-                </div>
-              ) : (
-                <div className="text-xs text-gray-400">Idle</div>
-              )
-            }
-          />
-        )}
-
-        {/* Grid Card */}
-        {showGrid && getPointValue("bidi.grid/power") !== null && (
-          <PowerCard
-            title="Grid"
-            value={
-              Math.abs(gridPower) < 100
-                ? "Idle"
-                : formatPowerValue(Math.abs(gridPower))
-            }
-            unit={Math.abs(gridPower) < 100 ? undefined : "kW"}
-            icon={
-              <span className="inline-flex items-center h-6 flex-row-reverse md:flex-row">
-                {getFlowChevron(
-                  gridPower,
-                  gridPower < 0, // negative = exporting = into grid
-                  gridPower >= 100
-                    ? "text-red-400"
-                    : gridPower <= -100
-                      ? "text-green-400"
-                      : "text-gray-400",
-                )}
-                <Zap className="w-6 h-6" />
-              </span>
-            }
-            iconColor={
-              gridPower >= 100
-                ? "text-red-400"
-                : gridPower <= -100
-                  ? "text-green-400"
-                  : "text-gray-400"
-            }
-            bgColor={
-              gridPower >= 100
-                ? "bg-red-900/20"
-                : gridPower <= -100
-                  ? "bg-green-900/20"
-                  : "bg-gray-900/20"
-            }
-            borderColor={
-              gridPower >= 100
-                ? "border-red-700"
-                : gridPower <= -100
-                  ? "border-green-700"
-                  : "border-gray-700"
-            }
-            staleThresholdSeconds={getStaleThreshold(vendorType)}
-            measurementTime={getMeasurementTime("bidi.grid/power") || undefined}
-            extraInfo={
-              gridPower >= 100
-                ? "Importing"
-                : gridPower <= -100
-                  ? "Exporting"
-                  : undefined
-            }
-          />
-        )}
-
-        {/* Amber Pricing Card - only show if Amber data available */}
-        {hasAmberData && <AmberSmallCard latest={latest} />}
-
-        {/* Tesla EV Card - only show if Tesla data available */}
-        {hasTeslaData && (
-          <TeslaSmallCard
-            latest={latest}
-            systemId={systemId}
-            canControl={canControl}
-          />
-        )}
+        {renderOrder.map((id) => (
+          <React.Fragment key={id}>{cardNodes[id]}</React.Fragment>
+        ))}
       </div>
     </div>
   );
