@@ -1,18 +1,61 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect, notFound } from "next/navigation";
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, gte } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pointInfo } from "@/lib/db/planetscale/schema";
+import { pointInfo, pointReadingsAgg5m } from "@/lib/db/planetscale/schema";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
-import { modelHws, DEFAULT_HWS_MODEL_OPTIONS } from "@/lib/hws-model";
+import { DEFAULT_HWS_MODEL_OPTIONS, type HwsModelStep } from "@/lib/hws-model";
 import { validateShareToken } from "@/lib/share-tokens";
 import Timeline from "./Timeline";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DISPLAY_DAYS = 7;
-const MODEL_WARMUP_DAYS = 2;
-const MODEL_WINDOW_MS = (DISPLAY_DAYS + MODEL_WARMUP_DAYS) * DAY_MS;
+const ON_THRESHOLD_W = DEFAULT_HWS_MODEL_OPTIONS.onThresholdW;
+
+/** The point index for the `load.hws` stem + given metric, or null. */
+async function hwsPointIndex(
+  systemId: number,
+  metricType: string,
+): Promise<number | null> {
+  const [row] = await requirePlanetscaleDb()
+    .select({ index: pointInfo.index })
+    .from(pointInfo)
+    .where(
+      and(
+        eq(pointInfo.systemId, systemId),
+        eq(pointInfo.logicalPathStem, "load.hws"),
+        eq(pointInfo.metricType, metricType),
+      ),
+    )
+    .limit(1);
+  return row ? row.index : null;
+}
+
+/** Bounded read of a point's agg_5m avg over [fromMs, now] → Map<intervalEndMs, avg>. */
+async function readAgg5m(
+  systemId: number,
+  pointId: number,
+  fromMs: number,
+): Promise<Map<number, number | null>> {
+  const rows = await requirePlanetscaleDb()
+    .select({
+      intervalEnd: pointReadingsAgg5m.intervalEnd,
+      avg: pointReadingsAgg5m.avg,
+    })
+    .from(pointReadingsAgg5m)
+    .where(
+      and(
+        eq(pointReadingsAgg5m.systemId, systemId),
+        eq(pointReadingsAgg5m.pointId, pointId),
+        gte(pointReadingsAgg5m.intervalEnd, new Date(fromMs)),
+      ),
+    )
+    .orderBy(asc(pointReadingsAgg5m.intervalEnd));
+  const m = new Map<number, number | null>();
+  for (const r of rows) m.set(r.intervalEnd.getTime(), r.avg);
+  return m;
+}
 
 export default async function KinkoraHwsPage({
   searchParams,
@@ -28,8 +71,8 @@ export default async function KinkoraHwsPage({
   );
   if (!system) notFound();
 
-  // Access check: a valid share token whose owner matches the system's owner
-  // is sufficient. Otherwise fall back to Clerk auth (owner or admin).
+  // Access check: a valid share token whose owner matches the system's owner is sufficient.
+  // Otherwise fall back to Clerk auth (owner or admin).
   let viaShareToken = false;
   if (access) {
     const validated = await validateShareToken(access);
@@ -37,7 +80,6 @@ export default async function KinkoraHwsPage({
       viaShareToken = true;
     }
   }
-
   if (!viaShareToken) {
     const authResult = await auth();
     const { userId } = authResult;
@@ -47,54 +89,50 @@ export default async function KinkoraHwsPage({
     if (!isOwner && !isAdmin) redirect("/dashboard");
   }
 
-  const hwsPoint = await requirePlanetscaleDb()
-    .select()
-    .from(pointInfo)
-    .where(
-      and(
-        eq(pointInfo.systemId, system.id),
-        eq(pointInfo.logicalPathStem, "load.hws"),
-        eq(pointInfo.metricType, "power"),
-      ),
-    )
-    .limit(1);
-
-  if (hwsPoint.length === 0) {
+  const tempPointId = await hwsPointIndex(system.id, "temperature");
+  const powerPointId = await hwsPointIndex(system.id, "power");
+  if (tempPointId === null) {
     return (
       <main className="min-h-screen bg-gray-900 text-gray-100 p-8">
         <h1 className="text-xl font-semibold mb-2">Kinkora HWS</h1>
         <p className="text-red-400">
-          No load.hws/power point found for system {system.id}.
+          No load.hws/temperature point for system {system.id}. Register it with
+          scripts/seed-hws-point.ts.
         </p>
       </main>
     );
   }
-  const pointIndex = hwsPoint[0].index;
 
   const tz = system.timezoneOffsetMin;
   const nowMs = Date.now();
-  const startMs = nowMs - MODEL_WINDOW_MS;
-
   const todayLocalMidnightMs =
     Math.floor((nowMs + tz * 60_000) / DAY_MS) * DAY_MS - tz * 60_000;
   const displayStartMs = todayLocalMidnightMs - (DISPLAY_DAYS - 1) * DAY_MS;
 
-  const result = await requirePlanetscaleDb().execute(sql`
-        SELECT (EXTRACT(EPOCH FROM interval_end AT TIME ZONE 'UTC') * 1000) AS interval_end, avg
-        FROM point_readings_agg_5m
-        WHERE system_id = ${system.id} AND point_id = ${pointIndex}
-          AND interval_end >= to_timestamp(${startMs} / 1000.0)
-        ORDER BY interval_end ASC`);
+  // Read the persisted modelled temperature + the source power (for the on/off row).
+  const tempByTs = await readAgg5m(system.id, tempPointId, displayStartMs);
+  const powerByTs =
+    powerPointId !== null
+      ? await readAgg5m(system.id, powerPointId, displayStartMs)
+      : new Map<number, number | null>();
 
-  const samples = result.rows.map((r: any) => ({
-    tsMs: Number(r.interval_end),
-    powerW: r.avg === null ? null : Number(r.avg),
-  }));
+  const tsSet = new Set<number>([...tempByTs.keys(), ...powerByTs.keys()]);
+  const steps: HwsModelStep[] = [...tsSet]
+    .sort((a, b) => a - b)
+    .map((tsMs) => {
+      const faucetC = tempByTs.get(tsMs) ?? DEFAULT_HWS_MODEL_OPTIONS.tFloor;
+      const powerW = powerByTs.has(tsMs) ? (powerByTs.get(tsMs) ?? null) : null;
+      return {
+        tsMs,
+        powerW,
+        on: powerW !== null && powerW > ON_THRESHOLD_W,
+        tankC: faucetC, // tank not persisted; unused by the Timeline
+        faucetC,
+      };
+    });
 
-  const allSteps = modelHws(samples, DEFAULT_HWS_MODEL_OPTIONS);
-  const steps = allSteps.filter((s) => s.tsMs >= displayStartMs);
   const latestFaucetC =
-    allSteps.length > 0 ? allSteps[allSteps.length - 1].faucetC : null;
+    steps.length > 0 ? steps[steps.length - 1].faucetC : null;
 
   return (
     <main className="min-h-screen bg-gray-900 text-gray-100 p-6">
@@ -110,7 +148,7 @@ export default async function KinkoraHwsPage({
 
         {steps.length === 0 ? (
           <p className="text-gray-400">
-            No 5-minute data in the last {DISPLAY_DAYS} days.
+            No modelled data in the last {DISPLAY_DAYS} days.
           </p>
         ) : (
           <Timeline

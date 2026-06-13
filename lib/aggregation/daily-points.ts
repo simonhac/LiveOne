@@ -22,6 +22,7 @@ import { FLOW_MATRIX_COMPUTE_IN_PG } from "@/lib/db/routing";
 import { listCompleteLogicalSystems } from "@/lib/aggregation/logical-system";
 import { RUN_TRACKING } from "@/lib/run-tracking/flags";
 import { recomputeRange as recomputeRunPeriodsRange } from "@/lib/run-tracking/recompute";
+import { recomputeRange as recomputeHwsTemperatureRange } from "@/lib/hws/recompute";
 
 // Earliest date for point data aggregation (when point data collection began)
 const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
@@ -275,6 +276,15 @@ export async function aggregateRange(
     } catch (error) {
       console.error("[Daily Points] Run-period heal pass failed:", error);
     }
+  }
+
+  // Daily heal of the derived hot-water temperature over the aggregated range (best-effort).
+  // Runs AFTER the 5m aggregation above, since it reads point_readings_agg_5m. No-op when no
+  // system has a load.hws/temperature point.
+  try {
+    await recomputeHwsTemperatureRange(rangeStartMs, Date.now());
+  } catch (error) {
+    console.error("[Daily Points] HWS temperature heal pass failed:", error);
   }
 
   console.log(
