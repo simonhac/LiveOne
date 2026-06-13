@@ -22,6 +22,33 @@ deployment we want to test. This skill does that re-pointing.
 A Vercel **alias is pinned to one deployment** — it does NOT follow new pushes. Re-run this skill
 after each push (or when switching branches) to move `preview.liveone.energy` to the newest build.
 
+## 🚫 Policy: NEVER preview against production
+
+**The preview must always read an isolated, seeded DB branch — never production Postgres. No
+exceptions, not even for "UX-only" or "read-only" changes, and not even when you're the only user.**
+
+The failure mode is silent: the `DB_*` env vars are shared across Production / Preview / Development,
+so if the Preview env has **no** `PLANETSCALE_DATABASE_URL` override, the runtime falls back to those
+shared vars and the preview quietly points at **prod**. Therefore the Preview env's
+`PLANETSCALE_DATABASE_URL` must **always** be set to a non-prod branch (see "Isolated, seeded preview
+DB branch" below) before you alias anything.
+
+**Guard — run before aliasing; abort if Preview has no DB override (→ would read prod):**
+
+```bash
+vercel env pull /tmp/preview.env --environment=preview --yes >/dev/null 2>&1
+PREVIEW_DB="$(grep '^PLANETSCALE_DATABASE_URL=' /tmp/preview.env | cut -d= -f2- | tr -d '"')"
+rm -f /tmp/preview.env
+if [ -z "$PREVIEW_DB" ]; then
+  echo "🚫 Preview has no PLANETSCALE_DATABASE_URL → it falls back to the shared DB_* = PROD."
+  echo "   Point Preview at a seeded throwaway branch first (see below). Aborting."; exit 1
+fi
+# The username segment encodes the branch (e.g. postgres.<branchid>). Confirm it is NOT the
+# sydney/prod branch before continuing — prod is the standalone `sydney` branch.
+echo "Preview DB user: $(printf '%s' "$PREVIEW_DB" | sed -E 's#^[^/]*//([^:]+):.*#\1#')"
+echo "   → verify this is a throwaway branch, NOT sydney/prod, before aliasing."
+```
+
 ## Prerequisites (already set up once — only check if it breaks)
 
 - DNS (Cloudflare): `preview.liveone.energy` CNAME → `cname.vercel-dns.com`, **DNS-only**.
@@ -29,12 +56,10 @@ after each push (or when switching branches) to move `preview.liveone.energy` to
 
 ## ⚠️ Cautions to relay to the user
 
-- **By default this preview reads PRODUCTION Postgres** (the `DB_*` env vars are shared across
-  Production / Preview / Development). Treat it as **read-only** — dashboards, history, admin _read_
-  views. Do NOT poll-now, edit config, create/revoke tokens, or run crons from the preview.
-  **Exception:** if the branch needs to write/migrate (e.g. a new table), point Preview at an
-  **isolated, seeded DB branch** first — see "Isolated, seeded preview DB branch" below — so prod is
-  never touched.
+- **The Preview env MUST point at an isolated, seeded DB branch — never prod** (see the Policy
+  above). Set up the branch first (see "Isolated, seeded preview DB branch"), run the guard, and only
+  then alias. Speed/convenience is never a reason to point preview at prod — if a throwaway branch is
+  cold/slow, warm it or accept the latency, don't fall back to prod.
 - Sign in with your **production** Clerk user (live instance). The dev/test Clerk instance has
   different user IDs that won't match prod data.
 - The deployment must have been built **after** `CLERK_SECRET_KEY` was added to the Preview env;
@@ -79,15 +104,16 @@ curl -sS -o /dev/null -w "https://$DOMAIN -> HTTP %{http_code} (401 = Vercel dep
 
 ## After running
 
-Tell the user: open **https://preview.liveone.energy** (logged into Vercel to clear the 401),
-sign in with the production Clerk user, and keep it read-only (unless it's pointed at an isolated
-seeded branch, below).
+Tell the user: open **https://preview.liveone.energy** (logged into Vercel to clear the 401) and
+sign in with the production Clerk user. The preview is backed by an isolated seeded branch, so it's
+safe to exercise writes (save dashboards, edit config) without touching prod.
 
-## Isolated, seeded preview DB branch (for DB / schema work)
+## Isolated, seeded preview DB branch (REQUIRED — always)
 
-Use this when the branch changes the schema or writes data (new tables, migrations) so the preview
-never touches prod. **PlanetScale Postgres has no copy-on-write data branches** — a fresh branch is
-schema-only (https://planetscale.com/docs/postgres/branching), so it must be seeded.
+This is **mandatory for every preview** (see the Policy above), not just schema/data work — it's how
+the preview avoids prod. **PlanetScale Postgres has no copy-on-write data branches** — a fresh branch
+is schema-only (https://planetscale.com/docs/postgres/branching), so it must be seeded. Reuse an
+existing seeded throwaway branch if one is already up; otherwise create one.
 
 **1. Create the branch.** Either a full data copy from a backup (slower, own storage), or an empty
 branch you seed with a recent slice (cheaper/faster):
