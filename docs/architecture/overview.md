@@ -61,15 +61,16 @@ Adapters live in `lib/vendors/<vendor>/`, registered in `lib/vendors/registry.ts
 `base-adapter.ts` / `types.ts`. Each adapter owns auth, fetching, mapping to point metadata,
 and error normalisation.
 
-| Vendor      | Mode                               | Notes                                                                                                                   |
-| ----------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| selectronic | poll (minutely)                    | select.live; [../vendors/selectronic.md](../vendors/selectronic.md)                                                     |
-| enphase     | poll (OAuth, 5m-native)            | [../vendors/enphase-integration.md](../vendors/enphase-integration.md)                                                  |
-| fusher      | push webhook                       | Fronius pusher, renamed from `fronius` (alias kept); [../vendors/fronius-push-spec.md](../vendors/fronius-push-spec.md) |
-| amber       | poll (5m-native)                   | Electricity market data; [../amber-sync-plan.md](../amber-sync-plan.md)                                                 |
-| tesla       | poll (OAuth, charge-aware cadence) | EVs; [../tesla.md](../tesla.md)                                                                                         |
-| mondo       | poll                               |                                                                                                                         |
-| composite   | never polled                       | Virtual aggregation ([data-model.md](data-model.md))                                                                    |
+| Vendor          | Mode                               | Notes                                                                                                                   |
+| --------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| selectronic     | poll (minutely)                    | select.live; [../vendors/selectronic.md](../vendors/selectronic.md)                                                     |
+| enphase         | poll (OAuth, 5m-native)            | [../vendors/enphase-integration.md](../vendors/enphase-integration.md)                                                  |
+| fusher          | push webhook                       | Fronius pusher, renamed from `fronius` (alias kept); [../vendors/fronius-push-spec.md](../vendors/fronius-push-spec.md) |
+| amber           | poll (5m-native)                   | Electricity market data; [../amber-sync-plan.md](../amber-sync-plan.md)                                                 |
+| openelectricity | poll (5m-native, dynamic cadence)  | NEM regional emissions intensity/price/renewables; [../devices/open-electricity.md](../devices/open-electricity.md)     |
+| tesla           | poll (OAuth, charge-aware cadence) | EVs; [../tesla.md](../tesla.md)                                                                                         |
+| mondo           | poll                               |                                                                                                                         |
+| composite       | never polled                       | Virtual aggregation ([data-model.md](data-model.md))                                                                    |
 
 ## Where each area is documented
 

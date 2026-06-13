@@ -13,6 +13,11 @@
 - [turso-pg-migration.md](turso-pg-migration.md) — historical record of the completed Turso→Postgres migration (phases, runbooks)
 - [architecture/api.md](architecture/api.md) — API conventions, external contracts, route inventory
 
+## Devices (vendor/system integrations)
+
+- [devices/README.md](devices/README.md) — **anatomy of a device integration**: the shared building blocks every adapter follows + the device-doc template and add-a-device checklist
+- [devices/open-electricity.md](devices/open-electricity.md) — OpenElectricity (NEM): regional emissions intensity / spot price / renewable proportion (poll, 5m-native, dynamic cadence)
+
 ## Reference
 
 - [architecture/points.md](architecture/points.md) — point model: paths, identity, composite rules

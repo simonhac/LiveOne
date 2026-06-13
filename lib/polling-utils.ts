@@ -1,5 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { transformForStorage } from "@/lib/json";
+import { vendorUsesAppCredentials } from "@/lib/vendors/ownership";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { pollingStatus as pgPollingStatus } from "@/lib/db/planetscale/schema";
 
@@ -219,8 +220,12 @@ export function validateSystemForPolling(
     };
   }
 
-  // Check if owner is configured
-  if (!system.ownerClerkUserId) {
+  // Check if owner is configured. Public/ownerless systems are allowed when the vendor
+  // authenticates with an app-wide credential (e.g. openelectricity).
+  if (
+    !system.ownerClerkUserId &&
+    !vendorUsesAppCredentials(system.vendorType)
+  ) {
     return {
       systemId: system.id,
       displayName: system.displayName || undefined,

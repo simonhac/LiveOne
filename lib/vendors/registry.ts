@@ -6,6 +6,7 @@ import { MondoAdapter } from "./mondo/adapter";
 import { AmberAdapter } from "./amber/adapter";
 import { CompositeAdapter } from "./composite/adapter";
 import { TeslaAdapter } from "./tesla/adapter";
+import { OpenElectricityAdapter } from "./openelectricity/adapter";
 import { SystemsManager } from "@/lib/systems-manager";
 
 /**
@@ -31,6 +32,7 @@ export class VendorRegistry {
     this.adapters.set("amber", new AmberAdapter());
     this.adapters.set("tesla", new TeslaAdapter());
     this.adapters.set("composite", new CompositeAdapter());
+    this.adapters.set("openelectricity", new OpenElectricityAdapter());
 
     this.initialized = true;
 

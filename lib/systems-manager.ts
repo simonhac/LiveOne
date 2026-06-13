@@ -286,29 +286,25 @@ export class SystemsManager {
         .filter((s) => !activeOnly || s.status === "active")
         .filter((s) => s.displayName && s.vendorSiteId); // Must have display name and vendor site ID
     } else {
-      // Get systems the user owns
-      const ownedSystems = allSystemsArray.filter(
-        (s) => s.ownerClerkUserId === userId,
-      );
-
-      // Get systems the user has been granted access to
+      // Systems the user has been granted access to
       const grantedAccess = await requirePlanetscaleDb()
         .select()
         .from(pgUserSystems)
         .where(eq(pgUserSystems.clerkUserId, userId));
-
       const grantedSystemIds = new Set(grantedAccess.map((ua) => ua.systemId));
 
-      // Combine owned and granted systems
-      const userVisibleSystems = [
-        ...ownedSystems,
-        ...allSystemsArray.filter(
-          (s) => grantedSystemIds.has(s.id) && s.ownerClerkUserId !== userId,
-        ),
-      ];
+      // A user sees: systems they own + systems shared with them + PUBLIC (ownerless)
+      // systems, which are readable by everyone. Dedupe by id.
+      const visibleById = new Map<number, SystemWithPolling>();
+      for (const s of allSystemsArray) {
+        const isOwner = s.ownerClerkUserId === userId;
+        const isGranted = grantedSystemIds.has(s.id);
+        const isPublic = s.ownerClerkUserId == null;
+        if (isOwner || isGranted || isPublic) visibleById.set(s.id, s);
+      }
 
       // Filter by status and required fields
-      visibleSystems = userVisibleSystems
+      visibleSystems = Array.from(visibleById.values())
         .filter((s) => !activeOnly || s.status === "active")
         .filter((s) => s.displayName && s.vendorSiteId);
     }

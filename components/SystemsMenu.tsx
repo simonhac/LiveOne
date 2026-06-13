@@ -45,8 +45,13 @@ export default function SystemsMenu({
     .filter((s) => s.ownerClerkUserId === userId)
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
+  // Public (ownerless) systems are visible to everyone.
+  const publicSystems = availableSystems
+    .filter((s) => s.ownerClerkUserId == null)
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+
   const grantedSystems = availableSystems
-    .filter((s) => s.ownerClerkUserId !== userId)
+    .filter((s) => s.ownerClerkUserId != null && s.ownerClerkUserId !== userId)
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
   const handleClick = (systemId: number) => {
@@ -137,12 +142,17 @@ export default function SystemsMenu({
       {/* Owned systems */}
       {ownedSystems.map(renderSystemItem)}
 
-      {/* Divider if both groups exist */}
-      {ownedSystems.length > 0 && grantedSystems.length > 0 && (
+      {/* Public (ownerless) systems */}
+      {ownedSystems.length > 0 && publicSystems.length > 0 && (
         <div className="border-t border-gray-700 my-1"></div>
       )}
+      {publicSystems.map(renderSystemItem)}
 
       {/* Granted systems */}
+      {(ownedSystems.length > 0 || publicSystems.length > 0) &&
+        grantedSystems.length > 0 && (
+          <div className="border-t border-gray-700 my-1"></div>
+        )}
       {grantedSystems.map(renderSystemItem)}
 
       {/* Admin note for many systems */}
