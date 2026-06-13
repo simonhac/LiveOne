@@ -12,6 +12,7 @@
 
 import { kv, kvKey } from "./kv";
 import { getLatestValues, LatestValuesMap } from "./latest-values-store";
+import { ROLE_IDS, ROLES } from "@/lib/roles/registry";
 
 /**
  * Summary readings for a system - fields are OMITTED when no data available
@@ -50,13 +51,14 @@ function getSummariesKey(): string {
 }
 
 /**
- * Aggregate readings from point values into summary format
+ * Aggregate readings from point values into summary format, driven by the role registry
+ * (`lib/roles/registry.ts`). For each role with a `summary` config it emits `${stem}/${metric}`:
  *
- * Rules:
- * - source.solar/power: Use master if exists, else sum children source.solar.* /power
- * - load/power: Use master if exists, else sum children load.* /power
- * - bidi.battery/soc: Direct lookup
- * - bidi.grid/power: Direct lookup
+ * - `aggregable` roles (solar, load): use the master point if present, else the sum of its dotted
+ *   children (`${stem}.* /${metric}`).
+ * - non-`aggregable` roles (battery soc, grid power): direct lookup of the single point.
+ *
+ * Roles without a `summary` config (ev) are not summarised. Fields are omitted when no data exists.
  *
  * @param values - Array of {logicalPath, value} from point readings
  * @returns Aggregated readings (fields omitted if no matching data)
@@ -64,58 +66,30 @@ function getSummariesKey(): string {
 export function aggregateSummaryReadings(
   values: Array<{ logicalPath: string; value: number }>,
 ): SystemSummaryReadings {
-  const readings: SystemSummaryReadings = {};
+  const readings = {} as Record<string, number>;
 
-  // Solar: master or sum children
-  const solarMaster = values.find(
-    (v) => v.logicalPath === "source.solar/power",
-  );
-  if (solarMaster) {
-    readings["source.solar/power"] = solarMaster.value;
-  } else {
-    const solarChildren = values.filter(
-      (v) =>
-        v.logicalPath.startsWith("source.solar.") &&
-        v.logicalPath.endsWith("/power"),
-    );
-    if (solarChildren.length > 0) {
-      readings["source.solar/power"] = solarChildren.reduce(
-        (sum, v) => sum + v.value,
-        0,
+  for (const id of ROLE_IDS) {
+    const role = ROLES[id];
+    if (!role.summary) continue;
+    const { metric, aggregable } = role.summary;
+    const masterPath = `${role.stem}/${metric}`;
+
+    const master = values.find((v) => v.logicalPath === masterPath);
+    if (master) {
+      readings[masterPath] = master.value;
+    } else if (aggregable) {
+      const children = values.filter(
+        (v) =>
+          v.logicalPath.startsWith(`${role.stem}.`) &&
+          v.logicalPath.endsWith(`/${metric}`),
       );
+      if (children.length > 0) {
+        readings[masterPath] = children.reduce((sum, v) => sum + v.value, 0);
+      }
     }
   }
 
-  // Load: master or sum children
-  const loadMaster = values.find((v) => v.logicalPath === "load/power");
-  if (loadMaster) {
-    readings["load/power"] = loadMaster.value;
-  } else {
-    const loadChildren = values.filter(
-      (v) =>
-        v.logicalPath.startsWith("load.") && v.logicalPath.endsWith("/power"),
-    );
-    if (loadChildren.length > 0) {
-      readings["load/power"] = loadChildren.reduce(
-        (sum, v) => sum + v.value,
-        0,
-      );
-    }
-  }
-
-  // Battery SOC: direct lookup
-  const batterySOC = values.find((v) => v.logicalPath === "bidi.battery/soc");
-  if (batterySOC) {
-    readings["bidi.battery/soc"] = batterySOC.value;
-  }
-
-  // Grid power: direct lookup
-  const gridPower = values.find((v) => v.logicalPath === "bidi.grid/power");
-  if (gridPower) {
-    readings["bidi.grid/power"] = gridPower.value;
-  }
-
-  return readings;
+  return readings as SystemSummaryReadings;
 }
 
 /**

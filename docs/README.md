@@ -16,6 +16,7 @@
 ## Reference
 
 - [architecture/points.md](architecture/points.md) — point model: paths, identity, composite rules
+- [architecture/areas-and-dashboards.md](architecture/areas-and-dashboards.md) — **proposed** redesign: split physical/semantic/presentation into Systems → Areas → Dashboards (HA-aligned, Apple-Home UX); replaces composite-as-system
 - [architecture/authentication.md](architecture/authentication.md) — Clerk, roles, API auth functions
 - [architecture/kv-store.md](architecture/kv-store.md) — KV cache keys, subscription registry
 - [architecture/load-calcs.md](architecture/load-calcs.md) — "rest of house" load calculation

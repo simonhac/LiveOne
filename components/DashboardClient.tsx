@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useModalContext } from "@/contexts/ModalContext";
 import {
   dashboardDataQuery,
   siteDataQuery,
   flowMatrixQuery,
+  dashboardDescriptorQuery,
 } from "@/lib/queries";
 import EnergyChart from "@/components/EnergyChart";
 import AmberCard from "@/components/AmberCard";
@@ -22,6 +23,19 @@ import {
   type EnergyFlowMatrix,
 } from "@/lib/energy-flow-matrix";
 import SystemPowerCards from "@/app/components/cards/SystemPowerCards";
+import DashboardCustomizeDialog from "@/components/DashboardCustomizeDialog";
+import {
+  buildDefaultDescriptor,
+  normalizeDescriptor,
+  powerCardsConfigOf,
+  isCardVisible,
+  type DashboardDescriptor,
+} from "@/lib/dashboard/descriptor";
+import {
+  CARD_REGISTRY,
+  availablePowerCards,
+  type DashboardCardType,
+} from "@/lib/dashboard/cards";
 import PeriodSwitcher from "@/components/PeriodSwitcher";
 import { formatDateTime, formatDateTimeRange } from "@/lib/fe-date-format";
 import { fromUnixTimestamp } from "@/lib/date-utils";
@@ -135,6 +149,18 @@ interface DashboardClientProps {
   userId?: string;
   /** When true, the long-range (30D) Sankey is served from PG (FLOW_MATRIX_SERVE_FROM_PG). */
   serveFlowFromPg?: boolean;
+  /**
+   * When true, layout/card selection is driven by the declarative dashboard descriptor
+   * (lib/dashboard) instead of the inline vendor_type checks. The descriptor reproduces the ladder,
+   * so on/off render identically. Gated by DECLARATIVE_DASHBOARD. See areas-and-dashboards.md.
+   */
+  declarativeDashboard?: boolean;
+  /**
+   * When true, load the user's saved dashboard descriptor (else the default) and enable Customize
+   * mode (reorder/hide/add cards, Reset to default). Gated by DASHBOARD_PERSISTENCE. Implies the
+   * descriptor render path. See areas-and-dashboards.md (P2).
+   */
+  dashboardPersistence?: boolean;
 }
 
 // Helper function to get stale threshold based on vendor type
@@ -152,9 +178,12 @@ export default function DashboardClient({
   availableSystems = [],
   userId,
   serveFlowFromPg = false,
+  declarativeDashboard = false,
+  dashboardPersistence = false,
 }: DashboardClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const [isAdmin, setIsAdmin] = useState(isAdminProp);
   const [currentDisplayName, setCurrentDisplayName] = useState(
     system?.displayName || "",
@@ -179,6 +208,21 @@ export default function DashboardClient({
   const data = (queryData ?? null) as DashboardData | null;
   const systemInfo =
     (queryData as { systemInfo?: SystemInfo } | undefined)?.systemInfo ?? null;
+
+  // P2: persisted/customizable dashboard descriptor. The descriptor query is disabled (systemId "")
+  // and the result ignored unless the DASHBOARD_PERSISTENCE flag is on.
+  const { data: savedDescriptorResp } = useQuery(
+    dashboardDescriptorQuery(dashboardPersistence && systemId ? systemId : ""),
+  );
+  const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
+
+  // The effective (saved-or-default) descriptor; null when persistence is off.
+  const effectiveDescriptor = useMemo<DashboardDescriptor | null>(() => {
+    if (!dashboardPersistence || !data?.system) return null;
+    const def = buildDefaultDescriptor(data.system, data.latest ?? {});
+    const saved = savedDescriptorResp?.descriptor ?? null;
+    return saved ? normalizeDescriptor(saved, def) : def;
+  }, [dashboardPersistence, data?.system, data?.latest, savedDescriptorResp]);
 
   // Derive the display error from the query result, preserving the original branches:
   // connection failure, an explicit `error` body, or the "system exists but no charts" marker.
@@ -736,6 +780,70 @@ export default function DashboardClient({
     ? getPoint(data.latest, "bidi.grid/power") !== null
     : false;
 
+  // Active descriptor: the customizable one (P2) when persistence is on, else the generated one
+  // (P1) when DECLARATIVE_DASHBOARD is on, else null (legacy inline checks). The descriptor
+  // reproduces the ladder, so the layout booleans below match the original vendor_type tests.
+  // Editing happens in the Customize dialog (its own draft); the dashboard renders the saved
+  // (effective) descriptor and updates on Save.
+  const activeDescriptor: DashboardDescriptor | null = dashboardPersistence
+    ? effectiveDescriptor
+    : declarativeDashboard && data?.system
+      ? buildDefaultDescriptor(data.system, data.latest ?? {})
+      : null;
+  const vendorTypeForLayout = data?.system.vendorType;
+  const isAmberLayout = activeDescriptor
+    ? activeDescriptor.layout === "amber"
+    : vendorTypeForLayout === "amber";
+  const isSiteLayout = activeDescriptor
+    ? activeDescriptor.layout === "site"
+    : vendorTypeForLayout === "mondo" || vendorTypeForLayout === "composite";
+
+  // P2 helpers. When persistence is off, cardVisible() is always true and powerCfg is null (so
+  // SystemPowerCards uses its default order/visibility) — i.e. unchanged behaviour.
+  const cardVisible = (type: DashboardCardType): boolean =>
+    !dashboardPersistence ||
+    !activeDescriptor ||
+    isCardVisible(activeDescriptor, type);
+  const powerCfg =
+    dashboardPersistence && activeDescriptor
+      ? powerCardsConfigOf(activeDescriptor)
+      : null;
+
+  // Customize (P2) handlers + the cards available on this system (for the dialog).
+  const saveDashboard = async (next: DashboardDescriptor) => {
+    if (systemId) {
+      await fetch(`/api/dashboard/${systemId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ descriptor: next }),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["dashboard-descriptor", systemId],
+      });
+    }
+    setIsCustomizeOpen(false);
+  };
+  const resetDashboard = async () => {
+    if (systemId) {
+      await fetch(`/api/dashboard/${systemId}`, { method: "DELETE" });
+      await queryClient.invalidateQueries({
+        queryKey: ["dashboard-descriptor", systemId],
+      });
+    }
+    setIsCustomizeOpen(false);
+  };
+  const availableModules = new Set<DashboardCardType>(
+    (Object.keys(CARD_REGISTRY) as DashboardCardType[]).filter((t) =>
+      CARD_REGISTRY[t].canRender({
+        vendorType: data?.system.vendorType ?? "",
+        latest: data?.latest ?? {},
+      }),
+    ),
+  );
+  const availablePower = new Set(
+    data?.latest ? availablePowerCards(data.latest) : [],
+  );
+
   return (
     <main className="max-w-7xl mx-auto px-1 py-4">
       {/* Removed System Banner - Show regardless of data availability */}
@@ -751,10 +859,31 @@ export default function DashboardClient({
         </div>
       )}
 
+      {/* Customize button + dialog (P2, DASHBOARD_PERSISTENCE) */}
+      {dashboardPersistence && data && (
+        <>
+          <div className="mb-4 flex justify-end">
+            <button
+              onClick={() => setIsCustomizeOpen(true)}
+              className="px-3 py-1.5 text-sm rounded-md border border-gray-600 text-gray-300 hover:bg-gray-700"
+            >
+              Customize
+            </button>
+          </div>
+          <DashboardCustomizeDialog
+            isOpen={isCustomizeOpen}
+            onClose={() => setIsCustomizeOpen(false)}
+            descriptor={effectiveDescriptor}
+            availableModules={availableModules}
+            availablePower={availablePower}
+            onSave={saveDashboard}
+            onReset={resetDashboard}
+          />
+        </>
+      )}
+
       {error &&
-        (error === "POINT_READINGS_NO_CHARTS" &&
-        data?.system.vendorType !== "mondo" &&
-        data?.system.vendorType !== "composite" ? (
+        (error === "POINT_READINGS_NO_CHARTS" && !isSiteLayout ? (
           <div className="bg-blue-900/50 border border-blue-700 text-blue-300 px-4 py-3 rounded mb-6 flex items-center gap-2">
             <AlertTriangle className="w-5 h-5" />
             <span>
@@ -768,11 +897,7 @@ export default function DashboardClient({
           </div>
         ) : null)}
 
-      {(data?.latest ||
-        (data &&
-          (data.system.vendorType === "mondo" ||
-            data.system.vendorType === "composite" ||
-            data.system.vendorType === "amber"))) && (
+      {(data?.latest || (data && (isSiteLayout || isAmberLayout))) && (
         <div className="space-y-6">
           {/* Fault Warning
                 TEMPORARILY DISABLED - Needs composite points implementation
@@ -820,7 +945,7 @@ export default function DashboardClient({
             )}
 
           {/* Amber Electric Dashboard - Live price + 48 hour timeline */}
-          {data?.system.vendorType === "amber" && systemId && (
+          {isAmberLayout && systemId && cardVisible("amber") && (
             <>
               <div className="px-1">
                 <AmberSmallCard latest={data.latest} />
@@ -835,70 +960,67 @@ export default function DashboardClient({
           )}
 
           {/* Main Dashboard Grid - Only show for admin or non-removed systems and non-Amber systems */}
-          {(isAdmin || system?.status !== "removed") &&
-            data?.system.vendorType !== "amber" && (
+          {(isAdmin || system?.status !== "removed") && !isAmberLayout && (
+            <div
+              className={
+                isSiteLayout
+                  ? ""
+                  : "flex flex-col lg:grid lg:grid-cols-3 lg:gap-4"
+              }
+            >
+              {/* Power Cards - For non-mondo/composite: first in DOM (mobile top), sidebar on desktop */}
+              {!isSiteLayout && data.latest && cardVisible("power-cards") && (
+                <div className="order-1 lg:order-2 mb-4 lg:mb-0 lg:self-stretch">
+                  <SystemPowerCards
+                    latest={data.latest}
+                    vendorType={data.system.vendorType}
+                    getStaleThreshold={getStaleThreshold}
+                    showGrid={showGrid}
+                    layout="sidebar"
+                    className="lg:h-full"
+                    systemId={data.system.id}
+                    order={powerCfg?.order}
+                    hidden={powerCfg?.hidden}
+                    canControl={
+                      isAdmin ||
+                      (!!userId && data.system.ownerClerkUserId === userId)
+                    }
+                  />
+                </div>
+              )}
+
+              {/* Charts - Full width for mondo/composite, 2/3 width for others */}
               <div
                 className={
-                  data?.system.vendorType === "mondo" ||
-                  data?.system.vendorType === "composite"
-                    ? ""
-                    : "flex flex-col lg:grid lg:grid-cols-3 lg:gap-4"
+                  isSiteLayout ? "" : "order-2 lg:order-1 lg:col-span-2"
                 }
               >
-                {/* Power Cards - For non-mondo/composite: first in DOM (mobile top), sidebar on desktop */}
-                {data?.system.vendorType !== "mondo" &&
-                  data?.system.vendorType !== "composite" &&
-                  data.latest && (
-                    <div className="order-1 lg:order-2 mb-4 lg:mb-0 lg:self-stretch">
-                      <SystemPowerCards
-                        latest={data.latest}
-                        vendorType={data.system.vendorType}
-                        getStaleThreshold={getStaleThreshold}
-                        showGrid={showGrid}
-                        layout="sidebar"
-                        className="lg:h-full"
-                        systemId={data.system.id}
-                        canControl={
-                          isAdmin ||
-                          (!!userId && data.system.ownerClerkUserId === userId)
-                        }
-                      />
-                    </div>
-                  )}
+                {isSiteLayout ? (
+                  <>
+                    {/* Power Cards - Composite and Mondo systems, horizontal grid at top */}
+                    {isSiteLayout &&
+                      data.latest &&
+                      cardVisible("power-cards") && (
+                        <SystemPowerCards
+                          latest={data.latest}
+                          vendorType={data.system.vendorType}
+                          getStaleThreshold={getStaleThreshold}
+                          showGrid={showGrid}
+                          systemId={data.system.id}
+                          order={powerCfg?.order}
+                          hidden={powerCfg?.hidden}
+                          canControl={
+                            isAdmin ||
+                            (!!userId &&
+                              data.system.ownerClerkUserId === userId)
+                          }
+                        />
+                      )}
 
-                {/* Charts - Full width for mondo/composite, 2/3 width for others */}
-                <div
-                  className={
-                    data?.system.vendorType === "mondo" ||
-                    data?.system.vendorType === "composite"
-                      ? ""
-                      : "order-2 lg:order-1 lg:col-span-2"
-                  }
-                >
-                  {data?.system.vendorType === "mondo" ||
-                  data?.system.vendorType === "composite" ? (
-                    <>
-                      {/* Power Cards - Composite and Mondo systems, horizontal grid at top */}
-                      {(data?.system.vendorType === "composite" ||
-                        data?.system.vendorType === "mondo") &&
-                        data.latest && (
-                          <SystemPowerCards
-                            latest={data.latest}
-                            vendorType={data.system.vendorType}
-                            getStaleThreshold={getStaleThreshold}
-                            showGrid={showGrid}
-                            systemId={data.system.id}
-                            canControl={
-                              isAdmin ||
-                              (!!userId &&
-                                data.system.ownerClerkUserId === userId)
-                            }
-                          />
-                        )}
-
-                      {/* Charts - For mondo/composite systems, show charts with tables in single container */}
-                      {/* Hide entire container for unconfigured composite systems */}
-                      {(historyLoading ||
+                    {/* Charts - For mondo/composite systems, show charts with tables in single container */}
+                    {/* Hide entire container for unconfigured composite systems */}
+                    {cardVisible("site-charts") &&
+                      (historyLoading ||
                         processedHistoryData.load ||
                         processedHistoryData.generation ||
                         system?.vendorType !== "composite") && (
@@ -1216,7 +1338,8 @@ export default function DashboardClient({
                           </div>
 
                           {/* Energy Flow Sankey Diagram */}
-                          {processedHistoryData.generation &&
+                          {cardVisible("sankey") &&
+                            processedHistoryData.generation &&
                             processedHistoryData.load &&
                             (() => {
                               // Sankey served from the server when available: 30D from the
@@ -1252,46 +1375,46 @@ export default function DashboardClient({
                             })()}
                         </div>
                       )}
-                    </>
-                  ) : (
-                    // For other systems, show the regular energy chart
-                    <EnergyChart
-                      systemId={parseInt(systemId as string)}
-                      vendorType={data?.system.vendorType}
-                      className="h-full min-h-[400px]"
-                      maxPowerHint={(() => {
-                        // Parse solar size (format: "9 kW")
-                        let solarKW: number | undefined;
-                        if (systemInfo?.solarSize) {
-                          const solarMatch = systemInfo.solarSize.match(
-                            /^(\d+(?:\.\d+)?)\s+kW$/i,
-                          );
-                          if (solarMatch) {
-                            solarKW = parseFloat(solarMatch[1]);
-                          }
+                  </>
+                ) : cardVisible("energy-chart") ? (
+                  // For other systems, show the regular energy chart
+                  <EnergyChart
+                    systemId={parseInt(systemId as string)}
+                    vendorType={data?.system.vendorType}
+                    className="h-full min-h-[400px]"
+                    maxPowerHint={(() => {
+                      // Parse solar size (format: "9 kW")
+                      let solarKW: number | undefined;
+                      if (systemInfo?.solarSize) {
+                        const solarMatch = systemInfo.solarSize.match(
+                          /^(\d+(?:\.\d+)?)\s+kW$/i,
+                        );
+                        if (solarMatch) {
+                          solarKW = parseFloat(solarMatch[1]);
                         }
+                      }
 
-                        // Parse inverter rating (format: "7.5kW, 48V")
-                        let inverterKW: number | undefined;
-                        if (systemInfo?.ratings) {
-                          const ratingMatch =
-                            systemInfo.ratings.match(/(\d+(?:\.\d+)?)kW/i);
-                          if (ratingMatch) {
-                            inverterKW = parseFloat(ratingMatch[1]);
-                          }
+                      // Parse inverter rating (format: "7.5kW, 48V")
+                      let inverterKW: number | undefined;
+                      if (systemInfo?.ratings) {
+                        const ratingMatch =
+                          systemInfo.ratings.match(/(\d+(?:\.\d+)?)kW/i);
+                        if (ratingMatch) {
+                          inverterKW = parseFloat(ratingMatch[1]);
                         }
+                      }
 
-                        // Return the maximum of both values, or undefined if neither parsed
-                        if (solarKW !== undefined && inverterKW !== undefined) {
-                          return Math.max(solarKW, inverterKW);
-                        }
-                        return solarKW ?? inverterKW;
-                      })()}
-                    />
-                  )}
-                </div>
+                      // Return the maximum of both values, or undefined if neither parsed
+                      if (solarKW !== undefined && inverterKW !== undefined) {
+                        return Math.max(solarKW, inverterKW);
+                      }
+                      return solarKW ?? inverterKW;
+                    })()}
+                  />
+                ) : null}
               </div>
-            )}
+            </div>
+          )}
 
           {/* Energy Panel - Only show for admin or non-removed systems
                 TEMPORARILY DISABLED - Needs composite points implementation

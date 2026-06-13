@@ -10,6 +10,10 @@ export { historyQuery, type HistoryQueryParams } from "./history";
 export { siteDataQuery, type SiteDataQueryParams } from "./siteData";
 export { flowMatrixQuery, type FlowMatrixQueryParams } from "./flowMatrix";
 export { amberQuery, type AmberQueryParams } from "./amber";
+export {
+  dashboardDescriptorQuery,
+  type DashboardDescriptorResponse,
+} from "./dashboard";
 
 /**
  * Invalidate every live/historical query for a system — the React Query replacement for

@@ -3,6 +3,7 @@ import type { PollingResult, TestConnectionResult } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { LatestReadingData } from "@/lib/types/readings";
 import { VendorRegistry } from "@/lib/vendors/registry";
+import type { RoleId } from "@/lib/roles/registry";
 
 /**
  * Composite system metadata
@@ -23,15 +24,13 @@ import { VendorRegistry } from "@/lib/vendors/registry";
  *   }
  * }
  */
+// NOTE: this legacy adapter keys off the `LatestReadingData` role-shape (solar/battery/load/grid
+// objects) rather than logical-path stems, so it is only lightly tied to the role registry here
+// (override keys are canonical `RoleId`s). It is slated for replacement against area_bindings in P3
+// (see docs/architecture/areas-and-dashboards.md). `battery_soc` is a battery sub-metric override.
 interface CompositeMetadata {
   base_system: number | null;
-  overrides?: {
-    solar?: number;
-    battery?: number;
-    battery_soc?: number;
-    load?: number;
-    grid?: number;
-  };
+  overrides?: Partial<Record<RoleId, number>> & { battery_soc?: number };
 }
 
 /**

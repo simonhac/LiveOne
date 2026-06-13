@@ -29,9 +29,12 @@ after each push (or when switching branches) to move `preview.liveone.energy` to
 
 ## ⚠️ Cautions to relay to the user
 
-- **This preview reads PRODUCTION Postgres** (the `DB_*` env vars are shared across Production /
-  Preview / Development). Treat it as **read-only** — dashboards, history, admin _read_ views.
-  Do NOT poll-now, edit config, create/revoke tokens, or run crons from the preview.
+- **By default this preview reads PRODUCTION Postgres** (the `DB_*` env vars are shared across
+  Production / Preview / Development). Treat it as **read-only** — dashboards, history, admin _read_
+  views. Do NOT poll-now, edit config, create/revoke tokens, or run crons from the preview.
+  **Exception:** if the branch needs to write/migrate (e.g. a new table), point Preview at an
+  **isolated, seeded DB branch** first — see "Isolated, seeded preview DB branch" below — so prod is
+  never touched.
 - Sign in with your **production** Clerk user (live instance). The dev/test Clerk instance has
   different user IDs that won't match prod data.
 - The deployment must have been built **after** `CLERK_SECRET_KEY` was added to the Preview env;
@@ -77,7 +80,62 @@ curl -sS -o /dev/null -w "https://$DOMAIN -> HTTP %{http_code} (401 = Vercel dep
 ## After running
 
 Tell the user: open **https://preview.liveone.energy** (logged into Vercel to clear the 401),
-sign in with the production Clerk user, and keep it read-only (it's pointed at prod data).
+sign in with the production Clerk user, and keep it read-only (unless it's pointed at an isolated
+seeded branch, below).
+
+## Isolated, seeded preview DB branch (for DB / schema work)
+
+Use this when the branch changes the schema or writes data (new tables, migrations) so the preview
+never touches prod. **PlanetScale Postgres has no copy-on-write data branches** — a fresh branch is
+schema-only (https://planetscale.com/docs/postgres/branching), so it must be seeded.
+
+**1. Create the branch.** Either a full data copy from a backup (slower, own storage), or an empty
+branch you seed with a recent slice (cheaper/faster):
+
+```bash
+# Full data (all rows) — pick a small cluster to keep it cheap; verify the SKU (a branch off a
+# production branch may bill as production):
+pscale backup list liveone sydney                                  # find a recent backup id
+pscale branch create liveone <branch> --restore <BACKUP_ID> --cluster-size PS-5 --wait
+#   …or an empty branch + seed scripts (what the steps below assume):
+pscale branch create liveone <branch> --from sydney --wait
+```
+
+`--seed-data` does NOT copy data for Postgres (it's a MySQL/Vitess feature) — don't rely on it.
+
+**2. Point the Preview env at it** (Preview-scoped only — Production keeps its prod `DB_*`):
+
+```bash
+pscale role reset-default liveone <branch> --format json   # postgres creds for the branch (rotates them)
+# Runtime reads PLANETSCALE_DATABASE_URL first; use ?sslmode=no-verify so node-pg's TLS works:
+printf '%s' "<branch_database_url>?sslmode=no-verify" | vercel env add PLANETSCALE_DATABASE_URL preview
+# optional feature flags, Preview-only:
+printf 'true' | vercel env add DECLARATIVE_DASHBOARD preview
+printf 'true' | vercel env add DASHBOARD_PERSISTENCE preview
+```
+
+**3. Seed it** (only for an empty branch). Two scripts in `scripts/`:
+
+```bash
+SRC=$(grep '^PLANETSCALE_DATABASE_URL_MIGRATIONS=' .env.local | cut -d= -f2- | tr -d '"')
+vercel env pull /tmp/preview.env --environment=preview --yes
+DST=$(grep '^PLANETSCALE_DATABASE_URL=' /tmp/preview.env | cut -d= -f2- | tr -d '"')
+
+# All config + 10d raw/5m readings + sessions + 45d daily aggregates (~4 min; tune with
+# SEED_DAYS / SEED_DAYS_DAILY). Idempotent: re-runs refresh the slice, keep config + dashboards.
+SOURCE_DATABASE_URL="$SRC" TARGET_DATABASE_URL="$DST" npx tsx scripts/seed-preview-db.ts
+
+# Live-style power cards: snapshot prod KV latest values -> the dev: namespace the preview reads
+# (VERCEL_ENV=preview -> getEnvironment()="dev"). Static snapshot (won't update). ~10s.
+npx tsx scripts/seed-preview-kv.ts
+
+rm -f /tmp/preview.env
+```
+
+**4. Redeploy + alias.** `vercel deploy` (so the build picks up the Preview env), then run the alias
+step above against the new deployment. Charts read the 5m/1d aggregates; power cards read the KV
+snapshot. **Tear down when done:** `pscale branch delete liveone <branch>` (stops cluster billing)
+and remove the Preview-only env vars.
 
 ## Troubleshooting
 

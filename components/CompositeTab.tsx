@@ -5,6 +5,7 @@ import { Plus, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useUser } from "@clerk/nextjs";
 import { stemSplit } from "@/lib/identifiers/logical-path";
+import { ROLES } from "@/lib/roles/registry";
 import { SUBSYSTEM_CONFIG } from "./subsystem-config";
 
 interface CompositeMapping {
@@ -31,13 +32,21 @@ interface CompositeConfigResponse {
   };
 }
 
-const EMPTY_MAPPINGS = (): CompositeMapping => ({
-  solar: [],
-  battery: [],
-  load: [],
-  grid: [],
-  ev: [],
-});
+// Composite systems map points into these categories, in this order.
+// (No inverter/other, which only apply to a single system's raw points.)
+// These are role ids from lib/roles/registry; display config comes from SUBSYSTEM_CONFIG.
+const COMPOSITE_CATEGORIES = [
+  "solar",
+  "battery",
+  "load",
+  "grid",
+  "ev",
+] as const;
+
+const EMPTY_MAPPINGS = (): CompositeMapping =>
+  Object.fromEntries(
+    COMPOSITE_CATEGORIES.map((id) => [id, [] as string[]]),
+  ) as CompositeMapping;
 
 interface CompositeTabProps {
   systemId: number;
@@ -46,16 +55,6 @@ interface CompositeTabProps {
   onSaveFunctionReady?: (saveFunction: () => Promise<CompositeMapping>) => void;
   ownerUserId?: string; // Optional: owner user ID for fetching points (for new systems)
 }
-
-// Composite systems map points into these categories, in this order.
-// (No inverter/other, which only apply to a single system's raw points.)
-const COMPOSITE_CATEGORIES = [
-  "solar",
-  "battery",
-  "load",
-  "grid",
-  "ev",
-] as const;
 
 export default function CompositeTab({
   systemId,
@@ -257,14 +256,10 @@ export default function CompositeTab({
 
   // Filter available points for selection
   const getAvailableForCategory = (category: string): AvailablePoint[] => {
-    // Map UI categories to series ID path patterns
-    const categoryPatterns: Record<string, string> = {
-      solar: "source.solar",
-      battery: "bidi.battery",
-      load: "load",
-      grid: "bidi.grid",
-      ev: "ev",
-    };
+    // Map UI categories to series ID path patterns, sourced from the role registry.
+    const categoryPatterns: Record<string, string> = Object.fromEntries(
+      COMPOSITE_CATEGORIES.map((id) => [id, ROLES[id].stem]),
+    );
 
     // Get already-added point IDs for this category
     const addedIds = new Set(mappings[category] || []);

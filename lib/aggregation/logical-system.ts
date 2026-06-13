@@ -15,6 +15,10 @@
 import { PointReference } from "@/lib/identifiers";
 import { PointManager } from "@/lib/point/point-manager";
 import { SystemsManager } from "@/lib/systems-manager";
+import { isCompleteRoleSet } from "@/lib/roles/registry";
+
+// Re-exported for back-compat: the role taxonomy now lives in lib/roles/registry.ts.
+export { isCompleteRoleSet };
 
 /** A power point participating in a logical system, carrying its physical origin. */
 export interface LogicalSystemPoint {
@@ -38,31 +42,6 @@ export interface LogicalSystem {
   points: LogicalSystemPoint[];
   /** Has at least one source role and one load role → a Sankey can be built. */
   isComplete: boolean;
-}
-
-/**
- * Whether a set of logical stems yields both a source and a load node. Mirrors the role population
- * in `buildFlowSeries` (`lib/aggregation/flow-series.ts`): solar/battery/grid feed sources; the
- * master load, sub-loads, and the bidi charge/export halves feed loads. Battery and grid count as
- * both (they split into a source and a load half).
- */
-export function isCompleteRoleSet(stems: string[]): boolean {
-  const isSolar = (s: string) =>
-    s === "source.solar" || s.startsWith("source.solar.");
-  let hasSource = false;
-  let hasLoad = false;
-  for (const s of stems) {
-    if (isSolar(s) || s === "bidi.battery" || s === "bidi.grid")
-      hasSource = true;
-    if (
-      s === "load" ||
-      s.startsWith("load.") ||
-      s === "bidi.battery" ||
-      s === "bidi.grid"
-    )
-      hasLoad = true;
-  }
-  return hasSource && hasLoad;
 }
 
 /**

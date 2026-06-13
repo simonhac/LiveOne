@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
 import { SystemsManager } from "@/lib/systems-manager";
+import { COMPOSITE_VALIDATED_ROLE_IDS, ROLES } from "@/lib/roles/registry";
 
 export async function GET(
   request: NextRequest,
@@ -198,13 +199,12 @@ export async function PATCH(
         return path === pattern || path.startsWith(pattern + ".");
       };
 
-      // Define category path requirements
-      const categoryPathPatterns: Record<string, string> = {
-        solar: "source.solar",
-        battery: "bidi.battery",
-        load: "load",
-        grid: "bidi.grid",
-      };
+      // Category path requirements, sourced from the role registry. Only roles flagged
+      // `validatesCompositePath` are checked here (solar/battery/load/grid); other categories
+      // (e.g. ev) fall through as "unknown" and are allowed unvalidated, as before.
+      const categoryPathPatterns: Record<string, string> = Object.fromEntries(
+        COMPOSITE_VALIDATED_ROLE_IDS.map((id) => [id, ROLES[id].stem]),
+      );
 
       // Validate each category's points
       for (const [category, pointIds] of Object.entries(mappings)) {

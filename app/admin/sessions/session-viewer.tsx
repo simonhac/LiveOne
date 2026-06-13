@@ -549,7 +549,9 @@ export default function ActivityViewer() {
       };
       // Keep prior rows only while paginating the same filter set; on a
       // filter/sort/time change, drop them so we never render the old vendor's rows.
-      return stripPage(prevParams) === stripPage(sessionsParams) ? prev : undefined;
+      return stripPage(prevParams) === stripPage(sessionsParams)
+        ? prev
+        : undefined;
     },
   });
 

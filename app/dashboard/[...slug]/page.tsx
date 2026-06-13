@@ -10,6 +10,10 @@ import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { FLOW_MATRIX_SERVE_FROM_PG } from "@/lib/db/routing";
+import {
+  DECLARATIVE_DASHBOARD,
+  DASHBOARD_PERSISTENCE,
+} from "@/lib/dashboard/flags";
 
 interface PageProps {
   params: Promise<{
@@ -228,6 +232,8 @@ export default async function DashboardPage({ params }: PageProps) {
         availableSystems={systemsWithUsernames}
         userId={userId}
         serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
+        declarativeDashboard={DECLARATIVE_DASHBOARD}
+        dashboardPersistence={DASHBOARD_PERSISTENCE}
       />
     );
   }
@@ -251,6 +257,8 @@ export default async function DashboardPage({ params }: PageProps) {
         availableSystems={systemsWithUsernames}
         userId={userId}
         serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
+        declarativeDashboard={DECLARATIVE_DASHBOARD}
+        dashboardPersistence={DASHBOARD_PERSISTENCE}
       />
     </DashboardLayout>
   );
