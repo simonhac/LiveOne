@@ -10,6 +10,10 @@ import {
   flowMatrixQuery,
   dashboardDescriptorQuery,
 } from "@/lib/queries";
+import { gridLatestFromData } from "@/lib/grid/latest";
+import GridSignalsCard from "@/components/GridSignalsCard";
+import { nemRegionShortLabel } from "@/lib/vendors/openelectricity/region";
+import type { GridContext } from "@/lib/grid/types";
 import EnergyChart from "@/components/EnergyChart";
 import AmberCard from "@/components/AmberCard";
 import AmberNow from "@/components/AmberNow";
@@ -152,6 +156,12 @@ interface DashboardClientProps {
   userId?: string;
   /** When true, the long-range (30D) Sankey is served from PG (FLOW_MATRIX_SERVE_FROM_PG). */
   serveFlowFromPg?: boolean;
+  /**
+   * The "Local Grid (NEM)" card's cross-system context (the public OpenElectricity region serving
+   * this Area's location), resolved server-side. Null when off-grid / no region / flags off — the
+   * card then defaults off and is not rendered. See areas-and-dashboards.md.
+   */
+  gridContext?: GridContext | null;
   /** Whether this system has an enabled generator run-tracker (gates the generator-runs card). */
   hasGenerator?: boolean;
 }
@@ -171,6 +181,7 @@ export default function DashboardClient({
   availableSystems = [],
   userId,
   serveFlowFromPg = false,
+  gridContext = null,
   hasGenerator = false,
 }: DashboardClientProps) {
   const router = useRouter();
@@ -200,6 +211,20 @@ export default function DashboardClient({
   const data = (queryData ?? null) as DashboardData | null;
   const systemInfo =
     (queryData as { systemInfo?: SystemInfo } | undefined)?.systemInfo ?? null;
+
+  // "Local Grid (NEM)" card: live signals for the household's NEM region. Read cross-system from the
+  // public OpenElectricity region system (gridContext.regionSystemId) using the SAME generic
+  // dashboardDataQuery every other live card uses — just keyed on that system. Disabled (id "") when
+  // no region resolves, so a null gridContext is safe. Paused while a modal is open like the others.
+  const { data: gridRegionData } = useQuery(
+    dashboardDataQuery(gridContext?.regionSystemId ?? "", {
+      paused: isAnyModalOpen,
+    }),
+  );
+  const gridValues = useMemo(
+    () => gridLatestFromData(gridRegionData),
+    [gridRegionData],
+  );
 
   // Persisted/customizable dashboard descriptor. The descriptor query is disabled (systemId "")
   // until a systemId is known.
@@ -231,10 +256,12 @@ export default function DashboardClient({
   // The effective (saved-or-default) descriptor; null until system data has loaded.
   const effectiveDescriptor = useMemo<DashboardDescriptor | null>(() => {
     if (!data?.system) return null;
-    const def = buildDefaultDescriptor(data.system, data.latest ?? {});
+    const def = buildDefaultDescriptor(data.system, data.latest ?? {}, {
+      gridSignalsAvailable: !!gridContext,
+    });
     const saved = savedDescriptorResp?.descriptor ?? null;
     return saved ? normalizeDescriptor(saved, def) : def;
-  }, [data?.system, data?.latest, savedDescriptorResp]);
+  }, [data?.system, data?.latest, savedDescriptorResp, gridContext]);
 
   // Derive the display error from the query result, preserving the original branches:
   // connection failure, an explicit `error` body, or the "system exists but no charts" marker.
@@ -962,26 +989,49 @@ export default function DashboardClient({
                   : "flex flex-col lg:grid lg:grid-cols-3 lg:gap-4"
               }
             >
-              {/* Power Cards - For non-mondo/composite: first in DOM (mobile top), sidebar on desktop */}
-              {!isSiteLayout && data.latest && cardVisible("power-cards") && (
-                <div className="order-1 lg:order-2 mb-4 lg:mb-0 lg:self-stretch">
-                  <SystemPowerCards
-                    latest={data.latest}
-                    vendorType={data.system.vendorType}
-                    getStaleThreshold={getStaleThreshold}
-                    showGrid={showGrid}
-                    layout="sidebar"
-                    className="lg:h-full"
-                    systemId={data.system.id}
-                    order={powerCfg?.order}
-                    hidden={powerCfg?.hidden}
-                    canControl={
-                      isAdmin ||
-                      (!!userId && data.system.ownerClerkUserId === userId)
-                    }
-                  />
-                </div>
-              )}
+              {/* Power Cards - For non-mondo/composite: first in DOM (mobile top), sidebar on desktop.
+                  When the Local Grid (NEM) card is present it stacks below the power cards in the
+                  sidebar; the power cards drop their full-height stretch so both sit naturally. */}
+              {!isSiteLayout &&
+                data.latest &&
+                (cardVisible("power-cards") ||
+                  (gridContext && cardVisible("grid-signals"))) &&
+                (() => {
+                  const showGridSignals = !!(
+                    gridContext && cardVisible("grid-signals")
+                  );
+                  return (
+                    <div
+                      className={`order-1 lg:order-2 mb-4 lg:mb-0 lg:self-stretch${showGridSignals ? " space-y-4" : ""}`}
+                    >
+                      {cardVisible("power-cards") && (
+                        <SystemPowerCards
+                          latest={data.latest}
+                          vendorType={data.system.vendorType}
+                          getStaleThreshold={getStaleThreshold}
+                          showGrid={showGrid}
+                          layout="sidebar"
+                          className={showGridSignals ? "" : "lg:h-full"}
+                          systemId={data.system.id}
+                          order={powerCfg?.order}
+                          hidden={powerCfg?.hidden}
+                          canControl={
+                            isAdmin ||
+                            (!!userId &&
+                              data.system.ownerClerkUserId === userId)
+                          }
+                        />
+                      )}
+                      {/* Local Grid (NEM) — cross-system live signals for this Area's region. */}
+                      {gridContext && cardVisible("grid-signals") && (
+                        <GridSignalsCard
+                          regionLabel={nemRegionShortLabel(gridContext.region)}
+                          values={gridValues}
+                        />
+                      )}
+                    </div>
+                  );
+                })()}
 
               {/* Charts - Full width for mondo/composite, 2/3 width for others */}
               <div
@@ -1010,6 +1060,16 @@ export default function DashboardClient({
                           }
                         />
                       )}
+
+                    {/* Local Grid (NEM) — cross-system live signals for this Area's region. */}
+                    {gridContext && cardVisible("grid-signals") && (
+                      <div className="mt-4">
+                        <GridSignalsCard
+                          regionLabel={nemRegionShortLabel(gridContext.region)}
+                          values={gridValues}
+                        />
+                      </div>
+                    )}
 
                     {/* Charts - For mondo/composite systems, show charts with tables in single container */}
                     {/* Hide entire container for unconfigured composite systems */}

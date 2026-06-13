@@ -10,6 +10,7 @@ import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { FLOW_MATRIX_SERVE_FROM_PG } from "@/lib/db/routing";
+import { resolveGridContextForSystem } from "@/lib/grid/context";
 import { hasEnabledTracker } from "@/lib/run-tracking/resolve";
 
 interface PageProps {
@@ -218,6 +219,12 @@ export default async function DashboardPage({ params }: PageProps) {
     }
   }
 
+  // Resolve the "Local Grid (NEM)" card's cross-system context (the public OE region serving this
+  // Area's location). Returns null when flags are off / off-grid / no derivable region. Only
+  // resolved for an accessible system — an Access-Denied render never uses it, so skip the DB work.
+  const gridContext =
+    system && hasAccess ? await resolveGridContextForSystem(system.id) : null;
+
   // Whether to offer the generator-runs card (system has an enabled generator tracker).
   const hasGenerator = system
     ? await hasEnabledTracker(system.id, "generator")
@@ -235,6 +242,7 @@ export default async function DashboardPage({ params }: PageProps) {
         availableSystems={systemsWithUsernames}
         userId={userId}
         serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
+        gridContext={gridContext}
         hasGenerator={hasGenerator}
       />
     );
@@ -259,6 +267,7 @@ export default async function DashboardPage({ params }: PageProps) {
         availableSystems={systemsWithUsernames}
         userId={userId}
         serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
+        gridContext={gridContext}
         hasGenerator={hasGenerator}
       />
     </DashboardLayout>

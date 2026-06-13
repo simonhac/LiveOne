@@ -52,6 +52,7 @@ import {
   timestamp,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import type { AreaLocation } from "@/lib/areas/types";
 
 // ============================================================================
 // Systems table - stores inverter system information
@@ -577,6 +578,11 @@ export const areas = pgTable(
     alias: text("alias"),
     timezoneOffsetMin: integer("timezone_offset_min").notNull(),
     displayTimezone: text("display_timezone").notNull(),
+    // Per-Area physical location (the semantic layer's equivalent of HA's home-location
+    // object; `timezoneOffsetMin`/`displayTimezone` above are its time_zone slice). Typed as
+    // `AreaLocation` (lib/areas/types.ts). Used to DERIVE the NEM grid region — never stores the
+    // region directly. See docs/architecture/areas-and-dashboards.md.
+    location: jsonb("location").$type<AreaLocation>(),
     status: text("status").notNull().default("active"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),

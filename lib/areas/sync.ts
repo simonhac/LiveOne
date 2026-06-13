@@ -75,6 +75,46 @@ export async function ensureCompositeArea(
   return id;
 }
 
+/** Locate the identity Area for a system (by legacy_system_id), or null if not yet created. */
+export async function getIdentityAreaId(
+  systemId: number,
+  db = requirePlanetscaleDb(),
+): Promise<string | null> {
+  const [row] = await db
+    .select({ id: areas.id })
+    .from(areas)
+    .where(and(eq(areas.legacySystemId, systemId), eq(areas.kind, "identity")))
+    .limit(1);
+  return row?.id ?? null;
+}
+
+/**
+ * Ensure an identity Area row exists for `system`, returning its id. The Area is the 1:1 wrapper
+ * for a physical system: it mirrors the system's identity fields, with `source_system_id` and
+ * `legacy_system_id` both pointing back at systems.id.
+ */
+export async function ensureIdentityArea(
+  system: typeof systems.$inferSelect,
+  db = requirePlanetscaleDb(),
+): Promise<string> {
+  const existing = await getIdentityAreaId(system.id, db);
+  if (existing) return existing;
+  const id = uuidv7();
+  await db.insert(areas).values({
+    id,
+    ownerClerkUserId: system.ownerClerkUserId,
+    kind: "identity",
+    sourceSystemId: system.id,
+    legacySystemId: system.id,
+    displayName: system.displayName,
+    alias: system.alias,
+    timezoneOffsetMin: system.timezoneOffsetMin,
+    displayTimezone: system.displayTimezone,
+    status: system.status,
+  });
+  return id;
+}
+
 /**
  * Replace a composite's `area_bindings` from its current `systems.metadata`, transactionally.
  * Returns the number of bindings written. Throws (via the converter) on an unrecognised metadata
