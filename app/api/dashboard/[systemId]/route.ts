@@ -5,6 +5,7 @@ import {
   saveDescriptor,
   deleteDescriptor,
 } from "@/lib/dashboard/store";
+import { getAreaForSystem } from "@/lib/areas/resolve";
 
 /**
  * Per-user dashboard descriptor (P2). A descriptor is the user's personal customization of a system
@@ -57,7 +58,11 @@ export async function PUT(
     );
   }
 
-  await saveDescriptor(a.userId, a.systemId, descriptor);
+  // Link the persisted dashboard to its Area (system's identity Area, or a composite Area).
+  // Resolved server-side and 1:1 with the system today, so this changes no behaviour; null when
+  // AREAS_TABLE is off / not yet backfilled. See docs/architecture/areas-and-dashboards.md (P3).
+  const area = await getAreaForSystem(a.systemId);
+  await saveDescriptor(a.userId, a.systemId, descriptor, area?.id ?? null);
   return NextResponse.json({ success: true });
 }
 

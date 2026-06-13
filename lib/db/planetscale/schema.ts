@@ -512,6 +512,14 @@ export const observationsOutbox = pgTable(
 // internal shape is owned by lib/dashboard and intentionally opaque to the DB.
 // See docs/architecture/areas-and-dashboards.md. Normalising into a separate
 // `dashboard_cards` table is deferred to P3.
+//
+// `area_id` (P3, additive/forward-only) links the dashboard to the Area that is its
+// data context — the system's identity Area, or a composite Area. Resolved server-side
+// from `system_id` on save (1:1 today, so it changes no behaviour); NULL when AREAS_TABLE
+// is off / not yet backfilled. `(clerk_user_id, system_id)` stays the authoritative access
+// key through the soak; this column is the seam P4 (multiple named dashboards per Area +
+// per-dashboard sharing) rotates on. ON DELETE SET NULL so dropping an Area never deletes a
+// user's customization.
 // ============================================================================
 export const dashboards = pgTable(
   "dashboards",
@@ -521,6 +529,9 @@ export const dashboards = pgTable(
     systemId: integer("system_id")
       .notNull()
       .references(() => systems.id, { onDelete: "cascade" }),
+    areaId: uuid("area_id").references(() => areas.id, {
+      onDelete: "set null",
+    }),
     descriptor: jsonb("descriptor").notNull(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -531,6 +542,7 @@ export const dashboards = pgTable(
       table.systemId,
     ),
     userIdx: index("dashboards_user_idx").on(table.clerkUserId),
+    areaIdx: index("dashboards_area_idx").on(table.areaId),
   }),
 );
 
