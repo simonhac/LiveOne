@@ -547,6 +547,58 @@ export const dashboards = pgTable(
 );
 
 // ============================================================================
+// Dashboard share tokens (P4) - read-only public links scoped to ONE dashboard.
+//
+// Distinct from the legacy `share_tokens` (which is owner-scoped to all the owner's systems and has
+// no GET consumption). A holder of a valid token gets read access to exactly the points that
+// dashboard's data exposes (resolved Dashboard → Area → area_bindings; see lib/dashboard/access.ts),
+// never general system access. Same 3-word phrase + epoch-ms convention as `share_tokens`.
+// ============================================================================
+export const dashboardShareTokens = pgTable(
+  "dashboard_share_tokens",
+  {
+    token: text("token").primaryKey(), // 3-word phrase, e.g. "leaping-fizzy-wombat"
+    dashboardId: integer("dashboard_id")
+      .notNull()
+      .references(() => dashboards.id, { onDelete: "cascade" }),
+    label: text("label"),
+    createdAtMs: bigint("created_at_ms", { mode: "number" }).notNull(),
+    expiresAtMs: bigint("expires_at_ms", { mode: "number" }),
+    revokedAtMs: bigint("revoked_at_ms", { mode: "number" }),
+    lastUsedAtMs: bigint("last_used_at_ms", { mode: "number" }),
+  },
+  (table) => ({
+    dashboardIdx: index("dashboard_share_tokens_dashboard_idx").on(
+      table.dashboardId,
+    ),
+  }),
+);
+
+// ============================================================================
+// Dashboard grants (P4) - per-dashboard membership (invite a person to a dashboard).
+// Access resolves Dashboard → its cards' bindings → points, so a grant is read-scoped to exactly
+// what the dashboard shows. role ∈ owner|admin|viewer. (Grant-management UI is a later phase.)
+// ============================================================================
+export const dashboardGrants = pgTable(
+  "dashboard_grants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    dashboardId: integer("dashboard_id")
+      .notNull()
+      .references(() => dashboards.id, { onDelete: "cascade" }),
+    clerkUserId: text("clerk_user_id").notNull(),
+    role: text("role").notNull(), // 'owner' | 'admin' | 'viewer'
+    createdAtMs: bigint("created_at_ms", { mode: "number" }).notNull(),
+  },
+  (table) => ({
+    dashboardUserUnique: uniqueIndex(
+      "dashboard_grants_dashboard_user_unique",
+    ).on(table.dashboardId, table.clerkUserId),
+    userIdx: index("dashboard_grants_user_idx").on(table.clerkUserId),
+  }),
+);
+
+// ============================================================================
 // Roles - HA-device_class-aware role registry (P3). A SQL projection of the code
 // source of truth in lib/roles/registry.ts (ROLES). Seeded/kept-in-sync by the
 // backfill script; exists so area_bindings.role has a FK target and so SQL joins
