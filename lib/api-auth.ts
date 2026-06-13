@@ -5,6 +5,11 @@ import { SystemsManager, SystemWithPolling } from "./systems-manager";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { userSystems } from "@/lib/db/planetscale/schema";
 import { eq, and } from "drizzle-orm";
+import {
+  DASHBOARD_SHARING,
+  validateDashboardShareToken,
+} from "@/lib/dashboard/sharing";
+import { getDashboardById } from "@/lib/dashboard/store";
 
 // Authorization result with context
 export interface AuthContext {
@@ -171,5 +176,57 @@ export async function requireSystemAccess(
     isViewer,
     canRead,
     canWrite,
+  };
+}
+
+// Dashboard access context — like a read-only SystemAuthContext but userId may be null when access
+// is granted via a public per-dashboard share token.
+export interface DashboardAuthContext {
+  system: SystemWithPolling;
+  userId: string | null;
+  canRead: boolean;
+  canWrite: boolean;
+  viaShareToken: boolean;
+}
+
+/**
+ * Access to a dashboard's data routes (P4). Grants READ via a valid per-dashboard share token
+ * (`?access=`, gated by DASHBOARD_SHARING) whose dashboard targets this exact `systemId` — a public,
+ * read-only, single-system grant that mirrors the existing ownerless-system public path. Otherwise
+ * falls through to `requireSystemAccess` (owner/admin/viewer/public). A bad or mismatched token never
+ * blocks normal auth (the caller may also be logged in).
+ */
+export async function requireDashboardAccess(
+  request: NextRequest,
+  systemId: number,
+): Promise<DashboardAuthContext | NextResponse> {
+  const token = new URL(request.url).searchParams.get("access");
+  if (DASHBOARD_SHARING && token) {
+    const valid = await validateDashboardShareToken(token);
+    if (valid) {
+      const dash = await getDashboardById(valid.dashboardId);
+      if (dash && dash.systemId === systemId) {
+        const system = await SystemsManager.getInstance().getSystem(systemId);
+        if (system) {
+          return {
+            system,
+            userId: null,
+            canRead: true,
+            canWrite: false,
+            viaShareToken: true,
+          };
+        }
+      }
+    }
+  }
+
+  const result = await requireSystemAccess(request, systemId);
+  if (result instanceof NextResponse) return result;
+  return {
+    system: result.system,
+    userId: result.userId,
+    canRead: result.canRead,
+    canWrite: result.canWrite,
+    viaShareToken: false,
   };
 }

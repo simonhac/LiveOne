@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq, gte, lte, sql } from "drizzle-orm";
-import { requireSystemAccess } from "@/lib/api-auth";
+import { requireDashboardAccess } from "@/lib/api-auth";
 import { parseDateRange } from "@/lib/date-utils";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { pointReadingsFlow1d } from "@/lib/db/planetscale/schema";
@@ -35,8 +35,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Authenticate and authorize (owner, viewer, or admin).
-    const authResult = await requireSystemAccess(request, systemId);
+    // Authenticate and authorize (owner/viewer/admin/public, or a valid dashboard share token).
+    const authResult = await requireDashboardAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
 
     const startStr = searchParams.get("start");

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSystemAccess } from "@/lib/api-auth";
+import { requireDashboardAccess } from "@/lib/api-auth";
 import { getPollingStatus } from "@/lib/polling-utils";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 import { VendorRegistry } from "@/lib/vendors/registry";
@@ -28,8 +28,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
     }
 
-    // Authenticate and check system access
-    const authResult = await requireSystemAccess(request, systemId);
+    // Authenticate and check access (owner/admin/viewer/public, or a valid dashboard share token).
+    const authResult = await requireDashboardAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
     const { system, userId } = authResult;
 
@@ -89,19 +89,16 @@ export async function GET(request: NextRequest) {
     // Get latest point values from KV cache (composite points system)
     const latest = await getLatestPointValues(system.id);
 
-    // Fetch available systems for the user
+    // The logged-in user's system-switcher list. A public share-token viewer (no userId) gets none.
     const systemsManager = SystemsManager.getInstance();
-    const availableSystems = await systemsManager.getSystemsVisibleByUser(
-      userId,
-      true, // active only
-    );
-
-    // Get current user's username for their own systems
-    const clerk = await clerkClient();
-    const currentUser = await clerk.users.getUser(userId);
-    const currentUsername = currentUser.username || null;
-
-    // Add username to systems owned by current user
+    const availableSystems = userId
+      ? await systemsManager.getSystemsVisibleByUser(userId, true) // active only
+      : [];
+    let currentUsername: string | null = null;
+    if (userId) {
+      const clerk = await clerkClient();
+      currentUsername = (await clerk.users.getUser(userId)).username || null;
+    }
     const systemsWithUsernames = availableSystems.map((sys) => ({
       ...sys,
       ownerUsername: sys.ownerClerkUserId === userId ? currentUsername : null,

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSystemAccess } from "@/lib/api-auth";
+import { requireDashboardAccess } from "@/lib/api-auth";
 import { SystemWithPolling } from "@/lib/systems-manager";
 import { OpenNEMDataSeries } from "@/types/opennem";
 import { formatOpenNEMResponse } from "@/lib/history/format-opennem";
@@ -524,8 +524,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Authenticate and check system access
-    const authResult = await requireSystemAccess(
+    // Authenticate and check access (owner/admin/viewer/public, or a valid dashboard share token).
+    const authResult = await requireDashboardAccess(
       request,
       basicParams.systemId!,
     );
