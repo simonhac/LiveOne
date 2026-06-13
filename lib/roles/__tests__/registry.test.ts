@@ -9,13 +9,24 @@ import {
 } from "../registry";
 
 describe("role registry", () => {
-  it("ROLE_IDS covers exactly the ROLES keys, in panel order", () => {
+  it("ROLE_IDS is the energy-flow role set, in panel order", () => {
     expect(ROLE_IDS).toEqual(["solar", "battery", "load", "grid", "ev"]);
-    expect(Object.keys(ROLES).sort()).toEqual([...ROLE_IDS].sort());
+  });
+
+  it("any ROLES key outside ROLE_IDS is a trackable device role (e.g. generator)", () => {
+    // Device roles (run-tracking) live in ROLES for FK/metadata but are deliberately NOT in
+    // ROLE_IDS, so they don't appear in the composite editor's energy-flow panels.
+    const extras = Object.keys(ROLES).filter(
+      (k) => !(ROLE_IDS as readonly string[]).includes(k),
+    );
+    expect(extras).toContain("generator");
+    for (const id of extras) {
+      expect(ROLES[id as keyof typeof ROLES].device?.trackable).toBe(true);
+    }
   });
 
   it("every role carries HA export metadata", () => {
-    for (const id of ROLE_IDS) {
+    for (const id of Object.keys(ROLES) as Array<keyof typeof ROLES>) {
       const ha = ROLES[id].ha;
       expect(ha.deviceClass).toBeTruthy();
       expect(ha.stateClass).toBeTruthy();

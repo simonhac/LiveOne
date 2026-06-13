@@ -20,9 +20,16 @@
     {
       "path": "/api/cron/relay-outbox",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/run-periods",
+      "schedule": "* * * * *"
     }
   ],
   "functions": {
+    "app/api/cron/run-periods/route.ts": {
+      "maxDuration": 60
+    },
     "app/api/cron/minutely/route.ts": {
       "maxDuration": 60
     },

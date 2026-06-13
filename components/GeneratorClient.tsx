@@ -5,7 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 interface GeneratorEvent {
   date: string;
   startTime: string;
-  endTime: string;
+  endTime: string | null;
+  running?: boolean;
   minPowerKw: number;
   maxPowerKw: number;
   energyKwh: number;
@@ -14,6 +15,7 @@ interface GeneratorEvent {
 interface GeneratorData {
   events: GeneratorEvent[];
   totalEnergyKwh: number;
+  running?: boolean;
 }
 
 interface AvailableSystem {
@@ -45,19 +47,18 @@ export default function GeneratorClient({
 }: GeneratorClientProps) {
   const propSystemId = system.id;
 
-  // NOTE: this is a (known-suboptimal) unbounded fetch of all generator events — preserved
-  // as-is; only the bespoke fetch was moved into React Query. A non-ok response yields null
-  // (rendered as "no events"), matching the original `if (generatorResponse.ok)` behaviour.
+  // Bounded read of persisted run periods (replaces the old unbounded generator-events scan).
+  // A non-ok response yields null (rendered as "no events").
   const {
     data: generatorData,
     isPending,
     isError,
     error: queryError,
   } = useQuery<GeneratorData | null>({
-    queryKey: ["system", propSystemId, "generator-events"],
+    queryKey: ["system", propSystemId, "run-periods", "generator"],
     queryFn: async () => {
       const generatorResponse = await fetch(
-        `/api/system/${propSystemId}/generator-events`,
+        `/api/system/${propSystemId}/run-periods?role=generator&period=30d`,
         {
           credentials: "same-origin",
         },
@@ -103,7 +104,7 @@ export default function GeneratorClient({
 
         {!generatorData || generatorData.events.length === 0 ? (
           <div className="text-gray-400">
-            No generator events found (no grid import &gt; 50W detected)
+            No generator runs found in the last 30 days
           </div>
         ) : (
           <>
@@ -130,9 +131,12 @@ export default function GeneratorClient({
                     <tr key={idx} className="hover:bg-gray-750">
                       <td className="px-4 py-3 text-sm">{event.date}</td>
                       <td className="px-4 py-3 text-sm">
-                        {event.startTime === event.endTime
-                          ? event.startTime
-                          : `${event.startTime} - ${event.endTime}`}
+                        {event.running
+                          ? `${event.startTime} – now`
+                          : event.endTime === null ||
+                              event.startTime === event.endTime
+                            ? event.startTime
+                            : `${event.startTime} - ${event.endTime}`}
                       </td>
                       <td className="px-4 py-3 text-sm text-right">
                         {event.minPowerKw === event.maxPowerKw
@@ -158,13 +162,13 @@ export default function GeneratorClient({
 
             <div className="mt-4 text-sm text-gray-400">
               <p>
-                Showing {generatorData.events.length} generator event
-                {generatorData.events.length !== 1 ? "s" : ""} (grid import &gt;
-                50W)
+                Showing {generatorData.events.length} generator run
+                {generatorData.events.length !== 1 ? "s" : ""} over the last 30
+                days{generatorData.running ? " — running now" : ""}.
               </p>
               <p className="mt-1">
-                Events are grouped when consecutive readings are within 120
-                seconds.
+                Consecutive readings within 120 seconds are grouped into one
+                run.
               </p>
             </div>
           </>
