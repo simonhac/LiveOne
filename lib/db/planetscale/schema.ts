@@ -647,6 +647,120 @@ export const areaBindings = pgTable(
 );
 
 // ============================================================================
+// Device trackers - per-instance run-tracking config (run-tracking feature).
+//
+// One tracker per (system, role) defines how to recognise "running" for a device: an HA-style
+// threshold helper over a chosen power point (lower/upper bound + hysteresis deadband) plus
+// anti-flap delays (delay_on/delay_off). The signal + energy points are referenced explicitly
+// (decision: "choose any power point"), independent of area_bindings / the AREAS_TABLE flag.
+// Null behaviour columns inherit per-role code defaults (lib/run-tracking/defaults.ts).
+// `system_id` is the logical system (== areas.legacy_system_id seam); `area_id` is a nullable
+// forward-only seam to be backfilled when identity Areas land. See docs (run-tracking).
+// ============================================================================
+export const deviceTrackers = pgTable(
+  "device_trackers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    systemId: integer("system_id").notNull(), // logical system observed
+    role: text("role")
+      .notNull()
+      .references(() => roles.role), // 'generator' ...
+    areaId: uuid("area_id").references(() => areas.id), // forward-only seam (nullable)
+    displayName: text("display_name").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+
+    // Signal: a power point + HA-style threshold bounds. ≥1 of lower/upper set; direction is
+    // implicit (generator: lowerW = -50 ⇒ on when value < -50).
+    signalKind: text("signal_kind").notNull().default("power-threshold"),
+    signalSystemId: integer("signal_system_id").notNull(), // child system for composites
+    signalPointId: integer("signal_point_id").notNull(),
+    lowerW: doublePrecision("lower_w"), // HA threshold `lower` (on when below)
+    upperW: doublePrecision("upper_w"), // HA threshold `upper` (on when above)
+    hysteresisW: doublePrecision("hysteresis_w"), // HA deadband (±); null = inherit default
+
+    // Energy attribution (optional). Generator: the 'Import' energy point.
+    energySystemId: integer("energy_system_id"),
+    energyPointId: integer("energy_point_id"),
+
+    // Anti-flap (HA binary_sensor vocabulary; null = inherit per-role code default).
+    delayOnSeconds: integer("delay_on_seconds"), // min run; shorter spans dropped
+    delayOffSeconds: integer("delay_off_seconds"), // coalesce gap / close-after-off
+    detectorVersion: integer("detector_version").notNull().default(1),
+
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    systemRoleUnique: uniqueIndex("device_trackers_system_role_unique").on(
+      table.systemId,
+      table.role,
+    ),
+    signalPointFk: foreignKey({
+      columns: [table.signalSystemId, table.signalPointId],
+      foreignColumns: [pointInfo.systemId, pointInfo.index],
+      name: "device_trackers_signal_point_fk",
+    }),
+  }),
+);
+
+// ============================================================================
+// Device run periods - the run-tracking serving store (run-tracking feature).
+//
+// Each row is one coalesced run of a device: start_time..end_time, end NULL = OPEN (running now).
+// This IS the binary "running" entity's edge-compressed history (the HA logbook); the live state
+// is the open row. Keyed by (system_id, role, start_time) — start_time is immutable once detected
+// (end_time mutates), so it is the stable identity across recomputes (cf. agg_5m keying on
+// interval_end). The recompute does a bounded delete-and-reinsert per (system, role) window, so a
+// run whose boundaries shift (split/merge/earlier-start under backfill) resolves without orphans.
+// Metrics are columns (energy/min/max/avg power) so the API never does per-period sub-queries.
+// `area_id` is the forward-only Areas re-key seam (never the key). See docs (run-tracking).
+// ============================================================================
+export const deviceRunPeriods = pgTable(
+  "device_run_periods",
+  {
+    systemId: integer("system_id").notNull(), // logical system (== legacy_system_id seam)
+    role: text("role")
+      .notNull()
+      .references(() => roles.role),
+    startTime: timestamp("start_time").notNull(), // UTC, run start
+    endTime: timestamp("end_time"), // UTC; NULL = OPEN (running now)
+
+    // Provenance: which point produced the signal (child system for a composite).
+    signalSystemId: integer("signal_system_id").notNull(),
+    signalPointId: integer("signal_point_id").notNull(),
+    trackerId: uuid("tracker_id").references(() => deviceTrackers.id), // traceability (nullable)
+    areaId: uuid("area_id").references(() => areas.id), // forward-only seam
+
+    // Stored metrics (computed once; bounded reads, never N+1). Power values are signed raw W.
+    durationSeconds: integer("duration_seconds"), // null while open
+    energyKwh: doublePrecision("energy_kwh"), // kWh 3dp; null if no energy point / unknown
+    maxPowerW: doublePrecision("max_power_w"),
+    minPowerW: doublePrecision("min_power_w"),
+    avgPowerW: doublePrecision("avg_power_w"),
+    sampleCount: integer("sample_count").notNull().default(0),
+
+    detectorVersion: integer("detector_version").notNull().default(1),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.systemId, table.role, table.startTime],
+    }),
+    // At most ONE open period per (system, role) — enforced, not hoped (cf. observations_outbox
+    // unpublished partial index). Powers the O(1) "is it running now?" lookup.
+    openUnique: uniqueIndex("drp_open_unique")
+      .on(table.systemId, table.role)
+      .where(sql`end_time IS NULL`),
+    signalPointFk: foreignKey({
+      columns: [table.signalSystemId, table.signalPointId],
+      foreignColumns: [pointInfo.systemId, pointInfo.index],
+      name: "device_run_periods_signal_point_fk",
+    }),
+  }),
+);
+
+// ============================================================================
 // Type exports
 // ============================================================================
 export type System = typeof systems.$inferSelect;
@@ -681,3 +795,7 @@ export type Area = typeof areas.$inferSelect;
 export type NewArea = typeof areas.$inferInsert;
 export type AreaBinding = typeof areaBindings.$inferSelect;
 export type NewAreaBinding = typeof areaBindings.$inferInsert;
+export type DeviceTracker = typeof deviceTrackers.$inferSelect;
+export type NewDeviceTracker = typeof deviceTrackers.$inferInsert;
+export type DeviceRunPeriod = typeof deviceRunPeriods.$inferSelect;
+export type NewDeviceRunPeriod = typeof deviceRunPeriods.$inferInsert;

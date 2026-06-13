@@ -16,7 +16,7 @@
  * import it safely.
  */
 
-export type RoleId = "solar" | "battery" | "load" | "grid" | "ev";
+export type RoleId = "solar" | "battery" | "load" | "grid" | "ev" | "generator";
 
 /** Energy-flow side. `bidi` roles (battery, grid) split into a source half and a load half. */
 export type RoleCategory = "source" | "load" | "bidi";
@@ -52,6 +52,14 @@ export interface RoleDef {
    * without `summary` (ev) are not summarised.
    */
   summary?: { metric: string; aggregable: boolean };
+  /**
+   * Run-tracking: marks this role as a first-class binary "running" device (see
+   * lib/run-tracking). `haDeviceClass` is the HA `binary_sensor` device_class for the export
+   * bridge ("running" — on means running). The role's own `ha` block still describes the
+   * underlying numeric signal (e.g. power/W); the binary entity is a derived view over the
+   * persisted run periods. Code-only — not projected into the `roles` SQL table.
+   */
+  device?: { trackable: true; haDeviceClass: string };
 }
 
 /** Canonical role order — drives the composite editor's panel order. */
@@ -107,6 +115,20 @@ export const ROLES: Record<RoleId, RoleDef> = {
     label: "EV",
     ha: { deviceClass: "battery", stateClass: "measurement", unit: "%" },
     validatesCompositePath: false,
+  },
+  // Run-tracking device role (see lib/run-tracking). Deliberately NOT in ROLE_IDS below, so it
+  // does not appear in the composite editor's energy-flow panels or get composite-path-validated;
+  // it exists as a role so device_trackers.role / device_run_periods.role have an FK target and so
+  // the binary "running" entity carries HA export metadata. `ha` describes the numeric signal
+  // (power/W); `device.haDeviceClass` is the binary_sensor class.
+  generator: {
+    id: "generator",
+    category: "source",
+    stem: "source.generator",
+    label: "Generator",
+    ha: { deviceClass: "power", stateClass: "measurement", unit: "W" },
+    validatesCompositePath: false,
+    device: { trackable: true, haDeviceClass: "running" },
   },
 };
 
