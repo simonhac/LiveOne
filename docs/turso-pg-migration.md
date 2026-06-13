@@ -512,8 +512,9 @@ Mon 2026-06-15 17:37 UTC), and a staleness alert (no new object in > 26 h).
   new production branch (e.g. `sydney`) inherits them at create. Set in the PlanetScale dashboard (no
   CLI/API for the schedule). `liveone` has 12h-keep-2d (immutable) + 3-day-keep-6mo; `pscale backup create`
   makes one-off base backups.
-- **Dev guardrails (C):** distinct `PLANETSCALE_DATABASE_URL` per env; startup `assertNotProdDbInDev`
-  throws if dev resolves to `PLANETSCALE_PRODUCTION_HOST`; `ALLOW_PROD_DB_IN_DEV=true` is the escape hatch.
+- **Dev guardrails (C):** distinct `PLANETSCALE_DATABASE_URL` per env; startup `assertDbEnvironmentMatches`
+  throws if dev's connection identity carries `PLANETSCALE_PROD_BRANCH_ID` (and alerts if prod's does NOT);
+  `ALLOW_PROD_DB_IN_DEV=true` is the escape hatch.
 - **share_tokens PG schema:** bigint epoch-ms columns + text PK; write-port detects PG `23505`.
 - **Seed hardening:** config upserts (`onConflictDoUpdate`); seed `polling_status` + `share_tokens`;
   count-shortfall is a hard abort.
@@ -547,8 +548,8 @@ split AFTER the store is on PG.**
 Dev uses a **shared PlanetScale dev branch** (not a separate engine), with Postgres PITR as the backstop.
 
 - **Env (`.env.local`):** `PLANETSCALE_DATABASE_URL` → dev branch (runtime); `PLANETSCALE_DATABASE_URL_MIGRATIONS`
-  (or `DB_*`) → DDL creds for `db:pg:migrate`; `PLANETSCALE_PRODUCTION_HOST` → prod host (arms the
-  guardrail); `PLANETSCALE_POOL_MAX` (optional, default 10).
+  (or `DB_*`) → DDL creds for `db:pg:migrate`; `PLANETSCALE_PROD_BRANCH_ID` → prod branch id (arms the
+  DB-environment guard); `PLANETSCALE_POOL_MAX` (optional, default 10).
 - **`receive-dev`** (`app/api/observations/receive-dev/route.ts`) only logs (no PG writes), so the dev
   queue pipeline doesn't populate dev Postgres today. To exercise the PG ingest path in dev, point the
   publisher's receiver URL at a dev receiver that writes the dev branch, or extend `receive-dev` to write.

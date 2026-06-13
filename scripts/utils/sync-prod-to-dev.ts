@@ -10,7 +10,7 @@
  *   1. Prod credential is a `pg_read_all_data` role (no INSERT/UPDATE/DELETE/DDL).
  *   2. This script refuses to run if the WRITE target resolves to the prod
  *      branch/role (dev and prod share a host, so it compares the username and
- *      the PLANETSCALE_PRODUCTION_HOST token) — a mis-pasted URL can't write prod.
+ *      the PLANETSCALE_PROD_BRANCH_ID token) — a mis-pasted URL can't write prod.
  *
  * Strategy per table (see MANIFEST):
  *   - incremental (large, time-keyed): copy rows newer than the dev watermark
@@ -265,7 +265,7 @@ function main() {
   const devUser = userOf(devUrl);
   const prodUser = userOf(prodUrl);
   const prodToken = (
-    process.env.PLANETSCALE_PRODUCTION_HOST ?? ""
+    process.env.PLANETSCALE_PROD_BRANCH_ID ?? ""
   ).toLowerCase();
   if (devUser && devUser === prodUser) {
     throw new Error(

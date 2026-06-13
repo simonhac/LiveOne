@@ -81,23 +81,48 @@ function connectionIdentity(config: PoolConfig): string | undefined {
 }
 
 /**
- * Guard the shared dev/preview database from clobbering production: outside
- * production, refuse to connect if the connection identity carries the declared
- * production token. Inert until `PLANETSCALE_PRODUCTION_HOST` is set.
+ * Assert the DB connection matches the environment, both directions, using the
+ * prod-identity token `PLANETSCALE_PROD_BRANCH_ID` — a prod-unique fragment of
+ * `user@host`. On PlanetScale's shared regional host that's the prod BRANCH ID,
+ * which appears in the prod username but not in liveone-dev's. Inert until set.
  *
- * The token is matched as a substring of `user@host`, so it can be any
- * prod-unique fragment. On PlanetScale (shared regional host) set it to the prod
- * BRANCH ID — which appears in the prod username but not in liveone-dev's — since
- * the hostname is identical across branches. `ALLOW_PROD_DB_IN_DEV=true` is an
- * explicit escape hatch.
+ *  - dev/preview: must NOT be on the prod DB → throw (fail-CLOSED). Escape hatch:
+ *    `ALLOW_PROD_DB_IN_DEV=true`.
+ *  - production: MUST be on the prod DB → if not, that's drift (a stale token, or
+ *    prod pointed at the wrong DB). Log + best-effort alert, but DON'T throw —
+ *    fail-OPEN, because a stale token must never take prod down.
  */
-function assertNotProdDbInDev(config: PoolConfig): void {
-  if (isProduction()) return;
-  const prodToken = process.env.PLANETSCALE_PRODUCTION_HOST;
+function assertDbEnvironmentMatches(config: PoolConfig): void {
+  const prodToken = process.env.PLANETSCALE_PROD_BRANCH_ID;
   if (!prodToken) return;
-  if (process.env.ALLOW_PROD_DB_IN_DEV === "true") return;
+
   const identity = connectionIdentity(config);
-  if (identity && identity.toLowerCase().includes(prodToken.toLowerCase())) {
+  const onProdDb =
+    !!identity && identity.toLowerCase().includes(prodToken.toLowerCase());
+
+  if (isProduction()) {
+    // Drift detection. Fail-open: alert loudly, keep prod running.
+    if (!onProdDb) {
+      const msg =
+        `[PlanetScale] DRIFT: production is NOT connected to the declared prod ` +
+        `database (identity=${identity ?? "?"}, expected token=${prodToken}). ` +
+        `Check PLANETSCALE_PROD_BRANCH_ID and the prod DB_* / PLANETSCALE_DATABASE_URL.`;
+      console.error(msg);
+      const webhook = process.env.OBSERVATIONS_ALERT_WEBHOOK_URL;
+      if (webhook) {
+        void fetch(webhook, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: `🔴 ${msg}` }),
+        }).catch(() => {});
+      }
+    }
+    return;
+  }
+
+  // dev/preview. Fail-closed: refuse to touch prod.
+  if (process.env.ALLOW_PROD_DB_IN_DEV === "true") return;
+  if (onProdDb) {
     throw new Error(
       `[PlanetScale] Refusing to use the PRODUCTION database (${identity}) outside production. ` +
         `Point PLANETSCALE_DATABASE_URL at liveone-dev, or set ALLOW_PROD_DB_IN_DEV=true to override.`,
@@ -115,11 +140,13 @@ function getPool(): Pool | null {
     return null;
   }
 
-  assertNotProdDbInDev(config);
-
   if (global.__planetscalePool) {
     return global.__planetscalePool;
   }
+
+  // Run once per pool creation (not on memoized returns) so the prod drift alert
+  // doesn't repeat; in dev the throw fires before any pool is memoized anyway.
+  assertDbEnvironmentMatches(config);
 
   const pool = new Pool({
     ...config,
