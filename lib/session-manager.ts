@@ -476,7 +476,7 @@ export class SessionManager {
    */
   async querySessions(params: {
     // Filters
-    systemIds?: number[];
+    systemNames?: string[];
     vendorTypes?: string[];
     causes?: string[];
     successful?: (boolean | null)[]; // null = pending/in-progress
@@ -517,8 +517,8 @@ export class SessionManager {
       // Build WHERE conditions
       const conditions = [];
 
-      if (params.systemIds && params.systemIds.length > 0) {
-        conditions.push(inArray(pgSessions.systemId, params.systemIds));
+      if (params.systemNames && params.systemNames.length > 0) {
+        conditions.push(inArray(pgSystems.displayName, params.systemNames));
       }
 
       if (params.vendorTypes && params.vendorTypes.length > 0) {

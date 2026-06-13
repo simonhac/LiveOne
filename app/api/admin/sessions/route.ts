@@ -37,9 +37,7 @@ export async function GET(request: NextRequest) {
       pageParam
     ) {
       // Parse filters
-      const systemIds = systemParam
-        ? systemParam.split(",").map((id) => parseInt(id))
-        : undefined;
+      const systemNames = systemParam ? systemParam.split(",") : undefined;
       const vendorTypes = vendorParam ? vendorParam.split(",") : undefined;
       const causes = causeParam ? causeParam.split(",") : undefined;
       // Parse status filter: "success" → true, "error" → false, "pending" → null
@@ -95,7 +93,7 @@ export async function GET(request: NextRequest) {
 
       // Query sessions
       const result = await sessionManager.querySessions({
-        systemIds,
+        systemNames,
         vendorTypes,
         causes,
         successful,

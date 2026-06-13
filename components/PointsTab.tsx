@@ -1,8 +1,8 @@
 import { useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/queries";
-import { Sun, Battery, Zap, Home, Activity } from "lucide-react";
 import { getLogicalPathStem } from "@/lib/identifiers/logical-path";
+import { SUBSYSTEM_CONFIG } from "./subsystem-config";
 import micromatch from "micromatch";
 
 interface ParsedPoint {
@@ -20,51 +20,6 @@ interface PointsResponse {
     metricUnit: string;
   }>;
 }
-
-const SUBSYSTEM_CONFIG = {
-  solar: {
-    label: "Solar",
-    icon: Sun,
-    iconColor: "text-yellow-400",
-    bgColor: "bg-yellow-500/10",
-    borderColor: "border-yellow-500/30",
-  },
-  battery: {
-    label: "Battery",
-    icon: Battery,
-    iconColor: "text-blue-400",
-    bgColor: "bg-blue-500/10",
-    borderColor: "border-blue-500/30",
-  },
-  grid: {
-    label: "Grid",
-    icon: Zap,
-    iconColor: "text-green-400",
-    bgColor: "bg-green-500/10",
-    borderColor: "border-green-500/30",
-  },
-  load: {
-    label: "Load",
-    icon: Home,
-    iconColor: "text-red-400",
-    bgColor: "bg-red-500/10",
-    borderColor: "border-red-500/30",
-  },
-  inverter: {
-    label: "Inverter",
-    icon: Activity,
-    iconColor: "text-orange-400",
-    bgColor: "bg-orange-500/10",
-    borderColor: "border-orange-500/30",
-  },
-  other: {
-    label: "Other",
-    icon: Activity,
-    iconColor: "text-gray-400",
-    bgColor: "bg-gray-500/10",
-    borderColor: "border-gray-500/30",
-  },
-} as const;
 
 interface PointsTabProps {
   systemId: number;
@@ -113,6 +68,7 @@ export default function PointsTab({
     const batteryPoints = filterPoints("bidi.battery*");
     const gridPoints = filterPoints("bidi.grid*");
     const loadPoints = filterPoints("load*");
+    const evPoints = filterPoints("ev*");
     const inverterPoints = filterPoints("inverter*");
 
     // Collect points that didn't match any subsystem
@@ -122,6 +78,7 @@ export default function PointsTab({
       ...batteryPoints,
       ...gridPoints,
       ...loadPoints,
+      ...evPoints,
       ...inverterPoints,
     ].forEach((p) => categorizedStems.add(p.stem));
 
@@ -156,6 +113,7 @@ export default function PointsTab({
       battery: groupByStem(batteryPoints),
       grid: groupByStem(gridPoints),
       load: groupByStem(loadPoints),
+      ev: groupByStem(evPoints),
       inverter: groupByStem(inverterPoints),
       other: groupByStem(otherPoints),
     };

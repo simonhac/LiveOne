@@ -88,7 +88,7 @@ export async function fetchAdminPivotRowsPg(
     : "";
   const orderDirection = direction === "newer" && cursor ? "ASC" : "DESC";
 
-  return runRawPg(`
+  const rows = await runRawPg(`
     WITH recent_timestamps AS (
       SELECT DISTINCT ${timeCol}
       FROM ${table} pr
@@ -99,7 +99,7 @@ export async function fetchAdminPivotRowsPg(
       LIMIT ${limit}
     )
     SELECT
-      (EXTRACT(EPOCH FROM pr.${timeCol} AT TIME ZONE 'UTC') * 1000) as measurement_time,
+      (EXTRACT(EPOCH FROM pr.${timeCol} AT TIME ZONE 'UTC') * 1000)::bigint as measurement_time,
       pr.session_id,
       s.session_label,
       ${pivotColumns}
@@ -110,6 +110,13 @@ export async function fetchAdminPivotRowsPg(
     GROUP BY pr.${timeCol}, pr.session_id, s.session_label
     ORDER BY pr.${timeCol} DESC, pr.session_id
   `);
+  // node-postgres returns the epoch-ms bigint as a string; coerce to a JS number so the
+  // route's `new Date(measurement_time)` and cursor formatting work (raw/5m only — the
+  // daily branch above returns `pr.day` as a YYYY-MM-DD string and must stay a string).
+  return rows.map((r) => ({
+    ...r,
+    measurement_time: Number(r.measurement_time),
+  }));
 }
 
 // ============================================================================
@@ -164,7 +171,7 @@ export async function fetchSinglePointReadingsPg(
   }
 
   if (source === "5m") {
-    return runRawPg(`
+    const rows = await runRawPg(`
       WITH all_rows AS (
         SELECT interval_end, ROW_NUMBER() OVER (ORDER BY interval_end ASC) as row_num
         FROM point_readings_agg_5m
@@ -179,7 +186,7 @@ export async function fetchSinglePointReadingsPg(
           pr.system_id as "systemId",
           pr.point_id as "pointId",
           pr.session_id as "sessionId",
-          (EXTRACT(EPOCH FROM pr.interval_end AT TIME ZONE 'UTC') * 1000) as "intervalEnd",
+          (EXTRACT(EPOCH FROM pr.interval_end AT TIME ZONE 'UTC') * 1000)::bigint as "intervalEnd",
           pr.avg,
           pr.min,
           pr.max,
@@ -198,20 +205,23 @@ export async function fetchSinglePointReadingsPg(
       WHERE ranked.row_num BETWEEN (target_position.target_row - 10) AND (target_position.target_row + 10)
       ORDER BY "intervalEnd" ASC
     `);
+    // Coerce the epoch-ms bigint (returned as a string by node-postgres) to a number so the
+    // route's centering comparison (`r.intervalEnd === timestamp`) matches.
+    return rows.map((r) => ({ ...r, intervalEnd: Number(r.intervalEnd) }));
   }
 
   // raw: ±1 hour window around the target timestamp.
   const oneHour = 60 * 60 * 1000;
   const startTime = timestamp! - oneHour;
   const endTime = timestamp! + oneHour;
-  return runRawPg(`
+  const rows = await runRawPg(`
     SELECT
       pr.id,
       pr.system_id as "systemId",
       pr.point_id as "pointId",
       pr.session_id as "sessionId",
-      (EXTRACT(EPOCH FROM pr.measurement_time AT TIME ZONE 'UTC') * 1000) as "measurementTime",
-      (EXTRACT(EPOCH FROM pr.received_time AT TIME ZONE 'UTC') * 1000) as "receivedTime",
+      (EXTRACT(EPOCH FROM pr.measurement_time AT TIME ZONE 'UTC') * 1000)::bigint as "measurementTime",
+      (EXTRACT(EPOCH FROM pr.received_time AT TIME ZONE 'UTC') * 1000)::bigint as "receivedTime",
       pr.value,
       pr.value_str as "valueStr",
       pr.error,
@@ -225,4 +235,10 @@ export async function fetchSinglePointReadingsPg(
       AND pr.measurement_time <= ${tsLitUTC(endTime)}
     ORDER BY pr.measurement_time ASC
   `);
+  // Coerce the epoch-ms bigints (returned as strings by node-postgres) to numbers.
+  return rows.map((r) => ({
+    ...r,
+    measurementTime: Number(r.measurementTime),
+    receivedTime: Number(r.receivedTime),
+  }));
 }

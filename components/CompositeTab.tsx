@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/queries";
-import { Plus, X, Sun, Home, Battery, Zap, Car } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useUser } from "@clerk/nextjs";
 import { stemSplit } from "@/lib/identifiers/logical-path";
+import { SUBSYSTEM_CONFIG } from "./subsystem-config";
 
 interface CompositeMapping {
   [key: string]: string[]; // Allow any category keys
@@ -46,43 +47,15 @@ interface CompositeTabProps {
   ownerUserId?: string; // Optional: owner user ID for fetching points (for new systems)
 }
 
-const CATEGORY_CONFIG = {
-  solar: {
-    label: "Solar",
-    icon: Sun,
-    iconColor: "text-yellow-400",
-    bgColor: "bg-yellow-500/10",
-    borderColor: "border-yellow-500/30",
-  },
-  battery: {
-    label: "Battery",
-    icon: Battery,
-    iconColor: "text-blue-400",
-    bgColor: "bg-blue-500/10",
-    borderColor: "border-blue-500/30",
-  },
-  load: {
-    label: "Load",
-    icon: Home,
-    iconColor: "text-red-400",
-    bgColor: "bg-red-500/10",
-    borderColor: "border-red-500/30",
-  },
-  grid: {
-    label: "Grid",
-    icon: Zap,
-    iconColor: "text-green-400",
-    bgColor: "bg-green-500/10",
-    borderColor: "border-green-500/30",
-  },
-  ev: {
-    label: "EV",
-    icon: Car,
-    iconColor: "text-purple-400",
-    bgColor: "bg-purple-500/10",
-    borderColor: "border-purple-500/30",
-  },
-};
+// Composite systems map points into these categories, in this order.
+// (No inverter/other, which only apply to a single system's raw points.)
+const COMPOSITE_CATEGORIES = [
+  "solar",
+  "battery",
+  "load",
+  "grid",
+  "ev",
+] as const;
 
 export default function CompositeTab({
   systemId,
@@ -489,7 +462,8 @@ export default function CompositeTab({
 
       {renderPopupMenu()}
 
-      {Object.entries(CATEGORY_CONFIG).map(([category, config]) => {
+      {COMPOSITE_CATEGORIES.map((category) => {
+        const config = SUBSYSTEM_CONFIG[category];
         const currentMappings = mappings[category] || [];
 
         return (
