@@ -110,15 +110,17 @@ export function getLayout(vendorType: string): DashboardLayout {
 export type PowerCardId =
   | "solar"
   | "load"
+  | "hotWater"
   | "battery"
   | "grid"
   | "amber"
   | "ev";
 
-/** Default order — matches the historical SystemPowerCards render order. */
+/** Default order — matches the historical SystemPowerCards render order (hotWater groups with loads). */
 export const POWER_CARD_IDS: readonly PowerCardId[] = [
   "solar",
   "load",
+  "hotWater",
   "battery",
   "grid",
   "amber",
@@ -134,6 +136,7 @@ export interface PowerCardDef {
 export const POWER_CARDS: Record<PowerCardId, PowerCardDef> = {
   solar: { id: "solar", label: "Solar", requiredRoles: ["solar"] },
   load: { id: "load", label: "Load", requiredRoles: ["load"] },
+  hotWater: { id: "hotWater", label: "Hot Water", requiredRoles: ["load"] },
   battery: { id: "battery", label: "Battery", requiredRoles: ["battery"] },
   grid: { id: "grid", label: "Grid", requiredRoles: ["grid"] },
   amber: { id: "amber", label: "Amber Price" },
@@ -168,6 +171,8 @@ export function availablePowerCards(latest: LatestPointValues): PowerCardId[] {
   const available: Record<PowerCardId, boolean> = {
     solar,
     load,
+    // The modelled hot-water temperature is a first-class derived point in `latest`.
+    hotWater: hasVal(latest, "load.hws/temperature"),
     battery: hasVal(latest, "bidi.battery/soc"),
     grid: hasVal(latest, "bidi.grid/power"),
     amber: hasVal(latest, "bidi.grid.import/rate"),

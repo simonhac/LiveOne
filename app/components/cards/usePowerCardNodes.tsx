@@ -4,6 +4,8 @@ import React from "react";
 import PowerCard from "@/components/PowerCard";
 import AmberSmallCard from "@/components/AmberSmallCard";
 import TeslaSmallCard from "@/components/TeslaSmallCard";
+import HwsSmallCard from "@/components/HwsSmallCard";
+import { DEFAULT_HWS_MODEL_OPTIONS } from "@/lib/hws-model";
 import { stemSplit, getMetricType } from "@/lib/identifiers/logical-path";
 import type { PowerCardId } from "@/lib/dashboard/cards";
 import type { LatestPointValues, LatestPointValue } from "@/lib/types/api";
@@ -481,9 +483,12 @@ export function usePowerCardNodes({
   const hasLoadData = allLoads.length > 0;
 
   // Which power cards have data (the authoritative availability).
+  const hwsTemp = getPointValue("load.hws/temperature");
+
   const available: Record<PowerCardId, boolean> = {
     solar: solarValue !== null,
     load: hasLoadData,
+    hotWater: hwsTemp !== null,
     battery: batterySoc !== null,
     grid: showGrid && getPointValue("bidi.grid/power") !== null,
     amber: hasAmberData,
@@ -661,6 +666,20 @@ export function usePowerCardNodes({
         latest={latest}
         systemId={systemId}
         canControl={canControl}
+      />
+    ),
+    hotWater: (
+      <HwsSmallCard
+        systemId={systemId}
+        faucetC={hwsTemp}
+        measurementTime={
+          getMeasurementTime("load.hws/temperature") ?? undefined
+        }
+        heating={
+          (getPointValue("load.hws/power") ?? 0) >
+          DEFAULT_HWS_MODEL_OPTIONS.onThresholdW
+        }
+        staleThresholdSeconds={getStaleThreshold(vendorType)}
       />
     ),
   };

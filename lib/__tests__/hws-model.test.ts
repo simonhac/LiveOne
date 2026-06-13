@@ -91,3 +91,70 @@ describe("modelHws", () => {
     expect(steps[0].on).toBe(true);
   });
 });
+
+/**
+ * The HWS recompute (lib/hws/recompute.ts) recomputes each window from a FIXED 2-day warmup lead-in
+ * and UPSERTs only the window's intervals, relying on the result being independent of the seed
+ * `tInitial` and of where the window boundary falls. These tests pin that property on the pure
+ * model: after ~2 days the first-order model forgets its initial condition, so any window
+ * recomputes to the same values regardless of anchor — which is what makes the recompute idempotent.
+ */
+describe("modelHws — warmup convergence (recompute idempotency)", () => {
+  const WARMUP_MS = 2 * 24 * 60 * 60 * 1000;
+  const WINDOW_HOURS = 24;
+
+  // A deterministic, bounded on/off duty cycle: heat 30 min every 2 hours.
+  function dutyCycleSeries(hours: number, startMs = 0): HwsSample[] {
+    const steps = (hours * 60) / 5;
+    const out: HwsSample[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const minuteOfCycle = (i * 5) % 120; // 2-hour cycle
+      out.push({
+        tsMs: startMs + i * FIVE_MIN_MS,
+        powerW: minuteOfCycle < 30 ? 800 : 0,
+      });
+    }
+    return out;
+  }
+
+  it("forgets the seed tInitial after the 2-day warmup", () => {
+    const series = dutyCycleSeries(48 + WINDOW_HOURS); // warmup + window
+    const cold = modelHws(series, {
+      ...DEFAULT_HWS_MODEL_OPTIONS,
+      tInitial: 30,
+    });
+    const hot = modelHws(series, {
+      ...DEFAULT_HWS_MODEL_OPTIONS,
+      tInitial: 50,
+    });
+
+    const inWindow = (s: { tsMs: number }) => s.tsMs >= WARMUP_MS;
+    const coldWin = cold.filter(inWindow);
+    const hotWin = hot.filter(inWindow);
+    expect(coldWin.length).toBe(hotWin.length);
+    expect(coldWin.length).toBeGreaterThan(0);
+    for (let i = 0; i < coldWin.length; i++) {
+      expect(Math.abs(coldWin[i].tankC - hotWin[i].tankC)).toBeLessThan(1e-3);
+    }
+  });
+
+  it("window values are independent of where the recompute window starts", () => {
+    const full = dutyCycleSeries(72); // shared signal
+    const byTs = new Map(full.map((s) => [s.tsMs, s.powerW] as const));
+    const sliceFrom = (anchorMs: number): HwsSample[] =>
+      full.filter((s) => s.tsMs >= anchorMs).map((s) => ({ ...s }));
+
+    const winStartMs = WARMUP_MS; // the window we actually persist starts here
+    const a = modelHws(sliceFrom(0), DEFAULT_HWS_MODEL_OPTIONS); // warmup from t=0
+    const b = modelHws(sliceFrom(FIVE_MIN_MS * 6), DEFAULT_HWS_MODEL_OPTIONS); // warmup 30min later
+
+    const aWin = a.filter((s) => s.tsMs >= winStartMs);
+    const bWin = b.filter((s) => s.tsMs >= winStartMs);
+    expect(aWin.length).toBe(bWin.length);
+    for (let i = 0; i < aWin.length; i++) {
+      expect(aWin[i].tsMs).toBe(bWin[i].tsMs);
+      expect(byTs.get(aWin[i].tsMs)).toBe(byTs.get(bWin[i].tsMs)); // same input
+      expect(Math.abs(aWin[i].faucetC - bWin[i].faucetC)).toBeLessThan(1e-3);
+    }
+  });
+});
