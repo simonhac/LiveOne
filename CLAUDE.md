@@ -32,11 +32,12 @@ To check TypeScript compilation:
 
 ```bash
 # PostgreSQL (PlanetScale) - PRIMARY database
-PLANETSCALE_DATABASE_URL=<runtime connection string>           # dev: dev branch; prod: sydney branch
+PLANETSCALE_DATABASE_URL=<runtime connection string>           # dev + preview: liveone-dev; prod: sydney branch
 PLANETSCALE_DATABASE_URL_MIGRATIONS=<DDL connection string>    # for npm run db:pg:migrate (or discrete DB_* vars)
 PLANETSCALE_PRODUCTION_HOST=<prod host>                        # arms the dev guardrail (assertNotProdDbInDev)
 # ALLOW_PROD_DB_IN_DEV=true                                    # escape hatch for the guardrail - use deliberately
 # PLANETSCALE_POOL_MAX=10                                      # optional pool size
+CRONS_ENABLED=true                                            # scheduled crons run ONLY when "true" (every env, incl. prod); dev/preview leave unset = off. Admin/x-claude/?force=true bypass.
 
 # Vercel KV (for latest point values cache)
 KV_REST_API_URL=<your-kv-url>
@@ -327,6 +328,14 @@ pscale role create liveone sydney <name> --inherited-roles postgres --ttl 1h --f
   (Control-plane `reassign` works even though SQL `ALTER ... OWNER` / `SET ROLE postgres` fail with "must be owner" — `postgres` here is not a superuser.)
 
 **Parallel-agent collisions.** Multiple Conductor workspaces can each `db:pg:generate` and grab the **same `NNNN` number** for different migrations (e.g. two `0004_*`). Before generating/applying, `git fetch origin main` and check `drizzle-planetscale/` + the live `drizzle.__drizzle_migrations`; if main already shipped your number, sync main and regenerate so yours lands as the next free number. Migrations are additive/independent objects, so the only real damage is the drizzle journal/numbering — fix it by renumbering, not by force.
+
+### `liveone-dev` — the shared dev/preview database
+
+`liveone-dev` is a **separate** single-node PlanetScale database (`aws-ap-southeast-2`), the sole datastore for **both local dev and Vercel preview**. It is never prod: the app's `assertNotProdDbInDev` guardrail (armed by `PLANETSCALE_PRODUCTION_HOST` in dev/preview) refuses any connection whose host matches prod, and it lives at a different host entirely. In Vercel, scope the prod `PLANETSCALE_DATABASE_URL` to **Production only** and the `liveone-dev` URL to **Preview + Development only** — never overlap.
+
+- **Seed / reset from prod:** restore the latest off-site R2 dump into `liveone-dev` (schema + data in one shot). Reuse the `scripts/utils/restore-drill-pg.sh` flow, but target `liveone-dev` and **run as the persistent `postgres` role** (table-ownership trap above). A restore reverts `liveone-dev` to prod's migration version — re-apply any in-progress test migration afterward.
+- **Keep in sync (between restores):** `npm run db:sync-dev` (`scripts/utils/sync-prod-to-dev.ts`) does an incremental top-up — reads prod with a **SELECT-only** role (`pg_read_all_data`), copies new `point_readings`/agg/session rows + refreshes small config tables into `liveone-dev`. It writes **only** to dev and refuses to run if the write target resolves to the prod host. Scheduled 4×/day via `.github/workflows/sync-prod-to-dev.yml` (+ `workflow_dispatch`). Needs `PG_PROD_RO_DATABASE_URL` (read-only prod role) and `LIVEONE_DEV_DATABASE_URL` (dev write role).
+- **Crons are off in dev/preview** (`CRONS_ENABLED` unset) so they don't double-poll vendors or pollute the mirror — see the env block above.
 
 ## Vercel Deployment
 
