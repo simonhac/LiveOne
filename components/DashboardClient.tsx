@@ -23,7 +23,7 @@ import {
   type EnergyFlowMatrix,
 } from "@/lib/energy-flow-matrix";
 import SystemPowerCards from "@/app/components/cards/SystemPowerCards";
-import DashboardCustomizePanel from "@/components/DashboardCustomizePanel";
+import DashboardCustomizeDialog from "@/components/DashboardCustomizeDialog";
 import {
   buildDefaultDescriptor,
   normalizeDescriptor,
@@ -214,9 +214,7 @@ export default function DashboardClient({
   const { data: savedDescriptorResp } = useQuery(
     dashboardDescriptorQuery(dashboardPersistence && systemId ? systemId : ""),
   );
-  const [isEditingDashboard, setIsEditingDashboard] = useState(false);
-  const [draftDescriptor, setDraftDescriptor] =
-    useState<DashboardDescriptor | null>(null);
+  const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
 
   // The effective (saved-or-default) descriptor; null when persistence is off.
   const effectiveDescriptor = useMemo<DashboardDescriptor | null>(() => {
@@ -785,10 +783,10 @@ export default function DashboardClient({
   // Active descriptor: the customizable one (P2) when persistence is on, else the generated one
   // (P1) when DECLARATIVE_DASHBOARD is on, else null (legacy inline checks). The descriptor
   // reproduces the ladder, so the layout booleans below match the original vendor_type tests.
+  // Editing happens in the Customize dialog (its own draft); the dashboard renders the saved
+  // (effective) descriptor and updates on Save.
   const activeDescriptor: DashboardDescriptor | null = dashboardPersistence
-    ? isEditingDashboard && draftDescriptor
-      ? draftDescriptor
-      : effectiveDescriptor
+    ? effectiveDescriptor
     : declarativeDashboard && data?.system
       ? buildDefaultDescriptor(data.system, data.latest ?? {})
       : null;
@@ -811,27 +809,19 @@ export default function DashboardClient({
       ? powerCardsConfigOf(activeDescriptor)
       : null;
 
-  // Customize (P2) handlers + the cards available on this system (for the panel).
-  const startEditing = () => {
-    setDraftDescriptor(effectiveDescriptor);
-    setIsEditingDashboard(true);
-  };
-  const cancelEditing = () => {
-    setIsEditingDashboard(false);
-    setDraftDescriptor(null);
-  };
-  const saveDashboard = async () => {
-    if (systemId && draftDescriptor) {
+  // Customize (P2) handlers + the cards available on this system (for the dialog).
+  const saveDashboard = async (next: DashboardDescriptor) => {
+    if (systemId) {
       await fetch(`/api/dashboard/${systemId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ descriptor: draftDescriptor }),
+        body: JSON.stringify({ descriptor: next }),
       });
       await queryClient.invalidateQueries({
         queryKey: ["dashboard-descriptor", systemId],
       });
     }
-    cancelEditing();
+    setIsCustomizeOpen(false);
   };
   const resetDashboard = async () => {
     if (systemId) {
@@ -840,7 +830,7 @@ export default function DashboardClient({
         queryKey: ["dashboard-descriptor", systemId],
       });
     }
-    cancelEditing();
+    setIsCustomizeOpen(false);
   };
   const availableModules = new Set<DashboardCardType>(
     (Object.keys(CARD_REGISTRY) as DashboardCardType[]).filter((t) =>
@@ -869,51 +859,27 @@ export default function DashboardClient({
         </div>
       )}
 
-      {/* Customize toolbar + panel (P2, DASHBOARD_PERSISTENCE) */}
+      {/* Customize button + dialog (P2, DASHBOARD_PERSISTENCE) */}
       {dashboardPersistence && data && (
-        <div className="mb-4">
-          <div className="flex justify-end items-center gap-2">
-            {isEditingDashboard ? (
-              <>
-                <button
-                  onClick={resetDashboard}
-                  className="px-3 py-1.5 text-sm rounded-md border border-gray-600 text-gray-300 hover:bg-gray-700"
-                >
-                  Reset to default
-                </button>
-                <button
-                  onClick={cancelEditing}
-                  className="px-3 py-1.5 text-sm rounded-md border border-gray-600 text-gray-300 hover:bg-gray-700"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={saveDashboard}
-                  className="px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700"
-                >
-                  Done
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={startEditing}
-                className="px-3 py-1.5 text-sm rounded-md border border-gray-600 text-gray-300 hover:bg-gray-700"
-              >
-                Customize
-              </button>
-            )}
+        <>
+          <div className="mb-4 flex justify-end">
+            <button
+              onClick={() => setIsCustomizeOpen(true)}
+              className="px-3 py-1.5 text-sm rounded-md border border-gray-600 text-gray-300 hover:bg-gray-700"
+            >
+              Customize
+            </button>
           </div>
-          {isEditingDashboard && activeDescriptor && (
-            <div className="mt-3">
-              <DashboardCustomizePanel
-                descriptor={activeDescriptor}
-                availableModules={availableModules}
-                availablePower={availablePower}
-                onChange={setDraftDescriptor}
-              />
-            </div>
-          )}
-        </div>
+          <DashboardCustomizeDialog
+            isOpen={isCustomizeOpen}
+            onClose={() => setIsCustomizeOpen(false)}
+            descriptor={effectiveDescriptor}
+            availableModules={availableModules}
+            availablePower={availablePower}
+            onSave={saveDashboard}
+            onReset={resetDashboard}
+          />
+        </>
       )}
 
       {error &&
