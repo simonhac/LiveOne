@@ -16,6 +16,7 @@ import { PointReference } from "@/lib/identifiers";
 import { PointManager } from "@/lib/point/point-manager";
 import { SystemsManager } from "@/lib/systems-manager";
 import { isCompleteRoleSet } from "@/lib/roles/registry";
+import { getAreaForSystem } from "@/lib/areas/resolve";
 
 // Re-exported for back-compat: the role taxonomy now lives in lib/roles/registry.ts.
 export { isCompleteRoleSet };
@@ -37,6 +38,13 @@ export interface LogicalSystemPoint {
 export interface LogicalSystem {
   /** The logical-system id == systems.id (composite or single). */
   id: number;
+  /**
+   * The Area this view belongs to (the area whose `legacy_system_id == id`), or null when
+   * `AREAS_TABLE` is off or the Area hasn't been backfilled yet. Drives the forward-only
+   * `point_readings_flow_1d.area_id` re-key — `id` (system_id) stays the primary key through the
+   * soak, so this is additive and a no-op when the flag is off. See areas-and-dashboards.md (P3).
+   */
+  areaId: string | null;
   timezoneOffsetMin: number;
   /** Participating power points (may span physical systems for a composite). */
   points: LogicalSystemPoint[];
@@ -71,8 +79,12 @@ export async function resolveLogicalSystem(
       displayName: p.name,
     }));
 
+  // Resolve the Area this view belongs to (null when AREAS_TABLE is off / not yet backfilled).
+  const area = await getAreaForSystem(systemId);
+
   return {
     id: systemId,
+    areaId: area?.id ?? null,
     timezoneOffsetMin: system.timezoneOffsetMin,
     points,
     isComplete: isCompleteRoleSet(points.map((p) => p.stem)),
