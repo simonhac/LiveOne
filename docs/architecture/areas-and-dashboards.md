@@ -281,6 +281,14 @@ the physical layer" value with no schema change.**
   registry (a rebuildable cache — migrate it **last**), and `share_tokens` keep working. The converter
   must handle all three legacy formats and **round-trip-assert on the real composite rows** (e.g.
   system 7, Kinkora) before migrating.
+  - **Flow matrix = re-key, not recompute.** `point_readings_flow_1d` is **already logical-keyed**
+    (`system_id` = the view), so an identity Area resolves to the same points and yields
+    **byte-identical** rows — do _not_ rebuild flow history. `buildFlowSeries`, the `agg_5m` read, and
+    the daily sum are untouched; the only changes are `resolveLogicalSystem` reading `area_bindings`
+    and the `system_id → area_id` re-key (forward-only, per the seam above). Invariants hold: an Area
+    collapses member provenance into one namespace (no cross-device edges), and never double-count a
+    composite Area + its member identity-Areas. Files: `lib/aggregation/{logical-system,flow-series}.ts`,
+    `lib/db/planetscale/flow-matrix-pg.ts`.
 
 - **P4 — Per-Dashboard sharing.** `dashboard_grants` + `dashboard_share_tokens`; transitive
   point-level read; implement share-token GET consumption.
