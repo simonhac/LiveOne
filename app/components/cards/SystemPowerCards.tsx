@@ -22,6 +22,11 @@ interface SystemPowerCardsProps {
   order?: PowerCardId[];
   /** Mini-cards explicitly hidden by the user (P2 customization). */
   hidden?: PowerCardId[];
+  /**
+   * Extra non-mini-card tiles appended after the mini-cards in the SAME grid (e.g. the Local Grid
+   * card), so they sit as constrained tiles like the rest rather than full-width below the grid.
+   */
+  trailingCards?: React.ReactNode[];
 }
 
 /**
@@ -42,6 +47,7 @@ export default function SystemPowerCards({
   canControl,
   order,
   hidden = [],
+  trailingCards = [],
 }: SystemPowerCardsProps) {
   const { available, cardNodes } = usePowerCardNodes({
     latest,
@@ -58,7 +64,7 @@ export default function SystemPowerCards({
   const renderOrder = (order ?? POWER_CARD_IDS).filter(
     (id) => available[id] && !hiddenSet.has(id),
   );
-  const cardCount = renderOrder.length;
+  const cardCount = renderOrder.length + trailingCards.length;
 
   // Determine grid columns based on layout mode
   const getGridClass = () => {
@@ -88,6 +94,9 @@ export default function SystemPowerCards({
       >
         {renderOrder.map((id) => (
           <React.Fragment key={id}>{cardNodes[id]}</React.Fragment>
+        ))}
+        {trailingCards.map((node, i) => (
+          <React.Fragment key={`trailing-${i}`}>{node}</React.Fragment>
         ))}
       </div>
     </div>
