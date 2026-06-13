@@ -23,7 +23,9 @@ import {
   type EnergyFlowMatrix,
 } from "@/lib/energy-flow-matrix";
 import SystemPowerCards from "@/app/components/cards/SystemPowerCards";
+import { usePowerCardNodes } from "@/app/components/cards/usePowerCardNodes";
 import DashboardCustomizeDialog from "@/components/DashboardCustomizeDialog";
+import { useDashboardCustomize } from "@/contexts/DashboardCustomizeContext";
 import {
   buildDefaultDescriptor,
   normalizeDescriptor,
@@ -214,7 +216,27 @@ export default function DashboardClient({
   const { data: savedDescriptorResp } = useQuery(
     dashboardDescriptorQuery(dashboardPersistence && systemId ? systemId : ""),
   );
-  const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
+  // Customize (P2) open/close + availability are shared with the header menu via context (the
+  // "Customise…" item lives in DashboardHeader, a sibling subtree). DashboardClient owns the dialog.
+  const { setCanCustomize, isCustomizeOpen, closeCustomize } =
+    useDashboardCustomize();
+  useEffect(() => {
+    setCanCustomize(!!(dashboardPersistence && data));
+    return () => setCanCustomize(false);
+  }, [dashboardPersistence, data, setCanCustomize]);
+
+  // Real power-card preview nodes for the Customize dialog — the SAME nodes the dashboard renders,
+  // so the editor shows cards exactly as they appear. Built unconditionally (before any early
+  // return) to keep hook order stable; harmless when data is absent.
+  const { cardNodes: powerCardNodes } = usePowerCardNodes({
+    latest: data?.latest ?? {},
+    vendorType: data?.system.vendorType ?? "",
+    getStaleThreshold,
+    showGrid: !!data?.latest?.["bidi.grid/power"],
+    systemId: data?.system.id,
+    canControl:
+      isAdmin || (!!userId && data?.system.ownerClerkUserId === userId),
+  });
 
   // The effective (saved-or-default) descriptor; null when persistence is off.
   const effectiveDescriptor = useMemo<DashboardDescriptor | null>(() => {
@@ -821,7 +843,7 @@ export default function DashboardClient({
         queryKey: ["dashboard-descriptor", systemId],
       });
     }
-    setIsCustomizeOpen(false);
+    closeCustomize();
   };
   const resetDashboard = async () => {
     if (systemId) {
@@ -830,7 +852,7 @@ export default function DashboardClient({
         queryKey: ["dashboard-descriptor", systemId],
       });
     }
-    setIsCustomizeOpen(false);
+    closeCustomize();
   };
   const availableModules = new Set<DashboardCardType>(
     (Object.keys(CARD_REGISTRY) as DashboardCardType[]).filter((t) =>
@@ -859,27 +881,18 @@ export default function DashboardClient({
         </div>
       )}
 
-      {/* Customize button + dialog (P2, DASHBOARD_PERSISTENCE) */}
+      {/* Customize dialog (P2, DASHBOARD_PERSISTENCE) — opened from the header "Customise…" menu item. */}
       {dashboardPersistence && data && (
-        <>
-          <div className="mb-4 flex justify-end">
-            <button
-              onClick={() => setIsCustomizeOpen(true)}
-              className="px-3 py-1.5 text-sm rounded-md border border-gray-600 text-gray-300 hover:bg-gray-700"
-            >
-              Customize
-            </button>
-          </div>
-          <DashboardCustomizeDialog
-            isOpen={isCustomizeOpen}
-            onClose={() => setIsCustomizeOpen(false)}
-            descriptor={effectiveDescriptor}
-            availableModules={availableModules}
-            availablePower={availablePower}
-            onSave={saveDashboard}
-            onReset={resetDashboard}
-          />
-        </>
+        <DashboardCustomizeDialog
+          isOpen={isCustomizeOpen}
+          onClose={closeCustomize}
+          descriptor={effectiveDescriptor}
+          availableModules={availableModules}
+          availablePower={availablePower}
+          powerCardNodes={powerCardNodes}
+          onSave={saveDashboard}
+          onReset={resetDashboard}
+        />
       )}
 
       {error &&

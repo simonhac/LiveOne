@@ -22,11 +22,13 @@ import {
   RefreshCw,
   Menu,
   X,
+  SlidersHorizontal,
 } from "lucide-react";
 import LastUpdateTime from "@/components/LastUpdateTime";
 import SystemInfoTooltip from "@/components/SystemInfoTooltip";
 import MobileHeaderMenu from "@/components/MobileHeaderMenu";
 import SystemsMenu from "@/components/SystemsMenu";
+import { useDashboardCustomizeOptional } from "@/contexts/DashboardCustomizeContext";
 
 interface SystemInfo {
   model?: string;
@@ -115,6 +117,9 @@ export default function DashboardHeader({
   const [showSystemDropdown, setShowSystemDropdown] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  // Customize (P2) — opens the dialog owned by DashboardClient. Only present when the dashboard is
+  // loaded and persistence is enabled (DashboardClient sets canCustomize).
+  const customize = useDashboardCustomizeOptional();
   const [isMobileSystemDropdownOpen, setIsMobileSystemDropdownOpen] =
     useState(false);
   const [longPressActive, setLongPressActive] = useState(false);
@@ -469,6 +474,20 @@ export default function DashboardHeader({
                       >
                         <SettingsIcon className="w-4 h-4" />
                         System Settings…
+                      </button>
+                    )}
+
+                    {/* Customise dashboard (P2) — present once the dashboard is loaded */}
+                    {customize?.canCustomize && (
+                      <button
+                        onClick={() => {
+                          setShowSettingsDropdown(false);
+                          customize.openCustomize();
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
+                      >
+                        <SlidersHorizontal className="w-4 h-4" />
+                        Customise…
                       </button>
                     )}
                   </div>
