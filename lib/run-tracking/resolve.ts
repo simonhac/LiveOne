@@ -89,6 +89,25 @@ export async function listEnabledTrackers(): Promise<ResolvedTracker[]> {
   return resolved.filter((t): t is ResolvedTracker => t !== null);
 }
 
+/** Cheap existence check: does (system, role) have an enabled tracker? One indexed lookup. */
+export async function hasEnabledTracker(
+  systemId: number,
+  role: string,
+): Promise<boolean> {
+  const [row] = await requirePlanetscaleDb()
+    .select({ id: deviceTrackers.id })
+    .from(deviceTrackers)
+    .where(
+      and(
+        eq(deviceTrackers.systemId, systemId),
+        eq(deviceTrackers.role, role),
+        eq(deviceTrackers.enabled, true),
+      ),
+    )
+    .limit(1);
+  return !!row;
+}
+
 /** The enabled tracker for a (system, role), or null. */
 export async function getTrackerForSystemRole(
   systemId: number,

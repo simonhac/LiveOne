@@ -12,7 +12,7 @@ describe("buildDefaultDescriptor (reproduces the vendor_type ladder)", () => {
     expect(d.cards.map((c) => c.type)).toEqual(["amber"]);
   });
 
-  it("mondo/composite → site layout with power-cards, site-charts, sankey", () => {
+  it("mondo/composite → site layout with power-cards, site-charts, sankey, generator-runs", () => {
     for (const vt of ["mondo", "composite"]) {
       const d = buildDefaultDescriptor({ vendorType: vt }, latest);
       expect(d.layout).toBe("site");
@@ -20,17 +20,19 @@ describe("buildDefaultDescriptor (reproduces the vendor_type ladder)", () => {
         "power-cards",
         "site-charts",
         "sankey",
+        "generator-runs",
       ]);
     }
   });
 
-  it("every other vendor → sidebar layout with power-cards + energy-chart", () => {
+  it("every other vendor → sidebar layout with power-cards, energy-chart, generator-runs", () => {
     for (const vt of ["selectronic", "enphase", "fronius", "tesla", "fusher"]) {
       const d = buildDefaultDescriptor({ vendorType: vt }, latest);
       expect(d.layout).toBe("sidebar");
       expect(d.cards.map((c) => c.type)).toEqual([
         "power-cards",
         "energy-chart",
+        "generator-runs",
       ]);
     }
   });
