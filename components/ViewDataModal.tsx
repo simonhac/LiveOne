@@ -9,6 +9,7 @@ import {
   formatDateTime,
   formatDate,
   formatDateTimeRange,
+  formatHoursAsDuration,
 } from "@/lib/fe-date-format";
 import { parseDateISO } from "@/lib/date-utils";
 import {
@@ -458,6 +459,9 @@ export default function ViewDataModal({
       const kw = numValue / 1000;
       // Only show decimal if not a whole number
       return kw % 1 === 0 ? `${kw.toFixed(0)}` : `${kw.toFixed(1)}`;
+    } else if (pointInfo?.metricType === "remaining") {
+      // Time remaining stored in hours; show as compact "0h43m" / "1d6h" duration
+      return formatHoursAsDuration(numValue);
     } else if (pointInfo?.metricUnit === "epochMs") {
       // Check for epoch 0 (Jan 1, 1970 00:00:00)
       if (numValue === 0) {

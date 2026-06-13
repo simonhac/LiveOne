@@ -157,6 +157,28 @@ export function formatDuration(ms: number): string {
 }
 
 /**
+ * Format a duration given in hours as a compact "Xh Ym" / "Xd Yh" string (no spaces).
+ *
+ * Examples:
+ * - 0 -> "0h"
+ * - 0.7167 -> "0h43m"
+ * - 1.0833 -> "1h5m" (minutes are not zero-padded)
+ * - 2 -> "2h"
+ * - 25.1 -> "1d1h" (>= 24h rolls into days, minutes dropped)
+ */
+export function formatHoursAsDuration(hours: number): string {
+  const totalMin = Math.round(hours * 60);
+  if (totalMin >= 1440) {
+    const days = Math.floor(totalMin / 1440);
+    const h = Math.floor((totalMin % 1440) / 60);
+    return `${days}d${h}h`;
+  }
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return m > 0 ? `${h}h${m}m` : `${h}h`;
+}
+
+/**
  * Format a relative time (e.g., "5 minutes ago", "in 2 hours")
  * @param date - Date to compare to now - must not be null
  * @returns Relative time string
