@@ -20,7 +20,6 @@ import { recomputeAgg1dForDay } from "@/lib/db/planetscale/aggregate-points-pg";
 import { recomputeFlowMatrixForDayBestEffort } from "@/lib/db/planetscale/flow-matrix-pg";
 import { FLOW_MATRIX_COMPUTE_IN_PG } from "@/lib/db/routing";
 import { listCompleteLogicalSystems } from "@/lib/aggregation/logical-system";
-import { RUN_TRACKING } from "@/lib/run-tracking/flags";
 import { recomputeRange as recomputeRunPeriodsRange } from "@/lib/run-tracking/recompute";
 
 // Earliest date for point data aggregation (when point data collection began)
@@ -266,15 +265,13 @@ export async function aggregateRange(
     }
   }
 
-  // Daily heal of device run periods over the aggregated range (best-effort, flag-gated).
+  // Daily heal of device run periods over the aggregated range (best-effort).
   // The minutely cron keeps the trailing window fresh; this catches late data across the range.
-  if (RUN_TRACKING) {
-    try {
-      const nowMs = Date.now();
-      await recomputeRunPeriodsRange(rangeStartMs, nowMs, nowMs);
-    } catch (error) {
-      console.error("[Daily Points] Run-period heal pass failed:", error);
-    }
+  try {
+    const nowMs = Date.now();
+    await recomputeRunPeriodsRange(rangeStartMs, nowMs, nowMs);
+  } catch (error) {
+    console.error("[Daily Points] Run-period heal pass failed:", error);
   }
 
   console.log(

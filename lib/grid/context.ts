@@ -12,7 +12,7 @@ import { and, eq, isNull } from "drizzle-orm";
 
 import type { AreaLocation } from "@/lib/areas/types";
 import { AREAS_TABLE } from "@/lib/areas/flags";
-import { GRID_SIGNALS_CARD } from "@/lib/dashboard/flags";
+import { GRID_SIGNALS_CARD } from "@/lib/grid/flags";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, pointInfo, systems } from "@/lib/db/planetscale/schema";
 import { stemMatchesRole } from "@/lib/roles/registry";

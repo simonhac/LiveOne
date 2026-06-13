@@ -22,6 +22,7 @@ import SitePowerChart, { type ChartData } from "@/components/SitePowerChart";
 import EnergyTable from "@/components/EnergyTable";
 import type { ProcessedSiteData } from "@/lib/site-data-processor";
 import EnergyFlowSankey from "@/components/EnergyFlowSankey";
+import GeneratorRunsCard from "@/components/GeneratorRunsCard";
 import {
   calculateEnergyFlowMatrix,
   type EnergyFlowMatrix,
@@ -156,23 +157,13 @@ interface DashboardClientProps {
   /** When true, the long-range (30D) Sankey is served from PG (FLOW_MATRIX_SERVE_FROM_PG). */
   serveFlowFromPg?: boolean;
   /**
-   * When true, layout/card selection is driven by the declarative dashboard descriptor
-   * (lib/dashboard) instead of the inline vendor_type checks. The descriptor reproduces the ladder,
-   * so on/off render identically. Gated by DECLARATIVE_DASHBOARD. See areas-and-dashboards.md.
-   */
-  declarativeDashboard?: boolean;
-  /**
-   * When true, load the user's saved dashboard descriptor (else the default) and enable Customize
-   * mode (reorder/hide/add cards, Reset to default). Gated by DASHBOARD_PERSISTENCE. Implies the
-   * descriptor render path. See areas-and-dashboards.md (P2).
-   */
-  dashboardPersistence?: boolean;
-  /**
    * The "Local Grid (NEM)" card's cross-system context (the public OpenElectricity region serving
    * this Area's location), resolved server-side. Null when off-grid / no region / flags off — the
    * card then defaults off and is not rendered. See areas-and-dashboards.md.
    */
   gridContext?: GridContext | null;
+  /** Whether this system has an enabled generator run-tracker (gates the generator-runs card). */
+  hasGenerator?: boolean;
 }
 
 // Helper function to get stale threshold based on vendor type
@@ -190,9 +181,8 @@ export default function DashboardClient({
   availableSystems = [],
   userId,
   serveFlowFromPg = false,
-  declarativeDashboard = false,
-  dashboardPersistence = false,
   gridContext = null,
+  hasGenerator = false,
 }: DashboardClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -236,19 +226,19 @@ export default function DashboardClient({
     [gridRegionData],
   );
 
-  // P2: persisted/customizable dashboard descriptor. The descriptor query is disabled (systemId "")
-  // and the result ignored unless the DASHBOARD_PERSISTENCE flag is on.
+  // Persisted/customizable dashboard descriptor. The descriptor query is disabled (systemId "")
+  // until a systemId is known.
   const { data: savedDescriptorResp } = useQuery(
-    dashboardDescriptorQuery(dashboardPersistence && systemId ? systemId : ""),
+    dashboardDescriptorQuery(systemId ?? ""),
   );
-  // Customize (P2) open/close + availability are shared with the header menu via context (the
+  // Customize open/close + availability are shared with the header menu via context (the
   // "Customise…" item lives in DashboardHeader, a sibling subtree). DashboardClient owns the dialog.
   const { setCanCustomize, isCustomizeOpen, closeCustomize } =
     useDashboardCustomize();
   useEffect(() => {
-    setCanCustomize(!!(dashboardPersistence && data));
+    setCanCustomize(!!data);
     return () => setCanCustomize(false);
-  }, [dashboardPersistence, data, setCanCustomize]);
+  }, [data, setCanCustomize]);
 
   // Real power-card preview nodes for the Customize dialog — the SAME nodes the dashboard renders,
   // so the editor shows cards exactly as they appear. Built unconditionally (before any early
@@ -263,21 +253,15 @@ export default function DashboardClient({
       isAdmin || (!!userId && data?.system.ownerClerkUserId === userId),
   });
 
-  // The effective (saved-or-default) descriptor; null when persistence is off.
+  // The effective (saved-or-default) descriptor; null until system data has loaded.
   const effectiveDescriptor = useMemo<DashboardDescriptor | null>(() => {
-    if (!dashboardPersistence || !data?.system) return null;
+    if (!data?.system) return null;
     const def = buildDefaultDescriptor(data.system, data.latest ?? {}, {
       gridSignalsAvailable: !!gridContext,
     });
     const saved = savedDescriptorResp?.descriptor ?? null;
     return saved ? normalizeDescriptor(saved, def) : def;
-  }, [
-    dashboardPersistence,
-    data?.system,
-    data?.latest,
-    savedDescriptorResp,
-    gridContext,
-  ]);
+  }, [data?.system, data?.latest, savedDescriptorResp, gridContext]);
 
   // Derive the display error from the query result, preserving the original branches:
   // connection failure, an explicit `error` body, or the "system exists but no charts" marker.
@@ -835,18 +819,9 @@ export default function DashboardClient({
     ? getPoint(data.latest, "bidi.grid/power") !== null
     : false;
 
-  // Active descriptor: the customizable one (P2) when persistence is on, else the generated one
-  // (P1) when DECLARATIVE_DASHBOARD is on, else null (legacy inline checks). The descriptor
-  // reproduces the ladder, so the layout booleans below match the original vendor_type tests.
-  // Editing happens in the Customize dialog (its own draft); the dashboard renders the saved
-  // (effective) descriptor and updates on Save.
-  const activeDescriptor: DashboardDescriptor | null = dashboardPersistence
-    ? effectiveDescriptor
-    : declarativeDashboard && data?.system
-      ? buildDefaultDescriptor(data.system, data.latest ?? {}, {
-          gridSignalsAvailable: !!gridContext,
-        })
-      : null;
+  // Active descriptor: the saved-or-default (customizable) descriptor; null only until data has
+  // loaded. The layout booleans fall back to vendor_type while it is null (loading).
+  const activeDescriptor: DashboardDescriptor | null = effectiveDescriptor;
   const vendorTypeForLayout = data?.system.vendorType;
   const isAmberLayout = activeDescriptor
     ? activeDescriptor.layout === "amber"
@@ -855,16 +830,13 @@ export default function DashboardClient({
     ? activeDescriptor.layout === "site"
     : vendorTypeForLayout === "mondo" || vendorTypeForLayout === "composite";
 
-  // P2 helpers. When persistence is off, cardVisible() is always true and powerCfg is null (so
-  // SystemPowerCards uses its default order/visibility) — i.e. unchanged behaviour.
+  // cardVisible() is true while the descriptor is still loading (null); powerCfg falls back to
+  // SystemPowerCards' default order/visibility until then.
   const cardVisible = (type: DashboardCardType): boolean =>
-    !dashboardPersistence ||
-    !activeDescriptor ||
-    isCardVisible(activeDescriptor, type);
-  const powerCfg =
-    dashboardPersistence && activeDescriptor
-      ? powerCardsConfigOf(activeDescriptor)
-      : null;
+    !activeDescriptor || isCardVisible(activeDescriptor, type);
+  const powerCfg = activeDescriptor
+    ? powerCardsConfigOf(activeDescriptor)
+    : null;
 
   // Customize (P2) handlers + the cards available on this system (for the dialog).
   const saveDashboard = async (next: DashboardDescriptor) => {
@@ -894,6 +866,7 @@ export default function DashboardClient({
       CARD_REGISTRY[t].canRender({
         vendorType: data?.system.vendorType ?? "",
         latest: data?.latest ?? {},
+        hasGenerator,
       }),
     ),
   );
@@ -916,8 +889,8 @@ export default function DashboardClient({
         </div>
       )}
 
-      {/* Customize dialog (P2, DASHBOARD_PERSISTENCE) — opened from the header "Customise…" menu item. */}
-      {dashboardPersistence && data && (
+      {/* Customize dialog — opened from the header "Customise…" menu item. */}
+      {data && (
         <DashboardCustomizeDialog
           isOpen={isCustomizeOpen}
           onClose={closeCustomize}
@@ -1494,6 +1467,13 @@ export default function DashboardClient({
                   />
                 ) : null}
               </div>
+            </div>
+          )}
+
+          {/* Generator runs — only when this system has an enabled generator tracker */}
+          {cardVisible("generator-runs") && hasGenerator && systemId && (
+            <div className="mt-4 px-1">
+              <GeneratorRunsCard systemId={parseInt(systemId)} />
             </div>
           )}
 

@@ -1,6 +1,6 @@
 /**
  * Areas feature flag (P3). Read once at module load. Only the exact string "true" (trimmed,
- * case-insensitive) is truthy — mirrors lib/dashboard/flags.ts and lib/db/routing.ts.
+ * case-insensitive) is truthy — mirrors lib/db/routing.ts.
  */
 
 function envFlag(name: string): boolean {

@@ -19,4 +19,5 @@ Replacement: a generalisable, logical-layer **run-tracking** feature (`lib/run-t
 
 The generator tracker reproduces the legacy definition (grid import > 50W ⇒ on, 120s coalescing)
 via config (`lowerW=-50`, `delayOffSeconds=120`), so the cutover is "same events, now bounded and
-persisted". Gated by the `RUN_TRACKING` flag. See the run-tracking modules for detail.
+persisted". (Was flag-gated by `RUN_TRACKING`; the flag has since been retired — the feature is
+permanent.) See the run-tracking modules for detail.

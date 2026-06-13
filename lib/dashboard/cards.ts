@@ -21,13 +21,16 @@ export type DashboardCardType =
   | "site-charts"
   | "sankey"
   | "energy-chart"
-  | "grid-signals";
+  | "grid-signals"
+  | "generator-runs";
 
 export type DashboardLayout = "amber" | "site" | "sidebar";
 
 export interface CardContext {
   vendorType: string;
   latest: LatestPointValues;
+  /** Whether the system has an enabled generator run-tracker (run-tracking feature). */
+  hasGenerator?: boolean;
 }
 
 export interface CardDef {
@@ -82,6 +85,13 @@ export const CARD_REGISTRY: Record<DashboardCardType, CardDef> = {
     // can't see. Treat this only as a gallery-eligibility hint, not the final say.
     canRender: (c) =>
       c.vendorType !== "amber" && hasVal(c.latest, "bidi.grid/power"),
+  },
+  "generator-runs": {
+    type: "generator-runs",
+    label: "Generator Runs",
+    requiredRoles: ["generator"],
+    // Eligible only where the system has an enabled generator run-tracker.
+    canRender: (c) => !!c.hasGenerator,
   },
 };
 

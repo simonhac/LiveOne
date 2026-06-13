@@ -10,11 +10,8 @@ import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { FLOW_MATRIX_SERVE_FROM_PG } from "@/lib/db/routing";
-import {
-  DECLARATIVE_DASHBOARD,
-  DASHBOARD_PERSISTENCE,
-} from "@/lib/dashboard/flags";
 import { resolveGridContextForSystem } from "@/lib/grid/context";
+import { hasEnabledTracker } from "@/lib/run-tracking/resolve";
 
 interface PageProps {
   params: Promise<{
@@ -228,6 +225,11 @@ export default async function DashboardPage({ params }: PageProps) {
   const gridContext =
     system && hasAccess ? await resolveGridContextForSystem(system.id) : null;
 
+  // Whether to offer the generator-runs card (system has an enabled generator tracker).
+  const hasGenerator = system
+    ? await hasEnabledTracker(system.id, "generator")
+    : false;
+
   // Render main dashboard
   if (!system) {
     return (
@@ -240,9 +242,8 @@ export default async function DashboardPage({ params }: PageProps) {
         availableSystems={systemsWithUsernames}
         userId={userId}
         serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
-        declarativeDashboard={DECLARATIVE_DASHBOARD}
-        dashboardPersistence={DASHBOARD_PERSISTENCE}
         gridContext={gridContext}
+        hasGenerator={hasGenerator}
       />
     );
   }
@@ -266,9 +267,8 @@ export default async function DashboardPage({ params }: PageProps) {
         availableSystems={systemsWithUsernames}
         userId={userId}
         serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
-        declarativeDashboard={DECLARATIVE_DASHBOARD}
-        dashboardPersistence={DASHBOARD_PERSISTENCE}
         gridContext={gridContext}
+        hasGenerator={hasGenerator}
       />
     </DashboardLayout>
   );
