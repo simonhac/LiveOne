@@ -5,10 +5,11 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/queries";
-import { X, Shield } from "lucide-react";
+import { X, Shield, Loader2 } from "lucide-react";
 import { useModalContext } from "@/contexts/ModalContext";
 import PointsTab from "./PointsTab";
 import CompositeTab from "./CompositeTab";
+import TeslaConfigTab from "./TeslaConfigTab";
 import AdminTab from "./AdminTab";
 import { TIMEZONE_GROUPS } from "@/lib/timezones";
 
@@ -48,6 +49,7 @@ export default function SystemSettingsDialog({
   const [isAliasDirty, setIsAliasDirty] = useState(false);
   const [isTimezoneDirty, setIsTimezoneDirty] = useState(false);
   const [isCompositeDirty, setIsCompositeDirty] = useState(false);
+  const [isTeslaDirty, setIsTeslaDirty] = useState(false);
   const [isAdminDirty, setIsAdminDirty] = useState(false);
   const [aliasError, setAliasError] = useState<string | null>(null);
   // Default system state
@@ -55,9 +57,10 @@ export default function SystemSettingsDialog({
   const [originalIsDefault, setOriginalIsDefault] = useState(false);
   const [isDefaultDirty, setIsDefaultDirty] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "general" | "points" | "composite" | "admin"
+    "general" | "points" | "composite" | "tesla" | "admin"
   >("general");
   const compositeSaveRef = useRef<(() => Promise<any>) | null>(null);
+  const teslaSaveRef = useRef<(() => Promise<any>) | null>(null);
   const adminSaveRef = useRef<(() => Promise<any>) | null>(null);
 
   // Register this modal with the global modal context
@@ -143,6 +146,7 @@ export default function SystemSettingsDialog({
       setIsAliasDirty(false);
       setIsTimezoneDirty(false);
       setIsCompositeDirty(false);
+      setIsTeslaDirty(false);
       setIsAdminDirty(false);
       setAliasError(null);
     }
@@ -184,6 +188,7 @@ export default function SystemSettingsDialog({
     isAliasDirty ||
     isTimezoneDirty ||
     isCompositeDirty ||
+    isTeslaDirty ||
     isAdminDirty ||
     isDefaultDirty;
   const hasGeneralChanges =
@@ -191,6 +196,8 @@ export default function SystemSettingsDialog({
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      const startedAt = performance.now();
+
       // Save regular settings (displayName, alias, displayTimezone)
       if (isDisplayNameDirty || isAliasDirty || isTimezoneDirty) {
         const settings: {
@@ -249,6 +256,28 @@ export default function SystemSettingsDialog({
         }
       }
 
+      // Save Tesla config via the generic per-system metadata route
+      if (isTeslaDirty && teslaSaveRef.current) {
+        const teslaConfig = await teslaSaveRef.current();
+
+        const response = await fetch(
+          `/api/admin/systems/${systemId}/metadata`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ key: "tesla", value: teslaConfig }),
+          },
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to update Tesla configuration");
+        }
+      }
+
       // Save admin settings separately
       if (isAdminDirty && adminSaveRef.current) {
         const adminData = await adminSaveRef.current();
@@ -296,6 +325,14 @@ export default function SystemSettingsDialog({
       if (isDisplayNameDirty) updates.displayName = editedDisplayName;
       if (isAliasDirty) updates.alias = editedAlias || null;
 
+      // Floor the perceived save at 500ms so a near-instant save shows a real spinner
+      // instead of an imperceptible flash. Log the actual (pre-floor) save time.
+      const elapsed = performance.now() - startedAt;
+      console.log(`[SystemSettings] Save took ${Math.round(elapsed)}ms`);
+      if (elapsed < 500) {
+        await new Promise((resolve) => setTimeout(resolve, 500 - elapsed));
+      }
+
       return updates;
     },
     onSuccess: async (updates) => {
@@ -304,6 +341,7 @@ export default function SystemSettingsDialog({
       setIsAliasDirty(false);
       setIsTimezoneDirty(false);
       setIsCompositeDirty(false);
+      setIsTeslaDirty(false);
       setIsAdminDirty(false);
       setIsDefaultDirty(false);
       setOriginalIsDefault(isDefaultSystem);
@@ -369,7 +407,7 @@ export default function SystemSettingsDialog({
     if (!isOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && !isSaving) {
         e.preventDefault();
         handleCancel();
       } else if (e.key === "Enter" && hasChanges && !isSaving && !aliasError) {
@@ -399,7 +437,8 @@ export default function SystemSettingsDialog({
             </h2>
             <button
               onClick={onClose}
-              className="p-1 hover:bg-gray-700 rounded transition-colors"
+              disabled={isSaving}
+              className="p-1 hover:bg-gray-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <X className="w-5 h-5 text-gray-400" />
             </button>
@@ -444,6 +483,21 @@ export default function SystemSettingsDialog({
                 >
                   Composite
                   {isCompositeDirty && (
+                    <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
+                  )}
+                </button>
+              )}
+              {vendorType === "tesla" && (
+                <button
+                  onClick={() => setActiveTab("tesla")}
+                  className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+                    activeTab === "tesla"
+                      ? "text-white border-blue-500 bg-gray-700/50"
+                      : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
+                  }`}
+                >
+                  Tesla
+                  {isTeslaDirty && (
                     <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
                   )}
                 </button>
@@ -605,6 +659,20 @@ export default function SystemSettingsDialog({
                   </div>
                 )}
 
+                {/* Tesla Tab Content */}
+                {vendorType === "tesla" && (
+                  <div className={activeTab === "tesla" ? "" : "hidden"}>
+                    <TeslaConfigTab
+                      systemId={systemId}
+                      shouldLoad={isOpen}
+                      onDirtyChange={setIsTeslaDirty}
+                      onSaveFunctionReady={(fn) => {
+                        teslaSaveRef.current = fn;
+                      }}
+                    />
+                  </div>
+                )}
+
                 {/* Admin Tab Content */}
                 {isAdmin && (
                   <div className={activeTab === "admin" ? "" : "hidden"}>
@@ -623,21 +691,31 @@ export default function SystemSettingsDialog({
           </div>
 
           {/* Footer */}
-          <div className="px-6 py-4 border-t border-gray-700 flex justify-end gap-3">
-            <button
-              onClick={handleCancel}
-              className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-gray-100 rounded-md transition-colors min-w-[100px]"
-              disabled={isSaving}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={!hasChanges || isSaving || !!aliasError}
-              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-w-[100px]"
-            >
-              {isSaving ? "Saving..." : "Save"}
-            </button>
+          <div className="px-6 py-4 border-t border-gray-700 flex items-center justify-between gap-3">
+            <p className="text-sm text-red-400 min-w-0 truncate">
+              {saveMutation.isError && !aliasError
+                ? saveMutation.error instanceof Error
+                  ? saveMutation.error.message
+                  : "Failed to save"
+                : ""}
+            </p>
+            <div className="flex gap-3 shrink-0">
+              <button
+                onClick={handleCancel}
+                className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-gray-100 rounded-md transition-colors min-w-[100px]"
+                disabled={isSaving}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={!hasChanges || isSaving || !!aliasError}
+                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-w-[100px] flex items-center justify-center gap-2"
+              >
+                {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+                {isSaving ? "Saving..." : "Save"}
+              </button>
+            </div>
           </div>
         </div>
       </div>
