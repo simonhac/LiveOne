@@ -1,10 +1,15 @@
 # Areas & Dashboards — separating the logical layer from the physical layer
 
-> **Status:** active — proposed 2026-06-13; **P0–P2 shipped & live on prod 2026-06-13** (PR #53).
-> The PRESENTATION layer (Dashboards/Cards) is built and flag-gated live; the SEMANTIC layer (Areas)
-> is **P3, not yet started**. The `areas`/`area_bindings`/`roles` schema below is still **proposed,
-> not approved** — any DDL is gated by the "ask before modifying the schema" rule. Schema source of
-> truth remains `lib/db/planetscale/schema.ts`. See the roadmap for exactly what's shipped vs. next.
+> **Status:** active — proposed 2026-06-13. **P0–P3 shipped & live on prod 2026-06-14.** Both the
+> PRESENTATION layer (Dashboards/Cards, PR #53) and the SEMANTIC layer (Areas) are live: `areas` /
+> `area_bindings` / `roles` exist (migration `0008`), `AREAS_TABLE="true"` in prod + preview, the
+> backfill is applied (1:1 identity Area per system + composite Areas for #7 Craig / #8 Kinkora),
+> `point_readings_flow_1d.area_id` is backfilled forward-only and **proven byte-identical** to the
+> `system_id` keying (parity harness, both envs), and `dashboards.area_id` links each dashboard to its
+> Area (migration `0011`, PR #66). What remains of P3 is the **deferred destructive tail** (drop
+> `flow_1d.system_id`, retire the composite `metadata` shim + pseudo-vendor) — gated behind a soak; see
+> the roadmap. **P4 (per-Dashboard sharing) is now next.** Schema source of truth:
+> `lib/db/planetscale/schema.ts`; any DDL still gated by the "ask before modifying the schema" rule.
 
 ## TL;DR
 
@@ -269,8 +274,13 @@ the physical layer" value with no schema change.**
   default. **Deferred within P2:** free reordering of the heavyweight chart modules (hide/show only) —
   needs their shared period/history/hover state decomposed.
 
-- **P3 — First-class `areas` + `area_bindings` + `roles`; retire composite-as-system. ← NEXT** (flag
-  `AREAS_TABLE`). Normalize the metadata JSON into typed rows; point `resolveLogicalSystem`, the
+- **P3 — First-class `areas` + `area_bindings` + `roles`; retire composite-as-system. ✅ SHIPPED & LIVE
+  (PR #55 schema/migration `0008`; #64 read layer + flow-matrix re-key; #66 `dashboards.area_id`
+  migration `0011`). Flag `AREAS_TABLE="true"` in prod + preview.** Backfill applied (identity + composite
+  Areas, `flow_1d.area_id`); parity proven byte-identical (`scripts/verify-areas-parity.ts`). **Still
+  deferred = the destructive tail** (drop `flow_1d.system_id`, retire the `metadata` shim + pseudo-vendor),
+  soak-gated — scoped in `docs/deferred/areas-p3-tail-and-p4-plan.md`. As-built notes below:
+  Normalized the metadata JSON into typed rows; pointed `resolveLogicalSystem`, the
   composite adapter, the summary store, and the KV registry builder at `area_bindings`.
   **Identity-Area seam (history):** every system gets a 1:1 identity Area; each composite `systems.id`
   maps 1:1 to an `areas.id`; add `area_id` to `point_readings_flow_1d` and backfill **forward-only —
@@ -289,8 +299,13 @@ the physical layer" value with no schema change.**
     composite Area + its member identity-Areas. Files: `lib/aggregation/{logical-system,flow-series}.ts`,
     `lib/db/planetscale/flow-matrix-pg.ts`.
 
-- **P4 — Per-Dashboard sharing.** `dashboard_grants` + `dashboard_share_tokens`; transitive
-  point-level read; implement share-token GET consumption.
+- **P4 — Per-Dashboard sharing. ← NEXT.** First the groundwork that makes a Dashboard a first-class
+  addressable entity (relax the `(user, system)` unique → multiple named dashboards per Area; add
+  `display_name`/`alias`; split the opaque JSONB descriptor into the typed `dashboard_cards` table —
+  the `dashboards.area_id` seam shipped in P3 is what this rotates on). Then sharing: `dashboard_grants`
+  - `dashboard_share_tokens`; transitive point-level read (access resolves Dashboard → its cards'
+    bindings → points); implement the not-yet-built share-token GET consumption. Scoped in
+    `docs/deferred/areas-p3-tail-and-p4-plan.md`.
 
 - **P5 — HA export bridge.** MQTT Discovery / HA API: System→Device, Point→Entity, Area→Area, Area
   bindings→Energy config.
