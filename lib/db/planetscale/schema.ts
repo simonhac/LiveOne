@@ -41,6 +41,7 @@ import {
   integer,
   bigint,
   text,
+  uuid,
   doublePrecision,
   boolean,
   jsonb,
@@ -412,6 +413,13 @@ export const pointReadingsFlow1d = pgTable(
     sourcePath: text("source_path").notNull(), // e.g. "source.solar" | "source.battery" | "source.grid"
     loadPath: text("load_path").notNull(), // "load" | "load.<sub>" | "load.battery" | "load.grid" | "load.rest-of-house"
 
+    // P3 Areas re-key (NOT a recompute): the Area this view belongs to, == the area whose
+    // legacy_system_id == this system_id. An identity Area is a 1:1 wrapper over a single
+    // physical system, so its rows are byte-identical to the system-keyed rows — flow history
+    // is never rebuilt. Nullable + backfilled forward-only; system_id stays through the soak and
+    // is dropped (with the composite shim) in a later migration. See areas-and-dashboards.md (P3).
+    areaId: uuid("area_id").references(() => areas.id),
+
     // Flow value
     energyKwh: doublePrecision("energy_kwh").notNull(), // always >= 0
 
@@ -428,6 +436,7 @@ export const pointReadingsFlow1d = pgTable(
     }),
     systemDayIdx: index("prf1d_system_day_idx").on(table.systemId, table.day),
     dayIdx: index("prf1d_day_idx").on(table.day),
+    areaDayIdx: index("prf1d_area_day_idx").on(table.areaId, table.day),
   }),
 );
 
@@ -525,6 +534,119 @@ export const dashboards = pgTable(
 );
 
 // ============================================================================
+// Roles - HA-device_class-aware role registry (P3). A SQL projection of the code
+// source of truth in lib/roles/registry.ts (ROLES). Seeded/kept-in-sync by the
+// backfill script; exists so area_bindings.role has a FK target and so SQL joins
+// (Sankey side, HA export) can read role metadata without the code registry.
+// Do NOT hand-edit role data here — change lib/roles/registry.ts and re-seed.
+// ============================================================================
+export const roles = pgTable("roles", {
+  role: text("role").primaryKey(), // RoleId: 'solar' | 'battery' | 'load' | 'grid' | 'ev'
+  category: text("category").notNull(), // 'source' | 'load' | 'bidi'
+  stem: text("stem").notNull(), // anchor logical_path_stem, e.g. 'source.solar' | 'bidi.battery'
+  label: text("label").notNull(),
+  haDeviceClass: text("ha_device_class").notNull(), // 'power' | 'battery' ...
+  haStateClass: text("ha_state_class").notNull(), // 'measurement' | 'total' | 'total_increasing'
+  haUnit: text("ha_unit").notNull(), // 'W' | '%'
+  summaryMetric: text("summary_metric"), // 'power' | 'soc' — null = not summarised (ev)
+  summaryAggregable: boolean("summary_aggregable"), // null when not summarised
+});
+
+// ============================================================================
+// Areas - the SEMANTIC layer (P3). A named role-set that binds physical points
+// into a coherent energy site. Replaces vendor_type='composite' fake systems rows.
+//
+//   kind='identity'  → 1:1 wrapper over a single physical system (source_system_id).
+//   kind='composite' → bindings drawn from points across ≥2 systems.
+//
+// `id` is a GUID (decoupled from systems.id). `legacy_system_id` is the systems.id
+// this Area was migrated from (identity: == source_system_id; composite: the composite
+// shim row) — it is the 1:1 seam that drives the point_readings_flow_1d.area_id re-key
+// and keeps the composite shim joined through the soak. Droppable post-soak.
+// Areas are organizational, NOT the access boundary (access stays system-granular until P4).
+// ============================================================================
+export const areas = pgTable(
+  "areas",
+  {
+    id: uuid("id").primaryKey().defaultRandom(), // app supplies uuidv7(); default is a safety net
+    ownerClerkUserId: text("owner_clerk_user_id"),
+    kind: text("kind").notNull(), // 'identity' | 'composite'
+    sourceSystemId: integer("source_system_id").references(() => systems.id), // set for kind='identity'
+    legacySystemId: integer("legacy_system_id").references(() => systems.id), // migration seam (1:1)
+    displayName: text("display_name").notNull(),
+    alias: text("alias"),
+    timezoneOffsetMin: integer("timezone_offset_min").notNull(),
+    displayTimezone: text("display_timezone").notNull(),
+    status: text("status").notNull().default("active"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    aliasUnique: uniqueIndex("areas_owner_alias_unique").on(
+      table.ownerClerkUserId,
+      table.alias,
+    ),
+    legacySystemUnique: uniqueIndex("areas_legacy_system_unique").on(
+      table.legacySystemId,
+    ),
+    sourceSystemIdx: index("areas_source_system_idx").on(table.sourceSystemId),
+  }),
+);
+
+// ============================================================================
+// Area bindings - the typed role→point edges (P3). One representation that subsumes
+// all legacy composite metadata JSON shapes (v2 `mappings`; the dead base_system/
+// overrides). One role may bind several points and several metric_types (e.g. battery
+// binds a `power` point AND a `soc` point — possibly from different child systems).
+//
+// `metric_type` comes from the child point_info, NOT from the role — a single v2
+// mapping bucket holds mixed metrics (e.g. Kinkora's `grid` bucket is a power point
+// plus Amber rate/value/energy points). `ordinal` reproduces the running enumeration
+// of buildSubscriptionRegistry so KV composite point refs stay stable. `transform` is
+// a per-binding override (nullable → inherit point_info.transform).
+//
+// The (point_system_id, point_id) index IS the KV subscription registry's reverse
+// lookup (source point → composites that subscribe), now in SQL.
+// ============================================================================
+export const areaBindings = pgTable(
+  "area_bindings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    areaId: uuid("area_id")
+      .notNull()
+      .references(() => areas.id, { onDelete: "cascade" }),
+    role: text("role")
+      .notNull()
+      .references(() => roles.role),
+    metricType: text("metric_type").notNull(), // from point_info: 'power' | 'soc' | 'energy' | 'rate' ...
+    pointSystemId: integer("point_system_id").notNull(), // the CHILD physical system
+    pointId: integer("point_id").notNull(), // (point_system_id, point_id) → point_info(system_id, id)
+    ordinal: integer("ordinal").notNull(),
+    transform: text("transform"), // per-binding override; null = inherit point_info.transform
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    bindingUnique: uniqueIndex("area_bindings_unique").on(
+      table.areaId,
+      table.role,
+      table.metricType,
+      table.pointSystemId,
+      table.pointId,
+    ),
+    pointIdx: index("area_bindings_point_idx").on(
+      table.pointSystemId,
+      table.pointId,
+    ),
+    areaIdx: index("area_bindings_area_idx").on(table.areaId),
+    pointFk: foreignKey({
+      columns: [table.pointSystemId, table.pointId],
+      foreignColumns: [pointInfo.systemId, pointInfo.index],
+      name: "area_bindings_point_info_fk",
+    }),
+  }),
+);
+
+// ============================================================================
 // Type exports
 // ============================================================================
 export type System = typeof systems.$inferSelect;
@@ -553,3 +675,9 @@ export type ObservationsOutbox = typeof observationsOutbox.$inferSelect;
 export type NewObservationsOutbox = typeof observationsOutbox.$inferInsert;
 export type Dashboard = typeof dashboards.$inferSelect;
 export type NewDashboard = typeof dashboards.$inferInsert;
+export type Role = typeof roles.$inferSelect;
+export type NewRole = typeof roles.$inferInsert;
+export type Area = typeof areas.$inferSelect;
+export type NewArea = typeof areas.$inferInsert;
+export type AreaBinding = typeof areaBindings.$inferSelect;
+export type NewAreaBinding = typeof areaBindings.$inferInsert;

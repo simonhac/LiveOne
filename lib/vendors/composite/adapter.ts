@@ -4,6 +4,8 @@ import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { LatestReadingData } from "@/lib/types/readings";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import type { RoleId } from "@/lib/roles/registry";
+import { AREAS_TABLE } from "@/lib/areas/flags";
+import { deriveLiveSourceSystems } from "@/lib/areas/bindings";
 
 /**
  * Composite system metadata
@@ -73,23 +75,41 @@ export class CompositeAdapter extends BaseVendorAdapter {
         return null;
       }
 
-      const metadata = system.metadata as CompositeMetadata;
-
-      if (!metadata.base_system && !metadata.overrides) {
-        console.error(
-          "[Composite] Invalid metadata - must have base_system or overrides",
-        );
-        return null;
-      }
-
-      // Determine source systems for each metric
-      const sources = {
-        solar: this.getSourceForMetric("solar", metadata),
-        battery: this.getSourceForMetric("battery", metadata),
-        battery_soc: this.getSourceForMetric("battery_soc", metadata),
-        load: this.getSourceForMetric("load", metadata),
-        grid: this.getSourceForMetric("grid", metadata),
+      // P3: derive the per-metric source systems from typed area_bindings (flag on) or the legacy
+      // base_system/overrides metadata (flag off). Both produce the same {solar,battery,...} map for
+      // a given composite — see the converter's base_system/overrides round-trip test.
+      let sources: {
+        solar: number | null;
+        battery: number | null;
+        battery_soc: number | null;
+        load: number | null;
+        grid: number | null;
       };
+      if (AREAS_TABLE) {
+        sources = await deriveLiveSourceSystems(systemId);
+        if (Object.values(sources).every((s) => s === null)) {
+          console.error("[Composite] No area_bindings for composite", systemId);
+          return null;
+        }
+      } else {
+        const metadata = system.metadata as CompositeMetadata;
+
+        if (!metadata.base_system && !metadata.overrides) {
+          console.error(
+            "[Composite] Invalid metadata - must have base_system or overrides",
+          );
+          return null;
+        }
+
+        // Determine source systems for each metric
+        sources = {
+          solar: this.getSourceForMetric("solar", metadata),
+          battery: this.getSourceForMetric("battery", metadata),
+          battery_soc: this.getSourceForMetric("battery_soc", metadata),
+          load: this.getSourceForMetric("load", metadata),
+          grid: this.getSourceForMetric("grid", metadata),
+        };
+      }
 
       console.log("[Composite] Source mapping:", sources);
 

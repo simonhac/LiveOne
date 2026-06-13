@@ -1,0 +1,673 @@
+{
+  "note": "Both real composites use v2 mappings format. base_system/overrides exists in NO prod row.",
+  "composites": [
+    {
+      "id": 7,
+      "alias": "blackburn",
+      "metadata": {
+        "version": 2,
+        "mappings": {
+          "grid": ["2.6"],
+          "load": ["2.4"],
+          "solar": ["3.1"],
+          "battery": ["2.5"]
+        }
+      },
+      "vendorType": "composite",
+      "displayName": "Craig Unified"
+    },
+    {
+      "id": 8,
+      "alias": "shorty",
+      "metadata": {
+        "version": 2,
+        "mappings": {
+          "ev": [
+            "10.1",
+            "10.6",
+            "10.5",
+            "10.2",
+            "10.7",
+            "10.8",
+            "10.4",
+            "10.11",
+            "10.3",
+            "10.10",
+            "10.9"
+          ],
+          "grid": [
+            "6.13",
+            "9.1",
+            "9.6",
+            "9.5",
+            "9.2",
+            "9.7",
+            "9.8",
+            "9.3",
+            "9.4"
+          ],
+          "load": ["6.1", "6.3", "6.11", "6.5"],
+          "solar": ["6.17", "6.7"],
+          "battery": ["5.7", "6.9"]
+        }
+      },
+      "vendorType": "composite",
+      "displayName": "Kinkora Unified"
+    }
+  ],
+  "capturedFrom": "prod sydney (PLANETSCALE_DATABASE_URL_MIGRATIONS)",
+  "childPointInfo": [
+    {
+      "systemId": 2,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 1,
+      "displayName": "Solar",
+      "logicalPathStem": "source.solar"
+    },
+    {
+      "systemId": 2,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 2,
+      "displayName": "Solar Remote",
+      "logicalPathStem": "source.solar.remote"
+    },
+    {
+      "systemId": 2,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 3,
+      "displayName": "Solar Local",
+      "logicalPathStem": "source.solar.local"
+    },
+    {
+      "systemId": 2,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 4,
+      "displayName": "Load",
+      "logicalPathStem": "load"
+    },
+    {
+      "systemId": 2,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 5,
+      "displayName": "Battery",
+      "logicalPathStem": "bidi.battery"
+    },
+    {
+      "systemId": 2,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 6,
+      "displayName": "Grid",
+      "logicalPathStem": "bidi.grid"
+    },
+    {
+      "systemId": 2,
+      "transform": null,
+      "metricType": "soc",
+      "metricUnit": "%",
+      "pointIndex": 7,
+      "displayName": "Battery",
+      "logicalPathStem": "bidi.battery"
+    },
+    {
+      "systemId": 2,
+      "transform": null,
+      "metricType": "code",
+      "metricUnit": "number",
+      "pointIndex": 8,
+      "displayName": "Fault",
+      "logicalPathStem": null
+    },
+    {
+      "systemId": 2,
+      "transform": null,
+      "metricType": "time",
+      "metricUnit": "epochMs",
+      "pointIndex": 9,
+      "displayName": "Fault",
+      "logicalPathStem": null
+    },
+    {
+      "systemId": 2,
+      "transform": null,
+      "metricType": "active",
+      "metricUnit": "bool",
+      "pointIndex": 10,
+      "displayName": "Generator",
+      "logicalPathStem": null
+    },
+    {
+      "systemId": 2,
+      "transform": "d",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 11,
+      "displayName": "Solar",
+      "logicalPathStem": "source.solar"
+    },
+    {
+      "systemId": 2,
+      "transform": "d",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 12,
+      "displayName": "Load",
+      "logicalPathStem": "load"
+    },
+    {
+      "systemId": 2,
+      "transform": "d",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 13,
+      "displayName": "Battery Charge",
+      "logicalPathStem": "bidi.battery.charge"
+    },
+    {
+      "systemId": 2,
+      "transform": "d",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 14,
+      "displayName": "Battery Discharge",
+      "logicalPathStem": "bidi.battery.discharge"
+    },
+    {
+      "systemId": 2,
+      "transform": "d",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 15,
+      "displayName": "Import",
+      "logicalPathStem": "bidi.grid.import"
+    },
+    {
+      "systemId": 2,
+      "transform": "d",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 16,
+      "displayName": "Export",
+      "logicalPathStem": "bidi.grid.export"
+    },
+    {
+      "systemId": 3,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 1,
+      "displayName": "Solar",
+      "logicalPathStem": "source.solar"
+    },
+    {
+      "systemId": 3,
+      "transform": null,
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 2,
+      "displayName": "Solar Interval",
+      "logicalPathStem": "source.solar"
+    },
+    {
+      "systemId": 5,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 1,
+      "displayName": "Solar",
+      "logicalPathStem": "source.solar"
+    },
+    {
+      "systemId": 5,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 2,
+      "displayName": "Solar Remote",
+      "logicalPathStem": "source.solar.remote"
+    },
+    {
+      "systemId": 5,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 3,
+      "displayName": "Solar Local",
+      "logicalPathStem": "source.solar.local"
+    },
+    {
+      "systemId": 5,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 4,
+      "displayName": "Load",
+      "logicalPathStem": "load"
+    },
+    {
+      "systemId": 5,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 5,
+      "displayName": "Battery",
+      "logicalPathStem": "bidi.battery"
+    },
+    {
+      "systemId": 5,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 6,
+      "displayName": "Grid",
+      "logicalPathStem": "bidi.grid"
+    },
+    {
+      "systemId": 5,
+      "transform": null,
+      "metricType": "soc",
+      "metricUnit": "%",
+      "pointIndex": 7,
+      "displayName": "Battery",
+      "logicalPathStem": "bidi.battery"
+    },
+    {
+      "systemId": 5,
+      "transform": null,
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 8,
+      "displayName": "Solar",
+      "logicalPathStem": "source.solar"
+    },
+    {
+      "systemId": 5,
+      "transform": null,
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 9,
+      "displayName": "Load",
+      "logicalPathStem": "load"
+    },
+    {
+      "systemId": 5,
+      "transform": null,
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 10,
+      "displayName": "Battery Charge",
+      "logicalPathStem": "bidi.battery.charge"
+    },
+    {
+      "systemId": 5,
+      "transform": null,
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 11,
+      "displayName": "Battery Discharge",
+      "logicalPathStem": "bidi.battery.discharge"
+    },
+    {
+      "systemId": 5,
+      "transform": null,
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 12,
+      "displayName": "Import",
+      "logicalPathStem": "bidi.grid.import"
+    },
+    {
+      "systemId": 5,
+      "transform": null,
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 13,
+      "displayName": "Export",
+      "logicalPathStem": "bidi.grid.export"
+    },
+    {
+      "systemId": 6,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 1,
+      "displayName": "EV",
+      "logicalPathStem": "load.ev"
+    },
+    {
+      "systemId": 6,
+      "transform": "d",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 2,
+      "displayName": "EV",
+      "logicalPathStem": null
+    },
+    {
+      "systemId": 6,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 3,
+      "displayName": "Heat Pump",
+      "logicalPathStem": "load.hws"
+    },
+    {
+      "systemId": 6,
+      "transform": "d",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 4,
+      "displayName": "HWS",
+      "logicalPathStem": null
+    },
+    {
+      "systemId": 6,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 5,
+      "displayName": "Pool",
+      "logicalPathStem": "load.pool"
+    },
+    {
+      "systemId": 6,
+      "transform": "d",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 6,
+      "displayName": "Pool",
+      "logicalPathStem": null
+    },
+    {
+      "systemId": 6,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 7,
+      "displayName": "Solar 2",
+      "logicalPathStem": "source.solar.remote"
+    },
+    {
+      "systemId": 6,
+      "transform": "d",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 8,
+      "displayName": "Solar 2",
+      "logicalPathStem": null
+    },
+    {
+      "systemId": 6,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 9,
+      "displayName": "Battery Storage",
+      "logicalPathStem": "bidi.battery"
+    },
+    {
+      "systemId": 6,
+      "transform": "d",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 10,
+      "displayName": "Battery Storage",
+      "logicalPathStem": null
+    },
+    {
+      "systemId": 6,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 11,
+      "displayName": "HVAC",
+      "logicalPathStem": "load.hvac"
+    },
+    {
+      "systemId": 6,
+      "transform": "d",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 12,
+      "displayName": "HVAC",
+      "logicalPathStem": null
+    },
+    {
+      "systemId": 6,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 13,
+      "displayName": "Grid",
+      "logicalPathStem": "bidi.grid"
+    },
+    {
+      "systemId": 6,
+      "transform": "d",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 14,
+      "displayName": "Meter (Mains Power)",
+      "logicalPathStem": null
+    },
+    {
+      "systemId": 6,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 15,
+      "displayName": "Battery",
+      "logicalPathStem": null
+    },
+    {
+      "systemId": 6,
+      "transform": "d",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 16,
+      "displayName": "Battery",
+      "logicalPathStem": null
+    },
+    {
+      "systemId": 6,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "W",
+      "pointIndex": 17,
+      "displayName": "Solar 1",
+      "logicalPathStem": "source.solar.local"
+    },
+    {
+      "systemId": 6,
+      "transform": "d",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 18,
+      "displayName": "Solar 1",
+      "logicalPathStem": null
+    },
+    {
+      "systemId": 9,
+      "transform": null,
+      "metricType": "rate",
+      "metricUnit": "cents_kWh",
+      "pointIndex": 1,
+      "displayName": "Grid export",
+      "logicalPathStem": "bidi.grid.export"
+    },
+    {
+      "systemId": 9,
+      "transform": null,
+      "metricType": "rate",
+      "metricUnit": "cents_kWh",
+      "pointIndex": 2,
+      "displayName": "Grid import",
+      "logicalPathStem": "bidi.grid.import"
+    },
+    {
+      "systemId": 9,
+      "transform": null,
+      "metricType": "proportion",
+      "metricUnit": "%",
+      "pointIndex": 3,
+      "displayName": "Grid renewables",
+      "logicalPathStem": "bidi.grid.renewables"
+    },
+    {
+      "systemId": 9,
+      "transform": null,
+      "metricType": "rate",
+      "metricUnit": "cents_kWh",
+      "pointIndex": 4,
+      "displayName": "Grid spot price",
+      "logicalPathStem": "bidi.grid.spot"
+    },
+    {
+      "systemId": 9,
+      "transform": null,
+      "metricType": "value",
+      "metricUnit": "cents",
+      "pointIndex": 5,
+      "displayName": "Grid export",
+      "logicalPathStem": "bidi.grid.export"
+    },
+    {
+      "systemId": 9,
+      "transform": null,
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 6,
+      "displayName": "Grid export",
+      "logicalPathStem": "bidi.grid.export"
+    },
+    {
+      "systemId": 9,
+      "transform": null,
+      "metricType": "value",
+      "metricUnit": "cents",
+      "pointIndex": 7,
+      "displayName": "Grid import",
+      "logicalPathStem": "bidi.grid.import"
+    },
+    {
+      "systemId": 9,
+      "transform": null,
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "pointIndex": 8,
+      "displayName": "Grid import",
+      "logicalPathStem": "bidi.grid.import"
+    },
+    {
+      "systemId": 10,
+      "transform": null,
+      "metricType": "soc",
+      "metricUnit": "%",
+      "pointIndex": 1,
+      "displayName": "Battery SoC",
+      "logicalPathStem": "ev.battery"
+    },
+    {
+      "systemId": 10,
+      "transform": null,
+      "metricType": "soc",
+      "metricUnit": "%",
+      "pointIndex": 2,
+      "displayName": "Charge Limit SoC",
+      "logicalPathStem": "ev.charge.limit"
+    },
+    {
+      "systemId": 10,
+      "transform": null,
+      "metricType": "engaged",
+      "metricUnit": "boolean",
+      "pointIndex": 3,
+      "displayName": "Plugged In",
+      "logicalPathStem": "ev.charge"
+    },
+    {
+      "systemId": 10,
+      "transform": null,
+      "metricType": "state",
+      "metricUnit": "text",
+      "pointIndex": 4,
+      "displayName": "Charging State",
+      "logicalPathStem": "ev.charge"
+    },
+    {
+      "systemId": 10,
+      "transform": null,
+      "metricType": "current",
+      "metricUnit": "A",
+      "pointIndex": 5,
+      "displayName": "Charge Limit Current",
+      "logicalPathStem": "ev.charge.limit"
+    },
+    {
+      "systemId": 10,
+      "transform": null,
+      "metricType": "current",
+      "metricUnit": "A",
+      "pointIndex": 6,
+      "displayName": "Charge Current",
+      "logicalPathStem": "ev.charge"
+    },
+    {
+      "systemId": 10,
+      "transform": null,
+      "metricType": "power",
+      "metricUnit": "kW",
+      "pointIndex": 7,
+      "displayName": "Charge Power",
+      "logicalPathStem": "ev.charge"
+    },
+    {
+      "systemId": 10,
+      "transform": null,
+      "metricType": "rate",
+      "metricUnit": "mi/hr",
+      "pointIndex": 8,
+      "displayName": "Charge Rate",
+      "logicalPathStem": "ev.charge"
+    },
+    {
+      "systemId": 10,
+      "transform": null,
+      "metricType": "remaining",
+      "metricUnit": "hours",
+      "pointIndex": 9,
+      "displayName": "Time to Full",
+      "logicalPathStem": "ev.charge"
+    },
+    {
+      "systemId": 10,
+      "transform": null,
+      "metricType": "speed",
+      "metricUnit": "mph",
+      "pointIndex": 10,
+      "displayName": "Speed",
+      "logicalPathStem": "ev"
+    },
+    {
+      "systemId": 10,
+      "transform": null,
+      "metricType": "odometer",
+      "metricUnit": "miles",
+      "pointIndex": 11,
+      "displayName": "Odometer",
+      "logicalPathStem": "ev"
+    }
+  ]
+}

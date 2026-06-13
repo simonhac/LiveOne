@@ -1,12 +1,11 @@
 import { kv, kvKey } from "./kv";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import {
-  systems as systemsTable,
-  pointInfo as pointInfoTable,
-} from "@/lib/db/planetscale/schema";
+import { systems as systemsTable } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
 import { PointReference } from "./identifiers";
 import { LatestValue, LatestValuesMap } from "./latest-values-store";
+import { AREAS_TABLE } from "@/lib/areas/flags";
+import { getAllCompositeBindings } from "@/lib/areas/bindings";
 
 // Re-export canonical types for backwards compatibility
 export type { LatestValue, LatestValuesMap };
@@ -175,67 +174,86 @@ async function getPointSubscribers(
  * - When composite system metadata changes
  * - Periodically (e.g., daily) as a safety net
  */
-export async function buildSubscriptionRegistry(): Promise<void> {
-  // Query all composite systems with their points
+/** Insert one (source point → composite point ref) edge into the reverse-subscription map. */
+function addSubscription(
+  subscriptions: Map<number, Map<string, Set<string>>>,
+  sourceSystemId: number,
+  sourcePointId: string,
+  compositePointRef: string,
+): void {
+  if (!subscriptions.has(sourceSystemId)) {
+    subscriptions.set(sourceSystemId, new Map());
+  }
+  const sourceSystemMap = subscriptions.get(sourceSystemId)!;
+  if (!sourceSystemMap.has(sourcePointId)) {
+    sourceSystemMap.set(sourcePointId, new Set());
+  }
+  sourceSystemMap.get(sourcePointId)!.add(compositePointRef);
+}
+
+/** AREAS_TABLE on: reverse-subscription map from typed area_bindings (the (point) index, in SQL). */
+async function buildSubscriptionsFromBindings(): Promise<
+  Map<number, Map<string, Set<string>>>
+> {
+  const subscriptions = new Map<number, Map<string, Set<string>>>();
+  for (const b of await getAllCompositeBindings()) {
+    addSubscription(
+      subscriptions,
+      b.pointSystemId,
+      b.pointId.toString(),
+      `${b.compositeSystemId}.${b.ordinal}`,
+    );
+  }
+  return subscriptions;
+}
+
+/** AREAS_TABLE off (legacy): reverse-subscription map from composite metadata.mappings (v2). */
+async function buildSubscriptionsFromMetadata(): Promise<
+  Map<number, Map<string, Set<string>>>
+> {
   const compositeSystems = await requirePlanetscaleDb()
     .select()
     .from(systemsTable)
     .where(eq(systemsTable.vendorType, "composite"));
 
-  // Build reverse mapping: sourceSystemId → { pointId → [compositePointRefs] }
-  // Example: { 6: { "1": ["100.0", "101.2"], "2": ["100.1"] } }
   const subscriptions = new Map<number, Map<string, Set<string>>>();
-
   for (const composite of compositeSystems) {
     const metadata = composite.metadata as any;
-
-    // Validate version 2 format
     if (!metadata || metadata.version !== 2 || !metadata.mappings) {
       continue;
     }
-
-    // Get all points for this composite system to map array index to point info
-    const compositePoints = await requirePlanetscaleDb()
-      .select()
-      .from(pointInfoTable)
-      .where(eq(pointInfoTable.systemId, composite.id))
-      .orderBy(pointInfoTable.index);
-
-    // Build map: sourcePointRef → compositePointIndex
-    // For each category in mappings (solar, battery, etc.)
     let compositePointIndex = 0;
     for (const [, sourcePointRefs] of Object.entries(metadata.mappings)) {
       if (!Array.isArray(sourcePointRefs)) continue;
-
       for (const sourcePointRefStr of sourcePointRefs as string[]) {
-        // Parse source point reference (e.g., "6.1" → systemId=6, pointId=1)
         const sourcePointRef = PointReference.parse(sourcePointRefStr);
         if (!sourcePointRef) {
           console.warn(`Invalid point reference: ${sourcePointRefStr}`);
           continue;
         }
-
-        const sourceSystemId = sourcePointRef.systemId;
-        const sourcePointId = sourcePointRef.pointId.toString();
-
-        // Composite point reference (e.g., "100.0" for composite system 100, point index 0)
-        const compositePointRef = `${composite.id}.${compositePointIndex}`;
-
-        // Add to subscriptions map
-        if (!subscriptions.has(sourceSystemId)) {
-          subscriptions.set(sourceSystemId, new Map());
-        }
-        const sourceSystemMap = subscriptions.get(sourceSystemId)!;
-
-        if (!sourceSystemMap.has(sourcePointId)) {
-          sourceSystemMap.set(sourcePointId, new Set());
-        }
-        sourceSystemMap.get(sourcePointId)!.add(compositePointRef);
-
+        addSubscription(
+          subscriptions,
+          sourcePointRef.systemId,
+          sourcePointRef.pointId.toString(),
+          `${composite.id}.${compositePointIndex}`,
+        );
         compositePointIndex++;
       }
     }
   }
+  return subscriptions;
+}
+
+export async function buildSubscriptionRegistry(): Promise<void> {
+  // Build reverse mapping: sourceSystemId → { pointId → [compositePointRefs] }
+  // Example: { 6: { "1": ["100.0", "101.2"], "2": ["100.1"] } }
+  // P3: source the (composite → child point) edges from typed area_bindings (flag on) or the legacy
+  // composite metadata.mappings JSON (flag off). The compositePointRef's index half is vestigial
+  // (updateLatestPointValue keys the composite's latest hash by logicalPath, not by index), so the
+  // two paths produce equivalent registries — only the source of the edges differs.
+  const subscriptions = AREAS_TABLE
+    ? await buildSubscriptionsFromBindings()
+    : await buildSubscriptionsFromMetadata();
 
   // First, scan for existing subscription keys and delete any that are no longer needed
   const pattern = kvKey("subscriptions:system:*");

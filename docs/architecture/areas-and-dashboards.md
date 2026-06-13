@@ -1,9 +1,10 @@
 # Areas & Dashboards — separating the logical layer from the physical layer
 
-> **Status:** plan — proposed 2026-06-13. A forward-looking design/direction-of-travel doc, not yet
-> implemented. The **proposed schema below is not approved** — it is illustrative; any DDL is gated by
-> the "ask before modifying the schema" rule. Schema source of truth remains
-> `lib/db/planetscale/schema.ts`.
+> **Status:** active — proposed 2026-06-13; **P0–P2 shipped & live on prod 2026-06-13** (PR #53).
+> The PRESENTATION layer (Dashboards/Cards) is built and flag-gated live; the SEMANTIC layer (Areas)
+> is **P3, not yet started**. The `areas`/`area_bindings`/`roles` schema below is still **proposed,
+> not approved** — any DDL is gated by the "ask before modifying the schema" rule. Schema source of
+> truth remains `lib/db/planetscale/schema.ts`. See the roadmap for exactly what's shipped vs. next.
 
 ## TL;DR
 
@@ -249,23 +250,27 @@ bindings grouped by `(role, metric_type)`; `CompositeTab`/`SystemPowerCards` rea
 Each phase is independently valuable. **P0–P1 are pure frontend/refactor — most of the "modules from
 the physical layer" value with no schema change.**
 
-- **P0 — HA-aware role registry.** `lib/roles/registry.ts` as the single source of truth; encodes HA
-  `device_class`/`state_class`/unit + source/load/bidi + `isCompleteRoleSet`. Replace the four
-  duplications with imports. No flag, no schema; covered by existing tests. _Scope discipline:
-  role-vocabulary extraction only — do not move `synthesizeMasterLoad`/the card catalog in this PR._
+- **P0 — HA-aware role registry. ✅ SHIPPED (PR #53).** `lib/roles/registry.ts` is the single source
+  of truth (role id, category, anchor stem, HA `device_class`/`state_class`/unit, `isCompleteRoleSet`);
+  the four duplications (`lib/aggregation/logical-system.ts`, `lib/system-summary-store.ts`,
+  `components/CompositeTab.tsx`, the composite-config route) import it. Behaviour-preserving; no
+  flag/schema.
 
-- **P1 — Card registry + descriptor-driven dashboard** (flag `DECLARATIVE_DASHBOARD`, frontend only).
-  Introduce the card registry + `buildDefaultDashboard`; `DashboardClient` becomes a generic renderer;
-  `SystemPowerCards`' point-presence checks become per-card `canRender`. Descriptor is **computed, not
-  stored** — no migration. Flag off = current path verbatim. Risk: reproduce the ladder's subtle
-  conditionals (removed-system banner, "unconfigured composite" warning, sidebar-vs-full-width,
-  `POINT_READINGS_NO_CHARTS`) — render both paths in dev and diff per vendor type before flipping.
+- **P1 — Card registry + descriptor-driven dashboard. ✅ SHIPPED (PR #53; flag `DECLARATIVE_DASHBOARD`).**
+  `lib/dashboard/cards.ts` (card registry, per-card `canRender`) + `lib/dashboard/descriptor.ts`
+  (`buildDefaultDescriptor`, reproduces the `vendor_type` ladder exactly). `DashboardClient` derives
+  `isAmberLayout`/`isSiteLayout` from the descriptor. Flag off = byte-identical. (Subsumed by the P2
+  flag.)
 
-- **P2 — Persist dashboards + favorites/Add-Card gallery** (`dashboards`/`dashboard_cards`; flag
-  `DASHBOARD_PERSISTENCE`). Opt-in editing; default stays auto-generated; saving forks the descriptor
-  into rows. Apple-Home-style: pin/reorder/hide + add from gallery.
+- **P2 — Persist + customize dashboards. ✅ SHIPPED & LIVE ON PROD (PR #53; flag `DASHBOARD_PERSISTENCE`,
+  migration `0007`).** New `dashboards` table stores a per-(user, system) descriptor as **JSONB** (the
+  doc's `dashboard_cards` split is deferred to P3). `GET/PUT/DELETE /api/dashboard/[systemId]` +
+  `lib/dashboard/store.ts`. Customize is a **modal dialog** (`components/DashboardCustomizeDialog.tsx`,
+  settings-dialog styling): reorder/hide/show power mini-cards + show/hide chart modules + Reset to
+  default. **Deferred within P2:** free reordering of the heavyweight chart modules (hide/show only) —
+  needs their shared period/history/hover state decomposed.
 
-- **P3 — First-class `areas` + `area_bindings` + `roles`; retire composite-as-system** (flag
+- **P3 — First-class `areas` + `area_bindings` + `roles`; retire composite-as-system. ← NEXT** (flag
   `AREAS_TABLE`). Normalize the metadata JSON into typed rows; point `resolveLogicalSystem`, the
   composite adapter, the summary store, and the KV registry builder at `area_bindings`.
   **Identity-Area seam (history):** every system gets a 1:1 identity Area; each composite `systems.id`
@@ -276,6 +281,14 @@ the physical layer" value with no schema change.**
   registry (a rebuildable cache — migrate it **last**), and `share_tokens` keep working. The converter
   must handle all three legacy formats and **round-trip-assert on the real composite rows** (e.g.
   system 7, Kinkora) before migrating.
+  - **Flow matrix = re-key, not recompute.** `point_readings_flow_1d` is **already logical-keyed**
+    (`system_id` = the view), so an identity Area resolves to the same points and yields
+    **byte-identical** rows — do _not_ rebuild flow history. `buildFlowSeries`, the `agg_5m` read, and
+    the daily sum are untouched; the only changes are `resolveLogicalSystem` reading `area_bindings`
+    and the `system_id → area_id` re-key (forward-only, per the seam above). Invariants hold: an Area
+    collapses member provenance into one namespace (no cross-device edges), and never double-count a
+    composite Area + its member identity-Areas. Files: `lib/aggregation/{logical-system,flow-series}.ts`,
+    `lib/db/planetscale/flow-matrix-pg.ts`.
 
 - **P4 — Per-Dashboard sharing.** `dashboard_grants` + `dashboard_share_tokens`; transitive
   point-level read; implement share-token GET consumption.
