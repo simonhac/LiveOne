@@ -476,6 +476,9 @@ export default function ViewDataModal({
     ) {
       // Format monetary values with 1 decimal place
       return `${numValue.toFixed(1)}`;
+    } else if (pointInfo?.metricUnit === "tCO2e/MWh") {
+      // Stored as tCO2e/MWh; show in gCO₂e/kWh (×1000) to match the grid card
+      return `${(numValue * 1000).toFixed(0)}`;
     } else {
       // Default formatting
       return `${numValue.toFixed(0)}`;
