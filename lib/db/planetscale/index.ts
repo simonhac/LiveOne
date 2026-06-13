@@ -53,38 +53,54 @@ function getPoolConfig(): PoolConfig | null {
   return null;
 }
 
-/** The host[:port] a PoolConfig points at, for the prod-in-dev guard. */
-function hostOf(config: PoolConfig): string | undefined {
+/**
+ * A connection's identity (`user@host[:port]`) for the prod-in-dev guard.
+ *
+ * Must include the USERNAME, not just the host: PlanetScale puts every branch of
+ * every database on the same shared regional gateway host (e.g.
+ * `aws-ap-southeast-2-1.pg.psdb.cloud`), and encodes the actual branch in the
+ * role/username (`postgres.<branch-id>`). The hostname alone cannot tell prod
+ * from liveone-dev — the username can.
+ */
+function connectionIdentity(config: PoolConfig): string | undefined {
   if (typeof config.connectionString === "string") {
     try {
-      return new URL(config.connectionString).host;
+      const u = new URL(config.connectionString);
+      return `${u.username}@${u.host}`;
     } catch {
-      return undefined;
+      return config.connectionString;
     }
   }
   if (config.host) {
-    return config.port ? `${config.host}:${config.port}` : config.host;
+    const hostPort = config.port
+      ? `${config.host}:${config.port}`
+      : config.host;
+    return `${config.user ?? ""}@${hostPort}`;
   }
   return undefined;
 }
 
 /**
- * Guard a shared PlanetScale dev branch from clobbering production: outside
- * production, refuse to connect if the resolved host is the declared production
- * host. Inert until `PLANETSCALE_PRODUCTION_HOST` is set (so the guard can be
- * armed in dev by recording the prod host — a hostname, not a credential).
- * `ALLOW_PROD_DB_IN_DEV=true` is an explicit escape hatch.
+ * Guard the shared dev/preview database from clobbering production: outside
+ * production, refuse to connect if the connection identity carries the declared
+ * production token. Inert until `PLANETSCALE_PRODUCTION_HOST` is set.
+ *
+ * The token is matched as a substring of `user@host`, so it can be any
+ * prod-unique fragment. On PlanetScale (shared regional host) set it to the prod
+ * BRANCH ID — which appears in the prod username but not in liveone-dev's — since
+ * the hostname is identical across branches. `ALLOW_PROD_DB_IN_DEV=true` is an
+ * explicit escape hatch.
  */
 function assertNotProdDbInDev(config: PoolConfig): void {
   if (isProduction()) return;
-  const prodHost = process.env.PLANETSCALE_PRODUCTION_HOST;
-  if (!prodHost) return;
+  const prodToken = process.env.PLANETSCALE_PRODUCTION_HOST;
+  if (!prodToken) return;
   if (process.env.ALLOW_PROD_DB_IN_DEV === "true") return;
-  const host = hostOf(config);
-  if (host && host.toLowerCase().includes(prodHost.toLowerCase())) {
+  const identity = connectionIdentity(config);
+  if (identity && identity.toLowerCase().includes(prodToken.toLowerCase())) {
     throw new Error(
-      `[PlanetScale] Refusing to use the PRODUCTION database (${host}) outside production. ` +
-        `Point PLANETSCALE_DATABASE_URL at the dev branch, or set ALLOW_PROD_DB_IN_DEV=true to override.`,
+      `[PlanetScale] Refusing to use the PRODUCTION database (${identity}) outside production. ` +
+        `Point PLANETSCALE_DATABASE_URL at liveone-dev, or set ALLOW_PROD_DB_IN_DEV=true to override.`,
     );
   }
 }

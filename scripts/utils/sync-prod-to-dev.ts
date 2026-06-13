@@ -8,8 +8,9 @@
  * ONLY to liveone-dev — the app never touches prod, and this job can't either:
  *
  *   1. Prod credential is a `pg_read_all_data` role (no INSERT/UPDATE/DELETE/DDL).
- *   2. This script refuses to run if the WRITE target resolves to the prod host
- *      (PLANETSCALE_PRODUCTION_HOST) — a mis-pasted URL can't write prod.
+ *   2. This script refuses to run if the WRITE target resolves to the prod
+ *      branch/role (dev and prod share a host, so it compares the username and
+ *      the PLANETSCALE_PRODUCTION_HOST token) — a mis-pasted URL can't write prod.
  *
  * Strategy per table (see MANIFEST):
  *   - incremental (large, time-keyed): copy rows newer than the dev watermark
@@ -139,6 +140,16 @@ function hostOf(url: string): string {
   }
 }
 
+// PlanetScale puts every branch on the same shared regional host; the BRANCH is
+// encoded in the username (`postgres.<branch-id>`). So tell prod from dev by user.
+function userOf(url: string): string {
+  try {
+    return new URL(url).username.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
 // Column order and PK from the DEST (dev) catalog — both DBs share the schema.
 function columnsOf(url: string, table: string): string[] {
   const out = scalar(
@@ -248,23 +259,28 @@ function main() {
     throw new Error("set PG_PROD_RO_DATABASE_URL (read-only prod role)");
   if (!devUrl) throw new Error("set LIVEONE_DEV_DATABASE_URL (dev write role)");
 
-  // Fail-closed: never let the WRITE target be prod.
-  const devHost = hostOf(devUrl);
-  const prodHost = (
+  // Fail-closed: never let the WRITE target be prod. dev and prod share a host
+  // (PlanetScale regional gateway), so compare the branch-encoding USERNAME, not
+  // the host: identical users ⇒ same branch ⇒ refuse.
+  const devUser = userOf(devUrl);
+  const prodUser = userOf(prodUrl);
+  const prodToken = (
     process.env.PLANETSCALE_PRODUCTION_HOST ?? ""
   ).toLowerCase();
-  if (devHost && devHost === hostOf(prodUrl)) {
+  if (devUser && devUser === prodUser) {
     throw new Error(
-      "refusing to run: LIVEONE_DEV_DATABASE_URL and PG_PROD_RO_DATABASE_URL share a host",
+      "refusing to run: LIVEONE_DEV_DATABASE_URL and PG_PROD_RO_DATABASE_URL resolve to the same branch/role",
     );
   }
-  if (prodHost && devHost.includes(prodHost)) {
+  if (prodToken && devUrl.toLowerCase().includes(prodToken)) {
     throw new Error(
-      `refusing to run: dev write target (${devHost}) is the production host`,
+      `refusing to run: dev write target carries the production identifier (${prodToken})`,
     );
   }
 
-  console.log(`Sync prod → dev  (write target: ${devHost || "?"})`);
+  console.log(
+    `Sync prod → dev  (write target: ${devUser || "?"}@${hostOf(devUrl) || "?"})`,
+  );
   const scratch = mkdtempSync(join(tmpdir(), "liveone-sync-"));
   const started = Date.now();
   try {
