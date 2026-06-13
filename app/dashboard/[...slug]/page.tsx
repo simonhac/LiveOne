@@ -70,10 +70,21 @@ export default async function DashboardPage({ params }: PageProps) {
       system = await systemsManager.getSystem(parseInt(segment));
 
       if (system?.alias && system.ownerClerkUserId) {
-        const clerk = await clerkClient();
-        const owner = await clerk.users.getUser(system.ownerClerkUserId);
-        if (owner.username) {
-          redirect(`/dashboard/${owner.username}/${system.alias}`);
+        // Canonicalise the URL to /dashboard/{owner-username}/{alias}. Guard the Clerk lookup:
+        // the owner may be absent from THIS Clerk instance (the dev DB mirrors prod owner ids but
+        // dev runs a different Clerk instance) or deleted in prod — in which case skip the
+        // canonical redirect and render by numeric id rather than 500 the dashboard. redirect()
+        // stays OUTSIDE the try so its internal control-flow throw isn't swallowed by the catch.
+        let ownerUsername: string | null = null;
+        try {
+          const clerk = await clerkClient();
+          const owner = await clerk.users.getUser(system.ownerClerkUserId);
+          ownerUsername = owner.username;
+        } catch {
+          // Owner not found in this Clerk instance — fall through without redirecting.
+        }
+        if (ownerUsername) {
+          redirect(`/dashboard/${ownerUsername}/${system.alias}`);
         }
       }
 
