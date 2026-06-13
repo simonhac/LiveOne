@@ -3,7 +3,7 @@
  * table; absent row → the dashboard is auto-generated from buildDefaultDescriptor.
  */
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { dashboards } from "@/lib/db/planetscale/schema";
 import type { DashboardDescriptor } from "./descriptor";
@@ -31,13 +31,19 @@ export async function saveDescriptor(
   clerkUserId: string,
   systemId: number,
   descriptor: DashboardDescriptor,
+  areaId?: string | null,
 ): Promise<void> {
   await requirePlanetscaleDb()
     .insert(dashboards)
-    .values({ clerkUserId, systemId, descriptor })
+    .values({ clerkUserId, systemId, descriptor, areaId: areaId ?? null })
     .onConflictDoUpdate({
       target: [dashboards.clerkUserId, dashboards.systemId],
-      set: { descriptor, updatedAt: new Date() },
+      // COALESCE so a flag-off save (areaId null) never wipes a previously-resolved area_id.
+      set: {
+        descriptor,
+        areaId: sql`COALESCE(excluded.area_id, ${dashboards.areaId})`,
+        updatedAt: new Date(),
+      },
     });
 }
 
