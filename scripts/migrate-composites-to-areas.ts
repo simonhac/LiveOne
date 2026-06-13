@@ -135,10 +135,11 @@ async function rekeyFlow1d(db: ReturnType<typeof requirePlanetscaleDb>) {
     `${tag} flow_1d re-key: area_id = area whose legacy_system_id = system_id`,
   );
   if (!APPLY) {
-    const [{ count }] = (await db.execute(
+    const res = await db.execute(
       sql`SELECT count(*)::int AS count FROM point_readings_flow_1d f
           WHERE NOT EXISTS (SELECT 1 FROM areas a WHERE a.legacy_system_id = f.system_id)`,
-    )) as unknown as Array<{ count: number }>;
+    );
+    const count = (res.rows[0] as { count: number }).count;
     console.log(
       `${tag}   ${count} flow_1d rows have a system_id with no matching area (would fail the NULL check)`,
     );
