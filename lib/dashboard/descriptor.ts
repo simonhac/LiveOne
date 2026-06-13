@@ -50,21 +50,31 @@ function defaultPowerCardsConfig(): PowerCardsConfig {
 /**
  * Generate the default dashboard descriptor for a system. Layout + card set depend only on the
  * vendor type (as the ladder does today); `latest` is accepted for forward-compatibility with the
- * per-card eligibility pass but is not used here.
+ * per-card eligibility pass but is not used here. When `opts.gridSignalsAvailable` is true (the
+ * Area resolves to a NEM region; gated server-side), a `grid-signals` module card is appended for
+ * the "sidebar" and "site" layouts.
  */
 export function buildDefaultDescriptor(
   system: { vendorType: string },
   _latest: LatestPointValues,
+  opts?: { gridSignalsAvailable?: boolean },
 ): DashboardDescriptor {
   const layout = getLayout(system.vendorType);
+  const cards: ModuleCardInstance[] = CARDS_BY_LAYOUT[layout].map((type) =>
+    type === "power-cards"
+      ? { type, powerCards: defaultPowerCardsConfig() }
+      : { type },
+  );
+  if (
+    opts?.gridSignalsAvailable &&
+    (layout === "sidebar" || layout === "site")
+  ) {
+    cards.push({ type: "grid-signals" });
+  }
   return {
     version: 2,
     layout,
-    cards: CARDS_BY_LAYOUT[layout].map((type) =>
-      type === "power-cards"
-        ? { type, powerCards: defaultPowerCardsConfig() }
-        : { type },
-    ),
+    cards,
   };
 }
 

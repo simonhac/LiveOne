@@ -14,6 +14,7 @@ import {
   DECLARATIVE_DASHBOARD,
   DASHBOARD_PERSISTENCE,
 } from "@/lib/dashboard/flags";
+import { resolveGridContextForSystem } from "@/lib/grid/context";
 
 interface PageProps {
   params: Promise<{
@@ -221,6 +222,12 @@ export default async function DashboardPage({ params }: PageProps) {
     }
   }
 
+  // Resolve the "Local Grid (NEM)" card's cross-system context (the public OE region serving this
+  // Area's location). Returns null when flags are off / off-grid / no derivable region. Only
+  // resolved for an accessible system — an Access-Denied render never uses it, so skip the DB work.
+  const gridContext =
+    system && hasAccess ? await resolveGridContextForSystem(system.id) : null;
+
   // Render main dashboard
   if (!system) {
     return (
@@ -235,6 +242,7 @@ export default async function DashboardPage({ params }: PageProps) {
         serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
         declarativeDashboard={DECLARATIVE_DASHBOARD}
         dashboardPersistence={DASHBOARD_PERSISTENCE}
+        gridContext={gridContext}
       />
     );
   }
@@ -260,6 +268,7 @@ export default async function DashboardPage({ params }: PageProps) {
         serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
         declarativeDashboard={DECLARATIVE_DASHBOARD}
         dashboardPersistence={DASHBOARD_PERSISTENCE}
+        gridContext={gridContext}
       />
     </DashboardLayout>
   );

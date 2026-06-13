@@ -48,6 +48,9 @@ export const queryKeys = {
 
   amber: (systemId: SystemIdLike, rangeKey: string) =>
     ["amber", sid(systemId), rangeKey] as const,
+
+  grid: (systemId: SystemIdLike, rangeKey: string) =>
+    ["grid", sid(systemId), rangeKey] as const,
 } as const;
 
 /**
@@ -62,6 +65,7 @@ const SYSTEM_RESOURCES = [
   "siteData",
   "flowMatrix",
   "amber",
+  "grid",
 ] as const;
 
 /** Predicate for `invalidateQueries({ predicate })` — true for any of this system's data queries. */

@@ -20,7 +20,8 @@ export type DashboardCardType =
   | "power-cards"
   | "site-charts"
   | "sankey"
-  | "energy-chart";
+  | "energy-chart"
+  | "grid-signals";
 
 export type DashboardLayout = "amber" | "site" | "sidebar";
 
@@ -70,6 +71,17 @@ export const CARD_REGISTRY: Record<DashboardCardType, CardDef> = {
     type: "energy-chart",
     label: "Energy Chart",
     canRender: (c) => c.vendorType !== "amber" && !isSiteVendor(c.vendorType),
+  },
+  "grid-signals": {
+    type: "grid-signals",
+    label: "Local Grid (NEM)",
+    requiredRoles: ["grid"],
+    // Eligibility approximates the off-grid rule (a grid-connected system has a grid point). The
+    // AUTHORITATIVE gate is server-side `resolveGridContextForSystem` (lib/grid/context.ts), which
+    // also needs the Area's location to derive a region + a seeded OE system — things canRender
+    // can't see. Treat this only as a gallery-eligibility hint, not the final say.
+    canRender: (c) =>
+      c.vendorType !== "amber" && hasVal(c.latest, "bidi.grid/power"),
   },
 };
 

@@ -71,6 +71,13 @@
       "when": 1781353353488,
       "tag": "0009_previous_charles_xavier",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1781356181585,
+      "tag": "0010_cultured_namor",
+      "breakpoints": true
     }
   ]
 }

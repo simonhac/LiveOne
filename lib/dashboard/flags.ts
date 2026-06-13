@@ -22,3 +22,10 @@ export const DECLARATIVE_DASHBOARD = envFlag("DECLARATIVE_DASHBOARD");
  * path. Off → identical to the previous behaviour. See docs/architecture/areas-and-dashboards.md.
  */
 export const DASHBOARD_PERSISTENCE = envFlag("DASHBOARD_PERSISTENCE");
+
+/**
+ * Render the live "Local Grid (NEM)" card on dashboards whose Area resolves to a NEM region. Gating
+ * is done server-side (resolveGridContextForSystem + the descriptor default); this flag is the
+ * top-level on/off. Off → the card is never appended. See docs/architecture/areas-and-dashboards.md.
+ */
+export const GRID_SIGNALS_CARD = envFlag("GRID_SIGNALS_CARD");
