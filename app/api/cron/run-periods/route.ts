@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireCronOrAdmin } from "@/lib/api-auth";
 import { parseDate } from "@internationalized/date";
 import { getNowFormattedAEST } from "@/lib/date-utils";
-import { RUN_TRACKING } from "@/lib/run-tracking/flags";
 import {
   reconcileTrailingWindow,
   recomputeRange,
@@ -78,15 +77,6 @@ async function handle(request: NextRequest) {
   try {
     const authResult = await requireCronOrAdmin(request);
     if (authResult instanceof NextResponse) return authResult;
-
-    if (!RUN_TRACKING) {
-      return NextResponse.json({
-        success: true,
-        skipped: true,
-        reason: "RUN_TRACKING disabled",
-        executedAt: getNowFormattedAEST(),
-      });
-    }
 
     const { searchParams } = new URL(request.url);
     const body =

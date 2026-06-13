@@ -20,13 +20,16 @@ export type DashboardCardType =
   | "power-cards"
   | "site-charts"
   | "sankey"
-  | "energy-chart";
+  | "energy-chart"
+  | "generator-runs";
 
 export type DashboardLayout = "amber" | "site" | "sidebar";
 
 export interface CardContext {
   vendorType: string;
   latest: LatestPointValues;
+  /** Whether the system has an enabled generator run-tracker (run-tracking feature). */
+  hasGenerator?: boolean;
 }
 
 export interface CardDef {
@@ -70,6 +73,13 @@ export const CARD_REGISTRY: Record<DashboardCardType, CardDef> = {
     type: "energy-chart",
     label: "Energy Chart",
     canRender: (c) => c.vendorType !== "amber" && !isSiteVendor(c.vendorType),
+  },
+  "generator-runs": {
+    type: "generator-runs",
+    label: "Generator Runs",
+    requiredRoles: ["generator"],
+    // Eligible only where the system has an enabled generator run-tracker.
+    canRender: (c) => !!c.hasGenerator,
   },
 };
 

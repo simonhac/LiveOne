@@ -256,14 +256,13 @@ the physical layer" value with no schema change.**
   `components/CompositeTab.tsx`, the composite-config route) import it. Behaviour-preserving; no
   flag/schema.
 
-- **P1 — Card registry + descriptor-driven dashboard. ✅ SHIPPED (PR #53; flag `DECLARATIVE_DASHBOARD`).**
-  `lib/dashboard/cards.ts` (card registry, per-card `canRender`) + `lib/dashboard/descriptor.ts`
-  (`buildDefaultDescriptor`, reproduces the `vendor_type` ladder exactly). `DashboardClient` derives
-  `isAmberLayout`/`isSiteLayout` from the descriptor. Flag off = byte-identical. (Subsumed by the P2
-  flag.)
+- **P1 — Card registry + descriptor-driven dashboard. ✅ SHIPPED (PR #53). Flag `DECLARATIVE_DASHBOARD`
+  RETIRED — descriptor rendering is permanent.** `lib/dashboard/cards.ts` (card registry, per-card
+  `canRender`) + `lib/dashboard/descriptor.ts` (`buildDefaultDescriptor`, reproduces the `vendor_type`
+  ladder exactly). `DashboardClient` derives `isAmberLayout`/`isSiteLayout` from the descriptor.
 
-- **P2 — Persist + customize dashboards. ✅ SHIPPED & LIVE ON PROD (PR #53; flag `DASHBOARD_PERSISTENCE`,
-  migration `0007`).** New `dashboards` table stores a per-(user, system) descriptor as **JSONB** (the
+- **P2 — Persist + customize dashboards. ✅ SHIPPED & LIVE ON PROD (PR #53; migration `0007`).
+  Flag `DASHBOARD_PERSISTENCE` RETIRED — persistence + Customize are permanent.** New `dashboards` table stores a per-(user, system) descriptor as **JSONB** (the
   doc's `dashboard_cards` split is deferred to P3). `GET/PUT/DELETE /api/dashboard/[systemId]` +
   `lib/dashboard/store.ts`. Customize is a **modal dialog** (`components/DashboardCustomizeDialog.tsx`,
   settings-dialog styling): reorder/hide/show power mini-cards + show/hide chart modules + Reset to

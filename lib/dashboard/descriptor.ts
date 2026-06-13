@@ -39,8 +39,8 @@ export interface DashboardDescriptor {
 /** Cards each layout shows by default — the exact set the vendor_type ladder renders today. */
 const CARDS_BY_LAYOUT: Record<DashboardLayout, DashboardCardType[]> = {
   amber: ["amber"],
-  site: ["power-cards", "site-charts", "sankey"],
-  sidebar: ["power-cards", "energy-chart"],
+  site: ["power-cards", "site-charts", "sankey", "generator-runs"],
+  sidebar: ["power-cards", "energy-chart", "generator-runs"],
 };
 
 function defaultPowerCardsConfig(): PowerCardsConfig {

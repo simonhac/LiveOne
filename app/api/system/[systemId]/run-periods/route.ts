@@ -1,19 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSystemAccess } from "@/lib/api-auth";
-import { and, asc, eq, gte, isNull, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lte, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { deviceRunPeriods } from "@/lib/db/planetscale/schema";
+import {
+  deviceRunPeriods,
+  type DeviceRunPeriod,
+} from "@/lib/db/planetscale/schema";
 import { formatInTimezone } from "@/lib/date-utils";
-import { RUN_TRACKING } from "@/lib/run-tracking/flags";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PERIOD_DAYS = 30;
 const MAX_PERIOD_DAYS = 366; // hard upper bound — this endpoint is always bounded
+const MAX_LIMIT = 100;
+const DEFAULT_LIMIT = 10;
 
 /** kW (1dp) magnitude of a signed Watt value, mirroring the legacy generator-events rounding. */
 function magnitudeKw(w: number | null): number {
   if (w == null) return 0;
   return Math.round(Math.abs(w) / 100) / 10;
+}
+
+/** Shape one run period into the (legacy-compatible + enriched) event the UI consumes. */
+function toEvent(r: DeviceRunPeriod, tz: string) {
+  return {
+    // Legacy generator-events contract:
+    date: formatInTimezone(r.startTime, tz, "d MMM"),
+    startTime: formatInTimezone(r.startTime, tz, "HH:mm"),
+    endTime: r.endTime ? formatInTimezone(r.endTime, tz, "HH:mm") : null,
+    running: r.endTime === null,
+    minPowerKw: magnitudeKw(r.maxPowerW), // magnitude min = |max signed|
+    maxPowerKw: magnitudeKw(r.minPowerW), // magnitude max = |min signed|
+    energyKwh: r.energyKwh ?? 0,
+    // Richer fields for cards / future generalisation:
+    startTimeISO: r.startTime.toISOString(),
+    endTimeISO: r.endTime ? r.endTime.toISOString() : null,
+    durationSeconds: r.durationSeconds,
+    avgPowerW: r.avgPowerW,
+    sampleCount: r.sampleCount,
+  };
 }
 
 /**
@@ -44,16 +68,47 @@ export async function GET(
     const { searchParams } = new URL(request.url);
     const role = searchParams.get("role") || "generator";
 
-    // Flag off → behave like "no events" (legacy-compatible empty payload).
-    if (!RUN_TRACKING) {
+    const tz = authResult.system.displayTimezone;
+    const db = requirePlanetscaleDb();
+
+    // Paged mode (limit present): most-recent-first, page back through ALL history. Used by the
+    // dashboard generator-runs card. Bounded by limit (no time window).
+    const limitParam = searchParams.get("limit");
+    if (limitParam !== null) {
+      const limit = Math.min(
+        Math.max(parseInt(limitParam, 10) || DEFAULT_LIMIT, 1),
+        MAX_LIMIT,
+      );
+      const offset = Math.max(
+        parseInt(searchParams.get("offset") || "0", 10) || 0,
+        0,
+      );
+      // Fetch one extra to know whether an older page exists.
+      const rows = await db
+        .select()
+        .from(deviceRunPeriods)
+        .where(
+          and(
+            eq(deviceRunPeriods.systemId, systemId),
+            eq(deviceRunPeriods.role, role),
+          ),
+        )
+        .orderBy(desc(deviceRunPeriods.startTime))
+        .limit(limit + 1)
+        .offset(offset);
+      const hasMore = rows.length > limit;
+      const events = rows.slice(0, limit).map((r) => toEvent(r, tz));
       return NextResponse.json({
-        events: [],
-        totalEnergyKwh: 0,
-        running: false,
+        role,
+        events,
+        limit,
+        offset,
+        hasMore,
+        running: events.some((e) => e.running),
       });
     }
 
-    // Bounded range: period=Nd (default 30d), or explicit start/end (ISO or YYYY-MM-DD).
+    // Period mode (default): a bounded time window, oldest-first, with a running total.
     const nowMs = Date.now();
     let rangeStartMs: number;
     let rangeEndMs = nowMs;
@@ -84,10 +139,8 @@ export async function GET(
       rangeStartMs = nowMs - days * DAY_MS;
     }
 
-    const tz = authResult.system.displayTimezone;
-
     // A period is in range if it starts at/before the range end and is open or ends at/after start.
-    const rows = await requirePlanetscaleDb()
+    const rows = await db
       .select()
       .from(deviceRunPeriods)
       .where(
@@ -106,26 +159,10 @@ export async function GET(
     let runningNow = false;
     let totalEnergyKwh = 0;
     const events = rows.map((r) => {
-      const running = r.endTime === null;
-      if (running) runningNow = true;
-      const energyKwh = r.energyKwh ?? 0;
-      totalEnergyKwh += energyKwh;
-      return {
-        // Legacy generator-events contract:
-        date: formatInTimezone(r.startTime, tz, "d MMM"),
-        startTime: formatInTimezone(r.startTime, tz, "HH:mm"),
-        endTime: r.endTime ? formatInTimezone(r.endTime, tz, "HH:mm") : null,
-        running,
-        minPowerKw: magnitudeKw(r.maxPowerW), // magnitude min = |max signed|
-        maxPowerKw: magnitudeKw(r.minPowerW), // magnitude max = |min signed|
-        energyKwh,
-        // Richer fields for future generalisation:
-        startTimeISO: r.startTime.toISOString(),
-        endTimeISO: r.endTime ? r.endTime.toISOString() : null,
-        durationSeconds: r.durationSeconds,
-        avgPowerW: r.avgPowerW,
-        sampleCount: r.sampleCount,
-      };
+      const ev = toEvent(r, tz);
+      if (ev.running) runningNow = true;
+      totalEnergyKwh += ev.energyKwh;
+      return ev;
     });
 
     return NextResponse.json({
