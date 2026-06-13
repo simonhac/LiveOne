@@ -7,6 +7,8 @@ import { requireAdmin } from "@/lib/api-auth";
 import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
 import { SystemsManager } from "@/lib/systems-manager";
 import { COMPOSITE_VALIDATED_ROLE_IDS, ROLES } from "@/lib/roles/registry";
+import { AREAS_TABLE } from "@/lib/areas/flags";
+import { syncCompositeBindings } from "@/lib/areas/sync";
 
 export async function GET(
   request: NextRequest,
@@ -252,6 +254,20 @@ export async function PATCH(
     await SystemsManager.getInstance().updateSystem(systemId, {
       metadata: metadata as any,
     });
+
+    // P3 dual-write: keep typed area_bindings in lock-step with the metadata shim while AREAS_TABLE
+    // is on (the shim stays authoritative for /api/data and flag-off rollback). The metadata write
+    // above already happened, so the converter sees the new mappings.
+    if (AREAS_TABLE) {
+      try {
+        await syncCompositeBindings(systemId);
+      } catch (error) {
+        console.error(
+          `[Composite] Failed to sync area_bindings for system ${systemId}:`,
+          error,
+        );
+      }
+    }
 
     // Rebuild subscription registry to reflect the updated composite system mappings
     console.log(

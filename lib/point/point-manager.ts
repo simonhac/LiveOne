@@ -22,6 +22,8 @@ import { SystemIdentifier, PointReference } from "@/lib/identifiers";
 import { SystemWithPolling, SystemsManager } from "@/lib/systems-manager";
 import micromatch from "micromatch";
 import { updateLatestPointValue } from "../kv-cache-manager";
+import { AREAS_TABLE } from "@/lib/areas/flags";
+import { getCompositeBindingRefs } from "@/lib/areas/bindings";
 import {
   updateSystemSummary,
   updateSubscriberSummaries,
@@ -254,33 +256,14 @@ export class PointManager {
   private async _resolveCompositeSystemPoints(
     system: SystemWithPolling,
   ): Promise<PointInfo[]> {
-    const metadata = system.metadata as any;
-
-    // Validate metadata structure
-    if (!metadata || metadata.version !== 2 || !metadata.mappings) {
-      return [];
-    }
-
-    // Collect all point references (systemId.pointId format)
-    const pointRefStrs: string[] = [];
-    for (const [, refs] of Object.entries(metadata.mappings)) {
-      if (Array.isArray(refs)) {
-        pointRefStrs.push(...(refs as string[]));
-      }
-    }
-
-    if (pointRefStrs.length === 0) {
-      return [];
-    }
-
-    // Parse and validate point references using PointReference
-    const validPointRefs: PointReference[] = [];
-    for (const refStr of pointRefStrs) {
-      const pointRef = PointReference.parse(refStr);
-      if (pointRef) {
-        validPointRefs.push(pointRef);
-      }
-    }
+    // P3: resolve the composite's child point refs from typed area_bindings (flag on) or the legacy
+    // metadata.mappings JSON (flag off). Both yield the same (system_id, point_id) set — proven by
+    // the converter round-trip test — so everything below (the OR-of-(system_id,id) fetch) is shared.
+    const validPointRefs: PointReference[] = AREAS_TABLE
+      ? (await getCompositeBindingRefs(system.id)).map((r) =>
+          PointReference.fromIds(r.pointSystemId, r.pointId),
+        )
+      : this._compositePointRefsFromMetadata(system);
 
     if (validPointRefs.length === 0) {
       return [];
@@ -297,6 +280,39 @@ export class PointManager {
     const pointsData = pgPointInfoRowsToServed(pgRows);
 
     return pointsData.map((row) => PointInfo.from(row));
+  }
+
+  /**
+   * Legacy (AREAS_TABLE off) path: parse the composite's child point refs from `metadata.mappings`
+   * (v2). Unchanged behaviour — moved verbatim out of _resolveCompositeSystemPoints.
+   */
+  private _compositePointRefsFromMetadata(
+    system: SystemWithPolling,
+  ): PointReference[] {
+    const metadata = system.metadata as any;
+
+    // Validate metadata structure
+    if (!metadata || metadata.version !== 2 || !metadata.mappings) {
+      return [];
+    }
+
+    // Collect all point references (systemId.pointId format)
+    const pointRefStrs: string[] = [];
+    for (const [, refs] of Object.entries(metadata.mappings)) {
+      if (Array.isArray(refs)) {
+        pointRefStrs.push(...(refs as string[]));
+      }
+    }
+
+    // Parse and validate point references using PointReference
+    const validPointRefs: PointReference[] = [];
+    for (const refStr of pointRefStrs) {
+      const pointRef = PointReference.parse(refStr);
+      if (pointRef) {
+        validPointRefs.push(pointRef);
+      }
+    }
+    return validPointRefs;
   }
 
   /**
