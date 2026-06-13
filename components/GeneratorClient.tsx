@@ -7,9 +7,19 @@ interface GeneratorEvent {
   startTime: string;
   endTime: string | null;
   running?: boolean;
-  minPowerKw: number;
-  maxPowerKw: number;
+  durationSeconds?: number | null;
+  startTimeISO?: string;
+  avgPowerW?: number | null;
   energyKwh: number;
+}
+
+/** Format a duration in seconds as "2h 30m" / "45m" / "3h". */
+function formatDuration(seconds: number): string {
+  const totalMin = Math.round(seconds / 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  return `${m}m`;
 }
 
 interface GeneratorData {
@@ -108,51 +118,67 @@ export default function GeneratorClient({
           </div>
         ) : (
           <>
-            <div className="bg-gray-800 rounded-lg overflow-hidden">
+            <div className="bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
               <table className="w-full">
                 <thead className="bg-gray-700">
                   <tr>
-                    <th className="px-4 py-3 text-left text-sm font-medium">
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-200">
                       Date
                     </th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">
-                      Time
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-200">
+                      Start
                     </th>
-                    <th className="px-4 py-3 text-right text-sm font-medium">
-                      Generator Power
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-200">
+                      End
                     </th>
-                    <th className="px-4 py-3 text-right text-sm font-medium">
+                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-200">
+                      Duration
+                    </th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-200">
+                      Avg Power
+                    </th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-200">
                       Energy (kWh)
                     </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-700">
-                  {generatorData.events.map((event, idx) => (
-                    <tr key={idx} className="hover:bg-gray-750">
-                      <td className="px-4 py-3 text-sm">{event.date}</td>
-                      <td className="px-4 py-3 text-sm">
-                        {event.running
-                          ? `${event.startTime} – now`
-                          : event.endTime === null ||
-                              event.startTime === event.endTime
-                            ? event.startTime
-                            : `${event.startTime} - ${event.endTime}`}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-right">
-                        {event.minPowerKw === event.maxPowerKw
-                          ? `${event.minPowerKw.toFixed(1)} kW`
-                          : `${event.minPowerKw.toFixed(1)} - ${event.maxPowerKw.toFixed(1)} kW`}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-right">
-                        {event.energyKwh.toFixed(2)}
-                      </td>
-                    </tr>
-                  ))}
-                  <tr className="bg-gray-700 font-bold">
-                    <td className="px-4 py-3 text-sm" colSpan={3}>
+                  {generatorData.events.map((event, idx) => {
+                    const durationSec =
+                      event.running && event.startTimeISO
+                        ? (Date.now() - Date.parse(event.startTimeISO)) / 1000
+                        : (event.durationSeconds ?? null);
+                    return (
+                      <tr
+                        key={idx}
+                        className="text-gray-100 odd:bg-gray-800 even:bg-gray-750 hover:bg-gray-700"
+                      >
+                        <td className="px-4 py-3 text-sm">{event.date}</td>
+                        <td className="px-4 py-3 text-sm">{event.startTime}</td>
+                        <td className="px-4 py-3 text-sm">
+                          {event.running ? "now" : (event.endTime ?? "—")}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right tabular-nums">
+                          {durationSec != null
+                            ? formatDuration(durationSec)
+                            : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right tabular-nums">
+                          {event.avgPowerW != null
+                            ? `${(Math.abs(event.avgPowerW) / 1000).toFixed(1)} kW`
+                            : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right tabular-nums">
+                          {event.energyKwh.toFixed(2)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  <tr className="bg-gray-700 font-bold text-gray-100">
+                    <td className="px-4 py-3 text-sm" colSpan={5}>
                       Total
                     </td>
-                    <td className="px-4 py-3 text-sm text-right">
+                    <td className="px-4 py-3 text-sm text-right tabular-nums">
                       {generatorData.totalEnergyKwh.toFixed(2)} kWh
                     </td>
                   </tr>
