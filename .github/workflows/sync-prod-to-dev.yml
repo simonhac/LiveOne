@@ -44,7 +44,7 @@ jobs:
         env:
           PG_PROD_RO_DATABASE_URL: ${{ secrets.PG_PROD_RO_DATABASE_URL }}
           LIVEONE_DEV_DATABASE_URL: ${{ secrets.LIVEONE_DEV_DATABASE_URL }}
-          PLANETSCALE_PRODUCTION_HOST: ${{ secrets.PLANETSCALE_PRODUCTION_HOST }}
+          PLANETSCALE_PROD_BRANCH_ID: ${{ secrets.PLANETSCALE_PROD_BRANCH_ID }}
         run: npm run db:sync-dev
 
       - name: Alert on failure
