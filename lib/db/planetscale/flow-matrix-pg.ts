@@ -68,15 +68,19 @@ export async function recomputeFlowMatrixForDay(
   const dayEndMs = dayEndUnix * 1000;
   const dayStr = day.toString();
 
-  const clearDay = () =>
-    db
-      .delete(pointReadingsFlow1d)
-      .where(
-        and(
-          eq(pointReadingsFlow1d.systemId, logicalSystem.id),
-          eq(pointReadingsFlow1d.day, dayStr),
-        ),
-      );
+  // P3 tail-1 (Phase A): key the day's rows by the view's Area when it resolves (prod/preview, where
+  // AREAS_TABLE is on + backfilled), else fall back to system_id (flag-off / local dev / tests).
+  // area_id is 1:1 with system_id and proven byte-identical, so this clears+rewrites exactly the same
+  // rows — but it exercises area-keying on the write path before system_id is dropped. system_id is
+  // still stamped on insert as a cushion; it (and this fallback) go in Phase B with the PK rebuild.
+  // See docs/deferred/areas-p3-tail-and-p4-plan.md.
+  const viewMatch =
+    logicalSystem.areaId != null
+      ? eq(pointReadingsFlow1d.areaId, logicalSystem.areaId)
+      : eq(pointReadingsFlow1d.systemId, logicalSystem.id);
+  const dayFilter = and(viewMatch, eq(pointReadingsFlow1d.day, dayStr));
+
+  const clearDay = () => db.delete(pointReadingsFlow1d).where(dayFilter);
 
   if (logicalSystem.points.length === 0) {
     await clearDay();
@@ -174,14 +178,7 @@ export async function recomputeFlowMatrixForDay(
 
   // Replace the day's rows atomically so dropped flows don't linger.
   await db.transaction(async (tx) => {
-    await tx
-      .delete(pointReadingsFlow1d)
-      .where(
-        and(
-          eq(pointReadingsFlow1d.systemId, logicalSystem.id),
-          eq(pointReadingsFlow1d.day, dayStr),
-        ),
-      );
+    await tx.delete(pointReadingsFlow1d).where(dayFilter);
     if (flowRows.length > 0) {
       await tx.insert(pointReadingsFlow1d).values(flowRows);
     }
