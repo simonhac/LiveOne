@@ -13,11 +13,45 @@ import { getNextMinuteBoundary } from "@/lib/date-utils";
 import { getTeslaClient } from "./tesla-client";
 import { getValidTeslaToken } from "./tesla-auth";
 import { TESLA_POINTS } from "./point-metadata";
-import type { TeslaCredentials, TeslaVehicleData } from "./types";
+import type {
+  TeslaCredentials,
+  TeslaSystemMetadata,
+  TeslaVehicleData,
+} from "./types";
 
 // Polling intervals in minutes
 const DEFAULT_POLL_INTERVAL = 15;
 const CHARGING_POLL_INTERVAL = 5;
+
+// Resolved per-system Tesla polling config (defaults applied).
+interface ResolvedTeslaConfig {
+  wakeToPoll: boolean;
+  idleInterval: number;
+  chargingInterval: number;
+}
+
+// Read the per-system overrides from `systems.metadata.tesla`, applying defaults and a
+// 1-minute floor on the intervals. Absent/garbage metadata yields the legacy defaults.
+function resolveTeslaConfig(system: SystemWithPolling): ResolvedTeslaConfig {
+  const meta =
+    ((system.metadata as { tesla?: TeslaSystemMetadata } | null) ?? {}).tesla ??
+    {};
+  const clampInterval = (
+    value: number | undefined,
+    fallback: number,
+  ): number =>
+    typeof value === "number" && Number.isFinite(value) && value >= 1
+      ? Math.floor(value)
+      : fallback;
+  return {
+    wakeToPoll: meta.wakeToPoll !== false, // default true (legacy behaviour)
+    idleInterval: clampInterval(meta.idlePollMinutes, DEFAULT_POLL_INTERVAL),
+    chargingInterval: clampInterval(
+      meta.chargingPollMinutes,
+      CHARGING_POLL_INTERVAL,
+    ),
+  };
+}
 
 export class TeslaAdapter extends BaseVendorAdapter {
   readonly vendorType = "tesla";
@@ -43,11 +77,10 @@ export class TeslaAdapter extends BaseVendorAdapter {
     lastPollTime: Date | null,
     now: Date,
   ): ScheduleEvaluation {
-    // Determine interval based on last known charging state
+    // Determine interval based on last known charging state, honouring per-system overrides
+    const cfg = resolveTeslaConfig(system);
     const isCharging = this.chargingStates.get(system.id) || false;
-    const interval = isCharging
-      ? CHARGING_POLL_INTERVAL
-      : DEFAULT_POLL_INTERVAL;
+    const interval = isCharging ? cfg.chargingInterval : cfg.idleInterval;
 
     // If never polled, poll now
     if (!lastPollTime) {
@@ -126,8 +159,32 @@ export class TeslaAdapter extends BaseVendorAdapter {
         return { success: false, error: `Vehicle ${vehicleId} not found` };
       }
 
+      // Per-system polling config (wake behaviour + intervals).
+      const cfg = resolveTeslaConfig(system);
+
       // Wake up vehicle if asleep
       if (vehicle.state !== "online") {
+        // When wakeToPoll is disabled, never issue a Wake command: record a skipped poll
+        // so the car can sleep (avoids the $0.02 wake charge + phantom drain).
+        if (!cfg.wakeToPoll) {
+          console.log(
+            `[Tesla] Vehicle ${vehicleId} is ${vehicle.state}; wakeToPoll disabled, skipping poll (no wake)`,
+          );
+          const nextPollTime = getNextMinuteBoundary(
+            cfg.idleInterval,
+            system.timezoneOffsetMin,
+          );
+          return {
+            success: true,
+            readings: [],
+            nextPollTime,
+            rawResponse: {
+              skipped: true,
+              reason: `Vehicle ${vehicle.state}, wakeToPoll disabled`,
+            },
+          };
+        }
+
         console.log(
           `[Tesla] Vehicle ${vehicleId} is ${vehicle.state}, waking up...`,
         );
@@ -138,7 +195,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
             `[Tesla] Vehicle ${vehicleId} did not wake, skipping poll`,
           );
           const nextPollTime = getNextMinuteBoundary(
-            DEFAULT_POLL_INTERVAL,
+            cfg.idleInterval,
             system.timezoneOffsetMin,
           );
           return {
@@ -186,9 +243,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
       );
 
       // Calculate next poll time based on current charging state
-      const nextInterval = isCharging
-        ? CHARGING_POLL_INTERVAL
-        : DEFAULT_POLL_INTERVAL;
+      const nextInterval = isCharging ? cfg.chargingInterval : cfg.idleInterval;
       const nextPollTime = getNextMinuteBoundary(
         nextInterval,
         system.timezoneOffsetMin,

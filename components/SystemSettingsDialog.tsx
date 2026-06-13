@@ -9,6 +9,7 @@ import { X, Shield } from "lucide-react";
 import { useModalContext } from "@/contexts/ModalContext";
 import PointsTab from "./PointsTab";
 import CompositeTab from "./CompositeTab";
+import TeslaConfigTab from "./TeslaConfigTab";
 import AdminTab from "./AdminTab";
 import { TIMEZONE_GROUPS } from "@/lib/timezones";
 
@@ -48,6 +49,7 @@ export default function SystemSettingsDialog({
   const [isAliasDirty, setIsAliasDirty] = useState(false);
   const [isTimezoneDirty, setIsTimezoneDirty] = useState(false);
   const [isCompositeDirty, setIsCompositeDirty] = useState(false);
+  const [isTeslaDirty, setIsTeslaDirty] = useState(false);
   const [isAdminDirty, setIsAdminDirty] = useState(false);
   const [aliasError, setAliasError] = useState<string | null>(null);
   // Default system state
@@ -55,9 +57,10 @@ export default function SystemSettingsDialog({
   const [originalIsDefault, setOriginalIsDefault] = useState(false);
   const [isDefaultDirty, setIsDefaultDirty] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "general" | "points" | "composite" | "admin"
+    "general" | "points" | "composite" | "tesla" | "admin"
   >("general");
   const compositeSaveRef = useRef<(() => Promise<any>) | null>(null);
+  const teslaSaveRef = useRef<(() => Promise<any>) | null>(null);
   const adminSaveRef = useRef<(() => Promise<any>) | null>(null);
 
   // Register this modal with the global modal context
@@ -143,6 +146,7 @@ export default function SystemSettingsDialog({
       setIsAliasDirty(false);
       setIsTimezoneDirty(false);
       setIsCompositeDirty(false);
+      setIsTeslaDirty(false);
       setIsAdminDirty(false);
       setAliasError(null);
     }
@@ -184,6 +188,7 @@ export default function SystemSettingsDialog({
     isAliasDirty ||
     isTimezoneDirty ||
     isCompositeDirty ||
+    isTeslaDirty ||
     isAdminDirty ||
     isDefaultDirty;
   const hasGeneralChanges =
@@ -249,6 +254,28 @@ export default function SystemSettingsDialog({
         }
       }
 
+      // Save Tesla config via the generic per-system metadata route
+      if (isTeslaDirty && teslaSaveRef.current) {
+        const teslaConfig = await teslaSaveRef.current();
+
+        const response = await fetch(
+          `/api/admin/systems/${systemId}/metadata`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ key: "tesla", value: teslaConfig }),
+          },
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to update Tesla configuration");
+        }
+      }
+
       // Save admin settings separately
       if (isAdminDirty && adminSaveRef.current) {
         const adminData = await adminSaveRef.current();
@@ -304,6 +331,7 @@ export default function SystemSettingsDialog({
       setIsAliasDirty(false);
       setIsTimezoneDirty(false);
       setIsCompositeDirty(false);
+      setIsTeslaDirty(false);
       setIsAdminDirty(false);
       setIsDefaultDirty(false);
       setOriginalIsDefault(isDefaultSystem);
@@ -444,6 +472,21 @@ export default function SystemSettingsDialog({
                 >
                   Composite
                   {isCompositeDirty && (
+                    <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
+                  )}
+                </button>
+              )}
+              {vendorType === "tesla" && (
+                <button
+                  onClick={() => setActiveTab("tesla")}
+                  className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+                    activeTab === "tesla"
+                      ? "text-white border-blue-500 bg-gray-700/50"
+                      : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
+                  }`}
+                >
+                  Tesla
+                  {isTeslaDirty && (
                     <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
                   )}
                 </button>
@@ -601,6 +644,20 @@ export default function SystemSettingsDialog({
                         compositeSaveRef.current = fn;
                       }}
                       ownerUserId={ownerClerkUserId}
+                    />
+                  </div>
+                )}
+
+                {/* Tesla Tab Content */}
+                {vendorType === "tesla" && (
+                  <div className={activeTab === "tesla" ? "" : "hidden"}>
+                    <TeslaConfigTab
+                      systemId={systemId}
+                      shouldLoad={isOpen}
+                      onDirtyChange={setIsTeslaDirty}
+                      onSaveFunctionReady={(fn) => {
+                        teslaSaveRef.current = fn;
+                      }}
                     />
                   </div>
                 )}
