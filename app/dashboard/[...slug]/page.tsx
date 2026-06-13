@@ -108,8 +108,9 @@ export default async function DashboardPage({ params }: PageProps) {
     // Admins have access to all systems that exist
     hasAccess = systemExists;
   } else if (system) {
-    // Check if user owns this system
-    hasAccess = system.ownerClerkUserId === userId;
+    // Owner, or a public (ownerless) system — public systems are readable by everyone.
+    hasAccess =
+      system.ownerClerkUserId === userId || system.ownerClerkUserId == null;
   }
 
   // Fetch available systems for the user - only active systems

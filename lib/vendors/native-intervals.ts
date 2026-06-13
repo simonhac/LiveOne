@@ -23,6 +23,7 @@
 export const FIVE_MIN_NATIVE_VENDOR_TYPES: ReadonlySet<string> = new Set([
   "amber",
   "enphase",
+  "openelectricity",
 ]);
 
 /**

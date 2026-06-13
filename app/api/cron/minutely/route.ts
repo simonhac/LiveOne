@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { SystemsManager } from "@/lib/systems-manager";
 import { formatSystemId } from "@/lib/system-utils";
 import { VendorRegistry } from "@/lib/vendors/registry";
+import { vendorUsesAppCredentials } from "@/lib/vendors/ownership";
 import { getSystemCredentials } from "@/lib/secure-credentials";
 import type { PollingResult, PollStage } from "@/lib/vendors/types";
 import { requireCronOrAdmin } from "@/lib/api-auth";
@@ -89,8 +90,12 @@ async function pollAllSystems(params: {
       `[Cron] Processing systemId=${system.id} (${system.vendorType}/${system.vendorSiteId} '${system.displayName}') with session ${sessionLabel}`,
     );
 
-    // Check if system has an owner
-    if (!system.ownerClerkUserId) {
+    // Public/ownerless systems are allowed when the vendor authenticates with an app-wide
+    // credential (e.g. openelectricity reads an env key). Per-user vendors still need an owner.
+    if (
+      !system.ownerClerkUserId &&
+      !vendorUsesAppCredentials(system.vendorType)
+    ) {
       const errorResult: PollingResult = {
         action: "ERROR",
         systemId: system.id,
@@ -162,11 +167,13 @@ async function pollAllSystems(params: {
         });
       }
 
-      // Fusher systems don't need credentials for polling - they use push
+      // Some vendors don't need per-user credentials: fusher/fronius push data, and
+      // openelectricity uses a single app-wide env key (OPEN_ELECTRICITY_API_KEY).
       if (
         !credentials &&
         adapter.vendorType !== "fusher" &&
-        adapter.vendorType !== "fronius"
+        adapter.vendorType !== "fronius" &&
+        adapter.vendorType !== "openelectricity"
       ) {
         console.error(
           `[Cron] No credentials found for ${system.vendorType} system ${system.id}`,

@@ -130,6 +130,8 @@ export async function requireSystemAccess(
 
   // Check access levels
   const isOwner = ctx.userId === system.ownerClerkUserId;
+  // Ownerless systems are PUBLIC: readable by everyone (but writable only by admins).
+  const isPublic = system.ownerClerkUserId == null;
   let isViewer = false;
 
   if (ctx.userId && !isOwner && !ctx.isAdmin) {
@@ -147,7 +149,8 @@ export async function requireSystemAccess(
     isViewer = viewerAccess.length > 0;
   }
 
-  const canRead = ctx.isAdmin || ctx.isClaudeDev || isOwner || isViewer;
+  const canRead =
+    ctx.isAdmin || ctx.isClaudeDev || isOwner || isViewer || isPublic;
   const canWrite = ctx.isAdmin || isOwner;
 
   if (!canRead && !ctx.userId) {
