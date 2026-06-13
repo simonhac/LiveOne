@@ -13,12 +13,37 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { AreaLocation } from "@/lib/areas/types";
 import { AREAS_TABLE } from "@/lib/areas/flags";
 import { GRID_SIGNALS_CARD } from "@/lib/grid/flags";
+import { getCompositeBindingRefs } from "@/lib/areas/bindings";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, pointInfo, systems } from "@/lib/db/planetscale/schema";
 import { stemMatchesRole } from "@/lib/roles/registry";
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
 
 import type { GridContext } from "@/lib/grid/types";
+
+/**
+ * Whether a system plays the grid role. A `composite` Area's grid role is a binding to a child
+ * system's `bidi.grid*` point (the composite has no own point_info), so we read its bindings; any
+ * other system checks its own points. Returns false for off-grid systems.
+ */
+async function systemPlaysGridRole(
+  db: ReturnType<typeof requirePlanetscaleDb>,
+  systemId: number,
+  areaKind: string,
+): Promise<boolean> {
+  if (areaKind === "composite") {
+    const bindings = await getCompositeBindingRefs(systemId);
+    return bindings.some((b) => b.role === "grid");
+  }
+  const gridPoints = await db
+    .select({ logicalPathStem: pointInfo.logicalPathStem })
+    .from(pointInfo)
+    .where(eq(pointInfo.systemId, systemId));
+  return gridPoints.some(
+    (p) =>
+      p.logicalPathStem != null && stemMatchesRole(p.logicalPathStem, "grid"),
+  );
+}
 
 export async function resolveGridContextForSystem(
   systemId: number,
@@ -32,13 +57,13 @@ export async function resolveGridContextForSystem(
   try {
     const db = requirePlanetscaleDb();
 
-    // b. The identity Area for this system carries the location we derive the region from.
+    // b. The Area for this system carries the location we derive the region from. Works for both an
+    //    identity Area (1:1 over a physical system) and a composite Area ("Kinkora Unified") — the
+    //    composite's location describes the composite site, set on the Area row like any other.
     const [area] = await db
-      .select({ location: areas.location })
+      .select({ location: areas.location, kind: areas.kind })
       .from(areas)
-      .where(
-        and(eq(areas.legacySystemId, systemId), eq(areas.kind, "identity")),
-      )
+      .where(eq(areas.legacySystemId, systemId))
       .limit(1);
     if (!area) return null;
 
@@ -48,18 +73,10 @@ export async function resolveGridContextForSystem(
     const region = nemRegionForLocation(location);
     if (!region) return null;
 
-    // d. Grid-connected check: the system must play the grid role. Any point whose stem matches the
-    //    grid anchor ("bidi.grid" or "bidi.grid.*") makes the system grid-connected; off-grid
-    //    systems have none and get no card.
-    const gridPoints = await db
-      .select({ logicalPathStem: pointInfo.logicalPathStem })
-      .from(pointInfo)
-      .where(eq(pointInfo.systemId, systemId));
-
-    const hasGridPoint = gridPoints.some(
-      (p) =>
-        p.logicalPathStem != null && stemMatchesRole(p.logicalPathStem, "grid"),
-    );
+    // d. Grid-connected check: the system must play the grid role. A composite has no own
+    //    point_info — its grid role is a binding to a child system's grid point — so check its
+    //    bindings; an identity system checks its own points. Off-grid systems have neither.
+    const hasGridPoint = await systemPlaysGridRole(db, systemId, area.kind);
     if (!hasGridPoint) return null;
 
     // e. Resolve the public OpenElectricity system serving this region.

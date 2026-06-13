@@ -84,7 +84,7 @@ export default function SystemPowerCards({
       className={`px-1 ${layout === "sidebar" ? "h-full" : "mb-4"} ${className || ""}`}
     >
       <div
-        className={`grid gap-2 lg:gap-4 ${getGridClass()} ${layout === "sidebar" ? "h-full lg:content-between" : ""}`}
+        className={`grid gap-2 lg:gap-4 ${getGridClass()} ${layout === "sidebar" ? "h-full lg:content-between" : "auto-rows-fr"}`}
       >
         {renderOrder.map((id) => (
           <React.Fragment key={id}>{cardNodes[id]}</React.Fragment>

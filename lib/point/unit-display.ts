@@ -72,6 +72,11 @@ export function getContextualUnitDisplay(
     return "time";
   }
 
+  // Emissions intensity stored as tCO2e/MWh, displayed as gCO₂e/kWh (×1000)
+  if (metricUnit === "tCO2e/MWh") {
+    return "gCO₂e/kWh";
+  }
+
   // Fall back to simple unit mapping
   return getUnitDisplay(metricUnit);
 }
