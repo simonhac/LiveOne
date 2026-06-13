@@ -45,6 +45,7 @@ const POINTS: LogicalSystemPoint[] = [
 
 const LS: LogicalSystem = {
   id: 6,
+  areaId: null,
   timezoneOffsetMin: 600,
   points: POINTS,
   isComplete: true,

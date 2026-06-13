@@ -157,6 +157,10 @@ export async function recomputeFlowMatrixForDay(
       if (energyKwh > MIN_FLOW_KWH) {
         flowRows.push({
           systemId: logicalSystem.id,
+          // Forward-only P3 re-key: stamp the Area alongside system_id (null when AREAS_TABLE is
+          // off / not backfilled). system_id stays the primary key through the soak — never a
+          // recompute, identity Areas yield byte-identical rows. See areas-and-dashboards.md (P3).
+          areaId: logicalSystem.areaId,
           day: dayStr,
           sourcePath: result.sources[s],
           loadPath: result.loads[l],
