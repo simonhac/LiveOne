@@ -1058,18 +1058,38 @@ export default function DashboardClient({
                             (!!userId &&
                               data.system.ownerClerkUserId === userId)
                           }
+                          // Local Grid (NEM) rides in the power-cards grid as a trailing tile, so it
+                          // sits constrained like the rest instead of as a full-width banner below.
+                          trailingCards={
+                            gridContext && cardVisible("grid-signals")
+                              ? [
+                                  <GridSignalsCard
+                                    key="grid-signals"
+                                    regionLabel={nemRegionShortLabel(
+                                      gridContext.region,
+                                    )}
+                                    values={gridValues}
+                                  />,
+                                ]
+                              : undefined
+                          }
                         />
                       )}
 
-                    {/* Local Grid (NEM) — cross-system live signals for this Area's region. */}
-                    {gridContext && cardVisible("grid-signals") && (
-                      <div className="mt-4">
-                        <GridSignalsCard
-                          regionLabel={nemRegionShortLabel(gridContext.region)}
-                          values={gridValues}
-                        />
-                      </div>
-                    )}
+                    {/* Standalone fallback only when the power-cards module is hidden (otherwise the
+                        Local Grid card rides in the grid above as a trailing tile). */}
+                    {gridContext &&
+                      cardVisible("grid-signals") &&
+                      !cardVisible("power-cards") && (
+                        <div className="mt-4 max-w-sm">
+                          <GridSignalsCard
+                            regionLabel={nemRegionShortLabel(
+                              gridContext.region,
+                            )}
+                            values={gridValues}
+                          />
+                        </div>
+                      )}
 
                     {/* Charts - For mondo/composite systems, show charts with tables in single container */}
                     {/* Hide entire container for unconfigured composite systems */}
