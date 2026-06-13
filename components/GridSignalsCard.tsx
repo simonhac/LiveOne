@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Clock, Zap } from "lucide-react";
 import { ttInterphases } from "@/lib/fonts/amber";
@@ -12,11 +12,64 @@ export interface GridSignalsCardProps {
   staleThresholdSeconds?: number;
 }
 
+/** Small, non-bold, muted unit text. Sizes relative to the value it follows (em-based). */
+function Unit({ children }: { children: ReactNode }) {
+  return (
+    <span className="text-[0.62em] font-normal text-gray-400">{children}</span>
+  );
+}
+
 /**
- * Presentational "Local Grid (NEM)" card. Shows three live grid signals for the
- * household's local NEM region: spot price (¢/kWh), emissions intensity
- * (gCO₂/kWh), and renewables (%). No data fetching happens here — the typed
- * `values` prop is supplied by the caller (cross-system OE region fetch).
+ * Typographic fraction (numerator over a rule over denominator) for a unit pair like
+ * "g CO₂e / kWh". Small + non-bold; sits inline next to a value via align-middle.
+ */
+function GridFraction({ top, bottom }: { top: string; bottom: string }) {
+  return (
+    <span className="inline-flex flex-col items-center align-middle text-[0.5em] font-normal leading-none text-gray-400">
+      <span className="whitespace-nowrap px-0.5">{top}</span>
+      <span className="my-px w-full border-t border-gray-500" />
+      <span className="whitespace-nowrap px-0.5">{bottom}</span>
+    </span>
+  );
+}
+
+/** A single labelled stat: small label on top, big bold value + recessed unit below. */
+function Stat({
+  label,
+  value,
+  unit,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  /** Rendered only when present (omitted when the value is the em-dash). */
+  unit?: ReactNode;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="truncate text-xs text-gray-400">{label}</p>
+      <p
+        className={`mt-0.5 flex items-baseline gap-1 text-xl font-bold leading-none md:text-2xl ${
+          valueClassName ?? "text-gray-200"
+        }`}
+      >
+        <span className="truncate">{value}</span>
+        {unit ? <span className="shrink-0">{unit}</span> : null}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Presentational "<region> Grid" card (e.g. "NSW Grid"). Shows three live grid signals for the
+ * household's local NEM region: spot price (¢/kWh), emissions intensity (g CO₂e/kWh), and
+ * renewables (%). No data fetching happens here — the typed `values` prop is supplied by the
+ * caller (cross-system OE region fetch).
+ *
+ * Layout: the three stats sit in an `@container` grid that reflows by the card's OWN width —
+ * 1 column when narrow, 2 from 200px, 3 (the familiar 3-up) from 340px — so values never collide
+ * at small widths. Units are small + non-bold; emissions uses a g CO₂e/kWh fraction.
  *
  * Staleness follows PowerCard: the newest measurementTime across the present
  * metrics is compared against `staleThresholdSeconds` (recomputed every second);
@@ -111,17 +164,21 @@ export default function GridSignalsCard({
     return null;
   }
 
-  // Display values (client-side conversions per the OE stored units).
-  const priceText = price != null ? `${(price / 10).toFixed(1)}¢` : "—";
+  // Display values (client-side conversions per the OE stored units). Units render separately
+  // (small + non-bold), so these are the bare numbers only.
+  const priceText = price != null ? `${(price / 10).toFixed(1)}` : "—";
   const emissionsText =
     emissions != null ? `${Math.round(emissions * 1000)}` : "—";
-  const renewablesText =
-    renewables != null ? `${Math.round(renewables)}%` : "—";
+  const renewablesText = renewables != null ? `${Math.round(renewables)}` : "—";
   const renewablesGreen = renewables != null && renewables > 50;
+
+  // Card title, e.g. "NSW Grid". The caller passes the short NEM label ("NSW"); strip a trailing
+  // region index defensively so a raw "NSW1" still renders "NSW Grid".
+  const regionShort = regionLabel.replace(/\d+$/, "").trim() || regionLabel;
 
   return (
     <div
-      className={`bg-gray-800/50 border border-gray-700 rounded-lg p-2 md:p-4 relative overflow-hidden ${isStale ? "opacity-75" : ""} ${ttInterphases.className}`}
+      className={`@container bg-gray-800/50 border border-gray-700 rounded-lg p-2 md:p-4 relative overflow-hidden ${isStale ? "opacity-75" : ""} ${ttInterphases.className}`}
     >
       {isStale && (
         <div
@@ -138,8 +195,8 @@ export default function GridSignalsCard({
           <span className="text-blue-400 flex-shrink-0">
             <Zap size={16} />
           </span>
-          <span className="text-gray-400 text-xs md:text-sm truncate">
-            Local Grid · {regionLabel}
+          <span className="text-gray-300 text-xs md:text-sm truncate">
+            {regionShort} Grid
           </span>
           {isStale && newestMs !== null && (
             <>
@@ -169,49 +226,32 @@ export default function GridSignalsCard({
           )}
         </div>
 
-        {/* 3-up stat grid */}
-        <div className="grid grid-cols-3 gap-2">
-          {/* Price */}
-          <div>
-            <p className="text-xl md:text-2xl font-bold text-gray-200">
-              {priceText}
-              {price != null && (
-                <>
-                  {" "}
-                  <span className="text-sm md:text-base font-semibold">
-                    /kWh
-                  </span>
-                </>
-              )}
-            </p>
-            <p className="text-xs text-gray-400">Price</p>
-          </div>
-
-          {/* Emissions */}
-          <div>
-            <p className="text-xl md:text-2xl font-bold text-gray-200">
-              {emissionsText}
-              {emissions != null && (
-                <>
-                  {" "}
-                  <span className="text-sm md:text-base font-semibold">
-                    g CO₂/kWh
-                  </span>
-                </>
-              )}
-            </p>
-            <p className="text-xs text-gray-400">Emissions</p>
-          </div>
-
-          {/* Renewables */}
-          <div>
-            <p
-              className={`text-xl md:text-2xl font-bold ${renewablesGreen ? "text-green-400" : "text-gray-200"}`}
-            >
-              {renewablesText}
-            </p>
-            <p className="text-xs text-gray-400">Renewables</p>
-          </div>
+        {/* Stats: 1 → 2 → 3 columns as the card widens (its OWN width via @container), so values
+            never collide at narrow widths. 3-up only from 340px, where emissions (the widest
+            stat: value + the g CO₂e/kWh fraction) still fits unclipped. */}
+        <div className="grid grid-cols-1 gap-3 @[200px]:grid-cols-2 @[340px]:grid-cols-3">
+          <Stat
+            label="Price"
+            value={priceText}
+            unit={price != null ? <Unit>¢/kWh</Unit> : undefined}
+          />
+          <Stat
+            label="Emissions"
+            value={emissionsText}
+            unit={
+              emissions != null ? (
+                <GridFraction top="g CO₂e" bottom="kWh" />
+              ) : undefined
+            }
+          />
+          <Stat
+            label="Renewables"
+            value={renewablesText}
+            unit={renewables != null ? <Unit>%</Unit> : undefined}
+            valueClassName={
+              renewablesGreen ? "text-green-400" : "text-gray-200"
+            }
+          />
         </div>
       </div>
     </div>
