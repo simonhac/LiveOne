@@ -26,6 +26,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { requireCronOrAdmin } from "@/lib/api-auth";
+import { cronSkipReason } from "@/lib/cron/guard";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { qstash, OBSERVATIONS_QUEUE_NAME } from "@/lib/qstash";
 
@@ -79,6 +80,9 @@ async function sendAlert(text: string): Promise<boolean> {
 export async function GET(request: NextRequest) {
   const auth = await requireCronOrAdmin(request);
   if (auth instanceof NextResponse) return auth;
+
+  const skip = cronSkipReason(request, auth);
+  if (skip) return NextResponse.json(skip);
 
   if (!planetscaleDb) {
     return NextResponse.json({ configured: false });

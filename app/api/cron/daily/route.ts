@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { deleteRange, aggregateRange } from "@/lib/aggregation/daily-points";
 import { requireCronOrAdmin } from "@/lib/api-auth";
+import { cronSkipReason } from "@/lib/cron/guard";
 import { parseDate, CalendarDate } from "@internationalized/date";
 import { getNowFormattedAEST, getYesterdayInTimezone } from "@/lib/date-utils";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -132,6 +133,9 @@ async function handleAggregation(request: NextRequest) {
     // Validate cron request or admin user
     const authResult = await requireCronOrAdmin(request);
     if (authResult instanceof NextResponse) return authResult;
+
+    const skip = cronSkipReason(request, authResult);
+    if (skip) return NextResponse.json(skip);
 
     // Extract parameters from query params (GET) or body (POST)
     const { searchParams } = new URL(request.url);

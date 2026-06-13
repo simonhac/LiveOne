@@ -19,6 +19,7 @@
     "fetch-data": "tsx scripts/fetch-data.ts",
     "db:pg:generate": "drizzle-kit generate --config=drizzle-planetscale.config.ts",
     "db:pg:migrate": "drizzle-kit migrate --config=drizzle-planetscale.config.ts",
+    "db:sync-dev": "tsx scripts/utils/sync-prod-to-dev.ts",
     "test:history": "node scripts/test-history-api.js",
     "test:history:prod": "node scripts/test-history-api.js --prod",
     "prepare": "husky"

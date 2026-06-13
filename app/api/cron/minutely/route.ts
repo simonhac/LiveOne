@@ -6,6 +6,7 @@ import { vendorUsesAppCredentials } from "@/lib/vendors/ownership";
 import { getSystemCredentials } from "@/lib/secure-credentials";
 import type { PollingResult, PollStage } from "@/lib/vendors/types";
 import { requireCronOrAdmin } from "@/lib/api-auth";
+import { cronSkipReason } from "@/lib/cron/guard";
 import { fromDate } from "@internationalized/date";
 import { formatTimeAEST } from "@/lib/date-utils";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
@@ -326,6 +327,9 @@ export async function GET(request: NextRequest) {
   try {
     const authResult = await requireCronOrAdmin(request);
     if (authResult instanceof NextResponse) return authResult;
+
+    const skip = cronSkipReason(request, authResult);
+    if (skip) return NextResponse.json(skip);
 
     // Parse query parameters
     const searchParams = request.nextUrl.searchParams;
