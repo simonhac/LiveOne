@@ -30,9 +30,24 @@ import {
 } from "@/lib/dashboard/cards";
 import {
   tilesConfigOf,
+  cardIdentity,
   type DashboardDescriptor,
   type ModuleCardInstance,
 } from "@/lib/dashboard/descriptor";
+
+/**
+ * Per-instance display label for a module card row. Multiple `chart` instances share one
+ * CARD_REGISTRY label, so derive a distinct label from the instance's chart config.
+ */
+function moduleLabel(c: ModuleCardInstance): string {
+  if (c.type === "chart" && c.chart) {
+    if (c.chart.variant === "lines") return "Energy Chart";
+    if (c.chart.split === "load") return "Power — Load";
+    if (c.chart.split === "generation") return "Power — Generation";
+    return "Power Chart";
+  }
+  return CARD_REGISTRY[c.type].label;
+}
 
 interface DashboardCustomizeDialogProps {
   isOpen: boolean;
@@ -66,6 +81,9 @@ type CardRow =
   | {
       key: string;
       kind: "module";
+      /** The card's reconcile identity (id ?? type) — keys the row, toggle and reorder. */
+      identity: string;
+      /** The bare type — for CARD_REGISTRY lookups / render dispatch. */
       moduleType: DashboardCardType;
       label: string;
       hidden: boolean;
@@ -144,10 +162,11 @@ export default function DashboardCustomizeDialog({
       ),
     ...moduleCards.map(
       (c): CardRow => ({
-        key: `mod:${c.type}`,
+        key: `mod:${cardIdentity(c)}`,
         kind: "module",
+        identity: cardIdentity(c),
         moduleType: c.type,
-        label: CARD_REGISTRY[c.type].label,
+        label: moduleLabel(c),
         hidden: !!c.hidden,
       }),
     ),
@@ -178,14 +197,14 @@ export default function DashboardCustomizeDialog({
           },
     );
 
-  const toggleModule = (type: DashboardCardType, hide: boolean) =>
+  const toggleModule = (identity: string, hide: boolean) =>
     setDraft((d) =>
       !d
         ? d
         : {
             ...d,
             cards: d.cards.map((c) =>
-              c.type === type ? { ...c, hidden: hide } : c,
+              cardIdentity(c) === identity ? { ...c, hidden: hide } : c,
             ),
           },
     );
@@ -204,25 +223,27 @@ export default function DashboardCustomizeDialog({
     const tileIds = next
       .filter((r): r is Extract<CardRow, { kind: "tile" }> => r.kind === "tile")
       .map((r) => r.tileId);
-    const moduleTypes = next
+    const moduleIdentities = next
       .filter(
         (r): r is Extract<CardRow, { kind: "module" }> => r.kind === "module",
       )
-      .map((r) => r.moduleType);
+      .map((r) => r.identity);
 
     setDraft((d) => {
       if (!d) return d;
       const tilesCard = d.cards.find((c) => c.type === "tiles");
-      const moduleByType = new Map(
-        d.cards.filter((c) => c.type !== "tiles").map((c) => [c.type, c]),
+      const moduleByIdentity = new Map(
+        d.cards
+          .filter((c) => c.type !== "tiles")
+          .map((c) => [cardIdentity(c), c]),
       );
-      const reorderedModules = moduleTypes
-        .map((t) => moduleByType.get(t))
+      const reorderedModules = moduleIdentities
+        .map((id) => moduleByIdentity.get(id))
         .filter((c): c is ModuleCardInstance => !!c);
       // Preserve any module cards NOT in the visible list (e.g. unavailable on this system).
-      const shown = new Set(moduleTypes);
+      const shown = new Set(moduleIdentities);
       const otherModules = d.cards.filter(
-        (c) => c.type !== "tiles" && !shown.has(c.type),
+        (c) => c.type !== "tiles" && !shown.has(cardIdentity(c)),
       );
       const cards: ModuleCardInstance[] = [
         ...(tilesCard
@@ -305,7 +326,7 @@ export default function DashboardCustomizeDialog({
                       onToggle={(hide) =>
                         row.kind === "tile"
                           ? toggleTile(row.tileId, hide)
-                          : toggleModule(row.moduleType, hide)
+                          : toggleModule(row.identity, hide)
                       }
                     />
                   ))}

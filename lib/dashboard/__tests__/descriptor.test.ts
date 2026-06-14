@@ -12,28 +12,40 @@ describe("buildDefaultDescriptor (reproduces the vendor_type ladder)", () => {
     expect(d.cards.map((c) => c.type)).toEqual(["amber-now", "amber-timeline"]);
   });
 
-  it("mondo/composite → site layout with tiles, site-charts, sankey, generator-runs", () => {
+  it("mondo/composite → site layout with tiles, two stacked charts, sankey, generator-runs", () => {
     for (const vt of ["mondo", "composite"]) {
       const d = buildDefaultDescriptor({ vendorType: vt }, latest);
       expect(d.layout).toBe("site");
-      expect(d.cards.map((c) => c.type)).toEqual([
+      expect(d.cards.map((c) => c.id ?? c.type)).toEqual([
         "tiles",
-        "site-charts",
+        "chart:load",
+        "chart:generation",
         "sankey",
         "generator-runs",
       ]);
+      // The two stacked chart instances carry their split config.
+      const load = d.cards.find((c) => c.id === "chart:load");
+      const gen = d.cards.find((c) => c.id === "chart:generation");
+      expect(load?.chart).toEqual({ variant: "stacked-areas", split: "load" });
+      expect(gen?.chart).toEqual({
+        variant: "stacked-areas",
+        split: "generation",
+      });
     }
   });
 
-  it("every other vendor → sidebar layout with tiles, energy-chart, generator-runs", () => {
+  it("every other vendor → sidebar layout with tiles, a lines chart, generator-runs", () => {
     for (const vt of ["selectronic", "enphase", "fronius", "tesla", "fusher"]) {
       const d = buildDefaultDescriptor({ vendorType: vt }, latest);
       expect(d.layout).toBe("sidebar");
-      expect(d.cards.map((c) => c.type)).toEqual([
+      expect(d.cards.map((c) => c.id ?? c.type)).toEqual([
         "tiles",
-        "energy-chart",
+        "chart:lines",
         "generator-runs",
       ]);
+      expect(d.cards.find((c) => c.id === "chart:lines")?.chart).toEqual({
+        variant: "lines",
+      });
     }
   });
 });
@@ -66,18 +78,27 @@ describe("CARD_REGISTRY canRender", () => {
     expect(CARD_REGISTRY["tiles"].canRender(ctx("composite"))).toBe(true);
     expect(CARD_REGISTRY["tiles"].canRender(ctx("amber"))).toBe(false);
   });
-  it("site-charts/sankey only for site (mondo/composite) systems", () => {
-    expect(CARD_REGISTRY["site-charts"].canRender(ctx("mondo"))).toBe(true);
+  it("sankey only for site (mondo/composite) systems", () => {
     expect(CARD_REGISTRY.sankey.canRender(ctx("composite"))).toBe(true);
-    expect(CARD_REGISTRY["site-charts"].canRender(ctx("selectronic"))).toBe(
-      false,
-    );
+    expect(CARD_REGISTRY.sankey.canRender(ctx("mondo"))).toBe(true);
+    expect(CARD_REGISTRY.sankey.canRender(ctx("selectronic"))).toBe(false);
   });
-  it("energy-chart for non-amber, non-site systems", () => {
-    expect(CARD_REGISTRY["energy-chart"].canRender(ctx("selectronic"))).toBe(
-      true,
-    );
-    expect(CARD_REGISTRY["energy-chart"].canRender(ctx("amber"))).toBe(false);
-    expect(CARD_REGISTRY["energy-chart"].canRender(ctx("mondo"))).toBe(false);
+  it("chart is data-driven (solar + load present), NOT vendor-gated", () => {
+    const withData = {
+      "source.solar/power": { value: 1000 },
+      "load/power": { value: 500 },
+    } as unknown as LatestPointValues;
+    // Eligible for BOTH a site and a sidebar vendor when the data is present.
+    expect(
+      CARD_REGISTRY.chart.canRender({ vendorType: "mondo", latest: withData }),
+    ).toBe(true);
+    expect(
+      CARD_REGISTRY.chart.canRender({
+        vendorType: "selectronic",
+        latest: withData,
+      }),
+    ).toBe(true);
+    // No series → not eligible.
+    expect(CARD_REGISTRY.chart.canRender(ctx("selectronic"))).toBe(false);
   });
 });

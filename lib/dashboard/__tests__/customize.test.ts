@@ -42,7 +42,8 @@ describe("normalizeDescriptor", () => {
 
   it("keeps saved hidden/order and appends newly-introduced cards", () => {
     const def = sidebarDefault();
-    const saved: DashboardDescriptor = {
+    // Untyped so the legacy "energy-chart" literal (read-shimmed to chart:lines) is allowed.
+    const saved = {
       version: 2,
       layout: "sidebar",
       cards: [
@@ -60,7 +61,8 @@ describe("normalizeDescriptor", () => {
     expect(cfg.order.slice(0, 2)).toEqual(["grid", "solar"]);
     expect(new Set(cfg.order)).toEqual(new Set(TILE_IDS));
     expect(cfg.hidden).toEqual(["battery"]);
-    expect(isCardVisible(out, "energy-chart")).toBe(false);
+    // legacy energy-chart → chart:lines, hidden carried
+    expect(isCardVisible(out, "chart:lines")).toBe(false);
     expect(isCardVisible(out, "tiles")).toBe(true);
   });
 
