@@ -6,18 +6,18 @@ import type { LatestPointValues } from "@/lib/types/api";
 const latest = {} as LatestPointValues;
 
 describe("buildDefaultDescriptor (reproduces the vendor_type ladder)", () => {
-  it("amber → amber layout with the amber card", () => {
+  it("amber → amber layout with the amber-now + amber-timeline cards", () => {
     const d = buildDefaultDescriptor({ vendorType: "amber" }, latest);
     expect(d.layout).toBe("amber");
-    expect(d.cards.map((c) => c.type)).toEqual(["amber"]);
+    expect(d.cards.map((c) => c.type)).toEqual(["amber-now", "amber-timeline"]);
   });
 
-  it("mondo/composite → site layout with power-cards, site-charts, sankey, generator-runs", () => {
+  it("mondo/composite → site layout with tiles, site-charts, sankey, generator-runs", () => {
     for (const vt of ["mondo", "composite"]) {
       const d = buildDefaultDescriptor({ vendorType: vt }, latest);
       expect(d.layout).toBe("site");
       expect(d.cards.map((c) => c.type)).toEqual([
-        "power-cards",
+        "tiles",
         "site-charts",
         "sankey",
         "generator-runs",
@@ -25,12 +25,12 @@ describe("buildDefaultDescriptor (reproduces the vendor_type ladder)", () => {
     }
   });
 
-  it("every other vendor → sidebar layout with power-cards, energy-chart, generator-runs", () => {
+  it("every other vendor → sidebar layout with tiles, energy-chart, generator-runs", () => {
     for (const vt of ["selectronic", "enphase", "fronius", "tesla", "fusher"]) {
       const d = buildDefaultDescriptor({ vendorType: vt }, latest);
       expect(d.layout).toBe("sidebar");
       expect(d.cards.map((c) => c.type)).toEqual([
-        "power-cards",
+        "tiles",
         "energy-chart",
         "generator-runs",
       ]);
@@ -49,16 +49,22 @@ describe("getLayout", () => {
 
 describe("CARD_REGISTRY canRender", () => {
   const ctx = (vendorType: string) => ({ vendorType, latest });
-  it("amber card only for amber systems", () => {
-    expect(CARD_REGISTRY.amber.canRender(ctx("amber"))).toBe(true);
-    expect(CARD_REGISTRY.amber.canRender(ctx("mondo"))).toBe(false);
+  it("amber-now/amber-timeline are data-driven (import rate point present)", () => {
+    const withRate = {
+      "bidi.grid.import/rate": { value: 12 },
+    } as unknown as LatestPointValues;
+    for (const t of ["amber-now", "amber-timeline"] as const) {
+      expect(
+        CARD_REGISTRY[t].canRender({ vendorType: "amber", latest: withRate }),
+      ).toBe(true);
+      // No rate point → not eligible (regardless of vendor type).
+      expect(CARD_REGISTRY[t].canRender(ctx("amber"))).toBe(false);
+    }
   });
-  it("power-cards for everything except amber", () => {
-    expect(CARD_REGISTRY["power-cards"].canRender(ctx("selectronic"))).toBe(
-      true,
-    );
-    expect(CARD_REGISTRY["power-cards"].canRender(ctx("composite"))).toBe(true);
-    expect(CARD_REGISTRY["power-cards"].canRender(ctx("amber"))).toBe(false);
+  it("tiles for everything except amber", () => {
+    expect(CARD_REGISTRY["tiles"].canRender(ctx("selectronic"))).toBe(true);
+    expect(CARD_REGISTRY["tiles"].canRender(ctx("composite"))).toBe(true);
+    expect(CARD_REGISTRY["tiles"].canRender(ctx("amber"))).toBe(false);
   });
   it("site-charts/sankey only for site (mondo/composite) systems", () => {
     expect(CARD_REGISTRY["site-charts"].canRender(ctx("mondo"))).toBe(true);

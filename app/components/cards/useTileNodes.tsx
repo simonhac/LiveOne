@@ -1,13 +1,15 @@
 "use client";
 
-import React from "react";
-import PowerCard from "@/components/PowerCard";
+import React, { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import Tile from "@/components/Tile";
 import AmberSmallCard from "@/components/AmberSmallCard";
 import TeslaSmallCard from "@/components/TeslaSmallCard";
 import HwsSmallCard from "@/components/HwsSmallCard";
+import { historyQuery } from "@/lib/queries";
 import { DEFAULT_HWS_MODEL_OPTIONS } from "@/lib/hws-model";
 import { stemSplit, getMetricType } from "@/lib/identifiers/logical-path";
-import type { PowerCardId } from "@/lib/dashboard/cards";
+import type { TileId } from "@/lib/dashboard/cards";
 import type { LatestPointValues, LatestPointValue } from "@/lib/types/api";
 import {
   Sun,
@@ -21,9 +23,9 @@ import {
 } from "lucide-react";
 
 /**
- * Shared builder for the power mini-cards (solar/load/battery/grid/amber/ev).
+ * Shared builder for the tiles (solar/load/battery/grid/amber/ev).
  *
- * Extracted from SystemPowerCards so BOTH the live dashboard and the Customize dialog render the
+ * Extracted from SystemTiles so BOTH the live dashboard and the Customize dialog render the
  * EXACT same card nodes — the dialog shows cards "as they actually would" on the dashboard. The
  * hook owns all the synthesis/aggregation; the caller owns ordering + grid layout.
  *
@@ -31,7 +33,7 @@ import {
  *  - `available`: which cards have data (the authoritative availability)
  *  - `cardNodes`: each card's rendered node, keyed by id (built for all ids; the caller picks order/subset)
  */
-export interface UsePowerCardNodesArgs {
+export interface UseTileNodesArgs {
   latest: LatestPointValues;
   vendorType: string;
   getStaleThreshold: (vendorType: string) => number;
@@ -40,9 +42,9 @@ export interface UsePowerCardNodesArgs {
   canControl?: boolean;
 }
 
-export interface PowerCardNodes {
-  available: Record<PowerCardId, boolean>;
-  cardNodes: Record<PowerCardId, React.ReactNode>;
+export interface TileNodes {
+  available: Record<TileId, boolean>;
+  cardNodes: Record<TileId, React.ReactNode>;
 }
 
 interface LoadPoint {
@@ -259,7 +261,7 @@ function synthesizeMasterLoad(
 
 /**
  * Calculate all load values including master, children, and rest-of-house.
- * (See the original SystemPowerCards docblock for the two calculation cases.)
+ * (See the original SystemTiles docblock for the two calculation cases.)
  */
 function calculateAllLoads(latest: LatestPointValues): LoadPoint[] {
   let masterLoad: number | null = null;
@@ -336,16 +338,16 @@ function calculateAllLoads(latest: LatestPointValues): LoadPoint[] {
 }
 
 /**
- * Build the per-id power mini-card nodes + availability for a system's latest values.
+ * Build the per-id tile nodes + availability for a system's latest values.
  */
-export function usePowerCardNodes({
+export function useTileNodes({
   latest,
   vendorType,
   getStaleThreshold,
   showGrid,
   systemId,
   canControl,
-}: UsePowerCardNodesArgs): PowerCardNodes {
+}: UseTileNodesArgs): TileNodes {
   // Helper to format power value (number only, no unit)
   const formatPowerValue = (watts: number) => {
     return (watts / 1000).toFixed(1);
@@ -482,10 +484,30 @@ export function usePowerCardNodes({
   // Determine if we should show the load card
   const hasLoadData = allLoads.length > 0;
 
-  // Which power cards have data (the authoritative availability).
+  // Which tiles have data (the authoritative availability).
   const hwsTemp = getPointValue("load.hws/temperature");
 
-  const available: Record<PowerCardId, boolean> = {
+  // HWS 24h sparkline — fetched here (orchestrated) so HwsSmallCard stays presentational like the
+  // other mini-cards. Uses the generic /api/history query; multiple useTileNodes callers share
+  // one request via the query key. Only fires when there is HWS temperature data.
+  const hwsHistory = useQuery(
+    historyQuery({
+      systemId: systemId ?? "",
+      interval: "5m",
+      last: "24h",
+      series: "load.hws/temperature.avg",
+      enabled: systemId != null && hwsTemp != null,
+    }),
+  );
+  const hwsSparkValues = useMemo<number[]>(() => {
+    const series = (
+      hwsHistory.data as { data?: Array<{ history?: { data?: unknown[] } }> }
+    )?.data?.[0]?.history?.data;
+    if (!Array.isArray(series)) return [];
+    return series.filter((v: unknown): v is number => typeof v === "number");
+  }, [hwsHistory.data]);
+
+  const available: Record<TileId, boolean> = {
     solar: solarValue !== null,
     load: hasLoadData,
     hotWater: hwsTemp !== null,
@@ -496,9 +518,9 @@ export function usePowerCardNodes({
   };
 
   // Each mini-card's node, keyed by id, so the dashboard/dialog can render them in any order/subset.
-  const cardNodes: Record<PowerCardId, React.ReactNode> = {
+  const cardNodes: Record<TileId, React.ReactNode> = {
     solar: (
-      <PowerCard
+      <Tile
         title="Solar"
         value={formatPowerValue(solarValue ?? 0)}
         unit="kW"
@@ -528,7 +550,7 @@ export function usePowerCardNodes({
       />
     ),
     load: (
-      <PowerCard
+      <Tile
         title="Load"
         value={formatPowerValue(totalLoad)}
         unit="kW"
@@ -552,7 +574,7 @@ export function usePowerCardNodes({
       />
     ),
     battery: (
-      <PowerCard
+      <Tile
         title="Battery"
         value={(batterySoc ?? 0).toFixed(1)}
         unit="%"
@@ -606,7 +628,7 @@ export function usePowerCardNodes({
       />
     ),
     grid: (
-      <PowerCard
+      <Tile
         title="Grid"
         value={
           Math.abs(gridPower) < 100
@@ -670,8 +692,8 @@ export function usePowerCardNodes({
     ),
     hotWater: (
       <HwsSmallCard
-        systemId={systemId}
         faucetC={hwsTemp}
+        sparkValues={hwsSparkValues}
         measurementTime={
           getMeasurementTime("load.hws/temperature") ?? undefined
         }

@@ -34,6 +34,12 @@
 - [old-database-admin.md](old-database-admin.md) — historical notes for rebuilding the stripped `/admin/readings` database admin tools
 - vendors/ — [enphase-api.md](vendors/enphase-api.md) · [enphase-integration.md](vendors/enphase-integration.md) · [enphase-testing.md](vendors/enphase-testing.md) (historical — mock removed 2026-06-10) · [fronius-push-spec.md](vendors/fronius-push-spec.md) · [selectronic.md](vendors/selectronic.md)
 
+## Plans (proposed — not yet started)
+
+- [plans/chart-card-generalization.md](plans/chart-card-generalization.md) — merge the two chart components (EnergyChart lines + SitePowerChart stacked-areas) into one instance-id'd `chart` card so a dashboard can show either or both; next phase after the P1–P7 card-uniformity work
+- [plans/composite-fast-cache.md](plans/composite-fast-cache.md) — make a newly-mapped composite point's card appear instantly on save (prototyped + reverted)
+- [plans/timestamptz-migration.md](plans/timestamptz-migration.md) — migrate time-series time columns to `timestamptz` (needs schema-change approval)
+
 ## Deferred work
 
 - [deferred/generator-events-rewrite.md](deferred/generator-events-rewrite.md) — bounded-range rewrite owed before its PG migration

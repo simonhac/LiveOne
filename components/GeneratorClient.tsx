@@ -1,17 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-
-interface GeneratorEvent {
-  date: string;
-  startTime: string;
-  endTime: string | null;
-  running?: boolean;
-  durationSeconds?: number | null;
-  startTimeISO?: string;
-  avgPowerW?: number | null;
-  energyKwh: number;
-}
+import { runPeriodsQuery } from "@/lib/queries";
 
 /** Format a duration in seconds as "2h 30m" / "45m" / "3h". */
 function formatDuration(seconds: number): string {
@@ -20,12 +10,6 @@ function formatDuration(seconds: number): string {
   const m = totalMin % 60;
   if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
   return `${m}m`;
-}
-
-interface GeneratorData {
-  events: GeneratorEvent[];
-  totalEnergyKwh: number;
-  running?: boolean;
 }
 
 interface AvailableSystem {
@@ -57,32 +41,20 @@ export default function GeneratorClient({
 }: GeneratorClientProps) {
   const propSystemId = system.id;
 
-  // Bounded read of persisted run periods (replaces the old unbounded generator-events scan).
-  // A non-ok response yields null (rendered as "no events").
+  // Bounded read of persisted run periods (replaces the old unbounded generator-events scan), via
+  // the shared run-periods query factory. A non-ok response surfaces as `isError`.
   const {
     data: generatorData,
     isPending,
     isError,
     error: queryError,
-  } = useQuery<GeneratorData | null>({
-    queryKey: ["system", propSystemId, "run-periods", "generator"],
-    queryFn: async () => {
-      const generatorResponse = await fetch(
-        `/api/system/${propSystemId}/run-periods?role=generator&period=30d`,
-        {
-          credentials: "same-origin",
-        },
-      );
-
-      if (generatorResponse.ok) {
-        return (await generatorResponse.json()) as GeneratorData;
-      }
-      // Non-ok: original left generatorData null without surfacing an error.
-      return null;
-    },
-    staleTime: 60_000,
-    enabled: !!propSystemId,
-  });
+  } = useQuery(
+    runPeriodsQuery({
+      systemId: propSystemId,
+      role: "generator",
+      period: "30d",
+    }),
+  );
 
   const loading = isPending;
   const error = isError
@@ -179,7 +151,7 @@ export default function GeneratorClient({
                       Total
                     </td>
                     <td className="px-4 py-3 text-sm text-right tabular-nums">
-                      {generatorData.totalEnergyKwh.toFixed(2)} kWh
+                      {(generatorData.totalEnergyKwh ?? 0).toFixed(2)} kWh
                     </td>
                   </tr>
                 </tbody>

@@ -6,7 +6,27 @@ import { VendorRegistry } from "@/lib/vendors/registry";
 import { getLatestPointValues } from "@/lib/kv-cache-manager";
 import { jsonResponse } from "@/lib/json";
 import { SystemsManager } from "@/lib/systems-manager";
+import { PointManager } from "@/lib/point/point-manager";
 import { clerkClient } from "@clerk/nextjs/server";
+
+/**
+ * One row of the detailed "latest readings" table (`include=readings`). A superset of the `latest`
+ * map: it also lists active points that have NO cached value yet (expected-but-missing) and carries
+ * per-point metadata (physical path, session labels). Date fields are renamed by `jsonResponse`
+ * (measurementTimeMs → measurementTime).
+ */
+interface LatestReadingRow {
+  value?: number | string | boolean;
+  physicalPath: string;
+  logicalPath: string | null;
+  pointReference?: string;
+  measurementTimeMs?: number;
+  receivedTimeMs?: number;
+  metricUnit: string;
+  pointName: string;
+  sessionId?: string;
+  sessionLabel?: string;
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -89,6 +109,66 @@ export async function GET(request: NextRequest) {
     // Get latest point values from KV cache (composite points system)
     const latest = await getLatestPointValues(system.id);
 
+    // `include=readings` → also build the detailed readings table (the former
+    // /api/system/{id}/latest route): every active point merged with its cached value, including
+    // expected-but-missing points + session labels. Computed only on request so the hot dashboard
+    // poll stays lean. This makes /api/data the single producer of the KV latest cache.
+    const include = (searchParams.get("include") || "")
+      .split(",")
+      .map((s) => s.trim());
+    let readings: LatestReadingRow[] | undefined;
+    if (include.includes("readings")) {
+      const expectedPoints =
+        await PointManager.getInstance().getActivePointsForSystem(system.id);
+      readings = expectedPoints
+        .map((point): LatestReadingRow => {
+          const logicalPath = point.getLogicalPath();
+          const cached = logicalPath ? latest[logicalPath] : null;
+          if (cached) {
+            // Numeric → boolean when the unit says so (the readings table renders true/false).
+            let displayValue: number | string | boolean | null = cached.value;
+            if (
+              cached.metricUnit === "boolean" &&
+              typeof cached.value === "number"
+            ) {
+              displayValue = cached.value !== 0;
+            }
+            return {
+              ...(displayValue != null && { value: displayValue }),
+              physicalPath: point.physicalPathTail,
+              logicalPath: cached.logicalPath,
+              ...(cached.pointReference != null && {
+                pointReference: cached.pointReference,
+              }),
+              ...(cached.measurementTimeMs != null && {
+                measurementTimeMs: cached.measurementTimeMs,
+              }),
+              ...(cached.receivedTimeMs != null && {
+                receivedTimeMs: cached.receivedTimeMs,
+              }),
+              metricUnit: cached.metricUnit,
+              pointName: cached.displayName,
+              ...(cached.sessionId != null && { sessionId: cached.sessionId }),
+              ...(cached.sessionLabel != null && {
+                sessionLabel: cached.sessionLabel,
+              }),
+            };
+          }
+          // No cached value — expected-but-missing point.
+          return {
+            physicalPath: point.physicalPathTail,
+            logicalPath,
+            metricUnit: point.metricUnit,
+            pointName: point.name,
+          };
+        })
+        .sort(
+          (a, b) =>
+            (a.pointName || "").localeCompare(b.pointName || "") ||
+            (a.logicalPath || "").localeCompare(b.logicalPath || ""),
+        );
+    }
+
     // The logged-in user's system-switcher list. A public share-token viewer (no userId) gets none.
     const systemsManager = SystemsManager.getInstance();
     const availableSystems = userId
@@ -111,6 +191,7 @@ export async function GET(request: NextRequest) {
         system: systemData,
         latest: latest,
         availableSystems: systemsWithUsernames,
+        ...(readings !== undefined && { readings }),
       },
       system.timezoneOffsetMin,
     );

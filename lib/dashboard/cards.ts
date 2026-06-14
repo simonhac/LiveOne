@@ -8,7 +8,7 @@
  * satisfy. See docs/architecture/areas-and-dashboards.md.
  *
  * P1 models cards at the MODULE level — the granularity the ladder actually chooses. The individual
- * power mini-cards (solar/battery/grid/load/amber/ev) are still rendered inside SystemPowerCards;
+ * tiles (solar/battery/grid/load/amber/ev) are still rendered inside SystemTiles;
  * they become first-class descriptor cards in P2.
  */
 
@@ -16,8 +16,9 @@ import type { LatestPointValues } from "@/lib/types/api";
 import type { RoleId } from "@/lib/roles/registry";
 
 export type DashboardCardType =
-  | "amber"
-  | "power-cards"
+  | "amber-now"
+  | "amber-timeline"
+  | "tiles"
   | "site-charts"
   | "sankey"
   | "energy-chart"
@@ -46,15 +47,24 @@ export interface CardDef {
 const isSiteVendor = (vt: string) => vt === "mondo" || vt === "composite";
 
 export const CARD_REGISTRY: Record<DashboardCardType, CardDef> = {
-  amber: {
-    type: "amber",
+  "amber-now": {
+    type: "amber-now",
     label: "Amber Price",
     requiredRoles: ["grid"],
-    canRender: (c) => c.vendorType === "amber",
+    // Data-driven (not vendor-driven): the live Amber price card is meaningful wherever the import
+    // rate point exists. The default amber layout still selects it via getLayout; this is the
+    // gallery-eligibility hint.
+    canRender: (c) => hasVal(c.latest, "bidi.grid.import/rate"),
   },
-  "power-cards": {
-    type: "power-cards",
-    label: "Power",
+  "amber-timeline": {
+    type: "amber-timeline",
+    label: "Amber Forecast",
+    requiredRoles: ["grid"],
+    canRender: (c) => hasVal(c.latest, "bidi.grid.import/rate"),
+  },
+  tiles: {
+    type: "tiles",
+    label: "Tiles",
     requiredRoles: ["solar", "battery", "grid", "load"],
     canRender: (c) => c.vendorType !== "amber",
   },
@@ -103,11 +113,11 @@ export function getLayout(vendorType: string): DashboardLayout {
 }
 
 // ============================================================================
-// Power mini-cards (P2) — the individually customizable cards inside the
-// `power-cards` module. Order/visibility are persisted in the descriptor.
+// Tiles (P2) — the individually customizable cards inside the
+// `tiles` module. Order/visibility are persisted in the descriptor.
 // ============================================================================
 
-export type PowerCardId =
+export type TileId =
   | "solar"
   | "load"
   | "hotWater"
@@ -116,8 +126,8 @@ export type PowerCardId =
   | "amber"
   | "ev";
 
-/** Default order — matches the historical SystemPowerCards render order (hotWater groups with loads). */
-export const POWER_CARD_IDS: readonly PowerCardId[] = [
+/** Default order — matches the historical SystemTiles render order (hotWater groups with loads). */
+export const TILE_IDS: readonly TileId[] = [
   "solar",
   "load",
   "hotWater",
@@ -127,13 +137,13 @@ export const POWER_CARD_IDS: readonly PowerCardId[] = [
   "ev",
 ];
 
-export interface PowerCardDef {
-  id: PowerCardId;
+export interface TileDef {
+  id: TileId;
   label: string;
   requiredRoles?: RoleId[];
 }
 
-export const POWER_CARDS: Record<PowerCardId, PowerCardDef> = {
+export const TILES: Record<TileId, TileDef> = {
   solar: { id: "solar", label: "Solar", requiredRoles: ["solar"] },
   load: { id: "load", label: "Load", requiredRoles: ["load"] },
   hotWater: { id: "hotWater", label: "Hot Water", requiredRoles: ["load"] },
@@ -147,11 +157,11 @@ const hasVal = (latest: LatestPointValues, path: string): boolean =>
   latest[path]?.value != null;
 
 /**
- * Which power mini-cards a system can currently show, given its latest values. Mirrors the
- * point-existence checks inside SystemPowerCards closely enough for the Add-Card gallery to grey
- * out unsupported cards. SystemPowerCards remains the authority for what actually renders.
+ * Which tiles a system can currently show, given its latest values. Mirrors the
+ * point-existence checks inside SystemTiles closely enough for the Add-Card gallery to grey
+ * out unsupported cards. SystemTiles remains the authority for what actually renders.
  */
-export function availablePowerCards(latest: LatestPointValues): PowerCardId[] {
+export function availableTiles(latest: LatestPointValues): TileId[] {
   const solar =
     hasVal(latest, "source.solar/power") ||
     hasVal(latest, "source.solar.local/power") ||
@@ -168,7 +178,7 @@ export function availablePowerCards(latest: LatestPointValues): PowerCardId[] {
     hasVal(latest, "bidi.battery/power") ||
     hasVal(latest, "bidi.grid/power");
 
-  const available: Record<PowerCardId, boolean> = {
+  const available: Record<TileId, boolean> = {
     solar,
     load,
     // The modelled hot-water temperature is a first-class derived point in `latest`.
@@ -178,5 +188,5 @@ export function availablePowerCards(latest: LatestPointValues): PowerCardId[] {
     amber: hasVal(latest, "bidi.grid.import/rate"),
     ev: hasVal(latest, "ev.battery/soc"),
   };
-  return POWER_CARD_IDS.filter((id) => available[id]);
+  return TILE_IDS.filter((id) => available[id]);
 }

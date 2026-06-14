@@ -12,52 +12,52 @@ export interface GridSignalsCardProps {
   staleThresholdSeconds?: number;
 }
 
-/** Small, non-bold, muted unit text. Sizes relative to the value it follows (em-based). */
-function Unit({ children }: { children: ReactNode }) {
-  return (
-    <span className="text-[0.62em] font-normal text-gray-400">{children}</span>
-  );
-}
-
 /**
- * Typographic fraction (numerator over a rule over denominator) for a unit pair like
- * "g CO₂e / kWh". Small + non-bold; sits inline next to a value via align-middle.
+ * Unit / suffix text styled like the power cards (e.g. solar's "kW"): small + semibold, sitting
+ * next to the value. By default it inherits the value's colour (the power-card look); `muted`
+ * recesses it (the trailing "RE"). `gap` adds a thin space before it ("6.9 kW"); omit to attach
+ * the symbol to the number ("1.5¢…", "24%").
  */
-function GridFraction({ top, bottom }: { top: string; bottom: string }) {
+function Unit({
+  children,
+  gap = false,
+  muted = false,
+}: {
+  children: ReactNode;
+  gap?: boolean;
+  muted?: boolean;
+}) {
   return (
-    <span className="inline-flex flex-col items-center align-middle text-[0.5em] font-normal leading-none text-gray-400">
-      <span className="whitespace-nowrap px-0.5">{top}</span>
-      <span className="my-px w-full border-t border-gray-500" />
-      <span className="whitespace-nowrap px-0.5">{bottom}</span>
-    </span>
+    <>
+      {gap && " "}
+      <span
+        className={`text-sm font-semibold md:text-base${muted ? " text-gray-400" : ""}`}
+      >
+        {children}
+      </span>
+    </>
   );
 }
 
-/** A single labelled stat: small label on top, big bold value + recessed unit below. */
+/** A compact, label-less stat: bold value + power-card-style unit. Never truncates. */
 function Stat({
-  label,
   value,
   unit,
   valueClassName,
 }: {
-  label: string;
   value: string;
-  /** Rendered only when present (omitted when the value is the em-dash). */
   unit?: ReactNode;
   valueClassName?: string;
 }) {
   return (
-    <div className="min-w-0">
-      <p className="truncate text-xs text-gray-400">{label}</p>
-      <p
-        className={`mt-0.5 flex items-baseline gap-1 text-xl font-bold leading-none md:text-2xl ${
-          valueClassName ?? "text-gray-200"
-        }`}
-      >
-        <span className="truncate">{value}</span>
-        {unit ? <span className="shrink-0">{unit}</span> : null}
-      </p>
-    </div>
+    <p
+      className={`whitespace-nowrap text-xl font-bold leading-none md:text-2xl ${
+        valueClassName ?? "text-gray-200"
+      }`}
+    >
+      {value}
+      {unit}
+    </p>
   );
 }
 
@@ -67,11 +67,12 @@ function Stat({
  * renewables (%). No data fetching happens here — the typed `values` prop is supplied by the
  * caller (cross-system OE region fetch).
  *
- * Layout: the three stats sit in an `@container` grid that reflows by the card's OWN width —
- * 1 column when narrow, 2 from 200px, 3 (the familiar 3-up) from 340px — so values never collide
- * at small widths. Units are small + non-bold; emissions uses a g CO₂e/kWh fraction.
+ * Layout: three compact, label-less stats (bold value + a power-card-style unit, like solar's
+ * "kW") in an `@container` grid that reflows by the card's OWN width — 1 column when narrow, then
+ * 2/3 columns as it widens. Price keeps ¢ attached ("1.5¢/kWh"), emissions abbreviates to "EI"
+ * (emissions intensity), renewables reads "<n>% RE". Values never truncate.
  *
- * Staleness follows PowerCard: the newest measurementTime across the present
+ * Staleness follows Tile: the newest measurementTime across the present
  * metrics is compared against `staleThresholdSeconds` (recomputed every second);
  * when stale, the card dims and a Clock icon exposes a "Last update" tooltip.
  */
@@ -226,28 +227,30 @@ export default function GridSignalsCard({
           )}
         </div>
 
-        {/* Stats: 1 → 2 → 3 columns as the card widens (its OWN width via @container), so values
-            never collide at narrow widths. 3-up only from 340px, where emissions (the widest
-            stat: value + the g CO₂e/kWh fraction) still fits unclipped. */}
-        <div className="grid grid-cols-1 gap-3 @[200px]:grid-cols-2 @[340px]:grid-cols-3">
+        {/* Compact, label-less stats: bold value + power-card-style unit. 1 → 2 → 3 columns as the
+            card widens (its OWN width via @container). Price keeps ¢ attached to the number;
+            emissions uses "EI" (emissions intensity); renewables is "<n>% RE". */}
+        <div className="grid grid-cols-1 gap-x-4 gap-y-1 @[180px]:grid-cols-2 @[300px]:grid-cols-3">
           <Stat
-            label="Price"
             value={priceText}
             unit={price != null ? <Unit>¢/kWh</Unit> : undefined}
           />
           <Stat
-            label="Emissions"
             value={emissionsText}
-            unit={
-              emissions != null ? (
-                <GridFraction top="g CO₂e" bottom="kWh" />
-              ) : undefined
-            }
+            unit={emissions != null ? <Unit gap>EI</Unit> : undefined}
           />
           <Stat
-            label="Renewables"
             value={renewablesText}
-            unit={renewables != null ? <Unit>%</Unit> : undefined}
+            unit={
+              renewables != null ? (
+                <>
+                  <Unit>%</Unit>
+                  <Unit gap muted>
+                    RE
+                  </Unit>
+                </>
+              ) : undefined
+            }
             valueClassName={
               renewablesGreen ? "text-green-400" : "text-gray-200"
             }
