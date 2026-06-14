@@ -16,6 +16,12 @@ import {
   buildShadingAnnotations,
   buildTimeScale,
 } from "@/lib/charts/scaffold";
+import { buildStackedAreaDatasets } from "@/lib/charts/datasets";
+import type { SeriesData, ChartData } from "@/lib/charts/types";
+
+// Re-exported for back-compat with existing importers (DashboardClient, EnergyTable,
+// site-data-processor, tests). The canonical home is now lib/charts/types.
+export type { SeriesData, ChartData } from "@/lib/charts/types";
 
 registerChartScaffold();
 
@@ -36,20 +42,6 @@ interface SitePowerChartProps {
   onVisibilityChange?: (visibleSeries: Set<string>) => void; // Callback when visibility changes
   data?: ChartData | null; // Pre-processed data from parent
   isLoading?: boolean; // External loading state from parent
-}
-
-export interface SeriesData {
-  id: string;
-  description: string;
-  data: (number | null)[];
-  color: string;
-  seriesType?: "power" | "soc"; // Type of series: power/energy (stacked) or soc (overlay)
-}
-
-export interface ChartData {
-  timestamps: Date[];
-  series: SeriesData[];
-  mode: "power" | "energy";
 }
 
 // Series configuration for data-driven approach
@@ -510,132 +502,11 @@ export default function SitePowerChart({
     ? {}
     : {
         labels: chartData.timestamps,
-        datasets: (() => {
-          // Separate power/energy series from SoC series
-          const powerSeries = chartData.series.filter(
-            (s) => s.seriesType !== "soc",
-          );
-          const socSeries = chartData.series.filter(
-            (s) => s.seriesType === "soc",
-          );
-
-          // Create datasets for power/energy series (stacked)
-          const powerDatasets = powerSeries
-            .filter((series) => effectiveVisibleSeries.has(series.id))
-            .map((series, idx) => {
-              const baseConfig = {
-                label: series.description,
-                data: series.data,
-                backgroundColor: series.color,
-                yAxisID: "y",
-                stack: "stack0",
-                order: idx,
-              };
-
-              if (isBarChart) {
-                return {
-                  ...baseConfig,
-                  borderColor: series.color,
-                  borderWidth: 0,
-                };
-              } else {
-                return {
-                  ...baseConfig,
-                  borderColor: series.color,
-                  tension: 0,
-                  borderWidth: 2,
-                  pointRadius: 0,
-                  pointHoverRadius: 0,
-                  fill: "stack",
-                };
-              }
-            });
-
-          // Create datasets for SoC series (non-stacked overlay)
-          const socDatasets: any[] = [];
-
-          // Find min, avg, max SoC series for daily data
-          const socMin = socSeries.find((s) => s.description.includes("(Min)"));
-          const socAvg = socSeries.find((s) => s.description.includes("(Avg)"));
-          const socMax = socSeries.find((s) => s.description.includes("(Max)"));
-          const socLast = socSeries.find(
-            (s) => !s.description.includes("(") && s.seriesType === "soc",
-          );
-
-          if (isBarChart && socMin && socMax) {
-            // Daily data: show min/max range as filled area
-            // Match EnergyChart pattern: max dataset fills DOWN to min dataset
-
-            // Add max as upper boundary (fill down to next dataset)
-            socDatasets.push({
-              label: "Battery SoC Range",
-              type: "line" as const,
-              data: socMax.data,
-              borderColor: "transparent",
-              backgroundColor: CHART_COLORS.battery.socRange,
-              yAxisID: "y1",
-              tension: 0.4, // Smooth curves for range
-              borderWidth: 0,
-              pointRadius: 0,
-              pointHoverRadius: 0,
-              pointHitRadius: 0,
-              fill: "+1", // Fill to next dataset (min)
-              showLine: true,
-              order: 10, // Higher number = drawn first (behind bars)
-            });
-
-            // Add min as lower boundary (no fill)
-            socDatasets.push({
-              label: "", // No label (hidden from legend)
-              type: "line" as const,
-              data: socMin.data,
-              borderColor: "transparent",
-              backgroundColor: "transparent",
-              yAxisID: "y1",
-              tension: 0.4, // Smooth curves for range
-              borderWidth: 0,
-              pointRadius: 0,
-              pointHoverRadius: 0,
-              pointHitRadius: 0,
-              fill: false,
-              showLine: true,
-              order: 10, // Higher number = drawn first (behind bars)
-            });
-
-            // Add average as a line on top
-            if (socAvg) {
-              socDatasets.push({
-                label: "Battery SoC",
-                type: "line" as const,
-                data: socAvg.data,
-                borderColor: CHART_COLORS.battery.soc,
-                backgroundColor: CHART_COLORS.battery.soc,
-                yAxisID: "y1",
-                tension: 0,
-                borderWidth: 2,
-                pointRadius: 0,
-                fill: false,
-                order: -1, // Negative = drawn last (on top)
-              });
-            }
-          } else if (socLast) {
-            // 5m/30m data: show single SoC line
-            socDatasets.push({
-              label: "Battery SoC",
-              data: socLast.data,
-              borderColor: CHART_COLORS.battery.soc,
-              backgroundColor: "transparent",
-              yAxisID: "y1",
-              fill: false,
-              borderWidth: 2,
-              pointRadius: 0,
-              tension: 0,
-              order: -1,
-            });
-          }
-
-          return [...powerDatasets, ...socDatasets];
-        })(),
+        datasets: buildStackedAreaDatasets(
+          chartData,
+          effectiveVisibleSeries,
+          isBarChart,
+        ),
       };
 
   const handleMouseLeave = useCallback(() => {
