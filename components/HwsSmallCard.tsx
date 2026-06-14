@@ -1,48 +1,29 @@
 "use client";
 
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Thermometer } from "lucide-react";
 import PowerCard from "@/components/PowerCard";
-import { historyQuery } from "@/lib/queries";
 
 const HWS_COLOR = "rgb(251, 146, 60)"; // CHART_COLORS.hotWater (orange-400)
 
 /**
  * Compact "Hot Water" mini-card: the current modelled faucet temperature (°C, orange) from the
- * `load.hws/temperature` point in `latest`, plus a 24h sparkline pulled from the EXISTING history
- * API. No bespoke endpoint — the temperature is just another point. Presentational; the value +
- * measurement time are passed in from usePowerCardNodes (which reads them from `latest`).
+ * `load.hws/temperature` point in `latest`, plus a 24h sparkline. Purely presentational — both the
+ * value/measurement time and the `sparkValues` (the 24h history series) are passed in from
+ * usePowerCardNodes, which orchestrates the generic /api/history fetch. No data fetching here.
  */
 export default function HwsSmallCard({
-  systemId,
   faucetC,
+  sparkValues,
   measurementTime,
   heating,
   staleThresholdSeconds,
 }: {
-  systemId?: number;
   faucetC: number | null;
+  sparkValues: number[];
   measurementTime?: Date;
   heating: boolean;
   staleThresholdSeconds: number;
 }) {
-  const { data } = useQuery(
-    historyQuery({
-      systemId: systemId ?? "",
-      interval: "5m",
-      last: "24h",
-      series: "load.hws/temperature.avg",
-      enabled: systemId != null && faucetC != null,
-    }),
-  );
-
-  const sparkValues = useMemo<number[]>(() => {
-    const series = (data as any)?.data?.[0]?.history?.data;
-    if (!Array.isArray(series)) return [];
-    return series.filter((v: unknown): v is number => typeof v === "number");
-  }, [data]);
-
   if (faucetC == null) return null;
 
   return (

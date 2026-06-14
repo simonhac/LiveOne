@@ -1,10 +1,12 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import PowerCard from "@/components/PowerCard";
 import AmberSmallCard from "@/components/AmberSmallCard";
 import TeslaSmallCard from "@/components/TeslaSmallCard";
 import HwsSmallCard from "@/components/HwsSmallCard";
+import { historyQuery } from "@/lib/queries";
 import { DEFAULT_HWS_MODEL_OPTIONS } from "@/lib/hws-model";
 import { stemSplit, getMetricType } from "@/lib/identifiers/logical-path";
 import type { PowerCardId } from "@/lib/dashboard/cards";
@@ -485,6 +487,26 @@ export function usePowerCardNodes({
   // Which power cards have data (the authoritative availability).
   const hwsTemp = getPointValue("load.hws/temperature");
 
+  // HWS 24h sparkline — fetched here (orchestrated) so HwsSmallCard stays presentational like the
+  // other mini-cards. Uses the generic /api/history query; multiple usePowerCardNodes callers share
+  // one request via the query key. Only fires when there is HWS temperature data.
+  const hwsHistory = useQuery(
+    historyQuery({
+      systemId: systemId ?? "",
+      interval: "5m",
+      last: "24h",
+      series: "load.hws/temperature.avg",
+      enabled: systemId != null && hwsTemp != null,
+    }),
+  );
+  const hwsSparkValues = useMemo<number[]>(() => {
+    const series = (
+      hwsHistory.data as { data?: Array<{ history?: { data?: unknown[] } }> }
+    )?.data?.[0]?.history?.data;
+    if (!Array.isArray(series)) return [];
+    return series.filter((v: unknown): v is number => typeof v === "number");
+  }, [hwsHistory.data]);
+
   const available: Record<PowerCardId, boolean> = {
     solar: solarValue !== null,
     load: hasLoadData,
@@ -670,8 +692,8 @@ export function usePowerCardNodes({
     ),
     hotWater: (
       <HwsSmallCard
-        systemId={systemId}
         faucetC={hwsTemp}
+        sparkValues={hwsSparkValues}
         measurementTime={
           getMeasurementTime("load.hws/temperature") ?? undefined
         }
