@@ -25,7 +25,7 @@ registerChartScaffold();
  * The presentational dashboard chart (chart-generalization phase 2c). One component, two visual
  * variants — `lines` (overlaid lines / energy bars, the sidebar chart) and `stacked-areas` (the site
  * load/generation chart). It owns the Chart.js options + dataset assembly + render; data ownership
- * and interaction state stay in the thin wrappers (EnergyChart / SitePowerChart) and, later, the
+ * and interaction state stay in the chart cards (LinesChartCard / SiteChartsCard) and, later, the
  * descriptor-driven `chart` card. The options/dataset logic is moved verbatim from those components
  * — no behaviour change.
  */
@@ -60,7 +60,7 @@ export type DashboardChartProps = LinesProps | StackedProps;
 
 const FONT = { size: 10, family: "DM Sans, system-ui, sans-serif" };
 
-/** Overlaid-line / energy-bar options (verbatim from EnergyChart). */
+/** Overlaid-line / energy-bar options (the lines chart). */
 function buildLineChartOptions(p: LinesProps): ChartOptions<any> {
   const { timeRange, now, windowStart, onHover, chartData, maxPowerHint } = p;
   return {
@@ -131,7 +131,7 @@ function buildLineChartOptions(p: LinesProps): ChartOptions<any> {
   };
 }
 
-/** Stacked-area / bar options (verbatim from SitePowerChart). */
+/** Stacked-area / bar options (the stacked chart). */
 function buildStackedChartOptions(p: StackedProps): ChartOptions<any> {
   const {
     timeRange,

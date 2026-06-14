@@ -76,6 +76,18 @@ export function historyQuery(p: HistoryQueryParams) {
     queryKey: queryKeys.history(p.systemId, p.interval, rangeKey, seriesKey),
     queryFn: () => fetchJson(buildHistoryUrl(p)),
     staleTime,
+    // Keep the previous chart on screen while a newly-navigated (uncached) window loads —
+    // prevents the blank → spinner thrash. Only when just the time window changed (same
+    // system + interval + series); never flash another system/period/series' data.
+    placeholderData: (prev, prevQuery) => {
+      const k = prevQuery?.queryKey;
+      return k &&
+        k[1] === String(p.systemId) &&
+        k[2] === p.interval &&
+        k[4] === seriesKey
+        ? prev
+        : undefined;
+    },
     refetchInterval: p.paused ? false : refetchInterval,
     refetchOnWindowFocus: false,
     enabled: p.enabled ?? true,

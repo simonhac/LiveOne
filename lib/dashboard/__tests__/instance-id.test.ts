@@ -136,53 +136,6 @@ describe("isCardVisible — by id or type", () => {
   });
 });
 
-describe("chart card — legacy read-shim", () => {
-  it("expands a legacy site-charts save into the two stacked chart instances (hidden carried)", () => {
-    const def = buildDefaultDescriptor({ vendorType: "mondo" }, EMPTY);
-    const saved = {
-      version: 2,
-      layout: "site",
-      cards: [
-        { type: "tiles", tiles: { order: ["solar"], hidden: [] } },
-        { type: "site-charts", hidden: true },
-        { type: "sankey" },
-        { type: "generator-runs" },
-      ],
-    };
-    const out = normalizeDescriptor(saved, def);
-    expect(out.cards.map((c) => c.id ?? c.type)).toEqual([
-      "tiles",
-      "chart:load",
-      "chart:generation",
-      "sankey",
-      "generator-runs",
-    ]);
-    // The single hidden site-charts carried its hidden state onto BOTH halves.
-    expect(isCardVisible(out, "chart:load")).toBe(false);
-    expect(isCardVisible(out, "chart:generation")).toBe(false);
-  });
-
-  it("expands a legacy energy-chart save into the lines chart instance", () => {
-    const def = buildDefaultDescriptor({ vendorType: "selectronic" }, EMPTY);
-    const saved = {
-      version: 2,
-      layout: "sidebar",
-      cards: [
-        { type: "tiles", tiles: { order: ["solar"], hidden: [] } },
-        { type: "energy-chart" },
-        { type: "generator-runs" },
-      ],
-    };
-    const out = normalizeDescriptor(saved, def);
-    expect(out.cards.map((c) => c.id ?? c.type)).toEqual([
-      "tiles",
-      "chart:lines",
-      "generator-runs",
-    ]);
-    expect(isCardVisible(out, "chart:lines")).toBe(true);
-  });
-});
-
 describe("chart instance ids never collide with a card type (guardrail)", () => {
   it("every default chart id is 'chart:'-namespaced and not a CARD_REGISTRY key", () => {
     for (const vendorType of ["mondo", "selectronic"]) {
@@ -245,27 +198,5 @@ describe("chart card — customized round-trip + shim idempotency", () => {
     expect(out2).toEqual(out1);
     const ids = out2.cards.map((c) => c.id ?? c.type);
     expect(new Set(ids).size).toBe(ids.length); // no duplicate chart instances
-  });
-
-  it("preserves legacy relative order: site-charts before tiles → chart pair before tiles", () => {
-    const def = buildDefaultDescriptor({ vendorType: "mondo" }, EMPTY);
-    const saved = {
-      version: 2,
-      layout: "site",
-      cards: [
-        { type: "site-charts" },
-        { type: "tiles", tiles: { order: ["solar"], hidden: [] } },
-        { type: "sankey" },
-        { type: "generator-runs" },
-      ],
-    };
-    const out = normalizeDescriptor(saved, def);
-    expect(out.cards.map((c) => c.id ?? c.type)).toEqual([
-      "chart:load",
-      "chart:generation",
-      "tiles",
-      "sankey",
-      "generator-runs",
-    ]);
   });
 });
