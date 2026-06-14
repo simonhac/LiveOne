@@ -6,7 +6,204 @@
  * (single line, or min/max range band + average line for daily data) is handled here too.
  */
 import { CHART_COLORS } from "@/lib/chart-colors";
-import type { ChartData } from "./types";
+import type { ChartData, LineChartData, PaddedSOCData } from "./types";
+
+/**
+ * Overlaid-line (sidebar) datasets: solar/load/battery/grid as lines on the left axis (bars when
+ * daily/energy mode), SoC as a line on the right axis, plus a padded min/max SoC band in energy
+ * mode. Extracted verbatim from EnergyChart. The caller computes `paddedSOCData` (energy mode only).
+ */
+export function buildLineDatasets(
+  chartData: LineChartData,
+  paddedSOCData: PaddedSOCData | null,
+): any[] {
+  if (chartData.mode === "energy") {
+    // Energy mode: Use bar chart data structure
+    return [
+      {
+        label: "Solar",
+        data: chartData.solar, // Already in kWh for energy mode
+        backgroundColor: "rgb(250, 204, 21)", // yellow-400 solid
+        borderWidth: 0, // No border
+        yAxisID: "y",
+        barPercentage: 0.9,
+        categoryPercentage: 0.8,
+      },
+      {
+        label: "Load",
+        data: chartData.load, // Already in kWh for energy mode
+        backgroundColor: "rgb(96, 165, 250)", // blue-400 solid
+        borderWidth: 0, // No border
+        yAxisID: "y",
+        barPercentage: 0.9,
+        categoryPercentage: 0.8,
+      },
+      // Add battery power if available (for energy mode, this would be battery energy)
+      ...(chartData.batteryW
+        ? [
+            {
+              label: "Battery",
+              data: chartData.batteryW, // Already in kWh for energy mode
+              backgroundColor: "rgb(251, 146, 60)", // orange-400 solid
+              borderWidth: 0, // No border
+              yAxisID: "y",
+              barPercentage: 0.9,
+              categoryPercentage: 0.8,
+            },
+          ]
+        : []),
+      // Add grid if available
+      ...(chartData.grid
+        ? [
+            {
+              label: "Grid",
+              data: chartData.grid, // Already in kWh for energy mode
+              backgroundColor: "rgb(239, 68, 68)", // red-500 solid
+              borderWidth: 0, // No border
+              yAxisID: "y",
+              barPercentage: 0.9,
+              categoryPercentage: 0.8,
+            },
+          ]
+        : []),
+      // Add SOC range area if we have min/max data
+      ...(paddedSOCData
+        ? [
+            {
+              label: "Battery SOC Range",
+              type: "line" as const,
+              labels: paddedSOCData.timestamps,
+              data: paddedSOCData.timestamps.map((t, i) => ({
+                x: t,
+                y: paddedSOCData.max[i],
+              })), // Upper boundary with padding
+              borderColor: "transparent",
+              backgroundColor: "rgba(74, 222, 128, 0.3)", // green-400 with 30% opacity
+              yAxisID: "y1",
+              tension: 0.4, // Nice curved splines
+              borderWidth: 0,
+              pointRadius: 0, // No dots
+              pointHoverRadius: 0, // No dots on hover
+              pointHitRadius: 0, // No hit area for points
+              fill: "+1", // Fill to next dataset (min line)
+              showLine: true,
+              clip: false, // Don't clip at chart edges
+              order: 10, // Higher number = drawn first (behind everything)
+            },
+            {
+              label: "", // No label for min line (hidden from legend)
+              type: "line" as const,
+              labels: paddedSOCData.timestamps,
+              data: paddedSOCData.timestamps.map((t, i) => ({
+                x: t,
+                y: paddedSOCData.min[i],
+              })), // Lower boundary with padding
+              borderColor: "transparent",
+              backgroundColor: "transparent",
+              yAxisID: "y1",
+              tension: 0.4, // Nice curved splines
+              borderWidth: 0,
+              pointRadius: 0, // No dots
+              pointHoverRadius: 0, // No dots on hover
+              pointHitRadius: 0, // No hit area for points
+              fill: false,
+              showLine: true,
+              clip: false, // Don't clip at chart edges
+              order: 10, // Higher number = drawn first (behind everything)
+            },
+          ]
+        : []),
+      {
+        label: "Battery SOC",
+        type: "line" as const, // Keep SOC as line even in bar chart
+        data: chartData.batterySOC, // Already in percentage
+        borderColor: "rgb(74, 222, 128)", // green-400
+        backgroundColor: "rgb(74, 222, 128)", // Solid color for legend
+        yAxisID: "y1",
+        tension: 0.1,
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: false, // Don't fill under the line
+        order: -1, // Negative number = drawn last (on top of everything)
+      },
+    ];
+  }
+
+  // Power mode: Use line chart data structure
+  return [
+    {
+      label: "Solar",
+      data: chartData.solar, // Already converted to kW by convertToKw()
+      borderColor: "rgb(250, 204, 21)", // yellow-400
+      backgroundColor: "rgb(250, 204, 21)", // Solid color for legend
+      yAxisID: "y",
+      tension: 0.1,
+      borderWidth: 2,
+      pointRadius: 0,
+      fill: false, // Don't fill under the line
+    },
+    {
+      label: "Load",
+      data: chartData.load, // Already converted to kW by convertToKw()
+      borderColor: "rgb(96, 165, 250)", // blue-400
+      backgroundColor: "rgb(96, 165, 250)", // Solid color for legend
+      yAxisID: "y",
+      tension: 0.1,
+      borderWidth: 2,
+      pointRadius: 0,
+      fill: false, // Don't fill under the line
+    },
+    // Add battery power if available
+    ...(chartData.batteryW
+      ? [
+          {
+            label: "Battery",
+            data: chartData.batteryW, // Already converted to kW by convertToKw()
+            borderColor: "rgb(251, 146, 60)", // orange-400
+            backgroundColor: "rgb(251, 146, 60)", // Solid color for legend
+            yAxisID: "y",
+            tension: 0.1,
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: false, // Don't fill under the line
+          },
+        ]
+      : []),
+    // Add grid if available
+    ...(chartData.grid
+      ? [
+          {
+            label: "Grid",
+            data: chartData.grid, // Already converted to kW by convertToKw()
+            borderColor: "rgb(239, 68, 68)", // red-500
+            backgroundColor: "rgb(239, 68, 68)", // Solid color for legend
+            yAxisID: "y",
+            tension: 0.1,
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: false, // Don't fill under the line
+          },
+        ]
+      : []),
+    {
+      label: "Battery SOC",
+      data: chartData.batterySOC, // Already in percentage
+      borderColor: "rgb(74, 222, 128)", // green-400
+      backgroundColor: "rgb(74, 222, 128)", // Solid color for legend
+      yAxisID: "y1",
+      tension: 0.1,
+      borderWidth: 2,
+      pointRadius: 0,
+      fill: false, // Don't fill under the line
+    },
+  ];
+}
+
+/**
+ * Stacked-area (site) datasets: power/energy series stacked on the left axis (areas when 5m/30m,
+ * bars when daily), with the SoC overlay on the right axis. Only series in `effectiveVisibleSeries`
+ * are drawn. Extracted verbatim from SitePowerChart.
+ */
 
 /**
  * Stacked-area (site) datasets: power/energy series stacked on the left axis (areas when 5m/30m,

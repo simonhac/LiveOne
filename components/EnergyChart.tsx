@@ -17,6 +17,8 @@ import {
   buildTimeScale,
   formatHoverTimestamp as formatHoverTimestampShared,
 } from "@/lib/charts/scaffold";
+import { buildLineDatasets } from "@/lib/charts/datasets";
+import type { LineChartData as ChartData } from "@/lib/charts/types";
 
 registerChartScaffold();
 
@@ -26,18 +28,6 @@ interface EnergyChartProps {
   systemId: number; // System ID (e.g., 648, 1586)
   vendorType?: string; // Vendor type (e.g., 'enphase', 'selectronic')
   initialPeriod?: "1D" | "7D" | "30D"; // Initial period from URL
-}
-
-interface ChartData {
-  timestamps: Date[];
-  solar: number[];
-  load: number[];
-  batteryW: number[];
-  batterySOC: number[];
-  batterySOCMin?: number[]; // Min SOC for daily data
-  batterySOCMax?: number[]; // Max SOC for daily data
-  grid?: number[]; // Grid power/energy (optional - not all systems have grid data)
-  mode: "power" | "energy"; // Mode based on interval: power (≤30m) or energy (≥1d)
 }
 
 // Series patterns to request for a given period (energy mode = 30D/1d, else power mode).
@@ -472,190 +462,10 @@ export default function EnergyChart({
 
   const data: any = !chartData
     ? {}
-    : chartData.mode === "energy"
-      ? {
-          // Energy mode: Use bar chart data structure
-          labels: chartData.timestamps,
-          datasets: [
-            {
-              label: "Solar",
-              data: chartData.solar, // Already in kWh for energy mode
-              backgroundColor: "rgb(250, 204, 21)", // yellow-400 solid
-              borderWidth: 0, // No border
-              yAxisID: "y",
-              barPercentage: 0.9,
-              categoryPercentage: 0.8,
-            },
-            {
-              label: "Load",
-              data: chartData.load, // Already in kWh for energy mode
-              backgroundColor: "rgb(96, 165, 250)", // blue-400 solid
-              borderWidth: 0, // No border
-              yAxisID: "y",
-              barPercentage: 0.9,
-              categoryPercentage: 0.8,
-            },
-            // Add battery power if available (for energy mode, this would be battery energy)
-            ...(chartData.batteryW
-              ? [
-                  {
-                    label: "Battery",
-                    data: chartData.batteryW, // Already in kWh for energy mode
-                    backgroundColor: "rgb(251, 146, 60)", // orange-400 solid
-                    borderWidth: 0, // No border
-                    yAxisID: "y",
-                    barPercentage: 0.9,
-                    categoryPercentage: 0.8,
-                  },
-                ]
-              : []),
-            // Add grid if available
-            ...(chartData.grid
-              ? [
-                  {
-                    label: "Grid",
-                    data: chartData.grid, // Already in kWh for energy mode
-                    backgroundColor: "rgb(239, 68, 68)", // red-500 solid
-                    borderWidth: 0, // No border
-                    yAxisID: "y",
-                    barPercentage: 0.9,
-                    categoryPercentage: 0.8,
-                  },
-                ]
-              : []),
-            // Add SOC range area if we have min/max data
-            ...(paddedSOCData
-              ? [
-                  {
-                    label: "Battery SOC Range",
-                    type: "line" as const,
-                    labels: paddedSOCData.timestamps,
-                    data: paddedSOCData.timestamps.map((t, i) => ({
-                      x: t,
-                      y: paddedSOCData.max[i],
-                    })), // Upper boundary with padding
-                    borderColor: "transparent",
-                    backgroundColor: "rgba(74, 222, 128, 0.3)", // green-400 with 30% opacity
-                    yAxisID: "y1",
-                    tension: 0.4, // Nice curved splines
-                    borderWidth: 0,
-                    pointRadius: 0, // No dots
-                    pointHoverRadius: 0, // No dots on hover
-                    pointHitRadius: 0, // No hit area for points
-                    fill: "+1", // Fill to next dataset (min line)
-                    showLine: true,
-                    clip: false, // Don't clip at chart edges
-                    order: 10, // Higher number = drawn first (behind everything)
-                  },
-                  {
-                    label: "", // No label for min line (hidden from legend)
-                    type: "line" as const,
-                    labels: paddedSOCData.timestamps,
-                    data: paddedSOCData.timestamps.map((t, i) => ({
-                      x: t,
-                      y: paddedSOCData.min[i],
-                    })), // Lower boundary with padding
-                    borderColor: "transparent",
-                    backgroundColor: "transparent",
-                    yAxisID: "y1",
-                    tension: 0.4, // Nice curved splines
-                    borderWidth: 0,
-                    pointRadius: 0, // No dots
-                    pointHoverRadius: 0, // No dots on hover
-                    pointHitRadius: 0, // No hit area for points
-                    fill: false,
-                    showLine: true,
-                    clip: false, // Don't clip at chart edges
-                    order: 10, // Higher number = drawn first (behind everything)
-                  },
-                ]
-              : []),
-            {
-              label: "Battery SOC",
-              type: "line" as const, // Keep SOC as line even in bar chart
-              data: chartData.batterySOC, // Already in percentage
-              borderColor: "rgb(74, 222, 128)", // green-400
-              backgroundColor: "rgb(74, 222, 128)", // Solid color for legend
-              yAxisID: "y1",
-              tension: 0.1,
-              borderWidth: 2,
-              pointRadius: 0,
-              fill: false, // Don't fill under the line
-              order: -1, // Negative number = drawn last (on top of everything)
-            },
-          ],
-        }
-      : {
-          // Power mode: Use line chart data structure
-          labels: chartData.timestamps,
-          datasets: [
-            {
-              label: "Solar",
-              data: chartData.solar, // Already converted to kW by convertToKw()
-              borderColor: "rgb(250, 204, 21)", // yellow-400
-              backgroundColor: "rgb(250, 204, 21)", // Solid color for legend
-              yAxisID: "y",
-              tension: 0.1,
-              borderWidth: 2,
-              pointRadius: 0,
-              fill: false, // Don't fill under the line
-            },
-            {
-              label: "Load",
-              data: chartData.load, // Already converted to kW by convertToKw()
-              borderColor: "rgb(96, 165, 250)", // blue-400
-              backgroundColor: "rgb(96, 165, 250)", // Solid color for legend
-              yAxisID: "y",
-              tension: 0.1,
-              borderWidth: 2,
-              pointRadius: 0,
-              fill: false, // Don't fill under the line
-            },
-            // Add battery power if available
-            ...(chartData.batteryW
-              ? [
-                  {
-                    label: "Battery",
-                    data: chartData.batteryW, // Already converted to kW by convertToKw()
-                    borderColor: "rgb(251, 146, 60)", // orange-400
-                    backgroundColor: "rgb(251, 146, 60)", // Solid color for legend
-                    yAxisID: "y",
-                    tension: 0.1,
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    fill: false, // Don't fill under the line
-                  },
-                ]
-              : []),
-            // Add grid if available
-            ...(chartData.grid
-              ? [
-                  {
-                    label: "Grid",
-                    data: chartData.grid, // Already converted to kW by convertToKw()
-                    borderColor: "rgb(239, 68, 68)", // red-500
-                    backgroundColor: "rgb(239, 68, 68)", // Solid color for legend
-                    yAxisID: "y",
-                    tension: 0.1,
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    fill: false, // Don't fill under the line
-                  },
-                ]
-              : []),
-            {
-              label: "Battery SOC",
-              data: chartData.batterySOC, // Already in percentage
-              borderColor: "rgb(74, 222, 128)", // green-400
-              backgroundColor: "rgb(74, 222, 128)", // Solid color for legend
-              yAxisID: "y1",
-              tension: 0.1,
-              borderWidth: 2,
-              pointRadius: 0,
-              fill: false, // Don't fill under the line
-            },
-          ],
-        };
+    : {
+        labels: chartData.timestamps,
+        datasets: buildLineDatasets(chartData, paddedSOCData),
+      };
 
   // Format timestamp based on time range (shared scaffold helper)
   const formatHoverTimestamp = (date: Date | null, isMobile: boolean = false) =>

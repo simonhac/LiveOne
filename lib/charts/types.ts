@@ -21,3 +21,27 @@ export interface ChartData {
   series: SeriesData[];
   mode: "power" | "energy";
 }
+
+/**
+ * The fixed-field shape the line (sidebar) chart uses today (solar/load/battery/grid + SoC). Kept
+ * distinct from the generic series-based `ChartData` until the line variant is migrated onto it; the
+ * `buildLineDatasets` builder consumes this.
+ */
+export interface LineChartData {
+  timestamps: Date[];
+  solar: number[];
+  load: number[];
+  batteryW: number[];
+  batterySOC: number[];
+  batterySOCMin?: number[]; // Min SOC for daily data
+  batterySOCMax?: number[]; // Max SOC for daily data
+  grid?: number[]; // Grid power/energy (optional - not all systems have grid data)
+  mode: "power" | "energy"; // Mode based on interval: power (≤30m) or energy (≥1d)
+}
+
+/** Edge-padded SoC min/max band for the line chart's energy (daily) mode. */
+export interface PaddedSOCData {
+  timestamps: Date[];
+  min: number[];
+  max: number[];
+}
