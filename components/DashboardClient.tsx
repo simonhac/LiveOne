@@ -840,8 +840,8 @@ export default function DashboardClient({
 
   // cardVisible() is true while the descriptor is still loading (null); tilesCfg falls back to
   // SystemTiles' default order/visibility until then.
-  const cardVisible = (type: DashboardCardType): boolean =>
-    !activeDescriptor || isCardVisible(activeDescriptor, type);
+  const cardVisible = (idOrType: DashboardCardType | string): boolean =>
+    !activeDescriptor || isCardVisible(activeDescriptor, idOrType);
   const tilesCfg = activeDescriptor ? tilesConfigOf(activeDescriptor) : null;
 
   // Customize (P2) handlers + the cards available on this system (for the dialog).
@@ -1028,7 +1028,7 @@ export default function DashboardClient({
             <div className="space-y-4 px-1">
               {/* Charts - For mondo/composite systems, show charts with tables in single container */}
               {/* Hide entire container for unconfigured composite systems */}
-              {cardVisible("site-charts") &&
+              {(cardVisible("chart:load") || cardVisible("chart:generation")) &&
                 (historyLoading ||
                   processedHistoryData.load ||
                   processedHistoryData.generation ||
@@ -1226,116 +1226,120 @@ export default function DashboardClient({
                     </div>
 
                     {/* Loads Chart with Table */}
-                    <div className="px-2 sm:px-4 pt-1 sm:pt-2 pb-2 sm:pb-4">
-                      <div className="flex flex-col md:flex-row md:gap-4">
-                        <div className="flex-1 min-w-0">
-                          <SitePowerChart
-                            systemId={parseInt(systemId as string)}
-                            mode="load"
-                            title="Loads"
-                            className="h-full min-h-[375px]"
-                            period={sitePeriod}
-                            onPeriodChange={(newPeriod) => {
-                              setSitePeriod(newPeriod);
-                              setHistoryTimeRange({}); // Reset to current when period changes
-                              const params = new URLSearchParams(
-                                searchParams.toString(),
-                              );
-                              params.set("period", newPeriod);
-                              params.delete("start");
-                              params.delete("end");
-                              params.delete("offset");
-                              router.push(`?${params.toString()}`, {
-                                scroll: false,
-                              });
-                            }}
-                            showPeriodSwitcher={false}
-                            onDataChange={setLoadChartData}
-                            onHoverIndexChange={handleLoadHoverIndexChange}
-                            hoveredIndex={hoveredIndex}
-                            visibleSeries={
-                              loadVisibleSeries.size > 0
-                                ? loadVisibleSeries
-                                : undefined
-                            }
-                            onVisibilityChange={setLoadVisibleSeries}
-                            data={processedHistoryData.load}
-                            isLoading={historyLoading}
-                          />
-                        </div>
-                        <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
-                          <EnergyTable
-                            chartData={loadChartData}
-                            mode="load"
-                            hoveredIndex={hoveredIndex}
-                            className="h-full"
-                            visibleSeries={
-                              loadVisibleSeries.size > 0
-                                ? loadVisibleSeries
-                                : undefined
-                            }
-                            onSeriesToggle={handleLoadSeriesToggle}
-                          />
+                    {cardVisible("chart:load") && (
+                      <div className="px-2 sm:px-4 pt-1 sm:pt-2 pb-2 sm:pb-4">
+                        <div className="flex flex-col md:flex-row md:gap-4">
+                          <div className="flex-1 min-w-0">
+                            <SitePowerChart
+                              systemId={parseInt(systemId as string)}
+                              mode="load"
+                              title="Loads"
+                              className="h-full min-h-[375px]"
+                              period={sitePeriod}
+                              onPeriodChange={(newPeriod) => {
+                                setSitePeriod(newPeriod);
+                                setHistoryTimeRange({}); // Reset to current when period changes
+                                const params = new URLSearchParams(
+                                  searchParams.toString(),
+                                );
+                                params.set("period", newPeriod);
+                                params.delete("start");
+                                params.delete("end");
+                                params.delete("offset");
+                                router.push(`?${params.toString()}`, {
+                                  scroll: false,
+                                });
+                              }}
+                              showPeriodSwitcher={false}
+                              onDataChange={setLoadChartData}
+                              onHoverIndexChange={handleLoadHoverIndexChange}
+                              hoveredIndex={hoveredIndex}
+                              visibleSeries={
+                                loadVisibleSeries.size > 0
+                                  ? loadVisibleSeries
+                                  : undefined
+                              }
+                              onVisibilityChange={setLoadVisibleSeries}
+                              data={processedHistoryData.load}
+                              isLoading={historyLoading}
+                            />
+                          </div>
+                          <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+                            <EnergyTable
+                              chartData={loadChartData}
+                              mode="load"
+                              hoveredIndex={hoveredIndex}
+                              className="h-full"
+                              visibleSeries={
+                                loadVisibleSeries.size > 0
+                                  ? loadVisibleSeries
+                                  : undefined
+                              }
+                              onSeriesToggle={handleLoadSeriesToggle}
+                            />
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    )}
 
                     {/* Generation Chart with Table */}
-                    <div className="p-2 sm:p-4">
-                      <div className="flex flex-col md:flex-row md:gap-4">
-                        <div className="flex-1 min-w-0">
-                          <SitePowerChart
-                            systemId={parseInt(systemId as string)}
-                            mode="generation"
-                            title="Generation"
-                            className="h-full min-h-[375px]"
-                            period={sitePeriod}
-                            onPeriodChange={(newPeriod) => {
-                              setSitePeriod(newPeriod);
-                              setHistoryTimeRange({}); // Reset to current when period changes
-                              const params = new URLSearchParams(
-                                searchParams.toString(),
-                              );
-                              params.set("period", newPeriod);
-                              params.delete("start");
-                              params.delete("end");
-                              params.delete("offset");
-                              router.push(`?${params.toString()}`, {
-                                scroll: false,
-                              });
-                            }}
-                            showPeriodSwitcher={false}
-                            onDataChange={setGenerationChartData}
-                            onHoverIndexChange={
-                              handleGenerationHoverIndexChange
-                            }
-                            hoveredIndex={hoveredIndex}
-                            visibleSeries={
-                              generationVisibleSeries.size > 0
-                                ? generationVisibleSeries
-                                : undefined
-                            }
-                            onVisibilityChange={setGenerationVisibleSeries}
-                            data={processedHistoryData.generation}
-                            isLoading={historyLoading}
-                          />
-                        </div>
-                        <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
-                          <EnergyTable
-                            chartData={generationChartData}
-                            mode="generation"
-                            hoveredIndex={hoveredIndex}
-                            className="h-full"
-                            visibleSeries={
-                              generationVisibleSeries.size > 0
-                                ? generationVisibleSeries
-                                : undefined
-                            }
-                            onSeriesToggle={handleGenerationSeriesToggle}
-                          />
+                    {cardVisible("chart:generation") && (
+                      <div className="p-2 sm:p-4">
+                        <div className="flex flex-col md:flex-row md:gap-4">
+                          <div className="flex-1 min-w-0">
+                            <SitePowerChart
+                              systemId={parseInt(systemId as string)}
+                              mode="generation"
+                              title="Generation"
+                              className="h-full min-h-[375px]"
+                              period={sitePeriod}
+                              onPeriodChange={(newPeriod) => {
+                                setSitePeriod(newPeriod);
+                                setHistoryTimeRange({}); // Reset to current when period changes
+                                const params = new URLSearchParams(
+                                  searchParams.toString(),
+                                );
+                                params.set("period", newPeriod);
+                                params.delete("start");
+                                params.delete("end");
+                                params.delete("offset");
+                                router.push(`?${params.toString()}`, {
+                                  scroll: false,
+                                });
+                              }}
+                              showPeriodSwitcher={false}
+                              onDataChange={setGenerationChartData}
+                              onHoverIndexChange={
+                                handleGenerationHoverIndexChange
+                              }
+                              hoveredIndex={hoveredIndex}
+                              visibleSeries={
+                                generationVisibleSeries.size > 0
+                                  ? generationVisibleSeries
+                                  : undefined
+                              }
+                              onVisibilityChange={setGenerationVisibleSeries}
+                              data={processedHistoryData.generation}
+                              isLoading={historyLoading}
+                            />
+                          </div>
+                          <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+                            <EnergyTable
+                              chartData={generationChartData}
+                              mode="generation"
+                              hoveredIndex={hoveredIndex}
+                              className="h-full"
+                              visibleSeries={
+                                generationVisibleSeries.size > 0
+                                  ? generationVisibleSeries
+                                  : undefined
+                              }
+                              onSeriesToggle={handleGenerationSeriesToggle}
+                            />
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    )}
 
                     {/* Energy Flow Sankey Diagram */}
                     {cardVisible("sankey") &&
@@ -1373,7 +1377,7 @@ export default function DashboardClient({
                       })()}
                   </div>
                 )}
-              {cardVisible("energy-chart") && (
+              {cardVisible("chart:lines") && (
                 // For other systems, show the regular energy chart
                 <EnergyChart
                   systemId={parseInt(systemId as string)}

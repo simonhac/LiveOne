@@ -19,9 +19,8 @@ export type DashboardCardType =
   | "amber-now"
   | "amber-timeline"
   | "tiles"
-  | "site-charts"
+  | "chart"
   | "sankey"
-  | "energy-chart"
   | "grid-signals"
   | "generator-runs";
 
@@ -68,22 +67,20 @@ export const CARD_REGISTRY: Record<DashboardCardType, CardDef> = {
     requiredRoles: ["solar", "battery", "grid", "load"],
     canRender: (c) => c.vendorType !== "amber",
   },
-  "site-charts": {
-    type: "site-charts",
-    label: "Power Charts",
+  chart: {
+    type: "chart",
+    label: "Power Chart",
     requiredRoles: ["solar", "load"],
-    canRender: (c) => isSiteVendor(c.vendorType),
+    // Data-driven, NOT vendor-driven (the whole point of the generalized chart card): eligible on any
+    // system with chartable series — true for both site (mondo/composite) and sidebar
+    // (selectronic/enphase) systems, false only for data-less / pure-amber.
+    canRender: (c) => chartHasData(c.latest),
   },
   sankey: {
     type: "sankey",
     label: "Energy Flows",
     requiredRoles: ["solar", "load"],
     canRender: (c) => isSiteVendor(c.vendorType),
-  },
-  "energy-chart": {
-    type: "energy-chart",
-    label: "Energy Chart",
-    canRender: (c) => c.vendorType !== "amber" && !isSiteVendor(c.vendorType),
   },
   "grid-signals": {
     type: "grid-signals",
@@ -155,6 +152,26 @@ export const TILES: Record<TileId, TileDef> = {
 
 const hasVal = (latest: LatestPointValues, path: string): boolean =>
   latest[path]?.value != null;
+
+/**
+ * Whether a system has enough series to draw a chart (either variant): solar AND a load signal,
+ * using the same point paths as `availableTiles`. Gates the vendor-independent `chart` card.
+ */
+function chartHasData(latest: LatestPointValues): boolean {
+  const solar =
+    hasVal(latest, "source.solar/power") ||
+    hasVal(latest, "source.solar.local/power") ||
+    hasVal(latest, "source.solar.remote/power");
+  const load =
+    hasVal(latest, "load/power") ||
+    Object.keys(latest).some(
+      (p) => p.startsWith("load.") && p.endsWith("/power") && hasVal(latest, p),
+    ) ||
+    solar ||
+    hasVal(latest, "bidi.battery/power") ||
+    hasVal(latest, "bidi.grid/power");
+  return solar && load;
+}
 
 /**
  * Which tiles a system can currently show, given its latest values. Mirrors the
