@@ -16,7 +16,8 @@ import type { LatestPointValues } from "@/lib/types/api";
 import type { RoleId } from "@/lib/roles/registry";
 
 export type DashboardCardType =
-  | "amber"
+  | "amber-now"
+  | "amber-timeline"
   | "power-cards"
   | "site-charts"
   | "sankey"
@@ -46,11 +47,20 @@ export interface CardDef {
 const isSiteVendor = (vt: string) => vt === "mondo" || vt === "composite";
 
 export const CARD_REGISTRY: Record<DashboardCardType, CardDef> = {
-  amber: {
-    type: "amber",
+  "amber-now": {
+    type: "amber-now",
     label: "Amber Price",
     requiredRoles: ["grid"],
-    canRender: (c) => c.vendorType === "amber",
+    // Data-driven (not vendor-driven): the live Amber price card is meaningful wherever the import
+    // rate point exists. The default amber layout still selects it via getLayout; this is the
+    // gallery-eligibility hint.
+    canRender: (c) => hasVal(c.latest, "bidi.grid.import/rate"),
+  },
+  "amber-timeline": {
+    type: "amber-timeline",
+    label: "Amber Forecast",
+    requiredRoles: ["grid"],
+    canRender: (c) => hasVal(c.latest, "bidi.grid.import/rate"),
   },
   "power-cards": {
     type: "power-cards",

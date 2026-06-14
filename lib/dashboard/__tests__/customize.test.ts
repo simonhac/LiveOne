@@ -81,6 +81,25 @@ describe("normalizeDescriptor", () => {
     expect(cfg.hidden).not.toContain("nope");
     expect(new Set(cfg.order)).toEqual(new Set(POWER_CARD_IDS));
   });
+
+  // Backward-compat read for the expand→migrate→contract rename: a legacy saved descriptor with the
+  // old monolithic "amber" module must still load, expanding to amber-now + amber-timeline and
+  // inheriting the old module's hidden state. Keep until the descriptor data migration ships.
+  it("migrates a legacy 'amber' module to amber-now + amber-timeline", () => {
+    const def = buildDefaultDescriptor({ vendorType: "amber" }, EMPTY);
+    const legacy = {
+      version: 2,
+      layout: "amber",
+      cards: [{ type: "amber", hidden: true }],
+    };
+    const out = normalizeDescriptor(legacy, def);
+    expect(out.cards.map((c) => c.type)).toEqual([
+      "amber-now",
+      "amber-timeline",
+    ]);
+    expect(isCardVisible(out, "amber-now")).toBe(false);
+    expect(isCardVisible(out, "amber-timeline")).toBe(false);
+  });
 });
 
 describe("availablePowerCards", () => {

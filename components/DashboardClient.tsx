@@ -966,18 +966,26 @@ export default function DashboardClient({
               </div>
             )}
 
-          {/* Amber Electric Dashboard - Live price + 48 hour timeline */}
-          {isAmberLayout && systemId && cardVisible("amber") && (
+          {/* Amber Electric Dashboard - Live price + forecast timeline. Each card is now an
+              independent descriptor card (amber-now / amber-timeline); the amber layout selects them
+              by default. */}
+          {isAmberLayout && systemId && (
             <>
-              <div className="px-1">
-                <AmberSmallCard latest={data.latest} />
-              </div>
-              <AmberNow latest={data.latest} />
-              <AmberCard
-                systemId={parseInt(systemId)}
-                timezoneOffsetMin={data?.system.timezoneOffsetMin ?? 600}
-                displayTimezone={data?.system.displayTimezone}
-              />
+              {cardVisible("amber-now") && (
+                <>
+                  <div className="px-1">
+                    <AmberSmallCard latest={data.latest} />
+                  </div>
+                  <AmberNow latest={data.latest} />
+                </>
+              )}
+              {cardVisible("amber-timeline") && (
+                <AmberCard
+                  systemId={parseInt(systemId)}
+                  timezoneOffsetMin={data?.system.timezoneOffsetMin ?? 600}
+                  displayTimezone={data?.system.displayTimezone}
+                />
+              )}
             </>
           )}
 

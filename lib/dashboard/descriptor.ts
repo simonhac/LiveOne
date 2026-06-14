@@ -38,7 +38,7 @@ export interface DashboardDescriptor {
 
 /** Cards each layout shows by default — the exact set the vendor_type ladder renders today. */
 const CARDS_BY_LAYOUT: Record<DashboardLayout, DashboardCardType[]> = {
-  amber: ["amber"],
+  amber: ["amber-now", "amber-timeline"],
   site: ["power-cards", "site-charts", "sankey", "generator-runs"],
   sidebar: ["power-cards", "energy-chart", "generator-runs"],
 };
@@ -97,25 +97,48 @@ function normalizePowerCards(
 }
 
 /**
+ * Upgrade a saved descriptor from a legacy wire shape to the current one — the READ side of the
+ * expand→migrate→contract rename. The old monolithic `"amber"` module expands to `amber-now` +
+ * `amber-timeline` (inheriting its hidden state). In-memory only; the persisted `dashboards` rows
+ * are rewritten by a separate data migration once this is deployed. KEEP until that migration ships.
+ */
+function migrateLegacyDescriptor(
+  s: Partial<DashboardDescriptor>,
+): Partial<DashboardDescriptor> {
+  if (!Array.isArray(s.cards)) return s;
+  const cards: ModuleCardInstance[] = [];
+  for (const c of s.cards) {
+    if ((c.type as string) === "amber") {
+      cards.push({ type: "amber-now", hidden: c.hidden });
+      cards.push({ type: "amber-timeline", hidden: c.hidden });
+    } else {
+      cards.push(c);
+    }
+  }
+  return { ...s, cards };
+}
+
+/**
  * Reconcile a saved descriptor with the current default. Discards the save if the layout changed
  * (e.g. the system's vendor type changed); otherwise keeps the saved hidden/order, adds module/power
  * cards introduced since, and drops any that no longer exist. Returns the default if `saved` is
- * missing or malformed.
+ * missing or malformed. Legacy wire shapes are upgraded first (migrateLegacyDescriptor).
  */
 export function normalizeDescriptor(
   saved: unknown,
   def: DashboardDescriptor,
 ): DashboardDescriptor {
-  const s = saved as Partial<DashboardDescriptor> | null | undefined;
+  const raw = saved as Partial<DashboardDescriptor> | null | undefined;
   if (
-    !s ||
-    typeof s !== "object" ||
-    s.layout !== def.layout ||
-    !Array.isArray(s.cards)
+    !raw ||
+    typeof raw !== "object" ||
+    raw.layout !== def.layout ||
+    !Array.isArray(raw.cards)
   ) {
     return def;
   }
-  const savedByType = new Map(s.cards.map((c) => [c.type, c]));
+  const s = migrateLegacyDescriptor(raw);
+  const savedByType = new Map(s.cards!.map((c) => [c.type, c]));
   const cards: ModuleCardInstance[] = def.cards.map((defCard) => {
     const sc = savedByType.get(defCard.type);
     if (!sc) return defCard; // module card introduced since the save → default (visible)
