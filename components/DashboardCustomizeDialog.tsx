@@ -83,8 +83,6 @@ type CardRow =
       kind: "module";
       /** The card's reconcile identity (id ?? type) — keys the row, toggle and reorder. */
       identity: string;
-      /** The bare type — for CARD_REGISTRY lookups / render dispatch. */
-      moduleType: DashboardCardType;
       label: string;
       hidden: boolean;
     };
@@ -165,7 +163,6 @@ export default function DashboardCustomizeDialog({
         key: `mod:${cardIdentity(c)}`,
         kind: "module",
         identity: cardIdentity(c),
-        moduleType: c.type,
         label: moduleLabel(c),
         hidden: !!c.hidden,
       }),
