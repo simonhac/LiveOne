@@ -26,7 +26,7 @@ export interface TilesConfig {
 export interface ChartCardConfig {
   /** Overlaid lines (sidebar) vs stacked areas (site load/generation). */
   variant: "lines" | "stacked-areas";
-  /** For stacked-areas: which half (maps to SitePowerChart's `mode`). */
+  /** For stacked-areas: which half of the stacked chart (load vs generation). */
   split?: "load" | "generation";
   /** Optional series subset for the (future) union-of-series fetch. */
   series?: string[];

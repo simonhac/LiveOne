@@ -11,7 +11,7 @@ import type { ChartData, LineChartData, PaddedSOCData } from "./types";
 /**
  * Overlaid-line (sidebar) datasets: solar/load/battery/grid as lines on the left axis (bars when
  * daily/energy mode), SoC as a line on the right axis, plus a padded min/max SoC band in energy
- * mode. Extracted verbatim from EnergyChart. The caller computes `paddedSOCData` (energy mode only).
+ * mode. Used by the lines chart. The caller computes `paddedSOCData` (energy mode only).
  */
 export function buildLineDatasets(
   chartData: LineChartData,
@@ -202,13 +202,13 @@ export function buildLineDatasets(
 /**
  * Stacked-area (site) datasets: power/energy series stacked on the left axis (areas when 5m/30m,
  * bars when daily), with the SoC overlay on the right axis. Only series in `effectiveVisibleSeries`
- * are drawn. Extracted verbatim from SitePowerChart.
+ * are drawn. Used by the stacked chart.
  */
 
 /**
  * Stacked-area (site) datasets: power/energy series stacked on the left axis (areas when 5m/30m,
  * bars when daily), with the SoC overlay on the right axis. Only series in `effectiveVisibleSeries`
- * are drawn. Extracted verbatim from SitePowerChart.
+ * are drawn. Used by the stacked chart.
  */
 export function buildStackedAreaDatasets(
   chartData: ChartData,
@@ -264,7 +264,7 @@ export function buildStackedAreaDatasets(
 
   if (isBarChart && socMin && socMax) {
     // Daily data: show min/max range as filled area
-    // Match EnergyChart pattern: max dataset fills DOWN to min dataset
+    // Match the lines chart pattern: max dataset fills DOWN to min dataset
 
     // Add max as upper boundary (fill down to next dataset)
     socDatasets.push({

@@ -1,6 +1,6 @@
 /**
  * Centralized color management for all charts
- * Ensures consistent colors across SitePowerChart, EnergyChart, Sankey, and other visualizations
+ * Ensures consistent colors across the dashboard charts, Sankey, and other visualizations
  */
 
 import { stemSplit } from "@/lib/identifiers/logical-path";

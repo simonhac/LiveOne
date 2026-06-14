@@ -10,7 +10,7 @@ import { generatorRunningFromLatest } from "@/lib/generator/running";
 import GridSignalsCard from "@/components/GridSignalsCard";
 import { nemRegionShortLabel } from "@/lib/vendors/openelectricity/region";
 import type { GridContext } from "@/lib/grid/types";
-import EnergyChart from "@/components/EnergyChart";
+import LinesChartCard from "@/components/LinesChartCard";
 import AmberCard from "@/components/AmberCard";
 import AmberNow from "@/components/AmberNow";
 import AmberSmallCard from "@/components/AmberSmallCard";
@@ -537,9 +537,8 @@ export default function DashboardClient({
               />
               {cardVisible("chart:lines") && (
                 // For other systems, show the regular energy chart
-                <EnergyChart
+                <LinesChartCard
                   systemId={parseInt(systemId as string)}
-                  vendorType={data?.system.vendorType}
                   className="h-full min-h-[400px]"
                   maxPowerHint={(() => {
                     // Parse solar size (format: "9 kW")
