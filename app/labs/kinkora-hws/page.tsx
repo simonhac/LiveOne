@@ -1,6 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect, notFound } from "next/navigation";
-import { and, asc, eq, gte } from "drizzle-orm";
+import { and, asc, eq, gte, lte } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { pointInfo, pointReadingsAgg5m } from "@/lib/db/planetscale/schema";
 import { isUserAdmin } from "@/lib/auth-utils";
@@ -32,11 +32,17 @@ async function hwsPointIndex(
   return row ? row.index : null;
 }
 
-/** Bounded read of a point's agg_5m avg over [fromMs, now] → Map<intervalEndMs, avg>. */
+/**
+ * Bounded read of a point's agg_5m avg over [fromMs, toMs] → Map<intervalEndMs, avg>.
+ * The upper bound matters: 5m `intervalEnd = ceil(t/5min)*5min`, so the current in-progress
+ * bucket is future-dated. Capping at `now` excludes it — mirroring the HWS recompute window
+ * (lib/hws/recompute.ts), which only models completed buckets.
+ */
 async function readAgg5m(
   systemId: number,
   pointId: number,
   fromMs: number,
+  toMs: number,
 ): Promise<Map<number, number | null>> {
   const rows = await requirePlanetscaleDb()
     .select({
@@ -49,6 +55,7 @@ async function readAgg5m(
         eq(pointReadingsAgg5m.systemId, systemId),
         eq(pointReadingsAgg5m.pointId, pointId),
         gte(pointReadingsAgg5m.intervalEnd, new Date(fromMs)),
+        lte(pointReadingsAgg5m.intervalEnd, new Date(toMs)),
       ),
     )
     .orderBy(asc(pointReadingsAgg5m.intervalEnd));
@@ -110,17 +117,28 @@ export default async function KinkoraHwsPage({
   const displayStartMs = todayLocalMidnightMs - (DISPLAY_DAYS - 1) * DAY_MS;
 
   // Read the persisted modelled temperature + the source power (for the on/off row).
-  const tempByTs = await readAgg5m(system.id, tempPointId, displayStartMs);
+  // Cap at `now`: the in-progress 5m bucket is future-dated, and the model has not yet
+  // produced a temperature for it — including it would surface a fabricated value.
+  const tempByTs = await readAgg5m(
+    system.id,
+    tempPointId,
+    displayStartMs,
+    nowMs,
+  );
   const powerByTs =
     powerPointId !== null
-      ? await readAgg5m(system.id, powerPointId, displayStartMs)
+      ? await readAgg5m(system.id, powerPointId, displayStartMs, nowMs)
       : new Map<number, number | null>();
 
   const tsSet = new Set<number>([...tempByTs.keys(), ...powerByTs.keys()]);
+  let prevFaucetC = DEFAULT_HWS_MODEL_OPTIONS.tFloor; // carry-forward for genuine gaps
   const steps: HwsModelStep[] = [...tsSet]
     .sort((a, b) => a - b)
     .map((tsMs) => {
-      const faucetC = tempByTs.get(tsMs) ?? DEFAULT_HWS_MODEL_OPTIONS.tFloor;
+      // Use the modelled temperature; for a power-only timestamp (a gap in the derived
+      // series) carry the last modelled value forward rather than dropping to tFloor.
+      const faucetC = tempByTs.get(tsMs) ?? prevFaucetC;
+      prevFaucetC = faucetC;
       const powerW = powerByTs.has(tsMs) ? (powerByTs.get(tsMs) ?? null) : null;
       return {
         tsMs,
@@ -131,8 +149,12 @@ export default async function KinkoraHwsPage({
       };
     });
 
+  // The headline reflects the newest actually-modelled temperature (matches the dashboard's
+  // KV latest), not the last merged step — which may be a power-only timestamp.
+  const tempTimestamps = [...tempByTs.keys()].sort((a, b) => a - b);
+  const latestTempTs = tempTimestamps[tempTimestamps.length - 1];
   const latestFaucetC =
-    steps.length > 0 ? steps[steps.length - 1].faucetC : null;
+    latestTempTs !== undefined ? (tempByTs.get(latestTempTs) ?? null) : null;
 
   return (
     <main className="min-h-screen bg-gray-900 text-gray-100 p-6">
