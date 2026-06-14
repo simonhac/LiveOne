@@ -90,19 +90,52 @@ function normalizeTiles(saved: unknown, def: TilesConfig): TilesConfig {
 }
 
 /**
+ * The legacy module card types this codebase no longer emits but may still find in persisted rows:
+ * the monolithic `"amber"` and the `"power-cards"` predecessor of `"tiles"`. Matched on the MODULE
+ * `card.type` only — note `"amber"` is ALSO a `TileId` and a `DashboardLayout` value, so never test
+ * by substring/tile-id/layout. `version` cannot discriminate (it has been `2` for both shapes).
+ */
+const LEGACY_CARD_TYPES = new Set(["amber", "power-cards"]);
+
+/**
+ * Whether a (possibly malformed, unknown-typed) descriptor still carries a legacy module card —
+ * the gate for both the in-memory read upgrade and the one-off data migration that rewrites the
+ * persisted `dashboards` rows. Returns false for any already-current or non-descriptor value, so a
+ * migration guarded by this leaves current rows byte-unchanged and is idempotent on a re-run.
+ */
+export function hasLegacyCards(d: unknown): boolean {
+  if (!d || typeof d !== "object") return false;
+  const cards = (d as { cards?: unknown }).cards;
+  if (!Array.isArray(cards)) return false;
+  return cards.some(
+    (c) =>
+      !!c &&
+      typeof c === "object" &&
+      LEGACY_CARD_TYPES.has((c as { type?: unknown }).type as string),
+  );
+}
+
+/**
  * Upgrade a saved descriptor from a legacy wire shape to the current one — the READ side of the
  * expand→migrate→contract rename. The old monolithic `"amber"` module expands to `amber-now` +
  * `amber-timeline` (inheriting its hidden state). The old `"power-cards"` module (with its
  * `powerCards` config) becomes the `"tiles"` module (with a `tiles` config). In-memory only; the
- * persisted `dashboards` rows are rewritten by a separate data migration once this is deployed.
- * KEEP until that migration ships.
+ * persisted `dashboards` rows are rewritten by `scripts/migrate-dashboard-descriptors.ts` (which
+ * reuses THIS function). KEEP until that migration has run on every environment.
  */
-function migrateLegacyDescriptor(
+export function migrateLegacyDescriptor(
   s: Partial<DashboardDescriptor>,
 ): Partial<DashboardDescriptor> {
   if (!Array.isArray(s.cards)) return s;
   const cards: ModuleCardInstance[] = [];
   for (const c of s.cards) {
+    // Pass through anything that isn't a card object (a malformed/null sibling shouldn't crash the
+    // read path or the data migration — hasLegacyCards is already null-safe, so the transform must
+    // be too, else a row like `{cards:[null,{type:"amber"}]}` would throw mid-rewrite forever).
+    if (!c || typeof c !== "object") {
+      cards.push(c);
+      continue;
+    }
     if ((c.type as string) === "amber") {
       cards.push({ type: "amber-now", hidden: c.hidden });
       cards.push({ type: "amber-timeline", hidden: c.hidden });
@@ -119,6 +152,40 @@ function migrateLegacyDescriptor(
     }
   }
   return { ...s, cards };
+}
+
+/** First-wins dedupe of cards by type (matches normalizeDescriptor's seen-set rule). */
+function dedupeCardsByType(cards: ModuleCardInstance[]): ModuleCardInstance[] {
+  const seen = new Set<string>();
+  const out: ModuleCardInstance[] = [];
+  for (const c of cards) {
+    const t = c?.type as string | undefined;
+    if (t !== undefined) {
+      if (seen.has(t)) continue;
+      seen.add(t);
+    }
+    out.push(c);
+  }
+  return out;
+}
+
+/**
+ * The descriptor data migration's per-row transform (WRITE side): the rewritten descriptor for a
+ * persisted `dashboards` row, or null if the row carries no legacy card (so the caller skips the
+ * write — keeping current rows byte-unchanged and the migration idempotent). Applies the same pure
+ * rename as the read path (`migrateLegacyDescriptor`) plus a defensive first-wins dedupe by type;
+ * unlike `normalizeDescriptor` it is non-lossy (no layout-discard, no dropping unknown cards).
+ * Used by scripts/migrate-dashboard-descriptors.ts.
+ */
+export function migrateLegacyDescriptorRow(
+  d: unknown,
+): Partial<DashboardDescriptor> | null {
+  if (!hasLegacyCards(d)) return null;
+  const migrated = migrateLegacyDescriptor(d as Partial<DashboardDescriptor>);
+  return {
+    ...migrated,
+    cards: dedupeCardsByType((migrated.cards ?? []) as ModuleCardInstance[]),
+  };
 }
 
 /**
