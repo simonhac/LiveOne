@@ -23,13 +23,13 @@ import { CSS } from "@dnd-kit/utilities";
 import { useModalContext } from "@/contexts/ModalContext";
 import {
   CARD_REGISTRY,
-  POWER_CARDS,
-  POWER_CARD_IDS,
+  TILES,
+  TILE_IDS,
   type DashboardCardType,
-  type PowerCardId,
+  type TileId,
 } from "@/lib/dashboard/cards";
 import {
-  powerCardsConfigOf,
+  tilesConfigOf,
   type DashboardDescriptor,
   type ModuleCardInstance,
 } from "@/lib/dashboard/descriptor";
@@ -42,9 +42,9 @@ interface DashboardCustomizeDialogProps {
   /** Module card types the system can satisfy. */
   availableModules: Set<DashboardCardType>;
   /** Power tiles the system can satisfy (have data). */
-  availablePower: Set<PowerCardId>;
+  availablePower: Set<TileId>;
   /** Real rendered card nodes, keyed by id (unused by the list now; kept for callers/preview). */
-  powerCardNodes: Record<PowerCardId, ReactNode>;
+  powerCardNodes: Record<TileId, ReactNode>;
   onSave: (next: DashboardDescriptor) => Promise<void>;
   onReset: () => Promise<void>;
 }
@@ -52,14 +52,14 @@ interface DashboardCustomizeDialogProps {
 /**
  * One row in the unified card list. Tiles (solar/load/…) and module cards (Local Grid, Power Charts,
  * …) are presented as ONE list — there is no "tiles vs sections" split. Order/visibility map back to
- * the two underlying descriptor structures: tiles → the power-cards module's `order`/`hidden`;
+ * the two underlying descriptor structures: tiles → the tiles module's `order`/`hidden`;
  * modules → each `ModuleCardInstance.hidden` + their position in `descriptor.cards`.
  */
 type CardRow =
   | {
       key: string;
       kind: "tile";
-      tileId: PowerCardId;
+      tileId: TileId;
       label: string;
       hidden: boolean;
     }
@@ -119,27 +119,27 @@ export default function DashboardCustomizeDialog({
 
   if (!isOpen || !draft || typeof document === "undefined") return null;
 
-  const power = powerCardsConfigOf(draft);
+  const tiles = tilesConfigOf(draft);
   const isDirty = JSON.stringify(draft) !== JSON.stringify(descriptor);
 
   // Tiles the system has no data for — shown greyed below as an "Add Card" gallery (can't be added).
-  const unavailableIds = POWER_CARD_IDS.filter((id) => !availablePower.has(id));
+  const unavailableIds = TILE_IDS.filter((id) => !availablePower.has(id));
 
-  // The unified list, in grid order: available power tiles (in their saved order), then the available
+  // The unified list, in grid order: available tiles (in their saved order), then the available
   // module cards (in their descriptor order).
   const moduleCards = draft.cards.filter(
-    (c) => c.type !== "power-cards" && availableModules.has(c.type),
+    (c) => c.type !== "tiles" && availableModules.has(c.type),
   );
   const rows: CardRow[] = [
-    ...power.order
+    ...tiles.order
       .filter((id) => availablePower.has(id))
       .map(
         (id): CardRow => ({
           key: `tile:${id}`,
           kind: "tile",
           tileId: id,
-          label: POWER_CARDS[id].label,
-          hidden: power.hidden.includes(id),
+          label: TILES[id].label,
+          hidden: tiles.hidden.includes(id),
         }),
       ),
     ...moduleCards.map(
@@ -153,21 +153,21 @@ export default function DashboardCustomizeDialog({
     ),
   ];
 
-  const toggleTile = (id: PowerCardId, hide: boolean) =>
+  const toggleTile = (id: TileId, hide: boolean) =>
     setDraft((d) =>
       !d
         ? d
         : {
             ...d,
             cards: d.cards.map((c) => {
-              if (c.type !== "power-cards") return c;
-              const cur = c.powerCards ?? {
-                order: [...POWER_CARD_IDS],
+              if (c.type !== "tiles") return c;
+              const cur = c.tiles ?? {
+                order: [...TILE_IDS],
                 hidden: [],
               };
               return {
                 ...c,
-                powerCards: {
+                tiles: {
                   order: cur.order,
                   hidden: hide
                     ? Array.from(new Set([...cur.hidden, id]))
@@ -212,9 +212,9 @@ export default function DashboardCustomizeDialog({
 
     setDraft((d) => {
       if (!d) return d;
-      const powerCard = d.cards.find((c) => c.type === "power-cards");
+      const tilesCard = d.cards.find((c) => c.type === "tiles");
       const moduleByType = new Map(
-        d.cards.filter((c) => c.type !== "power-cards").map((c) => [c.type, c]),
+        d.cards.filter((c) => c.type !== "tiles").map((c) => [c.type, c]),
       );
       const reorderedModules = moduleTypes
         .map((t) => moduleByType.get(t))
@@ -222,16 +222,16 @@ export default function DashboardCustomizeDialog({
       // Preserve any module cards NOT in the visible list (e.g. unavailable on this system).
       const shown = new Set(moduleTypes);
       const otherModules = d.cards.filter(
-        (c) => c.type !== "power-cards" && !shown.has(c.type),
+        (c) => c.type !== "tiles" && !shown.has(c.type),
       );
       const cards: ModuleCardInstance[] = [
-        ...(powerCard
+        ...(tilesCard
           ? [
               {
-                ...powerCard,
-                powerCards: {
+                ...tilesCard,
+                tiles: {
                   order: [...tileIds, ...unavailableIds],
-                  hidden: powerCard.powerCards?.hidden ?? [],
+                  hidden: tilesCard.tiles?.hidden ?? [],
                 },
               },
             ]
@@ -327,7 +327,7 @@ export default function DashboardCustomizeDialog({
                       title="No data on this system"
                     >
                       <span className="text-sm text-gray-400">
-                        {POWER_CARDS[id].label}
+                        {TILES[id].label}
                       </span>
                       <span className="ml-auto text-[10px] uppercase tracking-wide text-gray-600">
                         No data

@@ -1,13 +1,13 @@
 /**
  * Hand-crafted mock data for the card gallery (app/labs/card-gallery).
  *
- * Each card reads a different shape — PowerCard nodes are built by usePowerCardNodes from a
+ * Each card reads a different shape — Tile nodes are built by useTileNodes from a
  * LatestPointValues map, the Amber/Tesla cards take a Record<string, LatestValue|null>, and
  * GridSignalsCard takes a typed GridLiveValues. These fixtures cover the interesting states
  * (charging/discharging, stale, high/low/zero, missing) so the cards can be eyeballed at size.
  *
  * Timestamps are stamped at module import; "fresh" states sit well inside the staleness window
- * and "stale" states are aged past it (PowerCard/Tesla threshold ~300s, GridSignals ~900s).
+ * and "stale" states are aged past it (Tile/Tesla threshold ~300s, GridSignals ~900s).
  */
 import type { LatestPointValue, LatestPointValues } from "@/lib/types/api";
 import type { LatestValue } from "@/lib/amber-utils";
@@ -16,7 +16,7 @@ import type { GridLiveValues } from "@/lib/grid/latest";
 const FRESH = 30; // seconds old — comfortably fresh
 const STALE = 1200; // seconds old — past every threshold here
 
-/** Build a LatestPointValue (the numeric power/energy shape PowerCard nodes consume). */
+/** Build a LatestPointValue (the numeric power/energy shape Tile nodes consume). */
 function mk(
   value: number,
   logicalPath: string,
@@ -39,7 +39,7 @@ function lv(value: number | string, ageSeconds: number = FRESH): LatestValue {
 }
 
 // ---------------------------------------------------------------------------
-// PowerCard — Solar (source.solar/power, with optional local/remote breakdown)
+// Tile — Solar (source.solar/power, with optional local/remote breakdown)
 // ---------------------------------------------------------------------------
 export const SOLAR_SCENARIOS: Record<string, LatestPointValues> = {
   "local + remote": {
@@ -68,7 +68,7 @@ export const SOLAR_SCENARIOS: Record<string, LatestPointValues> = {
 };
 
 // ---------------------------------------------------------------------------
-// PowerCard — Load (load/power + load.* children + synthesized rest-of-house)
+// Tile — Load (load/power + load.* children + synthesized rest-of-house)
 // ---------------------------------------------------------------------------
 export const LOAD_SCENARIOS: Record<string, LatestPointValues> = {
   "with children": {
@@ -85,7 +85,7 @@ export const LOAD_SCENARIOS: Record<string, LatestPointValues> = {
 };
 
 // ---------------------------------------------------------------------------
-// PowerCard — Battery (bidi.battery/soc + bidi.battery/power; sign: -=charging)
+// Tile — Battery (bidi.battery/soc + bidi.battery/power; sign: -=charging)
 // ---------------------------------------------------------------------------
 export const BATTERY_SCENARIOS: Record<string, LatestPointValues> = {
   charging: {
@@ -117,7 +117,7 @@ export const BATTERY_SCENARIOS: Record<string, LatestPointValues> = {
 };
 
 // ---------------------------------------------------------------------------
-// PowerCard — Grid (bidi.grid/power; sign: +=import, -=export)
+// Tile — Grid (bidi.grid/power; sign: +=import, -=export)
 // ---------------------------------------------------------------------------
 export const GRID_SCENARIOS: Record<string, LatestPointValues> = {
   importing: {

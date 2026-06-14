@@ -11,8 +11,8 @@ import AmberSmallCard from "@/components/AmberSmallCard";
 import TeslaSmallCard from "@/components/TeslaSmallCard";
 import AmberNow from "@/components/AmberNow";
 import GridSignalsCard from "@/components/GridSignalsCard";
-import { usePowerCardNodes } from "@/app/components/cards/usePowerCardNodes";
-import type { PowerCardId } from "@/lib/dashboard/cards";
+import { useTileNodes } from "@/app/components/cards/useTileNodes";
+import type { TileId } from "@/lib/dashboard/cards";
 import type { LatestPointValues } from "@/lib/types/api";
 import {
   SOLAR_SCENARIOS,
@@ -28,15 +28,9 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Renders a single power mini-card node faithfully via the real builder hook. */
-function PowerCardCell({
-  latest,
-  id,
-}: {
-  latest: LatestPointValues;
-  id: PowerCardId;
-}) {
-  const { cardNodes } = usePowerCardNodes({
+/** Renders a single tile node faithfully via the real builder hook. */
+function TileCell({ latest, id }: { latest: LatestPointValues; id: TileId }) {
+  const { cardNodes } = useTileNodes({
     latest,
     vendorType: "gallery",
     getStaleThreshold: () => 300,
@@ -193,7 +187,7 @@ function CardSection({
 
 // Container-query cards re-layout at their own width: 66 / 90 / 120 / 180 / 300.
 const CQ_WIDTHS = [66, 80, 90, 110, 120, 150, 180, 220, 300, 380];
-// PowerCard / GridSignals key off the md: (768px) VIEWPORT width, not container width.
+// Tile / GridSignals key off the md: (768px) VIEWPORT width, not container width.
 const POWER_WIDTHS = [80, 110, 150, 180, 220, 300];
 const GRID_WIDTHS = [180, 260, 340, 440, 560];
 const AMBERNOW_WIDTHS = [220, 280, 340, 420];
@@ -240,55 +234,53 @@ export default function CardGallery() {
                 : "Show size badges (?debug)"}
             </button>
             <span className="text-xs text-gray-500">
-              Note: PowerCard &amp; Local Grid switch mobile↔desktop at the
-              768px <em>browser-window</em> width, not container width — resize
-              the window to exercise that flip.
+              Note: Tile &amp; Local Grid switch mobile↔desktop at the 768px{" "}
+              <em>browser-window</em> width, not container width — resize the
+              window to exercise that flip.
             </span>
           </div>
         </header>
 
         <CardSection
           title="Power — Solar"
-          note="PowerCard. Viewport (md:) breakpoint layout. 'local + remote' shows the breakdown rows."
+          note="Tile. Viewport (md:) breakpoint layout. 'local + remote' shows the breakdown rows."
           scenarios={Object.keys(SOLAR_SCENARIOS)}
           defaultScenario="local + remote"
           presetWidths={POWER_WIDTHS}
           playground={{ w: 200, h: 140 }}
-          render={(s) => (
-            <PowerCardCell latest={SOLAR_SCENARIOS[s]} id="solar" />
-          )}
+          render={(s) => <TileCell latest={SOLAR_SCENARIOS[s]} id="solar" />}
         />
 
         <CardSection
           title="Power — Load"
-          note="PowerCard. 'with children' shows top-2 child loads + synthesized rest-of-house."
+          note="Tile. 'with children' shows top-2 child loads + synthesized rest-of-house."
           scenarios={Object.keys(LOAD_SCENARIOS)}
           defaultScenario="with children"
           presetWidths={POWER_WIDTHS}
           playground={{ w: 200, h: 140 }}
-          render={(s) => <PowerCardCell latest={LOAD_SCENARIOS[s]} id="load" />}
+          render={(s) => <TileCell latest={LOAD_SCENARIOS[s]} id="load" />}
         />
 
         <CardSection
           title="Power — Battery"
-          note="PowerCard. Color + flow chevrons follow charge/discharge sign; 'stale' dims + hatches."
+          note="Tile. Color + flow chevrons follow charge/discharge sign; 'stale' dims + hatches."
           scenarios={Object.keys(BATTERY_SCENARIOS)}
           defaultScenario="charging"
           presetWidths={POWER_WIDTHS}
           playground={{ w: 200, h: 140 }}
           render={(s) => (
-            <PowerCardCell latest={BATTERY_SCENARIOS[s]} id="battery" />
+            <TileCell latest={BATTERY_SCENARIOS[s]} id="battery" />
           )}
         />
 
         <CardSection
           title="Power — Grid"
-          note="PowerCard. Import (red) / export (green) / idle; double chevron above 5kW."
+          note="Tile. Import (red) / export (green) / idle; double chevron above 5kW."
           scenarios={Object.keys(GRID_SCENARIOS)}
           defaultScenario="importing"
           presetWidths={POWER_WIDTHS}
           playground={{ w: 200, h: 140 }}
-          render={(s) => <PowerCardCell latest={GRID_SCENARIOS[s]} id="grid" />}
+          render={(s) => <TileCell latest={GRID_SCENARIOS[s]} id="grid" />}
         />
 
         <CardSection

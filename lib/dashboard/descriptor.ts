@@ -10,24 +10,24 @@
 import type { LatestPointValues } from "@/lib/types/api";
 import {
   getLayout,
-  POWER_CARD_IDS,
+  TILE_IDS,
   type DashboardCardType,
   type DashboardLayout,
-  type PowerCardId,
+  type TileId,
 } from "./cards";
 
-/** Per-card customization for the power mini-cards inside the `power-cards` module. */
-export interface PowerCardsConfig {
-  order: PowerCardId[];
-  hidden: PowerCardId[];
+/** Per-card customization for the tiles inside the `tiles` module. */
+export interface TilesConfig {
+  order: TileId[];
+  hidden: TileId[];
 }
 
 export interface ModuleCardInstance {
   type: DashboardCardType;
   /** Hidden module cards are persisted but not rendered (re-addable from the gallery). */
   hidden?: boolean;
-  /** Only meaningful for type === "power-cards". */
-  powerCards?: PowerCardsConfig;
+  /** Only meaningful for type === "tiles". */
+  tiles?: TilesConfig;
 }
 
 export interface DashboardDescriptor {
@@ -39,12 +39,12 @@ export interface DashboardDescriptor {
 /** Cards each layout shows by default — the exact set the vendor_type ladder renders today. */
 const CARDS_BY_LAYOUT: Record<DashboardLayout, DashboardCardType[]> = {
   amber: ["amber-now", "amber-timeline"],
-  site: ["power-cards", "site-charts", "sankey", "generator-runs"],
-  sidebar: ["power-cards", "energy-chart", "generator-runs"],
+  site: ["tiles", "site-charts", "sankey", "generator-runs"],
+  sidebar: ["tiles", "energy-chart", "generator-runs"],
 };
 
-function defaultPowerCardsConfig(): PowerCardsConfig {
-  return { order: [...POWER_CARD_IDS], hidden: [] };
+function defaultTilesConfig(): TilesConfig {
+  return { order: [...TILE_IDS], hidden: [] };
 }
 
 /**
@@ -61,9 +61,7 @@ export function buildDefaultDescriptor(
 ): DashboardDescriptor {
   const layout = getLayout(system.vendorType);
   const cards: ModuleCardInstance[] = CARDS_BY_LAYOUT[layout].map((type) =>
-    type === "power-cards"
-      ? { type, powerCards: defaultPowerCardsConfig() }
-      : { type },
+    type === "tiles" ? { type, tiles: defaultTilesConfig() } : { type },
   );
   if (
     opts?.gridSignalsAvailable &&
@@ -78,20 +76,15 @@ export function buildDefaultDescriptor(
   };
 }
 
-function normalizePowerCards(
-  saved: unknown,
-  def: PowerCardsConfig,
-): PowerCardsConfig {
-  const s = saved as Partial<PowerCardsConfig> | undefined;
+function normalizeTiles(saved: unknown, def: TilesConfig): TilesConfig {
+  const s = saved as Partial<TilesConfig> | undefined;
   if (!s || !Array.isArray(s.order)) return def;
-  const valid = new Set<PowerCardId>(def.order);
-  const order = s.order.filter((id): id is PowerCardId =>
-    valid.has(id as PowerCardId),
-  );
-  // Append any newly-introduced power cards not present in the saved order.
+  const valid = new Set<TileId>(def.order);
+  const order = s.order.filter((id): id is TileId => valid.has(id as TileId));
+  // Append any newly-introduced tiles not present in the saved order.
   for (const id of def.order) if (!order.includes(id)) order.push(id);
   const hidden = (Array.isArray(s.hidden) ? s.hidden : []).filter(
-    (id): id is PowerCardId => valid.has(id as PowerCardId),
+    (id): id is TileId => valid.has(id as TileId),
   );
   return { order, hidden };
 }
@@ -99,8 +92,10 @@ function normalizePowerCards(
 /**
  * Upgrade a saved descriptor from a legacy wire shape to the current one — the READ side of the
  * expand→migrate→contract rename. The old monolithic `"amber"` module expands to `amber-now` +
- * `amber-timeline` (inheriting its hidden state). In-memory only; the persisted `dashboards` rows
- * are rewritten by a separate data migration once this is deployed. KEEP until that migration ships.
+ * `amber-timeline` (inheriting its hidden state). The old `"power-cards"` module (with its
+ * `powerCards` config) becomes the `"tiles"` module (with a `tiles` config). In-memory only; the
+ * persisted `dashboards` rows are rewritten by a separate data migration once this is deployed.
+ * KEEP until that migration ships.
  */
 function migrateLegacyDescriptor(
   s: Partial<DashboardDescriptor>,
@@ -111,6 +106,14 @@ function migrateLegacyDescriptor(
     if ((c.type as string) === "amber") {
       cards.push({ type: "amber-now", hidden: c.hidden });
       cards.push({ type: "amber-timeline", hidden: c.hidden });
+    } else if ((c.type as string) === "power-cards") {
+      // Legacy `{ type: "power-cards", powerCards: { order, hidden } }` → the new `tiles` shape.
+      const legacy = c as ModuleCardInstance & { powerCards?: TilesConfig };
+      cards.push({
+        type: "tiles",
+        tiles: legacy.powerCards ?? legacy.tiles,
+        hidden: c.hidden,
+      });
     } else {
       cards.push(c);
     }
@@ -120,7 +123,7 @@ function migrateLegacyDescriptor(
 
 /**
  * Reconcile a saved descriptor with the current default. Discards the save if the layout changed
- * (e.g. the system's vendor type changed); otherwise keeps the saved card ORDER + hidden/power
+ * (e.g. the system's vendor type changed); otherwise keeps the saved card ORDER + hidden/tiles
  * config, appends module cards introduced since the save (as visible defaults), and drops any that
  * no longer exist. Returns the default if `saved` is missing or malformed. Legacy wire shapes are
  * upgraded first (migrateLegacyDescriptor).
@@ -164,20 +167,18 @@ export function normalizeDescriptor(
     const sc = savedByType.get(type);
     if (!sc) return defCard; // card introduced since the save → default (visible)
     const card: ModuleCardInstance = { type, hidden: !!sc.hidden };
-    if (type === "power-cards") {
-      card.powerCards = normalizePowerCards(sc.powerCards, defCard.powerCards!);
+    if (type === "tiles") {
+      card.tiles = normalizeTiles(sc.tiles, defCard.tiles!);
     }
     return card;
   });
   return { version: 2, layout: def.layout, cards };
 }
 
-/** The power-cards module's config from a descriptor (or a default if absent). */
-export function powerCardsConfigOf(
-  descriptor: DashboardDescriptor,
-): PowerCardsConfig {
-  const card = descriptor.cards.find((c) => c.type === "power-cards");
-  return card?.powerCards ?? defaultPowerCardsConfig();
+/** The tiles module's config from a descriptor (or a default if absent). */
+export function tilesConfigOf(descriptor: DashboardDescriptor): TilesConfig {
+  const card = descriptor.cards.find((c) => c.type === "tiles");
+  return card?.tiles ?? defaultTilesConfig();
 }
 
 /** Whether a module card is present and not hidden. */

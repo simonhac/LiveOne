@@ -72,7 +72,7 @@ function Stat({
  * 2/3 columns as it widens. Price keeps ¢ attached ("1.5¢/kWh"), emissions abbreviates to "EI"
  * (emissions intensity), renewables reads "<n>% RE". Values never truncate.
  *
- * Staleness follows PowerCard: the newest measurementTime across the present
+ * Staleness follows Tile: the newest measurementTime across the present
  * metrics is compared against `staleThresholdSeconds` (recomputed every second);
  * when stale, the card dims and a Clock icon exposes a "Last update" tooltip.
  */

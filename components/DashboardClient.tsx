@@ -35,20 +35,20 @@ import {
   calculateEnergyFlowMatrix,
   type EnergyFlowMatrix,
 } from "@/lib/energy-flow-matrix";
-import { usePowerCardNodes } from "@/app/components/cards/usePowerCardNodes";
+import { useTileNodes } from "@/app/components/cards/useTileNodes";
 import DashboardCustomizeDialog from "@/components/DashboardCustomizeDialog";
 import { useDashboardCustomize } from "@/contexts/DashboardCustomizeContext";
 import {
   buildDefaultDescriptor,
   normalizeDescriptor,
-  powerCardsConfigOf,
+  tilesConfigOf,
   isCardVisible,
   type DashboardDescriptor,
 } from "@/lib/dashboard/descriptor";
 import {
   CARD_REGISTRY,
-  availablePowerCards,
-  POWER_CARD_IDS,
+  availableTiles,
+  TILE_IDS,
   type DashboardCardType,
 } from "@/lib/dashboard/cards";
 import PeriodSwitcher from "@/components/PeriodSwitcher";
@@ -248,19 +248,18 @@ export default function DashboardClient({
     return () => setCanCustomize(false);
   }, [data, setCanCustomize]);
 
-  // Real power-card preview nodes for the Customize dialog — the SAME nodes the dashboard renders,
+  // Real tile preview nodes for the Customize dialog — the SAME nodes the dashboard renders,
   // so the editor shows cards exactly as they appear. Built unconditionally (before any early
   // return) to keep hook order stable; harmless when data is absent.
-  const { cardNodes: powerCardNodes, available: powerAvailable } =
-    usePowerCardNodes({
-      latest: data?.latest ?? {},
-      vendorType: data?.system.vendorType ?? "",
-      getStaleThreshold,
-      showGrid: !!data?.latest?.["bidi.grid/power"],
-      systemId: data?.system.id,
-      canControl:
-        isAdmin || (!!userId && data?.system.ownerClerkUserId === userId),
-    });
+  const { cardNodes: tileNodes, available: powerAvailable } = useTileNodes({
+    latest: data?.latest ?? {},
+    vendorType: data?.system.vendorType ?? "",
+    getStaleThreshold,
+    showGrid: !!data?.latest?.["bidi.grid/power"],
+    systemId: data?.system.id,
+    canControl:
+      isAdmin || (!!userId && data?.system.ownerClerkUserId === userId),
+  });
 
   // The effective (saved-or-default) descriptor; null until system data has loaded.
   const effectiveDescriptor = useMemo<DashboardDescriptor | null>(() => {
@@ -839,13 +838,11 @@ export default function DashboardClient({
     ? activeDescriptor.layout === "site"
     : vendorTypeForLayout === "mondo" || vendorTypeForLayout === "composite";
 
-  // cardVisible() is true while the descriptor is still loading (null); powerCfg falls back to
-  // SystemPowerCards' default order/visibility until then.
+  // cardVisible() is true while the descriptor is still loading (null); tilesCfg falls back to
+  // SystemTiles' default order/visibility until then.
   const cardVisible = (type: DashboardCardType): boolean =>
     !activeDescriptor || isCardVisible(activeDescriptor, type);
-  const powerCfg = activeDescriptor
-    ? powerCardsConfigOf(activeDescriptor)
-    : null;
+  const tilesCfg = activeDescriptor ? tilesConfigOf(activeDescriptor) : null;
 
   // Customize (P2) handlers + the cards available on this system (for the dialog).
   const saveDashboard = async (next: DashboardDescriptor) => {
@@ -879,22 +876,22 @@ export default function DashboardClient({
       }),
     ),
   );
-  const availablePower = new Set(
-    data?.latest ? availablePowerCards(data.latest) : [],
+  const availableTileSet = new Set(
+    data?.latest ? availableTiles(data.latest) : [],
   );
 
-  // Unified card grid (HA "Sections" style): the power tiles (expanded individually) and the
+  // Unified card grid (HA "Sections" style): the tiles (expanded individually) and the
   // Local Grid (NEM) card flow together in ONE responsive grid — no per-vendor layout fork. Each is
-  // a cell; order/visibility come from the descriptor (powerCfg) exactly as before.
-  const tileHidden = new Set(powerCfg?.hidden ?? []);
-  const tileOrder = (powerCfg?.order ?? [...POWER_CARD_IDS]).filter(
+  // a cell; order/visibility come from the descriptor (tilesCfg) exactly as before.
+  const tileHidden = new Set(tilesCfg?.hidden ?? []);
+  const tileOrder = (tilesCfg?.order ?? [...TILE_IDS]).filter(
     (id) => powerAvailable[id] && !tileHidden.has(id),
   );
   // Render each tile as a DIRECT grid item (no wrapper div) so it stretches to fill its cell;
   // auto-rows-fr (below) keeps every row equal height. This is how the cards "grow into the grid".
-  const tileItems: ReactNode[] = cardVisible("power-cards")
+  const tileItems: ReactNode[] = cardVisible("tiles")
     ? tileOrder.map((id) => (
-        <Fragment key={`tile-${id}`}>{powerCardNodes[id]}</Fragment>
+        <Fragment key={`tile-${id}`}>{tileNodes[id]}</Fragment>
       ))
     : [];
   if (gridContext && cardVisible("grid-signals")) {
@@ -929,8 +926,8 @@ export default function DashboardClient({
           onClose={closeCustomize}
           descriptor={effectiveDescriptor}
           availableModules={availableModules}
-          availablePower={availablePower}
-          powerCardNodes={powerCardNodes}
+          availablePower={availableTileSet}
+          powerCardNodes={tileNodes}
           onSave={saveDashboard}
           onReset={resetDashboard}
         />

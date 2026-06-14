@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Clock } from "lucide-react";
 import { ttInterphases } from "@/lib/fonts/amber";
 
-interface PowerCardProps {
+interface TileProps {
   title: string;
   value: string;
   /** Unit to display after value (e.g., "kW", "%"). Rendered smaller with appropriate spacing. */
@@ -18,7 +18,7 @@ interface PowerCardProps {
   extra?: React.ReactNode;
 }
 
-export default function PowerCard({
+export default function Tile({
   title,
   value,
   unit,
@@ -30,7 +30,7 @@ export default function PowerCard({
   measurementTime,
   extraInfo,
   extra,
-}: PowerCardProps) {
+}: TileProps) {
   const [isStale, setIsStale] = useState(false);
   const [isTooltipVisible, setIsTooltipVisible] = useState(false);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });

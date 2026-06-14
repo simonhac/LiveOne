@@ -12,12 +12,12 @@ describe("buildDefaultDescriptor (reproduces the vendor_type ladder)", () => {
     expect(d.cards.map((c) => c.type)).toEqual(["amber-now", "amber-timeline"]);
   });
 
-  it("mondo/composite → site layout with power-cards, site-charts, sankey, generator-runs", () => {
+  it("mondo/composite → site layout with tiles, site-charts, sankey, generator-runs", () => {
     for (const vt of ["mondo", "composite"]) {
       const d = buildDefaultDescriptor({ vendorType: vt }, latest);
       expect(d.layout).toBe("site");
       expect(d.cards.map((c) => c.type)).toEqual([
-        "power-cards",
+        "tiles",
         "site-charts",
         "sankey",
         "generator-runs",
@@ -25,12 +25,12 @@ describe("buildDefaultDescriptor (reproduces the vendor_type ladder)", () => {
     }
   });
 
-  it("every other vendor → sidebar layout with power-cards, energy-chart, generator-runs", () => {
+  it("every other vendor → sidebar layout with tiles, energy-chart, generator-runs", () => {
     for (const vt of ["selectronic", "enphase", "fronius", "tesla", "fusher"]) {
       const d = buildDefaultDescriptor({ vendorType: vt }, latest);
       expect(d.layout).toBe("sidebar");
       expect(d.cards.map((c) => c.type)).toEqual([
-        "power-cards",
+        "tiles",
         "energy-chart",
         "generator-runs",
       ]);
@@ -61,12 +61,10 @@ describe("CARD_REGISTRY canRender", () => {
       expect(CARD_REGISTRY[t].canRender(ctx("amber"))).toBe(false);
     }
   });
-  it("power-cards for everything except amber", () => {
-    expect(CARD_REGISTRY["power-cards"].canRender(ctx("selectronic"))).toBe(
-      true,
-    );
-    expect(CARD_REGISTRY["power-cards"].canRender(ctx("composite"))).toBe(true);
-    expect(CARD_REGISTRY["power-cards"].canRender(ctx("amber"))).toBe(false);
+  it("tiles for everything except amber", () => {
+    expect(CARD_REGISTRY["tiles"].canRender(ctx("selectronic"))).toBe(true);
+    expect(CARD_REGISTRY["tiles"].canRender(ctx("composite"))).toBe(true);
+    expect(CARD_REGISTRY["tiles"].canRender(ctx("amber"))).toBe(false);
   });
   it("site-charts/sankey only for site (mondo/composite) systems", () => {
     expect(CARD_REGISTRY["site-charts"].canRender(ctx("mondo"))).toBe(true);
