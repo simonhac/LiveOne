@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  Fragment,
+  type ReactNode,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useModalContext } from "@/contexts/ModalContext";
@@ -28,7 +35,6 @@ import {
   calculateEnergyFlowMatrix,
   type EnergyFlowMatrix,
 } from "@/lib/energy-flow-matrix";
-import SystemPowerCards from "@/app/components/cards/SystemPowerCards";
 import { usePowerCardNodes } from "@/app/components/cards/usePowerCardNodes";
 import DashboardCustomizeDialog from "@/components/DashboardCustomizeDialog";
 import { useDashboardCustomize } from "@/contexts/DashboardCustomizeContext";
@@ -42,6 +48,7 @@ import {
 import {
   CARD_REGISTRY,
   availablePowerCards,
+  POWER_CARD_IDS,
   type DashboardCardType,
 } from "@/lib/dashboard/cards";
 import PeriodSwitcher from "@/components/PeriodSwitcher";
@@ -244,15 +251,16 @@ export default function DashboardClient({
   // Real power-card preview nodes for the Customize dialog — the SAME nodes the dashboard renders,
   // so the editor shows cards exactly as they appear. Built unconditionally (before any early
   // return) to keep hook order stable; harmless when data is absent.
-  const { cardNodes: powerCardNodes } = usePowerCardNodes({
-    latest: data?.latest ?? {},
-    vendorType: data?.system.vendorType ?? "",
-    getStaleThreshold,
-    showGrid: !!data?.latest?.["bidi.grid/power"],
-    systemId: data?.system.id,
-    canControl:
-      isAdmin || (!!userId && data?.system.ownerClerkUserId === userId),
-  });
+  const { cardNodes: powerCardNodes, available: powerAvailable } =
+    usePowerCardNodes({
+      latest: data?.latest ?? {},
+      vendorType: data?.system.vendorType ?? "",
+      getStaleThreshold,
+      showGrid: !!data?.latest?.["bidi.grid/power"],
+      systemId: data?.system.id,
+      canControl:
+        isAdmin || (!!userId && data?.system.ownerClerkUserId === userId),
+    });
 
   // The effective (saved-or-default) descriptor; null until system data has loaded.
   const effectiveDescriptor = useMemo<DashboardDescriptor | null>(() => {
@@ -875,6 +883,30 @@ export default function DashboardClient({
     data?.latest ? availablePowerCards(data.latest) : [],
   );
 
+  // Unified card grid (HA "Sections" style): the power tiles (expanded individually) and the
+  // Local Grid (NEM) card flow together in ONE responsive grid — no per-vendor layout fork. Each is
+  // a cell; order/visibility come from the descriptor (powerCfg) exactly as before.
+  const tileHidden = new Set(powerCfg?.hidden ?? []);
+  const tileOrder = (powerCfg?.order ?? [...POWER_CARD_IDS]).filter(
+    (id) => powerAvailable[id] && !tileHidden.has(id),
+  );
+  // Render each tile as a DIRECT grid item (no wrapper div) so it stretches to fill its cell;
+  // auto-rows-fr (below) keeps every row equal height. This is how the cards "grow into the grid".
+  const tileItems: ReactNode[] = cardVisible("power-cards")
+    ? tileOrder.map((id) => (
+        <Fragment key={`tile-${id}`}>{powerCardNodes[id]}</Fragment>
+      ))
+    : [];
+  if (gridContext && cardVisible("grid-signals")) {
+    tileItems.push(
+      <GridSignalsCard
+        key="grid-signals"
+        regionLabel={nemRegionShortLabel(gridContext.region)}
+        values={gridValues}
+      />,
+    );
+  }
+
   return (
     <main className="max-w-7xl mx-auto px-1 py-4">
       {/* Removed System Banner - Show regardless of data availability */}
@@ -966,536 +998,420 @@ export default function DashboardClient({
               </div>
             )}
 
-          {/* Amber Electric Dashboard - Live price + forecast timeline. Each card is now an
-              independent descriptor card (amber-now / amber-timeline); the amber layout selects them
-              by default. */}
-          {isAmberLayout && systemId && (
+          {/* Unified card grid: the power tiles + Local Grid (NEM) flow together in one responsive
+              grid (HA "Sections" style). No per-vendor layout fork — order/visibility come from the
+              descriptor. */}
+          {(isAdmin || system?.status !== "removed") &&
+            tileItems.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 lg:gap-4 auto-rows-fr px-1">
+                {tileItems}
+              </div>
+            )}
+
+          {/* Amber price cards (full width). Render even for removed systems, matching prior behavior. */}
+          {cardVisible("amber-now") && systemId && (
             <>
-              {cardVisible("amber-now") && (
-                <>
-                  <div className="px-1">
-                    <AmberSmallCard latest={data.latest} />
-                  </div>
-                  <AmberNow latest={data.latest} />
-                </>
-              )}
-              {cardVisible("amber-timeline") && (
-                <AmberCard
-                  systemId={parseInt(systemId)}
-                  timezoneOffsetMin={data?.system.timezoneOffsetMin ?? 600}
-                  displayTimezone={data?.system.displayTimezone}
-                />
-              )}
+              <div className="px-1">
+                <AmberSmallCard latest={data.latest} />
+              </div>
+              <AmberNow latest={data.latest} />
             </>
           )}
+          {cardVisible("amber-timeline") && systemId && (
+            <AmberCard
+              systemId={parseInt(systemId)}
+              timezoneOffsetMin={data?.system.timezoneOffsetMin ?? 600}
+              displayTimezone={data?.system.displayTimezone}
+            />
+          )}
 
-          {/* Main Dashboard Grid - Only show for admin or non-removed systems and non-Amber systems */}
-          {(isAdmin || system?.status !== "removed") && !isAmberLayout && (
-            <div
-              className={
-                isSiteLayout
-                  ? ""
-                  : "flex flex-col lg:grid lg:grid-cols-3 lg:gap-4"
-              }
-            >
-              {/* Power Cards - For non-mondo/composite: first in DOM (mobile top), sidebar on desktop.
-                  When the Local Grid (NEM) card is present it stacks below the power cards in the
-                  sidebar; the power cards drop their full-height stretch so both sit naturally. */}
-              {!isSiteLayout &&
-                data.latest &&
-                (cardVisible("power-cards") ||
-                  (gridContext && cardVisible("grid-signals"))) &&
-                (() => {
-                  const showGridSignals = !!(
-                    gridContext && cardVisible("grid-signals")
-                  );
-                  return (
-                    <div
-                      className={`order-1 lg:order-2 mb-4 lg:mb-0 lg:self-stretch${showGridSignals ? " space-y-4" : ""}`}
-                    >
-                      {cardVisible("power-cards") && (
-                        <SystemPowerCards
-                          latest={data.latest}
-                          vendorType={data.system.vendorType}
-                          getStaleThreshold={getStaleThreshold}
-                          showGrid={showGrid}
-                          layout="sidebar"
-                          className={showGridSignals ? "" : "lg:h-full"}
-                          systemId={data.system.id}
-                          order={powerCfg?.order}
-                          hidden={powerCfg?.hidden}
-                          canControl={
-                            isAdmin ||
-                            (!!userId &&
-                              data.system.ownerClerkUserId === userId)
-                          }
-                        />
-                      )}
-                      {/* Local Grid (NEM) — cross-system live signals for this Area's region. */}
-                      {gridContext && cardVisible("grid-signals") && (
-                        <GridSignalsCard
-                          regionLabel={nemRegionShortLabel(gridContext.region)}
-                          values={gridValues}
-                        />
-                      )}
-                    </div>
-                  );
-                })()}
-
-              {/* Charts - Full width for mondo/composite, 2/3 width for others */}
-              <div
-                className={
-                  isSiteLayout ? "" : "order-2 lg:order-1 lg:col-span-2"
-                }
-              >
-                {isSiteLayout ? (
-                  <>
-                    {/* Power Cards - Composite and Mondo systems, horizontal grid at top */}
-                    {isSiteLayout &&
-                      data.latest &&
-                      cardVisible("power-cards") && (
-                        <SystemPowerCards
-                          latest={data.latest}
-                          vendorType={data.system.vendorType}
-                          getStaleThreshold={getStaleThreshold}
-                          showGrid={showGrid}
-                          systemId={data.system.id}
-                          order={powerCfg?.order}
-                          hidden={powerCfg?.hidden}
-                          canControl={
-                            isAdmin ||
-                            (!!userId &&
-                              data.system.ownerClerkUserId === userId)
-                          }
-                          // Local Grid (NEM) rides in the power-cards grid as a trailing tile, so it
-                          // sits constrained like the rest instead of as a full-width banner below.
-                          trailingCards={
-                            gridContext && cardVisible("grid-signals")
-                              ? [
-                                  <GridSignalsCard
-                                    key="grid-signals"
-                                    regionLabel={nemRegionShortLabel(
-                                      gridContext.region,
-                                    )}
-                                    values={gridValues}
-                                  />,
-                                ]
-                              : undefined
-                          }
-                        />
-                      )}
-
-                    {/* Standalone fallback only when the power-cards module is hidden (otherwise the
-                        Local Grid card rides in the grid above as a trailing tile). */}
-                    {gridContext &&
-                      cardVisible("grid-signals") &&
-                      !cardVisible("power-cards") && (
-                        <div className="mt-4 max-w-sm">
-                          <GridSignalsCard
-                            regionLabel={nemRegionShortLabel(
-                              gridContext.region,
-                            )}
-                            values={gridValues}
+          {/* Full-width charts (descriptor-gated, no layout fork). The chart cluster JSX below is
+              unchanged — only its wrapper/gate changed. */}
+          {(isAdmin || system?.status !== "removed") && (
+            <div className="space-y-4 px-1">
+              {/* Charts - For mondo/composite systems, show charts with tables in single container */}
+              {/* Hide entire container for unconfigured composite systems */}
+              {cardVisible("site-charts") &&
+                (historyLoading ||
+                  processedHistoryData.load ||
+                  processedHistoryData.generation ||
+                  system?.vendorType !== "composite") && (
+                  <div className="overflow-hidden">
+                    {/* Shared header with date/time and period switcher */}
+                    <div className="px-2 sm:px-4 pt-2 sm:pt-4 pb-1 sm:pb-2">
+                      <div className="flex justify-end items-center">
+                        <div className="flex items-center gap-2 sm:gap-4">
+                          <span
+                            className="text-xs sm:text-sm text-gray-400"
+                            style={{
+                              fontFamily: "DM Sans, system-ui, sans-serif",
+                            }}
+                          >
+                            {hoveredIndex !== null &&
+                            (loadChartData || generationChartData)
+                              ? // Show hovered timestamp from whichever chart has data - always show time when hovering
+                                format(
+                                  loadChartData?.timestamps[hoveredIndex] ||
+                                    generationChartData?.timestamps[
+                                      hoveredIndex
+                                    ] ||
+                                    new Date(),
+                                  sitePeriod === "1D"
+                                    ? "h:mma"
+                                    : sitePeriod === "7D"
+                                      ? "EEE, d MMM h:mma"
+                                      : "EEE, d MMM",
+                                )
+                              : // Show date range from actual chart data when not hovering
+                                (() => {
+                                  const chartData =
+                                    loadChartData || generationChartData;
+                                  // Get timezone offset from API data or system prop
+                                  const timezoneOffset =
+                                    data?.system.timezoneOffsetMin ??
+                                    system?.timezoneOffsetMin;
+                                  if (!timezoneOffset) {
+                                    return "Loading..."; // No timezone data yet
+                                  }
+                                  if (
+                                    chartData &&
+                                    chartData.timestamps.length > 0
+                                  ) {
+                                    const start = fromUnixTimestamp(
+                                      chartData.timestamps[0].getTime() / 1000,
+                                      timezoneOffset,
+                                    );
+                                    const end = fromUnixTimestamp(
+                                      chartData.timestamps[
+                                        chartData.timestamps.length - 1
+                                      ].getTime() / 1000,
+                                      timezoneOffset,
+                                    );
+                                    return (
+                                      <>
+                                        <span className="hidden sm:inline">
+                                          {formatDateTimeRange(
+                                            start,
+                                            end,
+                                            sitePeriod !== "30D",
+                                          )}
+                                        </span>
+                                        <span className="sm:hidden">
+                                          {formatDateTimeRange(
+                                            start,
+                                            end,
+                                            false,
+                                          )}
+                                        </span>
+                                      </>
+                                    );
+                                  } else {
+                                    // Fallback to calculated range if no data yet
+                                    // Use historyTimeRange if in historical mode, otherwise use current time
+                                    if (
+                                      isHistoricalMode &&
+                                      historyTimeRange.start &&
+                                      historyTimeRange.end
+                                    ) {
+                                      // Use the requested historical time range
+                                      const start = fromUnixTimestamp(
+                                        new Date(
+                                          historyTimeRange.start,
+                                        ).getTime() / 1000,
+                                        timezoneOffset,
+                                      );
+                                      const end = fromUnixTimestamp(
+                                        new Date(
+                                          historyTimeRange.end,
+                                        ).getTime() / 1000,
+                                        timezoneOffset,
+                                      );
+                                      return (
+                                        <>
+                                          <span className="hidden sm:inline">
+                                            {formatDateTimeRange(
+                                              start,
+                                              end,
+                                              sitePeriod !== "30D",
+                                            )}
+                                          </span>
+                                          <span className="sm:hidden">
+                                            {formatDateTimeRange(
+                                              start,
+                                              end,
+                                              false,
+                                            )}
+                                          </span>
+                                        </>
+                                      );
+                                    } else {
+                                      // Fallback to current time if not in historical mode
+                                      const now = new Date();
+                                      let windowHours: number;
+                                      if (sitePeriod === "1D") windowHours = 24;
+                                      else if (sitePeriod === "7D")
+                                        windowHours = 24 * 7;
+                                      else windowHours = 24 * 30;
+                                      const windowStart = new Date(
+                                        now.getTime() -
+                                          windowHours * 60 * 60 * 1000,
+                                      );
+                                      const start = fromUnixTimestamp(
+                                        windowStart.getTime() / 1000,
+                                        timezoneOffset,
+                                      );
+                                      const end = fromUnixTimestamp(
+                                        now.getTime() / 1000,
+                                        timezoneOffset,
+                                      );
+                                      return (
+                                        <>
+                                          <span className="hidden sm:inline">
+                                            {formatDateTimeRange(
+                                              start,
+                                              end,
+                                              sitePeriod !== "30D",
+                                            )}
+                                          </span>
+                                          <span className="sm:hidden">
+                                            {formatDateTimeRange(
+                                              start,
+                                              end,
+                                              false,
+                                            )}
+                                          </span>
+                                        </>
+                                      );
+                                    }
+                                  }
+                                })()}
+                          </span>
+                          {/* Prev/Next navigation buttons */}
+                          <div
+                            className="inline-flex rounded-md shadow-sm"
+                            role="group"
+                          >
+                            <button
+                              onClick={handlePageOlder}
+                              className="px-2 py-1 text-sm font-medium border rounded-l-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white transition-none"
+                              title="Older (Previous)"
+                            >
+                              <ChevronLeft className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={handlePageNewer}
+                              disabled={!isHistoricalMode}
+                              className="px-2 py-1 text-sm font-medium border-l-0 border rounded-r-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-none"
+                              title="Newer (Next)"
+                            >
+                              <ChevronRight className="w-4 h-4" />
+                            </button>
+                          </div>
+                          <PeriodSwitcher
+                            value={sitePeriod}
+                            onChange={(newPeriod) => {
+                              setSitePeriod(newPeriod);
+                              setHistoryTimeRange({}); // Reset to current when period changes
+                              const params = new URLSearchParams(
+                                searchParams.toString(),
+                              );
+                              params.set("period", newPeriod);
+                              params.delete("start");
+                              params.delete("end");
+                              params.delete("offset");
+                              router.push(`?${params.toString()}`, {
+                                scroll: false,
+                              });
+                            }}
                           />
                         </div>
-                      )}
+                      </div>
+                    </div>
 
-                    {/* Charts - For mondo/composite systems, show charts with tables in single container */}
-                    {/* Hide entire container for unconfigured composite systems */}
-                    {cardVisible("site-charts") &&
-                      (historyLoading ||
-                        processedHistoryData.load ||
-                        processedHistoryData.generation ||
-                        system?.vendorType !== "composite") && (
-                        <div className="overflow-hidden">
-                          {/* Shared header with date/time and period switcher */}
-                          <div className="px-2 sm:px-4 pt-2 sm:pt-4 pb-1 sm:pb-2">
-                            <div className="flex justify-end items-center">
-                              <div className="flex items-center gap-2 sm:gap-4">
-                                <span
-                                  className="text-xs sm:text-sm text-gray-400"
-                                  style={{
-                                    fontFamily:
-                                      "DM Sans, system-ui, sans-serif",
-                                  }}
-                                >
-                                  {hoveredIndex !== null &&
-                                  (loadChartData || generationChartData)
-                                    ? // Show hovered timestamp from whichever chart has data - always show time when hovering
-                                      format(
-                                        loadChartData?.timestamps[
-                                          hoveredIndex
-                                        ] ||
-                                          generationChartData?.timestamps[
-                                            hoveredIndex
-                                          ] ||
-                                          new Date(),
-                                        sitePeriod === "1D"
-                                          ? "h:mma"
-                                          : sitePeriod === "7D"
-                                            ? "EEE, d MMM h:mma"
-                                            : "EEE, d MMM",
-                                      )
-                                    : // Show date range from actual chart data when not hovering
-                                      (() => {
-                                        const chartData =
-                                          loadChartData || generationChartData;
-                                        // Get timezone offset from API data or system prop
-                                        const timezoneOffset =
-                                          data?.system.timezoneOffsetMin ??
-                                          system?.timezoneOffsetMin;
-                                        if (!timezoneOffset) {
-                                          return "Loading..."; // No timezone data yet
-                                        }
-                                        if (
-                                          chartData &&
-                                          chartData.timestamps.length > 0
-                                        ) {
-                                          const start = fromUnixTimestamp(
-                                            chartData.timestamps[0].getTime() /
-                                              1000,
-                                            timezoneOffset,
-                                          );
-                                          const end = fromUnixTimestamp(
-                                            chartData.timestamps[
-                                              chartData.timestamps.length - 1
-                                            ].getTime() / 1000,
-                                            timezoneOffset,
-                                          );
-                                          return (
-                                            <>
-                                              <span className="hidden sm:inline">
-                                                {formatDateTimeRange(
-                                                  start,
-                                                  end,
-                                                  sitePeriod !== "30D",
-                                                )}
-                                              </span>
-                                              <span className="sm:hidden">
-                                                {formatDateTimeRange(
-                                                  start,
-                                                  end,
-                                                  false,
-                                                )}
-                                              </span>
-                                            </>
-                                          );
-                                        } else {
-                                          // Fallback to calculated range if no data yet
-                                          // Use historyTimeRange if in historical mode, otherwise use current time
-                                          if (
-                                            isHistoricalMode &&
-                                            historyTimeRange.start &&
-                                            historyTimeRange.end
-                                          ) {
-                                            // Use the requested historical time range
-                                            const start = fromUnixTimestamp(
-                                              new Date(
-                                                historyTimeRange.start,
-                                              ).getTime() / 1000,
-                                              timezoneOffset,
-                                            );
-                                            const end = fromUnixTimestamp(
-                                              new Date(
-                                                historyTimeRange.end,
-                                              ).getTime() / 1000,
-                                              timezoneOffset,
-                                            );
-                                            return (
-                                              <>
-                                                <span className="hidden sm:inline">
-                                                  {formatDateTimeRange(
-                                                    start,
-                                                    end,
-                                                    sitePeriod !== "30D",
-                                                  )}
-                                                </span>
-                                                <span className="sm:hidden">
-                                                  {formatDateTimeRange(
-                                                    start,
-                                                    end,
-                                                    false,
-                                                  )}
-                                                </span>
-                                              </>
-                                            );
-                                          } else {
-                                            // Fallback to current time if not in historical mode
-                                            const now = new Date();
-                                            let windowHours: number;
-                                            if (sitePeriod === "1D")
-                                              windowHours = 24;
-                                            else if (sitePeriod === "7D")
-                                              windowHours = 24 * 7;
-                                            else windowHours = 24 * 30;
-                                            const windowStart = new Date(
-                                              now.getTime() -
-                                                windowHours * 60 * 60 * 1000,
-                                            );
-                                            const start = fromUnixTimestamp(
-                                              windowStart.getTime() / 1000,
-                                              timezoneOffset,
-                                            );
-                                            const end = fromUnixTimestamp(
-                                              now.getTime() / 1000,
-                                              timezoneOffset,
-                                            );
-                                            return (
-                                              <>
-                                                <span className="hidden sm:inline">
-                                                  {formatDateTimeRange(
-                                                    start,
-                                                    end,
-                                                    sitePeriod !== "30D",
-                                                  )}
-                                                </span>
-                                                <span className="sm:hidden">
-                                                  {formatDateTimeRange(
-                                                    start,
-                                                    end,
-                                                    false,
-                                                  )}
-                                                </span>
-                                              </>
-                                            );
-                                          }
-                                        }
-                                      })()}
-                                </span>
-                                {/* Prev/Next navigation buttons */}
-                                <div
-                                  className="inline-flex rounded-md shadow-sm"
-                                  role="group"
-                                >
-                                  <button
-                                    onClick={handlePageOlder}
-                                    className="px-2 py-1 text-sm font-medium border rounded-l-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white transition-none"
-                                    title="Older (Previous)"
-                                  >
-                                    <ChevronLeft className="w-4 h-4" />
-                                  </button>
-                                  <button
-                                    onClick={handlePageNewer}
-                                    disabled={!isHistoricalMode}
-                                    className="px-2 py-1 text-sm font-medium border-l-0 border rounded-r-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-none"
-                                    title="Newer (Next)"
-                                  >
-                                    <ChevronRight className="w-4 h-4" />
-                                  </button>
-                                </div>
-                                <PeriodSwitcher
-                                  value={sitePeriod}
-                                  onChange={(newPeriod) => {
-                                    setSitePeriod(newPeriod);
-                                    setHistoryTimeRange({}); // Reset to current when period changes
-                                    const params = new URLSearchParams(
-                                      searchParams.toString(),
-                                    );
-                                    params.set("period", newPeriod);
-                                    params.delete("start");
-                                    params.delete("end");
-                                    params.delete("offset");
-                                    router.push(`?${params.toString()}`, {
-                                      scroll: false,
-                                    });
-                                  }}
-                                />
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Loads Chart with Table */}
-                          <div className="px-2 sm:px-4 pt-1 sm:pt-2 pb-2 sm:pb-4">
-                            <div className="flex flex-col md:flex-row md:gap-4">
-                              <div className="flex-1 min-w-0">
-                                <SitePowerChart
-                                  systemId={parseInt(systemId as string)}
-                                  mode="load"
-                                  title="Loads"
-                                  className="h-full min-h-[375px]"
-                                  period={sitePeriod}
-                                  onPeriodChange={(newPeriod) => {
-                                    setSitePeriod(newPeriod);
-                                    setHistoryTimeRange({}); // Reset to current when period changes
-                                    const params = new URLSearchParams(
-                                      searchParams.toString(),
-                                    );
-                                    params.set("period", newPeriod);
-                                    params.delete("start");
-                                    params.delete("end");
-                                    params.delete("offset");
-                                    router.push(`?${params.toString()}`, {
-                                      scroll: false,
-                                    });
-                                  }}
-                                  showPeriodSwitcher={false}
-                                  onDataChange={setLoadChartData}
-                                  onHoverIndexChange={
-                                    handleLoadHoverIndexChange
-                                  }
-                                  hoveredIndex={hoveredIndex}
-                                  visibleSeries={
-                                    loadVisibleSeries.size > 0
-                                      ? loadVisibleSeries
-                                      : undefined
-                                  }
-                                  onVisibilityChange={setLoadVisibleSeries}
-                                  data={processedHistoryData.load}
-                                  isLoading={historyLoading}
-                                />
-                              </div>
-                              <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
-                                <EnergyTable
-                                  chartData={loadChartData}
-                                  mode="load"
-                                  hoveredIndex={hoveredIndex}
-                                  className="h-full"
-                                  visibleSeries={
-                                    loadVisibleSeries.size > 0
-                                      ? loadVisibleSeries
-                                      : undefined
-                                  }
-                                  onSeriesToggle={handleLoadSeriesToggle}
-                                />
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Generation Chart with Table */}
-                          <div className="p-2 sm:p-4">
-                            <div className="flex flex-col md:flex-row md:gap-4">
-                              <div className="flex-1 min-w-0">
-                                <SitePowerChart
-                                  systemId={parseInt(systemId as string)}
-                                  mode="generation"
-                                  title="Generation"
-                                  className="h-full min-h-[375px]"
-                                  period={sitePeriod}
-                                  onPeriodChange={(newPeriod) => {
-                                    setSitePeriod(newPeriod);
-                                    setHistoryTimeRange({}); // Reset to current when period changes
-                                    const params = new URLSearchParams(
-                                      searchParams.toString(),
-                                    );
-                                    params.set("period", newPeriod);
-                                    params.delete("start");
-                                    params.delete("end");
-                                    params.delete("offset");
-                                    router.push(`?${params.toString()}`, {
-                                      scroll: false,
-                                    });
-                                  }}
-                                  showPeriodSwitcher={false}
-                                  onDataChange={setGenerationChartData}
-                                  onHoverIndexChange={
-                                    handleGenerationHoverIndexChange
-                                  }
-                                  hoveredIndex={hoveredIndex}
-                                  visibleSeries={
-                                    generationVisibleSeries.size > 0
-                                      ? generationVisibleSeries
-                                      : undefined
-                                  }
-                                  onVisibilityChange={
-                                    setGenerationVisibleSeries
-                                  }
-                                  data={processedHistoryData.generation}
-                                  isLoading={historyLoading}
-                                />
-                              </div>
-                              <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
-                                <EnergyTable
-                                  chartData={generationChartData}
-                                  mode="generation"
-                                  hoveredIndex={hoveredIndex}
-                                  className="h-full"
-                                  visibleSeries={
-                                    generationVisibleSeries.size > 0
-                                      ? generationVisibleSeries
-                                      : undefined
-                                  }
-                                  onSeriesToggle={handleGenerationSeriesToggle}
-                                />
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Energy Flow Sankey Diagram */}
-                          {cardVisible("sankey") &&
-                            processedHistoryData.generation &&
-                            processedHistoryData.load &&
-                            (() => {
-                              // Sankey served from the server when available: 30D from the
-                              // materialized flow_1d endpoint, 1D/7D bundled with the history
-                              // response (processedHistoryData.flowMatrix). Falls back to the
-                              // client-side calc when neither is present (flag off / not loaded).
-                              const usePg =
-                                serveFlowFromPg && sitePeriod === "30D";
-                              const matrix =
-                                usePg && pgFlowMatrix
-                                  ? pgFlowMatrix
-                                  : processedHistoryData.flowMatrix
-                                    ? processedHistoryData.flowMatrix
-                                    : calculateEnergyFlowMatrix({
-                                        generation:
-                                          processedHistoryData.generation,
-                                        load: processedHistoryData.load,
-                                      });
-                              return matrix ? (
-                                <div className="sm:p-4">
-                                  <h3 className="text-base font-semibold text-gray-300 mb-2 px-2 sm:px-0">
-                                    Flows
-                                  </h3>
-                                  <div className="flex justify-center">
-                                    <EnergyFlowSankey
-                                      matrix={matrix}
-                                      width={600}
-                                      height={680}
-                                    />
-                                  </div>
-                                </div>
-                              ) : null;
-                            })()}
+                    {/* Loads Chart with Table */}
+                    <div className="px-2 sm:px-4 pt-1 sm:pt-2 pb-2 sm:pb-4">
+                      <div className="flex flex-col md:flex-row md:gap-4">
+                        <div className="flex-1 min-w-0">
+                          <SitePowerChart
+                            systemId={parseInt(systemId as string)}
+                            mode="load"
+                            title="Loads"
+                            className="h-full min-h-[375px]"
+                            period={sitePeriod}
+                            onPeriodChange={(newPeriod) => {
+                              setSitePeriod(newPeriod);
+                              setHistoryTimeRange({}); // Reset to current when period changes
+                              const params = new URLSearchParams(
+                                searchParams.toString(),
+                              );
+                              params.set("period", newPeriod);
+                              params.delete("start");
+                              params.delete("end");
+                              params.delete("offset");
+                              router.push(`?${params.toString()}`, {
+                                scroll: false,
+                              });
+                            }}
+                            showPeriodSwitcher={false}
+                            onDataChange={setLoadChartData}
+                            onHoverIndexChange={handleLoadHoverIndexChange}
+                            hoveredIndex={hoveredIndex}
+                            visibleSeries={
+                              loadVisibleSeries.size > 0
+                                ? loadVisibleSeries
+                                : undefined
+                            }
+                            onVisibilityChange={setLoadVisibleSeries}
+                            data={processedHistoryData.load}
+                            isLoading={historyLoading}
+                          />
                         </div>
-                      )}
-                  </>
-                ) : cardVisible("energy-chart") ? (
-                  // For other systems, show the regular energy chart
-                  <EnergyChart
-                    systemId={parseInt(systemId as string)}
-                    vendorType={data?.system.vendorType}
-                    className="h-full min-h-[400px]"
-                    maxPowerHint={(() => {
-                      // Parse solar size (format: "9 kW")
-                      let solarKW: number | undefined;
-                      if (systemInfo?.solarSize) {
-                        const solarMatch = systemInfo.solarSize.match(
-                          /^(\d+(?:\.\d+)?)\s+kW$/i,
-                        );
-                        if (solarMatch) {
-                          solarKW = parseFloat(solarMatch[1]);
-                        }
-                      }
+                        <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+                          <EnergyTable
+                            chartData={loadChartData}
+                            mode="load"
+                            hoveredIndex={hoveredIndex}
+                            className="h-full"
+                            visibleSeries={
+                              loadVisibleSeries.size > 0
+                                ? loadVisibleSeries
+                                : undefined
+                            }
+                            onSeriesToggle={handleLoadSeriesToggle}
+                          />
+                        </div>
+                      </div>
+                    </div>
 
-                      // Parse inverter rating (format: "7.5kW, 48V")
-                      let inverterKW: number | undefined;
-                      if (systemInfo?.ratings) {
-                        const ratingMatch =
-                          systemInfo.ratings.match(/(\d+(?:\.\d+)?)kW/i);
-                        if (ratingMatch) {
-                          inverterKW = parseFloat(ratingMatch[1]);
-                        }
-                      }
+                    {/* Generation Chart with Table */}
+                    <div className="p-2 sm:p-4">
+                      <div className="flex flex-col md:flex-row md:gap-4">
+                        <div className="flex-1 min-w-0">
+                          <SitePowerChart
+                            systemId={parseInt(systemId as string)}
+                            mode="generation"
+                            title="Generation"
+                            className="h-full min-h-[375px]"
+                            period={sitePeriod}
+                            onPeriodChange={(newPeriod) => {
+                              setSitePeriod(newPeriod);
+                              setHistoryTimeRange({}); // Reset to current when period changes
+                              const params = new URLSearchParams(
+                                searchParams.toString(),
+                              );
+                              params.set("period", newPeriod);
+                              params.delete("start");
+                              params.delete("end");
+                              params.delete("offset");
+                              router.push(`?${params.toString()}`, {
+                                scroll: false,
+                              });
+                            }}
+                            showPeriodSwitcher={false}
+                            onDataChange={setGenerationChartData}
+                            onHoverIndexChange={
+                              handleGenerationHoverIndexChange
+                            }
+                            hoveredIndex={hoveredIndex}
+                            visibleSeries={
+                              generationVisibleSeries.size > 0
+                                ? generationVisibleSeries
+                                : undefined
+                            }
+                            onVisibilityChange={setGenerationVisibleSeries}
+                            data={processedHistoryData.generation}
+                            isLoading={historyLoading}
+                          />
+                        </div>
+                        <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+                          <EnergyTable
+                            chartData={generationChartData}
+                            mode="generation"
+                            hoveredIndex={hoveredIndex}
+                            className="h-full"
+                            visibleSeries={
+                              generationVisibleSeries.size > 0
+                                ? generationVisibleSeries
+                                : undefined
+                            }
+                            onSeriesToggle={handleGenerationSeriesToggle}
+                          />
+                        </div>
+                      </div>
+                    </div>
 
-                      // Return the maximum of both values, or undefined if neither parsed
-                      if (solarKW !== undefined && inverterKW !== undefined) {
-                        return Math.max(solarKW, inverterKW);
+                    {/* Energy Flow Sankey Diagram */}
+                    {cardVisible("sankey") &&
+                      processedHistoryData.generation &&
+                      processedHistoryData.load &&
+                      (() => {
+                        // Sankey served from the server when available: 30D from the
+                        // materialized flow_1d endpoint, 1D/7D bundled with the history
+                        // response (processedHistoryData.flowMatrix). Falls back to the
+                        // client-side calc when neither is present (flag off / not loaded).
+                        const usePg = serveFlowFromPg && sitePeriod === "30D";
+                        const matrix =
+                          usePg && pgFlowMatrix
+                            ? pgFlowMatrix
+                            : processedHistoryData.flowMatrix
+                              ? processedHistoryData.flowMatrix
+                              : calculateEnergyFlowMatrix({
+                                  generation: processedHistoryData.generation,
+                                  load: processedHistoryData.load,
+                                });
+                        return matrix ? (
+                          <div className="sm:p-4">
+                            <h3 className="text-base font-semibold text-gray-300 mb-2 px-2 sm:px-0">
+                              Flows
+                            </h3>
+                            <div className="flex justify-center">
+                              <EnergyFlowSankey
+                                matrix={matrix}
+                                width={600}
+                                height={680}
+                              />
+                            </div>
+                          </div>
+                        ) : null;
+                      })()}
+                  </div>
+                )}
+              {cardVisible("energy-chart") && (
+                // For other systems, show the regular energy chart
+                <EnergyChart
+                  systemId={parseInt(systemId as string)}
+                  vendorType={data?.system.vendorType}
+                  className="h-full min-h-[400px]"
+                  maxPowerHint={(() => {
+                    // Parse solar size (format: "9 kW")
+                    let solarKW: number | undefined;
+                    if (systemInfo?.solarSize) {
+                      const solarMatch = systemInfo.solarSize.match(
+                        /^(\d+(?:\.\d+)?)\s+kW$/i,
+                      );
+                      if (solarMatch) {
+                        solarKW = parseFloat(solarMatch[1]);
                       }
-                      return solarKW ?? inverterKW;
-                    })()}
-                  />
-                ) : null}
-              </div>
+                    }
+
+                    // Parse inverter rating (format: "7.5kW, 48V")
+                    let inverterKW: number | undefined;
+                    if (systemInfo?.ratings) {
+                      const ratingMatch =
+                        systemInfo.ratings.match(/(\d+(?:\.\d+)?)kW/i);
+                      if (ratingMatch) {
+                        inverterKW = parseFloat(ratingMatch[1]);
+                      }
+                    }
+
+                    // Return the maximum of both values, or undefined if neither parsed
+                    if (solarKW !== undefined && inverterKW !== undefined) {
+                      return Math.max(solarKW, inverterKW);
+                    }
+                    return solarKW ?? inverterKW;
+                  })()}
+                />
+              )}
             </div>
           )}
 

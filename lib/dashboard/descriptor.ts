@@ -120,9 +120,10 @@ function migrateLegacyDescriptor(
 
 /**
  * Reconcile a saved descriptor with the current default. Discards the save if the layout changed
- * (e.g. the system's vendor type changed); otherwise keeps the saved hidden/order, adds module/power
- * cards introduced since, and drops any that no longer exist. Returns the default if `saved` is
- * missing or malformed. Legacy wire shapes are upgraded first (migrateLegacyDescriptor).
+ * (e.g. the system's vendor type changed); otherwise keeps the saved card ORDER + hidden/power
+ * config, appends module cards introduced since the save (as visible defaults), and drops any that
+ * no longer exist. Returns the default if `saved` is missing or malformed. Legacy wire shapes are
+ * upgraded first (migrateLegacyDescriptor).
  */
 export function normalizeDescriptor(
   saved: unknown,
@@ -139,14 +140,31 @@ export function normalizeDescriptor(
   }
   const s = migrateLegacyDescriptor(raw);
   const savedByType = new Map(s.cards!.map((c) => [c.type, c]));
-  const cards: ModuleCardInstance[] = def.cards.map((defCard) => {
-    const sc = savedByType.get(defCard.type);
-    if (!sc) return defCard; // module card introduced since the save → default (visible)
-    const card: ModuleCardInstance = {
-      type: defCard.type,
-      hidden: !!sc.hidden,
-    };
-    if (defCard.type === "power-cards") {
+  const defByType = new Map(def.cards.map((c) => [c.type, c]));
+
+  // Card order follows the SAVED order (so a Customize reorder sticks), keeping only types that
+  // still exist in the default; any default cards introduced since the save are appended.
+  const orderedTypes: DashboardCardType[] = [];
+  const seen = new Set<DashboardCardType>();
+  for (const c of s.cards!) {
+    if (defByType.has(c.type) && !seen.has(c.type)) {
+      orderedTypes.push(c.type);
+      seen.add(c.type);
+    }
+  }
+  for (const c of def.cards) {
+    if (!seen.has(c.type)) {
+      orderedTypes.push(c.type);
+      seen.add(c.type);
+    }
+  }
+
+  const cards: ModuleCardInstance[] = orderedTypes.map((type) => {
+    const defCard = defByType.get(type)!;
+    const sc = savedByType.get(type);
+    if (!sc) return defCard; // card introduced since the save → default (visible)
+    const card: ModuleCardInstance = { type, hidden: !!sc.hidden };
+    if (type === "power-cards") {
       card.powerCards = normalizePowerCards(sc.powerCards, defCard.powerCards!);
     }
     return card;
