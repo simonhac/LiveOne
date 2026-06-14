@@ -7,40 +7,20 @@ import { historyQuery } from "@/lib/queries";
 import ChartTooltip from "./ChartTooltip";
 import PeriodSwitcher from "./PeriodSwitcher";
 import ServerErrorModal from "./ServerErrorModal";
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  TimeScale,
-  ChartOptions,
-  Filler,
-} from "chart.js";
+import { type ChartOptions } from "chart.js";
 import { Line, Bar } from "react-chartjs-2";
-import { format } from "date-fns";
 import "chartjs-adapter-date-fns";
-import annotationPlugin from "chartjs-plugin-annotation";
 import micromatch from "micromatch";
+import {
+  registerChartScaffold,
+  buildShadingAnnotations,
+  buildTimeScale,
+  formatHoverTimestamp as formatHoverTimestampShared,
+} from "@/lib/charts/scaffold";
+import { buildLineDatasets } from "@/lib/charts/datasets";
+import type { LineChartData as ChartData } from "@/lib/charts/types";
 
-// Register Chart.js components
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  TimeScale,
-  Filler,
-  annotationPlugin,
-);
+registerChartScaffold();
 
 interface EnergyChartProps {
   className?: string;
@@ -48,18 +28,6 @@ interface EnergyChartProps {
   systemId: number; // System ID (e.g., 648, 1586)
   vendorType?: string; // Vendor type (e.g., 'enphase', 'selectronic')
   initialPeriod?: "1D" | "7D" | "30D"; // Initial period from URL
-}
-
-interface ChartData {
-  timestamps: Date[];
-  solar: number[];
-  load: number[];
-  batteryW: number[];
-  batterySOC: number[];
-  batterySOCMin?: number[]; // Min SOC for daily data
-  batterySOCMax?: number[]; // Max SOC for daily data
-  grid?: number[]; // Grid power/energy (optional - not all systems have grid data)
-  mode: "power" | "energy"; // Mode based on interval: power (≤30m) or energy (≥1d)
 }
 
 // Series patterns to request for a given period (energy mode = 30D/1d, else power mode).
@@ -373,135 +341,11 @@ export default function EnergyChart({
           enabled: false, // Disable the default tooltip since we're using our custom one
         },
         annotation: {
-          annotations: (() => {
-            const annotations: any[] = [];
-
-            if (timeRange === "30D") {
-              // For 30D view: shade weekdays (Mon-Fri)
-              const daysToShow = 31;
-              for (let i = 0; i < daysToShow; i++) {
-                const day = new Date(now);
-                day.setDate(day.getDate() - i);
-                day.setHours(0, 0, 0, 0);
-
-                const dayOfWeek = day.getDay(); // 0 = Sunday, 6 = Saturday
-
-                // Only shade weekdays (Monday = 1 through Friday = 5)
-                if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-                  const dayEnd = new Date(day);
-                  dayEnd.setHours(23, 59, 59, 999);
-
-                  // Only add if this day overlaps with our window
-                  if (dayEnd > windowStart && day < now) {
-                    annotations.push({
-                      type: "box",
-                      xMin: Math.max(day.getTime(), windowStart.getTime()),
-                      xMax: Math.min(dayEnd.getTime(), now.getTime()),
-                      backgroundColor: "rgba(255, 255, 255, 0.07)", // 7% opacity white overlay
-                      borderWidth: 0,
-                    });
-                  }
-                }
-              }
-            } else {
-              // For 1D and 7D views: shade daytime hours (7am-10pm)
-              const daysToShow = timeRange === "1D" ? 2 : 8;
-              for (let i = 0; i < daysToShow; i++) {
-                const dayStart = new Date(now);
-                dayStart.setDate(dayStart.getDate() - i);
-                dayStart.setHours(7, 0, 0, 0);
-
-                const dayEnd = new Date(now);
-                dayEnd.setDate(dayEnd.getDate() - i);
-                dayEnd.setHours(22, 0, 0, 0);
-
-                // Only add if this day overlaps with our window
-                if (dayEnd > windowStart && dayStart < now) {
-                  annotations.push({
-                    type: "box",
-                    xMin: Math.max(dayStart.getTime(), windowStart.getTime()),
-                    xMax: Math.min(dayEnd.getTime(), now.getTime()),
-                    backgroundColor: "rgba(255, 255, 255, 0.07)", // 7% opacity white overlay
-                    borderWidth: 0,
-                  });
-                }
-              }
-            }
-
-            return annotations;
-          })(),
+          annotations: buildShadingAnnotations(timeRange, now, windowStart),
         },
       },
       scales: {
-        x: {
-          type: "time",
-          min: windowStart.getTime(), // Show from selected time range
-          max: now.getTime(), // To current time
-          time: {
-            unit: timeRange === "1D" ? "hour" : "day",
-            displayFormats: {
-              hour: "HH:mm",
-              day: "MMM d", // Show month and day
-            },
-          },
-          grid: {
-            color: "rgb(55, 65, 81)", // gray-700
-            display: true,
-            drawOnChartArea: true,
-            drawTicks: true,
-          },
-          ticks: {
-            color: "rgb(156, 163, 175)", // gray-400
-            font: {
-              size: 10,
-              family: "DM Sans, system-ui, sans-serif",
-              lineHeight: 1.4, // Add spacing between day name and date
-            },
-            maxRotation: 0, // Keep labels horizontal
-            minRotation: 0, // Keep labels horizontal
-            align: timeRange !== "1D" ? "start" : "center", // Align labels to the right of the grid line in 7D/30D mode
-            padding: timeRange === "30D" ? 6 : 4, // More padding for 30D to prevent collision
-            autoSkip: timeRange === "1D", // Only auto-skip for 1D view
-            source: "auto", // Let Chart.js generate ticks automatically
-            callback: function (value: any, index: any, ticks: any) {
-              const date = new Date(value);
-              if (timeRange === "30D") {
-                // Dynamically adjust based on number of ticks
-                // More aggressive skipping for smaller screens
-                const totalDays = ticks.length;
-                let skipInterval = 2; // Default: show every other day
-
-                if (totalDays > 20) {
-                  skipInterval = 3; // Show every 3rd day
-                }
-                if (totalDays > 25) {
-                  skipInterval = 4; // Show every 4th day
-                }
-
-                if (index % skipInterval !== 0) {
-                  // Use multiple spaces to maintain minimum width
-                  return "     "; // 5 spaces to prevent collision detection
-                } else {
-                  // Show the date label
-                  const dayName = format(date, "EEE"); // Mon, Tue, Wed, etc.
-                  const dayDate = format(date, "d MMM"); // 30 Jun
-                  return [dayName, dayDate]; // Return array for multi-line label
-                }
-              } else if (timeRange === "7D") {
-                // For 7D mode, show day name on first line and date on second line
-                const dayName = format(date, "EEE");
-                const dayDate = format(date, "d MMM");
-                return [dayName, dayDate]; // Return array for multi-line label
-              } else if (timeRange === "1D") {
-                // For 1D mode, skip some labels to prevent collision
-                if (index % 2 !== 0) {
-                  return "\u200B"; // Return zero-width space to keep gridline but hide label
-                }
-                return format(date, "HH:mm");
-              }
-            },
-          },
-        },
+        x: buildTimeScale(timeRange, now, windowStart),
         y: {
           type: "linear" as const,
           display: true,
@@ -618,214 +462,14 @@ export default function EnergyChart({
 
   const data: any = !chartData
     ? {}
-    : chartData.mode === "energy"
-      ? {
-          // Energy mode: Use bar chart data structure
-          labels: chartData.timestamps,
-          datasets: [
-            {
-              label: "Solar",
-              data: chartData.solar, // Already in kWh for energy mode
-              backgroundColor: "rgb(250, 204, 21)", // yellow-400 solid
-              borderWidth: 0, // No border
-              yAxisID: "y",
-              barPercentage: 0.9,
-              categoryPercentage: 0.8,
-            },
-            {
-              label: "Load",
-              data: chartData.load, // Already in kWh for energy mode
-              backgroundColor: "rgb(96, 165, 250)", // blue-400 solid
-              borderWidth: 0, // No border
-              yAxisID: "y",
-              barPercentage: 0.9,
-              categoryPercentage: 0.8,
-            },
-            // Add battery power if available (for energy mode, this would be battery energy)
-            ...(chartData.batteryW
-              ? [
-                  {
-                    label: "Battery",
-                    data: chartData.batteryW, // Already in kWh for energy mode
-                    backgroundColor: "rgb(251, 146, 60)", // orange-400 solid
-                    borderWidth: 0, // No border
-                    yAxisID: "y",
-                    barPercentage: 0.9,
-                    categoryPercentage: 0.8,
-                  },
-                ]
-              : []),
-            // Add grid if available
-            ...(chartData.grid
-              ? [
-                  {
-                    label: "Grid",
-                    data: chartData.grid, // Already in kWh for energy mode
-                    backgroundColor: "rgb(239, 68, 68)", // red-500 solid
-                    borderWidth: 0, // No border
-                    yAxisID: "y",
-                    barPercentage: 0.9,
-                    categoryPercentage: 0.8,
-                  },
-                ]
-              : []),
-            // Add SOC range area if we have min/max data
-            ...(paddedSOCData
-              ? [
-                  {
-                    label: "Battery SOC Range",
-                    type: "line" as const,
-                    labels: paddedSOCData.timestamps,
-                    data: paddedSOCData.timestamps.map((t, i) => ({
-                      x: t,
-                      y: paddedSOCData.max[i],
-                    })), // Upper boundary with padding
-                    borderColor: "transparent",
-                    backgroundColor: "rgba(74, 222, 128, 0.3)", // green-400 with 30% opacity
-                    yAxisID: "y1",
-                    tension: 0.4, // Nice curved splines
-                    borderWidth: 0,
-                    pointRadius: 0, // No dots
-                    pointHoverRadius: 0, // No dots on hover
-                    pointHitRadius: 0, // No hit area for points
-                    fill: "+1", // Fill to next dataset (min line)
-                    showLine: true,
-                    clip: false, // Don't clip at chart edges
-                    order: 10, // Higher number = drawn first (behind everything)
-                  },
-                  {
-                    label: "", // No label for min line (hidden from legend)
-                    type: "line" as const,
-                    labels: paddedSOCData.timestamps,
-                    data: paddedSOCData.timestamps.map((t, i) => ({
-                      x: t,
-                      y: paddedSOCData.min[i],
-                    })), // Lower boundary with padding
-                    borderColor: "transparent",
-                    backgroundColor: "transparent",
-                    yAxisID: "y1",
-                    tension: 0.4, // Nice curved splines
-                    borderWidth: 0,
-                    pointRadius: 0, // No dots
-                    pointHoverRadius: 0, // No dots on hover
-                    pointHitRadius: 0, // No hit area for points
-                    fill: false,
-                    showLine: true,
-                    clip: false, // Don't clip at chart edges
-                    order: 10, // Higher number = drawn first (behind everything)
-                  },
-                ]
-              : []),
-            {
-              label: "Battery SOC",
-              type: "line" as const, // Keep SOC as line even in bar chart
-              data: chartData.batterySOC, // Already in percentage
-              borderColor: "rgb(74, 222, 128)", // green-400
-              backgroundColor: "rgb(74, 222, 128)", // Solid color for legend
-              yAxisID: "y1",
-              tension: 0.1,
-              borderWidth: 2,
-              pointRadius: 0,
-              fill: false, // Don't fill under the line
-              order: -1, // Negative number = drawn last (on top of everything)
-            },
-          ],
-        }
-      : {
-          // Power mode: Use line chart data structure
-          labels: chartData.timestamps,
-          datasets: [
-            {
-              label: "Solar",
-              data: chartData.solar, // Already converted to kW by convertToKw()
-              borderColor: "rgb(250, 204, 21)", // yellow-400
-              backgroundColor: "rgb(250, 204, 21)", // Solid color for legend
-              yAxisID: "y",
-              tension: 0.1,
-              borderWidth: 2,
-              pointRadius: 0,
-              fill: false, // Don't fill under the line
-            },
-            {
-              label: "Load",
-              data: chartData.load, // Already converted to kW by convertToKw()
-              borderColor: "rgb(96, 165, 250)", // blue-400
-              backgroundColor: "rgb(96, 165, 250)", // Solid color for legend
-              yAxisID: "y",
-              tension: 0.1,
-              borderWidth: 2,
-              pointRadius: 0,
-              fill: false, // Don't fill under the line
-            },
-            // Add battery power if available
-            ...(chartData.batteryW
-              ? [
-                  {
-                    label: "Battery",
-                    data: chartData.batteryW, // Already converted to kW by convertToKw()
-                    borderColor: "rgb(251, 146, 60)", // orange-400
-                    backgroundColor: "rgb(251, 146, 60)", // Solid color for legend
-                    yAxisID: "y",
-                    tension: 0.1,
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    fill: false, // Don't fill under the line
-                  },
-                ]
-              : []),
-            // Add grid if available
-            ...(chartData.grid
-              ? [
-                  {
-                    label: "Grid",
-                    data: chartData.grid, // Already converted to kW by convertToKw()
-                    borderColor: "rgb(239, 68, 68)", // red-500
-                    backgroundColor: "rgb(239, 68, 68)", // Solid color for legend
-                    yAxisID: "y",
-                    tension: 0.1,
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    fill: false, // Don't fill under the line
-                  },
-                ]
-              : []),
-            {
-              label: "Battery SOC",
-              data: chartData.batterySOC, // Already in percentage
-              borderColor: "rgb(74, 222, 128)", // green-400
-              backgroundColor: "rgb(74, 222, 128)", // Solid color for legend
-              yAxisID: "y1",
-              tension: 0.1,
-              borderWidth: 2,
-              pointRadius: 0,
-              fill: false, // Don't fill under the line
-            },
-          ],
-        };
+    : {
+        labels: chartData.timestamps,
+        datasets: buildLineDatasets(chartData, paddedSOCData),
+      };
 
-  // Format timestamp based on time range
-  const formatHoverTimestamp = (
-    date: Date | null,
-    isMobile: boolean = false,
-  ) => {
-    if (!date) return "";
-
-    if (timeRange === "30D") {
-      // For 30D view, show date only
-      // Mobile: "Fri, 22 Aug" / Desktop: "Fri, 22 Aug 2024"
-      return format(date, isMobile ? "EEE, d MMM" : "EEE, d MMM yyyy");
-    } else if (timeRange === "7D") {
-      // For 7D view, show date and time
-      // Mobile: "Fri, 22 Aug 11:58PM" / Desktop: "Fri, 22 Aug 2024 11:58PM"
-      return format(
-        date,
-        isMobile ? "EEE, d MMM h:mma" : "EEE, d MMM yyyy h:mma",
-      );
-    } else {
-      // For 1D view, show time only (e.g., "11:58PM")
-      return format(date, "h:mma");
-    }
-  };
+  // Format timestamp based on time range (shared scaffold helper)
+  const formatHoverTimestamp = (date: Date | null, isMobile: boolean = false) =>
+    formatHoverTimestampShared(date, timeRange, isMobile);
 
   // Render the chart content based on state
   const renderChartContent = () => {

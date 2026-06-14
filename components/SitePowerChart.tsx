@@ -4,43 +4,26 @@ import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import PeriodSwitcher from "./PeriodSwitcher";
 import ServerErrorModal from "./ServerErrorModal";
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  TimeScale,
-  ChartOptions,
-  Filler,
-} from "chart.js";
+import { type ChartOptions } from "chart.js";
 import { Line, Bar } from "react-chartjs-2";
-import { format } from "date-fns";
 import "chartjs-adapter-date-fns";
-import annotationPlugin from "chartjs-plugin-annotation";
 import { CalendarX2 } from "lucide-react";
 import { CHART_COLORS, getLoadColor } from "@/lib/chart-colors";
 import { stemSplit } from "@/lib/identifiers/logical-path";
 import micromatch from "micromatch";
+import {
+  registerChartScaffold,
+  buildShadingAnnotations,
+  buildTimeScale,
+} from "@/lib/charts/scaffold";
+import { buildStackedAreaDatasets } from "@/lib/charts/datasets";
+import type { SeriesData, ChartData } from "@/lib/charts/types";
 
-// Register Chart.js components
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  TimeScale,
-  Filler,
-  annotationPlugin,
-);
+// Re-exported for back-compat with existing importers (DashboardClient, EnergyTable,
+// site-data-processor, tests). The canonical home is now lib/charts/types.
+export type { SeriesData, ChartData } from "@/lib/charts/types";
+
+registerChartScaffold();
 
 interface SitePowerChartProps {
   className?: string;
@@ -59,20 +42,6 @@ interface SitePowerChartProps {
   onVisibilityChange?: (visibleSeries: Set<string>) => void; // Callback when visibility changes
   data?: ChartData | null; // Pre-processed data from parent
   isLoading?: boolean; // External loading state from parent
-}
-
-export interface SeriesData {
-  id: string;
-  description: string;
-  data: (number | null)[];
-  color: string;
-  seriesType?: "power" | "soc"; // Type of series: power/energy (stacked) or soc (overlay)
-}
-
-export interface ChartData {
-  timestamps: Date[];
-  series: SeriesData[];
-  mode: "power" | "energy";
 }
 
 // Series configuration for data-driven approach
@@ -398,132 +367,26 @@ export default function SitePowerChart({
         },
         annotation: {
           animation: false, // Disable animation for immediate updates
-          annotations: (() => {
-            const annotations: any[] = [];
-
-            if (timeRange === "30D") {
-              const daysToShow = 31;
-              for (let i = 0; i < daysToShow; i++) {
-                const day = new Date(now);
-                day.setDate(day.getDate() - i);
-                day.setHours(0, 0, 0, 0);
-
-                const dayOfWeek = day.getDay();
-
-                if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-                  const dayEnd = new Date(day);
-                  dayEnd.setHours(23, 59, 59, 999);
-
-                  if (dayEnd > windowStart && day < now) {
-                    annotations.push({
-                      type: "box",
-                      xMin: Math.max(day.getTime(), windowStart.getTime()),
-                      xMax: Math.min(dayEnd.getTime(), now.getTime()),
-                      backgroundColor: "rgba(255, 255, 255, 0.07)",
-                      borderWidth: 0,
-                    });
-                  }
-                }
-              }
-            } else {
-              const daysToShow = timeRange === "1D" ? 2 : 8;
-              for (let i = 0; i < daysToShow; i++) {
-                const dayStart = new Date(now);
-                dayStart.setDate(dayStart.getDate() - i);
-                dayStart.setHours(7, 0, 0, 0);
-
-                const dayEnd = new Date(now);
-                dayEnd.setDate(dayEnd.getDate() - i);
-                dayEnd.setHours(22, 0, 0, 0);
-
-                if (dayEnd > windowStart && dayStart < now) {
-                  annotations.push({
-                    type: "box",
-                    xMin: Math.max(dayStart.getTime(), windowStart.getTime()),
-                    xMax: Math.min(dayEnd.getTime(), now.getTime()),
-                    backgroundColor: "rgba(255, 255, 255, 0.07)",
-                    borderWidth: 0,
-                  });
-                }
-              }
-            }
-
+          annotations: [
+            ...buildShadingAnnotations(timeRange, now, windowStart),
             // Add vertical line for hover position
-            if (hoveredTimestamp) {
-              annotations.push({
-                type: "line",
-                scaleID: "x",
-                value: hoveredTimestamp.getTime(),
-                borderColor: "rgb(239, 68, 68)", // Red color
-                borderWidth: 1,
-                borderDash: [], // Solid line
-              });
-            }
-
-            return annotations;
-          })(),
+            ...(hoveredTimestamp
+              ? [
+                  {
+                    type: "line",
+                    scaleID: "x",
+                    value: hoveredTimestamp.getTime(),
+                    borderColor: "rgb(239, 68, 68)", // Red color
+                    borderWidth: 1,
+                    borderDash: [], // Solid line
+                  },
+                ]
+              : []),
+          ],
         },
       },
       scales: {
-        x: {
-          type: "time",
-          min: windowStart.getTime(),
-          max: now.getTime(),
-          time: {
-            unit: timeRange === "1D" ? "hour" : "day",
-            displayFormats: {
-              hour: "HH:mm",
-              day: "MMM d",
-            },
-          },
-          grid: {
-            color: "rgb(55, 65, 81)",
-            display: true,
-            drawOnChartArea: true,
-            drawTicks: true,
-          },
-          ticks: {
-            color: "rgb(156, 163, 175)",
-            font: {
-              size: 10,
-              family: "DM Sans, system-ui, sans-serif",
-              lineHeight: 1.4,
-            },
-            maxRotation: 0,
-            minRotation: 0,
-            align: timeRange !== "1D" ? "start" : "center",
-            padding: timeRange === "30D" ? 6 : 4,
-            autoSkip: timeRange === "1D",
-            source: "auto",
-            callback: function (value: any, index: any, ticks: any) {
-              const date = new Date(value);
-              if (timeRange === "30D") {
-                const totalDays = ticks.length;
-                let skipInterval = 2;
-
-                if (totalDays > 20) skipInterval = 3;
-                if (totalDays > 25) skipInterval = 4;
-
-                if (index % skipInterval !== 0) {
-                  return "     ";
-                } else {
-                  const dayName = format(date, "EEE");
-                  const dayDate = format(date, "d MMM");
-                  return [dayName, dayDate];
-                }
-              } else if (timeRange === "7D") {
-                const dayName = format(date, "EEE");
-                const dayDate = format(date, "d MMM");
-                return [dayName, dayDate];
-              } else if (timeRange === "1D") {
-                if (index % 2 !== 0) {
-                  return "\u200B";
-                }
-                return format(date, "HH:mm");
-              }
-            },
-          },
-        },
+        x: buildTimeScale(timeRange, now, windowStart),
         y: {
           type: "linear" as const,
           display: true,
@@ -639,155 +502,12 @@ export default function SitePowerChart({
     ? {}
     : {
         labels: chartData.timestamps,
-        datasets: (() => {
-          // Separate power/energy series from SoC series
-          const powerSeries = chartData.series.filter(
-            (s) => s.seriesType !== "soc",
-          );
-          const socSeries = chartData.series.filter(
-            (s) => s.seriesType === "soc",
-          );
-
-          // Create datasets for power/energy series (stacked)
-          const powerDatasets = powerSeries
-            .filter((series) => effectiveVisibleSeries.has(series.id))
-            .map((series, idx) => {
-              const baseConfig = {
-                label: series.description,
-                data: series.data,
-                backgroundColor: series.color,
-                yAxisID: "y",
-                stack: "stack0",
-                order: idx,
-              };
-
-              if (isBarChart) {
-                return {
-                  ...baseConfig,
-                  borderColor: series.color,
-                  borderWidth: 0,
-                };
-              } else {
-                return {
-                  ...baseConfig,
-                  borderColor: series.color,
-                  tension: 0,
-                  borderWidth: 2,
-                  pointRadius: 0,
-                  pointHoverRadius: 0,
-                  fill: "stack",
-                };
-              }
-            });
-
-          // Create datasets for SoC series (non-stacked overlay)
-          const socDatasets: any[] = [];
-
-          // Find min, avg, max SoC series for daily data
-          const socMin = socSeries.find((s) => s.description.includes("(Min)"));
-          const socAvg = socSeries.find((s) => s.description.includes("(Avg)"));
-          const socMax = socSeries.find((s) => s.description.includes("(Max)"));
-          const socLast = socSeries.find(
-            (s) => !s.description.includes("(") && s.seriesType === "soc",
-          );
-
-          if (isBarChart && socMin && socMax) {
-            // Daily data: show min/max range as filled area
-            // Match EnergyChart pattern: max dataset fills DOWN to min dataset
-
-            // Add max as upper boundary (fill down to next dataset)
-            socDatasets.push({
-              label: "Battery SoC Range",
-              type: "line" as const,
-              data: socMax.data,
-              borderColor: "transparent",
-              backgroundColor: CHART_COLORS.battery.socRange,
-              yAxisID: "y1",
-              tension: 0.4, // Smooth curves for range
-              borderWidth: 0,
-              pointRadius: 0,
-              pointHoverRadius: 0,
-              pointHitRadius: 0,
-              fill: "+1", // Fill to next dataset (min)
-              showLine: true,
-              order: 10, // Higher number = drawn first (behind bars)
-            });
-
-            // Add min as lower boundary (no fill)
-            socDatasets.push({
-              label: "", // No label (hidden from legend)
-              type: "line" as const,
-              data: socMin.data,
-              borderColor: "transparent",
-              backgroundColor: "transparent",
-              yAxisID: "y1",
-              tension: 0.4, // Smooth curves for range
-              borderWidth: 0,
-              pointRadius: 0,
-              pointHoverRadius: 0,
-              pointHitRadius: 0,
-              fill: false,
-              showLine: true,
-              order: 10, // Higher number = drawn first (behind bars)
-            });
-
-            // Add average as a line on top
-            if (socAvg) {
-              socDatasets.push({
-                label: "Battery SoC",
-                type: "line" as const,
-                data: socAvg.data,
-                borderColor: CHART_COLORS.battery.soc,
-                backgroundColor: CHART_COLORS.battery.soc,
-                yAxisID: "y1",
-                tension: 0,
-                borderWidth: 2,
-                pointRadius: 0,
-                fill: false,
-                order: -1, // Negative = drawn last (on top)
-              });
-            }
-          } else if (socLast) {
-            // 5m/30m data: show single SoC line
-            socDatasets.push({
-              label: "Battery SoC",
-              data: socLast.data,
-              borderColor: CHART_COLORS.battery.soc,
-              backgroundColor: "transparent",
-              yAxisID: "y1",
-              fill: false,
-              borderWidth: 2,
-              pointRadius: 0,
-              tension: 0,
-              order: -1,
-            });
-          }
-
-          return [...powerDatasets, ...socDatasets];
-        })(),
+        datasets: buildStackedAreaDatasets(
+          chartData,
+          effectiveVisibleSeries,
+          isBarChart,
+        ),
       };
-
-  const formatHoverTimestamp = (
-    date: Date | null,
-    isMobile: boolean = false,
-  ) => {
-    if (!date) {
-      // When not hovering, show the date range of the displayed data
-      // Note: This function is not currently used since date display moved to parent component
-      return "";
-    }
-
-    if (timeRange === "30D") {
-      return format(date, isMobile ? "EEE, d MMM" : "EEE, d MMM yyyy");
-    } else if (timeRange === "7D") {
-      return format(
-        date,
-        isMobile ? "EEE, d MMM h:mma" : "EEE, d MMM yyyy h:mma",
-      );
-    } else {
-      return format(date, "h:mma");
-    }
-  };
 
   const handleMouseLeave = useCallback(() => {
     // Only reset hover state on desktop (not touch devices)
