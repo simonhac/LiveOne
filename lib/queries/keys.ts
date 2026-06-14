@@ -48,6 +48,9 @@ export const queryKeys = {
 
   amber: (systemId: SystemIdLike, rangeKey: string) =>
     ["amber", sid(systemId), rangeKey] as const,
+
+  runPeriods: (systemId: SystemIdLike, role: string, modeKey: string) =>
+    ["runPeriods", sid(systemId), role, modeKey] as const,
 } as const;
 
 /**
@@ -62,6 +65,7 @@ const SYSTEM_RESOURCES = [
   "siteData",
   "flowMatrix",
   "amber",
+  "runPeriods",
 ] as const;
 
 /** Predicate for `invalidateQueries({ predicate })` — true for any of this system's data queries. */
