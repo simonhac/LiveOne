@@ -20,8 +20,18 @@ function formatDuration(seconds: number): string {
  * A compact dashboard panel listing a device's most recent generator runs, paged 10 at a time.
  * Shown on dashboards whose system has an enabled generator tracker (see lib/dashboard/cards.ts
  * "generator-runs"). Reads the bounded, paged run-periods API.
+ *
+ * `runningOverride` carries the live running state from the generic latest map (the derived
+ * `source.generator/running` point) so the badge comes from /api/data like every other live value;
+ * it falls back to the run-periods response's open-period flag when that point isn't present.
  */
-export default function GeneratorRunsCard({ systemId }: { systemId: number }) {
+export default function GeneratorRunsCard({
+  systemId,
+  runningOverride,
+}: {
+  systemId: number;
+  runningOverride?: boolean;
+}) {
   const [offset, setOffset] = useState(0);
 
   const { data, isPending, isError } = useQuery(
@@ -45,7 +55,7 @@ export default function GeneratorRunsCard({ systemId }: { systemId: number }) {
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
         <h2 className="text-sm font-semibold text-gray-100 flex items-center gap-2">
           Generator runs
-          {data?.running && (
+          {(runningOverride ?? data?.running) && (
             <span className="inline-flex items-center gap-1 text-xs font-medium text-green-400">
               <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
               running

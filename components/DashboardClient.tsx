@@ -11,6 +11,7 @@ import {
   dashboardDescriptorQuery,
 } from "@/lib/queries";
 import { gridLatestFromData } from "@/lib/grid/latest";
+import { generatorRunningFromLatest } from "@/lib/generator/running";
 import GridSignalsCard from "@/components/GridSignalsCard";
 import { nemRegionShortLabel } from "@/lib/vendors/openelectricity/region";
 import type { GridContext } from "@/lib/grid/types";
@@ -1493,7 +1494,10 @@ export default function DashboardClient({
           {/* Generator runs — only when this system has an enabled generator tracker */}
           {cardVisible("generator-runs") && hasGenerator && systemId && (
             <div className="mt-4 px-1">
-              <GeneratorRunsCard systemId={parseInt(systemId)} />
+              <GeneratorRunsCard
+                systemId={parseInt(systemId)}
+                runningOverride={generatorRunningFromLatest(data.latest)}
+              />
             </div>
           )}
 

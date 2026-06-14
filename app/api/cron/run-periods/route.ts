@@ -7,6 +7,7 @@ import {
   recomputeRange,
   deleteRange,
 } from "@/lib/run-tracking/recompute";
+import { publishRunningLatest } from "@/lib/run-tracking/running-latest";
 
 // Earliest data (when point data collection began) — clamps backfill ranges.
 const LIVEONE_BIRTHDATE_MS = Date.parse("2025-08-16T00:00:00Z");
@@ -106,10 +107,19 @@ async function handle(request: NextRequest) {
     // No action + no range → the default minutely cron pass.
     if (!action && !range) {
       const summary = await reconcileTrailingWindow(nowMs);
+      // Publish each tracker's live running state into the KV latest map (derived point) so
+      // dashboards read it from /api/data like any other live value. Best-effort.
+      let runningPublished = 0;
+      try {
+        runningPublished = (await publishRunningLatest(nowMs)).updated;
+      } catch (err) {
+        console.error("[Cron] publishRunningLatest failed:", err);
+      }
       return NextResponse.json({
         success: true,
         action: "reconcile",
         ...summary,
+        runningPublished,
         durationMs: Date.now() - startTime,
         executedAt: getNowFormattedAEST(),
       });
