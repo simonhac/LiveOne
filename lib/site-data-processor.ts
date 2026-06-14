@@ -1,8 +1,5 @@
-import {
-  ChartData,
-  SeriesData,
-  generateSeriesConfig,
-} from "@/components/SitePowerChart";
+import { ChartData, SeriesData } from "@/lib/charts/types";
+import { generateSeriesConfig } from "@/lib/charts/series-config";
 import { getColorForPath } from "@/lib/chart-colors";
 import type { EnergyFlowMatrix } from "./energy-flow-matrix";
 import { SeriesPath } from "@/lib/identifiers";

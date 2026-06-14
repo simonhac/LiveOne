@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useModalContext } from "@/contexts/ModalContext";
 import { siteDataQuery, flowMatrixQuery } from "@/lib/queries";
-import SitePowerChart, { type ChartData } from "@/components/SitePowerChart";
+import { type ChartData } from "@/lib/charts/types";
+import DashboardChart from "@/components/DashboardChart";
 import EnergyTable from "@/components/EnergyTable";
 import type { ProcessedSiteData } from "@/lib/site-data-processor";
 import EnergyFlowSankey from "@/components/EnergyFlowSankey";
@@ -20,7 +21,7 @@ import {
   decodeUrlOffset,
 } from "@/lib/url-date";
 import { format } from "date-fns";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { CalendarX2, ChevronLeft, ChevronRight } from "lucide-react";
 
 interface SiteChartsCardProps {
   systemId: string;
@@ -50,6 +51,222 @@ const getPeriodIntervalMinutes = (period: "1D" | "7D" | "30D"): number => {
   if (period === "7D") return 30;
   return 24 * 60; // 1 day
 };
+
+interface StackedChartProps {
+  mode: "load" | "generation";
+  period: "1D" | "7D" | "30D";
+  /** Pre-processed data from the parent (null = no data / still loading). */
+  data: ChartData | null;
+  /** External loading state from the parent. */
+  isLoading?: boolean;
+  /** External hover index to sync with the other chart. */
+  hoveredIndex?: number | null;
+  /** Callback when this chart's hover index changes. */
+  onHoverIndexChange?: (index: number | null) => void;
+  /** Control which series are visible. */
+  visibleSeries?: Set<string>;
+  className?: string;
+}
+
+/**
+ * Presentational stacked-area (or 30D bar) chart for the site load/generation halves.
+ * Inlined from the former SitePowerChart wrapper — the parent (SiteChartsCard) owns the
+ * fetch, period, URL nav, cross-chart hover arbitration, and series-visibility state.
+ */
+function StackedChart({
+  mode,
+  period,
+  data,
+  isLoading,
+  hoveredIndex: externalHoveredIndex,
+  onHoverIndexChange,
+  visibleSeries,
+  className = "",
+}: StackedChartProps) {
+  const [loading, setLoading] = useState(true);
+  const [showSpinner, setShowSpinner] = useState(false);
+  const [hoveredTimestamp, setHoveredTimestamp] = useState<Date | null>(null);
+  const chartRef = useRef<any>(null);
+
+  // Compute effective visibility - if empty/undefined, show all series
+  const effectiveVisibleSeries = useMemo(() => {
+    if ((!visibleSeries || visibleSeries.size === 0) && data) {
+      return new Set(data.series.map((s) => s.id));
+    }
+    return visibleSeries ?? new Set<string>();
+  }, [visibleSeries, data]);
+
+  // Sync external hovered index with internal timestamp
+  useEffect(() => {
+    if (externalHoveredIndex !== undefined && data) {
+      if (
+        externalHoveredIndex !== null &&
+        data.timestamps[externalHoveredIndex]
+      ) {
+        setHoveredTimestamp(data.timestamps[externalHoveredIndex]);
+      } else {
+        setHoveredTimestamp(null);
+      }
+    }
+  }, [externalHoveredIndex, data]);
+
+  const lastHoverIndexRef = useRef<number | null>(null);
+
+  const handleHover = useCallback(
+    (_event: any, activeElements: any[], _chart: any) => {
+      if (!data) return;
+
+      if (activeElements && activeElements.length > 0) {
+        const dataIndex = activeElements[0].index;
+
+        // Only update if index actually changed (reduces jitter)
+        if (lastHoverIndexRef.current !== dataIndex) {
+          lastHoverIndexRef.current = dataIndex;
+          const timestamp = data.timestamps[dataIndex];
+          setHoveredTimestamp(timestamp);
+          if (onHoverIndexChange) {
+            onHoverIndexChange(dataIndex);
+          }
+        }
+      } else {
+        if (lastHoverIndexRef.current !== null) {
+          lastHoverIndexRef.current = null;
+          setHoveredTimestamp(null);
+          if (onHoverIndexChange) {
+            onHoverIndexChange(null);
+          }
+        }
+      }
+    },
+    [data, onHoverIndexChange],
+  );
+
+  const { now, windowStart } = useMemo(() => {
+    // When data is available, use its actual timestamp range
+    // This ensures historical data is displayed correctly
+    if (data && data.timestamps && data.timestamps.length > 0) {
+      const timestamps = data.timestamps;
+      return {
+        windowStart: timestamps[0],
+        now: timestamps[timestamps.length - 1],
+      };
+    }
+
+    // Otherwise, use current time window (for initial render or live mode)
+    const now = new Date();
+    let windowHours: number;
+    if (period === "1D") {
+      windowHours = 24;
+    } else if (period === "7D") {
+      windowHours = 24 * 7;
+    } else {
+      windowHours = 24 * 30;
+    }
+    const windowStart = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
+    return { now, windowStart };
+  }, [period, data]);
+
+  // Track loading state from the parent-provided data/isLoading props
+  useEffect(() => {
+    if (data === null) {
+      // If data is null, check if parent is still loading
+      if (isLoading) {
+        // Parent is still loading, keep spinner
+        setLoading(true);
+      } else {
+        // Parent finished loading but data is null (no data available)
+        setLoading(false);
+      }
+    } else {
+      // We have actual data
+      setLoading(false);
+    }
+  }, [data, isLoading]);
+
+  // Delay showing spinner to avoid flash on quick loads
+  useEffect(() => {
+    let timerId: NodeJS.Timeout;
+
+    if (loading) {
+      // Start a timer when loading becomes true
+      timerId = setTimeout(() => {
+        setShowSpinner(true);
+      }, 1000);
+    } else {
+      // Immediately hide spinner when loading is done
+      setShowSpinner(false);
+    }
+
+    return () => {
+      if (timerId) {
+        clearTimeout(timerId);
+      }
+    };
+  }, [loading]);
+
+  const handleMouseLeave = useCallback(() => {
+    // Only reset hover state on desktop (not touch devices)
+    // On mobile, we want the hover line to persist until next tap
+    if (!("ontouchstart" in window)) {
+      setHoveredTimestamp(null);
+      if (onHoverIndexChange) {
+        onHoverIndexChange(null);
+      }
+    }
+  }, [onHoverIndexChange]);
+
+  const renderChartContent = () => {
+    if (loading && showSpinner) {
+      return (
+        <div className="flex-1 flex items-center justify-center min-h-0">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400"></div>
+        </div>
+      );
+    }
+
+    if (loading && !showSpinner) {
+      // Still loading but spinner delay hasn't elapsed - show nothing
+      return <div className="flex-1 min-h-0" />;
+    }
+
+    if (!data) {
+      return (
+        <div className="flex-1 flex items-center justify-center min-h-0">
+          <div className="flex flex-col items-center gap-3">
+            <CalendarX2 className="w-12 h-12 text-gray-500" />
+            <p className="text-sm text-gray-300">No data available</p>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <DashboardChart
+        variant="stacked-areas"
+        chartData={data}
+        effectiveVisibleSeries={effectiveVisibleSeries}
+        mode={mode}
+        hoveredTimestamp={hoveredTimestamp}
+        timeRange={period}
+        now={now}
+        windowStart={windowStart}
+        onHover={handleHover}
+        chartRef={chartRef}
+        className="flex-1 min-h-0 w-full overflow-hidden"
+        onMouseLeave={handleMouseLeave}
+      />
+    );
+  };
+
+  return (
+    <div
+      className={`flex flex-col site-power-chart-container ${className}`}
+      onMouseLeave={handleMouseLeave}
+    >
+      {renderChartContent()}
+    </div>
+  );
+}
 
 export default function SiteChartsCard({
   systemId,
@@ -206,8 +423,7 @@ export default function SiteChartsCard({
     onHistoryEmptyChange,
   ]);
 
-  // Mirror the latest site fetch into the chart-data state the EnergyTable reads
-  // (SitePowerChart's onDataChange keeps these in sync as it renders, too).
+  // Mirror the latest site fetch into the chart-data state the EnergyTable reads.
   useEffect(() => {
     if (siteData) {
       setLoadChartData(siteData.load);
@@ -730,28 +946,10 @@ export default function SiteChartsCard({
               <div className="px-2 sm:px-4 pt-1 sm:pt-2 pb-2 sm:pb-4">
                 <div className="flex flex-col md:flex-row md:gap-4">
                   <div className="flex-1 min-w-0">
-                    <SitePowerChart
-                      systemId={parseInt(systemId as string)}
+                    <StackedChart
                       mode="load"
-                      title="Loads"
                       className="h-full min-h-[375px]"
                       period={sitePeriod}
-                      onPeriodChange={(newPeriod) => {
-                        setSitePeriod(newPeriod);
-                        setHistoryTimeRange({}); // Reset to current when period changes
-                        const params = new URLSearchParams(
-                          searchParams.toString(),
-                        );
-                        params.set("period", newPeriod);
-                        params.delete("start");
-                        params.delete("end");
-                        params.delete("offset");
-                        router.push(`?${params.toString()}`, {
-                          scroll: false,
-                        });
-                      }}
-                      showPeriodSwitcher={false}
-                      onDataChange={setLoadChartData}
                       onHoverIndexChange={handleLoadHoverIndexChange}
                       hoveredIndex={hoveredIndex}
                       visibleSeries={
@@ -759,7 +957,6 @@ export default function SiteChartsCard({
                           ? loadVisibleSeries
                           : undefined
                       }
-                      onVisibilityChange={setLoadVisibleSeries}
                       data={processedHistoryData.load}
                       isLoading={historyLoading}
                     />
@@ -787,28 +984,10 @@ export default function SiteChartsCard({
               <div className="p-2 sm:p-4">
                 <div className="flex flex-col md:flex-row md:gap-4">
                   <div className="flex-1 min-w-0">
-                    <SitePowerChart
-                      systemId={parseInt(systemId as string)}
+                    <StackedChart
                       mode="generation"
-                      title="Generation"
                       className="h-full min-h-[375px]"
                       period={sitePeriod}
-                      onPeriodChange={(newPeriod) => {
-                        setSitePeriod(newPeriod);
-                        setHistoryTimeRange({}); // Reset to current when period changes
-                        const params = new URLSearchParams(
-                          searchParams.toString(),
-                        );
-                        params.set("period", newPeriod);
-                        params.delete("start");
-                        params.delete("end");
-                        params.delete("offset");
-                        router.push(`?${params.toString()}`, {
-                          scroll: false,
-                        });
-                      }}
-                      showPeriodSwitcher={false}
-                      onDataChange={setGenerationChartData}
                       onHoverIndexChange={handleGenerationHoverIndexChange}
                       hoveredIndex={hoveredIndex}
                       visibleSeries={
@@ -816,7 +995,6 @@ export default function SiteChartsCard({
                           ? generationVisibleSeries
                           : undefined
                       }
-                      onVisibilityChange={setGenerationVisibleSeries}
                       data={processedHistoryData.generation}
                       isLoading={historyLoading}
                     />

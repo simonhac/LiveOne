@@ -4,7 +4,7 @@ import {
   EnergyFlowMatrix,
 } from "../energy-flow-matrix";
 import { ProcessedSiteData } from "../site-data-processor";
-import { ChartData } from "@/components/SitePowerChart";
+import { ChartData } from "@/lib/charts/types";
 
 describe("calculateEnergyFlowMatrix", () => {
   it("should return null for missing generation or load data", () => {
