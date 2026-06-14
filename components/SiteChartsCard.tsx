@@ -170,7 +170,11 @@ export default function SiteChartsCard({
   // is referentially stable between renders and slides forward only on each refetch.
   const isSiteVendor =
     system?.vendorType === "mondo" || system?.vendorType === "composite";
-  const { data: siteData, isLoading: historyLoading } = useQuery(
+  const {
+    data: siteData,
+    isLoading: historyLoading,
+    isFetching: historyFetching,
+  } = useQuery(
     siteDataQuery({
       systemId: systemId ?? "",
       period: sitePeriod,
@@ -548,7 +552,11 @@ export default function SiteChartsCard({
           processedHistoryData.load ||
           processedHistoryData.generation ||
           system?.vendorType !== "composite") && (
-          <div className="overflow-hidden">
+          <div
+            className={`overflow-hidden transition-opacity duration-200 ${
+              historyFetching && !historyLoading ? "opacity-60" : ""
+            }`}
+          >
             {/* Shared header with date/time and period switcher */}
             <div className="px-2 sm:px-4 pt-2 sm:pt-4 pb-1 sm:pb-2">
               <div className="flex justify-end items-center">

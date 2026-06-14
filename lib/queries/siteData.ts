@@ -60,6 +60,15 @@ export function siteDataQuery(p: SiteDataQueryParams) {
     queryFn: () =>
       fetchAndProcessSiteData(String(p.systemId), p.period, p.start, p.end),
     staleTime,
+    // Keep the previous day's chart on screen while a newly-navigated (uncached) window
+    // loads — prevents the blank → axis-jump-to-now → spinner thrash. Only when just the
+    // time window changed (same system + period); never flash another system/period's data.
+    placeholderData: (prev, prevQuery) => {
+      const k = prevQuery?.queryKey;
+      return k && k[1] === String(p.systemId) && k[2] === p.period
+        ? prev
+        : undefined;
+    },
     refetchInterval: p.paused ? false : refetchInterval,
     refetchOnWindowFocus: false,
     enabled: p.enabled ?? true,

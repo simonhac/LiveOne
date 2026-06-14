@@ -60,6 +60,13 @@ export async function GET(
       vendorType: system.vendorType,
       timezoneOffsetMin: system.timezoneOffsetMin,
     },
+    // RAW saved descriptor. It is canonical (every stored row was migrated to the current `chart`
+    // shape, and the read-shim is retired), so it carries no legacy card types. The share VIEWER
+    // (not built yet) MUST still run normalizeDescriptor(descriptor, buildDefaultDescriptor(system,
+    // latest, { gridSignalsAvailable })) before rendering, to reconcile card eligibility/order for
+    // this system exactly as DashboardClient does — we don't normalize here because that needs the
+    // page's full default context (grid-region + generator-tracker resolution) not assembled in this
+    // endpoint.
     descriptor: dashboard.descriptor,
     systemIds: access.systemIds,
     points: access.points,
