@@ -38,6 +38,8 @@ type FullTable = {
   name: string;
   mode: "full";
   onConflict: "update" | "nothing";
+  conflictCols?: string[]; // natural unique key when the PK is a divergent surrogate
+  excludeCols?: string[]; // drop the surrogate id so dev keeps/assigns its own
 };
 type IncrementalTable = {
   name: string;
@@ -53,17 +55,44 @@ type Table = FullTable | IncrementalTable;
 
 // Small config tables — full refresh, FK parents first.
 const FULL: FullTable[] = [
-  "systems",
-  "point_info",
-  "users",
-  "user_systems",
-  "polling_status",
-  "share_tokens",
-  "roles",
-  "areas",
-  "area_bindings",
-  "dashboards",
-].map((name) => ({ name, mode: "full", onConflict: "update" }));
+  ...[
+    "systems",
+    "point_info",
+    "users",
+    "user_systems",
+    "polling_status",
+    "share_tokens",
+    "roles",
+    "areas",
+  ].map(
+    (name): FullTable => ({ name, mode: "full", onConflict: "update" }),
+  ),
+  // Surrogate-key tables: the PK (uuid/serial `id`) is assigned independently on
+  // dev, so dev and prod hold the same row under different ids. Upsert on the
+  // NATURAL unique key and exclude `id` (like point_readings) — otherwise the
+  // insert misses the PK conflict and trips the natural unique constraint,
+  // aborting the whole sync before it reaches the readings tables.
+  {
+    name: "area_bindings",
+    mode: "full",
+    onConflict: "update",
+    conflictCols: [
+      "area_id",
+      "role",
+      "metric_type",
+      "point_system_id",
+      "point_id",
+    ],
+    excludeCols: ["id"],
+  },
+  {
+    name: "dashboards",
+    mode: "full",
+    onConflict: "update",
+    conflictCols: ["clerk_user_id", "system_id"],
+    excludeCols: ["id"],
+  },
+];
 
 // Large, time-keyed tables — incremental. sessions before point_readings so the
 // FK parent is present; point_readings only inserts readings whose session exists.
