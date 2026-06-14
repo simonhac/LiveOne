@@ -195,3 +195,77 @@ describe("chart instance ids never collide with a card type (guardrail)", () => 
     }
   });
 });
+
+// Edge cases backing the phase-4 UI behaviours (hide/reorder a chart card; no double-expansion).
+describe("chart card — customized round-trip + shim idempotency", () => {
+  it("preserves a hidden + reordered chart instance on a current (non-legacy) save", () => {
+    const def = buildDefaultDescriptor({ vendorType: "mondo" }, EMPTY);
+    // user hid Generation and moved it before Load
+    const saved = {
+      version: 2,
+      layout: "site",
+      cards: [
+        { type: "tiles", tiles: { order: ["solar"], hidden: [] } },
+        {
+          type: "chart",
+          id: "chart:generation",
+          hidden: true,
+          chart: { variant: "stacked-areas", split: "generation" },
+        },
+        {
+          type: "chart",
+          id: "chart:load",
+          chart: { variant: "stacked-areas", split: "load" },
+        },
+        { type: "sankey" },
+        { type: "generator-runs" },
+      ],
+    };
+    const out = normalizeDescriptor(saved, def);
+    expect(out.cards.map((c) => c.id ?? c.type)).toEqual([
+      "tiles",
+      "chart:generation",
+      "chart:load",
+      "sankey",
+      "generator-runs",
+    ]);
+    expect(isCardVisible(out, "chart:generation")).toBe(false); // hide sticks per-instance
+    expect(isCardVisible(out, "chart:load")).toBe(true);
+    // chart config sourced from the canonical default
+    expect(out.cards.find((c) => c.id === "chart:load")?.chart).toEqual({
+      variant: "stacked-areas",
+      split: "load",
+    });
+  });
+
+  it("normalize is idempotent on an already-migrated descriptor (no double-expand, unique ids)", () => {
+    const def = buildDefaultDescriptor({ vendorType: "mondo" }, EMPTY);
+    const out1 = normalizeDescriptor(def, def);
+    const out2 = normalizeDescriptor(out1, def);
+    expect(out2).toEqual(out1);
+    const ids = out2.cards.map((c) => c.id ?? c.type);
+    expect(new Set(ids).size).toBe(ids.length); // no duplicate chart instances
+  });
+
+  it("preserves legacy relative order: site-charts before tiles → chart pair before tiles", () => {
+    const def = buildDefaultDescriptor({ vendorType: "mondo" }, EMPTY);
+    const saved = {
+      version: 2,
+      layout: "site",
+      cards: [
+        { type: "site-charts" },
+        { type: "tiles", tiles: { order: ["solar"], hidden: [] } },
+        { type: "sankey" },
+        { type: "generator-runs" },
+      ],
+    };
+    const out = normalizeDescriptor(saved, def);
+    expect(out.cards.map((c) => c.id ?? c.type)).toEqual([
+      "chart:load",
+      "chart:generation",
+      "tiles",
+      "sankey",
+      "generator-runs",
+    ]);
+  });
+});
