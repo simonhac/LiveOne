@@ -7,20 +7,10 @@ import { historyQuery } from "@/lib/queries";
 import ChartTooltip from "./ChartTooltip";
 import PeriodSwitcher from "./PeriodSwitcher";
 import ServerErrorModal from "./ServerErrorModal";
-import { type ChartOptions } from "chart.js";
-import { Line, Bar } from "react-chartjs-2";
-import "chartjs-adapter-date-fns";
 import micromatch from "micromatch";
-import {
-  registerChartScaffold,
-  buildShadingAnnotations,
-  buildTimeScale,
-  formatHoverTimestamp as formatHoverTimestampShared,
-} from "@/lib/charts/scaffold";
-import { buildLineDatasets } from "@/lib/charts/datasets";
+import { formatHoverTimestamp as formatHoverTimestampShared } from "@/lib/charts/scaffold";
+import DashboardChart from "./DashboardChart";
 import type { LineChartData as ChartData } from "@/lib/charts/types";
-
-registerChartScaffold();
 
 interface EnergyChartProps {
   className?: string;
@@ -324,94 +314,6 @@ export default function EnergyChart({
     return { now, windowStart };
   }, [timeRange]);
 
-  const options: ChartOptions<any> = useMemo(
-    () => ({
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: {
-        mode: "index" as const,
-        intersect: false,
-      },
-      onHover: handleHover,
-      plugins: {
-        legend: {
-          display: false, // Hide the legend
-        },
-        tooltip: {
-          enabled: false, // Disable the default tooltip since we're using our custom one
-        },
-        annotation: {
-          annotations: buildShadingAnnotations(timeRange, now, windowStart),
-        },
-      },
-      scales: {
-        x: buildTimeScale(timeRange, now, windowStart),
-        y: {
-          type: "linear" as const,
-          display: true,
-          position: "left" as const,
-          title: {
-            display: false, // Hide the title
-          },
-          // Use maxPowerHint for power mode, auto-scale for energy mode
-          suggestedMax: chartData?.mode === "energy" ? undefined : maxPowerHint,
-          // Allow negative values for grid/battery charging
-          // min: 0 removed to allow y-axis to go negative
-          grid: {
-            color: "rgb(55, 65, 81)", // gray-700
-            display: true,
-            drawOnChartArea: true,
-          },
-          ticks: {
-            color: "rgb(156, 163, 175)", // gray-400
-            font: {
-              size: 10,
-              family: "DM Sans, system-ui, sans-serif",
-            },
-            callback: function (value: any, index: any, ticks: any) {
-              // Add unit only to the last (top) tick
-              // Use kWh for energy mode, kW for power mode
-              if (index === ticks.length - 1) {
-                const unit = chartData?.mode === "energy" ? "kWh" : "kW";
-                return value + " " + unit;
-              }
-              return value;
-            },
-          },
-        },
-        y1: {
-          type: "linear" as const,
-          display: true,
-          position: "right" as const,
-          title: {
-            display: false, // Hide the title
-          },
-          grid: {
-            display: true,
-            drawOnChartArea: false, // Don't draw y1 grid lines on chart area to avoid overlap
-          },
-          ticks: {
-            color: "rgb(156, 163, 175)", // gray-400
-            font: {
-              size: 10,
-              family: "DM Sans, system-ui, sans-serif",
-            },
-            callback: function (value: any, index: any, ticks: any) {
-              // Add "%" only to the last (top) tick
-              if (index === ticks.length - 1) {
-                return value + "%";
-              }
-              return value;
-            },
-          },
-          min: 0,
-          max: 100,
-        },
-      },
-    }),
-    [handleHover, windowStart, now, timeRange, chartData?.mode, maxPowerHint],
-  );
-
   // Cleanup hover timeout on unmount
   useEffect(() => {
     return () => {
@@ -460,13 +362,6 @@ export default function EnergyChart({
         })()
       : null;
 
-  const data: any = !chartData
-    ? {}
-    : {
-        labels: chartData.timestamps,
-        datasets: buildLineDatasets(chartData, paddedSOCData),
-      };
-
   // Format timestamp based on time range (shared scaffold helper)
   const formatHoverTimestamp = (date: Date | null, isMobile: boolean = false) =>
     formatHoverTimestampShared(date, timeRange, isMobile);
@@ -500,13 +395,18 @@ export default function EnergyChart({
     // Normal chart display
     return (
       <>
-        <div className="flex-1 min-h-0">
-          {chartData.mode === "energy" ? (
-            <Bar ref={chartRef} data={data} options={options} />
-          ) : (
-            <Line ref={chartRef} data={data} options={options} />
-          )}
-        </div>
+        <DashboardChart
+          variant="lines"
+          chartData={chartData}
+          paddedSOCData={paddedSOCData}
+          maxPowerHint={maxPowerHint}
+          timeRange={timeRange}
+          now={now}
+          windowStart={windowStart}
+          onHover={handleHover}
+          chartRef={chartRef}
+          className="flex-1 min-h-0"
+        />
         <div className="flex justify-center mt-2 px-2 sm:px-0">
           <ChartTooltip
             solar={hoveredData.solar}
