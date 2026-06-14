@@ -4,26 +4,16 @@ import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import PeriodSwitcher from "./PeriodSwitcher";
 import ServerErrorModal from "./ServerErrorModal";
-import { type ChartOptions } from "chart.js";
-import { Line, Bar } from "react-chartjs-2";
-import "chartjs-adapter-date-fns";
 import { CalendarX2 } from "lucide-react";
 import { CHART_COLORS, getLoadColor } from "@/lib/chart-colors";
 import { stemSplit } from "@/lib/identifiers/logical-path";
 import micromatch from "micromatch";
-import {
-  registerChartScaffold,
-  buildShadingAnnotations,
-  buildTimeScale,
-} from "@/lib/charts/scaffold";
-import { buildStackedAreaDatasets } from "@/lib/charts/datasets";
-import type { SeriesData, ChartData } from "@/lib/charts/types";
+import DashboardChart from "./DashboardChart";
+import type { ChartData } from "@/lib/charts/types";
 
 // Re-exported for back-compat with existing importers (DashboardClient, EnergyTable,
 // site-data-processor, tests). The canonical home is now lib/charts/types.
 export type { SeriesData, ChartData } from "@/lib/charts/types";
-
-registerChartScaffold();
 
 interface SitePowerChartProps {
   className?: string;
@@ -336,118 +326,6 @@ export default function SitePowerChart({
     return { now, windowStart };
   }, [timeRange, chartData]);
 
-  // Determine if we should use bar chart (for energy/daily data)
-  const isBarChart = chartData?.mode === "energy";
-
-  const options: ChartOptions<any> = useMemo(
-    () => ({
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: false, // Disable all animations
-      hover: {
-        animationDuration: 0, // No animation on hover
-      },
-      interaction: {
-        mode: "index" as const,
-        intersect: false,
-        axis: "x" as const, // Only consider x-axis for hover (more stable)
-      },
-      onHover: handleHover,
-      // Bar chart specific configuration
-      ...(isBarChart && {
-        barPercentage: 0.95, // Increase bar width (default 0.9)
-        categoryPercentage: 0.95, // Increase category width (default 0.8)
-      }),
-      plugins: {
-        legend: {
-          display: false, // Legend now shown in the table
-        },
-        tooltip: {
-          enabled: false,
-        },
-        annotation: {
-          animation: false, // Disable animation for immediate updates
-          annotations: [
-            ...buildShadingAnnotations(timeRange, now, windowStart),
-            // Add vertical line for hover position
-            ...(hoveredTimestamp
-              ? [
-                  {
-                    type: "line",
-                    scaleID: "x",
-                    value: hoveredTimestamp.getTime(),
-                    borderColor: "rgb(239, 68, 68)", // Red color
-                    borderWidth: 1,
-                    borderDash: [], // Solid line
-                  },
-                ]
-              : []),
-          ],
-        },
-      },
-      scales: {
-        x: buildTimeScale(timeRange, now, windowStart),
-        y: {
-          type: "linear" as const,
-          display: true,
-          position: "left" as const,
-          stacked: true,
-          title: {
-            display: false,
-          },
-          min: 0,
-          grid: {
-            color: "rgb(55, 65, 81)",
-            display: true,
-            drawOnChartArea: true,
-          },
-          ticks: {
-            color: "rgb(156, 163, 175)",
-            font: {
-              size: 10,
-              family: "DM Sans, system-ui, sans-serif",
-            },
-            callback: function (value: any, index: any, ticks: any) {
-              if (index === ticks.length - 1) {
-                return value + " kW";
-              }
-              return value;
-            },
-          },
-        },
-        y1: {
-          type: "linear" as const,
-          display: true,
-          position: "right" as const,
-          min: 0,
-          max: 100,
-          grid: {
-            display: false, // Don't show grid for secondary axis
-          },
-          ticks: {
-            color: mode === "generation" ? "rgb(156, 163, 175)" : "transparent", // Transparent for load chart
-            font: {
-              size: 10,
-              family: "DM Sans, system-ui, sans-serif",
-            },
-            callback: function (value: any) {
-              return value + "%";
-            },
-          },
-        },
-      },
-    }),
-    [
-      handleHover,
-      windowStart,
-      now,
-      timeRange,
-      hoveredTimestamp,
-      isBarChart,
-      mode,
-    ],
-  );
-
   // Use external data when provided
   useEffect(() => {
     // When using external data, we need to manage loading state differently
@@ -498,17 +376,6 @@ export default function SitePowerChart({
     }
   }, [chartData, onDataChange]);
 
-  const data: any = !chartData
-    ? {}
-    : {
-        labels: chartData.timestamps,
-        datasets: buildStackedAreaDatasets(
-          chartData,
-          effectiveVisibleSeries,
-          isBarChart,
-        ),
-      };
-
   const handleMouseLeave = useCallback(() => {
     // Only reset hover state on desktop (not touch devices)
     // On mobile, we want the hover line to persist until next tap
@@ -546,16 +413,20 @@ export default function SitePowerChart({
     }
 
     return (
-      <div
+      <DashboardChart
+        variant="stacked-areas"
+        chartData={chartData}
+        effectiveVisibleSeries={effectiveVisibleSeries}
+        mode={mode}
+        hoveredTimestamp={hoveredTimestamp}
+        timeRange={timeRange}
+        now={now}
+        windowStart={windowStart}
+        onHover={handleHover}
+        chartRef={chartRef}
         className="flex-1 min-h-0 w-full overflow-hidden"
         onMouseLeave={handleMouseLeave}
-      >
-        {isBarChart ? (
-          <Bar ref={chartRef} data={data} options={options} />
-        ) : (
-          <Line ref={chartRef} data={data} options={options} />
-        )}
-      </div>
+      />
     );
   };
 
