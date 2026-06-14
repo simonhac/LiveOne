@@ -3,16 +3,15 @@
  * Area sits in, and the public OpenElectricity system that serves that region's live signals.
  *
  * The card it backs reads a DIFFERENT (public OE region) system than the dashboard it lives on, so
- * this is the cross-system seam. Returns null whenever the card should not render: flags off, no
- * identity Area, no derivable region, the system is off-grid (no `bidi.grid*` point), or no public OE
- * system exists for the region. See docs/architecture/areas-and-dashboards.md.
+ * this is the cross-system seam. Returns null whenever the card should not render: the Areas layer
+ * off (AREAS_TABLE), no Area, no derivable region, the system is off-grid (no `bidi.grid*` point), or
+ * no public OE system exists for the region. See docs/architecture/areas-and-dashboards.md.
  */
 
 import { and, eq, isNull } from "drizzle-orm";
 
 import type { AreaLocation } from "@/lib/areas/types";
 import { AREAS_TABLE } from "@/lib/areas/flags";
-import { GRID_SIGNALS_CARD } from "@/lib/grid/flags";
 import { getCompositeBindingRefs } from "@/lib/areas/bindings";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, pointInfo, systems } from "@/lib/db/planetscale/schema";
@@ -48,8 +47,9 @@ async function systemPlaysGridRole(
 export async function resolveGridContextForSystem(
   systemId: number,
 ): Promise<GridContext | null> {
-  // a. Both gates must be on.
-  if (!GRID_SIGNALS_CARD || !AREAS_TABLE) return null;
+  // a. The Areas read layer must be on — the card needs the Area's location + bindings. (The
+  //    former GRID_SIGNALS_CARD gate was retired once the card graduated to permanent.)
+  if (!AREAS_TABLE) return null;
 
   // This runs inline on the dashboard server render. It is a gated, additive feature, so any DB
   // fault must degrade to "no grid card" — never 500 the whole dashboard for a user who may have
