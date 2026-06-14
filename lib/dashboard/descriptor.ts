@@ -24,10 +24,25 @@ export interface TilesConfig {
 
 export interface ModuleCardInstance {
   type: DashboardCardType;
+  /**
+   * Stable per-instance identity. Optional: when absent the identity IS the `type` — every card is a
+   * singleton today, so this is unset. It lets one layout hold more than one card of the same `type`
+   * (e.g. several `chart` cards): reconciliation + visibility key on `id ?? type`, while RENDERING
+   * still dispatches on `type`. (Rule: dispatch on type, identity flows on the instance.)
+   */
+  id?: string;
   /** Hidden module cards are persisted but not rendered (re-addable from the gallery). */
   hidden?: boolean;
   /** Only meaningful for type === "tiles". */
   tiles?: TilesConfig;
+}
+
+/** A card's reconciliation/visibility identity: its explicit `id`, or its `type` for singletons. */
+export function cardIdentity(c: {
+  id?: string;
+  type: DashboardCardType;
+}): string {
+  return c.id ?? c.type;
 }
 
 export interface DashboardDescriptor {
@@ -92,8 +107,12 @@ function normalizeTiles(saved: unknown, def: TilesConfig): TilesConfig {
 /**
  * Reconcile a saved descriptor with the current default. Discards the save if the layout changed
  * (e.g. the system's vendor type changed); otherwise keeps the saved card ORDER + hidden/tiles
- * config, appends module cards introduced since the save (as visible defaults), and drops any that
- * no longer exist. Returns the default if `saved` is missing or malformed.
+ * config, appends cards introduced since the save (as visible defaults), and drops any that no
+ * longer exist. Returns the default if `saved` is missing or malformed.
+ *
+ * Cards are matched by IDENTITY (`id ?? type`), not bare `type`, so a layout can hold more than one
+ * card of the same type (the `chart` card). For today's singletons identity == type, so this is a
+ * no-op: a saved descriptor with no `id`s reconciles byte-identically to before.
  */
 export function normalizeDescriptor(
   saved: unknown,
@@ -109,32 +128,39 @@ export function normalizeDescriptor(
     return def;
   }
   const s = raw;
-  const savedByType = new Map(s.cards!.map((c) => [c.type, c]));
-  const defByType = new Map(def.cards.map((c) => [c.type, c]));
+  const savedById = new Map(s.cards!.map((c) => [cardIdentity(c), c]));
+  const defById = new Map(def.cards.map((c) => [cardIdentity(c), c]));
 
-  // Card order follows the SAVED order (so a Customize reorder sticks), keeping only types that
+  // Card order follows the SAVED order (so a Customize reorder sticks), keeping only identities that
   // still exist in the default; any default cards introduced since the save are appended.
-  const orderedTypes: DashboardCardType[] = [];
-  const seen = new Set<DashboardCardType>();
+  const orderedIds: string[] = [];
+  const seen = new Set<string>();
   for (const c of s.cards!) {
-    if (defByType.has(c.type) && !seen.has(c.type)) {
-      orderedTypes.push(c.type);
-      seen.add(c.type);
+    const id = cardIdentity(c);
+    if (defById.has(id) && !seen.has(id)) {
+      orderedIds.push(id);
+      seen.add(id);
     }
   }
   for (const c of def.cards) {
-    if (!seen.has(c.type)) {
-      orderedTypes.push(c.type);
-      seen.add(c.type);
+    const id = cardIdentity(c);
+    if (!seen.has(id)) {
+      orderedIds.push(id);
+      seen.add(id);
     }
   }
 
-  const cards: ModuleCardInstance[] = orderedTypes.map((type) => {
-    const defCard = defByType.get(type)!;
-    const sc = savedByType.get(type);
+  const cards: ModuleCardInstance[] = orderedIds.map((id) => {
+    const defCard = defById.get(id)!;
+    const sc = savedById.get(id);
     if (!sc) return defCard; // card introduced since the save → default (visible)
-    const card: ModuleCardInstance = { type, hidden: !!sc.hidden };
-    if (type === "tiles") {
+    // Structure (type/id/tiles) comes from the canonical default; hidden + tile order from the save.
+    const card: ModuleCardInstance = {
+      type: defCard.type,
+      hidden: !!sc.hidden,
+    };
+    if (defCard.id !== undefined) card.id = defCard.id;
+    if (defCard.type === "tiles") {
       card.tiles = normalizeTiles(sc.tiles, defCard.tiles!);
     }
     return card;
@@ -148,11 +174,17 @@ export function tilesConfigOf(descriptor: DashboardDescriptor): TilesConfig {
   return card?.tiles ?? defaultTilesConfig();
 }
 
-/** Whether a module card is present and not hidden. */
+/**
+ * Whether a module card is present and not hidden, looked up by IDENTITY (an instance `id`) or by
+ * `type` (the singleton case). Pass a card's `id` to target a specific instance, or a `type` to find
+ * the first card of that type (today's callers).
+ */
 export function isCardVisible(
   descriptor: DashboardDescriptor,
-  type: DashboardCardType,
+  idOrType: DashboardCardType | string,
 ): boolean {
-  const card = descriptor.cards.find((c) => c.type === type);
+  const card = descriptor.cards.find(
+    (c) => c.id === idOrType || c.type === idOrType,
+  );
   return !!card && !card.hidden;
 }
