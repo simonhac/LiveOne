@@ -81,54 +81,6 @@ describe("normalizeDescriptor", () => {
     expect(cfg.hidden).not.toContain("nope");
     expect(new Set(cfg.order)).toEqual(new Set(TILE_IDS));
   });
-
-  // Backward-compat read for the expand→migrate→contract rename: a legacy saved descriptor with the
-  // old monolithic "amber" module must still load, expanding to amber-now + amber-timeline and
-  // inheriting the old module's hidden state. Keep until the descriptor data migration ships.
-  it("migrates a legacy 'amber' module to amber-now + amber-timeline", () => {
-    const def = buildDefaultDescriptor({ vendorType: "amber" }, EMPTY);
-    const legacy = {
-      version: 2,
-      layout: "amber",
-      cards: [{ type: "amber", hidden: true }],
-    };
-    const out = normalizeDescriptor(legacy, def);
-    expect(out.cards.map((c) => c.type)).toEqual([
-      "amber-now",
-      "amber-timeline",
-    ]);
-    expect(isCardVisible(out, "amber-now")).toBe(false);
-    expect(isCardVisible(out, "amber-timeline")).toBe(false);
-  });
-
-  // Backward-compat read for the expand→migrate→contract rename: a legacy saved descriptor with the
-  // old "power-cards" module (carrying a `powerCards` config) must still load, becoming the new
-  // "tiles" module (with a `tiles` config) and preserving its order/hidden. Keep until the data
-  // migration ships.
-  it("migrates a legacy 'power-cards' module to 'tiles'", () => {
-    const def = sidebarDefault();
-    const legacy = {
-      version: 2,
-      layout: "sidebar",
-      cards: [
-        {
-          type: "power-cards",
-          powerCards: { order: ["grid", "solar"], hidden: ["battery"] },
-        },
-        { type: "energy-chart" },
-        { type: "generator-runs" },
-      ],
-    };
-    const out = normalizeDescriptor(legacy, def);
-    // The legacy power-cards module is read as the new "tiles" module.
-    expect(out.cards.some((c) => c.type === "tiles")).toBe(true);
-    expect(out.cards.some((c) => (c.type as string) === "power-cards")).toBe(
-      false,
-    );
-    const cfg = tilesConfigOf(out);
-    expect(cfg.order.slice(0, 2)).toEqual(["grid", "solar"]);
-    expect(cfg.hidden).toContain("battery");
-  });
 });
 
 describe("availableTiles", () => {

@@ -27,7 +27,7 @@ declare global {
  * discrete fields DB_HOST / DB_PORT / DB_DATABASE / DB_USERNAME / DB_PASSWORD.
  * Returns null if neither is configured.
  */
-export function getPoolConfig(): PoolConfig | null {
+function getPoolConfig(): PoolConfig | null {
   const url = process.env.PLANETSCALE_DATABASE_URL;
   if (url) {
     return { connectionString: url };
@@ -62,7 +62,7 @@ export function getPoolConfig(): PoolConfig | null {
  * role/username (`postgres.<branch-id>`). The hostname alone cannot tell prod
  * from liveone-dev — the username can.
  */
-export function connectionIdentity(config: PoolConfig): string | undefined {
+function connectionIdentity(config: PoolConfig): string | undefined {
   if (typeof config.connectionString === "string") {
     try {
       const u = new URL(config.connectionString);
