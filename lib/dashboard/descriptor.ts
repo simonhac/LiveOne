@@ -146,19 +146,40 @@ function normalizeTiles(saved: unknown, def: TilesConfig): TilesConfig {
   return { order, hidden };
 }
 
+/** Legacy chart card types this codebase no longer emits but may still find in persisted rows. */
+const LEGACY_CHART_TYPES = new Set(["site-charts", "energy-chart"]);
+
 /**
- * READ-side shim for the `chart`-card rename (the WRITE-side data migration is a separate later PR).
- * A legacy saved card expands to the new chart instances so its identity lines up with the current
- * default (and its `hidden` state is carried onto each half):
+ * Whether a (possibly malformed) descriptor still carries a legacy chart card type — the gate for
+ * both the read shim and the one-off data migration that rewrites the persisted `dashboards` rows.
+ */
+export function hasLegacyChartCards(d: unknown): boolean {
+  if (!d || typeof d !== "object") return false;
+  const cards = (d as { cards?: unknown }).cards;
+  if (!Array.isArray(cards)) return false;
+  return cards.some(
+    (c) =>
+      !!c &&
+      typeof c === "object" &&
+      LEGACY_CHART_TYPES.has((c as { type?: unknown }).type as string),
+  );
+}
+
+/**
+ * READ-side shim for the `chart`-card rename (the WRITE-side data migration reuses this). A legacy
+ * saved card expands to the new chart instances so its identity lines up with the current default
+ * (and its `hidden` state is carried onto each half):
  *   { type: "site-charts" }  → chart:load + chart:generation (stacked)
  *   { type: "energy-chart" } → chart:lines
  * Everything else passes through. Runs on the SAVED side of normalizeDescriptor only (the default is
- * already chart-shaped). KEEP until the persisted-descriptor data migration ships.
+ * already chart-shaped). KEEP until the persisted-descriptor data migration has run on every env.
  */
-function migrateLegacyChartCards(
+export function migrateLegacyChartCards(
   cards: ModuleCardInstance[],
 ): ModuleCardInstance[] {
   return cards.flatMap((c) => {
+    // Pass through anything that isn't a card object (a malformed/null sibling shouldn't crash).
+    if (!c || typeof c !== "object") return [c];
     const t = c.type as string;
     if (t === "site-charts") {
       return [
@@ -191,6 +212,24 @@ function migrateLegacyChartCards(
     }
     return [c];
   });
+}
+
+/**
+ * The chart data-migration's per-row transform (WRITE side): the rewritten descriptor for a persisted
+ * `dashboards` row, or null if the row has no legacy chart card (so the caller skips the write —
+ * keeping current rows byte-unchanged and the migration idempotent). Applies the same expansion as
+ * the read shim; it is NOT `normalizeDescriptor` (no reconcile against a per-system default), so order
+ * and all other cards are preserved verbatim. Used by scripts/migrate-chart-descriptors.ts.
+ */
+export function migrateLegacyChartDescriptorRow(
+  d: unknown,
+): Partial<DashboardDescriptor> | null {
+  if (!hasLegacyChartCards(d)) return null;
+  const desc = d as Partial<DashboardDescriptor>;
+  return {
+    ...desc,
+    cards: migrateLegacyChartCards(desc.cards as ModuleCardInstance[]),
+  };
 }
 
 /**
