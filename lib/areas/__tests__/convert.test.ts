@@ -4,6 +4,7 @@ import { join } from "path";
 import {
   convertCompositeToBindings,
   assertCompositeRoundTrip,
+  bindingsToMappings,
   type ConverterPointInfo,
 } from "@/lib/areas/convert";
 import { PointReference } from "@/lib/identifiers";
@@ -102,6 +103,44 @@ describe("convertCompositeToBindings — v2 round-trip against real prod composi
       });
     });
   }
+});
+
+describe("bindingsToMappings — inverse of the converter (real prod composites)", () => {
+  for (const composite of fixture.composites) {
+    describe(`${composite.displayName} (#${composite.id})`, () => {
+      const bindings = convertCompositeToBindings(composite.metadata, points);
+      const mappings = bindingsToMappings(bindings);
+
+      it("derived mappings cover the same point set as the original metadata", () => {
+        expect(legacyV2PointSet(mappings)).toEqual(
+          legacyV2PointSet(composite.metadata),
+        );
+      });
+
+      it("re-converting the derived mappings yields identical bindings (lossless)", () => {
+        const reconverted = convertCompositeToBindings(mappings, points);
+        expect(reconverted).toEqual(bindings);
+      });
+
+      it("derived blob is the frozen {version:2, mappings} shape", () => {
+        expect(mappings.version).toBe(2);
+        expect(typeof mappings.mappings).toBe("object");
+      });
+    });
+  }
+
+  it("groups by role and orders each bucket by ordinal", () => {
+    const out = bindingsToMappings([
+      { role: "grid", pointSystemId: 2, pointId: 8, ordinal: 3 },
+      { role: "solar", pointSystemId: 3, pointId: 1, ordinal: 0 },
+      { role: "battery", pointSystemId: 2, pointId: 5, ordinal: 1 },
+      { role: "battery", pointSystemId: 6, pointId: 0, ordinal: 2 },
+    ]);
+    // First-occurrence (by ordinal) gives role order solar, battery, grid.
+    expect(Object.keys(out.mappings)).toEqual(["solar", "battery", "grid"]);
+    expect(out.mappings.battery).toEqual(["2.5", "6.0"]);
+    expect(out.mappings.grid).toEqual(["2.8"]);
+  });
 });
 
 describe("convertCompositeToBindings — base_system/overrides round-trip (synthetic, no prod rows)", () => {

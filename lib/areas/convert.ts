@@ -52,7 +52,7 @@ export interface AreaBindingDraft {
   transform: string | null;
 }
 
-interface V2Metadata {
+export interface V2Metadata {
   version: 2;
   mappings: Record<string, string[]>;
 }
@@ -128,6 +128,29 @@ export function convertCompositeToBindings(
       metadata,
     )?.slice(0, 200)}`,
   );
+}
+
+/**
+ * Inverse of {@link convertV2}: rebuild the frozen `{version:2, mappings}` blob from a composite's
+ * binding refs. Lets the readers (composite-config GET, admin listing) DERIVE the legacy metadata
+ * shape from `area_bindings` once bindings are authoritative — preserving the external contract while
+ * `systems.metadata` goes away. Sorted by `ordinal` so each role bucket reproduces the original order
+ * (ordinals were assigned role-by-role in metadata-key order, so first-occurrence keeps role order too).
+ */
+export function bindingsToMappings(
+  bindings: {
+    role: string;
+    pointSystemId: number;
+    pointId: number;
+    ordinal: number;
+  }[],
+): V2Metadata {
+  const ordered = [...bindings].sort((a, b) => a.ordinal - b.ordinal);
+  const mappings: Record<string, string[]> = {};
+  for (const b of ordered) {
+    (mappings[b.role] ??= []).push(`${b.pointSystemId}.${b.pointId}`);
+  }
+  return { version: 2, mappings };
 }
 
 /**
