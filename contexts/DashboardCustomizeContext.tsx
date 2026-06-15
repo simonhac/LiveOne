@@ -16,6 +16,13 @@ interface DashboardCustomizeValue {
   isCustomizeOpen: boolean;
   openCustomize: () => void;
   closeCustomize: () => void;
+  /** True once the dashboard is loaded, sharing is enabled, and the caller owns it (P4). */
+  canShare: boolean;
+  setCanShare: (v: boolean) => void;
+  /** Open/close state for the Share dialog (P4). */
+  isShareOpen: boolean;
+  openShare: () => void;
+  closeShare: () => void;
 }
 
 const DashboardCustomizeContext = createContext<DashboardCustomizeValue | null>(
@@ -29,6 +36,8 @@ export function DashboardCustomizeProvider({
 }) {
   const [canCustomize, setCanCustomize] = useState(false);
   const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
+  const [canShare, setCanShare] = useState(false);
+  const [isShareOpen, setIsShareOpen] = useState(false);
   return (
     <DashboardCustomizeContext.Provider
       value={{
@@ -37,6 +46,11 @@ export function DashboardCustomizeProvider({
         isCustomizeOpen,
         openCustomize: () => setIsCustomizeOpen(true),
         closeCustomize: () => setIsCustomizeOpen(false),
+        canShare,
+        setCanShare,
+        isShareOpen,
+        openShare: () => setIsShareOpen(true),
+        closeShare: () => setIsShareOpen(false),
       }}
     >
       {children}
