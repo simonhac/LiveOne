@@ -52,8 +52,7 @@ interface SystemData {
   };
   status: "active" | "disabled" | "removed"; // System status
   location?: any; // Location data
-  metadata?: any; // Vendor-specific metadata (e.g., composite system configuration)
-  compositeSourceSystems?: Array<{ id: number; shortName: string | null }>; // Only present for composite systems
+  metadata?: any; // Vendor-specific metadata
   timezoneOffsetMin: number; // Timezone offset in minutes
   systemInfo?: SystemInfo | null;
   polling: {
@@ -77,31 +76,6 @@ interface SystemData {
     gridPower: number;
     timestamp: string;
   } | null;
-}
-
-/**
- * Format composite source systems for display
- * Uses shortnames where available, falls back to "ID: X" format
- * - "(drawn from kinkora)"
- * - "(drawn from kinkora and hawthorn)"
- * - "(drawn from kinkora, hawthorn and ID: 3)"
- */
-function formatCompositeSourceSystems(
-  systems: Array<{ id: number; shortName: string | null }> | undefined,
-): string {
-  if (!systems || systems.length === 0) return "(no systems)";
-
-  // Format each system: use shortname if available, otherwise "ID: X"
-  const formatted = systems.map((s) => s.shortName || `ID: ${s.id}`);
-
-  if (formatted.length === 1) return `(drawn from ${formatted[0]})`;
-  if (formatted.length === 2)
-    return `(drawn from ${formatted[0]} and ${formatted[1]})`;
-
-  // Three or more: "(drawn from kinkora, hawthorn and ID: 3)"
-  const allButLast = formatted.slice(0, -1).join(", ");
-  const last = formatted[formatted.length - 1];
-  return `(drawn from ${allButLast} and ${last})`;
 }
 
 interface AdminDashboardClientProps {
@@ -534,12 +508,7 @@ export default function AdminDashboardClient({
                             <div className="flex flex-col gap-0.5">
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-gray-400 group-hover:text-blue-400 transition-colors">
-                                  {system.vendor.type === "composite" &&
-                                  system.compositeSourceSystems
-                                    ? formatCompositeSourceSystems(
-                                        system.compositeSourceSystems,
-                                      )
-                                    : `${system.vendor.type}/${system.vendor.siteId}`}
+                                  {`${system.vendor.type}/${system.vendor.siteId}`}
                                 </span>
                                 {system.systemInfo && (
                                   <div onClick={(e) => e.preventDefault()}>

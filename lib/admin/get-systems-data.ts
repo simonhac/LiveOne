@@ -14,7 +14,6 @@ import {
   SystemSummary,
   SystemSummariesMap,
 } from "@/lib/system-summary-store";
-import { getCompositeBindingRefs } from "@/lib/areas/bindings";
 
 export interface SystemData {
   systemId: number;
@@ -35,7 +34,6 @@ export interface SystemData {
   };
   location?: any;
   metadata?: any;
-  compositeSourceSystems?: Array<{ id: number; alias: string | null }>;
   status: "active" | "disabled" | "removed";
   timezoneOffsetMin: number;
   systemInfo?: {
@@ -74,29 +72,6 @@ export interface AdminSystemsResult {
   totalSystems: number;
   timestamp: string;
   latestValuesIncluded: boolean;
-}
-
-/**
- * Extract all source (child) systems a composite draws points from, derived from its authoritative
- * `area_bindings` (keyed by the composite's legacy_system_id).
- */
-async function getCompositeSourceSystems(
-  compositeSystemId: number,
-): Promise<Array<{ id: number; alias: string | null }>> {
-  const refs = await getCompositeBindingRefs(compositeSystemId);
-
-  const systemsMap = new Map<number, { id: number; alias: string | null }>();
-  const systemsManager = SystemsManager.getInstance();
-
-  for (const ref of refs) {
-    if (systemsMap.has(ref.pointSystemId)) continue;
-    const system = await systemsManager.getSystem(ref.pointSystemId);
-    if (system) {
-      systemsMap.set(ref.pointSystemId, { id: system.id, alias: system.alias });
-    }
-  }
-
-  return Array.from(systemsMap.values()).sort((a, b) => a.id - b.id);
 }
 
 /**
@@ -196,7 +171,11 @@ export async function getAdminSystemsData(
   const { latestValuesTimeoutMs = 100, skipLatestValues = false } = options;
 
   const systemsManager = SystemsManager.getInstance();
-  const allSystems = await systemsManager.getAllSystems();
+  // Only real (physical, polled) systems belong in the admin Systems list. Composites are
+  // areas-backed virtual systems (synthesized by getAllSystems) and live on /admin/areas.
+  const allSystems = (await systemsManager.getAllSystems()).filter(
+    (s) => s.vendorType !== "composite",
+  );
 
   // Get unique owner user IDs to fetch user info in batch
   const ownerUserIds = [
@@ -293,11 +272,6 @@ export async function getAdminSystemsData(
       ? userCache.get(system.ownerClerkUserId)
       : null;
 
-    const compositeSourceSystems =
-      system.vendorType === "composite"
-        ? await getCompositeSourceSystems(system.id)
-        : undefined;
-
     systemsData.push({
       systemId: system.id,
       owner: {
@@ -317,7 +291,6 @@ export async function getAdminSystemsData(
       },
       location: system.location,
       metadata: system.metadata,
-      compositeSourceSystems,
       status: system.status as "active" | "disabled" | "removed",
       timezoneOffsetMin: system.timezoneOffsetMin,
       systemInfo: {
