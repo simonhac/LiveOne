@@ -104,6 +104,13 @@ export async function getSystemCredentials(
   userId: string,
   systemId: number,
 ): Promise<VendorCredentials | null> {
+  // Ownerless systems (e.g. openelectricity) authenticate with an app-wide env
+  // key and have no Clerk user — short-circuit before getUser() throws
+  // "A valid resource ID is required." The minutely cron already rejects
+  // per-user vendors with no owner upstream, so reaching here ownerless is a
+  // legitimate app-credential vendor that returns null and polls anyway.
+  if (!userId) return null;
+
   try {
     const client = await clerkClient();
     const user = await client.users.getUser(userId);
