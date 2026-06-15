@@ -19,7 +19,7 @@ import GeneratorRunsCard from "@/components/GeneratorRunsCard";
 import { useTileNodes } from "@/app/components/cards/useTileNodes";
 import DashboardCustomizeDialog from "@/components/DashboardCustomizeDialog";
 import DashboardShareDialog from "@/components/DashboardShareDialog";
-import DashboardLocationDialog from "@/components/DashboardLocationDialog";
+import AreaLocationDialog from "@/components/AreaLocationDialog";
 import { useDashboardCustomize } from "@/contexts/DashboardCustomizeContext";
 import {
   buildDefaultDescriptor,
@@ -483,9 +483,9 @@ export default function DashboardClient({
       )}
 
       {/* Location dialog — opened from the header "Location…" menu item (owner-only). Sets the
-          site's NEM region for the Local Grid card. */}
+          site's (Area's) location → NEM region for the Local Grid card. */}
       {data && systemId && (
-        <DashboardLocationDialog
+        <AreaLocationDialog
           isOpen={isLocationOpen}
           onClose={closeLocation}
           systemId={systemId}

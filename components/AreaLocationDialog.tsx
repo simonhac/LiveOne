@@ -12,8 +12,9 @@ import {
 } from "@/lib/vendors/openelectricity/region";
 
 /**
- * Owner-only dialog to set a dashboard's physical location (state + optional postcode), which DERIVES
- * the NEM region for the "Local Grid (NEM)" card. Talks to GET/PUT `/api/dashboard/[systemId]/location`.
+ * Owner-only dialog to set a SITE's physical location (state + optional postcode) — a property of the
+ * Area, not the dashboard. DERIVES the NEM region for the "Local Grid (NEM)" card. Talks to GET/PUT
+ * `/api/systems/[systemId]/location` (keyed on systemId → its Area while addressing is integer-based).
  * The derived region is previewed live (reusing `nemRegionForLocation` — the single source of truth),
  * and a successful save calls `router.refresh()` so the server re-resolves the grid context.
  *
@@ -32,7 +33,7 @@ const AU_STATES = [
   "NT",
 ] as const;
 
-export default function DashboardLocationDialog({
+export default function AreaLocationDialog({
   isOpen,
   onClose,
   systemId,
@@ -60,7 +61,7 @@ export default function DashboardLocationDialog({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/dashboard/${systemId}/location`);
+      const res = await fetch(`/api/systems/${systemId}/location`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       setState((json.location?.state as string) ?? "");
@@ -96,7 +97,7 @@ export default function DashboardLocationDialog({
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/dashboard/${systemId}/location`, {
+      const res = await fetch(`/api/systems/${systemId}/location`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         // "" clears the field (see mergeAreaLocation). country is AU for the NEM.
@@ -134,7 +135,7 @@ export default function DashboardLocationDialog({
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="Set dashboard location"
+        aria-label="Set site location"
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-gray-700 px-5 py-3.5">

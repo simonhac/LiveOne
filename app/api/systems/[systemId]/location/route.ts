@@ -14,10 +14,14 @@ import { SystemsManager } from "@/lib/systems-manager";
 import type { AreaLocation } from "@/lib/areas/types";
 
 /**
- * Owner-facing editor for a dashboard's physical location (`areas.location`), which DERIVES the NEM
- * grid region for the Local Grid card (lib/grid/context.ts). Keyed on `systemId` like the rest of the
- * dashboard API; resolves the system's Area (identity or composite) and, for a physical system that
- * predates the runtime identity-Area seam, heals it via `ensureIdentityArea`.
+ * Owner-facing editor for a SITE's physical location. Location is a property of the **Area** (the
+ * semantic site), not of a dashboard — a dashboard can show cards from multiple Areas (per-card
+ * `area_id` override), so it has no single location. Stored on `areas.location`; DERIVES the NEM grid
+ * region for the Local Grid card (lib/grid/context.ts), which itself resolves region per-Area.
+ *
+ * Keyed on `systemId` (all addressing is still integer-systemId today): resolves the system's Area
+ * (identity or composite) and, for a physical system that predates the runtime identity-Area seam,
+ * heals it via `ensureIdentityArea`.
  *
  * GET: read access. PUT: owner/admin write — merge-patches the location and returns the derived region.
  */
