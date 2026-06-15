@@ -1,18 +1,15 @@
 /**
- * Write side of the P3 Areas tables: turn a composite's metadata into typed `area_bindings` rows.
+ * Write side of the P3 Areas tables: create composite Areas and write their typed `area_bindings`.
  *
- * Shared by the one-off backfill (scripts/migrate-composites-to-areas.ts) and the composite editor
- * (create/PATCH composite → write the authoritative bindings). Idempotent per composite: ensures the
- * composite Area exists (located by legacy_system_id) and replaces its bindings transactionally.
+ * A composite Area carries an integer addressing handle (`legacy_system_id`) the rest of the app keys
+ * on — `getSystem(handle)` resolves to the synthesized virtual system (lib/systems-manager.ts), so a
+ * composite needs no `systems` row. New composites are areas-only, with a handle allocated from a
+ * dedicated high range. Bindings are the authoritative role→point mapping; the composite editor
+ * converts the edited `{version:2, mappings}` blob straight to bindings here.
  */
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import {
-  areas,
-  areaBindings,
-  pointInfo,
-  systems,
-} from "@/lib/db/planetscale/schema";
-import { and, eq } from "drizzle-orm";
+import { areas, areaBindings, pointInfo } from "@/lib/db/planetscale/schema";
+import { and, eq, gte, max } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import {
   convertCompositeToBindings,
@@ -21,6 +18,13 @@ import {
 } from "@/lib/areas/convert";
 
 type Db = ReturnType<typeof requirePlanetscaleDb>;
+
+/**
+ * Composite addressing handles live at 100000+, above the systems serial (prod) and the dev-id range
+ * (10000+, see SystemsManager.insertSystemToPg), so a composite's `legacy_system_id` never collides
+ * with a real `systems.id`.
+ */
+const COMPOSITE_HANDLE_START = 100000;
 
 /** Transactionally replace an Area's bindings with `drafts`. Shared by the sync entry points. */
 async function replaceAreaBindings(
@@ -63,7 +67,7 @@ async function loadAllPointInfo(
   return rows;
 }
 
-/** Locate the composite Area for a system (by legacy_system_id), or null if not yet created. */
+/** Locate the composite Area for a system handle (by legacy_system_id), or null if none. */
 export async function getCompositeAreaId(
   systemId: number,
   db = requirePlanetscaleDb(),
@@ -77,106 +81,74 @@ export async function getCompositeAreaId(
 }
 
 /**
- * Ensure a composite Area row exists for `composite`, returning its id. The Area mirrors the
- * composite shim row's identity fields; `legacy_system_id` is the 1:1 seam back to systems.id.
+ * Create a new composite Area with a fresh integer addressing handle (`legacy_system_id`) from the
+ * dedicated high range. Returns `{ areaId, systemId }`. No `systems` row is created — the composite is
+ * resolved via SystemsManager's areas-backed synthesis. The `areas_legacy_system_unique` index guards
+ * against a concurrent-create handle collision (the loser gets a unique violation).
  */
-export async function ensureCompositeArea(
-  composite: typeof systems.$inferSelect,
-  db = requirePlanetscaleDb(),
-): Promise<string> {
-  const existing = await getCompositeAreaId(composite.id, db);
-  if (existing) return existing;
-  const id = uuidv7();
+export async function createCompositeArea(
+  params: {
+    ownerClerkUserId: string;
+    displayName: string;
+    alias?: string | null;
+    timezoneOffsetMin?: number;
+    displayTimezone?: string;
+  },
+  db: Db = requirePlanetscaleDb(),
+): Promise<{ areaId: string; systemId: number }> {
+  const [row] = await db
+    .select({ maxHandle: max(areas.legacySystemId) })
+    .from(areas)
+    .where(gte(areas.legacySystemId, COMPOSITE_HANDLE_START));
+  const maxHandle = row?.maxHandle ?? null;
+  const systemId =
+    maxHandle && maxHandle >= COMPOSITE_HANDLE_START
+      ? maxHandle + 1
+      : COMPOSITE_HANDLE_START;
+
+  const areaId = uuidv7();
   await db.insert(areas).values({
-    id,
-    ownerClerkUserId: composite.ownerClerkUserId,
+    id: areaId,
+    ownerClerkUserId: params.ownerClerkUserId,
     kind: "composite",
     sourceSystemId: null,
-    legacySystemId: composite.id,
-    displayName: composite.displayName,
-    alias: composite.alias,
-    timezoneOffsetMin: composite.timezoneOffsetMin,
-    displayTimezone: composite.displayTimezone,
-    status: composite.status,
+    legacySystemId: systemId,
+    displayName: params.displayName,
+    alias: params.alias ?? null,
+    timezoneOffsetMin: params.timezoneOffsetMin ?? 600,
+    displayTimezone: params.displayTimezone ?? "Australia/Melbourne",
   });
-  return id;
+  return { areaId, systemId };
 }
 
-/** Locate the identity Area for a system (by legacy_system_id), or null if not yet created. */
-export async function getIdentityAreaId(
+/**
+ * Update a composite's identity fields on its `areas` row (the editable equivalent of
+ * `SystemsManager.updateSystem` for an areas-backed composite). Located by `legacy_system_id`. The
+ * caller is responsible for invalidating the SystemsManager cache afterwards.
+ */
+export async function updateCompositeArea(
   systemId: number,
+  patch: Partial<{
+    displayName: string;
+    alias: string | null;
+    status: string;
+    timezoneOffsetMin: number;
+    displayTimezone: string;
+  }>,
   db = requirePlanetscaleDb(),
-): Promise<string | null> {
-  const [row] = await db
-    .select({ id: areas.id })
-    .from(areas)
-    .where(and(eq(areas.legacySystemId, systemId), eq(areas.kind, "identity")))
-    .limit(1);
-  return row?.id ?? null;
-}
-
-/**
- * Ensure an identity Area row exists for `system`, returning its id. The Area is the 1:1 wrapper
- * for a physical system: it mirrors the system's identity fields, with `source_system_id` and
- * `legacy_system_id` both pointing back at systems.id.
- */
-export async function ensureIdentityArea(
-  system: typeof systems.$inferSelect,
-  db = requirePlanetscaleDb(),
-): Promise<string> {
-  const existing = await getIdentityAreaId(system.id, db);
-  if (existing) return existing;
-  const id = uuidv7();
-  await db.insert(areas).values({
-    id,
-    ownerClerkUserId: system.ownerClerkUserId,
-    kind: "identity",
-    sourceSystemId: system.id,
-    legacySystemId: system.id,
-    displayName: system.displayName,
-    alias: system.alias,
-    timezoneOffsetMin: system.timezoneOffsetMin,
-    displayTimezone: system.displayTimezone,
-    status: system.status,
-  });
-  return id;
-}
-
-/**
- * Replace a composite's `area_bindings` from its current `systems.metadata`, transactionally.
- * Returns the number of bindings written. Throws (via the converter) on an unrecognised metadata
- * shape — callers should let that abort the backfill / surface in the editor.
- */
-export async function syncCompositeBindings(systemId: number): Promise<number> {
-  const db = requirePlanetscaleDb();
-  const [composite] = await db
-    .select()
-    .from(systems)
-    .where(eq(systems.id, systemId))
-    .limit(1);
-  if (!composite)
-    throw new Error(`syncCompositeBindings: system ${systemId} not found`);
-  if (composite.vendorType !== "composite") {
-    throw new Error(
-      `syncCompositeBindings: system ${systemId} is not a composite`,
+): Promise<void> {
+  await db
+    .update(areas)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(
+      and(eq(areas.legacySystemId, systemId), eq(areas.kind, "composite")),
     );
-  }
-
-  const points = await loadAllPointInfo(db);
-  const drafts = convertCompositeToBindings(composite.metadata, points);
-
-  const areaId = await ensureCompositeArea(composite, db);
-  await replaceAreaBindings(db, areaId, drafts);
-
-  return drafts.length;
 }
 
 /**
- * Replace a composite's `area_bindings` from a `{version:2, mappings}` blob passed by the caller —
- * WITHOUT re-reading `systems.metadata`. This is the bindings-authoritative write path (the composite
- * editor): bindings are the source of truth, so the editor converts the edited mappings straight to
- * bindings here. The composite Area must already exist (it's backfilled); throws otherwise. Returns
- * the number of bindings written.
+ * Replace a composite's `area_bindings` from a `{version:2, mappings}` blob — the bindings-authoritative
+ * write path (composite create + editor). The composite Area must already exist; throws otherwise.
+ * Returns the number of bindings written.
  */
 export async function syncCompositeBindingsFromMappings(
   systemId: number,

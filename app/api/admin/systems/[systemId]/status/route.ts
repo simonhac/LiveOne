@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { systems } from "@/lib/db/planetscale/schema";
-import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { clearDefaultForAllUsers } from "@/lib/user-preferences";
 import { SystemsManager } from "@/lib/systems-manager";
+import { updateCompositeArea } from "@/lib/areas/sync";
 
 export async function PATCH(
   request: NextRequest,
@@ -33,21 +31,21 @@ export async function PATCH(
       );
     }
 
-    // Confirm the system exists before updating (preserves the prior 404 that the
-    // .returning() row count provided — updateSystem returns void).
-    const [existingSystem] = await requirePlanetscaleDb()
-      .select()
-      .from(systems)
-      .where(eq(systems.id, systemId))
-      .limit(1);
+    // Resolve via SystemsManager — a composite resolves to its areas-backed virtual system.
+    const existingSystem =
+      await SystemsManager.getInstance().getSystem(systemId);
 
     if (!existingSystem) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
-    // Update system status. updateSystem honours CONFIG_WRITES_TO_PG and
-    // invalidates the SystemsManager cache; updatedAt is stamped to now.
-    await SystemsManager.getInstance().updateSystem(systemId, { status });
+    // Update status on the right store: a composite's `areas` row, otherwise the `systems` row.
+    if (existingSystem.vendorType === "composite") {
+      await updateCompositeArea(systemId, { status });
+      SystemsManager.invalidateCache();
+    } else {
+      await SystemsManager.getInstance().updateSystem(systemId, { status });
+    }
 
     // Clear default system preference for all users if system is being removed
     if (status === "removed") {
