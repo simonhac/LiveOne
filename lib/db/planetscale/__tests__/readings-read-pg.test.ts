@@ -58,8 +58,16 @@ describe("fetchSinglePointReadingsPg", () => {
   it.each(["raw", "5m", "daily"])(
     "runs one query and returns its rows for source=%s",
     async (source) => {
+      // Include `receivedTime` — the raw branch coerces it via Number(), so a row without it
+      // would map to receivedTime: NaN. Real raw rows always carry received_time.
       const canned = [
-        { intervalEnd: 1, measurementTime: 1, date: "x", avg: 1 },
+        {
+          intervalEnd: 1,
+          measurementTime: 1,
+          receivedTime: 1,
+          date: "x",
+          avg: 1,
+        },
       ];
       const { db, calls } = makeFakeDb(canned);
       mockDb = db;
