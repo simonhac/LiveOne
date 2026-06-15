@@ -38,6 +38,8 @@ export function splitPhysicalPathTail(path: string): string[] {
   return path.split("/");
 }
 
-// Legacy aliases for backwards compatibility
+// Legacy aliases for backwards compatibility — no internal consumers remain.
+/** @deprecated Use {@link isValidPhysicalPathTail}. Slated for removal. */
 export const isValidPhysicalPath = isValidPhysicalPathTail;
+/** @deprecated Use {@link splitPhysicalPathTail}. Slated for removal. */
 export const splitPhysicalPath = splitPhysicalPathTail;

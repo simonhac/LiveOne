@@ -8,10 +8,22 @@
 
 ---
 
-> **✅ UPDATE 2026-06-15 (post-cutover):** P3-tail-1 is **complete** — `flow_1d.system_id` dropped
-> (migration `0013`, PR #87) and the `logical-system` loud-skip shipped, both live on prod + dev. The
-> reframing below still holds for what _remains_: the destructive SQL is mostly done, but the
-> composite-`systems`-row delete still hinges on the unstarted **integer→area addressing prerequisite**.
+> **✅ UPDATE 2026-06-15 (post #89–#92 — the composite retirement SHIPPED; supersedes the table + reframing below):**
+> The composite-as-system retirement is **done**. PRs #89–#92 made `area_bindings` authoritative (#89),
+> dropped the composite-related FKs and **DELETEd the composite `systems` rows** (migration `0014`, #90),
+> **retired the `AREAS_TABLE` flag** + dead metadata fallbacks (#91), and moved composite CREATE/admin
+> routes to areas-only while stripping `CompositeAdapter` (#92). The "LARGE, unstarted integer→area
+> addressing prerequisite" the reframing below treats as the gate was **solved differently**: composites
+> are now **areas-backed virtual systems** synthesized by `SystemsManager.synthesizeCompositeSystem`
+> keyed on `areas.legacy_system_id`, so integer addressing is preserved with **no UUID rewrite** — the
+> DELETE shipped without 404ing composite requests.
+>
+> **What actually remains (post-soak schema cleanup only, all gated on the soak + approval):** drop
+> `areas.legacy_system_id` + its unique index (and re-key the remaining integer handles —
+> `device_trackers.system_id`, `device_run_periods.system_id`, `dashboards.system_id`→`area_id`) once
+> the synthesized-virtual-system path has soaked and call sites move off the integer handle. Schema
+> source of truth: `lib/db/planetscale/schema.ts`. **The status table + "Headline reframing" below are
+> retained for history but are no longer current.**
 
 ## ⟳ REFRESH 2026-06-15 (re-verified against `main` @ `3618de5`, post chart-generalization #80–#85)
 
@@ -72,8 +84,8 @@ gates the row delete; the DELETE itself is trivial by comparison.
 - **Missing primitives** Phase A needs: a bindings→`{version:2,mappings}` **reverse converter**
   (`lib/areas/convert.ts` is forward-only) and `syncCompositeBindingsFromMappings` (current
   `syncCompositeBindings` still re-reads `metadata`).
-- **Second column-skew surface:** `scripts/seed-preview-db.ts` COPYs flow*1d via `SELECT *` (column
-  \_position* sensitive) in addition to `sync-prod-to-dev.ts` — pause **both** across the 0013 window.
+- **Second column-skew surface:** `scripts/seed-preview-db.ts` COPYs flow*1d via `SELECT *`(column
+\_position* sensitive) in addition to`sync-prod-to-dev.ts` — pause **both** across the 0013 window.
 
 ### Recommended next steps (the cheap, safe spine) — ✅ BOTH SHIPPED 2026-06-15 (PR #87)
 

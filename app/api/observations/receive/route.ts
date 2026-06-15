@@ -214,9 +214,9 @@ async function insert5mObservations(
   if (rows.length === 0) return { inserted: 0, skipped };
 
   // Conflict handling depends on who OWNS this system's 5m in PG:
-  //  - RAW vendors (useUpsert=false): the PG recompute (AGG_COMPUTE_IN_PG) recomputes 5m from PG
-  //    raw right after this insert, so it owns the values. Keep onConflictDoNothing (first-write-
-  //    wins) to stay idempotent on re-delivery and avoid out-of-order upsert hazards.
+  //  - RAW vendors (useUpsert=false): the PG recompute recomputes 5m from PG raw right after this
+  //    insert, so it owns the values. Keep onConflictDoNothing (first-write-wins) to stay
+  //    idempotent on re-delivery and avoid out-of-order upsert hazards.
   //  - 5m-NATIVE vendors (useUpsert=true, Amber/Enphase): there is NO raw and NO recompute — the
   //    queue copy IS the value. Amber re-publishes late `updateUsage` refinements (estimated →
   //    billable), so we must UPSERT to overwrite the earlier stale interval; onConflictDoNothing

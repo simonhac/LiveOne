@@ -466,8 +466,8 @@ export const shareTokens = pgTable(
 // A poll's built QueueMessage(s) are recorded here durably; a relay
 // (app/api/cron/relay-outbox) drains unpublished rows to QStash and marks them
 // published once accepted. This makes raw durability live on Postgres —
-// see docs/architecture/engine-web-separation.md §6.4. Gated by WRITE_OUTBOX; written
-// in parallel with (a tee of) the live direct enqueue during the soak.
+// see docs/architecture/engine-web-separation.md §6.4. Written as a tee in
+// parallel with the live direct enqueue.
 // ============================================================================
 export const observationsOutbox = pgTable(
   "observations_outbox",
@@ -513,8 +513,8 @@ export const observationsOutbox = pgTable(
 //
 // `area_id` (P3, additive/forward-only) links the dashboard to the Area that is its
 // data context — the system's identity Area, or a composite Area. Resolved server-side
-// from `system_id` on save (1:1 today, so it changes no behaviour); NULL when AREAS_TABLE
-// is off / not yet backfilled. `(clerk_user_id, system_id)` stays the authoritative access
+// from `system_id` on save (1:1 today, so it changes no behaviour); NULL when no Area has
+// been backfilled for the system yet. `(clerk_user_id, system_id)` stays the authoritative access
 // key through the soak; this column is the seam P4 (multiple named dashboards per Area +
 // per-dashboard sharing) rotates on. ON DELETE SET NULL so dropping an Area never deletes a
 // user's customization.
@@ -725,7 +725,7 @@ export const areaBindings = pgTable(
 // One tracker per (system, role) defines how to recognise "running" for a device: an HA-style
 // threshold helper over a chosen power point (lower/upper bound + hysteresis deadband) plus
 // anti-flap delays (delay_on/delay_off). The signal + energy points are referenced explicitly
-// (decision: "choose any power point"), independent of area_bindings / the AREAS_TABLE flag.
+// (decision: "choose any power point"), independent of area_bindings.
 // Null behaviour columns inherit per-role code defaults (lib/run-tracking/defaults.ts).
 // `system_id` is the logical system (== areas.legacy_system_id seam); `area_id` is a nullable
 // forward-only seam to be backfilled when identity Areas land. See docs (run-tracking).

@@ -390,7 +390,6 @@ async function getSystemHistoryInOpenNEMFormat(
     interval === "30m" ? firstEpoch - 25 * 60 * 1000 : firstEpoch;
 
   // Serve from Postgres: read the window and build the OpenNEM series via the shared transform.
-  void enableDebug; // legacy SQL-template debug capture removed (Phase 5)
   const rows = await fetchAggRowsPg({
     uniquePairs: uniquePairsArray,
     interval,

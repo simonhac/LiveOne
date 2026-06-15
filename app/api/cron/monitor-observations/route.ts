@@ -56,7 +56,7 @@ const QUEUE_LAG_MAX = num(process.env.MONITOR_QUEUE_LAG_MAX, 1000);
 const DLQ_ALERT = num(process.env.MONITOR_DLQ_ALERT, 50); // DLQ ≥ this ⇒ alert (any DLQ ⇒ warn)
 // Outbox relay (Phase 4): a healthy relay keeps the unpublished backlog ≈ 0 and
 // the oldest unpublished row fresh. A growing backlog / aging row ⇒ the relay is
-// stalled. Inert until WRITE_OUTBOX is on (backlog stays 0 otherwise).
+// stalled.
 const OUTBOX_BACKLOG_MAX = num(process.env.MONITOR_OUTBOX_BACKLOG_MAX, 500);
 const OUTBOX_STALE_MINUTES = num(process.env.MONITOR_OUTBOX_STALE_MINUTES, 10);
 

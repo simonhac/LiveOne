@@ -21,7 +21,7 @@
 ## Reference
 
 - [architecture/points.md](architecture/points.md) — point model: paths, identity, composite rules
-- [architecture/areas-and-dashboards.md](architecture/areas-and-dashboards.md) — **proposed** redesign: split physical/semantic/presentation into Systems → Areas → Dashboards (HA-aligned, Apple-Home UX); replaces composite-as-system
+- [architecture/areas-and-dashboards.md](architecture/areas-and-dashboards.md) — **live (P0–P3)**: splits physical/semantic/presentation into Systems → Areas → Dashboards (HA-aligned, Apple-Home UX); replaced composite-as-system (composites are now areas-backed virtual systems). P4 sharing + P5 HA export ongoing
 - [architecture/authentication.md](architecture/authentication.md) — Clerk, roles, API auth functions
 - [architecture/kv-store.md](architecture/kv-store.md) — KV cache keys, subscription registry
 - [architecture/load-calcs.md](architecture/load-calcs.md) — "rest of house" load calculation
@@ -36,20 +36,25 @@
 
 ## Plans (proposed — not yet started)
 
-- [plans/chart-card-generalization.md](plans/chart-card-generalization.md) — merge the two chart components (EnergyChart lines + SitePowerChart stacked-areas) into one instance-id'd `chart` card so a dashboard can show either or both; next phase after the P1–P7 card-uniformity work
-- [plans/composite-fast-cache.md](plans/composite-fast-cache.md) — make a newly-mapped composite point's card appear instantly on save (prototyped + reverted)
 - [plans/timestamptz-migration.md](plans/timestamptz-migration.md) — migrate time-series time columns to `timestamptz` (needs schema-change approval)
 
 ## Deferred work
 
-- [deferred/generator-events-rewrite.md](deferred/generator-events-rewrite.md) — bounded-range rewrite owed before its PG migration
-- [deferred/history-api-unification-plan.md](deferred/history-api-unification-plan.md) — unify composite/non-composite history paths
+- [deferred/areas-p3-tail-and-p4-plan.md](deferred/areas-p3-tail-and-p4-plan.md) — remaining Areas schema tail (post-soak `legacy_system_id`/`system_id` re-key) + P4 sharing plan
 - [deferred/postgres-integration-test-harness.md](deferred/postgres-integration-test-harness.md) — re-point legacy-seeded/flag-gated test suites to Postgres
 
 ## Records (append-only; never "stale")
 
 - [project-history.md](project-history.md) — feature/architecture timeline
 - incidents/ — [2025-11-11 migration 0035](incidents/2025-11-11-migration-0035-point-readings-corruption.md) · [2025-11-17 migration 0016](incidents/2025-11-17-migration-0016-point-info-corruption.md)
+
+## Removed 2026-06-15 (in git history if needed)
+
+`plans/chart-card-generalization.md` (shipped #80–#85), `plans/composite-fast-cache.md`
+(prototype reverted; mechanics now obsolete — composite config moved to `area_bindings`),
+`deferred/generator-events-rewrite.md` (resolved by run-tracking #58),
+`deferred/history-api-unification-plan.md` (obsolete — the history route is already unified, no
+composite branch remains).
 
 ## Removed 2026-06-10 (in git history if needed)
 

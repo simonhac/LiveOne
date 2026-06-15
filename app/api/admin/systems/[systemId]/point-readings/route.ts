@@ -192,52 +192,21 @@ export async function GET(
       headers[`point_${p.index}`] = pointInfoObj;
     });
 
-    // Build dynamic SQL for pivot query based on data source.
-    let pivotQuery: string;
+    // Build the per-point pivot columns (the MAX(CASE WHEN ...) projections) for the data source.
+    // The surrounding query (cursor/order/limit) is built by fetchAdminPivotRowsPg from the params
+    // below — only these column projections are passed through.
     let pivotColumns = "";
 
     if (source === "daily") {
-      // Query daily aggregated data
+      // Daily aggregated data
       pivotColumns = points
         .map((p) => {
           const aggCol = getAggColumn(p.metricType, p.transform, source);
           return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.index} THEN pr.${aggCol} END) as point_${p.index}`;
         })
         .join(",\n  ");
-
-      // Build cursor filter (day is in YYYYMMDD format)
-      const cursorFilter = cursor
-        ? direction === "older"
-          ? `AND day < '${cursor}'`
-          : `AND day > '${cursor}'`
-        : "";
-
-      // For "newer" direction, we need to reverse the order to get the correct records
-      const orderDirection = direction === "newer" && cursor ? "ASC" : "DESC";
-
-      pivotQuery = `
-        WITH recent_days AS (
-          SELECT DISTINCT day
-          FROM point_readings_agg_1d pr
-          INNER JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
-          WHERE pi.system_id = ${systemId}
-          ${cursorFilter}
-          ORDER BY day ${orderDirection}
-          LIMIT ${limit}
-        )
-        SELECT
-          pr.day as measurement_time,
-          NULL as session_id,
-          NULL as session_label,
-          ${pivotColumns}
-        FROM point_readings_agg_1d pr
-        WHERE pr.system_id = ${systemId}
-          AND pr.day IN (SELECT day FROM recent_days)
-        GROUP BY pr.day
-        ORDER BY pr.day DESC
-      `;
     } else if (source === "5m") {
-      // Query 5-minute aggregated data
+      // 5-minute aggregated data
       pivotColumns = points
         .map((p) => {
           // For text fields, use value_str; for numeric fields, use the appropriate aggregate column
@@ -248,81 +217,15 @@ export async function GET(
           return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.index} THEN pr.${aggCol} END) as point_${p.index}`;
         })
         .join(",\n  ");
-
-      // Build cursor filter
-      const cursorFilter = cursor
-        ? direction === "older"
-          ? `AND interval_end < ${cursor}`
-          : `AND interval_end > ${cursor}`
-        : "";
-
-      // For "newer" direction, we need to reverse the order to get the correct records
-      const orderDirection = direction === "newer" && cursor ? "ASC" : "DESC";
-
-      pivotQuery = `
-        WITH recent_timestamps AS (
-          SELECT DISTINCT interval_end
-          FROM point_readings_agg_5m pr
-          INNER JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
-          WHERE pi.system_id = ${systemId}
-          ${cursorFilter}
-          ORDER BY interval_end ${orderDirection}
-          LIMIT ${limit}
-        )
-        SELECT
-          pr.interval_end as measurement_time,
-          pr.session_id,
-          s.session_label,
-          ${pivotColumns}
-        FROM point_readings_agg_5m pr
-        LEFT JOIN sessions s ON s.id = CAST(pr.session_id AS TEXT)
-        WHERE pr.system_id = ${systemId}
-          AND pr.interval_end IN (SELECT interval_end FROM recent_timestamps)
-        GROUP BY pr.interval_end, pr.session_id
-        ORDER BY pr.interval_end DESC, pr.session_id
-      `;
     } else {
-      // Query raw point readings
+      // Raw point readings
       pivotColumns = points
         .map((p) => {
-          // For text fields, use valueStr; for others, use value
+          // For text fields, use value_str; for others, use value
           const column = p.metricUnit === "text" ? "pr.value_str" : "pr.value";
           return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.index} THEN ${column} END) as point_${p.index}`;
         })
         .join(",\n  ");
-
-      // Build cursor filter
-      const cursorFilter = cursor
-        ? direction === "older"
-          ? `AND measurement_time < ${cursor}`
-          : `AND measurement_time > ${cursor}`
-        : "";
-
-      // For "newer" direction, we need to reverse the order to get the correct records
-      const orderDirection = direction === "newer" && cursor ? "ASC" : "DESC";
-
-      pivotQuery = `
-        WITH recent_timestamps AS (
-          SELECT DISTINCT measurement_time
-          FROM point_readings pr
-          INNER JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
-          WHERE pi.system_id = ${systemId}
-          ${cursorFilter}
-          ORDER BY measurement_time ${orderDirection}
-          LIMIT ${limit}
-        )
-        SELECT
-          pr.measurement_time,
-          pr.session_id,
-          s.session_label,
-          ${pivotColumns}
-        FROM point_readings pr
-        LEFT JOIN sessions s ON s.id = CAST(pr.session_id AS TEXT)
-        WHERE pr.system_id = ${systemId}
-          AND pr.measurement_time IN (SELECT measurement_time FROM recent_timestamps)
-        GROUP BY pr.measurement_time, pr.session_id
-        ORDER BY pr.measurement_time DESC, pr.session_id
-      `;
     }
 
     // Transform raw pivot rows → the served `data` shape.
@@ -371,7 +274,6 @@ export async function GET(
       });
 
     // Serve the pivot from Postgres.
-    void pivotQuery; // the legacy raw-SQL pivot is no longer executed (Phase 5)
     const t0 = Date.now();
     const result = await fetchAdminPivotRowsPg({
       systemId,

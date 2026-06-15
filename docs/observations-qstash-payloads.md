@@ -81,18 +81,18 @@ Three flavours of readings message, by `interval`:
   - **5m-native vendors** (Enphase, Amber) produce NO raw readings, so their 5m is the only
     copy — it is **always published** and the receiver **upserts** it (late `updateUsage`
     refinements must overwrite).
-  - **Raw vendors** (Selectronic/Fusher/…): their 5m is **no longer published when
-    `AGG_COMPUTE_IN_PG` is on** (PR-13) — Postgres recomputes it from PG's own raw, so the
-    queue copy would be a redundant double-write. With `AGG_COMPUTE_IN_PG` off it is published
-    as before (and the receiver inserts it first-write-wins).
+  - **Raw vendors** (Selectronic/Fusher/…): their 5m is **not published** (since PR-13) —
+    Postgres recomputes it from PG's own raw, so the queue copy would be a redundant
+    double-write. (The `AGG_COMPUTE_IN_PG` flag that once toggled this was retired; the
+    recompute is now unconditional.)
 
 - **`1d`** — daily aggregates from the nightly cron. Same `agg` tuple, but `valueStr`/`dataQuality`
-  are unused (the daily table has no such columns). **No longer published when `AGG_COMPUTE_IN_PG`
-  is on** (PR-13) — Postgres recomputes 1d from its own 5m; published as before when the flag is off.
+  are unused (the daily table has no such columns). **Not published** (since PR-13) — Postgres
+  recomputes 1d from its own 5m.
 
-In short, on the queue today (`AGG_COMPUTE_IN_PG` on): **`raw` + sessions + 5m-native `5m`** always
-flow; **raw-vendor `5m`** and **`1d`** no longer do. A straggler of either still reaches the
-receiver harmlessly as a logged no-op.
+In short, on the queue today: **`raw` + sessions + 5m-native `5m`** always flow; **raw-vendor `5m`**
+and **`1d`** no longer do. A straggler of either still reaches the receiver harmlessly as a logged
+no-op.
 
 For aggregated observations the full `agg` tuple is sent so the Postgres mirror is full-fidelity
 rather than collapsing everything into the single `value` field. Raw observations omit `agg`.

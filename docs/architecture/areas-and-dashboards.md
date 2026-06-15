@@ -35,6 +35,12 @@ the points that dashboard's cards bind.
 
 ## Why (the problem)
 
+> **Historical framing (pre-June 2026).** This section describes the composite-as-system world that
+> motivated the redesign. Those mechanisms are now **removed**: composites are areas-backed virtual
+> systems, `area_bindings` is the authoritative role→point source, and the `CompositeAdapter`
+> pseudo-vendor (`lib/vendors/composite/adapter.ts`) + the `systems.metadata` composite shim are gone
+> (PRs #89–#92). Read the symptoms below as the _why_, not the current state.
+
 `systems` is the physical layer — one row per real, pollable installation (credentials, polling health,
 timezone). A **composite system** reuses that exact row to mean a _logical_ combination across devices.
 Stacking a logical (and presentation) concept onto the physical row produces five concrete symptoms:
@@ -323,8 +329,7 @@ payload.
 - `point_readings_flow_1d.system_id` + `app/api/energy-flow-matrix` key on the composite id → identity
   Areas + 1:1 id map + forward-only rename (gates P3). See `docs/architecture/energy-flow-matrix.md`.
 - `components/SitePowerChart` / `lib/site-data-processor.ts` / `lib/queries/siteData.ts` assume
-  `composite == system` (`isSiteVendor = vendorType==='mondo'||'composite'`). See also
-  `docs/deferred/history-api-unification-plan.md`.
+  `composite == system` (`isSiteVendor = vendorType==='mondo'||'composite'`).
 - KV keyspaces are system-id-keyed (`latest:system:{id}`, `subscriptions:system:{id}`,
   `system-summaries`; `lib/kv-cache-manager.ts`, `lib/system-summary-store.ts`) and the subscription
   registry is on the hot ingest path — refactor it last and watch summary freshness post-deploy. See
@@ -347,5 +352,4 @@ payload.
 - `docs/architecture/points.md` — point model, paths, current composite rules (superseded here).
 - `docs/architecture/energy-flow-matrix.md` — the logical-system / flow-matrix seam (P3 dependency).
 - `docs/architecture/kv-store.md` — KV keys + subscription registry (P3 dependency).
-- `docs/deferred/history-api-unification-plan.md` — unify composite/non-composite history paths.
 - `docs/architecture/data-model.md` — invariants; schema source of truth is the Drizzle schema.

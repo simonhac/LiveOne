@@ -9,7 +9,6 @@
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, areaBindings } from "@/lib/db/planetscale/schema";
 import { and, eq } from "drizzle-orm";
-import type { RoleId } from "@/lib/roles/registry";
 
 /** A composite Area's binding point refs, ordered by ordinal — the set the v2 mappings encoded. */
 export interface BindingRef {
@@ -44,35 +43,6 @@ export async function getCompositeBindingRefs(
   return rows;
 }
 
-/**
- * Per-metric source SYSTEM for a composite, derived from its bindings — the typed-table replacement
- * for `CompositeAdapter.getSourceForMetric` (override ?? base_system). A metric with no binding maps
- * to null, exactly as the adapter yields null when a source is absent.
- */
-export interface LiveSourceSystems {
-  solar: number | null;
-  battery: number | null;
-  battery_soc: number | null;
-  load: number | null;
-  grid: number | null;
-}
-
-export async function deriveLiveSourceSystems(
-  systemId: number,
-): Promise<LiveSourceSystems> {
-  const refs = await getCompositeBindingRefs(systemId);
-  const systemOf = (role: RoleId, metricType: string): number | null =>
-    refs.find((r) => r.role === role && r.metricType === metricType)
-      ?.pointSystemId ?? null;
-  return {
-    solar: systemOf("solar", "power"),
-    battery: systemOf("battery", "power"),
-    battery_soc: systemOf("battery", "soc"),
-    load: systemOf("load", "power"),
-    grid: systemOf("grid", "power"),
-  };
-}
-
 /** A flat row for rebuilding the KV subscription registry from SQL. */
 export interface CompositeBindingRow {
   compositeSystemId: number; // areas.legacy_system_id
@@ -83,8 +53,8 @@ export interface CompositeBindingRow {
 
 /**
  * All composite Areas' bindings, flattened with the composite's `legacy_system_id`. Drives
- * `buildSubscriptionRegistry` when `AREAS_TABLE` is on — the reverse `(point_system_id, point_id) →
- * composite` index, in SQL. Ordered so the per-composite enumeration is deterministic.
+ * `buildSubscriptionRegistry` — the reverse `(point_system_id, point_id) → composite` index, in
+ * SQL. Ordered so the per-composite enumeration is deterministic.
  */
 export async function getAllCompositeBindings(): Promise<
   CompositeBindingRow[]
