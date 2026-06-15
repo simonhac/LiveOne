@@ -7,7 +7,6 @@ import { storeSystemCredentials } from "@/lib/secure-credentials";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { SystemsManager } from "@/lib/systems-manager";
 import { uuidv7 } from "uuidv7";
-import { AREAS_TABLE } from "@/lib/areas/flags";
 import { syncCompositeBindings } from "@/lib/areas/sync";
 import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
 
@@ -57,18 +56,18 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      // P3 dual-write: create the typed area_bindings + composite Area alongside the metadata shim
-      // and refresh the subscription registry so the new composite resolves immediately.
-      if (AREAS_TABLE) {
-        try {
-          await syncCompositeBindings(newSystem.id);
-          await buildSubscriptionRegistry();
-        } catch (error) {
-          console.error(
-            `[Composite] Failed to sync area_bindings for new system ${newSystem.id}:`,
-            error,
-          );
-        }
+      // Create the composite Area + typed area_bindings and refresh the subscription registry so the
+      // new composite resolves immediately. (NOTE: composite CREATE still writes a `systems` row — the
+      // deferred follow-up is to make it write only an `areas` row; existing composites are already
+      // areas-only after migration 0014.)
+      try {
+        await syncCompositeBindings(newSystem.id);
+        await buildSubscriptionRegistry();
+      } catch (error) {
+        console.error(
+          `[Composite] Failed to sync area_bindings for new system ${newSystem.id}:`,
+          error,
+        );
       }
 
       // Success!
