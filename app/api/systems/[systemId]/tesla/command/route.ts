@@ -39,10 +39,10 @@ interface CommandBody {
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ systemId: string }> },
 ) {
   try {
-    const { id: idStr } = await params;
+    const { systemId: idStr } = await params;
     const systemId = parseInt(idStr, 10);
     if (isNaN(systemId)) {
       return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
