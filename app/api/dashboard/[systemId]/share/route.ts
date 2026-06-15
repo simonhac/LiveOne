@@ -8,7 +8,17 @@ import {
   createDashboardShareToken,
   listDashboardShareTokens,
   revokeDashboardShareToken,
+  renameDashboardShareToken,
 } from "@/lib/dashboard/sharing";
+
+// Match the legacy share-tokens convention of capping labels at 80 chars.
+const MAX_LABEL_LEN = 80;
+
+/** Parse + normalise a required link name from a request body. "" means missing/invalid. */
+function parseLabel(body: unknown): string {
+  const raw = (body as { label?: unknown })?.label;
+  return typeof raw === "string" ? raw.trim().slice(0, MAX_LABEL_LEN) : "";
+}
 
 /**
  * Owner management of per-dashboard share tokens (P4). Minting/listing/revoking a read-only public
@@ -44,6 +54,10 @@ export async function POST(
   if ("error" in a) return a.error;
 
   const body = await request.json().catch(() => ({}));
+  const label = parseLabel(body);
+  if (!label) {
+    return NextResponse.json({ error: "name required" }, { status: 400 });
+  }
   const dashboardId = await getOrCreateDefaultDashboardId(
     a.userId,
     a.systemId,
@@ -51,7 +65,7 @@ export async function POST(
   );
   const { token, expiresAtMs } = await createDashboardShareToken({
     dashboardId,
-    label: body?.label ?? null,
+    label,
     expiresInDays: body?.expiresInDays ?? null,
   });
   return NextResponse.json({ token, expiresAtMs });
@@ -88,4 +102,28 @@ export async function DELETE(
     ? await revokeDashboardShareToken(token, dashboardId)
     : false;
   return NextResponse.json({ revoked });
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ systemId: string }> },
+) {
+  const { systemId: s } = await params;
+  const a = await authorizeOwner(request, s);
+  if ("error" in a) return a.error;
+
+  const body = await request.json().catch(() => null);
+  const token = body?.token;
+  if (typeof token !== "string") {
+    return NextResponse.json({ error: "token required" }, { status: 400 });
+  }
+  const label = parseLabel(body);
+  if (!label) {
+    return NextResponse.json({ error: "name required" }, { status: 400 });
+  }
+  const dashboardId = await getDashboardIdForUserSystem(a.userId, a.systemId);
+  const updated = dashboardId
+    ? await renameDashboardShareToken(token, dashboardId, label)
+    : false;
+  return NextResponse.json({ updated });
 }

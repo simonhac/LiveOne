@@ -14,7 +14,7 @@ import { generateTokenString, isWellFormedToken } from "@/lib/share-tokens";
 export interface CreateDashboardShareTokenOptions {
   dashboardId: number;
   expiresInDays?: number | null; // null/undefined => never expires
-  label?: string | null;
+  label: string; // required, human-readable name for the link
 }
 
 export async function createDashboardShareToken(
@@ -27,15 +27,13 @@ export async function createDashboardShareToken(
         ? Date.now() + opts.expiresInDays * 24 * 60 * 60 * 1000
         : null;
     try {
-      await requirePlanetscaleDb()
-        .insert(dashboardShareTokens)
-        .values({
-          token,
-          dashboardId: opts.dashboardId,
-          label: opts.label ?? null,
-          createdAtMs: Date.now(),
-          expiresAtMs,
-        });
+      await requirePlanetscaleDb().insert(dashboardShareTokens).values({
+        token,
+        dashboardId: opts.dashboardId,
+        label: opts.label,
+        createdAtMs: Date.now(),
+        expiresAtMs,
+      });
       return { token, expiresAtMs };
     } catch (err: unknown) {
       // Token PK collision → SQLSTATE 23505 (unique_violation); retry with a fresh phrase.
@@ -100,6 +98,26 @@ export async function revokeDashboardShareToken(
   const result = await requirePlanetscaleDb()
     .update(dashboardShareTokens)
     .set({ revokedAtMs: Date.now() })
+    .where(
+      and(
+        eq(dashboardShareTokens.token, token),
+        eq(dashboardShareTokens.dashboardId, dashboardId),
+        isNull(dashboardShareTokens.revokedAtMs),
+      ),
+    )
+    .returning();
+  return result.length > 0;
+}
+
+/** Rename a (non-revoked) token's label, scoped to its dashboard. Returns true if a row updated. */
+export async function renameDashboardShareToken(
+  token: string,
+  dashboardId: number,
+  label: string,
+): Promise<boolean> {
+  const result = await requirePlanetscaleDb()
+    .update(dashboardShareTokens)
+    .set({ label })
     .where(
       and(
         eq(dashboardShareTokens.token, token),
