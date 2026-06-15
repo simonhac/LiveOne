@@ -19,7 +19,9 @@ import {
   getSeriesPath,
 } from "@/lib/point/series-info";
 import { SystemIdentifier, PointReference } from "@/lib/identifiers";
+import { derivePointUid } from "@/lib/identifiers/point-uid";
 import { SystemWithPolling, SystemsManager } from "@/lib/systems-manager";
+import { uuidv7 } from "uuidv7";
 import micromatch from "micromatch";
 import { updateLatestPointValue } from "../kv-cache-manager";
 import { getCompositeBindingRefs } from "@/lib/areas/bindings";
@@ -501,6 +503,22 @@ export class PointManager {
    * Get or create a point_info entry
    * Automatically invalidates cache when a new point is created
    */
+  /** A unique violation specifically on pi_point_uid_unique (the deterministic-uid duplicate-site case). */
+  private isPointUidCollision(e: unknown): boolean {
+    if (!e || typeof e !== "object") return false;
+    const err = e as {
+      code?: unknown;
+      constraint?: unknown;
+      message?: unknown;
+    };
+    if (err.code !== "23505") return false;
+    return (
+      err.constraint === "pi_point_uid_unique" ||
+      (typeof err.message === "string" &&
+        err.message.includes("pi_point_uid_unique"))
+    );
+  }
+
   async ensurePointInfo(
     systemId: number,
     pointMap: PointInfoMap,
@@ -535,35 +553,67 @@ export class PointManager {
           : 0;
       const nextIndex = maxIndex + 1;
 
-      const [pgRow] = await pg
-        .insert(pgPointInfoTable)
-        .values({
-          systemId,
-          index: nextIndex,
-          physicalPathTail: metadata.physicalPathTail,
-          logicalPathStem: metadata.logicalPathStem,
-          metricType: metadata.metricType,
-          metricUnit: metadata.metricUnit,
+      // Mint the stable point IDENTITY (point_uid) from the system's vendor identity. Deterministic so
+      // re-onboarding the same physical point reproduces the same uid; on the rare duplicate-site
+      // collision (pi_point_uid_unique) retry once with a random uid. A non-point_uid unique error
+      // (e.g. stem/metric) is rethrown unchanged.
+      const sys = await SystemsManager.getInstance().getSystem(systemId);
+      const derivedUid = sys
+        ? derivePointUid(
+            sys.vendorType,
+            sys.vendorSiteId,
+            metadata.physicalPathTail,
+          )
+        : null;
+
+      const insertValues = (pointUid: string | null) => ({
+        systemId,
+        index: nextIndex,
+        physicalPathTail: metadata.physicalPathTail,
+        logicalPathStem: metadata.logicalPathStem,
+        metricType: metadata.metricType,
+        metricUnit: metadata.metricUnit,
+        defaultName: metadata.defaultName,
+        displayName: metadata.defaultName, // Initially same as defaultName
+        subsystem: metadata.subsystem || null,
+        transform: metadata.transform,
+        pointUid,
+        createdAt: new Date(), // PG native timestamp
+      });
+      const onConflict = {
+        target: [pgPointInfoTable.systemId, pgPointInfoTable.physicalPathTail],
+        set: {
+          // Update default name from source if it changed
           defaultName: metadata.defaultName,
-          displayName: metadata.defaultName, // Initially same as defaultName
-          subsystem: metadata.subsystem || null,
+          // Update transform if it changed
           transform: metadata.transform,
-          createdAt: new Date(), // PG native timestamp
-        })
-        .onConflictDoUpdate({
-          target: [
-            pgPointInfoTable.systemId,
-            pgPointInfoTable.physicalPathTail,
-          ],
-          set: {
-            // Update default name from source if it changed
-            defaultName: metadata.defaultName,
-            // Update transform if it changed
-            transform: metadata.transform,
-            updatedAt: new Date(),
-          },
-        })
-        .returning();
+          updatedAt: new Date(),
+          // point_uid is identity — deliberately NOT overwritten on conflict.
+        },
+      };
+      const doInsert = async (pointUid: string | null) => {
+        const [row] = await pg
+          .insert(pgPointInfoTable)
+          .values(insertValues(pointUid))
+          .onConflictDoUpdate(onConflict)
+          .returning();
+        return row;
+      };
+
+      const pgRow = await (async () => {
+        try {
+          return await doInsert(derivedUid);
+        } catch (e) {
+          if (derivedUid && this.isPointUidCollision(e)) {
+            const randomUid = uuidv7();
+            console.warn(
+              `[PointManager] point_uid collision for system ${systemId} "${metadata.physicalPathTail}" — using random uid ${randomUid}`,
+            );
+            return await doInsert(randomUid);
+          }
+          throw e;
+        }
+      })();
 
       // Map the PG-shaped row back to the legacy row shape this method returns
       // (epoch-ms columns) so downstream callers/pointMap are unchanged.

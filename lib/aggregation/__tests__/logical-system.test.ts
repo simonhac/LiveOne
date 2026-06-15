@@ -11,11 +11,15 @@ jest.mock("@/lib/point/point-manager", () => ({
 jest.mock("@/lib/areas/resolve", () => ({
   getAreaForSystem: jest.fn(),
 }));
+jest.mock("@/lib/areas/sync", () => ({
+  ensureIdentityArea: jest.fn(),
+}));
 
 import { isCompleteRoleSet, resolveLogicalSystem } from "../logical-system";
 import { SystemsManager } from "@/lib/systems-manager";
 import { PointManager } from "@/lib/point/point-manager";
 import { getAreaForSystem } from "@/lib/areas/resolve";
+import { ensureIdentityArea } from "@/lib/areas/sync";
 
 describe("isCompleteRoleSet", () => {
   it("is complete when there is a source and a load role", () => {
@@ -69,7 +73,10 @@ describe("resolveLogicalSystem (Area is mandatory — P3-tail-1)", () => {
     (PointManager.getInstance as jest.MockedFunction<any>).mockReturnValue({
       getActivePointsForSystem,
     });
-    getSystem.mockResolvedValue({ timezoneOffsetMin: 600 });
+    getSystem.mockResolvedValue({
+      vendorType: "selectronic",
+      timezoneOffsetMin: 600,
+    });
     getActivePointsForSystem.mockResolvedValue([
       fakePoint("source.solar.local", "Solar"),
       fakePoint("load.hws", "Hot Water"),
@@ -88,13 +95,49 @@ describe("resolveLogicalSystem (Area is mandatory — P3-tail-1)", () => {
     expect(ls!.isComplete).toBe(true);
   });
 
-  it("returns null and logs when no Area resolves (the un-keyed-write guard)", async () => {
+  it("heals a missing identity Area for a physical system and uses the minted id", async () => {
     (getAreaForSystem as jest.MockedFunction<any>).mockResolvedValue(null);
+    (ensureIdentityArea as jest.MockedFunction<any>).mockResolvedValue(
+      "area-healed",
+    );
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const ls = await resolveLogicalSystem(1);
+    expect(ensureIdentityArea).toHaveBeenCalledTimes(1);
+    expect(ls).not.toBeNull();
+    expect(ls!.areaId).toBe("area-healed");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Healed missing identity Area for system 1"),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("does NOT fabricate an Area for a composite with no Area (genuine fault)", async () => {
+    getSystem.mockResolvedValue({
+      vendorType: "composite",
+      timezoneOffsetMin: 600,
+    });
+    (getAreaForSystem as jest.MockedFunction<any>).mockResolvedValue(null);
+    const errSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const ls = await resolveLogicalSystem(1);
+    expect(ls).toBeNull();
+    expect(ensureIdentityArea).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Composite system 1 has no Area"),
+    );
+    errSpy.mockRestore();
+  });
+
+  it("returns null when the heal itself fails", async () => {
+    (getAreaForSystem as jest.MockedFunction<any>).mockResolvedValue(null);
+    (ensureIdentityArea as jest.MockedFunction<any>).mockRejectedValue(
+      new Error("db down"),
+    );
     const errSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     const ls = await resolveLogicalSystem(1);
     expect(ls).toBeNull();
     expect(errSpy).toHaveBeenCalledWith(
       expect.stringContaining("No Area for system 1"),
+      expect.anything(),
     );
     errSpy.mockRestore();
   });
