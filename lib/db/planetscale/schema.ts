@@ -149,9 +149,10 @@ export const users = pgTable(
   "users",
   {
     clerkUserId: text("clerk_user_id").primaryKey(),
-    defaultSystemId: integer("default_system_id").references(() => systems.id, {
-      onDelete: "set null",
-    }),
+    // Plain integer view handle (no FK to systems): a user may default to a composite, whose
+    // areas-backed virtual system has no `systems` row after migration 0014. Resolved via
+    // getSystem(default_system_id).
+    defaultSystemId: integer("default_system_id"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -523,9 +524,10 @@ export const dashboards = pgTable(
   {
     id: serial("id").primaryKey(),
     clerkUserId: text("clerk_user_id").notNull(),
-    systemId: integer("system_id")
-      .notNull()
-      .references(() => systems.id, { onDelete: "cascade" }),
+    // Plain integer view handle (no FK to systems): a composite dashboard's system_id is its
+    // areas-backed virtual-system id, which has no `systems` row after migration 0014. `area_id` is
+    // the forward seam; `(clerk_user_id, system_id)` stays the access/uniqueness key.
+    systemId: integer("system_id").notNull(),
     areaId: uuid("area_id").references(() => areas.id, {
       onDelete: "set null",
     }),
@@ -634,7 +636,11 @@ export const areas = pgTable(
     ownerClerkUserId: text("owner_clerk_user_id"),
     kind: text("kind").notNull(), // 'identity' | 'composite'
     sourceSystemId: integer("source_system_id").references(() => systems.id), // set for kind='identity'
-    legacySystemId: integer("legacy_system_id").references(() => systems.id), // migration seam (1:1)
+    // The 1:1 migration seam + the stable integer ADDRESSING HANDLE for a composite (its old
+    // systems.id). No FK to systems: a composite Area outlives its `systems` row (deleted in
+    // migration 0014), and `getSystem(legacy_system_id)` then resolves to the synthesized virtual
+    // system. The unique index below stays as the addressing invariant (one Area per handle).
+    legacySystemId: integer("legacy_system_id"),
     displayName: text("display_name").notNull(),
     alias: text("alias"),
     timezoneOffsetMin: integer("timezone_offset_min").notNull(),
