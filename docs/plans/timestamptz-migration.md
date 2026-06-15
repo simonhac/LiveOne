@@ -130,9 +130,9 @@ node-postgres now returns these columns as JS `Date`s. Remove the epoch-ms machi
 - **Consumers** — the pivot route's `new Date(row.measurement_time)` already accepts a `Date`
   (clone); the single-point route's centering (`r.intervalEnd === timestamp`) and the
   pagination cursors must align with whichever shape is chosen.
-- **`app/api/system/[systemId]/generator-events/route.ts`** — replace
-  `Number(row.measurement_time)` accordingly (lines ~29/89). `app/labs/kinkora-hws/page.tsx`
-  uses the same projection — update or leave (labs).
+- **`app/api/system/[systemId]/run-periods/route.ts`** + `lib/run-tracking/*` (which replaced the
+  removed `generator-events` route) — audit any `Number(row.measurement_time)` projections
+  accordingly. `app/labs/kinkora-hws/page.tsx` uses the same projection — update or leave (labs).
 
 The front-end is untouched — it keeps receiving ISO-8601 in the system's timezone.
 

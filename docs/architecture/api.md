@@ -56,23 +56,22 @@ Hand-refreshed 2026-06-10 (generation script COMING SOON).
 
 ### Data & user (Clerk auth)
 
-| Route                                                                | Purpose                                                                                                                                                                    |
-| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/system/[id]/points`                                        | List active points (`?short=true` for paths only)                                                                                                                          |
-| `GET /api/system/[id]/points/latest` · `GET /api/system/[id]/latest` | Latest values (KV-backed)                                                                                                                                                  |
-| `GET·PATCH /api/system/[id]/point/[pointId]`                         | Point detail / update user-settable fields                                                                                                                                 |
-| `GET /api/system/[id]/series`                                        | Time-series, OpenNEM format                                                                                                                                                |
-| `GET /api/system/[id]/generator-events`                              | ⚠️ Known hack — unbounded history fetch + N+1 queries; see [../deferred/generator-events-rewrite.md](../deferred/generator-events-rewrite.md)                              |
-| `GET /api/history`                                                   | Historical series (composite + non-composite paths; unification deferred — see [../deferred/history-api-unification-plan.md](../deferred/history-api-unification-plan.md)) |
-| `GET /api/data`                                                      | Legacy combined latest+history payload (Selectronic-era dashboard)                                                                                                         |
-| `GET·POST /api/systems`, `GET /api/systems/subscriptions`            | Create/list systems; composite subscription registry                                                                                                                       |
-| `GET /api/vendors`                                                   | Available vendor types                                                                                                                                                     |
-| `POST /api/test-connection`, `POST /api/setup`                       | Setup wizard                                                                                                                                                               |
-| `GET·PUT /api/user/preferences`                                      | User preferences                                                                                                                                                           |
-| `GET·POST·DELETE /api/share-tokens`, `/api/share-tokens/[token]`     | Share-link management                                                                                                                                                      |
-| `/api/auth/{enphase,tesla}/{connect,callback,disconnect}`            | Vendor OAuth flows                                                                                                                                                         |
-| `GET /api/auth/check-admin`                                          | Admin check for UI                                                                                                                                                         |
-| `POST /api/enphase-proxy`                                            | CORS proxy to Enphase API                                                                                                                                                  |
+| Route                                                                | Purpose                                                            |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `GET /api/system/[id]/points`                                        | List active points (`?short=true` for paths only)                  |
+| `GET /api/system/[id]/points/latest` · `GET /api/system/[id]/latest` | Latest values (KV-backed)                                          |
+| `GET·PATCH /api/system/[id]/point/[pointId]`                         | Point detail / update user-settable fields                         |
+| `GET /api/system/[id]/series`                                        | Time-series, OpenNEM format                                        |
+| `GET /api/history`                                                   | Historical series, OpenNEM format (single unified path)            |
+| `GET /api/data`                                                      | Legacy combined latest+history payload (Selectronic-era dashboard) |
+| `GET·POST /api/systems`, `GET /api/systems/subscriptions`            | Create/list systems; composite subscription registry               |
+| `GET /api/vendors`                                                   | Available vendor types                                             |
+| `POST /api/test-connection`, `POST /api/setup`                       | Setup wizard                                                       |
+| `GET·PUT /api/user/preferences`                                      | User preferences                                                   |
+| `GET·POST·DELETE /api/share-tokens`, `/api/share-tokens/[token]`     | Share-link management                                              |
+| `/api/auth/{enphase,tesla}/{connect,callback,disconnect}`            | Vendor OAuth flows                                                 |
+| `GET /api/auth/check-admin`                                          | Admin check for UI                                                 |
+| `POST /api/enphase-proxy`                                            | CORS proxy to Enphase API                                          |
 
 ### Admin (`requireAdmin`)
 

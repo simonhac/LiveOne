@@ -16,8 +16,8 @@ import { getAreaForSystem } from "@/lib/areas/resolve";
  *
  * Access is system-granular (`requireSystemAccess`) — Areas are organisational, not the access
  * boundary, until P4. This is a NEW endpoint; the legacy `/api/data` payload stays frozen. Returns
- * `{ area: null, bindings: [] }` when `AREAS_TABLE` is off or no Area has been backfilled yet, so the
- * surface degrades gracefully before/independent of the P3 backfill.
+ * `{ area: null, bindings: [] }` when no Area has been backfilled for the system yet, so the
+ * surface degrades gracefully.
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
