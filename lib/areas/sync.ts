@@ -1,11 +1,17 @@
 /**
- * Write side of the P3 Areas tables: create composite Areas and write their typed `area_bindings`.
+ * Write side of the P3 Areas tables: ensure a physical system's 1:1 identity Area, create composite
+ * Areas, and write their typed `area_bindings`.
  *
  * A composite Area carries an integer addressing handle (`legacy_system_id`) the rest of the app keys
  * on — `getSystem(handle)` resolves to the synthesized virtual system (lib/systems-manager.ts), so a
  * composite needs no `systems` row. New composites are areas-only, with a handle allocated from a
  * dedicated high range. Bindings are the authoritative role→point mapping; the composite editor
  * converts the edited `{version:2, mappings}` blob straight to bindings here.
+ *
+ * Identity Areas (`ensureIdentityArea`) are the runtime counterpart to the one-off migration backfill:
+ * every physical system gets a `kind='identity'` Area keyed `legacy_system_id == systems.id`, so the
+ * System→Area seam has a live path. Without it `getAreaForSystem`/`resolveLogicalSystem` return null
+ * and the system silently drops out of the flow recompute, grid-region derivation, and share-scope.
  */
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, areaBindings, pointInfo } from "@/lib/db/planetscale/schema";
@@ -65,6 +71,77 @@ async function loadAllPointInfo(
     })
     .from(pointInfo);
   return rows;
+}
+
+/** Detect a Postgres unique_violation (SQLSTATE '23505') — e.g. a concurrent-create handle race. */
+function isUniqueViolation(e: unknown): boolean {
+  return (
+    !!e && typeof e === "object" && (e as { code?: unknown }).code === "23505"
+  );
+}
+
+/** The Area for an integer handle (by `legacy_system_id`, which is UNIQUE), or null. */
+async function getAreaIdByLegacyHandle(
+  systemId: number,
+  db: Db,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ id: areas.id })
+    .from(areas)
+    .where(eq(areas.legacySystemId, systemId))
+    .limit(1);
+  return row?.id ?? null;
+}
+
+/** Minimal physical-system shape `ensureIdentityArea` needs — a structural subset of `System`. */
+export type IdentitySystemInput = {
+  id: number;
+  ownerClerkUserId: string | null;
+  displayName: string;
+  timezoneOffsetMin: number;
+  displayTimezone: string;
+  status: string;
+};
+
+/**
+ * Ensure the 1:1 `kind='identity'` Area for a physical system exists, returning its id. Idempotent and
+ * race-safe: located by the `areas_legacy_system_unique` index on `legacy_system_id == system.id`, so a
+ * concurrent create loses with a unique violation and we re-read the winner's id.
+ *
+ * Call at system create-time (`SystemsManager.createSystem`); `resolveLogicalSystem` also heals via
+ * this for legacy/edge systems. Composites are NOT created here — they own a `kind='composite'` Area
+ * from `createCompositeArea`; callers must not pass a composite handle.
+ */
+export async function ensureIdentityArea(
+  system: IdentitySystemInput,
+  db: Db = requirePlanetscaleDb(),
+): Promise<string> {
+  const existingId = await getAreaIdByLegacyHandle(system.id, db);
+  if (existingId) return existingId;
+
+  const areaId = uuidv7();
+  try {
+    await db.insert(areas).values({
+      id: areaId,
+      ownerClerkUserId: system.ownerClerkUserId,
+      kind: "identity",
+      sourceSystemId: system.id,
+      legacySystemId: system.id,
+      displayName: system.displayName,
+      alias: null,
+      timezoneOffsetMin: system.timezoneOffsetMin,
+      displayTimezone: system.displayTimezone,
+      status: system.status,
+    });
+    return areaId;
+  } catch (e) {
+    // Lost a create race (areas_legacy_system_unique) — re-read the winner's id.
+    if (isUniqueViolation(e)) {
+      const winner = await getAreaIdByLegacyHandle(system.id, db);
+      if (winner) return winner;
+    }
+    throw e;
+  }
 }
 
 /** Locate the composite Area for a system handle (by legacy_system_id), or null if none. */

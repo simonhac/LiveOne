@@ -226,6 +226,14 @@ export const pointInfo = pgTable(
     transform: text("transform"),
     active: boolean("active").notNull().default(true),
 
+    // Stable, vendor-derived IDENTITY (HA `unique_id` analog), distinct from the renameable
+    // (system_id, index) ADDRESS. Deterministic uuidv5 over (vendor_type, vendor_site_id,
+    // physical_path_tail) — see lib/identifiers/point-uid.ts — so re-onboarding the same physical
+    // point reproduces the same uid; a duplicate-site collision falls back to a random uid. Nullable
+    // for now (backfilled + minted by ensurePointInfo going forward); a later migration may tighten
+    // to NOT NULL. See docs/plans/identity-address-split-and-labels.md (Part 1).
+    pointUid: uuid("point_uid"),
+
     // Timestamps
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at"),
@@ -236,6 +244,9 @@ export const pointInfo = pgTable(
       table.systemId,
       table.physicalPathTail,
     ),
+    // NULLs are distinct in Postgres, so this permits many un-backfilled (null) rows while still
+    // enforcing one row per non-null identity.
+    pointUidUnique: uniqueIndex("pi_point_uid_unique").on(table.pointUid),
     systemStemMetricUnique: uniqueIndex("pi_system_stem_metric_unique").on(
       table.systemId,
       table.logicalPathStem,

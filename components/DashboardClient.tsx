@@ -19,6 +19,7 @@ import GeneratorRunsCard from "@/components/GeneratorRunsCard";
 import { useTileNodes } from "@/app/components/cards/useTileNodes";
 import DashboardCustomizeDialog from "@/components/DashboardCustomizeDialog";
 import DashboardShareDialog from "@/components/DashboardShareDialog";
+import AreaLocationDialog from "@/components/AreaLocationDialog";
 import { useDashboardCustomize } from "@/contexts/DashboardCustomizeContext";
 import {
   buildDefaultDescriptor,
@@ -232,6 +233,9 @@ export default function DashboardClient({
     setCanShare,
     isShareOpen,
     closeShare,
+    setCanSetLocation,
+    isLocationOpen,
+    closeLocation,
   } = useDashboardCustomize();
   useEffect(() => {
     setCanCustomize(!readOnly && !!data);
@@ -245,6 +249,11 @@ export default function DashboardClient({
     setCanShare(!readOnly && !!data && isOwnerOrAdmin);
     return () => setCanShare(false);
   }, [readOnly, data, isOwnerOrAdmin, setCanShare]);
+  // The owner (or admin) may set the site's location → NEM grid region. Never in the read-only view.
+  useEffect(() => {
+    setCanSetLocation(!readOnly && !!data && isOwnerOrAdmin);
+    return () => setCanSetLocation(false);
+  }, [readOnly, data, isOwnerOrAdmin, setCanSetLocation]);
 
   // Real tile preview nodes for the Customize dialog — the SAME nodes the dashboard renders,
   // so the editor shows cards exactly as they appear. Built unconditionally (before any early
@@ -469,6 +478,16 @@ export default function DashboardClient({
         <DashboardShareDialog
           isOpen={isShareOpen}
           onClose={closeShare}
+          systemId={systemId}
+        />
+      )}
+
+      {/* Location dialog — opened from the header "Location…" menu item (owner-only). Sets the
+          site's (Area's) location → NEM region for the Local Grid card. */}
+      {data && systemId && (
+        <AreaLocationDialog
+          isOpen={isLocationOpen}
+          onClose={closeLocation}
           systemId={systemId}
         />
       )}

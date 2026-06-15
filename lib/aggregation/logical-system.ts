@@ -17,6 +17,7 @@ import { PointManager } from "@/lib/point/point-manager";
 import { SystemsManager } from "@/lib/systems-manager";
 import { isCompleteRoleSet } from "@/lib/roles/registry";
 import { getAreaForSystem } from "@/lib/areas/resolve";
+import { ensureIdentityArea } from "@/lib/areas/sync";
 
 // Re-exported for back-compat: the role taxonomy now lives in lib/roles/registry.ts.
 export { isCompleteRoleSet };
@@ -82,12 +83,31 @@ export async function resolveLogicalSystem(
   // A logical system MUST map to an Area — `area_id` is the primary key of point_readings_flow_1d
   // (P3-tail-1). If none resolves (a new/un-backfilled system), skip loudly rather than writing an
   // un-keyed flow row.
-  const area = await getAreaForSystem(systemId);
+  let area = await getAreaForSystem(systemId);
   if (!area) {
-    console.error(
-      `[LogicalSystem] No Area for system ${systemId} — skipping flow recompute (un-backfilled / unknown system)`,
-    );
-    return null;
+    // Self-heal the System→Area seam: a physical system with no Area (created before the runtime seam,
+    // or a rare create-time miss) is minted its 1:1 identity Area now rather than silently dropped from
+    // the recompute. Composites always have an Area (createCompositeArea), so a composite reaching here
+    // is a genuine fault — don't fabricate an identity Area for it.
+    if (system.vendorType === "composite") {
+      console.error(
+        `[LogicalSystem] Composite system ${systemId} has no Area — skipping flow recompute`,
+      );
+      return null;
+    }
+    try {
+      const areaId = await ensureIdentityArea(system);
+      area = { id: areaId, kind: "identity" };
+      console.warn(
+        `[LogicalSystem] Healed missing identity Area for system ${systemId} → ${areaId}`,
+      );
+    } catch (e) {
+      console.error(
+        `[LogicalSystem] No Area for system ${systemId} and heal failed — skipping flow recompute:`,
+        e,
+      );
+      return null;
+    }
   }
 
   return {

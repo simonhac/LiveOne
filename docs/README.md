@@ -21,6 +21,7 @@
 ## Reference
 
 - [architecture/points.md](architecture/points.md) — point model: paths, identity, composite rules
+- [architecture/home-assistant-comparison.md](architecture/home-assistant-comparison.md) — LiveOne vs Home Assistant: object-model mapping, where each is clearer, and where ours is superior (durable pipeline vs in-memory control plane)
 - [architecture/areas-and-dashboards.md](architecture/areas-and-dashboards.md) — **live (P0–P3)**: splits physical/semantic/presentation into Systems → Areas → Dashboards (HA-aligned, Apple-Home UX); replaced composite-as-system (composites are now areas-backed virtual systems). P4 sharing + P5 HA export ongoing
 - [architecture/authentication.md](architecture/authentication.md) — Clerk, roles, API auth functions
 - [architecture/kv-store.md](architecture/kv-store.md) — KV cache keys, subscription registry
@@ -37,6 +38,7 @@
 ## Plans (proposed — not yet started)
 
 - [plans/timestamptz-migration.md](plans/timestamptz-migration.md) — migrate time-series time columns to `timestamptz` (needs schema-change approval)
+- [plans/identity-address-split-and-labels.md](plans/identity-address-split-and-labels.md) — two HA-borrowings: split point identity from address (`point_uid`) + a Label orthogonal tag dimension (needs schema-change approval)
 
 ## Deferred work
 
