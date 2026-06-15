@@ -226,22 +226,10 @@ export async function PATCH(
       mappings,
     };
 
-    // Bindings are authoritative: write the edited mappings straight to area_bindings (no metadata
-    // re-read). Let a failure surface — the editor must not silently drop an edit.
+    // Bindings are the sole source of truth: write the edited mappings straight to area_bindings
+    // (no metadata re-read, no systems.metadata mirror — the composite has no systems row). Let a
+    // failure surface so the editor never silently drops an edit.
     await syncCompositeBindingsFromMappings(systemId, metadata);
-
-    // Rollback cushion (Stages 0–2): mirror the blob into systems.metadata while the legacy systems
-    // row still exists. Best-effort and a no-op once the row is gone (Stage 3 removes this).
-    try {
-      await SystemsManager.getInstance().updateSystem(systemId, {
-        metadata: metadata as any,
-      });
-    } catch (error) {
-      console.error(
-        `[Composite] Failed to mirror metadata cushion for system ${systemId}:`,
-        error,
-      );
-    }
 
     // Rebuild subscription registry to reflect the updated composite system mappings
     console.log(
