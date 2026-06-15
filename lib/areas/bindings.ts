@@ -1,13 +1,10 @@
 /**
  * Shared read helpers over the P3 `areas` / `area_bindings` tables.
  *
- * These are the typed-table equivalents of the legacy composite-metadata reads. The
- * `AREAS_TABLE` flag (lib/areas/flags.ts) decides at each call site whether to use these or the old
- * `systems.metadata` path; the round-trip converter test proves they produce the same point set /
- * source selection for the real composites.
- *
- * A composite Area is located by its `legacy_system_id` (== the composite's old `systems.id`), which
- * keeps every caller keyed on the same system id it uses today, through the shim soak.
+ * These are the authoritative composite role→point reads (they replaced the legacy
+ * `systems.metadata` parsing). A composite Area is located by its `legacy_system_id` (== the
+ * composite's integer handle, formerly its `systems.id`), so every caller stays keyed on the same
+ * id — now resolving to the areas-backed virtual system after the `systems` row was deleted (0014).
  */
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, areaBindings } from "@/lib/db/planetscale/schema";

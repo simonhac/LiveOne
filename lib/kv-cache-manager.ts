@@ -1,10 +1,6 @@
 import { kv, kvKey } from "./kv";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { systems as systemsTable } from "@/lib/db/planetscale/schema";
-import { eq } from "drizzle-orm";
-import { PointReference } from "./identifiers";
 import { LatestValue, LatestValuesMap } from "./latest-values-store";
-import { AREAS_TABLE } from "@/lib/areas/flags";
 import { getAllCompositeBindings } from "@/lib/areas/bindings";
 
 // Re-export canonical types for backwards compatibility
@@ -191,7 +187,7 @@ function addSubscription(
   sourceSystemMap.get(sourcePointId)!.add(compositePointRef);
 }
 
-/** AREAS_TABLE on: reverse-subscription map from typed area_bindings (the (point) index, in SQL). */
+/** Reverse-subscription map (source point → subscribing composites) from typed area_bindings, in SQL. */
 async function buildSubscriptionsFromBindings(): Promise<
   Map<number, Map<string, Set<string>>>
 > {
@@ -207,53 +203,13 @@ async function buildSubscriptionsFromBindings(): Promise<
   return subscriptions;
 }
 
-/** AREAS_TABLE off (legacy): reverse-subscription map from composite metadata.mappings (v2). */
-async function buildSubscriptionsFromMetadata(): Promise<
-  Map<number, Map<string, Set<string>>>
-> {
-  const compositeSystems = await requirePlanetscaleDb()
-    .select()
-    .from(systemsTable)
-    .where(eq(systemsTable.vendorType, "composite"));
-
-  const subscriptions = new Map<number, Map<string, Set<string>>>();
-  for (const composite of compositeSystems) {
-    const metadata = composite.metadata as any;
-    if (!metadata || metadata.version !== 2 || !metadata.mappings) {
-      continue;
-    }
-    let compositePointIndex = 0;
-    for (const [, sourcePointRefs] of Object.entries(metadata.mappings)) {
-      if (!Array.isArray(sourcePointRefs)) continue;
-      for (const sourcePointRefStr of sourcePointRefs as string[]) {
-        const sourcePointRef = PointReference.parse(sourcePointRefStr);
-        if (!sourcePointRef) {
-          console.warn(`Invalid point reference: ${sourcePointRefStr}`);
-          continue;
-        }
-        addSubscription(
-          subscriptions,
-          sourcePointRef.systemId,
-          sourcePointRef.pointId.toString(),
-          `${composite.id}.${compositePointIndex}`,
-        );
-        compositePointIndex++;
-      }
-    }
-  }
-  return subscriptions;
-}
-
 export async function buildSubscriptionRegistry(): Promise<void> {
   // Build reverse mapping: sourceSystemId → { pointId → [compositePointRefs] }
   // Example: { 6: { "1": ["100.0", "101.2"], "2": ["100.1"] } }
-  // P3: source the (composite → child point) edges from typed area_bindings (flag on) or the legacy
-  // composite metadata.mappings JSON (flag off). The compositePointRef's index half is vestigial
-  // (updateLatestPointValue keys the composite's latest hash by logicalPath, not by index), so the
-  // two paths produce equivalent registries — only the source of the edges differs.
-  const subscriptions = AREAS_TABLE
-    ? await buildSubscriptionsFromBindings()
-    : await buildSubscriptionsFromMetadata();
+  // Edges come from the typed area_bindings (the authoritative composite role→point mapping). The
+  // compositePointRef's index half is vestigial (updateLatestPointValue keys the composite's latest
+  // hash by logicalPath, not by index).
+  const subscriptions = await buildSubscriptionsFromBindings();
 
   // First, scan for existing subscription keys and delete any that are no longer needed
   const pattern = kvKey("subscriptions:system:*");

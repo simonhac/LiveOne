@@ -20,10 +20,15 @@ jest.mock("../kv", () => ({
   kvKey: jest.fn((pattern: string) => `test:${pattern}`),
 }));
 
-// Mock the database (Postgres)
+// Mock the database (Postgres). getAllCompositeBindings uses select→from→innerJoin→where→orderBy.
 const mockDb = {
   select: jest.fn(() => ({
     from: jest.fn(() => ({
+      innerJoin: jest.fn(() => ({
+        where: jest.fn(() => ({
+          orderBy: jest.fn(() => Promise.resolve([])),
+        })),
+      })),
       where: jest.fn(() => ({
         orderBy: jest.fn(() => Promise.resolve([])),
       })),
@@ -39,18 +44,21 @@ jest.mock("@/lib/db/planetscale", () => ({
 
 // Mock the schema
 jest.mock("@/lib/db/planetscale/schema", () => ({
-  systems: {
-    vendorType: "vendorType",
-  },
-  pointInfo: {
-    systemId: "systemId",
-    index: "index",
+  systems: { vendorType: "vendorType" },
+  pointInfo: { systemId: "systemId", index: "index" },
+  areas: { id: "id", kind: "kind", legacySystemId: "legacySystemId" },
+  areaBindings: {
+    areaId: "areaId",
+    pointSystemId: "pointSystemId",
+    pointId: "pointId",
+    ordinal: "ordinal",
   },
 }));
 
 // Mock drizzle-orm
 jest.mock("drizzle-orm", () => ({
   eq: jest.fn(),
+  and: jest.fn(),
   sql: jest.fn(() => "mock_sql"),
 }));
 
@@ -208,117 +216,52 @@ describe("kv-cache-manager", () => {
   });
 
   describe("buildSubscriptionRegistry", () => {
-    it("should build reverse mapping from source systems to composite systems", async () => {
-      const { requirePlanetscaleDb } = await import("@/lib/db/planetscale");
-      const db = requirePlanetscaleDb();
-      const { kv } = await import("../kv");
-
-      // Mock composite systems in database
-      const mockCompositeSystems = [
-        {
-          id: 100,
-          vendorType: "composite",
-          metadata: {
-            version: 2,
-            mappings: {
-              solar: ["6.17", "6.7"], // Points from system 6
-              battery: ["5.7", "5.10"], // Points from system 5
-            },
-          },
-        },
-        {
-          id: 101,
-          vendorType: "composite",
-          metadata: {
-            version: 2,
-            mappings: {
-              solar: ["6.17"], // Also uses system 6
-              load: ["7.3"], // Uses system 7
-            },
-          },
-        },
-      ];
-
-      (db.select as jest.MockedFunction<any>).mockReturnValueOnce({
-        from: jest.fn().mockReturnValueOnce({
-          where: jest.fn().mockResolvedValueOnce(mockCompositeSystems as never),
+    // Mock getAllCompositeBindings's query: select→from→innerJoin→where→orderBy → binding rows.
+    const mockBindings = (rows: unknown[]) => {
+      (mockDb.select as jest.MockedFunction<any>).mockReturnValueOnce({
+        from: () => ({
+          innerJoin: () => ({
+            where: () => ({ orderBy: () => Promise.resolve(rows) }),
+          }),
         }),
       });
+    };
+
+    it("builds the reverse source→composite map from area_bindings", async () => {
+      const { kv } = await import("../kv");
+
+      // composite 100: solar from sys6 (pts 17,7) + battery from sys5 (pts 7,10);
+      // composite 101: solar from sys6 (17) + load from sys7 (3). → source systems 5, 6, 7.
+      mockBindings([
+        { compositeSystemId: 100, pointSystemId: 6, pointId: 17, ordinal: 0 },
+        { compositeSystemId: 100, pointSystemId: 6, pointId: 7, ordinal: 1 },
+        { compositeSystemId: 100, pointSystemId: 5, pointId: 7, ordinal: 2 },
+        { compositeSystemId: 100, pointSystemId: 5, pointId: 10, ordinal: 3 },
+        { compositeSystemId: 101, pointSystemId: 6, pointId: 17, ordinal: 0 },
+        { compositeSystemId: 101, pointSystemId: 7, pointId: 3, ordinal: 1 },
+      ]);
 
       await buildSubscriptionRegistry();
 
-      // Should create subscription entries for systems 5, 6, and 7
-      expect(kv.set).toHaveBeenCalledWith(
-        "test:subscriptions:system:6",
-        expect.objectContaining({
-          pointSubscribers: expect.any(Object),
-          lastUpdatedTimeMs: expect.any(Number),
-        }),
-      );
-      expect(kv.set).toHaveBeenCalledWith(
-        "test:subscriptions:system:5",
-        expect.objectContaining({
-          pointSubscribers: expect.any(Object),
-          lastUpdatedTimeMs: expect.any(Number),
-        }),
-      );
-      expect(kv.set).toHaveBeenCalledWith(
-        "test:subscriptions:system:7",
-        expect.objectContaining({
-          pointSubscribers: expect.any(Object),
-          lastUpdatedTimeMs: expect.any(Number),
-        }),
-      );
+      for (const sys of [5, 6, 7]) {
+        expect(kv.set).toHaveBeenCalledWith(
+          `test:subscriptions:system:${sys}`,
+          expect.objectContaining({
+            pointSubscribers: expect.any(Object),
+            lastUpdatedTimeMs: expect.any(Number),
+          }),
+        );
+      }
     });
 
-    it("should skip composite systems with invalid metadata", async () => {
-      const { requirePlanetscaleDb } = await import("@/lib/db/planetscale");
-      const db = requirePlanetscaleDb();
+    it("writes no subscriptions when there are no composite bindings", async () => {
       const { kv } = await import("../kv");
 
-      const mockCompositeSystems = [
-        {
-          id: 100,
-          vendorType: "composite",
-          metadata: null, // Invalid metadata
-        },
-        {
-          id: 101,
-          vendorType: "composite",
-          metadata: {
-            version: 1, // Old version
-            base_system: 5,
-          },
-        },
-        {
-          id: 102,
-          vendorType: "composite",
-          metadata: {
-            version: 2,
-            mappings: {
-              solar: ["6.17"],
-            },
-          },
-        },
-      ];
-
-      (db.select as jest.MockedFunction<any>).mockReturnValueOnce({
-        from: jest.fn().mockReturnValueOnce({
-          where: jest.fn().mockResolvedValueOnce(mockCompositeSystems as never),
-        }),
-      });
+      mockBindings([]); // no bindings (e.g. no composites)
 
       await buildSubscriptionRegistry();
 
-      // Should only create subscription for system 102 (valid metadata)
-      expect(kv.set).toHaveBeenCalledTimes(1);
-      expect(kv.set).toHaveBeenCalledWith(
-        "test:subscriptions:system:6",
-        expect.objectContaining({
-          pointSubscribers: expect.any(Object),
-          lastUpdatedTimeMs: expect.any(Number),
-        }),
-      );
+      expect(kv.set).not.toHaveBeenCalled();
     });
   });
 });

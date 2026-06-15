@@ -1,10 +1,9 @@
 /**
  * Write side of the P3 Areas tables: turn a composite's metadata into typed `area_bindings` rows.
  *
- * Shared by the one-off backfill (scripts/migrate-composites-to-areas.ts) and the composite-editor
- * dual-write (when AREAS_TABLE is on, create/PATCH composite → keep bindings in lock-step with the
- * still-authoritative metadata shim). Idempotent per composite: ensures the composite Area exists
- * (located by legacy_system_id) and replaces its bindings transactionally.
+ * Shared by the one-off backfill (scripts/migrate-composites-to-areas.ts) and the composite editor
+ * (create/PATCH composite → write the authoritative bindings). Idempotent per composite: ensures the
+ * composite Area exists (located by legacy_system_id) and replaces its bindings transactionally.
  */
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {

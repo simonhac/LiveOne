@@ -1,7 +1,7 @@
 /**
  * Logical-system resolver — the single authority for "which physical points play which energy-flow
  * roles" for a Sankey view. A *logical system* is a complete source/load role set; it is either a
- * composite (`vendor_type='composite'`, role→point mappings in `systems.metadata`) or a single
+ * composite (`vendor_type='composite'`, role→point mappings in `area_bindings`) or a single
  * physical system whose own points already cover the roles. Both resolve to the same shape here, so
  * every Sankey path — the engine's daily recompute, the sub-daily history compute, and the FE —
  * consumes one definition instead of re-deriving role classification independently.
@@ -80,12 +80,12 @@ export async function resolveLogicalSystem(
     }));
 
   // A logical system MUST map to an Area — `area_id` is the primary key of point_readings_flow_1d
-  // (P3-tail-1). If none resolves (AREAS_TABLE off, or the system isn't backfilled), skip loudly
-  // rather than writing an un-keyed flow row.
+  // (P3-tail-1). If none resolves (a new/un-backfilled system), skip loudly rather than writing an
+  // un-keyed flow row.
   const area = await getAreaForSystem(systemId);
   if (!area) {
     console.error(
-      `[LogicalSystem] No Area for system ${systemId} — skipping flow recompute (AREAS_TABLE off or un-backfilled)`,
+      `[LogicalSystem] No Area for system ${systemId} — skipping flow recompute (un-backfilled / unknown system)`,
     );
     return null;
   }
