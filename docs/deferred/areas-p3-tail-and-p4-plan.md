@@ -6,6 +6,88 @@
 > modifying the schema" rule and the `docs/migrations.md` discipline (additive/forward-only, generated
 > migrations only, `DO`/`RAISE EXCEPTION` row-count guard before any DROP, never `drizzle-kit push`).
 
+---
+
+## ⟳ REFRESH 2026-06-15 (re-verified against `main` @ `3618de5`, post chart-generalization #80–#85)
+
+> A multi-agent design pass re-checked every claim below against current code. **The sections from
+> "## Dependency order" down predate the chart work — treat their file:line refs as approximate and
+> this refresh as authoritative where they conflict.** Live numbers are from `liveone-dev`
+> (re-verify on `sydney` before any DDL).
+
+### Headline reframing (changes the whole picture)
+
+**The destructive SQL is the last ~5% of the work, not the work.** Nothing in the serving/access
+stack reads a composite **by `areas.id`** — everything addresses composites by integer `systemId`
+(7=Craig, 8=Kinkora): `/api/data?systemId=`, `requireDashboardAccess(systemId)`,
+`SystemsManager.getSystem(N)`, `PointManager`, `grid/context.ts` (`eq(areas.legacySystemId, N)`), KV
+`latest:system:N`, the `dashboards(clerk_user_id, system_id)` unique. `area_id` is only a
+forward-only annotation resolved **from** systemId (`getAreaForSystem`). **Deleting systems 7/8
+before an integer→area addressing indirection ships + soaks would 404 every composite
+dashboard/data/history/grid request.** That indirection is the LARGE, UNSTARTED prerequisite — it
+gates the row delete; the DELETE itself is trivial by comparison.
+
+### Status (corrected)
+
+| Step                                                                                                             | State                                                                  |
+| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| P3 read layer + areas/area_bindings/roles + `AREAS_TABLE` (#64)                                                  | ✅ landed                                                              |
+| `dashboards.area_id` (#66)                                                                                       | ✅ landed                                                              |
+| P3-tail-1 **Phase A** — recompute DELETEs flow_1d by `area_id`, route prefers `area_id` (#69)                    | ✅ landed                                                              |
+| P3-tail-1 Phase A **"step 1"** (logical-system loud-error / non-null `areaId`)                                   | ❌ NEVER shipped — still silently writes null `area_id` (live footgun) |
+| P4 sharing MVP auth `requireDashboardAccess` (#72)                                                               | ◑ partially landed (out of scope; migration `0012` exists, not on dev) |
+| P3-tail-1 **Phase B** — drop `flow_1d.system_id`, re-key PK                                                      | ⬜ next migration = **0013**                                           |
+| P3-tail-2 A/B/C — bindings authoritative → drop metadata shim → retire `AREAS_TABLE` + delete `CompositeAdapter` | ⬜                                                                     |
+| Integer→area addressing prerequisite                                                                             | ⬜ **LARGE, unstarted — the real gate**                                |
+| Destructive systems-row DELETE + KV cleanup                                                                      | ⬜ last                                                                |
+
+### Critical ordering rules
+
+- **`CompositeAdapter` removal (Phase C) MUST follow the systems-row DELETE** — the minutely cron
+  `getAdapter` (`app/api/cron/minutely/.../route.ts:63`) returns null for an unknown vendor and hits
+  its ERROR branch _before_ the push-skip, so removing it while rows 7/8 exist logs an error per
+  composite every minute. (`supportsPolling` returns false for unknown, so render is non-regressing.)
+- **NEXT-1 (logical-system loud-error) must precede dropping `flow_1d.system_id`** (else an
+  unresolvable/new system writes a null `area_id` that violates the new NOT NULL in the daily cron).
+- **Live FK graph (migration `0006` IS applied despite its "STAGED" header):** a naive
+  `DELETE FROM systems` cascade-deletes the 1 composite dashboard + nulls 1 user `default_system_id`,
+  and `areas.legacy_system_id`'s **no-action** FK _refuses_ the delete until those 2 Areas are cleared.
+
+### Drift vs the sections below (don't trust their line refs)
+
+- `DashboardClient.tsx` is now ~615 lines; `EnergyChart.tsx`/`SitePowerChart.tsx` are **deleted**;
+  composite charts render via `components/SiteChartsCard.tsx` (gates on the string
+  `vendorType==='composite'`, reads no metadata/bindings) — chart work added **zero** new composite
+  coupling but invalidated the P3-tail-2/P4 line refs. The `metadata` field is `DashboardClient.tsx:65`,
+  still unread by render (conclusion holds).
+- Next migration is **0013** (disk has 0000–0012). Old PK name = `point_readings_flow_1d_system_id_day_source_path_load_path_pk`; index `prf1d_system_day_idx`.
+- **`share_tokens` has no `system_id`** — the doc's "re-key share_tokens" is wrong; nothing to do.
+- **Un-flagged metadata readers** missed by the doc: `lib/admin/get-systems-data.ts` + `/api/data` —
+  Phase A must convert both or they silently empty when metadata mirroring stops.
+- **Missing primitives** Phase A needs: a bindings→`{version:2,mappings}` **reverse converter**
+  (`lib/areas/convert.ts` is forward-only) and `syncCompositeBindingsFromMappings` (current
+  `syncCompositeBindings` still re-reads `metadata`).
+- **Second column-skew surface:** `scripts/seed-preview-db.ts` COPYs flow_1d via `SELECT *` (column
+  _position_ sensitive) in addition to `sync-prod-to-dev.ts` — pause **both** across the 0013 window.
+
+### Recommended next steps (the cheap, safe spine)
+
+1. **NEXT-1** — harden `lib/aggregation/logical-system.ts`: `areaId: string` (not nullable);
+   `resolveLogicalSystem` loud-errors/skips on a null area instead of `?? null`. Non-destructive,
+   behaviour-preserving in prod. Soak ≥1 daily-cron cycle.
+2. **NEXT-2** — P3-tail-1 Phase B: drop `flow_1d.system_id` (migration `0013`, guarded DDL drafted in
+   `.context/areas-p3-tail-refresh.md`). Destructive; dev-then-sydney same window, pause sync+seed, ≥24h soak.
+
+P3-tail-2 Phase A is parallel-safe but **off** the critical path to deleting the rows.
+
+### Bottom line
+
+~6 sequential, mostly soak-gated steps remain; realistically **2–4 weeks elapsed**, dominated by the
+**integer→area addressing prerequisite (unstarted)**, not the DDL. Full enumerated re-key (every FK
+reference, DO/RAISE gates, KV keyspace `latest:system:7/8`) is in `.context/areas-p3-tail-refresh.md`.
+
+---
+
 ## Dependency order
 
 ```
