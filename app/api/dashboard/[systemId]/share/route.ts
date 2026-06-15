@@ -5,7 +5,6 @@ import {
   getDashboardIdForUserSystem,
 } from "@/lib/dashboard/store";
 import {
-  DASHBOARD_SHARING,
   createDashboardShareToken,
   listDashboardShareTokens,
   revokeDashboardShareToken,
@@ -13,16 +12,11 @@ import {
 
 /**
  * Owner management of per-dashboard share tokens (P4). Minting/listing/revoking a read-only public
- * link for the caller's dashboard of `systemId`. Owner/admin only (write access). Gated by
- * DASHBOARD_SHARING — 404 when off. Consumption is the separate public `GET /api/dashboard-share/[token]`.
+ * link for the caller's dashboard of `systemId`. Owner/admin only (write access). Consumption is the
+ * separate public `GET /api/dashboard-share/[token]`.
  */
 
 async function authorizeOwner(request: NextRequest, systemIdStr: string) {
-  if (!DASHBOARD_SHARING) {
-    return {
-      error: NextResponse.json({ error: "Not found" }, { status: 404 }),
-    };
-  }
   const systemId = parseInt(systemIdStr, 10);
   if (isNaN(systemId)) {
     return {

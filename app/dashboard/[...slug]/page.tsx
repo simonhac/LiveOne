@@ -6,22 +6,61 @@ import GeneratorClient from "@/components/GeneratorClient";
 import AmberSync from "@/components/AmberSync";
 import LatestReadingsClient from "@/components/LatestReadingsClient";
 import DashboardLayout from "@/components/DashboardLayout";
+import SharedDashboardView from "@/components/SharedDashboardView";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { FLOW_MATRIX_SERVE_FROM_PG } from "@/lib/db/routing";
 import { resolveGridContextForSystem } from "@/lib/grid/context";
 import { hasEnabledTracker } from "@/lib/run-tracking/resolve";
+import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
+import { getDashboardById } from "@/lib/dashboard/store";
+import type { DashboardDescriptor } from "@/lib/dashboard/descriptor";
 
 interface PageProps {
   params: Promise<{
     slug: string[];
   }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
-export default async function DashboardPage({ params }: PageProps) {
+export default async function DashboardPage({
+  params,
+  searchParams,
+}: PageProps) {
   const { userId } = await auth();
   const { slug } = await params;
+
+  // P4 shared view: a valid `?access=` token renders the dashboard read-only, no sign-in. Resolve the
+  // dashboard FROM the token (authoritative; the slug is cosmetic) so the queries hit the right system.
+  // Invalid/expired tokens fall through to the normal authed flow.
+  const sp = await searchParams;
+  const accessToken = typeof sp?.access === "string" ? sp.access : undefined;
+  if (accessToken) {
+    const valid = await validateDashboardShareToken(accessToken);
+    if (valid) {
+      const dash = await getDashboardById(valid.dashboardId);
+      const sharedSystem = dash
+        ? await SystemsManager.getInstance().getSystem(dash.systemId)
+        : null;
+      if (dash && sharedSystem && sharedSystem.status !== "removed") {
+        const [gridContext, hasGenerator] = await Promise.all([
+          resolveGridContextForSystem(sharedSystem.id),
+          hasEnabledTracker(sharedSystem.id, "generator"),
+        ]);
+        return (
+          <SharedDashboardView
+            systemId={dash.systemId.toString()}
+            system={sharedSystem}
+            serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
+            gridContext={gridContext}
+            hasGenerator={hasGenerator}
+            sharedDescriptor={(dash.descriptor as DashboardDescriptor) ?? null}
+          />
+        );
+      }
+    }
+  }
 
   if (!userId) {
     redirect("/sign-in");

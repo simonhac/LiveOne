@@ -18,6 +18,7 @@ import SiteChartsCard from "@/components/SiteChartsCard";
 import GeneratorRunsCard from "@/components/GeneratorRunsCard";
 import { useTileNodes } from "@/app/components/cards/useTileNodes";
 import DashboardCustomizeDialog from "@/components/DashboardCustomizeDialog";
+import DashboardShareDialog from "@/components/DashboardShareDialog";
 import { useDashboardCustomize } from "@/contexts/DashboardCustomizeContext";
 import {
   buildDefaultDescriptor,
@@ -144,6 +145,10 @@ interface DashboardClientProps {
   gridContext?: GridContext | null;
   /** Whether this system has an enabled generator run-tracker (gates the generator-runs card). */
   hasGenerator?: boolean;
+  /** P4 shared view: render read-only (no owner controls; descriptor comes from `sharedDescriptor`). */
+  readOnly?: boolean;
+  /** P4 shared view: the shared dashboard's descriptor, server-fetched from the share token. */
+  sharedDescriptor?: DashboardDescriptor | null;
 }
 
 // Helper function to get stale threshold based on vendor type
@@ -163,6 +168,8 @@ export default function DashboardClient({
   serveFlowFromPg = false,
   gridContext = null,
   hasGenerator = false,
+  readOnly = false,
+  sharedDescriptor = null,
 }: DashboardClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -209,19 +216,35 @@ export default function DashboardClient({
     [gridRegionData],
   );
 
-  // Persisted/customizable dashboard descriptor. The descriptor query is disabled (systemId "")
-  // until a systemId is known.
+  // Persisted/customizable dashboard descriptor. Disabled (systemId "") until a systemId is known,
+  // and in the read-only shared view (the descriptor route is owner-scoped — the shared dashboard's
+  // descriptor arrives via the `sharedDescriptor` prop instead).
   const { data: savedDescriptorResp } = useQuery(
-    dashboardDescriptorQuery(systemId ?? ""),
+    dashboardDescriptorQuery(readOnly ? "" : (systemId ?? "")),
   );
-  // Customize open/close + availability are shared with the header menu via context (the
-  // "Customise…" item lives in DashboardHeader, a sibling subtree). DashboardClient owns the dialog.
-  const { setCanCustomize, isCustomizeOpen, closeCustomize } =
-    useDashboardCustomize();
+  // Customize/Share open/close + availability are shared with the header menu via context (the
+  // "Customise…"/"Share…" items live in DashboardHeader, a sibling subtree). DashboardClient owns
+  // the dialogs.
+  const {
+    setCanCustomize,
+    isCustomizeOpen,
+    closeCustomize,
+    setCanShare,
+    isShareOpen,
+    closeShare,
+  } = useDashboardCustomize();
   useEffect(() => {
-    setCanCustomize(!!data);
+    setCanCustomize(!readOnly && !!data);
     return () => setCanCustomize(false);
-  }, [data, setCanCustomize]);
+  }, [data, readOnly, setCanCustomize]);
+  // The owner (or admin) may mint a public share link once the dashboard has loaded. Never in the
+  // read-only shared view.
+  const isOwnerOrAdmin =
+    isAdmin || (!!userId && data?.system.ownerClerkUserId === userId);
+  useEffect(() => {
+    setCanShare(!readOnly && !!data && isOwnerOrAdmin);
+    return () => setCanShare(false);
+  }, [readOnly, data, isOwnerOrAdmin, setCanShare]);
 
   // Real tile preview nodes for the Customize dialog — the SAME nodes the dashboard renders,
   // so the editor shows cards exactly as they appear. Built unconditionally (before any early
@@ -242,9 +265,15 @@ export default function DashboardClient({
     const def = buildDefaultDescriptor(data.system, data.latest ?? {}, {
       gridSignalsAvailable: !!gridContext,
     });
-    const saved = savedDescriptorResp?.descriptor ?? null;
+    const saved = sharedDescriptor ?? savedDescriptorResp?.descriptor ?? null;
     return saved ? normalizeDescriptor(saved, def) : def;
-  }, [data?.system, data?.latest, savedDescriptorResp, gridContext]);
+  }, [
+    data?.system,
+    data?.latest,
+    savedDescriptorResp,
+    sharedDescriptor,
+    gridContext,
+  ]);
 
   // Derive the display error from the query result, preserving the original branches:
   // connection failure, an explicit `error` body, or the "system exists but no charts" marker.
@@ -432,6 +461,15 @@ export default function DashboardClient({
           powerCardNodes={tileNodes}
           onSave={saveDashboard}
           onReset={resetDashboard}
+        />
+      )}
+
+      {/* Share dialog (P4) — opened from the header "Share…" menu item (owner-only). */}
+      {data && systemId && (
+        <DashboardShareDialog
+          isOpen={isShareOpen}
+          onClose={closeShare}
+          systemId={systemId}
         />
       )}
 
