@@ -3,13 +3,15 @@
 > **Status:** active — proposed 2026-06-13. **P0–P3 shipped & live on prod 2026-06-14.** Both the
 > PRESENTATION layer (Dashboards/Cards, PR #53) and the SEMANTIC layer (Areas) are live: `areas` /
 > `area_bindings` / `roles` exist (migration `0008`), `AREAS_TABLE="true"` in prod + preview, the
-> backfill is applied (1:1 identity Area per system + composite Areas for #7 Craig / #8 Kinkora),
-> `point_readings_flow_1d.area_id` is backfilled forward-only and **proven byte-identical** to the
-> `system_id` keying (parity harness, both envs), and `dashboards.area_id` links each dashboard to its
-> Area (migration `0011`, PR #66). What remains of P3 is the **deferred destructive tail** (drop
-> `flow_1d.system_id`, retire the composite `metadata` shim + pseudo-vendor) — gated behind a soak; see
-> the roadmap. **P4 (per-Dashboard sharing) is now next.** Schema source of truth:
-> `lib/db/planetscale/schema.ts`; any DDL still gated by the "ask before modifying the schema" rule.
+> backfill is applied (1:1 identity Area per system + composite Areas for #7 Craig / #8 Kinkora), and
+> `point_readings_flow_1d` is now **keyed solely by `area_id`** — `system_id` was dropped in migration
+> `0013` (PR #87, 2026-06-15) after the backfill was proven byte-identical to the `system_id` keying
+> (parity harness, both envs) — and `dashboards.area_id` links each dashboard to its Area (migration
+> `0011`, PR #66). What remains of P3 is the rest of the **destructive tail** (retire the composite
+> `metadata` shim + pseudo-vendor, then the eventual composite `systems`-row delete behind the
+> integer→area addressing prerequisite); see the roadmap. **P4 (per-Dashboard sharing) is now next.**
+> Schema source of truth: `lib/db/planetscale/schema.ts`; any DDL still gated by the "ask before
+> modifying the schema" rule.
 
 ## TL;DR
 
@@ -277,9 +279,11 @@ the physical layer" value with no schema change.**
 - **P3 — First-class `areas` + `area_bindings` + `roles`; retire composite-as-system. ✅ SHIPPED & LIVE
   (PR #55 schema/migration `0008`; #64 read layer + flow-matrix re-key; #66 `dashboards.area_id`
   migration `0011`). Flag `AREAS_TABLE="true"` in prod + preview.** Backfill applied (identity + composite
-  Areas, `flow_1d.area_id`); parity proven byte-identical (`scripts/verify-areas-parity.ts`). **Still
-  deferred = the destructive tail** (drop `flow_1d.system_id`, retire the `metadata` shim + pseudo-vendor),
-  soak-gated — scoped in `docs/deferred/areas-p3-tail-and-p4-plan.md`. As-built notes below:
+  Areas, `flow_1d.area_id`); parity proven byte-identical (`scripts/verify-areas-parity.ts`).
+  **P3-tail-1 `flow_1d.system_id` drop ✅ DONE** (migration `0013`, PR #87, 2026-06-15 — `area_id` is now
+  the sole PK). **Still deferred = the rest of the tail** (retire the `metadata` shim + pseudo-vendor,
+  then the composite `systems`-row delete) — scoped in `docs/deferred/areas-p3-tail-and-p4-plan.md`.
+  As-built notes below:
   Normalized the metadata JSON into typed rows; pointed `resolveLogicalSystem`, the
   composite adapter, the summary store, and the KV registry builder at `area_bindings`.
   **Identity-Area seam (history):** every system gets a 1:1 identity Area; each composite `systems.id`

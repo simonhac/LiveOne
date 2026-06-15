@@ -8,6 +8,11 @@
 
 ---
 
+> **✅ UPDATE 2026-06-15 (post-cutover):** P3-tail-1 is **complete** — `flow_1d.system_id` dropped
+> (migration `0013`, PR #87) and the `logical-system` loud-skip shipped, both live on prod + dev. The
+> reframing below still holds for what _remains_: the destructive SQL is mostly done, but the
+> composite-`systems`-row delete still hinges on the unstarted **integer→area addressing prerequisite**.
+
 ## ⟳ REFRESH 2026-06-15 (re-verified against `main` @ `3618de5`, post chart-generalization #80–#85)
 
 > A multi-agent design pass re-checked every claim below against current code. **The sections from
@@ -29,17 +34,17 @@ gates the row delete; the DELETE itself is trivial by comparison.
 
 ### Status (corrected)
 
-| Step                                                                                                             | State                                                                  |
-| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| P3 read layer + areas/area_bindings/roles + `AREAS_TABLE` (#64)                                                  | ✅ landed                                                              |
-| `dashboards.area_id` (#66)                                                                                       | ✅ landed                                                              |
-| P3-tail-1 **Phase A** — recompute DELETEs flow_1d by `area_id`, route prefers `area_id` (#69)                    | ✅ landed                                                              |
-| P3-tail-1 Phase A **"step 1"** (logical-system loud-error / non-null `areaId`)                                   | ❌ NEVER shipped — still silently writes null `area_id` (live footgun) |
-| P4 sharing MVP auth `requireDashboardAccess` (#72)                                                               | ◑ partially landed (out of scope; migration `0012` exists, not on dev) |
-| P3-tail-1 **Phase B** — drop `flow_1d.system_id`, re-key PK                                                      | ⬜ next migration = **0013**                                           |
-| P3-tail-2 A/B/C — bindings authoritative → drop metadata shim → retire `AREAS_TABLE` + delete `CompositeAdapter` | ⬜                                                                     |
-| Integer→area addressing prerequisite                                                                             | ⬜ **LARGE, unstarted — the real gate**                                |
-| Destructive systems-row DELETE + KV cleanup                                                                      | ⬜ last                                                                |
+| Step                                                                                                             | State                                                                                               |
+| ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| P3 read layer + areas/area_bindings/roles + `AREAS_TABLE` (#64)                                                  | ✅ landed                                                                                           |
+| `dashboards.area_id` (#66)                                                                                       | ✅ landed                                                                                           |
+| P3-tail-1 **Phase A** — recompute DELETEs flow_1d by `area_id`, route prefers `area_id` (#69)                    | ✅ landed                                                                                           |
+| P3-tail-1 Phase A **"step 1"** (logical-system loud-error / non-null `areaId`)                                   | ✅ DONE (PR #87) — `resolveLogicalSystem` skips + logs on a null Area                               |
+| P4 sharing MVP auth `requireDashboardAccess` (#72)                                                               | ◑ partially landed (out of scope; migration `0012` now applied dev + prod, as a side-effect of #87) |
+| P3-tail-1 **Phase B** — drop `flow_1d.system_id`, re-key PK                                                      | ✅ DONE (migration `0013`, PR #87, 2026-06-15) — `area_id` is the sole PK                           |
+| P3-tail-2 A/B/C — bindings authoritative → drop metadata shim → retire `AREAS_TABLE` + delete `CompositeAdapter` | ⬜                                                                                                  |
+| Integer→area addressing prerequisite                                                                             | ⬜ **LARGE, unstarted — the real gate**                                                             |
+| Destructive systems-row DELETE + KV cleanup                                                                      | ⬜ last                                                                                             |
 
 ### Critical ordering rules
 
@@ -67,18 +72,22 @@ gates the row delete; the DELETE itself is trivial by comparison.
 - **Missing primitives** Phase A needs: a bindings→`{version:2,mappings}` **reverse converter**
   (`lib/areas/convert.ts` is forward-only) and `syncCompositeBindingsFromMappings` (current
   `syncCompositeBindings` still re-reads `metadata`).
-- **Second column-skew surface:** `scripts/seed-preview-db.ts` COPYs flow_1d via `SELECT *` (column
-  _position_ sensitive) in addition to `sync-prod-to-dev.ts` — pause **both** across the 0013 window.
+- **Second column-skew surface:** `scripts/seed-preview-db.ts` COPYs flow*1d via `SELECT *` (column
+  \_position* sensitive) in addition to `sync-prod-to-dev.ts` — pause **both** across the 0013 window.
 
-### Recommended next steps (the cheap, safe spine)
+### Recommended next steps (the cheap, safe spine) — ✅ BOTH SHIPPED 2026-06-15 (PR #87)
 
-1. **NEXT-1** — harden `lib/aggregation/logical-system.ts`: `areaId: string` (not nullable);
-   `resolveLogicalSystem` loud-errors/skips on a null area instead of `?? null`. Non-destructive,
-   behaviour-preserving in prod. Soak ≥1 daily-cron cycle.
-2. **NEXT-2** — P3-tail-1 Phase B: drop `flow_1d.system_id` (migration `0013`, guarded DDL drafted in
-   `.context/areas-p3-tail-refresh.md`). Destructive; dev-then-sydney same window, pause sync+seed, ≥24h soak.
+1. **NEXT-1 ✅** — hardened `lib/aggregation/logical-system.ts`: `areaId: string` (non-nullable);
+   `resolveLogicalSystem` logs + returns `null` on a null Area instead of `?? null`.
+2. **NEXT-2 ✅** — P3-tail-1 Phase B: dropped `flow_1d.system_id` (migration `0013`, guarded DDL).
+   The soak was **deliberately skipped** (sole user; `flow_1d` is a recomputable cache, not source
+   data; guard + base backup + PITR cover rollback) — NEXT-1 + NEXT-2 shipped in one PR, dev-then-sydney
+   in one window. Verified: `system_id` dropped, `area_id` NOT NULL + sole PK, 17,492 rows preserved,
+   0 nulls, live read path 200 for identity (sys 1) + composite (sys 8) Areas.
 
-P3-tail-2 Phase A is parallel-safe but **off** the critical path to deleting the rows.
+**What's actually next** = P3-tail-2 (retire the composite `metadata` shim + pseudo-vendor) and, the real
+bulk, the **integer→area addressing prerequisite** before the composite `systems`-row DELETE. P4 sharing
+is independent. P3-tail-2 Phase A is parallel-safe but **off** the critical path to deleting the rows.
 
 ### Bottom line
 
