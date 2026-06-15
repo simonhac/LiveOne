@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "concurrently \"next dev\" \"tsc --noEmit --watch\"",
     "dev:no-typecheck": "next dev",
+    "check:routes": "node scripts/check-route-slugs.mjs",
+    "prebuild": "node scripts/check-route-slugs.mjs",
     "build": "next build",
+    "prebuild:local": "node scripts/check-route-slugs.mjs",
     "build:local": "BUILD_DIR=.next-build next build",
     "start": "next start",
     "lint": "next lint",
