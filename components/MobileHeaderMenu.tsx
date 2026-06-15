@@ -13,6 +13,7 @@ import {
   RefreshCw,
   SlidersHorizontal,
   Share2,
+  MapPin,
 } from "lucide-react";
 import { useDashboardCustomizeOptional } from "@/contexts/DashboardCustomizeContext";
 
@@ -222,6 +223,18 @@ export default function MobileHeaderMenu({
                   >
                     <Share2 className="w-4 h-4" />
                     Share…
+                  </button>
+                )}
+                {customize?.canSetLocation && (
+                  <button
+                    onClick={() => {
+                      onClose();
+                      customize.openLocation();
+                    }}
+                    className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
+                  >
+                    <MapPin className="w-4 h-4" />
+                    Location…
                   </button>
                 )}
               </div>

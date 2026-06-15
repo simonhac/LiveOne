@@ -24,6 +24,7 @@ import {
   X,
   SlidersHorizontal,
   Share2,
+  MapPin,
 } from "lucide-react";
 import LastUpdateTime from "@/components/LastUpdateTime";
 import SystemInfoTooltip from "@/components/SystemInfoTooltip";
@@ -503,6 +504,20 @@ export default function DashboardHeader({
                       >
                         <Share2 className="w-4 h-4" />
                         Share…
+                      </button>
+                    )}
+
+                    {/* Location — owner-only; sets the site's NEM region for the Local Grid card */}
+                    {customize?.canSetLocation && (
+                      <button
+                        onClick={() => {
+                          setShowSettingsDropdown(false);
+                          customize.openLocation();
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
+                      >
+                        <MapPin className="w-4 h-4" />
+                        Location…
                       </button>
                     )}
                   </div>

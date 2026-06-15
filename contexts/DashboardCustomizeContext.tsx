@@ -23,6 +23,13 @@ interface DashboardCustomizeValue {
   isShareOpen: boolean;
   openShare: () => void;
   closeShare: () => void;
+  /** True once the dashboard is loaded and the caller owns it (sets the site location → grid region). */
+  canSetLocation: boolean;
+  setCanSetLocation: (v: boolean) => void;
+  /** Open/close state for the Location dialog. */
+  isLocationOpen: boolean;
+  openLocation: () => void;
+  closeLocation: () => void;
 }
 
 const DashboardCustomizeContext = createContext<DashboardCustomizeValue | null>(
@@ -38,6 +45,8 @@ export function DashboardCustomizeProvider({
   const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
   const [canShare, setCanShare] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
+  const [canSetLocation, setCanSetLocation] = useState(false);
+  const [isLocationOpen, setIsLocationOpen] = useState(false);
   return (
     <DashboardCustomizeContext.Provider
       value={{
@@ -51,6 +60,11 @@ export function DashboardCustomizeProvider({
         isShareOpen,
         openShare: () => setIsShareOpen(true),
         closeShare: () => setIsShareOpen(false),
+        canSetLocation,
+        setCanSetLocation,
+        isLocationOpen,
+        openLocation: () => setIsLocationOpen(true),
+        closeLocation: () => setIsLocationOpen(false),
       }}
     >
       {children}
