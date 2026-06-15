@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { systems } from "@/lib/db/planetscale/schema";
 import { pointInfo } from "@/lib/db/planetscale/schema";
-import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
 import { SystemsManager } from "@/lib/systems-manager";
 import { COMPOSITE_VALIDATED_ROLE_IDS, ROLES } from "@/lib/roles/registry";
-import { AREAS_TABLE } from "@/lib/areas/flags";
-import { syncCompositeBindings } from "@/lib/areas/sync";
+import { bindingsToMappings } from "@/lib/areas/convert";
+import { getCompositeBindingRefs } from "@/lib/areas/bindings";
+import { syncCompositeBindingsFromMappings } from "@/lib/areas/sync";
 
 export async function GET(
   request: NextRequest,
@@ -25,18 +24,14 @@ export async function GET(
       return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
     }
 
-    // Get the target system
-    const [targetSystem] = await requirePlanetscaleDb()
-      .select()
-      .from(systems)
-      .where(eq(systems.id, systemId))
-      .limit(1);
+    // Resolve via SystemsManager (a composite resolves to its areas-backed virtual system once the
+    // legacy systems row is gone), then verify it's a composite.
+    const targetSystem = await SystemsManager.getInstance().getSystem(systemId);
 
     if (!targetSystem) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
-    // Verify it's a composite system
     if (targetSystem.vendorType !== "composite") {
       return NextResponse.json(
         { error: "This endpoint is only for composite systems" },
@@ -44,23 +39,10 @@ export async function GET(
       );
     }
 
-    // Get metadata (Drizzle auto-parses with mode: "json")
-    let metadata = targetSystem.metadata || null;
-
-    // Handle legacy double-encoded data (if metadata is a string, parse it again)
-    if (typeof metadata === "string") {
-      try {
-        metadata = JSON.parse(metadata);
-        console.warn(
-          `System ${systemId} has double-encoded metadata, parsed successfully`,
-        );
-      } catch (e) {
-        console.error(
-          `Failed to parse double-encoded metadata for system ${systemId}:`,
-          e,
-        );
-      }
-    }
+    // Derive the {version:2, mappings} blob from the authoritative area_bindings.
+    const metadata = bindingsToMappings(
+      await getCompositeBindingRefs(systemId),
+    );
 
     return NextResponse.json({
       success: true,
@@ -94,12 +76,8 @@ export async function PATCH(
       return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
     }
 
-    // Get the target system
-    const [targetSystem] = await requirePlanetscaleDb()
-      .select()
-      .from(systems)
-      .where(eq(systems.id, systemId))
-      .limit(1);
+    // Resolve via SystemsManager (areas-backed once the legacy systems row is gone).
+    const targetSystem = await SystemsManager.getInstance().getSystem(systemId);
 
     if (!targetSystem) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
@@ -248,25 +226,21 @@ export async function PATCH(
       mappings,
     };
 
-    // Update the system with new metadata. updateSystem honours CONFIG_WRITES_TO_PG
-    // and invalidates the SystemsManager cache. The system's existence was already
-    // confirmed above (targetSystem), so no post-update 404 check is needed.
-    await SystemsManager.getInstance().updateSystem(systemId, {
-      metadata: metadata as any,
-    });
+    // Bindings are authoritative: write the edited mappings straight to area_bindings (no metadata
+    // re-read). Let a failure surface — the editor must not silently drop an edit.
+    await syncCompositeBindingsFromMappings(systemId, metadata);
 
-    // P3 dual-write: keep typed area_bindings in lock-step with the metadata shim while AREAS_TABLE
-    // is on (the shim stays authoritative for /api/data and flag-off rollback). The metadata write
-    // above already happened, so the converter sees the new mappings.
-    if (AREAS_TABLE) {
-      try {
-        await syncCompositeBindings(systemId);
-      } catch (error) {
-        console.error(
-          `[Composite] Failed to sync area_bindings for system ${systemId}:`,
-          error,
-        );
-      }
+    // Rollback cushion (Stages 0–2): mirror the blob into systems.metadata while the legacy systems
+    // row still exists. Best-effort and a no-op once the row is gone (Stage 3 removes this).
+    try {
+      await SystemsManager.getInstance().updateSystem(systemId, {
+        metadata: metadata as any,
+      });
+    } catch (error) {
+      console.error(
+        `[Composite] Failed to mirror metadata cushion for system ${systemId}:`,
+        error,
+      );
     }
 
     // Rebuild subscription registry to reflect the updated composite system mappings

@@ -14,6 +14,7 @@ import {
   SystemSummary,
   SystemSummariesMap,
 } from "@/lib/system-summary-store";
+import { getCompositeBindingRefs } from "@/lib/areas/bindings";
 
 export interface SystemData {
   systemId: number;
@@ -76,33 +77,22 @@ export interface AdminSystemsResult {
 }
 
 /**
- * Extract all source systems referenced in composite metadata (version 2 format)
+ * Extract all source (child) systems a composite draws points from, derived from its authoritative
+ * `area_bindings` (keyed by the composite's legacy_system_id).
  */
 async function getCompositeSourceSystems(
-  metadata: any,
+  compositeSystemId: number,
 ): Promise<Array<{ id: number; alias: string | null }>> {
-  if (!metadata || typeof metadata !== "object") return [];
-  if (metadata.version !== 2 || !metadata.mappings) return [];
+  const refs = await getCompositeBindingRefs(compositeSystemId);
 
   const systemsMap = new Map<number, { id: number; alias: string | null }>();
   const systemsManager = SystemsManager.getInstance();
 
-  for (const [, pointRefs] of Object.entries(metadata.mappings)) {
-    if (Array.isArray(pointRefs)) {
-      for (const pointRef of pointRefs as string[]) {
-        const [systemIdStr] = pointRef.split(".");
-        const systemId = parseInt(systemIdStr);
-
-        if (!isNaN(systemId) && !systemsMap.has(systemId)) {
-          const system = await systemsManager.getSystem(systemId);
-          if (system) {
-            systemsMap.set(systemId, {
-              id: system.id,
-              alias: system.alias,
-            });
-          }
-        }
-      }
+  for (const ref of refs) {
+    if (systemsMap.has(ref.pointSystemId)) continue;
+    const system = await systemsManager.getSystem(ref.pointSystemId);
+    if (system) {
+      systemsMap.set(ref.pointSystemId, { id: system.id, alias: system.alias });
     }
   }
 
@@ -305,7 +295,7 @@ export async function getAdminSystemsData(
 
     const compositeSourceSystems =
       system.vendorType === "composite"
-        ? await getCompositeSourceSystems(system.metadata)
+        ? await getCompositeSourceSystems(system.id)
         : undefined;
 
     systemsData.push({

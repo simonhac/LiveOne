@@ -8,16 +8,53 @@ import {
   systems as pgSystems,
   pollingStatus as pgPollingStatus,
   userSystems as pgUserSystems,
+  areas as pgAreas,
 } from "@/lib/db/planetscale/schema";
 
 // Export the type for a system from the database
 export type System = InferSelectModel<typeof pgSystems>;
 export type PollingStatus = InferSelectModel<typeof pgPollingStatus>;
 
+export type Area = InferSelectModel<typeof pgAreas>;
+
 // Combined system with polling status
 export type SystemWithPolling = System & {
   pollingStatus?: PollingStatus | null;
 };
+
+/**
+ * Synthesize a `SystemWithPolling` for a composite Area — the areas-backed "virtual system" that lets
+ * the integer handle (`legacy_system_id`) keep addressing a composite after its legacy `systems` row
+ * is deleted (migration 0014). Composites own no points, never poll, and resolve points/live values
+ * from `area_bindings` + the KV fan-out, so device/polling fields are null. Returns null if the Area
+ * has no `legacy_system_id` (not a composite migration seam).
+ */
+export function synthesizeCompositeSystem(
+  area: Area,
+): SystemWithPolling | null {
+  if (area.legacySystemId == null) return null;
+  return {
+    id: area.legacySystemId,
+    ownerClerkUserId: area.ownerClerkUserId,
+    vendorType: "composite",
+    vendorSiteId: `composite:${area.legacySystemId}`,
+    status: area.status,
+    displayName: area.displayName,
+    alias: area.alias,
+    model: null,
+    serial: null,
+    ratings: null,
+    solarSize: null,
+    batterySize: null,
+    location: area.location,
+    metadata: null,
+    timezoneOffsetMin: area.timezoneOffsetMin,
+    displayTimezone: area.displayTimezone,
+    createdAt: area.createdAt,
+    updatedAt: area.updatedAt,
+    pollingStatus: null,
+  };
+}
 
 // Input shape for creating a system (shared by createSystem and its routed inserts).
 type CreateSystemData = {
@@ -148,6 +185,22 @@ export class SystemsManager {
         pollingStatus: row.polling_status,
       };
       this.systemsMap.set(row.systems.id, systemWithPolling);
+    }
+
+    // Composites are areas-backed "virtual systems": synthesize one per composite Area, keyed by its
+    // `legacy_system_id` (the stable integer handle). The `has()` guard makes this a no-op while the
+    // legacy `systems` row still exists (the real row wins) and the source of truth once it's deleted
+    // (migration 0014) — so this is safe to deploy before the delete. Composites own no points, never
+    // poll, and resolve their points/live values from area_bindings + the KV fan-out.
+    const compositeAreas = await requirePlanetscaleDb()
+      .select()
+      .from(pgAreas)
+      .where(eq(pgAreas.kind, "composite"));
+    for (const area of compositeAreas) {
+      if (area.legacySystemId == null) continue;
+      if (this.systemsMap.has(area.legacySystemId)) continue; // real row wins
+      const synthesized = synthesizeCompositeSystem(area);
+      if (synthesized) this.systemsMap.set(area.legacySystemId, synthesized);
     }
 
     const allSystemsArray = Array.from(this.systemsMap.values());

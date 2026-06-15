@@ -59,6 +59,13 @@ async function pollAllSystems(params: {
     subSequence++;
     const sessionLabel = formatSessionId(sessionLabelPrefix, subSequence);
 
+    // Composites are areas-backed virtual systems (no vendor, no polling) — their data arrives via
+    // the KV fan-out from child-system polls. Skip before the adapter lookup so removing the
+    // CompositeAdapter pseudo-vendor doesn't trip the unknown-vendor error branch below.
+    if (system.vendorType === "composite") {
+      continue;
+    }
+
     // Get the vendor adapter first to check if it supports polling
     const adapter = VendorRegistry.getAdapter(system.vendorType);
 

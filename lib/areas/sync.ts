@@ -17,8 +17,36 @@ import { and, eq } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import {
   convertCompositeToBindings,
+  type AreaBindingDraft,
   type ConverterPointInfo,
 } from "@/lib/areas/convert";
+
+type Db = ReturnType<typeof requirePlanetscaleDb>;
+
+/** Transactionally replace an Area's bindings with `drafts`. Shared by the sync entry points. */
+async function replaceAreaBindings(
+  db: Db,
+  areaId: string,
+  drafts: AreaBindingDraft[],
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.delete(areaBindings).where(eq(areaBindings.areaId, areaId));
+    if (drafts.length > 0) {
+      await tx.insert(areaBindings).values(
+        drafts.map((d) => ({
+          id: uuidv7(),
+          areaId,
+          role: d.role,
+          metricType: d.metricType,
+          pointSystemId: d.pointSystemId,
+          pointId: d.pointId,
+          ordinal: d.ordinal,
+          transform: d.transform,
+        })),
+      );
+    }
+  });
+}
 
 /** point_info → ConverterPointInfo. point_info is a small config table; loading it whole is cheap. */
 async function loadAllPointInfo(
@@ -139,24 +167,31 @@ export async function syncCompositeBindings(systemId: number): Promise<number> {
   const drafts = convertCompositeToBindings(composite.metadata, points);
 
   const areaId = await ensureCompositeArea(composite, db);
+  await replaceAreaBindings(db, areaId, drafts);
 
-  await db.transaction(async (tx) => {
-    await tx.delete(areaBindings).where(eq(areaBindings.areaId, areaId));
-    if (drafts.length > 0) {
-      await tx.insert(areaBindings).values(
-        drafts.map((d) => ({
-          id: uuidv7(),
-          areaId,
-          role: d.role,
-          metricType: d.metricType,
-          pointSystemId: d.pointSystemId,
-          pointId: d.pointId,
-          ordinal: d.ordinal,
-          transform: d.transform,
-        })),
-      );
-    }
-  });
+  return drafts.length;
+}
 
+/**
+ * Replace a composite's `area_bindings` from a `{version:2, mappings}` blob passed by the caller —
+ * WITHOUT re-reading `systems.metadata`. This is the bindings-authoritative write path (the composite
+ * editor): bindings are the source of truth, so the editor converts the edited mappings straight to
+ * bindings here. The composite Area must already exist (it's backfilled); throws otherwise. Returns
+ * the number of bindings written.
+ */
+export async function syncCompositeBindingsFromMappings(
+  systemId: number,
+  metadata: unknown,
+): Promise<number> {
+  const db = requirePlanetscaleDb();
+  const areaId = await getCompositeAreaId(systemId, db);
+  if (!areaId) {
+    throw new Error(
+      `syncCompositeBindingsFromMappings: no composite Area for system ${systemId}`,
+    );
+  }
+  const points = await loadAllPointInfo(db);
+  const drafts = convertCompositeToBindings(metadata, points);
+  await replaceAreaBindings(db, areaId, drafts);
   return drafts.length;
 }
