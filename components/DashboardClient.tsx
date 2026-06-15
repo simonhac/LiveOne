@@ -149,8 +149,6 @@ interface DashboardClientProps {
   readOnly?: boolean;
   /** P4 shared view: the shared dashboard's descriptor, server-fetched from the share token. */
   sharedDescriptor?: DashboardDescriptor | null;
-  /** P4: DASHBOARD_SHARING is enabled (server flag) — gates the owner's "Share…" affordance. */
-  sharingEnabled?: boolean;
 }
 
 // Helper function to get stale threshold based on vendor type
@@ -172,7 +170,6 @@ export default function DashboardClient({
   hasGenerator = false,
   readOnly = false,
   sharedDescriptor = null,
-  sharingEnabled = false,
 }: DashboardClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -240,14 +237,14 @@ export default function DashboardClient({
     setCanCustomize(!readOnly && !!data);
     return () => setCanCustomize(false);
   }, [data, readOnly, setCanCustomize]);
-  // The owner (or admin) may mint a public share link when DASHBOARD_SHARING is on. Never in the
+  // The owner (or admin) may mint a public share link once the dashboard has loaded. Never in the
   // read-only shared view.
   const isOwnerOrAdmin =
     isAdmin || (!!userId && data?.system.ownerClerkUserId === userId);
   useEffect(() => {
-    setCanShare(sharingEnabled && !readOnly && !!data && isOwnerOrAdmin);
+    setCanShare(!readOnly && !!data && isOwnerOrAdmin);
     return () => setCanShare(false);
-  }, [sharingEnabled, readOnly, data, isOwnerOrAdmin, setCanShare]);
+  }, [readOnly, data, isOwnerOrAdmin, setCanShare]);
 
   // Real tile preview nodes for the Customize dialog — the SAME nodes the dashboard renders,
   // so the editor shows cards exactly as they appear. Built unconditionally (before any early

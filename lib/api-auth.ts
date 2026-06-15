@@ -5,10 +5,7 @@ import { SystemsManager, SystemWithPolling } from "./systems-manager";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { userSystems } from "@/lib/db/planetscale/schema";
 import { eq, and } from "drizzle-orm";
-import {
-  DASHBOARD_SHARING,
-  validateDashboardShareToken,
-} from "@/lib/dashboard/sharing";
+import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboardById } from "@/lib/dashboard/store";
 
 // Authorization result with context
@@ -191,17 +188,17 @@ export interface DashboardAuthContext {
 
 /**
  * Access to a dashboard's data routes (P4). Grants READ via a valid per-dashboard share token
- * (`?access=`, gated by DASHBOARD_SHARING) whose dashboard targets this exact `systemId` — a public,
- * read-only, single-system grant that mirrors the existing ownerless-system public path. Otherwise
- * falls through to `requireSystemAccess` (owner/admin/viewer/public). A bad or mismatched token never
- * blocks normal auth (the caller may also be logged in).
+ * (`?access=`) whose dashboard targets this exact `systemId` — a public, read-only, single-system
+ * grant that mirrors the existing ownerless-system public path. Otherwise falls through to
+ * `requireSystemAccess` (owner/admin/viewer/public). A bad or mismatched token never blocks normal
+ * auth (the caller may also be logged in).
  */
 export async function requireDashboardAccess(
   request: NextRequest,
   systemId: number,
 ): Promise<DashboardAuthContext | NextResponse> {
   const token = new URL(request.url).searchParams.get("access");
-  if (DASHBOARD_SHARING && token) {
+  if (token) {
     const valid = await validateDashboardShareToken(token);
     if (valid) {
       const dash = await getDashboardById(valid.dashboardId);

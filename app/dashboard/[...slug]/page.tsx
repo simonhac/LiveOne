@@ -13,7 +13,6 @@ import { VendorRegistry } from "@/lib/vendors/registry";
 import { FLOW_MATRIX_SERVE_FROM_PG } from "@/lib/db/routing";
 import { resolveGridContextForSystem } from "@/lib/grid/context";
 import { hasEnabledTracker } from "@/lib/run-tracking/resolve";
-import { DASHBOARD_SHARING } from "@/lib/dashboard/sharing";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboardById } from "@/lib/dashboard/store";
 import type { DashboardDescriptor } from "@/lib/dashboard/descriptor";
@@ -37,7 +36,7 @@ export default async function DashboardPage({
   // Invalid/expired tokens fall through to the normal authed flow.
   const sp = await searchParams;
   const accessToken = typeof sp?.access === "string" ? sp.access : undefined;
-  if (DASHBOARD_SHARING && accessToken) {
+  if (accessToken) {
     const valid = await validateDashboardShareToken(accessToken);
     if (valid) {
       const dash = await getDashboardById(valid.dashboardId);
@@ -295,7 +294,6 @@ export default async function DashboardPage({
         serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
         gridContext={gridContext}
         hasGenerator={hasGenerator}
-        sharingEnabled={DASHBOARD_SHARING}
       />
     );
   }
@@ -321,7 +319,6 @@ export default async function DashboardPage({
         serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
         gridContext={gridContext}
         hasGenerator={hasGenerator}
-        sharingEnabled={DASHBOARD_SHARING}
       />
     </DashboardLayout>
   );

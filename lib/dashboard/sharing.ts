@@ -5,21 +5,11 @@
  * `share_tokens`). A holder gets read access to exactly the points that dashboard exposes
  * (lib/dashboard/access.ts), resolved at consumption time — never general system access. Reuses the
  * 3-word phrase generator + epoch-ms / revoke / expiry convention from lib/share-tokens.ts.
- *
- * Gated by DASHBOARD_SHARING (off by default → the share endpoints 404), a kill-switch for this
- * security-sensitive new surface.
  */
 import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { dashboardShareTokens } from "@/lib/db/planetscale/schema";
 import { generateTokenString, isWellFormedToken } from "@/lib/share-tokens";
-
-function envFlag(name: string): boolean {
-  return (process.env[name] ?? "").trim().toLowerCase() === "true";
-}
-
-/** P4 per-dashboard sharing kill-switch. Off → /api/dashboard-share + the share-mint routes 404. */
-export const DASHBOARD_SHARING = envFlag("DASHBOARD_SHARING");
 
 export interface CreateDashboardShareTokenOptions {
   dashboardId: number;
