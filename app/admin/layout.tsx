@@ -14,6 +14,8 @@ import {
   Menu,
   X,
   Radio,
+  Layers,
+  LayoutDashboard,
 } from "lucide-react";
 
 const navItems = [
@@ -22,6 +24,18 @@ const navItems = [
     href: "/admin/systems",
     icon: Server,
     description: "Manage and monitor all systems",
+  },
+  {
+    name: "Areas",
+    href: "/admin/areas",
+    icon: Layers,
+    description: "Identity & composite areas",
+  },
+  {
+    name: "Dashboards",
+    href: "/admin/dashboards",
+    icon: LayoutDashboard,
+    description: "User dashboards & sharing",
   },
   {
     name: "Users",
