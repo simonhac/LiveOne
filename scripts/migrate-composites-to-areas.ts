@@ -134,6 +134,17 @@ async function rekeyFlow1d(db: ReturnType<typeof requirePlanetscaleDb>) {
   console.log(
     `${tag} flow_1d re-key: area_id = area whose legacy_system_id = system_id`,
   );
+  // Historical step: `system_id` was dropped in migration 0013 (flow rows are now born area-keyed
+  // by the daily recompute), so this re-key is a no-op once that migration has landed. Skip rather
+  // than erroring on the missing column so the areas/bindings/roles steps stay re-runnable.
+  const colRes = await db.execute(
+    sql`SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'point_readings_flow_1d' AND column_name = 'system_id'`,
+  );
+  if (colRes.rows.length === 0) {
+    console.log(`${tag}   system_id column gone (post-0013) — re-key skipped`);
+    return;
+  }
   if (!APPLY) {
     const res = await db.execute(
       sql`SELECT count(*)::int AS count FROM point_readings_flow_1d f

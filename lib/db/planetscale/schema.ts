@@ -396,30 +396,28 @@ export const pointReadingsAgg1d = pgTable(
 // time. A multi-day range is a plain `SUM(energy_kwh) GROUP BY (source_path,
 // load_path)`, because per-interval energy is additive.
 //
-// `system_id` is the LOGICAL SYSTEM / view the flows belong to (`resolveLogicalSystem`):
-// a single physical system, OR a composite whose points are drawn from CHILD systems.
-// For a composite the cross-system origin is collapsed into the composite's id (provenance
-// is not preserved on the row); `source_path`/`load_path` are stems in that view's namespace.
-// All flows in a row therefore belong to one view — cross-system *edges* (a source on one
-// system, a load on another) are not representable in this shape. NOTE: a composite and its
-// child systems each get their own rows, so a portfolio rollup must never sum a composite
-// AND its members.
+// `area_id` is the LOGICAL SYSTEM / view the flows belong to (`resolveLogicalSystem`):
+// an identity Area over a single physical system, OR a composite Area whose points are drawn
+// from CHILD systems. For a composite the cross-system origin is collapsed into the Area
+// (provenance is not preserved on the row); `source_path`/`load_path` are stems in that view's
+// namespace. All flows in a row therefore belong to one view — cross-system *edges* (a source
+// on one system, a load on another) are not representable in this shape. NOTE: a composite Area
+// and its members' identity Areas each get their own rows, so a portfolio rollup must never sum
+// a composite AND its members.
 // ============================================================================
 export const pointReadingsFlow1d = pgTable(
   "point_readings_flow_1d",
   {
-    // Composite primary key columns
-    systemId: integer("system_id").notNull(), // LOGICAL system / view id (physical OR composite)
+    // The Area this view belongs to — the logical-system identity (P3-tail-1). Part of the
+    // composite primary key. An identity Area is a 1:1 wrapper over a single physical system; a
+    // composite Area collapses its members' provenance into one namespace. See
+    // areas-and-dashboards.md (P3). (Replaced the legacy `system_id` keying in migration 0013.)
+    areaId: uuid("area_id")
+      .notNull()
+      .references(() => areas.id),
     day: text("day").notNull(), // YYYY-MM-DD, system-local — same key convention as agg_1d
     sourcePath: text("source_path").notNull(), // e.g. "source.solar" | "source.battery" | "source.grid"
     loadPath: text("load_path").notNull(), // "load" | "load.<sub>" | "load.battery" | "load.grid" | "load.rest-of-house"
-
-    // P3 Areas re-key (NOT a recompute): the Area this view belongs to, == the area whose
-    // legacy_system_id == this system_id. An identity Area is a 1:1 wrapper over a single
-    // physical system, so its rows are byte-identical to the system-keyed rows — flow history
-    // is never rebuilt. Nullable + backfilled forward-only; system_id stays through the soak and
-    // is dropped (with the composite shim) in a later migration. See areas-and-dashboards.md (P3).
-    areaId: uuid("area_id").references(() => areas.id),
 
     // Flow value
     energyKwh: doublePrecision("energy_kwh").notNull(), // always >= 0
@@ -433,9 +431,8 @@ export const pointReadingsFlow1d = pgTable(
   },
   (table) => ({
     pk: primaryKey({
-      columns: [table.systemId, table.day, table.sourcePath, table.loadPath],
+      columns: [table.areaId, table.day, table.sourcePath, table.loadPath],
     }),
-    systemDayIdx: index("prf1d_system_day_idx").on(table.systemId, table.day),
     dayIdx: index("prf1d_day_idx").on(table.day),
     areaDayIdx: index("prf1d_area_day_idx").on(table.areaId, table.day),
   }),

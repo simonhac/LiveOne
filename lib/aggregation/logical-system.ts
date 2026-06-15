@@ -39,12 +39,12 @@ export interface LogicalSystem {
   /** The logical-system id == systems.id (composite or single). */
   id: number;
   /**
-   * The Area this view belongs to (the area whose `legacy_system_id == id`), or null when
-   * `AREAS_TABLE` is off or the Area hasn't been backfilled yet. Drives the forward-only
-   * `point_readings_flow_1d.area_id` re-key — `id` (system_id) stays the primary key through the
-   * soak, so this is additive and a no-op when the flag is off. See areas-and-dashboards.md (P3).
+   * The Area this view belongs to (the area whose `legacy_system_id == id`). Always present:
+   * `resolveLogicalSystem` returns `null` (and logs) rather than yielding an Area-less system, so
+   * the flow recompute never writes an un-keyed `point_readings_flow_1d` row. `area_id` is the
+   * primary key of that table (P3-tail-1). See areas-and-dashboards.md (P3).
    */
-  areaId: string | null;
+  areaId: string;
   timezoneOffsetMin: number;
   /** Participating power points (may span physical systems for a composite). */
   points: LogicalSystemPoint[];
@@ -79,12 +79,20 @@ export async function resolveLogicalSystem(
       displayName: p.name,
     }));
 
-  // Resolve the Area this view belongs to (null when AREAS_TABLE is off / not yet backfilled).
+  // A logical system MUST map to an Area — `area_id` is the primary key of point_readings_flow_1d
+  // (P3-tail-1). If none resolves (AREAS_TABLE off, or the system isn't backfilled), skip loudly
+  // rather than writing an un-keyed flow row.
   const area = await getAreaForSystem(systemId);
+  if (!area) {
+    console.error(
+      `[LogicalSystem] No Area for system ${systemId} — skipping flow recompute (AREAS_TABLE off or un-backfilled)`,
+    );
+    return null;
+  }
 
   return {
     id: systemId,
-    areaId: area?.id ?? null,
+    areaId: area.id,
     timezoneOffsetMin: system.timezoneOffsetMin,
     points,
     isComplete: isCompleteRoleSet(points.map((p) => p.stem)),
