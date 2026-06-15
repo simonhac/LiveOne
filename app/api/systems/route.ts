@@ -6,8 +6,10 @@ import { systems as pgSystems } from "@/lib/db/planetscale/schema";
 import { storeSystemCredentials } from "@/lib/secure-credentials";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { SystemsManager } from "@/lib/systems-manager";
-import { uuidv7 } from "uuidv7";
-import { syncCompositeBindings } from "@/lib/areas/sync";
+import {
+  createCompositeArea,
+  syncCompositeBindingsFromMappings,
+} from "@/lib/areas/sync";
 import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
 
 export async function POST(request: NextRequest) {
@@ -42,39 +44,24 @@ export async function POST(request: NextRequest) {
         `[Create System] Creating composite system for user ${userId}`,
       );
 
-      // Create the composite system using SystemsManager
-      const systemsManager = SystemsManager.getInstance();
-      const newSystem = await systemsManager.createSystem({
+      // Composites are areas-only "virtual systems" (no `systems` row): create the composite Area
+      // with a fresh integer handle, then write its authoritative area_bindings from the mappings.
+      // getSystem(handle) resolves to the synthesized virtual system once the cache refreshes.
+      const { systemId } = await createCompositeArea({
         ownerClerkUserId: userId,
-        vendorType: "composite",
-        vendorSiteId: uuidv7(), // UUIDv7 for time-ordered unique identifier
         displayName: displayName.trim(),
-        status: "active",
-        metadata: {
-          version: 2, // Version 2 uses new mapping format
-          mappings: metadata.mappings,
-        },
       });
-
-      // Create the composite Area + typed area_bindings and refresh the subscription registry so the
-      // new composite resolves immediately. (NOTE: composite CREATE still writes a `systems` row — the
-      // deferred follow-up is to make it write only an `areas` row; existing composites are already
-      // areas-only after migration 0014.)
-      try {
-        await syncCompositeBindings(newSystem.id);
-        await buildSubscriptionRegistry();
-      } catch (error) {
-        console.error(
-          `[Composite] Failed to sync area_bindings for new system ${newSystem.id}:`,
-          error,
-        );
-      }
+      await syncCompositeBindingsFromMappings(systemId, {
+        version: 2,
+        mappings: metadata.mappings,
+      });
+      await buildSubscriptionRegistry();
+      SystemsManager.invalidateCache();
 
       // Success!
       return NextResponse.json({
         success: true,
-        systemId: newSystem.id,
-        system: newSystem,
+        systemId,
       });
     }
 

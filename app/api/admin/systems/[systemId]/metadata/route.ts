@@ -1,7 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { systems } from "@/lib/db/planetscale/schema";
-import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
 
@@ -35,12 +32,8 @@ function readMetadata(raw: unknown): Record<string, unknown> {
 }
 
 async function loadSystem(systemId: number) {
-  const [system] = await requirePlanetscaleDb()
-    .select()
-    .from(systems)
-    .where(eq(systems.id, systemId))
-    .limit(1);
-  return system ?? null;
+  // Resolves a composite to its areas-backed virtual system (metadata is null there).
+  return SystemsManager.getInstance().getSystem(systemId);
 }
 
 export async function GET(
@@ -116,6 +109,17 @@ export async function PATCH(
     const system = await loadSystem(systemId);
     if (!system) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
+    }
+    // Composites are areas-backed and own no generic `systems.metadata`; their config is the
+    // role→point mapping, edited via composite-config.
+    if (system.vendorType === "composite") {
+      return NextResponse.json(
+        {
+          error:
+            "Generic metadata is not supported for composite systems — configure role→point mappings via composite-config.",
+        },
+        { status: 400 },
+      );
     }
 
     // Shallow-merge the namespaced value into existing metadata (preserve sibling keys).

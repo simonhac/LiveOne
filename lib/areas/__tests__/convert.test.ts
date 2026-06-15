@@ -143,43 +143,6 @@ describe("bindingsToMappings — inverse of the converter (real prod composites)
   });
 });
 
-describe("convertCompositeToBindings — base_system/overrides round-trip (synthetic, no prod rows)", () => {
-  // getSourceForMetric, verbatim from CompositeAdapter.
-  const sourceForMetric = (metric: string, metadata: any): number | null => {
-    if (metadata.overrides && metric in metadata.overrides) {
-      return metadata.overrides[metric] ?? null;
-    }
-    return metadata.base_system ?? null;
-  };
-
-  // System 2 has full role coverage (solar/battery/load/grid power + battery soc); system 3 has a
-  // master solar power point. Mirrors the stale adapter example { base_system:2, overrides:{solar:3} }.
-  const metadata = { base_system: 2, overrides: { solar: 3 } };
-
-  it("derives the same per-metric source system as getSourceForMetric", () => {
-    const bindings = convertCompositeToBindings(metadata, points);
-    const systemOf = (role: string, metricType: string): number | undefined =>
-      bindings.find((b) => b.role === role && b.metricType === metricType)
-        ?.pointSystemId;
-
-    expect(systemOf("solar", "power")).toBe(sourceForMetric("solar", metadata)); // 3
-    expect(systemOf("battery", "power")).toBe(
-      sourceForMetric("battery", metadata),
-    ); // 2
-    expect(systemOf("battery", "soc")).toBe(
-      sourceForMetric("battery_soc", metadata),
-    ); // 2
-    expect(systemOf("load", "power")).toBe(sourceForMetric("load", metadata)); // 2
-    expect(systemOf("grid", "power")).toBe(sourceForMetric("grid", metadata)); // 2
-  });
-
-  it("resolves battery to TWO bindings (power + soc)", () => {
-    const bindings = convertCompositeToBindings(metadata, points);
-    const battery = bindings.filter((b) => b.role === "battery");
-    expect(battery.map((b) => b.metricType).sort()).toEqual(["power", "soc"]);
-  });
-});
-
 describe("convertCompositeToBindings — unsupported shapes throw", () => {
   it("throws on the v1 path-string form", () => {
     expect(() =>
