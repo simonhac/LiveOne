@@ -10,8 +10,8 @@
  * Driven by a LOGICAL SYSTEM (`lib/aggregation/logical-system.ts`) — the role→point mapping — so a
  * single physical system and a composite are handled identically: the recompute reads `agg_5m` for
  * the logical system's point refs (which may span *child* systems for a composite) and writes the
- * resulting matrix under the logical-system id. Provenance is collapsed into that id (matching the
- * live dashboard's composite stitching); a flow row's `system_id` is the VIEW the flows belong to.
+ * resulting matrix under the logical system's Area. Provenance is collapsed into that Area (matching
+ * the live dashboard's composite stitching); a flow row's `area_id` is the VIEW the flows belong to.
  *
  * The series assembly (battery/grid split, solar leaf/residual, rest-of-house) and the integration
  * math live in the shared, db-free modules `lib/aggregation/flow-series.ts` and
@@ -53,7 +53,7 @@ function toKw(value: number | null, unit: string | null): number | null {
  * Recompute a logical system's energy-flow matrix for one local day from PG `agg_5m` and replace
  * that day's rows in `point_readings_flow_1d`. Uses the same local-day boundary as the 1d recompute
  * (`dayToUnixRangeForAggregation`) so flow days tile identically with `agg_1d`. The matrix is keyed
- * by — and written under — `logicalSystem.id`, while the points read may belong to child systems.
+ * by — and written under — `logicalSystem.areaId`, while the points read may belong to child systems.
  */
 export async function recomputeFlowMatrixForDay(
   db: PgDb,
@@ -68,17 +68,13 @@ export async function recomputeFlowMatrixForDay(
   const dayEndMs = dayEndUnix * 1000;
   const dayStr = day.toString();
 
-  // P3 tail-1 (Phase A): key the day's rows by the view's Area when it resolves (prod/preview, where
-  // AREAS_TABLE is on + backfilled), else fall back to system_id (flag-off / local dev / tests).
-  // area_id is 1:1 with system_id and proven byte-identical, so this clears+rewrites exactly the same
-  // rows — but it exercises area-keying on the write path before system_id is dropped. system_id is
-  // still stamped on insert as a cushion; it (and this fallback) go in Phase B with the PK rebuild.
+  // P3 tail-1 (Phase B): point_readings_flow_1d is keyed solely by the view's Area. `areaId` is
+  // always present (resolveLogicalSystem skips Area-less systems) and is the table's primary key.
   // See docs/deferred/areas-p3-tail-and-p4-plan.md.
-  const viewMatch =
-    logicalSystem.areaId != null
-      ? eq(pointReadingsFlow1d.areaId, logicalSystem.areaId)
-      : eq(pointReadingsFlow1d.systemId, logicalSystem.id);
-  const dayFilter = and(viewMatch, eq(pointReadingsFlow1d.day, dayStr));
+  const dayFilter = and(
+    eq(pointReadingsFlow1d.areaId, logicalSystem.areaId),
+    eq(pointReadingsFlow1d.day, dayStr),
+  );
 
   const clearDay = () => db.delete(pointReadingsFlow1d).where(dayFilter);
 
@@ -160,10 +156,8 @@ export async function recomputeFlowMatrixForDay(
       const energyKwh = result.matrix[s][l];
       if (energyKwh > MIN_FLOW_KWH) {
         flowRows.push({
-          systemId: logicalSystem.id,
-          // Forward-only P3 re-key: stamp the Area alongside system_id (null when AREAS_TABLE is
-          // off / not backfilled). system_id stays the primary key through the soak — never a
-          // recompute, identity Areas yield byte-identical rows. See areas-and-dashboards.md (P3).
+          // point_readings_flow_1d is keyed by the view's Area (P3-tail-1). Identity Areas are
+          // 1:1 wrappers, so rows are byte-identical to the old system_id keying — never a recompute.
           areaId: logicalSystem.areaId,
           day: dayStr,
           sourcePath: result.sources[s],

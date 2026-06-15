@@ -12,9 +12,8 @@
  *   A. Binding parity — the backfilled `area_bindings` point-set for each composite EQUALS what the
  *      tested converter derives from that composite's CURRENT `systems.metadata` (no point gained/lost,
  *      metric_type matches). This is the convert.test.ts gate, re-run against live rows not fixtures.
- *   B. flow_1d re-key parity — for each system that has an Area, the rows keyed by `system_id` are
- *      byte-identical to the rows keyed by that Area's `area_id` (same (day, source_path, load_path,
- *      energy_kwh, sample_count) set). Proves the re-key never gained/lost/altered a flow.
+ *   B. flow_1d area-keyed — every `point_readings_flow_1d` row has a non-null `area_id` (the legacy
+ *      `system_id` column was dropped in migration 0013, so `area_id` is now the sole view key).
  *
  * Usage:  npx tsx scripts/verify-areas-parity.ts
  */
@@ -99,60 +98,29 @@ async function checkBindingParity(db: Db) {
   }
 }
 
-/** B. flow_1d rows keyed by system_id == rows keyed by area_id, for every system that has an Area. */
-async function checkFlowRekeyParity(db: Db) {
-  console.log("\nB. flow_1d re-key parity (system_id-keyed vs area_id-keyed)");
-  const areaRows = await db
-    .select({
-      id: areas.id,
-      kind: areas.kind,
-      legacySystemId: areas.legacySystemId,
-    })
-    .from(areas);
-
-  for (const a of areaRows) {
-    if (a.legacySystemId === null) continue;
-    // Symmetric-difference count between the two keyings over the shared tuple. A non-zero count
-    // means a flow row was gained, lost, or altered by the re-key.
-    const res = await db.execute(sql`
-      WITH by_system AS (
-        SELECT day, source_path, load_path, energy_kwh, sample_count
-        FROM point_readings_flow_1d WHERE system_id = ${a.legacySystemId}
-      ),
-      by_area AS (
-        SELECT day, source_path, load_path, energy_kwh, sample_count
-        FROM point_readings_flow_1d WHERE area_id = ${a.id}
-      )
-      SELECT
-        (SELECT count(*) FROM by_system) AS system_rows,
-        (SELECT count(*) FROM by_area)   AS area_rows,
-        (SELECT count(*) FROM (
-           (SELECT * FROM by_system EXCEPT SELECT * FROM by_area)
-           UNION ALL
-           (SELECT * FROM by_area EXCEPT SELECT * FROM by_system)
-        ) d) AS mismatched
-    `);
-    const row = res.rows[0] as {
-      system_rows: number;
-      area_rows: number;
-      mismatched: number;
-    };
-    const mismatched = Number(row.mismatched);
-    // Only report systems that actually have flow rows (skip the long tail of areas with none).
-    if (Number(row.system_rows) === 0 && Number(row.area_rows) === 0) continue;
-    check(
-      mismatched === 0,
-      `system #${a.legacySystemId} (${a.kind}): ${row.system_rows} system-keyed / ${row.area_rows} area-keyed rows`,
-      mismatched === 0 ? "byte-identical" : `${mismatched} mismatched tuples`,
-    );
-  }
+/** B. Every flow_1d row is Area-keyed (the `system_id` column was dropped in migration 0013). */
+async function checkFlowAreaKeyed(db: Db) {
+  console.log("\nB. flow_1d area-keyed smoke check (no NULL area_id)");
+  const res = await db.execute(sql`
+    SELECT
+      count(*) AS total,
+      count(*) FILTER (WHERE area_id IS NULL) AS null_area
+    FROM point_readings_flow_1d
+  `);
+  const row = res.rows[0] as { total: number; null_area: number };
+  const nullArea = Number(row.null_area);
+  check(
+    nullArea === 0,
+    `${Number(row.total)} flow rows`,
+    nullArea === 0 ? "all area-keyed" : `${nullArea} rows with NULL area_id`,
+  );
 }
 
 async function main() {
   const db = requirePlanetscaleDb();
   console.log("P3 Areas parity verification (read-only)\n");
   await checkBindingParity(db);
-  await checkFlowRekeyParity(db);
+  await checkFlowAreaKeyed(db);
   console.log(
     `\n${failures === 0 ? "✓ PASS" : `✗ FAIL (${failures} mismatch${failures === 1 ? "" : "es"})`} — parity ${failures === 0 ? "proven" : "NOT proven; do not flip AREAS_TABLE"}`,
   );

@@ -6,7 +6,6 @@ import { planetscaleDb } from "@/lib/db/planetscale";
 import { pointReadingsFlow1d } from "@/lib/db/planetscale/schema";
 import { toEnergyFlowMatrix } from "@/lib/aggregation/flow-node-meta";
 import { resolveLogicalSystem } from "@/lib/aggregation/logical-system";
-import { AREAS_TABLE } from "@/lib/areas/flags";
 
 /**
  * GET /api/energy-flow-matrix?systemId=&start=&end=
@@ -69,16 +68,14 @@ export async function GET(request: NextRequest) {
     }
 
     // Resolve the logical system first: for display names (keyed by stem; works for composites,
-    // whose points live on child systems), to explain an empty result, and — when AREAS_TABLE is
-    // on — to key the flow query on the view's `area_id` instead of `system_id`. An identity Area
-    // is a 1:1 wrapper, so both keyings return byte-identical rows (the backfill re-keyed history
-    // forward-only and the recompute stamps area_id going forward).
+    // whose points live on child systems), to explain an empty result, and to key the flow query on
+    // the view's `area_id` (P3-tail-1: `area_id` is point_readings_flow_1d's primary key). A null
+    // logicalSystem (no Area resolved) falls through to the empty-result branch below.
     const logicalSystem = await resolveLogicalSystem(systemId);
 
-    const viewFilter =
-      AREAS_TABLE && logicalSystem?.areaId
-        ? eq(pointReadingsFlow1d.areaId, logicalSystem.areaId)
-        : eq(pointReadingsFlow1d.systemId, systemId);
+    const viewFilter = logicalSystem
+      ? eq(pointReadingsFlow1d.areaId, logicalSystem.areaId)
+      : sql`false`;
 
     // Sum each (source, load) flow over the completed days in range.
     const rows = await planetscaleDb
