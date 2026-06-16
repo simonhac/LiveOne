@@ -749,6 +749,32 @@ export const areaBindings = pgTable(
 );
 
 // ============================================================================
+// Area devices - explicit area→member-device membership (composite retirement, Phase B).
+//
+// Unifies the two implicit membership models into one: an identity Area has a single member (its
+// `source_system_id`); a composite Area's members are the DISTINCT `area_bindings.point_system_id`s.
+// Making membership first-class lets an Area be "a grouping of 1..N member devices" and lets roles
+// later DEFAULT from each member's own point_info (with area_bindings as an override) — retiring the
+// composite special-case. `system_id` is a plain int (like `areas.legacy_system_id`) with NO FK to
+// systems: a member may be a child system whose `systems` row was deleted (migration 0014). The table
+// is fully rederivable, so the `area_id` CASCADE is safe and does NOT loosen point_readings_flow_1d's
+// data-loss firewall (that table is untouched).
+// ============================================================================
+export const areaDevices = pgTable(
+  "area_devices",
+  {
+    areaId: uuid("area_id")
+      .notNull()
+      .references(() => areas.id, { onDelete: "cascade" }),
+    systemId: integer("system_id").notNull(),
+    ordinal: integer("ordinal").notNull().default(0),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.areaId, table.systemId] }),
+  }),
+);
+
+// ============================================================================
 // Device trackers - per-instance run-tracking config (run-tracking feature).
 //
 // One tracker per (system, role) defines how to recognise "running" for a device: an HA-style
