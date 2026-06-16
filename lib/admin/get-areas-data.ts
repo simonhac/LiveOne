@@ -1,9 +1,10 @@
 /**
  * Shared function to fetch admin areas data (server-side rendering + API).
  *
- * Areas are the SEMANTIC layer (P3): `kind='identity'` wraps a single physical system; `kind='composite'`
- * binds points drawn from ≥2 systems (these are the former vendor_type='composite' fake systems rows,
- * now areas-backed virtual systems — see migration 0014). This powers /admin/areas.
+ * Areas are the SEMANTIC layer: an Area is a grouping of 1..N **member devices** (`area_devices`). A
+ * single-device Area wraps one physical system; a multi-device Area draws points from several (the
+ * former vendor_type='composite' fake systems, now areas-backed virtual systems). Membership is read
+ * uniformly from `area_devices` — there is no `kind` branch. This powers /admin/areas.
  */
 
 import { clerkClient } from "@clerk/nextjs/server";
@@ -11,7 +12,7 @@ import { sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, areaBindings } from "@/lib/db/planetscale/schema";
 import { SystemsManager } from "@/lib/systems-manager";
-import { getCompositeBindingRefs } from "@/lib/areas/bindings";
+import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
 import type { AreaLocation } from "@/lib/areas/types";
 
 export interface AreaSourceSystem {
@@ -22,7 +23,6 @@ export interface AreaSourceSystem {
 
 export interface AdminAreaData {
   id: string;
-  kind: "identity" | "composite";
   displayName: string;
   alias: string | null;
   legacySystemId: number | null;
@@ -35,11 +35,10 @@ export interface AdminAreaData {
     email: string | null;
     userName: string | null;
   };
+  /** Number of `area_bindings` (role→point overrides). 0 for a plain membership-only Area. */
   bindingCount: number;
-  /** For identity areas: the single physical system this wraps. */
-  sourceSystem: AreaSourceSystem | null;
-  /** For composite areas: the physical systems its bindings draw points from. */
-  sourceSystems: AreaSourceSystem[];
+  /** The Area's member devices (from `area_devices`); length 1 = single-device, >1 = multi-device. */
+  memberSystems: AreaSourceSystem[];
 }
 
 export interface AdminAreasResult {
@@ -121,32 +120,23 @@ export async function getAdminAreasData(): Promise<AdminAreasResult> {
       ? userCache.get(area.ownerClerkUserId)
       : null;
 
-    let sourceSystem: AreaSourceSystem | null = null;
-    let sourceSystems: AreaSourceSystem[] = [];
-
-    if (area.kind === "identity" && area.sourceSystemId != null) {
-      sourceSystem = await resolveSystem(systemsManager, area.sourceSystemId);
-    } else if (area.kind === "composite" && area.legacySystemId != null) {
-      const refs = await getCompositeBindingRefs(area.legacySystemId);
-      const seen = new Map<number, AreaSourceSystem>();
-      for (const ref of refs) {
-        if (seen.has(ref.pointSystemId)) continue;
-        const resolved = await resolveSystem(systemsManager, ref.pointSystemId);
-        seen.set(
-          ref.pointSystemId,
-          resolved ?? {
-            id: ref.pointSystemId,
-            alias: null,
-            displayName: null,
-          },
-        );
-      }
-      sourceSystems = Array.from(seen.values()).sort((a, b) => a.id - b.id);
-    }
+    // Uniform: an Area's member devices are its `area_devices` rows — no identity/composite branch.
+    const memberIds = await getAreaDeviceSystemIds(area.id);
+    const memberSystems: AreaSourceSystem[] = (
+      await Promise.all(
+        memberIds.map(
+          async (id) =>
+            (await resolveSystem(systemsManager, id)) ?? {
+              id,
+              alias: null,
+              displayName: null,
+            },
+        ),
+      )
+    ).sort((a, b) => a.id - b.id);
 
     areasData.push({
       id: area.id,
-      kind: area.kind as "identity" | "composite",
       displayName: area.displayName,
       alias: area.alias,
       legacySystemId: area.legacySystemId,
@@ -160,8 +150,7 @@ export async function getAdminAreasData(): Promise<AdminAreasResult> {
         userName: userInfo?.userName || null,
       },
       bindingCount: bindingCounts.get(area.id) ?? 0,
-      sourceSystem,
-      sourceSystems,
+      memberSystems,
     });
   }
 

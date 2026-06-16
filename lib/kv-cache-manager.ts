@@ -2,6 +2,7 @@ import { kv, kvKey } from "./kv";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { LatestValue, LatestValuesMap } from "./latest-values-store";
 import { getAllCompositeBindings } from "@/lib/areas/bindings";
+import { getBindinglessAreaMemberPoints } from "@/lib/areas/devices";
 
 // Re-export canonical types for backwards compatibility
 export type { LatestValue, LatestValuesMap };
@@ -187,7 +188,12 @@ function addSubscription(
   sourceSystemMap.get(sourcePointId)!.add(compositePointRef);
 }
 
-/** Reverse-subscription map (source point → subscribing composites) from typed area_bindings, in SQL. */
+/**
+ * Reverse-subscription map (source point → subscribing areas-backed handle). Two sources, unioned:
+ * (1) typed `area_bindings` for curated multi-device Areas (every existing composite); (2) the member
+ * devices' own points for **binding-less** multi-device Areas (union-default — empty for today's data,
+ * since both prod composites have bindings). Together this is "the area's resolved point set", in SQL.
+ */
 async function buildSubscriptionsFromBindings(): Promise<
   Map<number, Map<string, Set<string>>>
 > {
@@ -198,6 +204,19 @@ async function buildSubscriptionsFromBindings(): Promise<
       b.pointSystemId,
       b.pointId.toString(),
       `${b.compositeSystemId}.${b.ordinal}`,
+    );
+  }
+  // Binding-less multi-device Areas: fan out each member device's own points to the handle. The ref's
+  // index half is vestigial (latest is keyed by logicalPath), so a per-handle running ordinal is fine.
+  const ordByHandle = new Map<number, number>();
+  for (const m of await getBindinglessAreaMemberPoints()) {
+    const ord = ordByHandle.get(m.handle) ?? 0;
+    ordByHandle.set(m.handle, ord + 1);
+    addSubscription(
+      subscriptions,
+      m.pointSystemId,
+      m.pointId.toString(),
+      `${m.handle}.${ord}`,
     );
   }
   return subscriptions;

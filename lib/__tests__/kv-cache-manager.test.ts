@@ -20,19 +20,20 @@ jest.mock("../kv", () => ({
   kvKey: jest.fn((pattern: string) => `test:${pattern}`),
 }));
 
-// Mock the database (Postgres). getAllCompositeBindings uses select→from→innerJoin→orderBy
-// (no `where` — the innerJoin alone restricts to Areas that have bindings).
+// Mock the database (Postgres). Two query shapes hit this:
+//  - getAllCompositeBindings: select→from→innerJoin→orderBy
+//  - getBindinglessAreaMemberPoints: select→from→innerJoin→innerJoin→where→orderBy
+// A recursive chain node (innerJoin/where return itself; orderBy resolves) covers both → [].
+const chainNode = (): any => {
+  const node: any = {
+    innerJoin: jest.fn(() => node),
+    where: jest.fn(() => node),
+    orderBy: jest.fn(() => Promise.resolve([])),
+  };
+  return node;
+};
 const mockDb = {
-  select: jest.fn(() => ({
-    from: jest.fn(() => ({
-      innerJoin: jest.fn(() => ({
-        orderBy: jest.fn(() => Promise.resolve([])),
-      })),
-      where: jest.fn(() => ({
-        orderBy: jest.fn(() => Promise.resolve([])),
-      })),
-    })),
-  })),
+  select: jest.fn(() => ({ from: jest.fn(() => chainNode()) })),
 };
 jest.mock("@/lib/db/planetscale", () => ({
   requirePlanetscaleDb: () => mockDb,
@@ -52,12 +53,15 @@ jest.mock("@/lib/db/planetscale/schema", () => ({
     pointId: "pointId",
     ordinal: "ordinal",
   },
+  areaDevices: { areaId: "areaId", systemId: "systemId", ordinal: "ordinal" },
 }));
 
 // Mock drizzle-orm
 jest.mock("drizzle-orm", () => ({
   eq: jest.fn(),
   and: jest.fn(),
+  asc: jest.fn(),
+  isNotNull: jest.fn(),
   sql: jest.fn(() => "mock_sql"),
 }));
 
