@@ -22,7 +22,7 @@
 
 - [architecture/points.md](architecture/points.md) — point model: paths, identity, composite rules
 - [architecture/home-assistant-comparison.md](architecture/home-assistant-comparison.md) — LiveOne vs Home Assistant: object-model mapping, where each is clearer, and where ours is superior (durable pipeline vs in-memory control plane)
-- [architecture/areas-and-dashboards.md](architecture/areas-and-dashboards.md) — **live (P0–P3)**: splits physical/semantic/presentation into Systems → Areas → Dashboards (HA-aligned, Apple-Home UX); replaced composite-as-system (composites are now areas-backed virtual systems). P4 sharing + P5 HA export ongoing
+- [architecture/areas-and-dashboards.md](architecture/areas-and-dashboards.md) — **foundation live** + roadmap: splits physical/semantic/presentation into Systems → Areas → Dashboards (HA-aligned, Apple-Home UX); composites are now areas-backed virtual systems. Roadmap: sharing hardening (done), the first-class/multi-area dashboards keystone (per-card `area_id` + default-dashboard), HA export
 - [architecture/authentication.md](architecture/authentication.md) — Clerk, roles, API auth functions
 - [architecture/kv-store.md](architecture/kv-store.md) — KV cache keys, subscription registry
 - [architecture/load-calcs.md](architecture/load-calcs.md) — "rest of house" load calculation
@@ -42,25 +42,9 @@
 
 ## Deferred work
 
-- [deferred/areas-p3-tail-and-p4-plan.md](deferred/areas-p3-tail-and-p4-plan.md) — remaining Areas schema tail (post-soak `legacy_system_id`/`system_id` re-key) + P4 sharing plan
 - [deferred/postgres-integration-test-harness.md](deferred/postgres-integration-test-harness.md) — re-point legacy-seeded/flag-gated test suites to Postgres
 
 ## Records (append-only; never "stale")
 
 - [project-history.md](project-history.md) — feature/architecture timeline
 - incidents/ — [2025-11-11 migration 0035](incidents/2025-11-11-migration-0035-point-readings-corruption.md) · [2025-11-17 migration 0016](incidents/2025-11-17-migration-0016-point-info-corruption.md)
-
-## Removed 2026-06-15 (in git history if needed)
-
-`plans/chart-card-generalization.md` (shipped #80–#85), `plans/composite-fast-cache.md`
-(prototype reverted; mechanics now obsolete — composite config moved to `area_bindings`),
-`deferred/generator-events-rewrite.md` (resolved by run-tracking #58),
-`deferred/history-api-unification-plan.md` (obsolete — the history route is already unified, no
-composite branch remains).
-
-## Removed 2026-06-10 (in git history if needed)
-
-`ARCHITECTURE.md` (pre-PG; replaced by overview.md), `SCHEMA.md` + `DEPRECATED_SCHEMA.md`
-(replaced by data-model.md + Drizzle schema), `API.md` (replaced by slim api.md),
-`to-clean/` (executed/superseded plans), `fronius-modbus-vs-solar-api.md` (Modbus rejected),
-`energy-analysis-2025-11-27.md` (one-off report).
