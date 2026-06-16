@@ -10,7 +10,6 @@ import {
   userSystems as pgUserSystems,
   areas as pgAreas,
 } from "@/lib/db/planetscale/schema";
-import { ensureIdentityArea } from "@/lib/areas/sync";
 
 // Export the type for a system from the database
 export type System = InferSelectModel<typeof pgSystems>;
@@ -409,18 +408,11 @@ export class SystemsManager {
       `[SystemsManager] Created system ${newSystem.id} (${systemData.vendorType}) for user ${systemData.ownerClerkUserId}`,
     );
 
-    // Ensure the system's 1:1 identity Area exists — the runtime System→Area seam (the migration
-    // backfill only covered systems that existed then). Best-effort: never fail creation over it;
-    // `resolveLogicalSystem` heals a missing Area later. Composites don't use this path — they create
-    // a `kind='composite'` Area via `createCompositeArea`.
-    try {
-      await ensureIdentityArea(newSystem);
-    } catch (e) {
-      console.error(
-        `[SystemsManager] Failed to ensure identity Area for system ${newSystem.id}:`,
-        e,
-      );
-    }
+    // Areas are LAZY: a new system gets no identity Area at create-time. One is minted on demand the
+    // moment it's actually needed — when the system forms a complete flow role set (the daily
+    // `resolveLogicalSystem` heal) or when its location is set (`/api/systems/[id]/location`). This
+    // stops bare monitoring-only systems (e.g. public grid-region feeds) accruing pointless Area rows.
+    // Serving works without an Area: a real device resolves its OWN point_info, not via an Area.
 
     // Invalidate cache and refresh immediately
     SystemsManager.invalidateCache();

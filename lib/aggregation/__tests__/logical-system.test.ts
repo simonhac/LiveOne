@@ -110,9 +110,22 @@ describe("resolveLogicalSystem (Area is mandatory — P3-tail-1)", () => {
     expect(ls).not.toBeNull();
     expect(ls!.areaId).toBe("area-healed");
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Healed missing identity Area for system 1"),
+      expect.stringContaining(
+        "Healed missing identity Area for complete system 1",
+      ),
     );
     warnSpy.mockRestore();
+  });
+
+  it("does NOT mint an Area for an INCOMPLETE system with no Area (lazy areas)", async () => {
+    // source-only → not a complete role set; with no Area it should be skipped, not healed.
+    getActivePointsForSystem.mockResolvedValue([
+      fakePoint("source.solar", "Solar"),
+    ]);
+    (getAreaForSystem as jest.MockedFunction<any>).mockResolvedValue(null);
+    const ls = await resolveLogicalSystem(1);
+    expect(ls).toBeNull();
+    expect(ensureIdentityArea).not.toHaveBeenCalled();
   });
 
   it("does NOT fabricate an Area for an areas-backed system with no Area (genuine fault)", async () => {
