@@ -44,6 +44,11 @@ jest.mock("@/lib/dashboard/store", () => ({
   getOrCreateDefaultDashboardId: (...a: unknown[]) => mockGetOrCreate(...a),
 }));
 
+const mockGetDashboard = jest.fn<(...a: unknown[]) => Promise<unknown>>();
+jest.mock("@/lib/dashboard/dashboards", () => ({
+  getDashboard: (...a: unknown[]) => mockGetDashboard(...a),
+}));
+
 const mockGetSystem = jest.fn<(...a: unknown[]) => Promise<unknown>>();
 jest.mock("@/lib/systems-manager", () => ({
   SystemsManager: { getInstance: () => ({ getSystem: mockGetSystem }) },
@@ -52,6 +57,8 @@ jest.mock("@/lib/systems-manager", () => ({
 import {
   getValidDefaultDashboardId,
   getValidDefaultSystemId,
+  resolveDefaultDashboardRoute,
+  setDefaultDashboardById,
 } from "@/lib/user-preferences";
 
 const USER = "u1";
@@ -130,5 +137,77 @@ describe("getValidDefaultSystemId (back-compat wrapper)", () => {
       areaId: null,
     });
     expect(await getValidDefaultSystemId(USER)).toBe(5);
+  });
+});
+
+describe("resolveDefaultDashboardRoute (landing redirect target)", () => {
+  it("a composition default (null system_id) → /dashboard/id/{id}", async () => {
+    usersRow!.defaultDashboardId = 88;
+    mockGetDashboardById.mockResolvedValue({
+      id: 88,
+      systemId: null,
+      areaId: null,
+    });
+    expect(await resolveDefaultDashboardRoute(USER)).toBe("/dashboard/id/88");
+  });
+
+  it("a legacy per-system default → /dashboard/{systemId}", async () => {
+    usersRow!.defaultDashboardId = 77;
+    mockGetDashboardById.mockResolvedValue({
+      id: 77,
+      systemId: 5,
+      areaId: null,
+    });
+    expect(await resolveDefaultDashboardRoute(USER)).toBe("/dashboard/5");
+  });
+
+  it("no default → null", async () => {
+    expect(await resolveDefaultDashboardRoute(USER)).toBeNull();
+  });
+});
+
+describe("setDefaultDashboardById (composition default, owner-only)", () => {
+  it("owner + composition dashboard → writes default_dashboard_id with null system_id", async () => {
+    mockGetDashboard.mockResolvedValue({
+      id: 90,
+      ownerClerkUserId: USER,
+      displayName: "My Home",
+    });
+    const res = await setDefaultDashboardById(USER, 90);
+    expect(res.success).toBe(true);
+    expect(updates).toContainEqual(
+      expect.objectContaining({
+        defaultDashboardId: 90,
+        defaultSystemId: null,
+      }),
+    );
+  });
+
+  it("rejects another user's dashboard (no write)", async () => {
+    mockGetDashboard.mockResolvedValue({
+      id: 90,
+      ownerClerkUserId: "someone-else",
+      displayName: "Theirs",
+    });
+    const res = await setDefaultDashboardById(USER, 90);
+    expect(res.success).toBe(false);
+    expect(updates).toHaveLength(0);
+  });
+
+  it("404-sentinels a missing dashboard", async () => {
+    mockGetDashboard.mockResolvedValue(null);
+    const res = await setDefaultDashboardById(USER, 91);
+    expect(res).toEqual({ success: false, error: "not_found" });
+  });
+
+  it("refuses a legacy (system-bound, no display_name) dashboard — avoids default-column drift", async () => {
+    mockGetDashboard.mockResolvedValue({
+      id: 92,
+      ownerClerkUserId: USER,
+      displayName: null,
+    });
+    const res = await setDefaultDashboardById(USER, 92);
+    expect(res.success).toBe(false);
+    expect(updates).toHaveLength(0);
   });
 });

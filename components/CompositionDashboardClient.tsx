@@ -180,9 +180,29 @@ function RenameDialog({
   const [alias, setAlias] = useState(initialAlias);
   const [busy, setBusy] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [defaultSet, setDefaultSet] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!isOpen || typeof document === "undefined") return null;
+
+  const setAsDefault = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/user/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ defaultDashboardId: id }),
+      });
+      if (res.ok) setDefaultSet(true);
+      else {
+        const body = await res.json().catch(() => ({}));
+        setError(body?.error ?? "Could not set default");
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const save = async () => {
     if (!name.trim()) {
@@ -263,6 +283,15 @@ function RenameDialog({
                 className="w-full rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600"
               />
             </label>
+            <button
+              onClick={setAsDefault}
+              disabled={busy || defaultSet}
+              className="inline-flex items-center gap-1.5 text-sm text-blue-400 transition-colors hover:text-blue-300 disabled:opacity-60"
+            >
+              {defaultSet
+                ? "✓ This is your default dashboard"
+                : "Set as my default dashboard"}
+            </button>
             {error && <p className="text-sm text-red-400">{error}</p>}
           </div>
           <div className="flex items-center justify-between gap-3 border-t border-gray-700 px-6 py-4">
