@@ -175,11 +175,17 @@ cutover):
   `emptyCompositionDescriptor` / `descriptorAreaIds`); CRUD store (`lib/dashboard/dashboards.ts`) + API
   (`/api/dashboards`, `/api/dashboards/[id]`) with the no-escalation authoring check; scope/auth
   (`allowedSystemIds`) generalized to a null home systemId.
-- **Renderer + routing + create/manage UI — ⬜ next.** Generalize `MultiAreaCards` to render the whole
-  ordered descriptor for ALL card types (incl. sankey/site, amber-now, grid-signals as area-bound); the
-  `/dashboard/{user}/...` routes + landing redirect; the header "New dashboard"/manage UI.
-- **Retire the legacy path — ⬜.** Delete `/dashboard/{systemId}` + the system-keyed store/API; migration
-  `0018` drops `system_id`/`area_id` + the old unique index and makes `display_name` NOT NULL.
+- **Renderer + routing + create/manage UI — ✅ done.** `CompositionDashboard` renders the whole ordered
+  descriptor for ALL card types, each area-bound + self-fetching (tiles, chart lines/stacked, sankey,
+  amber-now, amber-timeline, generator-runs, grid-signals — the last via a server-resolved per-Area NEM
+  region). Addressed by id (`/dashboard/id/{id}` and `/dashboard/{user}/id/{id}`) in the `[...slug]` route.
+  `NewDashboardDialog` (name + optional seed-from-Area) is reachable from the header "New Dashboard…" item;
+  `CompositionDashboardClient` wraps the renderer with Customize (the reused dialog in composition mode —
+  no page tile grid / Reset) + Rename/shortname + Delete. CRUD via `/api/dashboards*`.
+- **Retire the legacy path — ⬜ next.** Delete `/dashboard/{systemId}` + the system-keyed store/API + the
+  old `DashboardClient`/`MultiAreaCards`; the `/dashboard/{user}/{shortname}` pretty-URL + landing redirect
+  to the default dashboard; migration `0018` drops `system_id`/`area_id` + the old unique index and makes
+  `display_name` NOT NULL.
 
 ### Phase 3 — Home Assistant export — ⬜
 

@@ -15,7 +15,10 @@ import { resolveGridContextForSystem } from "@/lib/grid/context";
 import { hasEnabledTracker } from "@/lib/run-tracking/resolve";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboardById } from "@/lib/dashboard/store";
+import { getDashboard } from "@/lib/dashboard/dashboards";
+import CompositionDashboardClient from "@/components/CompositionDashboardClient";
 import { resolveAreasByIds } from "@/lib/areas/list";
+import type { GridContext } from "@/lib/grid/types";
 import type { DashboardDescriptor } from "@/lib/dashboard/descriptor";
 
 interface PageProps {
@@ -91,6 +94,56 @@ export default async function DashboardPage({
 
   const isAdmin = await isUserAdmin();
   const systemsManager = SystemsManager.getInstance();
+
+  // Composition-first dashboards (Phase 2b-2), addressed by id: `/dashboard/id/{id}` or
+  // `/dashboard/{user}/id/{id}` (the {user} segment is cosmetic; access is by ownership/admin).
+  const compositionId =
+    slug.length === 2 && slug[0] === "id"
+      ? slug[1]
+      : slug.length === 3 && slug[1] === "id"
+        ? slug[2]
+        : null;
+  if (compositionId && /^\d+$/.test(compositionId)) {
+    const dashboard = await getDashboard(parseInt(compositionId, 10));
+    if (!dashboard) redirect("/dashboard");
+    const canEdit = dashboard.ownerClerkUserId === userId || isAdmin;
+    if (!canEdit) redirect("/dashboard"); // sharing a composition dashboard arrives via ?access=
+
+    // Resolve the NEM region for each Area that has a grid-signals card (region is derived from the
+    // Area's location — server-only). Other card types self-resolve client-side.
+    const gridAreaIds = [
+      ...new Set(
+        dashboard.descriptor.cards
+          .filter((c) => c.type === "grid-signals" && c.areaId)
+          .map((c) => c.areaId as string),
+      ),
+    ];
+    const gridContextByArea: Record<string, GridContext | null> = {};
+    if (gridAreaIds.length > 0) {
+      const areas = await resolveAreasByIds(gridAreaIds);
+      await Promise.all(
+        areas.map(async (a) => {
+          gridContextByArea[a.id] = await resolveGridContextForSystem(
+            a.legacySystemId,
+          );
+        }),
+      );
+    }
+
+    return (
+      <CompositionDashboardClient
+        dashboard={{
+          id: dashboard.id,
+          displayName: dashboard.displayName,
+          alias: dashboard.alias,
+          descriptor: dashboard.descriptor,
+        }}
+        canEdit={canEdit}
+        gridContextByArea={gridContextByArea}
+        serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
+      />
+    );
+  }
 
   // Check route type based on last segment
   const lastSegment = slug[slug.length - 1];
