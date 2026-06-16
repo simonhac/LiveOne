@@ -94,7 +94,7 @@ Hand-refreshed 2026-06-10 (generation script COMING SOON).
 | `GET /api/cron/minutely`             | Poll active systems (per-vendor smart schedules; dev params `systemId`, `force`, `date`)                             |
 | `GET·POST /api/cron/daily`           | Daily aggregation at 00:05 (actions: `aggregate`/`regenerate`/`delete`; date ranges via `date`/`start`+`end`/`last`) |
 | `GET /api/cron/relay-outbox`         | Drain `observations_outbox` → QStash (Phase 4)                                                                       |
-| `GET /api/cron/monitor-observations` | Queue/outbox health monitoring                                                                                       |
+| `GET /api/cron/monitor-observations` | Queue/outbox health monitoring (signals + alerts: see [operations.md](../operations.md))                             |
 | `GET /api/cron/db-stats`             | DB stats snapshots                                                                                                   |
 
 ### Dev/test only
