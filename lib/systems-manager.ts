@@ -102,6 +102,10 @@ export class SystemsManager {
   private static lastLoadedAt: number = 0;
   private static readonly CACHE_TTL_MS = 60 * 1000; // 1 minute TTL
   private systemsMap: Map<number, SystemWithPolling> = new Map();
+  // Handles that are areas-backed virtual systems (synthesized from a composite Area — no real
+  // `systems` row). The structural "this resolves its points from area_bindings, not its own
+  // point_info" signal, replacing the `vendorType === 'composite'` string check.
+  private areasBackedIds: Set<number> = new Set();
   private loadPromise: Promise<void>;
 
   private constructor() {
@@ -201,7 +205,10 @@ export class SystemsManager {
       if (area.legacySystemId == null) continue;
       if (this.systemsMap.has(area.legacySystemId)) continue; // real row wins
       const synthesized = synthesizeCompositeSystem(area);
-      if (synthesized) this.systemsMap.set(area.legacySystemId, synthesized);
+      if (synthesized) {
+        this.systemsMap.set(area.legacySystemId, synthesized);
+        this.areasBackedIds.add(area.legacySystemId);
+      }
     }
 
     const allSystemsArray = Array.from(this.systemsMap.values());
@@ -219,6 +226,16 @@ export class SystemsManager {
   async getSystem(systemId: number): Promise<SystemWithPolling | null> {
     await this.loadPromise;
     return this.systemsMap.get(systemId) || null;
+  }
+
+  /**
+   * Whether `systemId` is an areas-backed virtual system (synthesized from a composite Area, with no
+   * real `systems` row) — i.e. it resolves its points from `area_bindings` rather than owning
+   * `point_info`. The structural replacement for `system.vendorType === 'composite'`.
+   */
+  async isAreasBackedSystem(systemId: number): Promise<boolean> {
+    await this.loadPromise;
+    return this.areasBackedIds.has(systemId);
   }
 
   /**

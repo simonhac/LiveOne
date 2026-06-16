@@ -199,8 +199,8 @@ export class PointManager {
       return cached;
     }
 
-    // Get all points for this system (handles both composite and non-composite)
-    const allPoints = await this._loadPointsWithCompositeSupport(system);
+    // Get all points for this system (areas-backed → bound refs; real device → own point_info)
+    const allPoints = await this._resolvePointsForViewable(system);
     const systemIdentifier = SystemIdentifier.fromId(system.id);
 
     const seriesInfos: SeriesInfo[] = [];
@@ -235,28 +235,26 @@ export class PointManager {
   }
 
   /**
-   * Load points for a system - handles both composite and non-composite systems
-   * For composite: resolves point references from area_bindings
-   * For non-composite: loads points directly from database
-   * PRIVATE: External callers should use getActivePointsForSystem instead
+   * Resolve the viewable points for a system handle — the single "resolve viewable" path.
+   *
+   * An **areas-backed virtual system** (a composite Area with no real `systems` row) resolves its
+   * points from its typed `area_bindings` (its child point refs); a **real device** loads its own
+   * `point_info`. Dispatched on the structural areas-backed signal (`isAreasBackedSystem`), NOT the
+   * `vendorType === 'composite'` string — the first step of retiring the composite special-case
+   * (the two are equivalent today: every composite is synthesized, no composite owns point_info).
+   *
+   * PRIVATE: external callers should use getActivePointsForSystem instead.
    */
-  private async _loadPointsWithCompositeSupport(
+  private async _resolvePointsForViewable(
     system: SystemWithPolling,
   ): Promise<PointInfo[]> {
-    if (system.vendorType === "composite") {
-      return this._resolveCompositeSystemPoints(system);
-    } else {
+    const areasBacked = await SystemsManager.getInstance().isAreasBackedSystem(
+      system.id,
+    );
+    if (!areasBacked) {
       return this._loadPointsForNonCompositeSystem(system.id);
     }
-  }
 
-  /**
-   * Resolve points for a composite system from its typed `area_bindings` (the composite's child
-   * point refs). PRIVATE: external callers should use getActivePointsForSystem instead.
-   */
-  private async _resolveCompositeSystemPoints(
-    system: SystemWithPolling,
-  ): Promise<PointInfo[]> {
     const validPointRefs: PointReference[] = (
       await getCompositeBindingRefs(system.id)
     ).map((r) => PointReference.fromIds(r.pointSystemId, r.pointId));
@@ -353,8 +351,8 @@ export class PointManager {
       throw new Error(`System not found: ${systemId}`);
     }
 
-    // Load points (handles both composite and non-composite)
-    const allPoints = await this._loadPointsWithCompositeSupport(system);
+    // Load points (areas-backed → bound refs; real device → own point_info)
+    const allPoints = await this._resolvePointsForViewable(system);
 
     // Filter by active status (unless includeInactive) and optionally by typedOnly
     return allPoints.filter((point) => {

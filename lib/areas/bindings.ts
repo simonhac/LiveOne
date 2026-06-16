@@ -22,8 +22,8 @@ export interface BindingRef {
 /**
  * The (point_system_id, point_id) refs bound to the composite Area whose `legacy_system_id` is
  * `systemId`, ordered by ordinal. Empty if no such Area (e.g. not yet backfilled). This is the
- * typed-table replacement for parsing `metadata.mappings` in
- * `PointManager._resolveCompositeSystemPoints`.
+ * typed-table replacement for parsing `metadata.mappings`; consumed by the areas-backed branch of
+ * `PointManager._resolvePointsForViewable`.
  */
 export async function getCompositeBindingRefs(
   systemId: number,
