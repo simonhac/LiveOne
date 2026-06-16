@@ -1,5 +1,5 @@
 import { describe, it, expect } from "@jest/globals";
-import { buildDefaultDescriptor } from "../descriptor";
+import { buildDefaultDescriptor, normalizeDescriptor } from "../descriptor";
 import { CARD_REGISTRY, getLayout } from "../cards";
 import type { LatestPointValues } from "@/lib/types/api";
 
@@ -47,6 +47,36 @@ describe("buildDefaultDescriptor (reproduces the vendor_type ladder)", () => {
         variant: "lines",
       });
     }
+  });
+});
+
+describe("normalizeDescriptor — per-card areaId (Phase 2 seam)", () => {
+  // sidebar layout: tiles, chart:lines, generator-runs
+  const def = buildDefaultDescriptor({ vendorType: "selectronic" }, latest);
+
+  it("introduces no areaId key when the save is areaId-less (byte-clean, inert)", () => {
+    const out = normalizeDescriptor(def, def);
+    for (const c of out.cards) {
+      expect(Object.prototype.hasOwnProperty.call(c, "areaId")).toBe(false);
+    }
+    expect(JSON.stringify(out)).not.toContain("areaId");
+  });
+
+  it("preserves a saved card's areaId (carried on the instance, like hidden/tiles)", () => {
+    const saved = {
+      version: 2 as const,
+      layout: def.layout,
+      cards: def.cards.map((c) =>
+        c.id === "chart:lines" ? { ...c, areaId: "area-xyz" } : { ...c },
+      ),
+    };
+    const out = normalizeDescriptor(saved, def);
+    expect(out.cards.find((c) => c.id === "chart:lines")?.areaId).toBe(
+      "area-xyz",
+    );
+    // Cards that set no areaId stay areaId-less.
+    const tiles = out.cards.find((c) => c.type === "tiles")!;
+    expect(Object.prototype.hasOwnProperty.call(tiles, "areaId")).toBe(false);
   });
 });
 

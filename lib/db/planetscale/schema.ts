@@ -149,16 +149,28 @@ export const users = pgTable(
   "users",
   {
     clerkUserId: text("clerk_user_id").primaryKey(),
-    // Plain integer view handle (no FK to systems): a user may default to a composite, whose
-    // areas-backed virtual system has no `systems` row after migration 0014. Resolved via
-    // getSystem(default_system_id).
+    // LEGACY default landing handle (plain int, no FK to systems): a user may default to a composite,
+    // whose areas-backed virtual system has no `systems` row after migration 0014. Superseded by
+    // default_dashboard_id (Phase 2); kept as a fallback that getValidDefaultDashboardId lazily
+    // migrates + keeps in sync. Not dropped this phase.
     defaultSystemId: integer("default_system_id"),
+    // Forward-correct default landing DASHBOARD (Phase 2). FK to dashboards.id is safe — a dashboard
+    // row always physically exists, composite or not (unlike default_system_id, which may name a
+    // composite virtual system with no `systems` row). ON DELETE SET NULL so deleting the dashboard
+    // silently clears the default. (forward ref: `dashboards` is declared later in this module.)
+    defaultDashboardId: integer("default_dashboard_id").references(
+      () => dashboards.id,
+      { onDelete: "set null" },
+    ),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => ({
     defaultSystemIdx: index("users_default_system_idx").on(
       table.defaultSystemId,
+    ),
+    defaultDashboardIdx: index("users_default_dashboard_idx").on(
+      table.defaultDashboardId,
     ),
   }),
 );

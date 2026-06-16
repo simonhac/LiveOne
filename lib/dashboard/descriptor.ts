@@ -47,6 +47,15 @@ export interface ModuleCardInstance {
   tiles?: TilesConfig;
   /** Only meaningful for type === "chart". */
   chart?: ChartCardConfig;
+  /**
+   * The Area this card reads from (uuid). OPTIONAL and absent in practice today: a card with no
+   * `areaId` INHERITS the dashboard's default area (`dashboards.area_id`). This is the per-card
+   * junction for the multi-area future (see docs/architecture/areas-and-dashboards.md §3) — carried
+   * on the descriptor (no `dashboard_cards` table). Forward-only seam; every card is areaId-less
+   * today, so it's inert. Rides on the saved instance like `hidden`/`tiles` (it's customization, not
+   * structure).
+   */
+  areaId?: string;
 }
 
 /** A card's reconciliation/visibility identity: its explicit `id`, or its `type` for singletons. */
@@ -202,6 +211,9 @@ export function normalizeDescriptor(
       hidden: !!sc.hidden,
     };
     if (defCard.id !== undefined) card.id = defCard.id;
+    // Per-card area is customization carried on the SAVE (like hidden/tiles). The guard keeps this a
+    // byte-identical no-op for today's areaId-less saves (no explicit `areaId: undefined` key added).
+    if (sc.areaId !== undefined) card.areaId = sc.areaId;
     if (defCard.type === "tiles") {
       card.tiles = normalizeTiles(sc.tiles, defCard.tiles!);
     }

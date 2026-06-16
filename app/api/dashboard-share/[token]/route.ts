@@ -37,9 +37,15 @@ export async function GET(
     return NextResponse.json({ error: "System not found" }, { status: 404 });
   }
 
-  const access = await resolveDashboardReadPoints(dashboard.systemId);
-  // The system's latest map IS the dashboard's (1:1), so this is already scoped — a self-contained,
-  // renderable payload (descriptor + live values + scope) with no general system access granted.
+  const access = await resolveDashboardReadPoints({
+    defaultAreaId: dashboard.areaId,
+    systemId: dashboard.systemId,
+    descriptor: dashboard.descriptor,
+  });
+  // The system's latest map IS the dashboard's (1:1 today), so this is already scoped — a
+  // self-contained, renderable payload (descriptor + live values + scope) with no general system
+  // access granted. (When the multi-area UI lands, this `latest` fetch must union across
+  // `access.systemIds`; today the descriptor is single-area so it's the dashboard's own system.)
   const latest = await getLatestPointValues(dashboard.systemId);
 
   return NextResponse.json({
