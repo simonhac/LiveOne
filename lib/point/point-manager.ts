@@ -25,6 +25,8 @@ import { uuidv7 } from "uuidv7";
 import micromatch from "micromatch";
 import { updateLatestPointValue } from "../kv-cache-manager";
 import { getCompositeBindingRefs } from "@/lib/areas/bindings";
+import { getAreaForSystem } from "@/lib/areas/resolve";
+import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
 import {
   updateSystemSummary,
   updateSubscriberSummaries,
@@ -237,11 +239,15 @@ export class PointManager {
   /**
    * Resolve the viewable points for a system handle — the single "resolve viewable" path.
    *
-   * An **areas-backed virtual system** (a composite Area with no real `systems` row) resolves its
-   * points from its typed `area_bindings` (its child point refs); a **real device** loads its own
-   * `point_info`. Dispatched on the structural areas-backed signal (`isAreasBackedSystem`), NOT the
-   * `vendorType === 'composite'` string — the first step of retiring the composite special-case
-   * (the two are equivalent today: every composite is synthesized, no composite owns point_info).
+   * A **real device** loads its own `point_info`. An **areas-backed virtual system** (an Area with no
+   * real `systems` row) resolves under the membership + override model: its typed `area_bindings`
+   * SELECT the points (the override), and a curated multi-device Area — every existing composite —
+   * HAS bindings, so its bound child refs ARE the set (unchanged). An Area with NO bindings DEFAULTS
+   * to the union of its member devices' own points (a plain "several devices in one Area"). Dispatched
+   * on the structural `isAreasBackedSystem` signal, not the `vendorType === 'composite'` string.
+   *
+   * Parity: every existing areas-backed handle has bindings, so the union-default branch is dormant
+   * for current data — behaviour is byte-identical (verified by the per-area parity gate).
    *
    * PRIVATE: external callers should use getActivePointsForSystem instead.
    */
@@ -259,21 +265,28 @@ export class PointManager {
       await getCompositeBindingRefs(system.id)
     ).map((r) => PointReference.fromIds(r.pointSystemId, r.pointId));
 
-    if (validPointRefs.length === 0) {
-      return [];
+    if (validPointRefs.length > 0) {
+      // Bindings present (override) → the bound child refs ARE the set. Fetch all in one query:
+      // OR-of-(system_id,id) against Postgres point_info.
+      const pgConditions = validPointRefs.map(
+        (ref) => sql`(system_id = ${ref.systemId} AND id = ${ref.pointId})`,
+      );
+      const pgRows = await requirePlanetscaleDb()
+        .select()
+        .from(pgPointInfoTable)
+        .where(sql`${sql.join(pgConditions, sql` OR `)}`);
+      return pgPointInfoRowsToServed(pgRows).map((row) => PointInfo.from(row));
     }
 
-    // Fetch all points in one query: OR-of-(system_id,id) against Postgres point_info.
-    const pgConditions = validPointRefs.map(
-      (ref) => sql`(system_id = ${ref.systemId} AND id = ${ref.pointId})`,
-    );
-    const pgRows = await requirePlanetscaleDb()
-      .select()
-      .from(pgPointInfoTable)
-      .where(sql`${sql.join(pgConditions, sql` OR `)}`);
-    const pointsData = pgPointInfoRowsToServed(pgRows);
-
-    return pointsData.map((row) => PointInfo.from(row));
+    // No bindings → default to the union of the Area's member devices' own points.
+    const area = await getAreaForSystem(system.id);
+    if (!area) return [];
+    const memberSystemIds = await getAreaDeviceSystemIds(area.id);
+    const unioned: PointInfo[] = [];
+    for (const sid of memberSystemIds) {
+      unioned.push(...(await this._loadPointsForNonCompositeSystem(sid)));
+    }
+    return unioned;
   }
 
   /**
