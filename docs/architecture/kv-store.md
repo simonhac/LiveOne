@@ -284,6 +284,13 @@ redis-cli --pattern "test:*" | xargs redis-cli DEL
 - Use API endpoint: `GET /api/systems/subscriptions?build=true`
 - Run script: `npx tsx scripts/build-subscription-registry.ts`
 
+### Rebuilding the whole `dev:` cache from the DB
+
+The `dev:` namespace is not written organically (crons are off in dev/preview), so it is rebuilt
+from the synced `liveone-dev` Postgres DB — latest values, system summaries, and the subscription
+registry — by `scripts/utils/rebuild-dev-kv-from-db.ts` (`npm run db:rebuild-dev-kv`). This runs
+automatically after the 2-hourly DB sync. See [../sync-prod-to-dev.md](../sync-prod-to-dev.md).
+
 ### Username Cache
 
 **Strategy:** Lazy invalidation on username change

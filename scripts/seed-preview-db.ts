@@ -4,7 +4,8 @@
  *
  * PlanetScale Postgres has no copy-on-write data branches, so a fresh branch is schema-only; this
  * gives it just enough data to render (charts read the 5m/1d aggregates). Pair with
- * `seed-preview-kv.ts` for live-style power cards.
+ * `scripts/utils/rebuild-dev-kv-from-db.ts` (rebuild the dev: KV cache from the seeded branch) for
+ * live-style power cards.
  *
  * Requires `psql` on PATH. Env:
  *   SOURCE_DATABASE_URL  read-only prod connection (e.g. .env.local PLANETSCALE_DATABASE_URL_MIGRATIONS)

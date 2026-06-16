@@ -1,7 +1,7 @@
 /**
  * Incremental top-up sync: prod (Sydney) → liveone-dev.
  *
- *   PG_PROD_RO_DATABASE_URL=… LIVEONE_DEV_DATABASE_URL=… npm run db:sync-dev
+ *   PG_PROD_RO_DATABASE_URL=… LIVEONE_DEV_DATABASE_URL=… npm run db:sync-dev-db
  *
  * Keeps the shared `liveone-dev` database roughly in sync with prod between the
  * occasional full R2 restores. Reads prod with a SELECT-only role and writes
@@ -64,9 +64,7 @@ const FULL: FullTable[] = [
     "share_tokens",
     "roles",
     "areas",
-  ].map(
-    (name): FullTable => ({ name, mode: "full", onConflict: "update" }),
-  ),
+  ].map((name): FullTable => ({ name, mode: "full", onConflict: "update" })),
   // Surrogate-key tables: the PK (uuid/serial `id`) is assigned independently on
   // dev, so dev and prod hold the same row under different ids. Upsert on the
   // NATURAL unique key and exclude `id` (like point_readings) — otherwise the

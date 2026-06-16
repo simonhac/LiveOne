@@ -21,7 +21,8 @@
     "test:coverage": "jest --coverage",
     "db:pg:generate": "drizzle-kit generate --config=drizzle-planetscale.config.ts",
     "db:pg:migrate": "drizzle-kit migrate --config=drizzle-planetscale.config.ts",
-    "db:sync-dev": "tsx scripts/utils/sync-prod-to-dev.ts",
+    "db:sync-dev-db": "tsx scripts/utils/sync-prod-to-dev-db.ts",
+    "db:rebuild-dev-kv": "tsx scripts/utils/rebuild-dev-kv-from-db.ts",
     "prepare": "husky"
   },
   "keywords": [],

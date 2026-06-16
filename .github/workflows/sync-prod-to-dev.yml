@@ -1,13 +1,14 @@
 name: Sync prod → liveone-dev
 
-# Incremental top-up of the shared liveone-dev database from prod (Sydney), 4×/day.
+# Incremental top-up of the shared liveone-dev database from prod (Sydney), every 2h.
 # Reads prod with a SELECT-only role; writes only to liveone-dev. Between these runs
 # (and the occasional manual R2 full restore) liveone-dev tracks prod closely enough
-# for local dev + Vercel preview to share it. See scripts/utils/sync-prod-to-dev.ts.
+# for local dev + Vercel preview to share it. See scripts/utils/sync-prod-to-dev-db.ts
+# and scripts/utils/rebuild-dev-kv-from-db.ts (the two legs), or docs/sync-prod-to-dev.md.
 
 on:
   schedule:
-    - cron: "20 */6 * * *" # every 6h at :20, off the top-of-hour cron rush
+    - cron: "20 */2 * * *" # every 2h at :20, off the top-of-hour cron rush
   workflow_dispatch: {} # manual "bring up to date" button
 
 concurrency:
@@ -45,7 +46,19 @@ jobs:
           PG_PROD_RO_DATABASE_URL: ${{ secrets.PG_PROD_RO_DATABASE_URL }}
           LIVEONE_DEV_DATABASE_URL: ${{ secrets.LIVEONE_DEV_DATABASE_URL }}
           PLANETSCALE_PROD_BRANCH_ID: ${{ secrets.PLANETSCALE_PROD_BRANCH_ID }}
-        run: npm run db:sync-dev
+        run: npm run db:sync-dev-db
+
+      # Crons are off in dev/preview, so nothing fills the dev: KV namespace organically.
+      # Rebuild it from the DB we just topped up, so preview "live" cards stay consistent with
+      # the synced data. No prod KV access needed — derived purely from liveone-dev.
+      # getEnvironment() resolves to "dev" here (no VERCEL_ENV), so writes land in dev:.
+      - name: Rebuild dev KV from liveone-dev
+        env:
+          PLANETSCALE_DATABASE_URL: ${{ secrets.LIVEONE_DEV_DATABASE_URL }}
+          PLANETSCALE_PROD_BRANCH_ID: ${{ secrets.PLANETSCALE_PROD_BRANCH_ID }}
+          KV_REST_API_URL: ${{ secrets.KV_REST_API_URL }}
+          KV_REST_API_TOKEN: ${{ secrets.KV_REST_API_TOKEN }}
+        run: npm run db:rebuild-dev-kv
 
       - name: Alert on failure
         if: failure()
