@@ -29,7 +29,7 @@ const navItems = [
     name: "Areas",
     href: "/admin/areas",
     icon: Layers,
-    description: "Identity & composite areas",
+    description: "Groupings of member devices",
   },
   {
     name: "Dashboards",
