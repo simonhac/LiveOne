@@ -21,6 +21,18 @@ export {
   type DashboardDescriptorResponse,
 } from "./dashboard";
 export { readableAreasQuery, type ReadableAreasResponse } from "./areas";
+export {
+  myDashboardsQuery,
+  MY_DASHBOARDS_KEY,
+  type MyDashboardsResponse,
+  type DashboardSummaryDTO,
+} from "./dashboards";
+export {
+  userPreferencesQuery,
+  USER_PREFERENCES_KEY,
+  type UserPreferencesResponse,
+  type UserPreferencesDTO,
+} from "./preferences";
 
 /**
  * Invalidate every live/historical query for a system — the React Query replacement for

@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { X, Layers } from "lucide-react";
+import { toast } from "sonner";
 import { useModalContext } from "@/contexts/ModalContext";
-import { readableAreasQuery } from "@/lib/queries";
+import { readableAreasQuery, MY_DASHBOARDS_KEY } from "@/lib/queries";
+import { normalizeAlias, isValidAlias } from "@/lib/dashboard/alias";
 
 /**
  * Create a composition-first dashboard (Phase 2b-2): a name + an optional "seed from an Area" choice.
@@ -21,18 +23,22 @@ export default function NewDashboardDialog({
   onClose: () => void;
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { registerModal, unregisterModal } = useModalContext();
   const [displayName, setDisplayName] = useState("");
+  const [alias, setAlias] = useState("");
   const [seedAreaId, setSeedAreaId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const { data: areasResp } = useQuery(readableAreasQuery(isOpen));
   const areas = areasResp?.areas ?? [];
+  const aliasValid = isValidAlias(alias.trim());
 
   useEffect(() => {
     if (isOpen) {
       setDisplayName("");
+      setAlias("");
       setSeedAreaId("");
       setError(null);
       registerModal("new-dashboard-dialog");
@@ -48,14 +54,22 @@ export default function NewDashboardDialog({
       setError("Give the dashboard a name");
       return;
     }
+    if (!aliasValid) {
+      setError(
+        "Shortname may only contain lowercase letters, numbers and hyphens",
+      );
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
+      const cleanAlias = normalizeAlias(alias);
       const res = await fetch("/api/dashboards", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           displayName: name,
+          alias: cleanAlias || undefined,
           seedAreaId: seedAreaId || undefined,
         }),
       });
@@ -65,6 +79,8 @@ export default function NewDashboardDialog({
         return;
       }
       const { id } = await res.json();
+      await queryClient.invalidateQueries({ queryKey: MY_DASHBOARDS_KEY });
+      toast.success(`Created “${name}”`);
       onClose();
       router.push(`/dashboard/id/${id}`);
     } finally {
@@ -105,6 +121,28 @@ export default function NewDashboardDialog({
             </label>
 
             <label className="block">
+              <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                Shortname (optional)
+              </span>
+              <input
+                value={alias}
+                onChange={(e) => setAlias(e.target.value)}
+                onBlur={() => setAlias(normalizeAlias(alias))}
+                placeholder="e.g. home-farm"
+                className="w-full rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600"
+              />
+              {!aliasValid ? (
+                <span className="mt-1 block text-xs text-amber-400">
+                  Lowercase letters, numbers and hyphens only
+                </span>
+              ) : (
+                <span className="mt-1 block text-xs text-gray-600">
+                  Enables a tidy URL like /dashboard/you/home-farm.
+                </span>
+              )}
+            </label>
+
+            <label className="block">
               <span className="mb-1 flex items-center gap-1.5 text-xs uppercase tracking-wide text-gray-500">
                 <Layers className="h-3.5 w-3.5" />
                 Start from an area (optional)
@@ -140,7 +178,7 @@ export default function NewDashboardDialog({
             </button>
             <button
               onClick={create}
-              disabled={busy || !displayName.trim()}
+              disabled={busy || !displayName.trim() || !aliasValid}
               className="min-w-[100px] rounded-md bg-blue-600 px-6 py-2 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy ? "Creating…" : "Create"}

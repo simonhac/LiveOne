@@ -9,7 +9,10 @@ import {
   DashboardAliasTakenError,
   type CompositionDashboard,
 } from "@/lib/dashboard/dashboards";
-import { descriptorAreaIds } from "@/lib/dashboard/composition";
+import {
+  descriptorAreaIds,
+  filterVendorIncompatibleCards,
+} from "@/lib/dashboard/composition";
 import type { DashboardDescriptor } from "@/lib/dashboard/descriptor";
 
 /**
@@ -102,19 +105,28 @@ export async function PATCH(
     // No-escalation authoring check: every card's Area must be readable by the owner.
     const areaIds = descriptorAreaIds(descriptor);
     if (areaIds.length > 0) {
-      const readable = new Set(
-        (await listReadableAreas(r.dashboard.ownerClerkUserId)).map(
-          (a) => a.id,
-        ),
+      const readableAreas = await listReadableAreas(
+        r.dashboard.ownerClerkUserId,
       );
+      const readable = new Set(readableAreas.map((a) => a.id));
       if (areaIds.some((aid) => !readable.has(aid))) {
         return NextResponse.json(
           { error: "A card references an area you cannot read" },
           { status: 403 },
         );
       }
+      // Drop (don't reject) any card that can't render for its Area's vendor type, so a descriptor
+      // never persists a permanently-broken card. Vendor-deterministic rules only — see composition.ts.
+      const vendorTypeByAreaId = new Map(
+        readableAreas.map((a) => [a.id, a.vendorType] as const),
+      );
+      patch.descriptor = filterVendorIncompatibleCards(
+        descriptor,
+        vendorTypeByAreaId,
+      );
+    } else {
+      patch.descriptor = descriptor;
     }
-    patch.descriptor = descriptor;
   }
 
   try {

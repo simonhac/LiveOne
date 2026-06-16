@@ -41,8 +41,10 @@ import {
   cardIdentity,
   type DashboardDescriptor,
   type ModuleCardInstance,
+  type ChartCardConfig,
 } from "@/lib/dashboard/descriptor";
 import { MULTI_AREA_CARD_TYPES } from "@/lib/dashboard/multi-area";
+import { isCardTypeVendorCompatible } from "@/lib/dashboard/composition";
 import type { ReadableArea } from "@/lib/areas/list";
 
 /** Card types that can be composed from ANOTHER Area (Phase 2b), with their catalog labels. */
@@ -144,6 +146,11 @@ export default function DashboardCustomizeDialog({
   // "Add a card from another Area" picker state.
   const [addType, setAddType] = useState<DashboardCardType>("tiles");
   const [addAreaId, setAddAreaId] = useState<string>("");
+  const [addChartVariant, setAddChartVariant] =
+    useState<ChartCardConfig["variant"]>("lines");
+  const [addChartSplit, setAddChartSplit] = useState<"load" | "generation">(
+    "load",
+  );
 
   // Seed the draft from the effective descriptor each time the dialog opens.
   useEffect(() => {
@@ -182,10 +189,20 @@ export default function DashboardCustomizeDialog({
   const unavailableIds = TILE_IDS.filter((id) => !availablePower.has(id));
 
   const areaNameById = new Map(readableAreas.map((a) => [a.id, a.displayName]));
+  const vendorTypeByAreaId = new Map(
+    readableAreas.map((a) => [a.id, a.vendorType]),
+  );
   // Areas the user can compose FROM — everything they can read except this page's own Area.
   const otherAreas = readableAreas.filter(
     (a) => a.legacySystemId !== pageSystemId,
   );
+  // The vendor type of the area selected in the add-card picker — gates which card types are offered.
+  const addAreaVendorType = addAreaId
+    ? vendorTypeByAreaId.get(addAreaId)
+    : undefined;
+  const addTypeIncompatible =
+    addAreaVendorType != null &&
+    !isCardTypeVendorCompatible(addType, addAreaVendorType);
 
   // The unified list, in grid order: available tiles (in their saved order), then module cards in
   // descriptor order. An off-area card (areaId set) is always listed (it's the user's explicit
@@ -259,7 +276,11 @@ export default function DashboardCustomizeDialog({
     );
 
   // Append a new off-area card (Phase 2b): a fresh instance bound to another Area, visible by default.
-  const appendAreaCard = (type: DashboardCardType, areaId: string) => {
+  const appendAreaCard = (
+    type: DashboardCardType,
+    areaId: string,
+    chart?: ChartCardConfig,
+  ) => {
     if (!areaId) return;
     const card: ModuleCardInstance = {
       type,
@@ -267,7 +288,7 @@ export default function DashboardCustomizeDialog({
       areaId,
       hidden: false,
     };
-    if (type === "chart") card.chart = { variant: "lines" };
+    if (type === "chart") card.chart = chart ?? { variant: "lines" };
     setDraft((d) => (!d ? d : { ...d, cards: [...d.cards, card] }));
   };
 
@@ -423,12 +444,49 @@ export default function DashboardCustomizeDialog({
                     }
                     className="rounded-md border border-gray-600 bg-gray-900 px-2 py-1.5 text-sm text-gray-200"
                   >
-                    {ADDABLE_AREA_CARD_TYPES.map((t) => (
-                      <option key={t.type} value={t.type}>
-                        {t.label}
-                      </option>
-                    ))}
+                    {ADDABLE_AREA_CARD_TYPES.map((t) => {
+                      // Grey out a type the chosen Area's vendor can't render (vendor-deterministic only).
+                      const disabled =
+                        addAreaVendorType != null &&
+                        !isCardTypeVendorCompatible(t.type, addAreaVendorType);
+                      return (
+                        <option key={t.type} value={t.type} disabled={disabled}>
+                          {t.label}
+                          {disabled ? " (n/a)" : ""}
+                        </option>
+                      );
+                    })}
                   </select>
+                  {addType === "chart" && (
+                    <>
+                      <select
+                        value={addChartVariant}
+                        onChange={(e) =>
+                          setAddChartVariant(
+                            e.target.value as ChartCardConfig["variant"],
+                          )
+                        }
+                        className="rounded-md border border-gray-600 bg-gray-900 px-2 py-1.5 text-sm text-gray-200"
+                      >
+                        <option value="lines">Lines</option>
+                        <option value="stacked-areas">Stacked areas</option>
+                      </select>
+                      {addChartVariant === "stacked-areas" && (
+                        <select
+                          value={addChartSplit}
+                          onChange={(e) =>
+                            setAddChartSplit(
+                              e.target.value as "load" | "generation",
+                            )
+                          }
+                          className="rounded-md border border-gray-600 bg-gray-900 px-2 py-1.5 text-sm text-gray-200"
+                        >
+                          <option value="load">Load</option>
+                          <option value="generation">Generation</option>
+                        </select>
+                      )}
+                    </>
+                  )}
                   <select
                     value={addAreaId}
                     onChange={(e) => setAddAreaId(e.target.value)}
@@ -443,9 +501,18 @@ export default function DashboardCustomizeDialog({
                   </select>
                   <button
                     type="button"
-                    disabled={!addAreaId}
+                    disabled={!addAreaId || addTypeIncompatible}
                     onClick={() => {
-                      appendAreaCard(addType, addAreaId);
+                      const chart: ChartCardConfig | undefined =
+                        addType === "chart"
+                          ? {
+                              variant: addChartVariant,
+                              ...(addChartVariant === "stacked-areas"
+                                ? { split: addChartSplit }
+                                : {}),
+                            }
+                          : undefined;
+                      appendAreaCard(addType, addAreaId, chart);
                       setAddAreaId("");
                     }}
                     className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
@@ -454,6 +521,11 @@ export default function DashboardCustomizeDialog({
                     Add
                   </button>
                 </div>
+                {addTypeIncompatible && (
+                  <p className="mt-2 text-xs text-amber-400">
+                    That card type isn’t available for the selected area.
+                  </p>
+                )}
               </div>
             )}
 

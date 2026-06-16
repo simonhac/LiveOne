@@ -114,11 +114,21 @@ export async function getOrCreateDefaultDashboardId(
     {} as LatestPointValues,
   );
   const areaId = (await getAreaForSystem(systemId))?.id ?? null;
-  const [row] = await requirePlanetscaleDb()
-    .insert(dashboards)
-    .values({ clerkUserId, systemId, areaId, descriptor })
-    .returning({ id: dashboards.id });
-  return row.id;
+  try {
+    const [row] = await requirePlanetscaleDb()
+      .insert(dashboards)
+      .values({ clerkUserId, systemId, areaId, descriptor })
+      .returning({ id: dashboards.id });
+    return row.id;
+  } catch (err) {
+    // Two concurrent first-loads of an un-customized system both see no row and both insert; the
+    // loser hits the (clerk_user_id, system_id) unique violation. Re-select the row the winner made
+    // rather than 500. (Re-throw anything that isn't a 23505 unique violation.)
+    if ((err as { code?: string })?.code !== "23505") throw err;
+    const raced = await getDashboardIdForUserSystem(clerkUserId, systemId);
+    if (raced !== null) return raced;
+    throw err;
+  }
 }
 
 /** Reset to default = drop the saved row. */

@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { UserButton } from "@clerk/nextjs";
-import { useRouter, usePathname } from "next/navigation";
+import { usePathname } from "next/navigation";
 
 // Map subpage slugs to display titles
 const SUBPAGE_TITLES: Record<string, string> = {
@@ -31,7 +31,7 @@ import NewDashboardDialog from "@/components/NewDashboardDialog";
 import LastUpdateTime from "@/components/LastUpdateTime";
 import SystemInfoTooltip from "@/components/SystemInfoTooltip";
 import MobileHeaderMenu from "@/components/MobileHeaderMenu";
-import SystemsMenu from "@/components/SystemsMenu";
+import DashboardsMenu from "@/components/DashboardsMenu";
 import { useDashboardCustomizeOptional } from "@/contexts/DashboardCustomizeContext";
 
 interface SystemInfo {
@@ -89,7 +89,6 @@ export interface DashboardHeaderProps {
 
 export default function DashboardHeader({
   displayName,
-  systemId,
   vendorSiteId,
   lastUpdate,
   systemInfo,
@@ -98,8 +97,6 @@ export default function DashboardHeader({
   systemStatus,
   isAdmin,
   userId,
-  availableSystems = [],
-  defaultSystemId,
   onLogout,
   onTestConnection,
   onViewData,
@@ -108,7 +105,6 @@ export default function DashboardHeader({
   onSystemSettings,
   shiftKeyDown = false,
 }: DashboardHeaderProps) {
-  const router = useRouter();
   const pathname = usePathname();
 
   // Compute full title with subpage suffix (e.g., "Amber Test — Heatmap")
@@ -155,29 +151,6 @@ export default function DashboardHeader({
       longPressTimer.current = null;
     }
     setLongPressActive(false);
-  };
-
-  // Handle system selection in mobile dropdown
-  const handleMobileSystemSelect = (systemId: number) => {
-    const system = availableSystems.find((s) => s.id === systemId);
-    const basePath =
-      system?.ownerUsername && system?.alias
-        ? `/dashboard/${system.ownerUsername}/${system.alias}`
-        : `/dashboard/${systemId}`;
-
-    // Preserve current subpage (e.g., /heatmap, /generator, /amber)
-    // Only preserve /amber if target system is amber vendorType
-    const knownSubpages = ["heatmap", "generator", "amber"];
-    const pathParts = window.location.pathname.split("/").filter(Boolean);
-    const lastPart = pathParts[pathParts.length - 1];
-    const subpage = knownSubpages.includes(lastPart)
-      ? lastPart === "amber" && system?.vendorType !== "amber"
-        ? ""
-        : `/${lastPart}`
-      : "";
-
-    router.push(`${basePath}${subpage}`);
-    setIsMobileSystemDropdownOpen(false);
   };
 
   // Reset long-press when menu closes
@@ -234,14 +207,14 @@ export default function DashboardHeader({
         <div className="sm:hidden">
           <div className="flex justify-between items-center">
             <div className="relative" ref={mobileSystemDropdownRef}>
-              {availableSystems.length > 1 ? (
+              {userId ? (
                 <button
                   onClick={() =>
                     setIsMobileSystemDropdownOpen(!isMobileSystemDropdownOpen)
                   }
                   className="flex items-center gap-1 text-base font-bold text-white hover:text-blue-400 transition-colors"
                 >
-                  {fullTitle || "Select System"}
+                  {fullTitle || "Dashboards"}
                   <ChevronDown
                     className={`w-4 h-4 transition-transform ${isMobileSystemDropdownOpen ? "rotate-180" : ""}`}
                   />
@@ -252,19 +225,13 @@ export default function DashboardHeader({
                 </h1>
               )}
 
-              {/* System Dropdown Menu */}
-              {isMobileSystemDropdownOpen && availableSystems.length > 1 && (
+              {/* Dashboards Dropdown Menu */}
+              {isMobileSystemDropdownOpen && userId && (
                 <div className="absolute top-full left-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
-                  <SystemsMenu
-                    availableSystems={availableSystems}
-                    currentSystemId={systemId}
-                    userId={userId}
-                    isAdmin={isAdmin}
-                    defaultSystemId={defaultSystemId}
-                    onSystemSelect={(systemId) => {
-                      handleMobileSystemSelect(systemId);
-                      setIsMobileSystemDropdownOpen(false);
-                    }}
+                  <DashboardsMenu
+                    enabled={!!userId}
+                    onNew={() => setShowNewDashboard(true)}
+                    onNavigate={() => setIsMobileSystemDropdownOpen(false)}
                     isMobile={true}
                     itemClassName="w-full text-left px-4 py-2 text-sm hover:bg-gray-700 transition-colors first:rounded-t-lg last:rounded-b-lg text-white"
                     activeItemClassName="text-blue-400 bg-gray-700/50"
@@ -332,7 +299,7 @@ export default function DashboardHeader({
         {/* Desktop Layout */}
         <div className="hidden sm:flex justify-between items-center">
           <div className="relative" ref={dropdownRef}>
-            {availableSystems.length > 1 ? (
+            {userId ? (
               <>
                 <button
                   onClick={() => setShowSystemDropdown(!showSystemDropdown)}
@@ -347,13 +314,10 @@ export default function DashboardHeader({
                 {showSystemDropdown && (
                   <div className="absolute top-full left-0 mt-2 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
                     <div className="py-1">
-                      <SystemsMenu
-                        availableSystems={availableSystems}
-                        currentSystemId={systemId}
-                        userId={userId}
-                        isAdmin={isAdmin}
-                        defaultSystemId={defaultSystemId}
-                        onSystemSelect={() => setShowSystemDropdown(false)}
+                      <DashboardsMenu
+                        enabled={!!userId}
+                        onNew={() => setShowNewDashboard(true)}
+                        onNavigate={() => setShowSystemDropdown(false)}
                       />
                     </div>
                   </div>
