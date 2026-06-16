@@ -15,21 +15,22 @@ import { getCompositeBindingRefs } from "@/lib/areas/bindings";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, pointInfo, systems } from "@/lib/db/planetscale/schema";
 import { stemMatchesRole } from "@/lib/roles/registry";
+import { SystemsManager } from "@/lib/systems-manager";
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
 
 import type { GridContext } from "@/lib/grid/types";
 
 /**
- * Whether a system plays the grid role. A `composite` Area's grid role is a binding to a child
- * system's `bidi.grid*` point (the composite has no own point_info), so we read its bindings; any
- * other system checks its own points. Returns false for off-grid systems.
+ * Whether a system plays the grid role. An areas-backed virtual system (a multi-device/composite Area
+ * with no own point_info) gets its grid role from a binding to a child system's `bidi.grid*` point, so
+ * we read its bindings; a real device checks its own points. Dispatched on the structural areas-backed
+ * signal, not `kind`. Returns false for off-grid systems.
  */
 async function systemPlaysGridRole(
   db: ReturnType<typeof requirePlanetscaleDb>,
   systemId: number,
-  areaKind: string,
 ): Promise<boolean> {
-  if (areaKind === "composite") {
+  if (await SystemsManager.getInstance().isAreasBackedSystem(systemId)) {
     const bindings = await getCompositeBindingRefs(systemId);
     return bindings.some((b) => b.role === "grid");
   }
@@ -56,7 +57,7 @@ export async function resolveGridContextForSystem(
     //    identity Area (1:1 over a physical system) and a composite Area ("Kinkora Unified") — the
     //    composite's location describes the composite site, set on the Area row like any other.
     const [area] = await db
-      .select({ location: areas.location, kind: areas.kind })
+      .select({ location: areas.location })
       .from(areas)
       .where(eq(areas.legacySystemId, systemId))
       .limit(1);
@@ -71,7 +72,7 @@ export async function resolveGridContextForSystem(
     // d. Grid-connected check: the system must play the grid role. A composite has no own
     //    point_info — its grid role is a binding to a child system's grid point — so check its
     //    bindings; an identity system checks its own points. Off-grid systems have neither.
-    const hasGridPoint = await systemPlaysGridRole(db, systemId, area.kind);
+    const hasGridPoint = await systemPlaysGridRole(db, systemId);
     if (!hasGridPoint) return null;
 
     // e. Resolve the public OpenElectricity system serving this region.

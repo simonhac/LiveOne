@@ -4,6 +4,7 @@ import {
   getOrCreateUserPreferences,
   setDefaultSystem,
   setDefaultDashboardById,
+  clearDefaultDashboard,
 } from "@/lib/user-preferences";
 
 // GET /api/user/preferences - Get current user preferences
@@ -38,11 +39,19 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json();
     const { defaultSystemId, defaultDashboardId } = body;
 
-    // Composition-first default (Phase 2b-2): set the default to a named dashboard by its id.
+    // Composition-first default (Phase 2b-2): set the default to a named dashboard by its id, or pass
+    // null to clear the default landing entirely.
     if (defaultDashboardId !== undefined) {
+      if (defaultDashboardId === null) {
+        await clearDefaultDashboard(userId);
+        return NextResponse.json({
+          success: true,
+          message: "Default dashboard cleared",
+        });
+      }
       if (typeof defaultDashboardId !== "number") {
         return NextResponse.json(
-          { error: "defaultDashboardId must be a number" },
+          { error: "defaultDashboardId must be a number or null" },
           { status: 400 },
         );
       }

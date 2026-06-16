@@ -200,6 +200,19 @@ export async function setDefaultDashboardById(
 }
 
 /**
+ * Clear the user's default landing dashboard. Nulls BOTH default_dashboard_id and default_system_id
+ * (kept in sync), so the `/dashboard` landing falls back to the first visible/owned system. Used by the
+ * "Remove default" action; idempotent.
+ */
+export async function clearDefaultDashboard(
+  clerkUserId: string,
+): Promise<{ success: boolean; error?: string }> {
+  await getOrCreateUserPreferences(clerkUserId);
+  await writeDefaults(clerkUserId, { dashboardId: null, systemId: null });
+  return { success: true };
+}
+
+/**
  * Set both default columns in one UPDATE so default_dashboard_id (source of truth) and the legacy
  * default_system_id fallback never drift. The shared body of the set + clear + lazy-migrate paths.
  */

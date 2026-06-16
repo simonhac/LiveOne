@@ -19,6 +19,8 @@ export interface ReadableArea {
   kind: "identity" | "composite";
   /** The integer addressing handle — the systemId a card binds its data queries to. */
   legacySystemId: number;
+  /** The bound system's vendor type — lets the card picker grey out vendor-incompatible card types. */
+  vendorType: string;
 }
 
 /**
@@ -35,6 +37,7 @@ export async function listReadableAreas(
   );
   const systemIds = systems.map((s) => s.id);
   if (systemIds.length === 0) return [];
+  const vendorBySystemId = new Map(systems.map((s) => [s.id, s.vendorType]));
 
   const rows = await requirePlanetscaleDb()
     .select({
@@ -58,6 +61,7 @@ export async function listReadableAreas(
       displayName: r.displayName,
       kind: r.kind as "identity" | "composite",
       legacySystemId: r.legacySystemId,
+      vendorType: vendorBySystemId.get(r.legacySystemId) ?? "",
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
@@ -81,15 +85,18 @@ export async function resolveAreasByIds(
     })
     .from(areas)
     .where(inArray(areas.id, ids));
-  return rows
-    .filter(
-      (r): r is typeof r & { legacySystemId: number } =>
-        r.legacySystemId != null,
-    )
-    .map((r) => ({
+  const present = rows.filter(
+    (r): r is typeof r & { legacySystemId: number } => r.legacySystemId != null,
+  );
+  return Promise.all(
+    present.map(async (r) => ({
       id: r.id,
       displayName: r.displayName,
       kind: r.kind as "identity" | "composite",
       legacySystemId: r.legacySystemId,
-    }));
+      vendorType:
+        (await SystemsManager.getInstance().getSystem(r.legacySystemId))
+          ?.vendorType ?? "",
+    })),
+  );
 }

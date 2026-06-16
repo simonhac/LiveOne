@@ -20,14 +20,13 @@ jest.mock("../kv", () => ({
   kvKey: jest.fn((pattern: string) => `test:${pattern}`),
 }));
 
-// Mock the database (Postgres). getAllCompositeBindings uses select→from→innerJoin→where→orderBy.
+// Mock the database (Postgres). getAllCompositeBindings uses select→from→innerJoin→orderBy
+// (no `where` — the innerJoin alone restricts to Areas that have bindings).
 const mockDb = {
   select: jest.fn(() => ({
     from: jest.fn(() => ({
       innerJoin: jest.fn(() => ({
-        where: jest.fn(() => ({
-          orderBy: jest.fn(() => Promise.resolve([])),
-        })),
+        orderBy: jest.fn(() => Promise.resolve([])),
       })),
       where: jest.fn(() => ({
         orderBy: jest.fn(() => Promise.resolve([])),
@@ -216,13 +215,11 @@ describe("kv-cache-manager", () => {
   });
 
   describe("buildSubscriptionRegistry", () => {
-    // Mock getAllCompositeBindings's query: select→from→innerJoin→where→orderBy → binding rows.
+    // Mock getAllCompositeBindings's query: select→from→innerJoin→orderBy → binding rows.
     const mockBindings = (rows: unknown[]) => {
       (mockDb.select as jest.MockedFunction<any>).mockReturnValueOnce({
         from: () => ({
-          innerJoin: () => ({
-            where: () => ({ orderBy: () => Promise.resolve(rows) }),
-          }),
+          innerJoin: () => ({ orderBy: () => Promise.resolve(rows) }),
         }),
       });
     };

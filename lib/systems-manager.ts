@@ -1,4 +1,4 @@
-import { eq, max } from "drizzle-orm";
+import { eq, max, isNotNull } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { isProduction } from "@/lib/env";
@@ -102,6 +102,10 @@ export class SystemsManager {
   private static lastLoadedAt: number = 0;
   private static readonly CACHE_TTL_MS = 60 * 1000; // 1 minute TTL
   private systemsMap: Map<number, SystemWithPolling> = new Map();
+  // Handles that are areas-backed virtual systems (synthesized from a composite Area — no real
+  // `systems` row). The structural "this resolves its points from area_bindings, not its own
+  // point_info" signal, replacing the `vendorType === 'composite'` string check.
+  private areasBackedIds: Set<number> = new Set();
   private loadPromise: Promise<void>;
 
   private constructor() {
@@ -188,20 +192,24 @@ export class SystemsManager {
       this.systemsMap.set(row.systems.id, systemWithPolling);
     }
 
-    // Composites are areas-backed "virtual systems": synthesize one per composite Area, keyed by its
-    // `legacy_system_id` (the stable integer handle). The `has()` guard makes this a no-op while the
-    // legacy `systems` row still exists (the real row wins) and the source of truth once it's deleted
-    // (migration 0014) — so this is safe to deploy before the delete. Composites own no points, never
-    // poll, and resolve their points/live values from area_bindings + the KV fan-out.
-    const compositeAreas = await requirePlanetscaleDb()
+    // Areas-backed "virtual systems": synthesize one per Area whose addressing handle
+    // (`legacy_system_id`) has NO real `systems` row — i.e. a composite, after its row was deleted
+    // (migration 0014). Selecting by "no real row" via the `has()` guard, NOT `kind='composite'`, is
+    // the structural signal (retiring the composite special-case): an identity Area's handle keeps its
+    // real row, so it's skipped here. Areas-backed systems own no points, never poll, and resolve
+    // their points/live values from area_bindings + the KV fan-out.
+    const handleAreas = await requirePlanetscaleDb()
       .select()
       .from(pgAreas)
-      .where(eq(pgAreas.kind, "composite"));
-    for (const area of compositeAreas) {
+      .where(isNotNull(pgAreas.legacySystemId));
+    for (const area of handleAreas) {
       if (area.legacySystemId == null) continue;
-      if (this.systemsMap.has(area.legacySystemId)) continue; // real row wins
+      if (this.systemsMap.has(area.legacySystemId)) continue; // real row wins (identity Areas)
       const synthesized = synthesizeCompositeSystem(area);
-      if (synthesized) this.systemsMap.set(area.legacySystemId, synthesized);
+      if (synthesized) {
+        this.systemsMap.set(area.legacySystemId, synthesized);
+        this.areasBackedIds.add(area.legacySystemId);
+      }
     }
 
     const allSystemsArray = Array.from(this.systemsMap.values());
@@ -219,6 +227,16 @@ export class SystemsManager {
   async getSystem(systemId: number): Promise<SystemWithPolling | null> {
     await this.loadPromise;
     return this.systemsMap.get(systemId) || null;
+  }
+
+  /**
+   * Whether `systemId` is an areas-backed virtual system (synthesized from a composite Area, with no
+   * real `systems` row) — i.e. it resolves its points from `area_bindings` rather than owning
+   * `point_info`. The structural replacement for `system.vendorType === 'composite'`.
+   */
+  async isAreasBackedSystem(systemId: number): Promise<boolean> {
+    await this.loadPromise;
+    return this.areasBackedIds.has(systemId);
   }
 
   /**

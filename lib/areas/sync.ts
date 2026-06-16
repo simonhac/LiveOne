@@ -14,7 +14,12 @@
  * and the system silently drops out of the flow recompute, grid-region derivation, and share-scope.
  */
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areas, areaBindings, pointInfo } from "@/lib/db/planetscale/schema";
+import {
+  areas,
+  areaBindings,
+  areaDevices,
+  pointInfo,
+} from "@/lib/db/planetscale/schema";
 import { and, eq, gte, max } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import {
@@ -53,6 +58,17 @@ async function replaceAreaBindings(
           transform: d.transform,
         })),
       );
+    }
+    // Keep area_devices membership in lockstep: a composite Area's members are the DISTINCT child
+    // systems of its bindings (the same rule as the Phase B backfill), within the same transaction.
+    await tx.delete(areaDevices).where(eq(areaDevices.areaId, areaId));
+    const memberIds = [...new Set(drafts.map((d) => d.pointSystemId))];
+    if (memberIds.length > 0) {
+      await tx
+        .insert(areaDevices)
+        .values(
+          memberIds.map((systemId, i) => ({ areaId, systemId, ordinal: i })),
+        );
     }
   });
 }
@@ -117,7 +133,11 @@ export async function ensureIdentityArea(
   db: Db = requirePlanetscaleDb(),
 ): Promise<string> {
   const existingId = await getAreaIdByLegacyHandle(system.id, db);
-  if (existingId) return existingId;
+  if (existingId) {
+    // Heal membership for an Area created before area_devices existed (idempotent).
+    await ensureIdentityMember(db, existingId, system.id);
+    return existingId;
+  }
 
   const areaId = uuidv7();
   try {
@@ -133,15 +153,31 @@ export async function ensureIdentityArea(
       displayTimezone: system.displayTimezone,
       status: system.status,
     });
+    await ensureIdentityMember(db, areaId, system.id);
     return areaId;
   } catch (e) {
     // Lost a create race (areas_legacy_system_unique) — re-read the winner's id.
     if (isUniqueViolation(e)) {
       const winner = await getAreaIdByLegacyHandle(system.id, db);
-      if (winner) return winner;
+      if (winner) {
+        await ensureIdentityMember(db, winner, system.id);
+        return winner;
+      }
     }
     throw e;
   }
+}
+
+/** An identity Area's single member is its source system. Idempotent (PK conflict → no-op). */
+async function ensureIdentityMember(
+  db: Db,
+  areaId: string,
+  systemId: number,
+): Promise<void> {
+  await db
+    .insert(areaDevices)
+    .values({ areaId, systemId, ordinal: 0 })
+    .onConflictDoNothing();
 }
 
 /** Locate the composite Area for a system handle (by legacy_system_id), or null if none. */

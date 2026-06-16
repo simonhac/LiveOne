@@ -62,6 +62,7 @@ function fakePoint(stem: string, name: string) {
 
 describe("resolveLogicalSystem (Area is mandatory — P3-tail-1)", () => {
   const getSystem = jest.fn<(id: number) => Promise<unknown>>();
+  const isAreasBackedSystem = jest.fn<(id: number) => Promise<boolean>>();
   const getActivePointsForSystem =
     jest.fn<(id: number, typedOnly: boolean) => Promise<unknown[]>>();
 
@@ -69,6 +70,7 @@ describe("resolveLogicalSystem (Area is mandatory — P3-tail-1)", () => {
     jest.clearAllMocks();
     (SystemsManager.getInstance as jest.MockedFunction<any>).mockReturnValue({
       getSystem,
+      isAreasBackedSystem,
     });
     (PointManager.getInstance as jest.MockedFunction<any>).mockReturnValue({
       getActivePointsForSystem,
@@ -77,6 +79,8 @@ describe("resolveLogicalSystem (Area is mandatory — P3-tail-1)", () => {
       vendorType: "selectronic",
       timezoneOffsetMin: 600,
     });
+    // Default: a real device (own point_info), not an areas-backed virtual system.
+    isAreasBackedSystem.mockResolvedValue(false);
     getActivePointsForSystem.mockResolvedValue([
       fakePoint("source.solar.local", "Solar"),
       fakePoint("load.hws", "Hot Water"),
@@ -111,18 +115,15 @@ describe("resolveLogicalSystem (Area is mandatory — P3-tail-1)", () => {
     warnSpy.mockRestore();
   });
 
-  it("does NOT fabricate an Area for a composite with no Area (genuine fault)", async () => {
-    getSystem.mockResolvedValue({
-      vendorType: "composite",
-      timezoneOffsetMin: 600,
-    });
+  it("does NOT fabricate an Area for an areas-backed system with no Area (genuine fault)", async () => {
+    isAreasBackedSystem.mockResolvedValue(true);
     (getAreaForSystem as jest.MockedFunction<any>).mockResolvedValue(null);
     const errSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     const ls = await resolveLogicalSystem(1);
     expect(ls).toBeNull();
     expect(ensureIdentityArea).not.toHaveBeenCalled();
     expect(errSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Composite system 1 has no Area"),
+      expect.stringContaining("Areas-backed system 1 has no Area"),
     );
     errSpy.mockRestore();
   });

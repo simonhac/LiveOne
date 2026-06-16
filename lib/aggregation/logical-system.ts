@@ -87,11 +87,11 @@ export async function resolveLogicalSystem(
   if (!area) {
     // Self-heal the System→Area seam: a physical system with no Area (created before the runtime seam,
     // or a rare create-time miss) is minted its 1:1 identity Area now rather than silently dropped from
-    // the recompute. Composites always have an Area (createCompositeArea), so a composite reaching here
-    // is a genuine fault — don't fabricate an identity Area for it.
-    if (system.vendorType === "composite") {
+    // the recompute. An areas-backed system is synthesized FROM an Area, so one reaching here with no
+    // Area is a genuine fault — don't fabricate an identity Area for it.
+    if (await SystemsManager.getInstance().isAreasBackedSystem(systemId)) {
       console.error(
-        `[LogicalSystem] Composite system ${systemId} has no Area — skipping flow recompute`,
+        `[LogicalSystem] Areas-backed system ${systemId} has no Area — skipping flow recompute`,
       );
       return null;
     }

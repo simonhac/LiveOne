@@ -127,6 +127,13 @@
       "when": 1781591352126,
       "tag": "0017_known_patriot",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1781618545366,
+      "tag": "0018_low_wallflower",
+      "breakpoints": true
     }
   ]
 }
