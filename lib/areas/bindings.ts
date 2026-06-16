@@ -8,7 +8,7 @@
  */
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, areaBindings } from "@/lib/db/planetscale/schema";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 /** A composite Area's binding point refs, ordered by ordinal — the set the v2 mappings encoded. */
 export interface BindingRef {
@@ -38,7 +38,9 @@ export async function getCompositeBindingRefs(
     })
     .from(areaBindings)
     .innerJoin(areas, eq(areaBindings.areaId, areas.id))
-    .where(and(eq(areas.legacySystemId, systemId), eq(areas.kind, "composite")))
+    // Located by the addressing handle alone — no `kind` filter. Only multi-device (composite) Areas
+    // have bindings, so an identity handle resolves to zero rows here regardless.
+    .where(eq(areas.legacySystemId, systemId))
     .orderBy(areaBindings.ordinal);
   return rows;
 }
@@ -68,7 +70,8 @@ export async function getAllCompositeBindings(): Promise<
     })
     .from(areaBindings)
     .innerJoin(areas, eq(areaBindings.areaId, areas.id))
-    .where(eq(areas.kind, "composite"))
+    // No `kind` filter: the innerJoin already restricts to Areas that HAVE bindings, which are
+    // exactly the multi-device (composite) Areas — identity Areas contribute none.
     .orderBy(areas.legacySystemId, areaBindings.ordinal);
   // legacySystemId is nullable in the schema but always set for composite Areas.
   return rows.filter(
