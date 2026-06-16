@@ -15,6 +15,7 @@ import { resolveGridContextForSystem } from "@/lib/grid/context";
 import { hasEnabledTracker } from "@/lib/run-tracking/resolve";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboardById } from "@/lib/dashboard/store";
+import { resolveAreasByIds } from "@/lib/areas/list";
 import type { DashboardDescriptor } from "@/lib/dashboard/descriptor";
 
 interface PageProps {
@@ -44,9 +45,22 @@ export default async function DashboardPage({
         ? await SystemsManager.getInstance().getSystem(dash.systemId)
         : null;
       if (dash && sharedSystem && sharedSystem.status !== "removed") {
-        const [gridContext, hasGenerator] = await Promise.all([
+        const descriptor = (dash.descriptor as DashboardDescriptor) ?? null;
+        // Resolve the Areas this shared descriptor's cards reference (areaId→systemId+label) so the
+        // read-only view can render + label multi-area cards without an authed /api/areas/readable
+        // call. The share token authorizes each area's data fetch via the live union scope.
+        const referencedAreaIds = [
+          ...new Set(
+            [
+              dash.areaId,
+              ...(descriptor?.cards ?? []).map((c) => c.areaId),
+            ].filter((x): x is string => typeof x === "string"),
+          ),
+        ];
+        const [gridContext, hasGenerator, sharedAreas] = await Promise.all([
           resolveGridContextForSystem(sharedSystem.id),
           hasEnabledTracker(sharedSystem.id, "generator"),
+          resolveAreasByIds(referencedAreaIds),
         ]);
         return (
           <SharedDashboardView
@@ -55,7 +69,8 @@ export default async function DashboardPage({
             serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
             gridContext={gridContext}
             hasGenerator={hasGenerator}
-            sharedDescriptor={(dash.descriptor as DashboardDescriptor) ?? null}
+            sharedDescriptor={descriptor}
+            sharedAreas={sharedAreas}
           />
         );
       }

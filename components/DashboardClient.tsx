@@ -4,7 +4,13 @@ import { useState, useEffect, useMemo, Fragment, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useModalContext } from "@/contexts/ModalContext";
-import { dashboardDataQuery, dashboardDescriptorQuery } from "@/lib/queries";
+import {
+  dashboardDataQuery,
+  dashboardDescriptorQuery,
+  readableAreasQuery,
+} from "@/lib/queries";
+import MultiAreaCards from "@/components/MultiAreaCards";
+import type { ReadableArea } from "@/lib/areas/list";
 import { gridLatestFromData } from "@/lib/grid/latest";
 import { generatorRunningFromLatest } from "@/lib/generator/running";
 import GridSignalsCard from "@/components/GridSignalsCard";
@@ -150,6 +156,12 @@ interface DashboardClientProps {
   readOnly?: boolean;
   /** P4 shared view: the shared dashboard's descriptor, server-fetched from the share token. */
   sharedDescriptor?: DashboardDescriptor | null;
+  /**
+   * Phase 2b shared view: the Areas the shared descriptor's cards reference (areaId→systemId+label),
+   * resolved server-side from the share token. The authed view fetches these via readableAreasQuery
+   * instead. Lets multi-area cards resolve + render without an authed /api/areas/readable call.
+   */
+  sharedAreas?: ReadableArea[];
 }
 
 // Helper function to get stale threshold based on vendor type
@@ -171,6 +183,7 @@ export default function DashboardClient({
   hasGenerator = false,
   readOnly = false,
   sharedDescriptor = null,
+  sharedAreas,
 }: DashboardClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -222,6 +235,17 @@ export default function DashboardClient({
   // descriptor arrives via the `sharedDescriptor` prop instead).
   const { data: savedDescriptorResp } = useQuery(
     dashboardDescriptorQuery(readOnly ? "" : (systemId ?? "")),
+  );
+
+  // Readable Areas (Phase 2b) → resolve each multi-area card's areaId to its systemId + label. The
+  // authed view fetches them; the read-only shared view receives the referenced areas as a prop
+  // (the authed /api/areas/readable would 401 a token holder).
+  const { data: readableAreasResp } = useQuery(readableAreasQuery(!readOnly));
+  const readableAreas: ReadableArea[] =
+    sharedAreas ?? readableAreasResp?.areas ?? [];
+  const areaById = useMemo(
+    () => new Map(readableAreas.map((a) => [a.id, a] as const)),
+    [readableAreas],
   );
   // Customize/Share open/close + availability are shared with the header menu via context (the
   // "Customise…"/"Share…" items live in DashboardHeader, a sibling subtree). DashboardClient owns
@@ -468,6 +492,8 @@ export default function DashboardClient({
           availableModules={availableModules}
           availablePower={availableTileSet}
           powerCardNodes={tileNodes}
+          readableAreas={readableAreas}
+          pageSystemId={data.system.id}
           onSave={saveDashboard}
           onReset={resetDashboard}
         />
@@ -638,6 +664,17 @@ export default function DashboardClient({
                 runningOverride={generatorRunningFromLatest(data.latest)}
               />
             </div>
+          )}
+
+          {/* Multi-area composition (Phase 2b): cards the user composed from OTHER Areas. Each
+              self-fetches its area's data; the page's own cards render above. Renders nothing when
+              the dashboard has no off-area cards. */}
+          {data?.system && (isAdmin || system?.status !== "removed") && (
+            <MultiAreaCards
+              descriptor={effectiveDescriptor}
+              areaById={areaById}
+              pageSystemId={data.system.id}
+            />
           )}
 
           {/* Energy Panel - Only show for admin or non-removed systems

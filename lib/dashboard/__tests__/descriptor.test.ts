@@ -1,5 +1,10 @@
 import { describe, it, expect } from "@jest/globals";
-import { buildDefaultDescriptor, normalizeDescriptor } from "../descriptor";
+import {
+  buildDefaultDescriptor,
+  normalizeDescriptor,
+  tilesConfigOf,
+  type DashboardDescriptor,
+} from "../descriptor";
 import { CARD_REGISTRY, getLayout } from "../cards";
 import type { LatestPointValues } from "@/lib/types/api";
 
@@ -77,6 +82,53 @@ describe("normalizeDescriptor — per-card areaId (Phase 2 seam)", () => {
     // Cards that set no areaId stay areaId-less.
     const tiles = out.cards.find((c) => c.type === "tiles")!;
     expect(Object.prototype.hasOwnProperty.call(tiles, "areaId")).toBe(false);
+  });
+
+  it("KEEPS an off-area composed card that has no default counterpart (would otherwise be dropped)", () => {
+    const offArea = {
+      type: "chart" as const,
+      id: "chart@farm-ab12",
+      areaId: "area-farm",
+      chart: { variant: "lines" as const },
+    };
+    const saved = {
+      version: 2 as const,
+      layout: def.layout,
+      cards: [...def.cards, offArea],
+    };
+    const out = normalizeDescriptor(saved, def);
+    const kept = out.cards.find((c) => c.id === "chart@farm-ab12");
+    expect(kept).toBeTruthy();
+    expect(kept?.areaId).toBe("area-farm");
+    // The page's default cards are still present too.
+    expect(out.cards.some((c) => c.id === "chart:lines")).toBe(true);
+  });
+});
+
+describe("tilesConfigOf — targets the PAGE tile grid, not an off-area tiles block", () => {
+  it("reads the areaId-less tiles card, ignoring a multi-area tiles card", () => {
+    const d: DashboardDescriptor = {
+      version: 2,
+      layout: "site",
+      cards: [
+        // An off-area tiles block appears FIRST — must NOT be mistaken for the page tile grid.
+        {
+          type: "tiles",
+          id: "tiles@farm",
+          areaId: "area-farm",
+          tiles: { order: ["battery"], hidden: ["battery"] },
+        },
+        // The page's own tile grid (no areaId).
+        {
+          type: "tiles",
+          tiles: { order: ["solar", "load"], hidden: ["load"] },
+        },
+      ],
+    };
+    expect(tilesConfigOf(d)).toEqual({
+      order: ["solar", "load"],
+      hidden: ["load"],
+    });
   });
 });
 

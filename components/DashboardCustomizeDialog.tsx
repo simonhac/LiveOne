@@ -2,7 +2,15 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { X, Eye, EyeOff, GripVertical } from "lucide-react";
+import {
+  X,
+  Eye,
+  EyeOff,
+  GripVertical,
+  Plus,
+  Trash2,
+  Layers,
+} from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -34,6 +42,25 @@ import {
   type DashboardDescriptor,
   type ModuleCardInstance,
 } from "@/lib/dashboard/descriptor";
+import { MULTI_AREA_CARD_TYPES } from "@/lib/dashboard/multi-area";
+import type { ReadableArea } from "@/lib/areas/list";
+
+/** Card types that can be composed from ANOTHER Area (Phase 2b), with their catalog labels. */
+const ADDABLE_AREA_CARD_TYPES = MULTI_AREA_CARD_TYPES.map((type) => ({
+  type,
+  label: CARD_REGISTRY[type].label,
+}));
+
+/** A reasonably-unique, type/Area-namespaced instance id for an added multi-area card. */
+function newAreaCardId(type: DashboardCardType, areaId: string): string {
+  const rand = Math.random().toString(36).slice(2, 7);
+  return `${type}@${areaId.slice(0, 8)}-${rand}`;
+}
+
+/** True for the PAGE tile grid (the areaId-less `tiles` card), as opposed to an off-area tiles block. */
+function isPageTiles(c: ModuleCardInstance): boolean {
+  return c.type === "tiles" && !c.areaId;
+}
 
 /**
  * Per-instance display label for a module card row. Multiple `chart` instances share one
@@ -60,6 +87,10 @@ interface DashboardCustomizeDialogProps {
   availablePower: Set<TileId>;
   /** Real rendered card nodes, keyed by id (unused by the list now; kept for callers/preview). */
   powerCardNodes: Record<TileId, ReactNode>;
+  /** Areas the user can read — the "add a card from another Area" picker (Phase 2b). */
+  readableAreas?: ReadableArea[];
+  /** This dashboard's own systemId — excluded from the area picker (it's the page, not "another"). */
+  pageSystemId?: number;
   onSave: (next: DashboardDescriptor) => Promise<void>;
   onReset: () => Promise<void>;
 }
@@ -85,6 +116,10 @@ type CardRow =
       identity: string;
       label: string;
       hidden: boolean;
+      /** For an off-area card (Phase 2b): the Area's display name, shown as a subdued suffix. */
+      areaName?: string;
+      /** Off-area cards are user-added → removable (not just hideable). */
+      removable?: boolean;
     };
 
 /**
@@ -98,12 +133,17 @@ export default function DashboardCustomizeDialog({
   descriptor,
   availableModules,
   availablePower,
+  readableAreas = [],
+  pageSystemId,
   onSave,
   onReset,
 }: DashboardCustomizeDialogProps) {
   const { registerModal, unregisterModal } = useModalContext();
   const [draft, setDraft] = useState<DashboardDescriptor | null>(descriptor);
   const [isSaving, setIsSaving] = useState(false);
+  // "Add a card from another Area" picker state.
+  const [addType, setAddType] = useState<DashboardCardType>("tiles");
+  const [addAreaId, setAddAreaId] = useState<string>("");
 
   // Seed the draft from the effective descriptor each time the dialog opens.
   useEffect(() => {
@@ -141,10 +181,18 @@ export default function DashboardCustomizeDialog({
   // Tiles the system has no data for — shown greyed below as an "Add Card" gallery (can't be added).
   const unavailableIds = TILE_IDS.filter((id) => !availablePower.has(id));
 
-  // The unified list, in grid order: available tiles (in their saved order), then the available
-  // module cards (in their descriptor order).
+  const areaNameById = new Map(readableAreas.map((a) => [a.id, a.displayName]));
+  // Areas the user can compose FROM — everything they can read except this page's own Area.
+  const otherAreas = readableAreas.filter(
+    (a) => a.legacySystemId !== pageSystemId,
+  );
+
+  // The unified list, in grid order: available tiles (in their saved order), then module cards in
+  // descriptor order. An off-area card (areaId set) is always listed (it's the user's explicit
+  // composition) even if the PAGE system couldn't render that type; the PAGE tile grid is excluded
+  // (it's rendered as the tile rows above, not as a module).
   const moduleCards = draft.cards.filter(
-    (c) => c.type !== "tiles" && availableModules.has(c.type),
+    (c) => !isPageTiles(c) && (availableModules.has(c.type) || !!c.areaId),
   );
   const rows: CardRow[] = [
     ...tiles.order
@@ -165,6 +213,10 @@ export default function DashboardCustomizeDialog({
         identity: cardIdentity(c),
         label: moduleLabel(c),
         hidden: !!c.hidden,
+        areaName: c.areaId
+          ? (areaNameById.get(c.areaId) ?? "Other area")
+          : undefined,
+        removable: !!c.areaId,
       }),
     ),
   ];
@@ -176,7 +228,7 @@ export default function DashboardCustomizeDialog({
         : {
             ...d,
             cards: d.cards.map((c) => {
-              if (c.type !== "tiles") return c;
+              if (!isPageTiles(c)) return c;
               const cur = c.tiles ?? {
                 order: [...TILE_IDS],
                 hidden: [],
@@ -206,6 +258,27 @@ export default function DashboardCustomizeDialog({
           },
     );
 
+  // Append a new off-area card (Phase 2b): a fresh instance bound to another Area, visible by default.
+  const appendAreaCard = (type: DashboardCardType, areaId: string) => {
+    if (!areaId) return;
+    const card: ModuleCardInstance = {
+      type,
+      id: newAreaCardId(type, areaId),
+      areaId,
+      hidden: false,
+    };
+    if (type === "chart") card.chart = { variant: "lines" };
+    setDraft((d) => (!d ? d : { ...d, cards: [...d.cards, card] }));
+  };
+
+  // Remove an off-area card entirely (user-added cards are removable, not just hideable).
+  const removeModule = (identity: string) =>
+    setDraft((d) =>
+      !d
+        ? d
+        : { ...d, cards: d.cards.filter((c) => cardIdentity(c) !== identity) },
+    );
+
   // Drag-reorder the unified list, then split the new sequence back into the tile order and the
   // module order. Tiles stay tiles and modules stay modules (the grid renders tiles, then modules),
   // so a cross-group drag settles the card at the nearest valid spot within its own kind.
@@ -228,11 +301,9 @@ export default function DashboardCustomizeDialog({
 
     setDraft((d) => {
       if (!d) return d;
-      const tilesCard = d.cards.find((c) => c.type === "tiles");
+      const tilesCard = d.cards.find(isPageTiles);
       const moduleByIdentity = new Map(
-        d.cards
-          .filter((c) => c.type !== "tiles")
-          .map((c) => [cardIdentity(c), c]),
+        d.cards.filter((c) => !isPageTiles(c)).map((c) => [cardIdentity(c), c]),
       );
       const reorderedModules = moduleIdentities
         .map((id) => moduleByIdentity.get(id))
@@ -240,7 +311,7 @@ export default function DashboardCustomizeDialog({
       // Preserve any module cards NOT in the visible list (e.g. unavailable on this system).
       const shown = new Set(moduleIdentities);
       const otherModules = d.cards.filter(
-        (c) => c.type !== "tiles" && !shown.has(cardIdentity(c)),
+        (c) => !isPageTiles(c) && !shown.has(cardIdentity(c)),
       );
       const cards: ModuleCardInstance[] = [
         ...(tilesCard
@@ -325,11 +396,66 @@ export default function DashboardCustomizeDialog({
                           ? toggleTile(row.tileId, hide)
                           : toggleModule(row.identity, hide)
                       }
+                      onRemove={
+                        row.kind === "module" && row.removable
+                          ? () => removeModule(row.identity)
+                          : undefined
+                      }
                     />
                   ))}
                 </div>
               </SortableContext>
             </DndContext>
+
+            {/* Add a card from ANOTHER Area (Phase 2b multi-area composition). Pick a card type +
+                an Area you can read; it's appended as a visible off-area card. */}
+            {otherAreas.length > 0 && (
+              <div className="mt-5 border-t border-gray-700/70 pt-4">
+                <div className="mb-2 flex items-center gap-1.5 text-xs uppercase tracking-wide text-gray-500">
+                  <Layers className="h-3.5 w-3.5" />
+                  Add a card from another area
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={addType}
+                    onChange={(e) =>
+                      setAddType(e.target.value as DashboardCardType)
+                    }
+                    className="rounded-md border border-gray-600 bg-gray-900 px-2 py-1.5 text-sm text-gray-200"
+                  >
+                    {ADDABLE_AREA_CARD_TYPES.map((t) => (
+                      <option key={t.type} value={t.type}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={addAreaId}
+                    onChange={(e) => setAddAreaId(e.target.value)}
+                    className="min-w-[8rem] flex-1 rounded-md border border-gray-600 bg-gray-900 px-2 py-1.5 text-sm text-gray-200"
+                  >
+                    <option value="">Choose area…</option>
+                    {otherAreas.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.displayName}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={!addAreaId}
+                    onClick={() => {
+                      appendAreaCard(addType, addAreaId);
+                      setAddAreaId("");
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Add-Card gallery: tiles this system can't populate (no data, not addable). */}
             {unavailableIds.length > 0 && (
@@ -390,13 +516,15 @@ export default function DashboardCustomizeDialog({
   );
 }
 
-/** A single draggable card row: grip + label + show/hide toggle. */
+/** A single draggable card row: grip + label (+ Area suffix) + show/hide toggle (+ remove). */
 function CardRowItem({
   row,
   onToggle,
+  onRemove,
 }: {
   row: CardRow;
   onToggle: (hide: boolean) => void;
+  onRemove?: () => void;
 }) {
   const {
     attributes,
@@ -406,6 +534,7 @@ function CardRowItem({
     transition,
     isDragging,
   } = useSortable({ id: row.key });
+  const areaName = row.kind === "module" ? row.areaName : undefined;
 
   return (
     <div
@@ -428,6 +557,12 @@ function CardRowItem({
         className={`text-sm flex-1 ${row.hidden ? "text-gray-500 line-through" : "text-gray-200"}`}
       >
         {row.label}
+        {areaName && (
+          <span className="ml-1.5 inline-flex items-center gap-1 text-xs text-gray-500">
+            <Layers className="h-3 w-3" />
+            {areaName}
+          </span>
+        )}
       </span>
       <button
         className="p-1.5 rounded text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
@@ -440,6 +575,16 @@ function CardRowItem({
           <Eye className="w-4 h-4" />
         )}
       </button>
+      {onRemove && (
+        <button
+          className="p-1.5 rounded text-gray-400 hover:text-red-400 hover:bg-gray-700 transition-colors"
+          onClick={onRemove}
+          title="Remove card"
+          aria-label="Remove card"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+      )}
     </div>
   );
 }

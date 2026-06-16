@@ -1,7 +1,7 @@
 # Areas & Dashboards
 
-> Status: foundation live · Phase 1 (sharing hardening) done · Phase 2a (default dashboard + multi-area
-> scope seam) done · Phase 2b (multi-area composition UI) + Phase 3 planned.
+> Status: foundation live · Phase 1 (sharing hardening) done · Phase 2a (default dashboard + scope seam)
+> done · Phase 2b-1 (multi-area cards) done · Phase 2b-2 (first-class multiple dashboards) + Phase 3 planned.
 > Schema source of truth: `lib/db/planetscale/schema.ts` (Drizzle is authoritative — never hand-rolled
 > SQL, never `drizzle-kit push`). This doc holds the _why_ and the invariants; columns and routes live in
 > code.
@@ -141,14 +141,28 @@ scope seam:** an optional `ModuleCardInstance.areaId` on the descriptor (no `das
 across card areas; `requireDashboardAccess` authorizes `?systemId=X` by **membership in that union**
 (covers `/api/data`, `/api/history`, `/api/energy-flow-matrix`). No `dashboard_cards`, no data migration.
 
-### Phase 2b — Multi-area composition UI (keystone) — ⬜
+### Phase 2b-1 — Multi-area cards (compose other Areas onto a dashboard) — ✅ done
 
-The pivot that unlocks §3 and the bulk of the remaining value, on top of the 2a seams. Add
-`alias`/`display_name` to `dashboards` (the `id` PK already exists); relax the `(clerk_user_id, system_id)`
-uniqueness so a user can hold multiple dashboards; address dashboards by id/alias; build the card-picker UI
-to add cards from other readable areas (with the **no-escalation authoring-time check** — an owner can
-only add a card for an area they can already read — and the "exposes data from N areas" surface); widen the
-shared-view `latest` fetch to union across card areas; optional point-level narrowing. Depends on 2a.
+The §3 keystone screen value on top of the 2a seams, **no schema change**. A user can **add a card from
+another Area they can read** in the Customize dialog (pick a card type + an Area). Off-area cards carry an
+`areaId` on the descriptor and render in a labelled multi-area section — each a self-contained component
+that fetches its OWN area's data via the existing per-systemId query factories (the Local Grid (NEM) card's
+proven cross-system pattern); v1 composes `tiles`, `chart`, `amber-timeline`, `generator-runs`
+(`lib/dashboard/multi-area.ts`; sankey/grid-signals/amber-now stay page-scoped). Area enumeration is
+`listReadableAreas` → `GET /api/areas/readable` (authed) / a server-resolved sidecar for the shared view.
+The **no-escalation authoring check** is enforced at save (`PUT /api/dashboard/[systemId]` rejects a card
+binding an Area the owner can't read); the runtime read scope was already the live union (2a), so a shared
+multi-area dashboard's per-area fetches are token-authorized with no payload change. The page's own cards
+still render via the existing template (off-area cards append below) — a full template→descriptor-iteration
+re-layout (arbitrary interleave) is deferred.
+
+### Phase 2b-2 — First-class multiple dashboards — ⬜
+
+Make dashboards first-class so a user can hold MORE THAN ONE. Add `alias`/`display_name` to `dashboards`
+(the `id` PK already exists); relax the `(clerk_user_id, system_id)` uniqueness; address dashboards by
+id/alias (new URL scheme + management UI to create/name/delete); the "exposes data from N areas" sharing
+surface; optional point-level narrowing. This is what finally makes `users.default_dashboard_id` (2a) and
+multi-area cards (2b-1) more than a single per-system dashboard. Depends on 2b-1.
 
 ### Phase 3 — Home Assistant export — ⬜
 

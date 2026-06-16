@@ -4,6 +4,7 @@ import DashboardClient from "@/components/DashboardClient";
 import { DashboardCustomizeProvider } from "@/contexts/DashboardCustomizeContext";
 import type { DashboardDescriptor } from "@/lib/dashboard/descriptor";
 import type { GridContext } from "@/lib/grid/types";
+import type { ReadableArea } from "@/lib/areas/list";
 
 /**
  * Read-only public view of a shared dashboard (P4). Reached via `/dashboard/...?access=<token>` — no
@@ -19,6 +20,7 @@ export default function SharedDashboardView({
   gridContext,
   hasGenerator,
   sharedDescriptor,
+  sharedAreas,
 }: {
   systemId: string;
   system: unknown;
@@ -26,6 +28,7 @@ export default function SharedDashboardView({
   gridContext: GridContext | null;
   hasGenerator: boolean;
   sharedDescriptor: DashboardDescriptor | null;
+  sharedAreas?: ReadableArea[];
 }) {
   const displayName =
     (system as { displayName?: string } | null)?.displayName ?? "Dashboard";
@@ -52,6 +55,7 @@ export default function SharedDashboardView({
           hasGenerator={hasGenerator}
           readOnly
           sharedDescriptor={sharedDescriptor}
+          sharedAreas={sharedAreas}
         />
       </div>
     </DashboardCustomizeProvider>
