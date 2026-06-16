@@ -6,6 +6,7 @@ import {
   deleteDescriptor,
 } from "@/lib/dashboard/store";
 import { getAreaForSystem } from "@/lib/areas/resolve";
+import { listReadableAreas } from "@/lib/areas/list";
 
 /**
  * Per-user dashboard descriptor (P2). A descriptor is the user's personal customization of a system
@@ -56,6 +57,29 @@ export async function PUT(
       { error: "A version-2 dashboard descriptor is required" },
       { status: 400 },
     );
+  }
+
+  // No-escalation authoring check (Phase 2b): every card that binds another Area (`areaId`) must
+  // reference an Area the caller can already read. Stops an owner composing a card from — and thus
+  // sharing read access to — an Area they don't have. Only runs when off-area cards are present.
+  const cardAreaIds = [
+    ...new Set(
+      (descriptor.cards as Array<{ areaId?: unknown }>)
+        .map((c) => c.areaId)
+        .filter((x): x is string => typeof x === "string"),
+    ),
+  ];
+  if (cardAreaIds.length > 0) {
+    const readable = new Set(
+      (await listReadableAreas(a.userId)).map((ar) => ar.id),
+    );
+    const forbidden = cardAreaIds.filter((id) => !readable.has(id));
+    if (forbidden.length > 0) {
+      return NextResponse.json(
+        { error: "A card references an area you cannot read" },
+        { status: 403 },
+      );
+    }
   }
 
   // Link the persisted dashboard to its Area (system's identity Area, or a composite Area).

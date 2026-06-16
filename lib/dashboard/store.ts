@@ -51,17 +51,17 @@ export async function saveDescriptor(
 }
 
 /** A dashboard row by its id (the target of a dashboard share token). */
-export async function getDashboardById(
-  id: number,
-): Promise<{
+export async function getDashboardById(id: number): Promise<{
   id: number;
   systemId: number;
+  areaId: string | null;
   descriptor: DashboardDescriptor;
 } | null> {
   const rows = await requirePlanetscaleDb()
     .select({
       id: dashboards.id,
       systemId: dashboards.systemId,
+      areaId: dashboards.areaId,
       descriptor: dashboards.descriptor,
     })
     .from(dashboards)
@@ -72,6 +72,7 @@ export async function getDashboardById(
     ? {
         id: r.id,
         systemId: r.systemId,
+        areaId: r.areaId,
         descriptor: r.descriptor as DashboardDescriptor,
       }
     : null;

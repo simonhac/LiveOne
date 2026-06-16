@@ -47,6 +47,15 @@ export interface ModuleCardInstance {
   tiles?: TilesConfig;
   /** Only meaningful for type === "chart". */
   chart?: ChartCardConfig;
+  /**
+   * The Area this card reads from (uuid). OPTIONAL and absent in practice today: a card with no
+   * `areaId` INHERITS the dashboard's default area (`dashboards.area_id`). This is the per-card
+   * junction for the multi-area future (see docs/architecture/areas-and-dashboards.md §3) — carried
+   * on the descriptor (no `dashboard_cards` table). Forward-only seam; every card is areaId-less
+   * today, so it's inert. Rides on the saved instance like `hidden`/`tiles` (it's customization, not
+   * structure).
+   */
+  areaId?: string;
 }
 
 /** A card's reconciliation/visibility identity: its explicit `id`, or its `type` for singletons. */
@@ -169,34 +178,18 @@ export function normalizeDescriptor(
   ) {
     return def;
   }
-  const savedCards = raw.cards;
-  const savedById = new Map(savedCards.map((c) => [cardIdentity(c), c]));
+  const savedCards = raw.cards as ModuleCardInstance[];
+  const savedPageById = new Map(
+    savedCards.filter((c) => !c.areaId).map((c) => [cardIdentity(c), c]),
+  );
   const defById = new Map(def.cards.map((c) => [cardIdentity(c), c]));
 
-  // Card order follows the SAVED order (so a Customize reorder sticks), keeping only identities that
-  // still exist in the default; any default cards introduced since the save are appended.
-  const orderedIds: string[] = [];
-  const seen = new Set<string>();
-  for (const c of savedCards) {
-    const id = cardIdentity(c);
-    if (defById.has(id) && !seen.has(id)) {
-      orderedIds.push(id);
-      seen.add(id);
-    }
-  }
-  for (const c of def.cards) {
-    const id = cardIdentity(c);
-    if (!seen.has(id)) {
-      orderedIds.push(id);
-      seen.add(id);
-    }
-  }
-
-  const cards: ModuleCardInstance[] = orderedIds.map((id) => {
+  // Reconcile a PAGE (areaId-less) card: structure (type/id/tiles/chart) from the canonical default;
+  // hidden + tile order from the save.
+  const reconcilePageCard = (id: string): ModuleCardInstance => {
     const defCard = defById.get(id)!;
-    const sc = savedById.get(id);
+    const sc = savedPageById.get(id);
     if (!sc) return defCard; // card introduced since the save → default (visible)
-    // Structure (type/id/tiles/chart) comes from the canonical default; hidden + tile order from the save.
     const card: ModuleCardInstance = {
       type: defCard.type,
       hidden: !!sc.hidden,
@@ -207,13 +200,56 @@ export function normalizeDescriptor(
     }
     if (defCard.chart) card.chart = defCard.chart;
     return card;
-  });
+  };
+
+  // An OFF-AREA composed card (Phase 2b: `areaId` set) is user-authored, not catalog — it has no
+  // default counterpart, so keep its structure verbatim. Without this it would be dropped (it isn't
+  // in `def`), and the multi-area cards would vanish on reload.
+  const keepOffAreaCard = (c: ModuleCardInstance): ModuleCardInstance => {
+    const card: ModuleCardInstance = {
+      type: c.type,
+      areaId: c.areaId,
+      hidden: !!c.hidden,
+    };
+    if (c.id !== undefined) card.id = c.id;
+    if (c.tiles) card.tiles = c.tiles;
+    if (c.chart) card.chart = c.chart;
+    return card;
+  };
+
+  // Walk the SAVED order (so a Customize reorder sticks): off-area cards kept in place; page cards
+  // reconciled against the default, dropping any that no longer exist. Then append default page
+  // cards introduced since the save.
+  const cards: ModuleCardInstance[] = [];
+  const seenPage = new Set<string>();
+  for (const c of savedCards) {
+    if (c.areaId) {
+      cards.push(keepOffAreaCard(c));
+      continue;
+    }
+    const id = cardIdentity(c);
+    if (defById.has(id) && !seenPage.has(id)) {
+      cards.push(reconcilePageCard(id));
+      seenPage.add(id);
+    }
+  }
+  for (const c of def.cards) {
+    const id = cardIdentity(c);
+    if (!seenPage.has(id)) {
+      cards.push(c);
+      seenPage.add(id);
+    }
+  }
   return { version: 2, layout: def.layout, cards };
 }
 
-/** The tiles module's config from a descriptor (or a default if absent). */
+/**
+ * The PAGE tiles module's config from a descriptor (or a default if absent). Targets the page's own
+ * tile grid — the `tiles` card with no `areaId`. A multi-area `tiles` card (areaId set) is a separate
+ * off-area block (rendered by MultiAreaCards), not part of the page tile grid, so it's skipped here.
+ */
 export function tilesConfigOf(descriptor: DashboardDescriptor): TilesConfig {
-  const card = descriptor.cards.find((c) => c.type === "tiles");
+  const card = descriptor.cards.find((c) => c.type === "tiles" && !c.areaId);
   return card?.tiles ?? defaultTilesConfig();
 }
 

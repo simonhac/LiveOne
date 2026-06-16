@@ -20,6 +20,7 @@ export {
   dashboardDescriptorQuery,
   type DashboardDescriptorResponse,
 } from "./dashboard";
+export { readableAreasQuery, type ReadableAreasResponse } from "./areas";
 
 /**
  * Invalidate every live/historical query for a system — the React Query replacement for

@@ -1,10 +1,16 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   users as pgUsers,
   systems as pgSystems,
   userSystems as pgUserSystems,
+  dashboards,
 } from "@/lib/db/planetscale/schema";
+import { SystemsManager } from "@/lib/systems-manager";
+import {
+  getDashboardById,
+  getOrCreateDefaultDashboardId,
+} from "@/lib/dashboard/store";
 
 /**
  * User preferences (users + user_systems config tables) — Postgres only.
@@ -13,6 +19,7 @@ import {
 export interface UserPreferences {
   clerkUserId: string;
   defaultSystemId: number | null;
+  defaultDashboardId: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -35,6 +42,7 @@ export async function getOrCreateUserPreferences(
     return {
       clerkUserId: existing[0].clerkUserId,
       defaultSystemId: existing[0].defaultSystemId,
+      defaultDashboardId: existing[0].defaultDashboardId,
       createdAt: existing[0].createdAt,
       updatedAt: existing[0].updatedAt,
     };
@@ -53,6 +61,7 @@ export async function getOrCreateUserPreferences(
   return {
     clerkUserId: newUser.clerkUserId,
     defaultSystemId: newUser.defaultSystemId,
+    defaultDashboardId: newUser.defaultDashboardId,
     createdAt: newUser.createdAt,
     updatedAt: newUser.updatedAt,
   };
@@ -127,16 +136,19 @@ async function isSystemValidForDefault(
 }
 
 /**
- * Set user's default system.
- * Validates user has access and system is active before setting.
+ * Set the user's default landing dashboard by SYSTEM id (single-area UX: one dashboard per system).
+ * Resolves/creates that system's dashboard via getOrCreateDefaultDashboardId, validating access +
+ * active status first, then writes BOTH default_dashboard_id (forward-correct) and default_system_id
+ * (legacy fallback, kept in sync). Pass null to clear both.
  */
-export async function setDefaultSystem(
+export async function setDefaultDashboard(
   clerkUserId: string,
   systemId: number | null,
 ): Promise<{ success: boolean; error?: string }> {
+  await getOrCreateUserPreferences(clerkUserId);
+
   if (systemId === null) {
-    await getOrCreateUserPreferences(clerkUserId);
-    await writeDefaultSystemId(clerkUserId, null);
+    await writeDefaults(clerkUserId, { dashboardId: null, systemId: null });
     return { success: true };
   }
 
@@ -145,57 +157,130 @@ export async function setDefaultSystem(
     return { success: false, error: validation.reason };
   }
 
-  await getOrCreateUserPreferences(clerkUserId);
-  await writeDefaultSystemId(clerkUserId, systemId);
+  // vendorType is required by getOrCreateDefaultDashboardId; SystemsManager resolves composites to
+  // their synthesized "composite" system.
+  const system = await SystemsManager.getInstance().getSystem(systemId);
+  if (!system) {
+    return { success: false, error: "System not found" };
+  }
 
+  const dashboardId = await getOrCreateDefaultDashboardId(
+    clerkUserId,
+    systemId,
+    system.vendorType,
+  );
+  await writeDefaults(clerkUserId, { dashboardId, systemId });
   return { success: true };
 }
 
 /**
- * Write the user's default_system_id (the shared body of setDefaultSystem and its clear path).
+ * Set both default columns in one UPDATE so default_dashboard_id (source of truth) and the legacy
+ * default_system_id fallback never drift. The shared body of the set + clear + lazy-migrate paths.
  */
-async function writeDefaultSystemId(
+async function writeDefaults(
   clerkUserId: string,
-  systemId: number | null,
+  {
+    dashboardId,
+    systemId,
+  }: { dashboardId: number | null; systemId: number | null },
 ): Promise<void> {
-  const now = new Date();
   await requirePlanetscaleDb()
     .update(pgUsers)
-    .set({ defaultSystemId: systemId, updatedAt: now })
+    .set({
+      defaultDashboardId: dashboardId,
+      defaultSystemId: systemId,
+      updatedAt: new Date(),
+    })
     .where(eq(pgUsers.clerkUserId, clerkUserId));
 }
 
 /**
- * Get user's valid default system ID.
- * Returns null if no default set, access revoked, or system is no longer active.
- * Will auto-clear invalid defaults.
+ * Resolve the user's valid default landing target as { dashboardId, systemId }, or null. Source of
+ * truth is default_dashboard_id; falls back to (and lazily migrates) the legacy default_system_id.
+ * Validates the resolved system is still active + accessible, auto-clearing an invalid default.
+ */
+export async function getValidDefaultDashboardId(
+  clerkUserId: string,
+): Promise<{ dashboardId: number; systemId: number } | null> {
+  const prefs = await getOrCreateUserPreferences(clerkUserId);
+
+  // Path A — forward-correct column is set.
+  if (prefs.defaultDashboardId != null) {
+    const dash = await getDashboardById(prefs.defaultDashboardId);
+    if (!dash) {
+      await writeDefaults(clerkUserId, { dashboardId: null, systemId: null });
+      return null;
+    }
+    const validation = await isSystemValidForDefault(
+      clerkUserId,
+      dash.systemId,
+    );
+    if (!validation.valid) {
+      await writeDefaults(clerkUserId, { dashboardId: null, systemId: null });
+      return null;
+    }
+    return { dashboardId: dash.id, systemId: dash.systemId };
+  }
+
+  // Path B — lazy migration from legacy default_system_id.
+  if (prefs.defaultSystemId != null) {
+    const systemId = prefs.defaultSystemId;
+    const validation = await isSystemValidForDefault(clerkUserId, systemId);
+    if (!validation.valid) {
+      await writeDefaults(clerkUserId, { dashboardId: null, systemId: null });
+      return null;
+    }
+    const system = await SystemsManager.getInstance().getSystem(systemId);
+    if (!system) {
+      await writeDefaults(clerkUserId, { dashboardId: null, systemId: null });
+      return null;
+    }
+    const dashboardId = await getOrCreateDefaultDashboardId(
+      clerkUserId,
+      systemId,
+      system.vendorType,
+    );
+    await writeDefaults(clerkUserId, { dashboardId, systemId });
+    return { dashboardId, systemId };
+  }
+
+  return null;
+}
+
+/**
+ * Set user's default system. Thin wrapper over setDefaultDashboard (single-area UX: a default system
+ * IS its dashboard today). Kept so existing callers (preferences API, settings dialog) are unchanged.
+ */
+export async function setDefaultSystem(
+  clerkUserId: string,
+  systemId: number | null,
+): Promise<{ success: boolean; error?: string }> {
+  return setDefaultDashboard(clerkUserId, systemId);
+}
+
+/**
+ * Get user's valid default system ID. Thin wrapper over getValidDefaultDashboardId (returns just the
+ * system id for the home-page redirect, which still routes to /dashboard/{systemId}).
  */
 export async function getValidDefaultSystemId(
   clerkUserId: string,
 ): Promise<number | null> {
-  const prefs = await getOrCreateUserPreferences(clerkUserId);
+  return (await getValidDefaultDashboardId(clerkUserId))?.systemId ?? null;
+}
 
-  if (!prefs.defaultSystemId) {
-    return null;
-  }
-
-  const defaultSystemId = prefs.defaultSystemId;
-
-  const validation = await isSystemValidForDefault(
-    clerkUserId,
-    defaultSystemId,
-  );
-  if (!validation.valid) {
-    // Access revoked or system inactive — clear the default.
-    await setDefaultSystem(clerkUserId, null);
-    return null;
-  }
-  return defaultSystemId;
+/** The dashboard ids belonging to a system — the rows a system-removal must clear a default off. */
+async function dashboardIdsForSystem(systemId: number): Promise<number[]> {
+  const rows = await requirePlanetscaleDb()
+    .select({ id: dashboards.id })
+    .from(dashboards)
+    .where(eq(dashboards.systemId, systemId));
+  return rows.map((r) => r.id);
 }
 
 /**
- * Clear default system if it matches the given systemId.
- * Call this when a system is marked as 'removed' or when access is revoked.
+ * Clear default system if it matches the given systemId, covering BOTH the legacy default_system_id
+ * and the forward default_dashboard_id (any of this system's dashboards). Call when a system is marked
+ * 'removed' or access is revoked.
  */
 export async function clearDefaultIfMatches(
   clerkUserId: string,
@@ -206,19 +291,35 @@ export async function clearDefaultIfMatches(
     .from(pgUsers)
     .where(eq(pgUsers.clerkUserId, clerkUserId))
     .limit(1);
+  if (!user) return;
 
-  if (user && user.defaultSystemId === systemId) {
-    await writeDefaultSystemId(clerkUserId, null);
+  const dashIds = await dashboardIdsForSystem(systemId);
+  const matchesDashboard =
+    user.defaultDashboardId != null &&
+    dashIds.includes(user.defaultDashboardId);
+  if (user.defaultSystemId === systemId || matchesDashboard) {
+    await writeDefaults(clerkUserId, { dashboardId: null, systemId: null });
   }
 }
 
 /**
- * Clear default system for all users who have a specific system as their default.
- * Call this when a system is deleted or marked as 'removed'.
+ * Clear default landing for all users defaulting to a specific system — both the legacy
+ * default_system_id and any default_dashboard_id pointing at one of this system's dashboards.
+ * Call when a system is deleted or marked 'removed'. (System removal does NOT delete dashboard rows,
+ * so the FK ON DELETE SET NULL does not fire — this explicit clear is the mechanism.)
  */
 export async function clearDefaultForAllUsers(systemId: number): Promise<void> {
   const now = new Date();
-  await requirePlanetscaleDb()
+  const db = requirePlanetscaleDb();
+
+  const dashIds = await dashboardIdsForSystem(systemId);
+  if (dashIds.length > 0) {
+    await db
+      .update(pgUsers)
+      .set({ defaultDashboardId: null, updatedAt: now })
+      .where(inArray(pgUsers.defaultDashboardId, dashIds));
+  }
+  await db
     .update(pgUsers)
     .set({ defaultSystemId: null, updatedAt: now })
     .where(eq(pgUsers.defaultSystemId, systemId));

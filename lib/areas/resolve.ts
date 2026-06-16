@@ -32,3 +32,21 @@ export async function getAreaForSystem(
   if (!row) return null;
   return { id: row.id, kind: row.kind as "identity" | "composite" };
 }
+
+/**
+ * The integer addressing handle (`legacy_system_id`) for an Area uuid — the inverse of
+ * `getAreaForSystem`. For an identity Area this is the physical `systems.id`; for a composite it is
+ * the areas-backed virtual-system handle that `getActivePointsForSystem` resolves to child points.
+ * Returns null when the uuid is unknown or the Area carries no handle. Used to map a dashboard's
+ * per-card Areas back to the systemIds its share scope authorizes.
+ */
+export async function getLegacySystemIdForArea(
+  areaId: string,
+): Promise<number | null> {
+  const [row] = await requirePlanetscaleDb()
+    .select({ legacySystemId: areas.legacySystemId })
+    .from(areas)
+    .where(eq(areas.id, areaId))
+    .limit(1);
+  return row?.legacySystemId ?? null;
+}
