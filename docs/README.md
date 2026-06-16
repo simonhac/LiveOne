@@ -25,6 +25,7 @@
 - [architecture/areas-and-dashboards.md](architecture/areas-and-dashboards.md) — **foundation live** + roadmap: splits physical/semantic/presentation into Systems → Areas → Dashboards (HA-aligned, Apple-Home UX); composites are now areas-backed virtual systems. Roadmap: sharing hardening (done), the first-class/multi-area dashboards keystone (per-card `area_id` + default-dashboard), HA export
 - [architecture/authentication.md](architecture/authentication.md) — Clerk, roles, API auth functions
 - [architecture/kv-store.md](architecture/kv-store.md) — KV cache keys, subscription registry
+- [sync-prod-to-dev.md](sync-prod-to-dev.md) — keeping `liveone-dev` fresh: the 2-hourly prod→dev DB top-up + KV rebuild-from-DB (`db:sync-dev-db` / `db:rebuild-dev-kv`)
 - [architecture/load-calcs.md](architecture/load-calcs.md) — "rest of house" load calculation
 - [architecture/energy-flow-matrix.md](architecture/energy-flow-matrix.md) — energy-flow (Sankey) matrix: logical systems, daily materialization, serving paths
 - [observations-qstash-payloads.md](observations-qstash-payloads.md) — queue message formats, receiver behaviour

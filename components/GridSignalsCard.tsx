@@ -233,11 +233,24 @@ export default function GridSignalsCard({
         <div className="grid grid-cols-1 gap-x-4 gap-y-1 @[180px]:grid-cols-2 @[300px]:grid-cols-3">
           <Stat
             value={priceText}
-            unit={price != null ? <Unit>¢/kWh</Unit> : undefined}
+            unit={
+              price != null ? (
+                <>
+                  <Unit>¢</Unit>
+                  <Unit muted>/kWh</Unit>
+                </>
+              ) : undefined
+            }
           />
           <Stat
             value={emissionsText}
-            unit={emissions != null ? <Unit gap>EI</Unit> : undefined}
+            unit={
+              emissions != null ? (
+                <Unit gap muted>
+                  EI
+                </Unit>
+              ) : undefined
+            }
           />
           <Stat
             value={renewablesText}

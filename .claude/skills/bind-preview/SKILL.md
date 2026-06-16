@@ -151,9 +151,10 @@ DST=$(grep '^PLANETSCALE_DATABASE_URL=' /tmp/preview.env | cut -d= -f2- | tr -d 
 # SEED_DAYS / SEED_DAYS_DAILY). Idempotent: re-runs refresh the slice, keep config + dashboards.
 SOURCE_DATABASE_URL="$SRC" TARGET_DATABASE_URL="$DST" npx tsx scripts/seed-preview-db.ts
 
-# Live-style power cards: snapshot prod KV latest values -> the dev: namespace the preview reads
-# (VERCEL_ENV=preview -> getEnvironment()="dev"). Static snapshot (won't update). ~10s.
-npx tsx scripts/seed-preview-kv.ts
+# Live-style power cards: rebuild the dev: KV namespace (which preview reads, since
+# VERCEL_ENV=preview -> getEnvironment()="dev") from the seeded branch DB. No prod KV creds. ~10s.
+# (Inline PLANETSCALE_DATABASE_URL=$DST overrides the .env.local value; KV creds come from .env.local.)
+PLANETSCALE_DATABASE_URL="$DST" npx tsx --env-file=.env.local scripts/utils/rebuild-dev-kv-from-db.ts
 
 rm -f /tmp/preview.env
 ```
