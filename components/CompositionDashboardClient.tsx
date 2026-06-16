@@ -179,6 +179,7 @@ function RenameDialog({
   const [name, setName] = useState(initialName);
   const [alias, setAlias] = useState(initialAlias);
   const [busy, setBusy] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!isOpen || typeof document === "undefined") return null;
@@ -209,7 +210,6 @@ function RenameDialog({
   };
 
   const remove = async () => {
-    if (!confirm("Delete this dashboard? This cannot be undone.")) return;
     setBusy(true);
     try {
       const res = await fetch(`/api/dashboards/${id}`, { method: "DELETE" });
@@ -266,14 +266,37 @@ function RenameDialog({
             {error && <p className="text-sm text-red-400">{error}</p>}
           </div>
           <div className="flex items-center justify-between gap-3 border-t border-gray-700 px-6 py-4">
-            <button
-              onClick={remove}
-              disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm text-red-400 transition-colors hover:bg-red-950/40 disabled:opacity-50"
-            >
-              <Trash2 className="h-4 w-4" />
-              Delete
-            </button>
+            {confirmingDelete ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-400">
+                  Delete permanently?
+                </span>
+                <button
+                  onClick={remove}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-2 text-sm text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {busy ? "Deleting…" : "Confirm"}
+                </button>
+                <button
+                  onClick={() => setConfirmingDelete(false)}
+                  disabled={busy}
+                  className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-white disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmingDelete(true)}
+                disabled={busy}
+                className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm text-red-400 transition-colors hover:bg-red-950/40 disabled:opacity-50"
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete
+              </button>
+            )}
             <div className="flex gap-3">
               <button
                 onClick={onClose}
