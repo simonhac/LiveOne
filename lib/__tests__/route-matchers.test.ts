@@ -1,12 +1,16 @@
 import { describe, it, expect } from "@jest/globals";
-import { isPublicRoute, hasAccessToken } from "../route-matchers";
+import {
+  isPublicRoute,
+  isShareableRoute,
+  hasAccessToken,
+} from "../route-matchers";
 
 // createRouteMatcher's predicate reads the request URL; provide both `url` (used
 // by hasAccessToken) and `nextUrl` (used by some Clerk versions) so the same fake
 // satisfies both without pulling in the Edge runtime.
-const req = (path: string) => {
+const req = (path: string, method = "GET") => {
   const url = `https://liveone.vercel.app${path}`;
-  return { url, nextUrl: new URL(url), method: "GET" } as any;
+  return { url, nextUrl: new URL(url), method } as any;
 };
 
 describe("isPublicRoute — middleware allow-list", () => {
@@ -64,5 +68,59 @@ describe("hasAccessToken — share-link bypass (presence-only)", () => {
   });
   it("is false for an unrelated query param", () => {
     expect(hasAccessToken(req("/labs/kinkora-hws?foo=bar"))).toBe(false);
+  });
+});
+
+describe("isShareableRoute — ?access= bypass allow-list", () => {
+  // The read-only shared dashboard page + the endpoints its cards fetch (lib/queries/*).
+  const shareable = [
+    "/dashboard",
+    "/dashboard/simon/home",
+    "/api/data",
+    "/api/history",
+    "/api/energy-flow-matrix",
+    "/api/dashboard/1",
+    "/api/dashboard-share/keen-fruity-tapir",
+    "/api/system/1/latest",
+    "/api/system/1/run-periods",
+  ];
+  it.each(shareable)("allows %s via a share token", (p) => {
+    expect(isShareableRoute(req(p))).toBe(true);
+  });
+
+  // A stray ?access= must NOT reach these — they stay Clerk-gated. Note the plural `/api/systems`
+  // (admin) must NOT be caught by the singular `/api/system/(.*)` rule.
+  const notShareable = [
+    "/api/test/cache",
+    "/api/admin/storage",
+    "/api/systems",
+    "/api/share-tokens",
+    "/api/user/preferences",
+  ];
+  it.each(notShareable)("does NOT make %s shareable", (p) => {
+    expect(isShareableRoute(req(p))).toBe(false);
+  });
+});
+
+// The exact predicate middleware.ts uses to decide whether to skip Clerk's auth.protect().
+const bypassesAuth = (request: any) =>
+  (request.method === "GET" || request.method === "HEAD") &&
+  isShareableRoute(request) &&
+  hasAccessToken(request);
+
+describe("share-link bypass decision (mirrors middleware.ts)", () => {
+  it("bypasses for a GET to a share-eligible route with ?access=", () => {
+    expect(bypassesAuth(req("/api/data?systemId=1&access=tok"))).toBe(true);
+  });
+  it("does NOT bypass a non-shareable route even with ?access= (the closed hole)", () => {
+    expect(bypassesAuth(req("/api/test/cache?access=tok"))).toBe(false);
+  });
+  it("does NOT bypass a write (POST) even on a share-eligible route", () => {
+    expect(bypassesAuth(req("/api/dashboard/1?access=tok", "POST"))).toBe(
+      false,
+    );
+  });
+  it("does NOT bypass a share-eligible route without a token", () => {
+    expect(bypassesAuth(req("/api/data?systemId=1"))).toBe(false);
   });
 });
