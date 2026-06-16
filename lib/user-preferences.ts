@@ -11,6 +11,7 @@ import {
   getDashboardById,
   getOrCreateDefaultDashboardId,
 } from "@/lib/dashboard/store";
+import { getDashboard } from "@/lib/dashboard/dashboards";
 
 /**
  * User preferences (users + user_systems config tables) — Postgres only.
@@ -174,6 +175,31 @@ export async function setDefaultDashboard(
 }
 
 /**
+ * Set the user's default landing dashboard to a COMPOSITION-first dashboard (Phase 2b-2) by its id.
+ * Owner-only. Writes default_dashboard_id with a null default_system_id (composition dashboards have
+ * no home system), so the landing redirects to `/dashboard/id/{id}` rather than a system.
+ */
+export async function setDefaultDashboardById(
+  clerkUserId: string,
+  dashboardId: number,
+): Promise<{ success: boolean; error?: string }> {
+  await getOrCreateUserPreferences(clerkUserId);
+  const dash = await getDashboard(dashboardId);
+  if (!dash) return { success: false, error: "not_found" };
+  if (dash.ownerClerkUserId !== clerkUserId) {
+    return { success: false, error: "Not your dashboard" };
+  }
+  // Must be a composition dashboard (which always has a display_name). Refuse a legacy per-system
+  // dashboard here — its default is set via setDefaultSystem so default_system_id stays in sync;
+  // writing default_system_id=null for it would drift the two columns.
+  if (dash.displayName == null) {
+    return { success: false, error: "Not a composition dashboard" };
+  }
+  await writeDefaults(clerkUserId, { dashboardId, systemId: null });
+  return { success: true };
+}
+
+/**
  * Set both default columns in one UPDATE so default_dashboard_id (source of truth) and the legacy
  * default_system_id fallback never drift. The shared body of the set + clear + lazy-migrate paths.
  */
@@ -211,6 +237,9 @@ export async function getValidDefaultDashboardId(
       await writeDefaults(clerkUserId, { dashboardId: null, systemId: null });
       return null;
     }
+    // A composition-first default (Phase 2b-2, null system_id) has no legacy systemId to redirect to;
+    // the new id/alias landing resolves it directly. This legacy resolver yields null for it.
+    if (dash.systemId == null) return null;
     const validation = await isSystemValidForDefault(
       clerkUserId,
       dash.systemId,
@@ -245,6 +274,24 @@ export async function getValidDefaultDashboardId(
   }
 
   return null;
+}
+
+/**
+ * The path the `/dashboard` landing should redirect to for this user's default, or null when there's
+ * no valid default. A composition-first default (Phase 2b-2, null system_id) → `/dashboard/id/{id}`;
+ * otherwise the legacy per-system default → `/dashboard/{systemId}` (validated + lazily migrated +
+ * auto-cleared by getValidDefaultDashboardId).
+ */
+export async function resolveDefaultDashboardRoute(
+  clerkUserId: string,
+): Promise<string | null> {
+  const prefs = await getOrCreateUserPreferences(clerkUserId);
+  if (prefs.defaultDashboardId != null) {
+    const dash = await getDashboardById(prefs.defaultDashboardId);
+    if (dash && dash.systemId == null) return `/dashboard/id/${dash.id}`;
+  }
+  const sys = await getValidDefaultDashboardId(clerkUserId);
+  return sys ? `/dashboard/${sys.systemId}` : null;
 }
 
 /**

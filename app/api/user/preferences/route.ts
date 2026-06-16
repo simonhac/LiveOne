@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/api-auth";
 import {
   getOrCreateUserPreferences,
   setDefaultSystem,
+  setDefaultDashboardById,
 } from "@/lib/user-preferences";
 
 // GET /api/user/preferences - Get current user preferences
@@ -35,7 +36,28 @@ export async function PATCH(request: NextRequest) {
     const { userId } = authResult;
 
     const body = await request.json();
-    const { defaultSystemId } = body;
+    const { defaultSystemId, defaultDashboardId } = body;
+
+    // Composition-first default (Phase 2b-2): set the default to a named dashboard by its id.
+    if (defaultDashboardId !== undefined) {
+      if (typeof defaultDashboardId !== "number") {
+        return NextResponse.json(
+          { error: "defaultDashboardId must be a number" },
+          { status: 400 },
+        );
+      }
+      const result = await setDefaultDashboardById(userId, defaultDashboardId);
+      if (!result.success) {
+        const status = result.error === "not_found" ? 404 : 403;
+        const error =
+          result.error === "not_found" ? "Dashboard not found" : result.error;
+        return NextResponse.json({ error }, { status });
+      }
+      return NextResponse.json({
+        success: true,
+        message: "Default dashboard updated",
+      });
+    }
 
     // Validate defaultSystemId is provided (can be null to clear)
     if (defaultSystemId === undefined) {

@@ -15,7 +15,14 @@ import { resolveGridContextForSystem } from "@/lib/grid/context";
 import { hasEnabledTracker } from "@/lib/run-tracking/resolve";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboardById } from "@/lib/dashboard/store";
+import {
+  getDashboard,
+  getDashboardByOwnerAlias,
+  type CompositionDashboard,
+} from "@/lib/dashboard/dashboards";
+import CompositionDashboardClient from "@/components/CompositionDashboardClient";
 import { resolveAreasByIds } from "@/lib/areas/list";
+import type { GridContext } from "@/lib/grid/types";
 import type { DashboardDescriptor } from "@/lib/dashboard/descriptor";
 
 interface PageProps {
@@ -23,6 +30,64 @@ interface PageProps {
     slug: string[];
   }>;
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}
+
+/** Resolve a Clerk username → its user id (for `/dashboard/{user}/{shortname}`). Null if none. */
+async function resolveClerkUserIdByUsername(
+  username: string,
+): Promise<string | null> {
+  try {
+    const clerk = await clerkClient();
+    const res = await clerk.users.getUserList({
+      username: [username],
+      limit: 1,
+    });
+    return res.data[0]?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Render a composition-first dashboard (Phase 2b-2). Resolves the NEM region server-side for each
+ * Area that has a grid-signals card (region derives from the Area's location); other card types
+ * self-resolve client-side.
+ */
+async function renderCompositionDashboard(
+  dashboard: CompositionDashboard,
+  canEdit: boolean,
+) {
+  const gridAreaIds = [
+    ...new Set(
+      dashboard.descriptor.cards
+        .filter((c) => c.type === "grid-signals" && c.areaId)
+        .map((c) => c.areaId as string),
+    ),
+  ];
+  const gridContextByArea: Record<string, GridContext | null> = {};
+  if (gridAreaIds.length > 0) {
+    const areas = await resolveAreasByIds(gridAreaIds);
+    await Promise.all(
+      areas.map(async (a) => {
+        gridContextByArea[a.id] = await resolveGridContextForSystem(
+          a.legacySystemId,
+        );
+      }),
+    );
+  }
+  return (
+    <CompositionDashboardClient
+      dashboard={{
+        id: dashboard.id,
+        displayName: dashboard.displayName,
+        alias: dashboard.alias,
+        descriptor: dashboard.descriptor,
+      }}
+      canEdit={canEdit}
+      gridContextByArea={gridContextByArea}
+      serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
+    />
+  );
 }
 
 export default async function DashboardPage({
@@ -41,10 +106,18 @@ export default async function DashboardPage({
     const valid = await validateDashboardShareToken(accessToken);
     if (valid) {
       const dash = await getDashboardById(valid.dashboardId);
-      const sharedSystem = dash
-        ? await SystemsManager.getInstance().getSystem(dash.systemId)
-        : null;
-      if (dash && sharedSystem && sharedSystem.status !== "removed") {
+      // This legacy per-system shared view only renders home-system dashboards; a composition-first
+      // dashboard (null system_id) flows through the new shared path instead.
+      const sharedSystem =
+        dash && dash.systemId != null
+          ? await SystemsManager.getInstance().getSystem(dash.systemId)
+          : null;
+      if (
+        dash &&
+        dash.systemId != null &&
+        sharedSystem &&
+        sharedSystem.status !== "removed"
+      ) {
         const descriptor = (dash.descriptor as DashboardDescriptor) ?? null;
         // Resolve the Areas this shared descriptor's cards reference (areaId→systemId+label) so the
         // read-only view can render + label multi-area cards without an authed /api/areas/readable
@@ -84,9 +157,45 @@ export default async function DashboardPage({
   const isAdmin = await isUserAdmin();
   const systemsManager = SystemsManager.getInstance();
 
+  const validSubPages = ["heatmap", "generator", "amber", "latest"] as const;
+
+  // Composition-first dashboards (Phase 2b-2), addressed by id: `/dashboard/id/{id}` or
+  // `/dashboard/{user}/id/{id}` (the {user} segment is cosmetic; access is by ownership/admin).
+  const compositionId =
+    slug.length === 2 && slug[0] === "id"
+      ? slug[1]
+      : slug.length === 3 && slug[1] === "id"
+        ? slug[2]
+        : null;
+  if (compositionId && /^\d+$/.test(compositionId)) {
+    const dashboard = await getDashboard(parseInt(compositionId, 10));
+    if (!dashboard) redirect("/dashboard");
+    const canEdit = dashboard.ownerClerkUserId === userId || isAdmin;
+    if (!canEdit) redirect("/dashboard"); // sharing a composition dashboard arrives via ?access=
+    return await renderCompositionDashboard(dashboard, canEdit);
+  }
+
+  // Pretty owner-scoped alias: `/dashboard/{user}/{shortname}`. Tried BEFORE the legacy system
+  // username/alias route; a composition dashboard the caller can edit wins, otherwise fall through.
+  if (
+    slug.length === 2 &&
+    !/^\d+$/.test(slug[0]) &&
+    slug[0] !== "id" &&
+    slug[1] !== "id" &&
+    !validSubPages.includes(slug[1] as (typeof validSubPages)[number])
+  ) {
+    const ownerId = await resolveClerkUserIdByUsername(slug[0]);
+    if (ownerId) {
+      const dash = await getDashboardByOwnerAlias(ownerId, slug[1]);
+      if (dash && (dash.ownerClerkUserId === userId || isAdmin)) {
+        return await renderCompositionDashboard(dash, true);
+      }
+    }
+    // No matching composition dashboard → fall through to legacy system username/alias resolution.
+  }
+
   // Check route type based on last segment
   const lastSegment = slug[slug.length - 1];
-  const validSubPages = ["heatmap", "generator", "amber", "latest"] as const;
   const subPageRoute = validSubPages.includes(lastSegment as any)
     ? (lastSegment as (typeof validSubPages)[number])
     : null;

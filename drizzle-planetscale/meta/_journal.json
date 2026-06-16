@@ -120,6 +120,13 @@
       "when": 1781583021032,
       "tag": "0016_bizarre_blacklash",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1781591352126,
+      "tag": "0017_known_patriot",
+      "breakpoints": true
     }
   ]
 }

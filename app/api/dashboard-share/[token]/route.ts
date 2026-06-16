@@ -29,6 +29,14 @@ export async function GET(
   if (!dashboard) {
     return NextResponse.json({ error: "Dashboard not found" }, { status: 404 });
   }
+  // This legacy single-system payload only serves home-system dashboards. A composition-first
+  // dashboard (Phase 2b-2, null system_id) is rendered by the new shared path instead.
+  if (dashboard.systemId == null) {
+    return NextResponse.json(
+      { error: "Unsupported dashboard type for this endpoint" },
+      { status: 404 },
+    );
+  }
 
   const system = await SystemsManager.getInstance().getSystem(
     dashboard.systemId,

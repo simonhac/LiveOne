@@ -525,32 +525,31 @@ export const observationsOutbox = pgTable(
 );
 
 // ============================================================================
-// Dashboards - per-user, per-system presentation layer (P2).
+// Dashboards - moving from per-(user,system) to first-class COMPOSITION-FIRST (Phase 2b-2).
 //
-// One row per (user, system): the user's forked/customized DashboardDescriptor
-// (card order + hidden flags), stored as JSONB. Absent row → the dashboard is
-// auto-generated from buildDefaultDescriptor (lib/dashboard). The descriptor's
-// internal shape is owned by lib/dashboard and intentionally opaque to the DB.
-// See docs/architecture/areas-and-dashboards.md. Normalising into a separate
-// `dashboard_cards` table is deferred to P3.
+// TARGET model: a dashboard is a NAMED, owner-scoped composition — `descriptor` is an ordered list of
+// cards, each bound to its OWN Area (`areaId`), with no home system/area. Addressed by id
+// (`/dashboard/{user}/id/{id}`) or `alias` (`/dashboard/{user}/{alias}`, an owner-unique shortname).
 //
-// `area_id` (P3, additive/forward-only) links the dashboard to the Area that is its
-// data context — the system's identity Area, or a composite Area. Resolved server-side
-// from `system_id` on save (1:1 today, so it changes no behaviour); NULL when no Area has
-// been backfilled for the system yet. `(clerk_user_id, system_id)` stays the authoritative access
-// key through the soak; this column is the seam P4 (multiple named dashboards per Area +
-// per-dashboard sharing) rotates on. ON DELETE SET NULL so dropping an Area never deletes a
-// user's customization.
+// TRANSITION (additive, migration 0017): `display_name` + `alias` are added and `system_id` is made
+// NULLABLE so new composition dashboards (null system_id) coexist with the legacy per-system rows
+// while the old path is still live. `area_id` + the `(user, system_id)` unique index are retained
+// (NULLs are distinct, so many composition dashboards are allowed). Phase 2b-2's final step retires
+// the legacy path and drops `system_id`/`area_id` + the old unique (migration 0018). `display_name`
+// is nullable until then (legacy rows have none). See docs/architecture/areas-and-dashboards.md.
 // ============================================================================
 export const dashboards = pgTable(
   "dashboards",
   {
     id: serial("id").primaryKey(),
-    clerkUserId: text("clerk_user_id").notNull(),
-    // Plain integer view handle (no FK to systems): a composite dashboard's system_id is its
-    // areas-backed virtual-system id, which has no `systems` row after migration 0014. `area_id` is
-    // the forward seam; `(clerk_user_id, system_id)` stays the access/uniqueness key.
-    systemId: integer("system_id").notNull(),
+    clerkUserId: text("clerk_user_id").notNull(), // the owner
+    // Composition dashboards (Phase 2b-2): name + owner-unique shortname. Nullable through the
+    // transition (legacy per-system rows have neither). Become the identity once the old path retires.
+    displayName: text("display_name"),
+    alias: text("alias"), // owner-unique shortname for /dashboard/{user}/{alias}; null = unnamed
+    // LEGACY home handles — nullable now; a composition dashboard sets neither (its cards each carry
+    // their own areaId). Dropped in 0018 when the old per-system path retires.
+    systemId: integer("system_id"),
     areaId: uuid("area_id").references(() => areas.id, {
       onDelete: "set null",
     }),
@@ -559,9 +558,16 @@ export const dashboards = pgTable(
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => ({
+    // Legacy per-(user,system) uniqueness — retained through the transition. A composition dashboard
+    // has null system_id, and NULLs are distinct in Postgres, so any number of them coexist.
     userSystemUnique: uniqueIndex("dashboards_user_system_unique").on(
       table.clerkUserId,
       table.systemId,
+    ),
+    // (clerk_user_id, alias) unique — owner-scoped shortname (NULL aliases distinct).
+    ownerAliasUnique: uniqueIndex("dashboards_owner_alias_unique").on(
+      table.clerkUserId,
+      table.alias,
     ),
     userIdx: index("dashboards_user_idx").on(table.clerkUserId),
     areaIdx: index("dashboards_area_idx").on(table.areaId),

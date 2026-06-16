@@ -23,7 +23,9 @@ export interface AdminDashboardRow {
     email: string | null;
     userName: string | null;
   };
-  systemId: number;
+  displayName: string | null;
+  alias: string | null;
+  systemId: number | null;
   systemName: string | null;
   areaId: string | null;
   cardCount: number;
@@ -96,8 +98,15 @@ export async function getAdminDashboardsData(): Promise<AdminDashboardsResult> {
     );
   }
 
-  // Resolve system display names (works for real + composite handles).
-  const systemIds = [...new Set(allDashboards.map((d) => d.systemId))];
+  // Resolve system display names (works for real + composite handles). Composition dashboards
+  // (Phase 2b-2) have a null system_id — skip them here.
+  const systemIds = [
+    ...new Set(
+      allDashboards
+        .map((d) => d.systemId)
+        .filter((x): x is number => x != null),
+    ),
+  ];
   const systemNames = new Map<number, string>();
   await Promise.all(
     systemIds.map(async (id) => {
@@ -116,8 +125,11 @@ export async function getAdminDashboardsData(): Promise<AdminDashboardsResult> {
         email: userInfo?.email || null,
         userName: userInfo?.userName || null,
       },
+      displayName: d.displayName,
+      alias: d.alias,
       systemId: d.systemId,
-      systemName: systemNames.get(d.systemId) ?? null,
+      systemName:
+        d.systemId != null ? (systemNames.get(d.systemId) ?? null) : null,
       areaId: d.areaId,
       cardCount: descriptor?.cards?.length ?? 0,
       shareTokenCount: shareCounts.get(d.id) ?? 0,

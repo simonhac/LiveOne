@@ -29,8 +29,11 @@ export interface DashboardReadAccess {
 export interface DashboardScopeInput {
   /** The dashboard's default Area (`dashboards.area_id`), or null when unset (back-compat). */
   defaultAreaId: string | null;
-  /** The dashboard's integer system handle — the addressable system when `defaultAreaId` is null. */
-  systemId: number;
+  /**
+   * The dashboard's legacy integer system handle, or null for a composition-first dashboard (Phase
+   * 2b-2) which has no home system — its scope is purely the union of its cards' Areas.
+   */
+  systemId: number | null;
   descriptor: DashboardDescriptor;
 }
 
@@ -61,10 +64,13 @@ export async function allowedSystemIds(
     if (c.areaId) areaIds.add(c.areaId);
   }
 
-  // No resolvable Areas → exactly today's single-system dashboard; address it by its systemId.
-  if (areaIds.size === 0) return [input.systemId];
+  // No resolvable Areas → a legacy single-system dashboard (address by its systemId), or an empty
+  // composition dashboard (no systemId, no cards) → empty scope.
+  if (areaIds.size === 0) return input.systemId != null ? [input.systemId] : [];
 
-  const out = new Set<number>([input.systemId]);
+  // Seed with the legacy home systemId when present (composition dashboards have none).
+  const out = new Set<number>();
+  if (input.systemId != null) out.add(input.systemId);
   for (const areaId of areaIds) {
     const sid = await getLegacySystemIdForArea(areaId);
     if (sid != null) out.add(sid); // sid == null → dangling/deleted Area uuid → dropped.

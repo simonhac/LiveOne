@@ -457,8 +457,9 @@ export default function DashboardCustomizeDialog({
               </div>
             )}
 
-            {/* Add-Card gallery: tiles this system can't populate (no data, not addable). */}
-            {unavailableIds.length > 0 && (
+            {/* Add-Card gallery: tiles this system can't populate (no data, not addable). Only for a
+                page (home-system) dashboard — a composition dashboard has no page tile grid. */}
+            {pageSystemId != null && unavailableIds.length > 0 && (
               <div className="mt-4">
                 <div className="text-xs uppercase tracking-wide text-gray-600 mb-2">
                   Unavailable (no data)
@@ -485,13 +486,19 @@ export default function DashboardCustomizeDialog({
 
           {/* Footer */}
           <div className="px-6 py-4 border-t border-gray-700 flex justify-between items-center gap-3">
-            <button
-              onClick={handleReset}
-              disabled={isSaving}
-              className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors disabled:opacity-50"
-            >
-              Reset to default
-            </button>
+            {/* "Reset to default" only applies to a home-system dashboard; a composition dashboard
+                has no vendor default to reset to. */}
+            {pageSystemId != null ? (
+              <button
+                onClick={handleReset}
+                disabled={isSaving}
+                className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+              >
+                Reset to default
+              </button>
+            ) : (
+              <span />
+            )}
             <div className="flex gap-3">
               <button
                 onClick={onClose}
