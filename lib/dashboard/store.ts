@@ -53,7 +53,7 @@ export async function saveDescriptor(
 /** A dashboard row by its id (the target of a dashboard share token). */
 export async function getDashboardById(id: number): Promise<{
   id: number;
-  systemId: number;
+  systemId: number | null;
   areaId: string | null;
   descriptor: DashboardDescriptor;
 } | null> {

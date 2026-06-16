@@ -156,13 +156,30 @@ multi-area dashboard's per-area fetches are token-authorized with no payload cha
 still render via the existing template (off-area cards append below) — a full template→descriptor-iteration
 re-layout (arbitrary interleave) is deferred.
 
-### Phase 2b-2 — First-class multiple dashboards — ⬜
+### Phase 2b-2 — First-class, composition-first dashboards — ◑ in progress
 
-Make dashboards first-class so a user can hold MORE THAN ONE. Add `alias`/`display_name` to `dashboards`
-(the `id` PK already exists); relax the `(clerk_user_id, system_id)` uniqueness; address dashboards by
-id/alias (new URL scheme + management UI to create/name/delete); the "exposes data from N areas" sharing
-surface; optional point-level narrowing. This is what finally makes `users.default_dashboard_id` (2a) and
-multi-area cards (2b-1) more than a single per-system dashboard. Depends on 2b-1.
+The full §3 model: a dashboard is a **named, owner-scoped composition** — `descriptor` is an ordered list
+of cards, each bound to its OWN Area, with **no home system/area** (the renderer iterates cards and each
+self-fetches; the 2b-1 `MultiAreaCards` mechanism generalized to be _the_ renderer). Addressed by id
+(`/dashboard/{user}/id/{id}`) or `alias` (`/dashboard/{user}/{shortname}`); the old `/dashboard/{systemId}`
+path retires. Create = "New dashboard" in the header menu (seed from an Area's default cards _or_ start
+empty); configure = add cards (any type, any readable Area) / reorder / rename / delete / set-default.
+`users.default_dashboard_id` (2a) drives the landing redirect.
+
+**Staged additively** so the app stays green at every step (the old per-system path keeps working until
+cutover):
+
+- **Foundation — ✅ done.** Migration `0017` (additive): `dashboards` gains `display_name` + `alias`
+  (owner-unique), `system_id` made NULLABLE so composition rows (null `system_id`) coexist with legacy
+  rows. Composition descriptor helpers (`lib/dashboard/composition.ts`: `buildSeedDescriptor` /
+  `emptyCompositionDescriptor` / `descriptorAreaIds`); CRUD store (`lib/dashboard/dashboards.ts`) + API
+  (`/api/dashboards`, `/api/dashboards/[id]`) with the no-escalation authoring check; scope/auth
+  (`allowedSystemIds`) generalized to a null home systemId.
+- **Renderer + routing + create/manage UI — ⬜ next.** Generalize `MultiAreaCards` to render the whole
+  ordered descriptor for ALL card types (incl. sankey/site, amber-now, grid-signals as area-bound); the
+  `/dashboard/{user}/...` routes + landing redirect; the header "New dashboard"/manage UI.
+- **Retire the legacy path — ⬜.** Delete `/dashboard/{systemId}` + the system-keyed store/API; migration
+  `0018` drops `system_id`/`area_id` + the old unique index and makes `display_name` NOT NULL.
 
 ### Phase 3 — Home Assistant export — ⬜
 

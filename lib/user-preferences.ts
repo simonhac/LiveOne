@@ -211,6 +211,9 @@ export async function getValidDefaultDashboardId(
       await writeDefaults(clerkUserId, { dashboardId: null, systemId: null });
       return null;
     }
+    // A composition-first default (Phase 2b-2, null system_id) has no legacy systemId to redirect to;
+    // the new id/alias landing resolves it directly. This legacy resolver yields null for it.
+    if (dash.systemId == null) return null;
     const validation = await isSystemValidForDefault(
       clerkUserId,
       dash.systemId,

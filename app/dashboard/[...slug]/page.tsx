@@ -41,10 +41,18 @@ export default async function DashboardPage({
     const valid = await validateDashboardShareToken(accessToken);
     if (valid) {
       const dash = await getDashboardById(valid.dashboardId);
-      const sharedSystem = dash
-        ? await SystemsManager.getInstance().getSystem(dash.systemId)
-        : null;
-      if (dash && sharedSystem && sharedSystem.status !== "removed") {
+      // This legacy per-system shared view only renders home-system dashboards; a composition-first
+      // dashboard (null system_id) flows through the new shared path instead.
+      const sharedSystem =
+        dash && dash.systemId != null
+          ? await SystemsManager.getInstance().getSystem(dash.systemId)
+          : null;
+      if (
+        dash &&
+        dash.systemId != null &&
+        sharedSystem &&
+        sharedSystem.status !== "removed"
+      ) {
         const descriptor = (dash.descriptor as DashboardDescriptor) ?? null;
         // Resolve the Areas this shared descriptor's cards reference (areaId→systemId+label) so the
         // read-only view can render + label multi-area cards without an authed /api/areas/readable
