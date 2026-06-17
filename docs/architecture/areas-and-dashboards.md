@@ -378,3 +378,35 @@ What's missing is only the **API route, the UI, and the composition shared-view 
 (invite a specific person, vs. a public read-only link) are deferred follow-ups. This finishes the §2
 "the dashboard is the unit of sharing" story for composition dashboards (it was previously only wired for
 legacy per-system dashboards).
+
+## 8. The sankey — generalized to any area with loads + sources
+
+**Context.** The energy-flow **sankey** used to be a mondo/composite "site" exclusive, gated everywhere
+on `isSiteVendor (vt === 'mondo' || 'composite')`. But the whole pipeline — `/api/history` →
+`site-data-processor` → `calculateEnergyFlowMatrix` → `EnergyFlowSankey` — is keyed on **logical paths**
+(`source.solar*`, `load`, `bidi.battery`, `bidi.grid`), not on vendor type. A single **selectronic**
+inverter (Daylesford) carries those exact stems, and `/api/history` already aggregates an area across its
+member devices, so the sankey works for **any area with loads + sources** — single-device or multi-device.
+
+**Design.** The sankey is **one of `SiteChartsCard`'s `cardVisible` views** (alongside `chart:load` /
+`chart:generation`), not a separate component — so generalizing means lifting the gate on the _existing_
+card, not forking it:
+
+- **Data-driven gate, not vendor.** `AreaSiteCharts` computes `siteCapable = getLayout(vendorType) ===
+'site' || chartHasData(latest)` and passes it to `SiteChartsCard`, whose history query now enables on
+  `siteCapable ?? isSiteVendor` (the `?? isSiteVendor` keeps the legacy per-system `DashboardClient` page
+  unchanged). A composite stays `site` (renders before `latest` loads, no flash); a selectronic area
+  qualifies via its `latest` carrying solar + load. The true "is there a flow" check is the renderer:
+  `selectFlowMatrix` (shared by every sankey site) returns `null` when generation or load is missing, and
+  the card renders nothing.
+- **Opt-in card, never auto-given.** `buildDefaultDashboardV3` emits **no** sankey in any layout — it's a
+  card you add. `CARD_REGISTRY.sankey.canRender` is now `chartHasData(latest)` (same bar as `chart`), and
+  `isCardTypeVendorCompatible` folds `sankey` into the not-`amber` arm (the v3 PATCH doesn't drop cards
+  anyway; the renderer is the authority).
+- **Period caption.** The sankey shows the window it integrates over underneath the diagram — a time range
+  for 1D/7D, a date range for 30D.
+
+A bare `{ type: "sankey" }` card was added to **Daylesford**'s section. **Deferred:** a _binding-less_
+multi-device area (the union-default resolver) would need per-logical-stem summing in `buildFlowSeries`
+before the matrix; multi-device areas built via the composite editor (typed `area_bindings`, like Kinkora)
+already aggregate correctly.

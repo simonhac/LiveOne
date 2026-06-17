@@ -16,6 +16,7 @@ import GridSignalsCard from "@/components/GridSignalsCard";
 import { gridLatestFromData } from "@/lib/grid/latest";
 import { nemRegionShortLabel } from "@/lib/vendors/openelectricity/region";
 import { isNemRegion } from "@/lib/vendors/openelectricity/types";
+import { getLayout, chartHasData } from "@/lib/dashboard/cards";
 import type { TileId } from "@/lib/dashboard/cards";
 import type {
   AreaSectionV3,
@@ -124,8 +125,10 @@ function AreaSectionView({
   const handle = area?.legacySystemId;
   const visible = section.cards.filter((c) => !c.hidden);
 
-  // Collapse all stacked-areas charts + sankey of this section into ONE SiteChartsCard (shared period
-  // + hover), exactly like the legacy unified view; `lines` charts stay standalone.
+  // Collapse this section's stacked-areas charts + sankey into ONE SiteChartsCard (shared period +
+  // hover), exactly like the legacy unified view; `lines` charts stay standalone. SiteChartsCard works
+  // for ANY area with loads + sources (not just mondo/composite) — a sidebar area with just a sankey
+  // card renders that sankey alone in the same container.
   const chartKeys = new Set<string>();
   for (const c of visible) {
     if (c.type === "sankey") chartKeys.add("sankey");
@@ -320,8 +323,11 @@ function TileCell({
 
 /**
  * The collapsed site charts (+ sankey) for a section. Self-fetches the handle's `system` (vendorType +
- * timezone) and passes it to SiteChartsCard, which gates its site-history query on the site vendor;
- * `keys` selects which sub-charts show (chart:load / chart:generation / sankey).
+ * timezone) and `latest`, and renders SiteChartsCard for ANY area that has loads + sources — not just
+ * mondo/composite "site" vendors. `keys` selects which sub-charts show (chart:load / chart:generation /
+ * sankey). The "has loads + sources" decision is data-driven (`chartHasData`), so a selectronic area
+ * with a sankey card renders the sankey here just like a composite would; site vendors keep rendering
+ * via their layout even before `latest` resolves.
  */
 function AreaSiteCharts({
   systemId,
@@ -336,19 +342,27 @@ function AreaSiteCharts({
   const { data } = useQuery(
     dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
   );
-  const system = ((data ?? null) as AreaDatum | null)?.system;
+  const datum = (data ?? null) as AreaDatum | null;
+  const system = datum?.system;
+  const latest = datum?.latest ?? {};
   // Hold the layout until `system` (vendorType) is known. Mounting SiteChartsCard with
-  // system=undefined disables its history query (isSiteVendor=false), which renders "No data
-  // available" before any real loading state. An empty min-height container avoids that flash;
-  // SiteChartsCard's own (delayed) spinner takes over once the system loads.
+  // system=undefined disables its history query, which renders "No data available" before any real
+  // loading state. An empty min-height container avoids that flash; SiteChartsCard's own (delayed)
+  // spinner takes over once the system loads.
   if (!system) {
     return <div className="min-h-[360px]" />;
   }
+  // Render the charts/sankey for site vendors (by layout, even before `latest` lands — preserves the
+  // existing composite loading UX) OR any area whose data actually carries sources + loads.
+  const siteCapable =
+    getLayout(system.vendorType) === "site" || chartHasData(latest);
+  if (!siteCapable) return null;
   return (
     <SiteChartsCard
       systemId={String(systemId)}
       system={system}
       serveFlowFromPg={serveFlowFromPg}
+      siteCapable={siteCapable}
       cardVisible={(k) => keys.has(k)}
     />
   );

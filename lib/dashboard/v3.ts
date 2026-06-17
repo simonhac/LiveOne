@@ -137,7 +137,8 @@ export function buildDefaultDashboardV3(opts: BuildDefaultV3Opts): DashboardV3 {
   const cards: CardV3[] = [{ type: "tiles", tiles }];
 
   if (layout === "site") {
-    // Site (mondo/composite): the two stacked-area charts + sankey.
+    // Site (mondo/composite): the two stacked-area charts. The sankey is NOT a default — it's an opt-in
+    // card you add (it works for any area with loads + sources), so it's never auto-given here.
     cards.push(
       {
         type: "chart",
@@ -149,7 +150,6 @@ export function buildDefaultDashboardV3(opts: BuildDefaultV3Opts): DashboardV3 {
         id: "chart:generation",
         chart: { variant: "stacked-areas", split: "generation" },
       },
-      { type: "sankey" },
     );
   } else {
     // Sidebar (selectronic/enphase/...): a single lines chart.

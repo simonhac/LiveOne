@@ -10,7 +10,7 @@ import DashboardChart from "@/components/DashboardChart";
 import EnergyTable from "@/components/EnergyTable";
 import type { ProcessedSiteData } from "@/lib/site-data-processor";
 import EnergyFlowSankey from "@/components/EnergyFlowSankey";
-import { calculateEnergyFlowMatrix } from "@/lib/energy-flow-matrix";
+import { selectFlowMatrix } from "@/lib/energy-flow-matrix";
 import PeriodSwitcher from "@/components/PeriodSwitcher";
 import { formatDateTimeRange } from "@/lib/fe-date-format";
 import { fromUnixTimestamp } from "@/lib/date-utils";
@@ -28,6 +28,13 @@ interface SiteChartsCardProps {
   system?: any; // System object from database
   /** When true, the long-range (30D) Sankey is served from PG (FLOW_MATRIX_SERVE_FROM_PG). */
   serveFlowFromPg: boolean;
+  /**
+   * Whether to run the site-history query (the data behind the charts + sankey). Lets the caller drive
+   * it from a DATA signal ("this area has loads + sources") rather than the vendor type, so the sankey
+   * works for any such area. Omitted ⇒ falls back to the vendor check (mondo/composite), preserving the
+   * legacy per-system page.
+   */
+  siteCapable?: boolean;
   cardVisible: (idOrType: string) => boolean;
   /**
    * Reports the site-history fetch state back to the parent so it can render the
@@ -272,6 +279,7 @@ export default function SiteChartsCard({
   systemId,
   system,
   serveFlowFromPg,
+  siteCapable,
   cardVisible,
   onHistoryEmptyChange,
 }: SiteChartsCardProps) {
@@ -385,8 +393,11 @@ export default function SiteChartsCard({
   // boundary; an explicit historical window (prev/next navigation) is settled (no polling).
   // Fetch + process + windowing happen inside the query factory, so `processedHistoryData`
   // is referentially stable between renders and slides forward only on each refetch.
+  // Run the site-history query when the area has loads + sources. Caller-supplied `siteCapable` (data
+  // driven) wins; otherwise fall back to the vendor check, so the legacy per-system page is unchanged.
   const isSiteVendor =
     system?.vendorType === "mondo" || system?.vendorType === "composite";
+  const runSiteQuery = siteCapable ?? isSiteVendor;
   const {
     data: siteData,
     isLoading: historyLoading,
@@ -400,7 +411,7 @@ export default function SiteChartsCard({
       end: historyTimeRange.end,
       timezoneOffsetMin: system?.timezoneOffsetMin ?? 0,
       paused: isAnyModalOpen,
-      enabled: isSiteVendor && !!systemId,
+      enabled: runSiteQuery && !!systemId,
     }),
   );
   const processedHistoryData = useMemo<ProcessedSiteData>(
@@ -1031,21 +1042,35 @@ export default function SiteChartsCard({
               processedHistoryData.generation &&
               processedHistoryData.load &&
               (() => {
-                // Sankey served from the server when available: 30D from the
-                // materialized flow_1d endpoint, 1D/7D bundled with the history
-                // response (processedHistoryData.flowMatrix). Falls back to the
-                // client-side calc when neither is present (flag off / not loaded).
-                const usePg = serveFlowFromPg && sitePeriod === "30D";
-                const matrix =
-                  usePg && pgFlowMatrix
-                    ? pgFlowMatrix
-                    : processedHistoryData.flowMatrix
-                      ? processedHistoryData.flowMatrix
-                      : calculateEnergyFlowMatrix({
-                          generation: processedHistoryData.generation,
-                          load: processedHistoryData.load,
-                        });
-                return matrix ? (
+                // Sankey source precedence (PG flow_1d 30D → history-bundled 1D/7D → client calc) lives
+                // in selectFlowMatrix, shared so this and any other sankey site can't diverge.
+                const matrix = selectFlowMatrix({
+                  processed: processedHistoryData,
+                  pgFlowMatrix,
+                  serveFlowFromPg,
+                  period: sitePeriod,
+                });
+                if (!matrix) return null;
+                // The window the sankey integrates over: a TIME range for 1D/7D, a DATE range for 30D.
+                const cd =
+                  processedHistoryData.load ?? processedHistoryData.generation;
+                const tz = system?.timezoneOffsetMin;
+                const rangeLabel =
+                  cd && cd.timestamps.length > 0 && tz != null
+                    ? formatDateTimeRange(
+                        fromUnixTimestamp(
+                          cd.timestamps[0].getTime() / 1000,
+                          tz,
+                        ),
+                        fromUnixTimestamp(
+                          cd.timestamps[cd.timestamps.length - 1].getTime() /
+                            1000,
+                          tz,
+                        ),
+                        sitePeriod !== "30D",
+                      )
+                    : null;
+                return (
                   <div className="sm:p-4">
                     <h3 className="text-base font-semibold text-gray-300 mb-2 px-2 sm:px-0">
                       Flows
@@ -1057,8 +1082,13 @@ export default function SiteChartsCard({
                         height={680}
                       />
                     </div>
+                    {rangeLabel && (
+                      <div className="mt-1 text-center text-xs text-gray-500">
+                        {rangeLabel}
+                      </div>
+                    )}
                   </div>
-                ) : null;
+                );
               })()}
           </div>
         )}

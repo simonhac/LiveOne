@@ -169,6 +169,28 @@ export function calculateEnergyFlowMatrix(
 }
 
 /**
+ * Pick the energy-flow matrix for a sankey from the available sources, in priority order:
+ *   1. the materialized PG flow_1d matrix (30D only, when FLOW_MATRIX_SERVE_FROM_PG is on),
+ *   2. the history response's bundled matrix (1D/7D),
+ *   3. compute it client-side from generation + load.
+ * Returns null when there is no complete flow to diagram (missing generation OR load) — the data-driven
+ * gate for "this area has loads + sources". Extracted so every sankey site shares one precedence.
+ */
+export function selectFlowMatrix(opts: {
+  processed: ProcessedSiteData;
+  pgFlowMatrix: EnergyFlowMatrix | null;
+  serveFlowFromPg: boolean;
+  period: "1D" | "7D" | "30D";
+}): EnergyFlowMatrix | null {
+  const { generation, load, flowMatrix } = opts.processed;
+  if (!generation || !load) return null;
+  const usePg = opts.serveFlowFromPg && opts.period === "30D";
+  if (usePg && opts.pgFlowMatrix) return opts.pgFlowMatrix;
+  if (flowMatrix) return flowMatrix;
+  return calculateEnergyFlowMatrix(opts.processed);
+}
+
+/**
  * Log the energy flow matrix to console in a readable table format
  */
 export function logEnergyFlowMatrix(matrix: EnergyFlowMatrix): void {
