@@ -213,7 +213,7 @@ export default function UsersPageClient() {
                                 className="flex items-center gap-1.5"
                               >
                                 <Link
-                                  href={`/dashboard/${system.systemId}`}
+                                  href={`/device/${system.systemId}`}
                                   className={`text-sm transition-colors whitespace-nowrap ${
                                     system.status === "removed"
                                       ? "text-gray-500 line-through italic hover:text-gray-400"

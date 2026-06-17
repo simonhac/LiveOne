@@ -103,7 +103,7 @@ export default function SessionInfoModal({
               <h3 className="text-lg font-semibold text-white">
                 Session with{" "}
                 <a
-                  href={`/dashboard/${session.systemId}`}
+                  href={`/device/${session.systemId}`}
                   className="hover:text-blue-400 hover:underline transition-colors"
                 >
                   {session.systemName}{" "}

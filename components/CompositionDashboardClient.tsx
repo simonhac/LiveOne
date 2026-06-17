@@ -3,9 +3,8 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { Settings, Share2, Plus, ChevronDown } from "lucide-react";
+import { Settings, Plus, ChevronDown } from "lucide-react";
 import CompositionDashboard from "@/components/CompositionDashboard";
-import CompositionShareDialog from "@/components/CompositionShareDialog";
 import DashboardSettingsDialog from "@/components/DashboardSettingsDialog";
 import DashboardsMenu, {
   usePrefetchDashboardsMenu,
@@ -37,7 +36,6 @@ export default function CompositionDashboardClient({
 }: CompositionDashboardClientProps) {
   const router = useRouter();
   const [renameOpen, setRenameOpen] = useState(false);
-  const [shareOpen, setShareOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
 
@@ -94,9 +92,6 @@ export default function CompositionDashboardClient({
           </div>
           {canEdit && (
             <div className="flex items-center gap-1">
-              <HeaderButton title="Share" onClick={() => setShareOpen(true)}>
-                <Share2 className="h-4 w-4" />
-              </HeaderButton>
               <HeaderButton
                 title="Dashboard settings"
                 onClick={() => setRenameOpen(true)}
@@ -132,11 +127,6 @@ export default function CompositionDashboardClient({
             initialAlias={dashboard.alias ?? ""}
             onDeleted={() => router.push("/dashboard")}
             onSaved={() => router.refresh()}
-          />
-          <CompositionShareDialog
-            isOpen={shareOpen}
-            onClose={() => setShareOpen(false)}
-            dashboardId={dashboard.id}
           />
           <NewDashboardDialog
             isOpen={newOpen}

@@ -292,8 +292,8 @@ export async function getValidDefaultDashboardId(
 /**
  * The path the `/dashboard` landing should redirect to for this user's default, or null when there's
  * no valid default. A composition-first default (Phase 2b-2, null system_id) → `/dashboard/id/{id}`;
- * otherwise the legacy per-system default → `/dashboard/{systemId}` (validated + lazily migrated +
- * auto-cleared by getValidDefaultDashboardId).
+ * otherwise the per-system default → the device view `/device/{systemId}` (validated + lazily
+ * migrated + auto-cleared by getValidDefaultDashboardId).
  */
 export async function resolveDefaultDashboardRoute(
   clerkUserId: string,
@@ -304,7 +304,7 @@ export async function resolveDefaultDashboardRoute(
     if (dash && dash.systemId == null) return `/dashboard/id/${dash.id}`;
   }
   const sys = await getValidDefaultDashboardId(clerkUserId);
-  return sys ? `/dashboard/${sys.systemId}` : null;
+  return sys ? `/device/${sys.systemId}` : null;
 }
 
 /**

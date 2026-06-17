@@ -151,14 +151,14 @@ describe("resolveDefaultDashboardRoute (landing redirect target)", () => {
     expect(await resolveDefaultDashboardRoute(USER)).toBe("/dashboard/id/88");
   });
 
-  it("a legacy per-system default → /dashboard/{systemId}", async () => {
+  it("a per-system default → the device view /device/{systemId}", async () => {
     usersRow!.defaultDashboardId = 77;
     mockGetDashboardById.mockResolvedValue({
       id: 77,
       systemId: 5,
       areaId: null,
     });
-    expect(await resolveDefaultDashboardRoute(USER)).toBe("/dashboard/5");
+    expect(await resolveDefaultDashboardRoute(USER)).toBe("/device/5");
   });
 
   it("no default → null", async () => {

@@ -481,7 +481,7 @@ export default function AdminDashboardClient({
                         </td>
                         <td className="px-1.5 md:px-1.5 py-4 whitespace-nowrap align-top">
                           <Link
-                            href={`/dashboard/${system.systemId}`}
+                            href={`/device/${system.systemId}`}
                             className="block group"
                           >
                             <div className="flex items-center gap-2">
