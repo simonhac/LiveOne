@@ -21,6 +21,18 @@ interface DashboardsMenuProps {
 }
 
 /**
+ * Warm the switcher's data (dashboards + default-preference) into the React Query cache while the
+ * page is mounted, so the dropdown paints fully populated on its FIRST open instead of flashing just
+ * the "New dashboard…" row and then reflowing. The menu only mounts when the dropdown opens, so
+ * without this its own queries don't fire until then. Same query keys → this dedupes with the menu's
+ * own `useQuery`; a single fetch, shared cache. Gate with `enabled` so closed/shared views don't fetch.
+ */
+export function usePrefetchDashboardsMenu(enabled = true) {
+  useQuery(myDashboardsQuery(enabled));
+  useQuery(userPreferencesQuery(enabled));
+}
+
+/**
  * The contents of the header title dropdown — the signed-in user's composition dashboards. A drop-in
  * repurpose of `SystemsMenu`: same row styling + default star, but rows link to `/dashboard/id/{id}`
  * and the data is client-fetched (react-query, invalidated by create/rename/delete) rather than passed
