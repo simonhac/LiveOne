@@ -31,6 +31,7 @@ import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates
 import { computeFlowMatrix } from "@/lib/aggregation/flow-matrix-core";
 import {
   buildFlowSeries,
+  applyPowerTransform,
   ClassifiedPoint,
 } from "@/lib/aggregation/flow-series";
 import type { LogicalSystem } from "@/lib/aggregation/logical-system";
@@ -137,7 +138,8 @@ export async function recomputeFlowMatrixForDay(
     const power = new Array<number | null>(timestamps.length).fill(null);
     for (const [t, v] of series) {
       const i = tIndex.get(t);
-      if (i !== undefined) power[i] = toKw(v, p.metricUnit);
+      if (i !== undefined)
+        power[i] = applyPowerTransform(toKw(v, p.metricUnit), p.transform);
     }
     classified.push({ stem: p.stem, power });
   }
