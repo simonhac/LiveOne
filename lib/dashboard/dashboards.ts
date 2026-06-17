@@ -5,10 +5,11 @@
  * `display_name`, an optional owner-unique `alias`, and a composition `descriptor` (every card
  * area-bound); `system_id`/`area_id` are left null. Addressed by `id` or `(owner, alias)`.
  */
-import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { dashboards } from "@/lib/db/planetscale/schema";
 import { allCardsV3, isDashboardV3, type DashboardV3 } from "./v3";
+import { listGrantsForUser } from "./grants";
 
 export interface CompositionDashboard {
   id: number;
@@ -26,6 +27,8 @@ export interface DashboardSummary {
   alias: string | null;
   cardCount: number;
   updatedAt: Date;
+  /** How the caller reaches this dashboard: "owner" = they own it, "shared" = granted via a membership. */
+  access: "owner" | "shared";
 }
 
 /** Raised when an alias collides with another of the owner's dashboards (SQLSTATE 23505). */
@@ -136,7 +139,21 @@ export async function listDashboardsForOwner(
       ),
     )
     .orderBy(desc(dashboards.updatedAt));
-  return rows.map((r) => ({
+  return rows.map((r) => rowToSummary(r, "owner"));
+}
+
+/** Shape a dashboard row into a DashboardSummary, tagged with how the caller reaches it. */
+function rowToSummary(
+  r: {
+    id: number;
+    displayName: string | null;
+    alias: string | null;
+    descriptor: unknown;
+    updatedAt: Date;
+  },
+  access: "owner" | "shared",
+): DashboardSummary {
+  return {
     id: r.id,
     displayName: r.displayName,
     alias: r.alias,
@@ -146,7 +163,36 @@ export async function listDashboardsForOwner(
         ? (r.descriptor as { cards: unknown[] }).cards.length
         : 0,
     updatedAt: r.updatedAt,
-  }));
+    access,
+  };
+}
+
+/**
+ * Every dashboard the user can reach: the ones they OWN ∪ the ones SHARED with them via a grant,
+ * deduped by id (ownership wins). Powers the dashboard-first landing and the switcher.
+ */
+export async function listAccessibleDashboards(
+  clerkUserId: string,
+): Promise<DashboardSummary[]> {
+  const owned = await listDashboardsForOwner(clerkUserId);
+  const ownedIds = new Set(owned.map((d) => d.id));
+
+  const grantedIds = (await listGrantsForUser(clerkUserId)).filter(
+    (id) => !ownedIds.has(id),
+  );
+  if (grantedIds.length === 0) return owned;
+
+  const sharedRows = await requirePlanetscaleDb()
+    .select(DASHBOARD_COLUMNS)
+    .from(dashboards)
+    .where(
+      and(
+        inArray(dashboards.id, grantedIds),
+        isNotNull(dashboards.displayName),
+      ),
+    );
+  const shared = sharedRows.map((r) => rowToSummary(r, "shared"));
+  return [...owned, ...shared];
 }
 
 export async function updateDashboard(

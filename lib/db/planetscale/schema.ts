@@ -626,6 +626,9 @@ export const dashboardGrants = pgTable(
   }),
 );
 
+export type DashboardGrant = typeof dashboardGrants.$inferSelect;
+export type NewDashboardGrant = typeof dashboardGrants.$inferInsert;
+
 // ============================================================================
 // Roles - HA-device_class-aware role registry (P3). A SQL projection of the code
 // source of truth in lib/roles/registry.ts (ROLES). Seeded/kept-in-sync by the
