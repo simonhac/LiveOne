@@ -12,7 +12,7 @@ import DashboardsMenu, {
 } from "@/components/DashboardsMenu";
 import NewDashboardDialog from "@/components/NewDashboardDialog";
 import { readableAreasQuery } from "@/lib/queries";
-import type { DashboardV3 } from "@/lib/dashboard/v3";
+import { sectionAreaIdsV3, type DashboardV3 } from "@/lib/dashboard/v3";
 import type { ReadableArea } from "@/lib/areas/list";
 
 interface CompositionDashboardClientProps {
@@ -130,6 +130,7 @@ export default function CompositionDashboardClient({
             id={dashboard.id}
             initialName={dashboard.displayName ?? ""}
             initialAlias={dashboard.alias ?? ""}
+            areaIds={sectionAreaIdsV3(dashboard.descriptor)}
             onDeleted={() => router.push("/dashboard")}
             onSaved={() => router.refresh()}
           />
