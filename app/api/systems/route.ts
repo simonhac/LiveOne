@@ -6,11 +6,6 @@ import { systems as pgSystems } from "@/lib/db/planetscale/schema";
 import { storeSystemCredentials } from "@/lib/secure-credentials";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { SystemsManager } from "@/lib/systems-manager";
-import {
-  createCompositeArea,
-  syncCompositeBindingsFromMappings,
-} from "@/lib/areas/sync";
-import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,50 +15,7 @@ export async function POST(request: NextRequest) {
     const { userId } = authResult;
 
     // Get request data
-    const { vendorType, credentials, systemInfo, displayName, metadata } =
-      await request.json();
-
-    // Handle composite systems differently
-    if (vendorType === "composite") {
-      // Validate composite system requirements
-      if (!displayName || !displayName.trim()) {
-        return NextResponse.json(
-          { error: "Display name is required for composite systems" },
-          { status: 400 },
-        );
-      }
-
-      if (!metadata || !metadata.mappings) {
-        return NextResponse.json(
-          { error: "Composite mappings are required" },
-          { status: 400 },
-        );
-      }
-
-      console.log(
-        `[Create System] Creating composite system for user ${userId}`,
-      );
-
-      // Composites are areas-only "virtual systems" (no `systems` row): create the composite Area
-      // with a fresh integer handle, then write its authoritative area_bindings from the mappings.
-      // getSystem(handle) resolves to the synthesized virtual system once the cache refreshes.
-      const { systemId } = await createCompositeArea({
-        ownerClerkUserId: userId,
-        displayName: displayName.trim(),
-      });
-      await syncCompositeBindingsFromMappings(systemId, {
-        version: 2,
-        mappings: metadata.mappings,
-      });
-      await buildSubscriptionRegistry();
-      SystemsManager.invalidateCache();
-
-      // Success!
-      return NextResponse.json({
-        success: true,
-        systemId,
-      });
-    }
+    const { vendorType, credentials, systemInfo } = await request.json();
 
     // Handle regular systems
     if (!credentials || !systemInfo?.vendorSiteId) {

@@ -122,8 +122,9 @@ export function computeFlowMatrix(input: {
  * per interval, but on the raw sample value rather than trapezoidal energy.
  *
  * The unit of the result is the unit of the input series at that sample: POWER (kW) for the 5m/30m
- * charts, or that day's ENERGY (kWh) for the 1d (30D) chart. Same `FlowMatrixResult` shape, with
- * row/column sums for the node totals, so it drops straight into the same sankey renderer.
+ * (1D/7D) charts. (The 30D Sankey hover does NOT use this — it indexes a real per-day energy matrix
+ * from `flow_1d`.) Same `FlowMatrixResult` shape, with row/column sums for the node totals, so it
+ * drops straight into the same sankey renderer.
  */
 export function computeInstantFlowMatrix(input: {
   sources: FlowSeries[];

@@ -1,16 +1,14 @@
 /**
- * Shared read helpers over the P3 `areas` / `area_bindings` tables.
- *
- * These are the authoritative composite role→point reads (they replaced the legacy
- * `systems.metadata` parsing). A composite Area is located by its `legacy_system_id` (== the
- * composite's integer handle, formerly its `systems.id`), so every caller stays keyed on the same
- * id — now resolving to the areas-backed virtual system after the `systems` row was deleted (0014).
+ * Shared read helpers over the `areas` / `area_bindings` tables — the authoritative role→point reads
+ * for a MULTI-DEVICE Area (one that aggregates several devices' points into typed roles). A multi-device
+ * Area is located by its `legacy_system_id` (its integer addressing handle), so every caller stays keyed
+ * on the same id; only multi-device Areas have bindings, so an identity handle resolves to zero rows.
  */
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, areaBindings } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
 
-/** A composite Area's binding point refs, ordered by ordinal — the set the v2 mappings encoded. */
+/** An Area's binding point refs, ordered by ordinal. */
 export interface BindingRef {
   pointSystemId: number;
   pointId: number;
@@ -20,13 +18,12 @@ export interface BindingRef {
 }
 
 /**
- * The (point_system_id, point_id) refs bound to the composite Area whose `legacy_system_id` is
- * `systemId`, ordered by ordinal. Empty if no such Area (e.g. not yet backfilled). This is the
- * typed-table replacement for parsing `metadata.mappings`; consumed by the areas-backed branch of
- * `PointManager._resolvePointsForViewable`.
+ * The (point_system_id, point_id) refs bound to the multi-device Area whose `legacy_system_id` is
+ * `handle`, ordered by ordinal. Empty if no such Area / no bindings. Consumed by the area-native branch
+ * of `PointManager._resolvePointsForViewable`.
  */
-export async function getCompositeBindingRefs(
-  systemId: number,
+export async function getAreaBindingRefs(
+  handle: number,
 ): Promise<BindingRef[]> {
   const rows = await requirePlanetscaleDb()
     .select({
@@ -38,43 +35,39 @@ export async function getCompositeBindingRefs(
     })
     .from(areaBindings)
     .innerJoin(areas, eq(areaBindings.areaId, areas.id))
-    // Located by the addressing handle alone — no `kind` filter. Only multi-device (composite) Areas
-    // have bindings, so an identity handle resolves to zero rows here regardless.
-    .where(eq(areas.legacySystemId, systemId))
+    // Located by the addressing handle alone — no `kind` filter. Only multi-device Areas have bindings,
+    // so an identity handle resolves to zero rows here regardless.
+    .where(eq(areas.legacySystemId, handle))
     .orderBy(areaBindings.ordinal);
   return rows;
 }
 
 /** A flat row for rebuilding the KV subscription registry from SQL. */
-export interface CompositeBindingRow {
-  compositeSystemId: number; // areas.legacy_system_id
+export interface AreaBindingRow {
+  handle: number; // areas.legacy_system_id
   pointSystemId: number;
   pointId: number;
   ordinal: number;
 }
 
 /**
- * All composite Areas' bindings, flattened with the composite's `legacy_system_id`. Drives
- * `buildSubscriptionRegistry` — the reverse `(point_system_id, point_id) → composite` index, in
- * SQL. Ordered so the per-composite enumeration is deterministic.
+ * Every multi-device Area's bindings, flattened with the Area's `legacy_system_id` (its handle). Drives
+ * `buildSubscriptionRegistry` — the reverse `(point_system_id, point_id) → subscriber` index, in SQL.
+ * Ordered so the per-Area enumeration is deterministic.
  */
-export async function getAllCompositeBindings(): Promise<
-  CompositeBindingRow[]
-> {
+export async function getAreaBindings(): Promise<AreaBindingRow[]> {
   const rows = await requirePlanetscaleDb()
     .select({
-      compositeSystemId: areas.legacySystemId,
+      handle: areas.legacySystemId,
       pointSystemId: areaBindings.pointSystemId,
       pointId: areaBindings.pointId,
       ordinal: areaBindings.ordinal,
     })
     .from(areaBindings)
     .innerJoin(areas, eq(areaBindings.areaId, areas.id))
-    // No `kind` filter: the innerJoin already restricts to Areas that HAVE bindings, which are
-    // exactly the multi-device (composite) Areas — identity Areas contribute none.
+    // No `kind` filter: the innerJoin already restricts to Areas that HAVE bindings — exactly the
+    // multi-device Areas; identity Areas contribute none.
     .orderBy(areas.legacySystemId, areaBindings.ordinal);
-  // legacySystemId is nullable in the schema but always set for composite Areas.
-  return rows.filter(
-    (r): r is CompositeBindingRow => r.compositeSystemId !== null,
-  );
+  // legacySystemId is nullable in the schema but always set for a handle-addressed Area.
+  return rows.filter((r): r is AreaBindingRow => r.handle !== null);
 }

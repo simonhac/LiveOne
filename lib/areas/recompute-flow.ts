@@ -7,9 +7,10 @@
 export async function recomputeAreaFlow(
   areaId: string,
   onProgress?: (daysSoFar: number) => void,
-): Promise<{ recomputed: number }> {
+): Promise<{ recomputed: number; systemId: number | null }> {
   let cursor: string | undefined;
   let total = 0;
+  let systemId: number | null = null;
   // Safety cap: well above any real range (≈ MAX_LIMIT 31 × 200 = 6200 days) so a bug can't spin forever.
   for (let i = 0; i < 200; i++) {
     const res = await fetch(
@@ -25,10 +26,13 @@ export async function recomputeAreaFlow(
       throw new Error(body?.error ?? `Recompute failed (${res.status})`);
     }
     const data = await res.json();
+    if (typeof data.systemId === "number") systemId = data.systemId;
     total += data.recomputed ?? 0;
     onProgress?.(total);
     if (data.done || !data.nextCursor) break;
     cursor = data.nextCursor as string;
   }
-  return { recomputed: total };
+  // `systemId` is the area's handle — the key the chart/sankey queries use; the caller invalidates it so
+  // the freshly-recomputed Sankey shows without a hard refresh (the data is otherwise long-`staleTime`d).
+  return { recomputed: total, systemId };
 }

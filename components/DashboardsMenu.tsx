@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Star, Plus } from "lucide-react";
+import { Star, Plus, HardDrive } from "lucide-react";
 import { myDashboardsQuery, userPreferencesQuery } from "@/lib/queries";
 
 interface DashboardsMenuProps {
@@ -94,6 +94,20 @@ export default function DashboardsMenu({
         <Plus className="h-4 w-4" />
         New dashboard…
       </button>
+
+      {/* Cross-nav to the systems/devices world — `/device` redirects to the first visible system,
+          whose header dropdown is the symmetric SystemsMenu (with "Go to Dashboards"). */}
+      <div className="my-1 border-t border-gray-700" />
+      <Link
+        href="/device"
+        onClick={onNavigate}
+        className={`${itemClassName} flex items-center gap-2 text-gray-300 hover:text-white ${
+          isMobile ? "first:rounded-t-lg last:rounded-b-lg" : ""
+        }`}
+      >
+        <HardDrive className="h-4 w-4" />
+        Go to Devices
+      </Link>
     </div>
   );
 }

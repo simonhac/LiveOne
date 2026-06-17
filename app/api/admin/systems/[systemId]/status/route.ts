@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { clearDefaultForAllUsers } from "@/lib/user-preferences";
 import { SystemsManager } from "@/lib/systems-manager";
-import { updateCompositeArea } from "@/lib/areas/sync";
 
 export async function PATCH(
   request: NextRequest,
@@ -31,7 +30,6 @@ export async function PATCH(
       );
     }
 
-    // Resolve via SystemsManager — a composite resolves to its areas-backed virtual system.
     const existingSystem =
       await SystemsManager.getInstance().getSystem(systemId);
 
@@ -39,13 +37,7 @@ export async function PATCH(
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
-    // Update status on the right store: a composite's `areas` row, otherwise the `systems` row.
-    if (existingSystem.vendorType === "composite") {
-      await updateCompositeArea(systemId, { status });
-      SystemsManager.invalidateCache();
-    } else {
-      await SystemsManager.getInstance().updateSystem(systemId, { status });
-    }
+    await SystemsManager.getInstance().updateSystem(systemId, { status });
 
     // Clear default system preference for all users if system is being removed
     if (status === "removed") {

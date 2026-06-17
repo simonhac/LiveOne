@@ -4,7 +4,9 @@
 > done · Phase 2b-1 (multi-area cards) done · Phase 2b-2 (first-class composition dashboards) done (additive,
 > legacy per-system path kept) · **Composite special-case retired (#105 + #106): an Area is now a grouping
 > of 1..N member devices — resolver unified, `kind` no longer read, `area_devices` membership live.** The
-> `areas.kind` _column_ drop + create-UX reframe is **Phase D** (still pending — §5). Phase 3 (HA export) planned.
+> `areas.kind` _column_ drop + create-UX reframe is **Phase D** (still pending — §5). The unified tile
+> model (§6, #110), composition sharing + settings menu (§7, #112), and the generalized sankey (§8,
+> #116–118) have all shipped. Phase 3 (HA export) planned.
 > Schema source of truth: `lib/db/planetscale/schema.ts` (Drizzle is authoritative — never hand-rolled
 > SQL, never `drizzle-kit push`). This doc holds the _why_ and the invariants; columns and routes live in
 > code.
@@ -129,13 +131,13 @@ eliminated the descriptor→rows dual-read data migration.
 
 ## 4. Roadmap
 
-Legend: ✅ shipped · ◑ in progress · ⬜ planned. Migration high-water mark: **0017**. All schema work
+Legend: ✅ shipped · ◑ in progress · ⬜ planned. Migration high-water mark: **0018**. All schema work
 follows `docs/migrations.md` (additive/forward-only, `DO`/`RAISE` guards before any drop, never
 `drizzle-kit push`).
 
 > ⚠️ **Deploy gate (see `docs/incidents/2026-06-16-…`):** PG migrations are **manual**, not applied at
 > deploy. Apply a schema-dependent PR's migration to prod `sydney` **before** merging the code, or prod
-> 500s. `0017` is on `liveone-dev` + this branch only — apply it to `sydney` before 2b-2 merges.
+> 500s. (The composition-dashboard `0017` and the `area_devices` `0018` are both applied to `sydney`.)
 
 ### Foundation — ✅ shipped
 
@@ -302,12 +304,14 @@ sites still _select_ it as a pass-through, and `sync.ts` still _writes_ it). Pha
 **Not in Phase D / not planned:** re-keying the serving path or `flow_1d` to UUID, and dropping
 `legacy_system_id` — the integer handle is load-bearing addressing (see "Not planned" above), kept.
 
-## 6. Tile rendering — the unified tile model (in progress)
+## 6. Tile rendering — the unified tile model — ✅ shipped (#110)
 
 > The descriptor is now the **nested v3** model — `Dashboard → AreaSection → Card → device-bound Tile`
 > (shipped #107; see `docs/plans/dashboard-nested-tile-model.md` §0, which supersedes the flat per-card
-> `areaId` framing in §§2–3: a section binds the Area, a card holds device-bound tiles). This section is
-> the plan for rendering those tiles uniformly. **Status:** its own PR, in progress.
+> `areaId` framing in §§2–3: a section binds the Area, a card holds device-bound tiles). This section
+> describes how those tiles render uniformly. **Status:** ✅ shipped in #110 — two follow-ups stay deferred
+> (below): the `renderTileView` extraction from `useTileNodes`, and auto-deriving tile availability from
+> `latest` (today it's supplied explicitly at seed time).
 
 **Why.** The first v3 renderer special-cased the device-bound `oe-grid` (NEM grid) tile. The whole-area
 tiles are built together by `useTileNodes` from the section's **single** `dashboardDataQuery(handle)`,
@@ -334,22 +338,27 @@ renders through the same **`<TileCell>`**:
 3. **`TilesGrid` is a stable set of cells** — one `<TileCell>` per descriptor tile, in order. No separate
    skeleton block that swaps the whole grid wholesale; each cell transitions skeleton → content on its own.
 
-**No reflow.** The skeleton count must equal the rendered count, so the **area strategy emits only the
-tiles the system supports**: `buildDefaultDashboardV3` becomes availability-aware (`availableViewsForDevice(latest)`
-from the handle's latest at default/seed time), so descriptor == rendered set. Daylesford re-seeds to its
-4 supported tiles (Kinkora already matches at 8). Each `TileCell` then goes skeleton → content with **no
-count change**.
+**No reflow.** The skeleton count must equal the rendered count, so the **area strategy can emit only the
+tiles the system supports**: `buildDefaultDashboardV3` takes an optional `availableViews` list and filters
+`TILE_IDS` to it (`lib/dashboard/v3.ts`), so descriptor == rendered set. Today that list is supplied
+**explicitly at seed time** — the `scripts/temp/seed-v3-dashboard.ts` literal re-seeds Daylesford to its 4
+supported tiles (Kinkora matches at 8 unfiltered). Each `TileCell` then goes skeleton → content with **no
+count change** for those seeded dashboards. _Deferred:_ auto-deriving the list from the handle's `latest`
+(the planned `availableViewsForDevice(latest)` helper was not built) and threading it through the runtime
+`buildSeedDescriptor` path — until then a freshly user-seeded composition dashboard gets no `availableViews`.
 
 **Timing caveat (inherent, not a bug).** A device-bound tile reads a _different_ device, whose data can
 resolve a beat after the handle's — unavoidable for a separate data source — but it now behaves like any
 tile (skeleton → fills in), not a bespoke late-pop component.
 
-**Scope (its own PR), gated on the existing whole-area tiles rendering byte-identical:** refactor
-`useTileNodes` → `renderTileView` + `availableViewsForDevice`; add `TileCell`; fold `oe-grid` in as a
-view; make `buildDefaultDashboardV3` availability-aware; re-seed Daylesford. This is the `renderTileView`
-refactor the nested-tile design (`§3.3` of the plan) specified and the first cut skipped.
+**Shipped in #110** (gated on the existing whole-area tiles rendering byte-identical): added `TileCell`;
+folded `oe-grid` in as a view case; `TilesGrid` is one cell per tile; gave `buildDefaultDashboardV3` an
+`availableViews` filter and re-seeded Daylesford. **Deferred** (as the first cut intended): the full
+`renderTileView` extraction from `useTileNodes` — its 4 `useMemo`s + 5 consumers make it a separate,
+riskier change and the per-cell recompute is negligible, so `TileCell` still calls `useTileNodes` per cell
+— plus the `availableViewsForDevice(latest)` auto-derivation above.
 
-## 7. Dashboard settings menu + composition sharing (in progress)
+## 7. Dashboard settings menu + composition sharing — ✅ shipped (#112)
 
 **Context.** The v3 cutover (#107) left the composition dashboard with minimal chrome (switcher /
 rename / new): the v2 customize editor was dropped, and the share UX only ever lived in the legacy
@@ -359,7 +368,7 @@ lifecycle in `lib/dashboard/sharing.ts` (`create`/`validate`/`list`/`revoke`/`re
 `DashboardShareToken`), `dashboard_grants`, and `resolveDashboardReadPoints` scope (now v3-aware, §"cutover").
 What's missing is only the **API route, the UI, and the composition shared-view render**.
 
-**Build (this PR):**
+**Shipped in #112:**
 
 1. **API — `app/api/dashboards/[id]/share/route.ts`** (owner/admin only, reusing the `[id]/route.ts`
    `loadOwned` guard): `POST` mints a token (`createDashboardShareToken`, optional `label`/`expiresInDays`),
@@ -370,16 +379,16 @@ What's missing is only the **API route, the UI, and the composition shared-view 
    with `canEdit=false`. Per-area data fetches carry the token and are authorized by the live union scope
    (`requireDashboardAccess`, v3-aware). Replaces the current "composition share → redirect to sign-in" stub.
 3. **UI — a Settings (gear) menu** on the composition dashboard, consolidating the scattered chrome:
-   **Share** (mint a read-only link, copy, list/revoke), **Rename / Shortname / Set-default / Delete**
-   (the existing `DashboardSettingsDialog`), and a **Customize** entry that opens the v3 configurator (#23,
-   a follow-up). Lead with **Share** — the gap the user hit.
+   **Share** (mint a read-only link, copy, list/revoke) and **Rename / Shortname / Set-default / Delete**
+   (the existing `DashboardSettingsDialog`); the header leads with **Share** — the gap the user hit. A
+   **Customize** entry (the v3 configurator, #23) is a deferred follow-up — not yet in the menu.
 
-**Scope:** Share + the Settings menu land here; the **configurator** (#23) and **`dashboard_grants`**
+**Scope:** Share + the Settings menu shipped in #112; the **configurator** (#23) and **`dashboard_grants`**
 (invite a specific person, vs. a public read-only link) are deferred follow-ups. This finishes the §2
 "the dashboard is the unit of sharing" story for composition dashboards (it was previously only wired for
 legacy per-system dashboards).
 
-## 8. The sankey — generalized to any area with loads + sources
+## 8. The sankey — generalized to any area with loads + sources — ✅ shipped (#116–#118)
 
 **Context.** The energy-flow **sankey** used to be a mondo/composite "site" exclusive, gated everywhere
 on `isSiteVendor (vt === 'mondo' || 'composite')`. But the whole pipeline — `/api/history` →

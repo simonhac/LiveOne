@@ -5,7 +5,10 @@ import { requireAuth } from "@/lib/api-auth";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
 import { resolveLogicalSystem } from "@/lib/aggregation/logical-system";
-import { recomputeFlowMatrixForDay } from "@/lib/db/planetscale/flow-matrix-pg";
+import {
+  recomputeFlowMatrixForDay,
+  getFirstFlowDay,
+} from "@/lib/db/planetscale/flow-matrix-pg";
 import { planFlowRecomputeBatch } from "@/lib/aggregation/flow-recompute-batch";
 import { getYesterdayInTimezone } from "@/lib/date-utils";
 
@@ -15,7 +18,6 @@ export const maxDuration = 60;
 const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
 const DEFAULT_LIMIT = 14;
 const MAX_LIMIT = 31;
-const DEFAULT_LOOKBACK_DAYS = 35; // covers the longest sankey window (30D) + margin
 
 /**
  * POST /api/areas/[areaId]/recompute-flow — recompute ONE area's energy-flow matrix
@@ -23,7 +25,8 @@ const DEFAULT_LOOKBACK_DAYS = 35; // covers the longest sankey window (30D) + ma
  * blow the function timeout. Authorized for the area's **owner** or an **admin**.
  *
  * Body (all optional): { start?, end?: "YYYY-MM-DD", last?: "Nd", cursor?: "YYYY-MM-DD", limit?: number }
- *   - range defaults to the last 35 local days (end = yesterday); `last` or `start`+`end` override it.
+ *   - range defaults to the system's FIRST data point → yesterday (full history); `last` or
+ *     `start`+`end` override it. Processing still runs in bounded batches, newest-first.
  *   - `cursor` = the most-recent day still to do (defaults to `end`); processing runs BACKWARD.
  *   - `limit` = max days this call (default 14, max 31).
  * Returns: { ok, areaId, recomputed, rowsUpserted, from, to, nextCursor, done }.
@@ -99,7 +102,9 @@ export async function POST(
     } else if (typeof body.start === "string") {
       start = parseDate(body.start);
     } else {
-      start = end.subtract({ days: DEFAULT_LOOKBACK_DAYS - 1 });
+      // Default: the system's first data point (full history). Falls back to the birthdate when
+      // the system has no 5m data yet.
+      start = (await getFirstFlowDay(planetscaleDb, ls)) ?? LIVEONE_BIRTHDATE;
     }
   } catch {
     return NextResponse.json(
@@ -151,6 +156,9 @@ export async function POST(
   return NextResponse.json({
     ok: true,
     areaId,
+    // The area's handle (legacy_system_id) — the systemId the client's chart/sankey queries are keyed
+    // on, so the caller can invalidate exactly this system's cached data after the recompute.
+    systemId: area.legacySystemId,
     recomputed: days.length,
     rowsUpserted,
     from: days.length ? days[days.length - 1].toString() : null, // oldest

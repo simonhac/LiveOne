@@ -8,11 +8,11 @@ import { getAreaForSystem } from "@/lib/areas/resolve";
 /**
  * GET /api/areas?systemId=N — the P3 Area for a system, read-only.
  *
- * Returns the Area whose view is `systemId`: its identity Area (`kind='identity'`, a 1:1 wrapper
- * over the physical system) or its composite Area (`kind='composite'`, points drawn across child
- * systems), plus the typed `area_bindings`. Identity Areas carry NO bindings — their points are the
- * system's own points (resolved from `point_info`), so `bindings` is empty for them; composite Areas
- * return their role→point edges.
+ * Returns the Area whose view is `systemId` — a single-device Area (a 1:1 wrapper over the physical
+ * system) or a multi-device Area (points drawn across its `area_devices` members), plus the typed
+ * `area_bindings`. A single-device Area carries NO bindings — its points are the system's own points
+ * (resolved from `point_info`), so `bindings` is empty for it; multi-device Areas return their
+ * role→point edges.
  *
  * Access is system-granular (`requireSystemAccess`) — Areas are organisational, not the access
  * boundary, until P4. This is a NEW endpoint; the legacy `/api/data` payload stays frozen. Returns
@@ -43,7 +43,6 @@ export async function GET(request: NextRequest) {
   const [area] = await db
     .select({
       id: areas.id,
-      kind: areas.kind,
       sourceSystemId: areas.sourceSystemId,
       legacySystemId: areas.legacySystemId,
       displayName: areas.displayName,

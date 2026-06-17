@@ -197,18 +197,11 @@ export default function SystemActionsMenu({
               opacity: isPositioned ? 1 : 0,
             }}
           >
-            {/* View Data - Available for all systems, disabled for composite */}
+            {/* View Data - Available for all systems */}
             {onViewData && (
               <button
-                onClick={() =>
-                  vendorType !== "composite" && handleMenuClick(onViewData)
-                }
-                disabled={vendorType === "composite"}
-                className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 ${
-                  vendorType !== "composite"
-                    ? "text-gray-300 hover:bg-gray-700 hover:text-white cursor-pointer"
-                    : "text-gray-500 cursor-not-allowed opacity-70"
-                }`}
+                onClick={() => handleMenuClick(onViewData)}
+                className="w-full text-left px-4 py-2 text-sm flex items-center gap-2 text-gray-300 hover:bg-gray-700 hover:text-white cursor-pointer"
               >
                 <Database className="w-4 h-4" />
                 View Data…

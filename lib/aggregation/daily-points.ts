@@ -18,7 +18,6 @@ import { getYesterdayInTimezone, getTodayInTimezone } from "@/lib/date-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { recomputeAgg1dForDay } from "@/lib/db/planetscale/aggregate-points-pg";
 import { recomputeFlowMatrixForDayBestEffort } from "@/lib/db/planetscale/flow-matrix-pg";
-import { FLOW_MATRIX_COMPUTE_IN_PG } from "@/lib/db/routing";
 import { listCompleteLogicalSystems } from "@/lib/aggregation/logical-system";
 import { recomputeRange as recomputeRunPeriodsRange } from "@/lib/run-tracking/recompute";
 import { recomputeRange as recomputeHwsTemperatureRange } from "@/lib/hws/recompute";
@@ -250,20 +249,18 @@ export async function aggregateRange(
   // Materialise the energy-flow matrix per LOGICAL system (composites + qualifying
   // single systems), each read from its own (possibly cross-system) 5m. Best-effort
   // and idempotent per day, so re-running just heals each day.
-  if (FLOW_MATRIX_COMPUTE_IN_PG) {
-    try {
-      const logicalSystems = await listCompleteLogicalSystems();
-      console.log(
-        `[Daily Points] Recomputing energy-flow matrix for ${logicalSystems.length} logical systems × ${allDays.length} days`,
-      );
-      for (const ls of logicalSystems) {
-        for (const day of allDays) {
-          await recomputeFlowMatrixForDayBestEffort(ls, day);
-        }
+  try {
+    const logicalSystems = await listCompleteLogicalSystems();
+    console.log(
+      `[Daily Points] Recomputing energy-flow matrix for ${logicalSystems.length} logical systems × ${allDays.length} days`,
+    );
+    for (const ls of logicalSystems) {
+      for (const day of allDays) {
+        await recomputeFlowMatrixForDayBestEffort(ls, day);
       }
-    } catch (error) {
-      console.error("[Daily Points] Energy-flow matrix pass failed:", error);
     }
+  } catch (error) {
+    console.error("[Daily Points] Energy-flow matrix pass failed:", error);
   }
 
   // Daily heal of device run periods over the aggregated range (best-effort).

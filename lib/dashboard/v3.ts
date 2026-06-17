@@ -16,7 +16,16 @@
  */
 import { getLayout, TILE_IDS } from "./cards";
 import type { DashboardCardType, DashboardLayout, TileId } from "./cards";
-import type { ChartCardConfig } from "./descriptor";
+
+/** A chart card's config — lines (sidebar) vs stacked-areas (site load/generation halves). */
+export interface ChartCardConfig {
+  /** Overlaid lines (sidebar) vs stacked areas (site load/generation). */
+  variant: "lines" | "stacked-areas";
+  /** For stacked-areas: which half of the stacked chart (load vs generation). */
+  split?: "load" | "generation";
+  /** Optional series subset for the (future) union-of-series fetch. */
+  series?: string[];
+}
 
 /**
  * The tile-view catalog: today's TileId (`solar`, `load`, `hotWater`, `battery`, `house-to-grid`,

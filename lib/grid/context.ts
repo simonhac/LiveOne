@@ -11,29 +11,21 @@
 import { and, eq, isNull } from "drizzle-orm";
 
 import type { AreaLocation } from "@/lib/areas/types";
-import { getCompositeBindingRefs } from "@/lib/areas/bindings";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, pointInfo, systems } from "@/lib/db/planetscale/schema";
 import { stemMatchesRole } from "@/lib/roles/registry";
-import { SystemsManager } from "@/lib/systems-manager";
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
 
 import type { GridContext } from "@/lib/grid/types";
 
 /**
- * Whether a system plays the grid role. An areas-backed virtual system (a multi-device/composite Area
- * with no own point_info) gets its grid role from a binding to a child system's `bidi.grid*` point, so
- * we read its bindings; a real device checks its own points. Dispatched on the structural areas-backed
- * signal, not `kind`. Returns false for off-grid systems.
+ * Whether a system plays the grid role — a real device checks its own `bidi.grid*` points. Returns
+ * false for off-grid systems.
  */
 async function systemPlaysGridRole(
   db: ReturnType<typeof requirePlanetscaleDb>,
   systemId: number,
 ): Promise<boolean> {
-  if (await SystemsManager.getInstance().isAreasBackedSystem(systemId)) {
-    const bindings = await getCompositeBindingRefs(systemId);
-    return bindings.some((b) => b.role === "grid");
-  }
   const gridPoints = await db
     .select({ logicalPathStem: pointInfo.logicalPathStem })
     .from(pointInfo)

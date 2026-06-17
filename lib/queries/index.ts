@@ -16,10 +16,6 @@ export {
   type RunPeriodsResponse,
   type RunPeriodEvent,
 } from "./runPeriods";
-export {
-  dashboardDescriptorQuery,
-  type DashboardDescriptorResponse,
-} from "./dashboard";
 export { readableAreasQuery, type ReadableAreasResponse } from "./areas";
 export {
   myDashboardsQuery,

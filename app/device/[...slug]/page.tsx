@@ -9,7 +9,6 @@ import DeviceLayout from "@/components/DeviceLayout";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { VendorRegistry } from "@/lib/vendors/registry";
-import { FLOW_MATRIX_SERVE_FROM_PG } from "@/lib/db/routing";
 import { resolveGridContextForSystem } from "@/lib/grid/context";
 import { hasEnabledTracker } from "@/lib/run-tracking/resolve";
 
@@ -258,7 +257,6 @@ export default async function DevicePage({ params }: PageProps) {
         systemExists={systemExists}
         isAdmin={isAdmin}
         userId={userId}
-        serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
         gridContext={gridContext}
         hasGenerator={hasGenerator}
       />
@@ -282,7 +280,6 @@ export default async function DevicePage({ params }: PageProps) {
         systemExists={systemExists}
         isAdmin={isAdmin}
         userId={userId}
-        serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
         gridContext={gridContext}
         hasGenerator={hasGenerator}
       />

@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { systems, areas } from "@/lib/db/planetscale/schema";
+import { systems } from "@/lib/db/planetscale/schema";
 import { eq, and, ne } from "drizzle-orm";
 import { requireAdmin, requireSystemAccess } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
-import { updateCompositeArea } from "@/lib/areas/sync";
 import { isValidTimezone } from "@/lib/timezones";
 
 export async function GET(
@@ -185,35 +184,19 @@ export async function PATCH(
       updates.displayTimezone = displayTimezone.trim();
     }
 
-    // Resolve the system — a composite resolves to its areas-backed virtual system.
     const existingSystem =
       await SystemsManager.getInstance().getSystem(systemId);
     if (!existingSystem) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
-    const isComposite = existingSystem.vendorType === "composite";
 
-    // Check if the alias is already taken by another view (composites live in `areas`, real
-    // systems in `systems`).
+    // Check if the alias is already taken by another system.
     if (updates.alias) {
-      const conflict = isComposite
-        ? await requirePlanetscaleDb()
-            .select({ displayName: areas.displayName })
-            .from(areas)
-            .where(
-              and(
-                eq(areas.alias, updates.alias),
-                ne(areas.legacySystemId, systemId),
-              ),
-            )
-            .limit(1)
-        : await requirePlanetscaleDb()
-            .select({ displayName: systems.displayName })
-            .from(systems)
-            .where(
-              and(eq(systems.alias, updates.alias), ne(systems.id, systemId)),
-            )
-            .limit(1);
+      const conflict = await requirePlanetscaleDb()
+        .select({ displayName: systems.displayName })
+        .from(systems)
+        .where(and(eq(systems.alias, updates.alias), ne(systems.id, systemId)))
+        .limit(1);
 
       if (conflict.length > 0) {
         return NextResponse.json(
@@ -225,14 +208,7 @@ export async function PATCH(
       }
     }
 
-    // Update on the right store: a composite's `areas` row, otherwise the `systems` row.
-    if (isComposite) {
-      const { updatedAt: _omit, ...areaPatch } = updates;
-      await updateCompositeArea(systemId, areaPatch);
-      SystemsManager.invalidateCache();
-    } else {
-      await SystemsManager.getInstance().updateSystem(systemId, updates);
-    }
+    await SystemsManager.getInstance().updateSystem(systemId, updates);
 
     // Revalidate dashboard paths to refresh server-side data
     revalidatePath("/dashboard", "layout");
