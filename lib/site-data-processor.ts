@@ -67,8 +67,7 @@ async function fetchHistoryData(
   }
 
   // Ask the history endpoint to bundle the energy-flow matrix from the same hi-res rows (sub-daily
-  // only; 1d/long-range is served from the flow_1d endpoint). Server-gated by FLOW_MATRIX_SERVE_FROM_PG
-  // — when off it simply isn't returned and we fall back to the client-side calc.
+  // only; 1d/long-range is served from the flow_1d endpoint instead).
   if (requestInterval !== "1d") apiUrl += "&include=sankey";
 
   // Use the shared fetcher so a dashboard share token (?access=) in the page URL is propagated

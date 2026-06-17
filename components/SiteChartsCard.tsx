@@ -12,6 +12,8 @@ import EnergyFlowSankey from "@/components/EnergyFlowSankey";
 import {
   selectFlowMatrix,
   calculateInstantFlowMatrix,
+  sumDailyFlowMatrices,
+  pickDailyFlowMatrix,
 } from "@/lib/energy-flow-matrix";
 import TemporalNavigator from "@/components/TemporalNavigator";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
@@ -24,8 +26,6 @@ import { CalendarX2 } from "lucide-react";
 interface SiteChartsCardProps {
   systemId: string;
   system?: any; // System object from database
-  /** When true, the long-range (30D) Sankey is served from PG (FLOW_MATRIX_SERVE_FROM_PG). */
-  serveFlowFromPg: boolean;
   /**
    * Whether to run the site-history query (the data behind the charts + sankey). Lets the caller drive
    * it from a DATA signal ("this area has loads + sources") rather than the vendor type, so the sankey
@@ -262,7 +262,6 @@ function StackedChart({
 export default function SiteChartsCard({
   systemId,
   system,
-  serveFlowFromPg,
   siteCapable,
   cardVisible,
   onHistoryEmptyChange,
@@ -346,16 +345,15 @@ export default function SiteChartsCard({
     }
   }, [siteData]);
 
-  // Long-range Sankey from Postgres (point_readings_flow_1d), gated by FLOW_MATRIX_SERVE_FROM_PG.
-  // 30D only; a dependent query keyed on the site fetch's request window. When disabled / not yet
-  // loaded / errored, pgFlowMatrix stays null and the render falls back to the client-side calc.
+  // Long-range Sankey from Postgres (point_readings_flow_1d), 30D only; a dependent query keyed on
+  // the site fetch's request window. When not yet loaded / errored / not materialized, pgDaily stays
+  // null and the render falls back to the client-side window calc.
   const flowOffsetMin = system?.timezoneOffsetMin || 0;
   const toLocalYMD = (iso: string) =>
     new Date(new Date(iso).getTime() + flowOffsetMin * 60000)
       .toISOString()
       .slice(0, 10);
   const flowEnabled =
-    serveFlowFromPg &&
     period === "30D" &&
     !!systemId &&
     !!processedHistoryData.requestStart &&
@@ -373,7 +371,8 @@ export default function SiteChartsCard({
       enabled: flowEnabled,
     }),
   );
-  const pgFlowMatrix = flowEnabled ? (pgFlowMatrixData ?? null) : null;
+  // Raw per-day flow matrices (30D); the render sums them for the window or picks the hovered day.
+  const pgDaily = flowEnabled ? (pgFlowMatrixData ?? null) : null;
 
   // Prev/next navigation + keyboard handling now live in the shared TemporalNavigator (driven by the
   // URL via useTemporalRange) — rendered in this card's header below.
@@ -632,25 +631,32 @@ export default function SiteChartsCard({
               processedHistoryData.generation &&
               processedHistoryData.load &&
               (() => {
-                // When a point is focused, show that instant instead of the whole-window total:
-                // an instantaneous flow at the hovered index — POWER (kW) for 1D/7D, or that single
-                // day's ENERGY (kWh) for 30D (the indexed value is a daily energy). Otherwise the
-                // cumulative matrix via selectFlowMatrix (PG flow_1d 30D → bundled 1D/7D → client calc).
-                const focused =
-                  hoveredIndex !== null
-                    ? calculateInstantFlowMatrix(
-                        processedHistoryData,
-                        hoveredIndex,
-                      )
+                // 30D: the Sankey is REAL per-day energy from flow_1d — sum the window's days when
+                // nothing is hovered, or pick the hovered day's matrix (kWh either way). Sub-daily
+                // (1D/7D) shows the instantaneous-POWER (kW) snapshot on hover, else the window
+                // matrix via selectFlowMatrix. `focused` drives the kW/kWh label below.
+                let matrix;
+                let focused = false;
+                if (period === "30D" && pgDaily && pgDaily.days.length > 0) {
+                  const hoveredYMD = focusedTime
+                    ? toLocalYMD(focusedTime.toISOString())
                     : null;
-                const matrix =
-                  focused ??
-                  selectFlowMatrix({
-                    processed: processedHistoryData,
-                    pgFlowMatrix,
-                    serveFlowFromPg,
-                    period,
-                  });
+                  const dayMatrix = hoveredYMD
+                    ? pickDailyFlowMatrix(pgDaily, hoveredYMD)
+                    : null;
+                  focused = dayMatrix !== null;
+                  matrix = dayMatrix ?? sumDailyFlowMatrices(pgDaily);
+                } else {
+                  const instant =
+                    period !== "30D" && hoveredIndex !== null
+                      ? calculateInstantFlowMatrix(
+                          processedHistoryData,
+                          hoveredIndex,
+                        )
+                      : null;
+                  focused = instant !== null;
+                  matrix = instant ?? selectFlowMatrix(processedHistoryData);
+                }
                 if (!matrix) return null;
                 const unit = focused && period !== "30D" ? "kW" : "kWh";
                 const tz = system?.timezoneOffsetMin;

@@ -25,14 +25,12 @@ interface CompositionDashboardClientProps {
   canEdit: boolean;
   /** Read-only shared view: referenced Areas resolved server-side (no authed areas fetch). */
   sharedAreas?: ReadableArea[];
-  serveFlowFromPg?: boolean;
 }
 
 export default function CompositionDashboardClient({
   dashboard,
   canEdit,
   sharedAreas,
-  serveFlowFromPg = false,
 }: CompositionDashboardClientProps) {
   const router = useRouter();
   const [renameOpen, setRenameOpen] = useState(false);
@@ -113,7 +111,6 @@ export default function CompositionDashboardClient({
         <CompositionDashboard
           descriptor={dashboard.descriptor}
           areaById={areaById}
-          serveFlowFromPg={serveFlowFromPg}
         />
       </main>
 

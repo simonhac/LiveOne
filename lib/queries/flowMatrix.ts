@@ -2,7 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { fetchJson } from "./fetcher";
 import { queryKeys, type SystemIdLike } from "./keys";
 import { DAILY_STALE, SETTLED_STALE } from "./freshness";
-import type { EnergyFlowMatrix } from "@/lib/energy-flow-matrix";
+import type { DailyFlowMatrices } from "@/lib/energy-flow-matrix";
 
 export interface FlowMatrixQueryParams {
   systemId: SystemIdLike;
@@ -14,8 +14,9 @@ export interface FlowMatrixQueryParams {
 }
 
 /**
- * Long-range (30D) Sankey from `/api/energy-flow-matrix` (PG `flow_1d`). A window of fully-past
- * days is immutable; a window that includes today still accrues, so poll it slowly.
+ * Long-range (30D) Sankey from `/api/energy-flow-matrix` (PG `flow_1d`) — RAW per-day matrices the
+ * client reduces (sum for the window, pick one day for the hover). A window of fully-past days is
+ * immutable; a window that includes today still accrues, so poll it slowly.
  */
 export function flowMatrixQuery(p: FlowMatrixQueryParams) {
   const offsetMin = p.timezoneOffsetMin ?? 600;
@@ -24,10 +25,10 @@ export function flowMatrixQuery(p: FlowMatrixQueryParams) {
     .slice(0, 10);
   const includesToday = p.endYMD >= todayLocalYMD;
 
-  return queryOptions<EnergyFlowMatrix>({
+  return queryOptions<DailyFlowMatrices>({
     queryKey: queryKeys.flowMatrix(p.systemId, p.startYMD, p.endYMD),
     queryFn: () =>
-      fetchJson<EnergyFlowMatrix>(
+      fetchJson<DailyFlowMatrices>(
         `/api/energy-flow-matrix?systemId=${p.systemId}&start=${p.startYMD}&end=${p.endYMD}`,
       ),
     staleTime: includesToday ? DAILY_STALE : SETTLED_STALE,

@@ -40,6 +40,62 @@ export interface EnergyFlowMatrix {
   totalEnergy: number; // Grand total
 }
 
+/** One day's raw energy matrix, aligned to the shared {@link DailyFlowMatrices} node order. */
+export interface DailyFlowMatrix {
+  day: string; // system-local YYYY-MM-DD
+  matrix: number[][]; // [sourceIdx][loadIdx] = that day's energy (kWh)
+}
+
+/**
+ * The 30D Sankey payload: per-day energy matrices from `point_readings_flow_1d`, served RAW (not
+ * pre-summed). The node arrays are the union across the window so every day's matrix shares one
+ * index order — the client sums them for the window view ({@link sumDailyFlowMatrices}) or picks
+ * one day for the hovered view ({@link pickDailyFlowMatrix}).
+ */
+export interface DailyFlowMatrices {
+  sources: EnergyFlowNode[];
+  loads: EnergyFlowNode[];
+  days: DailyFlowMatrix[];
+  reason?: string; // why the result is empty (e.g. "not-materialized"), for the blank-Sankey copy
+}
+
+/** Build an {@link EnergyFlowMatrix} (with totals) from shared nodes + a dense [src][load] matrix. */
+function matrixWithTotals(
+  sources: EnergyFlowNode[],
+  loads: EnergyFlowNode[],
+  matrix: number[][],
+): EnergyFlowMatrix {
+  const sourceTotals = matrix.map((row) => row.reduce((sum, v) => sum + v, 0));
+  const loadTotals = loads.map((_, l) =>
+    matrix.reduce((sum, row) => sum + (row[l] ?? 0), 0),
+  );
+  const totalEnergy = sourceTotals.reduce((sum, v) => sum + v, 0);
+  return { sources, loads, matrix, sourceTotals, loadTotals, totalEnergy };
+}
+
+/** Sum every day in the window into one energy matrix (the un-hovered 30D Sankey). */
+export function sumDailyFlowMatrices(
+  d: DailyFlowMatrices,
+): EnergyFlowMatrix | null {
+  if (d.days.length === 0) return null;
+  const summed = d.sources.map((_, s) =>
+    d.loads.map((_, l) =>
+      d.days.reduce((sum, day) => sum + (day.matrix[s]?.[l] ?? 0), 0),
+    ),
+  );
+  return matrixWithTotals(d.sources, d.loads, summed);
+}
+
+/** That single day's energy matrix (the hovered 30D Sankey), or null if the day isn't in range. */
+export function pickDailyFlowMatrix(
+  d: DailyFlowMatrices,
+  ymd: string,
+): EnergyFlowMatrix | null {
+  const day = d.days.find((x) => x.day === ymd);
+  if (!day) return null;
+  return matrixWithTotals(d.sources, d.loads, day.matrix);
+}
+
 /** Node metadata + pure power/energy series ready for the flow-matrix core, plus the shared timestamps. */
 interface PreparedFlowInputs {
   sources: EnergyFlowNode[];
@@ -202,11 +258,12 @@ export function calculateEnergyFlowMatrix(
 }
 
 /**
- * Flow matrix for a SINGLE focused sample (the hovered point), instead of the whole-window total.
- * Reuses the same node preparation as {@link calculateEnergyFlowMatrix}, then snapshots the flow at
- * `index` via {@link computeInstantFlowMatrix}. Values carry the series' own unit at that sample —
- * POWER (kW) for the 5m/30m charts, that day's ENERGY (kWh) for the 1d (30D) chart. Returns null
- * when there's no complete flow or the index is out of range.
+ * Flow matrix for a SINGLE focused sample (the hovered point) on the SUB-DAILY (1D/7D) charts —
+ * the instantaneous POWER (kW) at that 5m/30m sample. Reuses the same node preparation as
+ * {@link calculateEnergyFlowMatrix}, then snapshots the flow at `index` via
+ * {@link computeInstantFlowMatrix}. Returns null when there's no complete flow or the index is out
+ * of range. The 30D hover instead indexes a real per-day energy matrix from `flow_1d` (see
+ * {@link pickDailyFlowMatrix}); it does NOT use this power snapshot.
  */
 export function calculateInstantFlowMatrix(
   data: ProcessedSiteData,
@@ -233,25 +290,20 @@ export function calculateInstantFlowMatrix(
 }
 
 /**
- * Pick the energy-flow matrix for a sankey from the available sources, in priority order:
- *   1. the materialized PG flow_1d matrix (30D only, when FLOW_MATRIX_SERVE_FROM_PG is on),
- *   2. the history response's bundled matrix (1D/7D),
- *   3. compute it client-side from generation + load.
+ * Pick the window energy-flow matrix for a sankey from the NON-flow_1d sources: the history
+ * response's bundled matrix (1D/7D), else computed client-side from generation + load. The 30D
+ * Sankey is served from the per-day flow_1d matrices instead (see {@link sumDailyFlowMatrices} /
+ * {@link pickDailyFlowMatrix}); this is its fallback when those aren't materialized.
  * Returns null when there is no complete flow to diagram (missing generation OR load) — the data-driven
  * gate for "this area has loads + sources". Extracted so every sankey site shares one precedence.
  */
-export function selectFlowMatrix(opts: {
-  processed: ProcessedSiteData;
-  pgFlowMatrix: EnergyFlowMatrix | null;
-  serveFlowFromPg: boolean;
-  period: "1D" | "7D" | "30D";
-}): EnergyFlowMatrix | null {
-  const { generation, load, flowMatrix } = opts.processed;
+export function selectFlowMatrix(
+  processed: ProcessedSiteData,
+): EnergyFlowMatrix | null {
+  const { generation, load, flowMatrix } = processed;
   if (!generation || !load) return null;
-  const usePg = opts.serveFlowFromPg && opts.period === "30D";
-  if (usePg && opts.pgFlowMatrix) return opts.pgFlowMatrix;
   if (flowMatrix) return flowMatrix;
-  return calculateEnergyFlowMatrix(opts.processed);
+  return calculateEnergyFlowMatrix(processed);
 }
 
 /**
