@@ -67,7 +67,6 @@ export async function ensureIdentityArea(
     await db.insert(areas).values({
       id: areaId,
       ownerClerkUserId: system.ownerClerkUserId,
-      kind: "identity",
       sourceSystemId: system.id,
       legacySystemId: system.id,
       displayName: system.displayName,
