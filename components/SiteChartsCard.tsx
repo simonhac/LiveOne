@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useRouter, useSearchParams } from "next/navigation";
 import { useModalContext } from "@/contexts/ModalContext";
 import { siteDataQuery, flowMatrixQuery } from "@/lib/queries";
 import { type ChartData } from "@/lib/charts/types";
@@ -11,17 +10,12 @@ import EnergyTable from "@/components/EnergyTable";
 import type { ProcessedSiteData } from "@/lib/site-data-processor";
 import EnergyFlowSankey from "@/components/EnergyFlowSankey";
 import { selectFlowMatrix } from "@/lib/energy-flow-matrix";
-import PeriodSwitcher from "@/components/PeriodSwitcher";
+import TemporalNavigator from "@/components/TemporalNavigator";
+import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { formatDateTimeRange } from "@/lib/fe-date-format";
 import { fromUnixTimestamp } from "@/lib/date-utils";
-import {
-  encodeUrlDate,
-  decodeUrlDate,
-  encodeUrlOffset,
-  decodeUrlOffset,
-} from "@/lib/url-date";
 import { format } from "date-fns";
-import { CalendarX2, ChevronLeft, ChevronRight } from "lucide-react";
+import { CalendarX2 } from "lucide-react";
 
 interface SiteChartsCardProps {
   systemId: string;
@@ -44,20 +38,6 @@ interface SiteChartsCardProps {
    */
   onHistoryEmptyChange?: (empty: boolean) => void;
 }
-
-// Helper function to get period duration in milliseconds
-const getPeriodDuration = (period: "1D" | "7D" | "30D"): number => {
-  if (period === "1D") return 24 * 60 * 60 * 1000;
-  if (period === "7D") return 7 * 24 * 60 * 60 * 1000;
-  return 30 * 24 * 60 * 60 * 1000;
-};
-
-// Helper function to get data interval in minutes for a given period
-const getPeriodIntervalMinutes = (period: "1D" | "7D" | "30D"): number => {
-  if (period === "1D") return 5;
-  if (period === "7D") return 30;
-  return 24 * 60; // 1 day
-};
 
 interface StackedChartProps {
   mode: "load" | "generation";
@@ -283,97 +263,14 @@ export default function SiteChartsCard({
   cardVisible,
   onHistoryEmptyChange,
 }: SiteChartsCardProps) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-
   // Get modal context to pause polling when modals are open
   const { isAnyModalOpen } = useModalContext();
 
-  const [sitePeriod, setSitePeriod] = useState<"1D" | "7D" | "30D">(() => {
-    // Initialize from URL params if present, otherwise default to "1D"
-    const periodParam = searchParams.get("period");
-    if (periodParam === "1D" || periodParam === "7D" || periodParam === "30D") {
-      return periodParam;
-    }
-    return "1D";
+  // Shared temporal-navigator state (period + historical window) read from the URL — one source of
+  // truth shared with the line chart and every navigator instance on the page.
+  const { period, start, end } = useTemporalRange({
+    timezoneOffsetMin: system?.timezoneOffsetMin ?? 600,
   });
-  const [historyTimeRange, setHistoryTimeRange] = useState<{
-    start?: string;
-    end?: string;
-  }>(() => {
-    // Initialize from URL params if present
-    const startEncoded = searchParams.get("start");
-    const endEncoded = searchParams.get("end");
-    const offsetEncoded = searchParams.get("offset");
-    const periodParam = searchParams.get("period");
-
-    if (!periodParam) {
-      return {};
-    }
-
-    const period =
-      periodParam === "1D" || periodParam === "7D" || periodParam === "30D"
-        ? periodParam
-        : "1D";
-
-    // For 30D (day-based), use offset=0 (no timezone conversion)
-    // For other periods, offset is required
-    const offsetMin =
-      period === "30D"
-        ? 0
-        : offsetEncoded
-          ? decodeUrlOffset(offsetEncoded)
-          : null;
-
-    if (offsetMin === null) {
-      return {}; // offset is required for non-day-based periods
-    }
-
-    const periodDuration = getPeriodDuration(period);
-
-    // Case 1: Both start and end provided
-    if (startEncoded && endEncoded) {
-      const start = decodeUrlDate(startEncoded, offsetMin);
-      const end = decodeUrlDate(endEncoded, offsetMin);
-
-      // Validate that start + period == end
-      const expectedEnd = new Date(new Date(start).getTime() + periodDuration);
-      const actualEnd = new Date(end);
-
-      if (expectedEnd.getTime() !== actualEnd.getTime()) {
-        console.error("URL parameters don't agree: start + period != end");
-        // Fall back to using start + period
-        return {
-          start,
-          end: expectedEnd.toISOString(),
-        };
-      }
-
-      return { start, end };
-    }
-
-    // Case 2: Only start provided - calculate end
-    if (startEncoded) {
-      const start = decodeUrlDate(startEncoded, offsetMin);
-      const end = new Date(new Date(start).getTime() + periodDuration);
-      return { start, end: end.toISOString() };
-    }
-
-    // Case 3: Only end provided - calculate start
-    if (endEncoded) {
-      const end = decodeUrlDate(endEncoded, offsetMin);
-      const start = new Date(new Date(end).getTime() - periodDuration);
-      return { start: start.toISOString(), end };
-    }
-
-    return {};
-  });
-
-  // Derive whether we're in historical navigation mode (vs live mode)
-  const isHistoricalMode = useMemo(
-    () => !!(historyTimeRange.start || historyTimeRange.end),
-    [historyTimeRange],
-  );
 
   const [loadChartData, setLoadChartData] = useState<ChartData | null>(null);
   const [generationChartData, setGenerationChartData] =
@@ -402,13 +299,12 @@ export default function SiteChartsCard({
     data: siteData,
     isLoading: historyLoading,
     isFetching: historyFetching,
-    isPlaceholderData,
   } = useQuery(
     siteDataQuery({
       systemId: systemId ?? "",
-      period: sitePeriod,
-      start: historyTimeRange.start,
-      end: historyTimeRange.end,
+      period,
+      start,
+      end,
       timezoneOffsetMin: system?.timezoneOffsetMin ?? 0,
       paused: isAnyModalOpen,
       enabled: runSiteQuery && !!systemId,
@@ -443,25 +339,6 @@ export default function SiteChartsCard({
     }
   }, [siteData]);
 
-  // In historical mode, normalize the window to the server-aligned request window so prev/next
-  // navigation steps from the actual fetched range. Guarded by equality so it converges.
-  //
-  // Skip while `isPlaceholderData` — during a navigation refetch React Query keeps the PREVIOUS
-  // window's data on screen (see siteDataQuery's placeholderData), whose requestStart/End belong
-  // to the old window. Snapping to those would revert a just-issued prev/next step. That was the
-  // "first click does nothing" bug: the first Older click flips isHistoricalMode false→true, which
-  // re-ran this effect against the stale live placeholder and reset the range back to live.
-  useEffect(() => {
-    if (!siteData || !isHistoricalMode || isPlaceholderData) return;
-    const { requestStart, requestEnd } = siteData;
-    if (!requestStart || !requestEnd) return;
-    setHistoryTimeRange((prev) =>
-      prev.start === requestStart && prev.end === requestEnd
-        ? prev
-        : { start: requestStart, end: requestEnd },
-    );
-  }, [siteData, isHistoricalMode, isPlaceholderData]);
-
   // Long-range Sankey from Postgres (point_readings_flow_1d), gated by FLOW_MATRIX_SERVE_FROM_PG.
   // 30D only; a dependent query keyed on the site fetch's request window. When disabled / not yet
   // loaded / errored, pgFlowMatrix stays null and the render falls back to the client-side calc.
@@ -472,7 +349,7 @@ export default function SiteChartsCard({
       .slice(0, 10);
   const flowEnabled =
     serveFlowFromPg &&
-    sitePeriod === "30D" &&
+    period === "30D" &&
     !!systemId &&
     !!processedHistoryData.requestStart &&
     !!processedHistoryData.requestEnd;
@@ -491,161 +368,8 @@ export default function SiteChartsCard({
   );
   const pgFlowMatrix = flowEnabled ? (pgFlowMatrixData ?? null) : null;
 
-  // Ensure period is always in the URL
-  useEffect(() => {
-    const periodParam = searchParams.get("period");
-    if (!periodParam) {
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("period", sitePeriod);
-      router.push(`?${params.toString()}`, { scroll: false });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run only on mount - intentionally ignoring dependencies
-
-  // Navigation handlers for prev/next buttons
-  const handlePageNewer = useCallback(() => {
-    if (historyTimeRange.start && historyTimeRange.end && system) {
-      // Go forward in time by one period
-      const currentStart = new Date(historyTimeRange.start);
-      const currentEnd = new Date(historyTimeRange.end);
-      const duration = currentEnd.getTime() - currentStart.getTime();
-
-      const newStart = new Date(currentEnd.getTime());
-      const newEnd = new Date(currentEnd.getTime() + duration);
-
-      // Check if the new end would be past current time or very close to it
-      // If we're within one interval of "now", revert to live mode
-      const now = new Date();
-      const intervalMs = getPeriodIntervalMinutes(sitePeriod) * 60 * 1000;
-      if (newEnd.getTime() > now.getTime() - intervalMs) {
-        // Revert to live mode - clear start/end/offset from URL
-        setHistoryTimeRange({});
-
-        const params = new URLSearchParams(searchParams.toString());
-        params.delete("start");
-        params.delete("end");
-        params.delete("offset");
-        router.push(`?${params.toString()}`, { scroll: false });
-        return;
-      }
-
-      const newStartISO = newStart.toISOString();
-      const newEndISO = newEnd.toISOString();
-
-      setHistoryTimeRange({
-        start: newStartISO,
-        end: newEndISO,
-      });
-
-      // Update URL with only start (period is already in URL, end can be calculated)
-      const offsetMin = system.timezoneOffsetMin ?? 600;
-      const params = new URLSearchParams(searchParams.toString());
-      const isDateOnly = sitePeriod === "30D";
-      params.set("start", encodeUrlDate(newStartISO, offsetMin, isDateOnly));
-      params.delete("end"); // Remove end - it's redundant with start + period
-      // Only include offset for time-based periods (1D, 7D)
-      if (isDateOnly) {
-        params.delete("offset");
-      } else {
-        params.set("offset", encodeUrlOffset(offsetMin));
-      }
-      router.push(`?${params.toString()}`, { scroll: false });
-    }
-  }, [historyTimeRange, system, sitePeriod, searchParams, router]);
-
-  const handlePageOlder = useCallback(() => {
-    if (!system) return;
-
-    let currentStart: Date;
-    let currentEnd: Date;
-
-    if (isHistoricalMode && historyTimeRange.start && historyTimeRange.end) {
-      // Already in historical mode - go back from current position
-      currentStart = new Date(historyTimeRange.start);
-      currentEnd = new Date(historyTimeRange.end);
-    } else {
-      // In live mode - go back one period from now (rounded to interval boundary)
-      const intervalMinutes = getPeriodIntervalMinutes(sitePeriod);
-
-      // Round current time down to nearest interval boundary
-      const now = new Date();
-      const roundedNow = new Date(now);
-      const minutes = now.getMinutes();
-      const roundedMinutes =
-        Math.floor(minutes / intervalMinutes) * intervalMinutes;
-      roundedNow.setMinutes(roundedMinutes, 0, 0); // Set seconds and ms to 0
-
-      const duration = getPeriodDuration(sitePeriod);
-      currentEnd = roundedNow;
-      currentStart = new Date(roundedNow.getTime() - duration);
-    }
-
-    const duration = currentEnd.getTime() - currentStart.getTime();
-    const newEnd = new Date(currentStart.getTime());
-    const newStart = new Date(currentStart.getTime() - duration);
-
-    const newStartISO = newStart.toISOString();
-    const newEndISO = newEnd.toISOString();
-
-    setHistoryTimeRange({
-      start: newStartISO,
-      end: newEndISO,
-    });
-
-    // Update URL with only start (period is already in URL, end can be calculated)
-    const offsetMin = system.timezoneOffsetMin ?? 600;
-    const params = new URLSearchParams(searchParams.toString());
-    const isDateOnly = sitePeriod === "30D";
-    params.set("start", encodeUrlDate(newStartISO, offsetMin, isDateOnly));
-    params.delete("end"); // Remove end - it's redundant with start + period
-    if (isDateOnly) {
-      params.delete("offset"); // No offset for day-based periods
-    } else {
-      params.set("offset", encodeUrlOffset(offsetMin));
-    }
-    router.push(`?${params.toString()}`, { scroll: false });
-  }, [
-    system,
-    isHistoricalMode,
-    historyTimeRange,
-    sitePeriod,
-    searchParams,
-    router,
-  ]);
-
-  // Keyboard navigation for prev/next buttons
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Only handle arrow keys when not typing in an input
-      const target = e.target as HTMLElement;
-      if (
-        target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable
-      ) {
-        return;
-      }
-
-      if (e.key === "ArrowLeft") {
-        // Left arrow = Previous/Older
-        if (!historyLoading) {
-          e.preventDefault();
-          e.stopPropagation();
-          handlePageOlder();
-        }
-      } else if (e.key === "ArrowRight") {
-        // Right arrow = Next/Newer
-        if (isHistoricalMode && !historyLoading) {
-          e.preventDefault();
-          e.stopPropagation();
-          handlePageNewer();
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [historyLoading, isHistoricalMode, handlePageOlder, handlePageNewer]);
+  // Prev/next navigation + keyboard handling now live in the shared TemporalNavigator (driven by the
+  // URL via useTemporalRange) — rendered in this card's header below.
 
   // Hover handlers that track which chart is active on touch devices
   const handleLoadHoverIndexChange = useCallback(
@@ -777,6 +501,22 @@ export default function SiteChartsCard({
     }
   };
 
+  // Hovered timestamp shown in this card's navigator label (kept local to this card's shared hover
+  // index across the load + generation charts; null ⇒ the navigator shows the window range).
+  const navHoverLabel =
+    hoveredIndex !== null && (loadChartData || generationChartData)
+      ? format(
+          loadChartData?.timestamps[hoveredIndex] ||
+            generationChartData?.timestamps[hoveredIndex] ||
+            new Date(),
+          period === "1D"
+            ? "h:mma"
+            : period === "7D"
+              ? "EEE, d MMM h:mma"
+              : "EEE, d MMM",
+        )
+      : null;
+
   return (
     <>
       {/* Charts - For mondo/composite systems, show charts with tables in single container */}
@@ -795,170 +535,11 @@ export default function SiteChartsCard({
           >
             {/* Shared header with date/time and period switcher */}
             <div className="px-2 sm:px-4 pt-2 sm:pt-4 pb-1 sm:pb-2">
-              <div className="flex justify-end items-center">
-                <div className="flex items-center gap-2 sm:gap-4">
-                  <span
-                    className="text-xs sm:text-sm text-gray-400"
-                    style={{
-                      fontFamily: "DM Sans, system-ui, sans-serif",
-                    }}
-                  >
-                    {hoveredIndex !== null &&
-                    (loadChartData || generationChartData)
-                      ? // Show hovered timestamp from whichever chart has data - always show time when hovering
-                        format(
-                          loadChartData?.timestamps[hoveredIndex] ||
-                            generationChartData?.timestamps[hoveredIndex] ||
-                            new Date(),
-                          sitePeriod === "1D"
-                            ? "h:mma"
-                            : sitePeriod === "7D"
-                              ? "EEE, d MMM h:mma"
-                              : "EEE, d MMM",
-                        )
-                      : // Show date range from actual chart data when not hovering
-                        (() => {
-                          const chartData =
-                            loadChartData || generationChartData;
-                          // Get timezone offset from API data or system prop
-                          const timezoneOffset = system?.timezoneOffsetMin;
-                          if (!timezoneOffset) {
-                            return "Loading..."; // No timezone data yet
-                          }
-                          if (chartData && chartData.timestamps.length > 0) {
-                            const start = fromUnixTimestamp(
-                              chartData.timestamps[0].getTime() / 1000,
-                              timezoneOffset,
-                            );
-                            const end = fromUnixTimestamp(
-                              chartData.timestamps[
-                                chartData.timestamps.length - 1
-                              ].getTime() / 1000,
-                              timezoneOffset,
-                            );
-                            return (
-                              <>
-                                <span className="hidden sm:inline">
-                                  {formatDateTimeRange(
-                                    start,
-                                    end,
-                                    sitePeriod !== "30D",
-                                  )}
-                                </span>
-                                <span className="sm:hidden">
-                                  {formatDateTimeRange(start, end, false)}
-                                </span>
-                              </>
-                            );
-                          } else {
-                            // Fallback to calculated range if no data yet
-                            // Use historyTimeRange if in historical mode, otherwise use current time
-                            if (
-                              isHistoricalMode &&
-                              historyTimeRange.start &&
-                              historyTimeRange.end
-                            ) {
-                              // Use the requested historical time range
-                              const start = fromUnixTimestamp(
-                                new Date(historyTimeRange.start).getTime() /
-                                  1000,
-                                timezoneOffset,
-                              );
-                              const end = fromUnixTimestamp(
-                                new Date(historyTimeRange.end).getTime() / 1000,
-                                timezoneOffset,
-                              );
-                              return (
-                                <>
-                                  <span className="hidden sm:inline">
-                                    {formatDateTimeRange(
-                                      start,
-                                      end,
-                                      sitePeriod !== "30D",
-                                    )}
-                                  </span>
-                                  <span className="sm:hidden">
-                                    {formatDateTimeRange(start, end, false)}
-                                  </span>
-                                </>
-                              );
-                            } else {
-                              // Fallback to current time if not in historical mode
-                              const now = new Date();
-                              let windowHours: number;
-                              if (sitePeriod === "1D") windowHours = 24;
-                              else if (sitePeriod === "7D")
-                                windowHours = 24 * 7;
-                              else windowHours = 24 * 30;
-                              const windowStart = new Date(
-                                now.getTime() - windowHours * 60 * 60 * 1000,
-                              );
-                              const start = fromUnixTimestamp(
-                                windowStart.getTime() / 1000,
-                                timezoneOffset,
-                              );
-                              const end = fromUnixTimestamp(
-                                now.getTime() / 1000,
-                                timezoneOffset,
-                              );
-                              return (
-                                <>
-                                  <span className="hidden sm:inline">
-                                    {formatDateTimeRange(
-                                      start,
-                                      end,
-                                      sitePeriod !== "30D",
-                                    )}
-                                  </span>
-                                  <span className="sm:hidden">
-                                    {formatDateTimeRange(start, end, false)}
-                                  </span>
-                                </>
-                              );
-                            }
-                          }
-                        })()}
-                  </span>
-                  {/* Prev/Next navigation buttons */}
-                  <div
-                    className="inline-flex rounded-md shadow-sm"
-                    role="group"
-                  >
-                    <button
-                      onClick={handlePageOlder}
-                      className="px-2 py-1 text-sm font-medium border rounded-l-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white transition-none"
-                      title="Older (Previous)"
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={handlePageNewer}
-                      disabled={!isHistoricalMode}
-                      className="px-2 py-1 text-sm font-medium border-l-0 border rounded-r-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-none"
-                      title="Newer (Next)"
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
-                  </div>
-                  <PeriodSwitcher
-                    value={sitePeriod}
-                    onChange={(newPeriod) => {
-                      setSitePeriod(newPeriod);
-                      setHistoryTimeRange({}); // Reset to current when period changes
-                      const params = new URLSearchParams(
-                        searchParams.toString(),
-                      );
-                      params.set("period", newPeriod);
-                      params.delete("start");
-                      params.delete("end");
-                      params.delete("offset");
-                      router.push(`?${params.toString()}`, {
-                        scroll: false,
-                      });
-                    }}
-                  />
-                </div>
-              </div>
+              <TemporalNavigator
+                timezoneOffsetMin={system?.timezoneOffsetMin ?? 600}
+                hoverLabel={navHoverLabel}
+                loading={historyLoading}
+              />
             </div>
 
             {/* Loads Chart with Table */}
@@ -969,7 +550,7 @@ export default function SiteChartsCard({
                     <StackedChart
                       mode="load"
                       className="h-full min-h-[375px]"
-                      period={sitePeriod}
+                      period={period}
                       onHoverIndexChange={handleLoadHoverIndexChange}
                       hoveredIndex={hoveredIndex}
                       visibleSeries={
@@ -1007,7 +588,7 @@ export default function SiteChartsCard({
                     <StackedChart
                       mode="generation"
                       className="h-full min-h-[375px]"
-                      period={sitePeriod}
+                      period={period}
                       onHoverIndexChange={handleGenerationHoverIndexChange}
                       hoveredIndex={hoveredIndex}
                       visibleSeries={
@@ -1048,7 +629,7 @@ export default function SiteChartsCard({
                   processed: processedHistoryData,
                   pgFlowMatrix,
                   serveFlowFromPg,
-                  period: sitePeriod,
+                  period,
                 });
                 if (!matrix) return null;
                 // The window the sankey integrates over: a TIME range for 1D/7D, a DATE range for 30D.
@@ -1067,7 +648,7 @@ export default function SiteChartsCard({
                             1000,
                           tz,
                         ),
-                        sitePeriod !== "30D",
+                        period !== "30D",
                       )
                     : null;
                 return (

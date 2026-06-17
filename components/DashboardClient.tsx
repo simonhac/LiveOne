@@ -623,6 +623,7 @@ export default function DashboardClient({
                 <LinesChartCard
                   systemId={parseInt(systemId as string)}
                   className="h-full min-h-[400px]"
+                  timezoneOffsetMin={system?.timezoneOffsetMin ?? 600}
                   maxPowerHint={(() => {
                     // Parse solar size (format: "9 kW")
                     let solarKW: number | undefined;
