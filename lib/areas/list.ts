@@ -7,7 +7,7 @@
  * `resolveAreasByIds` resolves a specific set of Area uuids to their addressing handle + label,
  * used by the read-only shared view (where the scope is already fixed by the token).
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -16,7 +16,6 @@ export interface ReadableArea {
   /** Area uuid (what a card's `areaId` holds). */
   id: string;
   displayName: string;
-  kind: "identity" | "composite";
   /** The integer addressing handle — the systemId a card binds its data queries to. */
   legacySystemId: number;
   /** The bound system's vendor type — lets the card picker grey out vendor-incompatible card types. */
@@ -36,20 +35,26 @@ export async function listReadableAreas(
     true,
   );
   const systemIds = systems.map((s) => s.id);
-  if (systemIds.length === 0) return [];
   const vendorBySystemId = new Map(systems.map((s) => [s.id, s.vendorType]));
+
+  // Areas a user can read: the identity Areas of every visible system, PLUS Areas they OWN — the
+  // latter catches multi-device ("composite") Areas whose handle is not itself a real system.
+  const accessCond =
+    systemIds.length > 0
+      ? or(
+          eq(areas.ownerClerkUserId, userId),
+          inArray(areas.legacySystemId, systemIds),
+        )
+      : eq(areas.ownerClerkUserId, userId);
 
   const rows = await requirePlanetscaleDb()
     .select({
       id: areas.id,
       displayName: areas.displayName,
-      kind: areas.kind,
       legacySystemId: areas.legacySystemId,
     })
     .from(areas)
-    .where(
-      and(inArray(areas.legacySystemId, systemIds), eq(areas.status, "active")),
-    );
+    .where(and(eq(areas.status, "active"), accessCond));
 
   return rows
     .filter(
@@ -59,9 +64,10 @@ export async function listReadableAreas(
     .map((r) => ({
       id: r.id,
       displayName: r.displayName,
-      kind: r.kind as "identity" | "composite",
       legacySystemId: r.legacySystemId,
-      vendorType: vendorBySystemId.get(r.legacySystemId) ?? "",
+      // Real handle → its vendor type; a multi-device Area handle (no real system) → "area"
+      // (drives the "site"/unified layout via getLayout).
+      vendorType: vendorBySystemId.get(r.legacySystemId) ?? "area",
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
@@ -80,7 +86,6 @@ export async function resolveAreasByIds(
     .select({
       id: areas.id,
       displayName: areas.displayName,
-      kind: areas.kind,
       legacySystemId: areas.legacySystemId,
     })
     .from(areas)
@@ -92,10 +97,9 @@ export async function resolveAreasByIds(
     present.map(async (r) => ({
       id: r.id,
       displayName: r.displayName,
-      kind: r.kind as "identity" | "composite",
       legacySystemId: r.legacySystemId,
       vendorType:
-        (await SystemsManager.getInstance().getSystem(r.legacySystemId))
+        (await SystemsManager.getInstance().getViewableSystem(r.legacySystemId))
           ?.vendorType ?? "",
     })),
   );

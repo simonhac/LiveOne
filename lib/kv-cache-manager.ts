@@ -1,7 +1,7 @@
 import { kv, kvKey } from "./kv";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { LatestValue, LatestValuesMap } from "./latest-values-store";
-import { getAllCompositeBindings } from "@/lib/areas/bindings";
+import { getAreaBindings } from "@/lib/areas/bindings";
 import { getBindinglessAreaMemberPoints } from "@/lib/areas/devices";
 
 // Re-export canonical types for backwards compatibility
@@ -18,17 +18,17 @@ export type LatestPointValue = LatestValue;
 export type LatestPointValues = LatestValuesMap;
 
 /**
- * Subscription registry entry - maps source point to composite points that subscribe to it
+ * Subscription registry entry - maps source point to subscriber points that subscribe to it
  */
 export interface SubscriptionRegistryEntry {
   /**
-   * Map of source point ID to array of composite point references that subscribe to it
+   * Map of source point ID to array of subscriber point references that subscribe to it
    * Key: pointId (e.g., "1" for point with id=1)
-   * Value: array of composite point references (format: "systemId.pointIndex")
+   * Value: array of subscriber point references (format: "systemId.pointIndex")
    *
    * Example: { "1": ["100.0", "101.2"], "2": ["100.1"] }
-   * Means: source point 1 is subscribed to by composite system 100 point 0 and composite system 101 point 2
-   *        source point 2 is subscribed to by composite system 100 point 1
+   * Means: source point 1 is subscribed to by subscriber system 100 point 0 and subscriber system 101 point 2
+   *        source point 2 is subscribed to by subscriber system 100 point 1
    */
   pointSubscribers: Record<string, string[]>;
   lastUpdatedTimeMs: number; // Unix timestamp in milliseconds when registry was last updated
@@ -50,7 +50,7 @@ function getSubscriptionsKey(systemId: number): string {
 
 /**
  * Update the latest value for a point in a system's cache
- * Also updates all composite systems that subscribe to this specific point
+ * Also updates all subscriber systems that subscribe to this specific point
  *
  * @param systemId - Source system ID
  * @param pointId - Source point ID (database id/index)
@@ -93,32 +93,32 @@ export async function updateLatestPointValue(
   const key = getLatestValuesKey(systemId);
   await kv.hset(key, { [pointPath]: pointValue });
 
-  // Look up composite points that subscribe to this specific source point
-  const compositePointRefs = await getPointSubscribers(systemId, pointId);
+  // Look up subscriber points that subscribe to this specific source point
+  const subscriberPointRefs = await getPointSubscribers(systemId, pointId);
 
-  // Update each composite system's cache (only for subscribed points)
-  if (compositePointRefs && compositePointRefs.length > 0) {
-    // Group by composite system ID for efficient batching
+  // Update each subscriber system's cache (only for subscribed points)
+  if (subscriberPointRefs && subscriberPointRefs.length > 0) {
+    // Group by subscriber system ID for efficient batching
     const updatesBySystem = new Map<number, Record<string, LatestValue>>();
 
-    for (const compositePointRef of compositePointRefs) {
-      // Parse composite point reference (e.g., "100.0" → systemId=100, pointIndex=0)
-      const [compositeSystemIdStr] = compositePointRef.split(".");
-      const compositeSystemId = parseInt(compositeSystemIdStr);
+    for (const subscriberPointRef of subscriberPointRefs) {
+      // Parse subscriber point reference (e.g., "100.0" → systemId=100, pointIndex=0)
+      const [subscriberSystemIdStr] = subscriberPointRef.split(".");
+      const subscriberSystemId = parseInt(subscriberSystemIdStr);
 
-      if (!updatesBySystem.has(compositeSystemId)) {
-        updatesBySystem.set(compositeSystemId, {});
+      if (!updatesBySystem.has(subscriberSystemId)) {
+        updatesBySystem.set(subscriberSystemId, {});
       }
 
-      // Add this point's value to the batch for this composite system
-      updatesBySystem.get(compositeSystemId)![pointPath] = pointValue;
+      // Add this point's value to the batch for this subscriber system
+      updatesBySystem.get(subscriberSystemId)![pointPath] = pointValue;
     }
 
-    // Execute batched updates per composite system
+    // Execute batched updates per subscriber system
     const updates = Array.from(updatesBySystem.entries()).map(
-      ([compositeSystemId, pointValues]) => {
-        const compositeKey = getLatestValuesKey(compositeSystemId);
-        return kv.hset(compositeKey, pointValues);
+      ([subscriberSystemId, pointValues]) => {
+        const subscriberKey = getLatestValuesKey(subscriberSystemId);
+        return kv.hset(subscriberKey, pointValues);
       },
     );
 
@@ -146,7 +146,7 @@ export async function getLatestPointValues(
  *
  * @param sourceSystemId - Source system ID
  * @param sourcePointId - Source point ID
- * @returns Array of composite point references (format: "systemId.pointIndex")
+ * @returns Array of subscriber point references (format: "systemId.pointIndex")
  */
 async function getPointSubscribers(
   sourceSystemId: number,
@@ -163,20 +163,20 @@ async function getPointSubscribers(
 }
 
 /**
- * Build the subscription registry for all composite systems
- * This creates a reverse mapping: source point → composite points that subscribe to it
+ * Build the subscription registry for all subscriber systems
+ * This creates a reverse mapping: source point → subscriber points that subscribe to it
  *
  * Should be called:
  * - On application startup
- * - When composite system metadata changes
+ * - When subscriber system metadata changes
  * - Periodically (e.g., daily) as a safety net
  */
-/** Insert one (source point → composite point ref) edge into the reverse-subscription map. */
+/** Insert one (source point → subscriber point ref) edge into the reverse-subscription map. */
 function addSubscription(
   subscriptions: Map<number, Map<string, Set<string>>>,
   sourceSystemId: number,
   sourcePointId: string,
-  compositePointRef: string,
+  subscriberPointRef: string,
 ): void {
   if (!subscriptions.has(sourceSystemId)) {
     subscriptions.set(sourceSystemId, new Map());
@@ -185,25 +185,25 @@ function addSubscription(
   if (!sourceSystemMap.has(sourcePointId)) {
     sourceSystemMap.set(sourcePointId, new Set());
   }
-  sourceSystemMap.get(sourcePointId)!.add(compositePointRef);
+  sourceSystemMap.get(sourcePointId)!.add(subscriberPointRef);
 }
 
 /**
  * Reverse-subscription map (source point → subscribing areas-backed handle). Two sources, unioned:
- * (1) typed `area_bindings` for curated multi-device Areas (every existing composite); (2) the member
+ * (1) typed `area_bindings` for curated multi-device Areas (every existing subscriber); (2) the member
  * devices' own points for **binding-less** multi-device Areas (union-default — empty for today's data,
- * since both prod composites have bindings). Together this is "the area's resolved point set", in SQL.
+ * since both prod subscribers have bindings). Together this is "the area's resolved point set", in SQL.
  */
 async function buildSubscriptionsFromBindings(): Promise<
   Map<number, Map<string, Set<string>>>
 > {
   const subscriptions = new Map<number, Map<string, Set<string>>>();
-  for (const b of await getAllCompositeBindings()) {
+  for (const b of await getAreaBindings()) {
     addSubscription(
       subscriptions,
       b.pointSystemId,
       b.pointId.toString(),
-      `${b.compositeSystemId}.${b.ordinal}`,
+      `${b.handle}.${b.ordinal}`,
     );
   }
   // Binding-less multi-device Areas: fan out each member device's own points to the handle. The ref's
@@ -223,10 +223,10 @@ async function buildSubscriptionsFromBindings(): Promise<
 }
 
 export async function buildSubscriptionRegistry(): Promise<void> {
-  // Build reverse mapping: sourceSystemId → { pointId → [compositePointRefs] }
+  // Build reverse mapping: sourceSystemId → { pointId → [subscriberPointRefs] }
   // Example: { 6: { "1": ["100.0", "101.2"], "2": ["100.1"] } }
-  // Edges come from the typed area_bindings (the authoritative composite role→point mapping). The
-  // compositePointRef's index half is vestigial (updateLatestPointValue keys the composite's latest
+  // Edges come from the typed area_bindings (the authoritative subscriber role→point mapping). The
+  // subscriberPointRef's index half is vestigial (updateLatestPointValue keys the subscriber's latest
   // hash by logicalPath, not by index).
   const subscriptions = await buildSubscriptionsFromBindings();
 
@@ -261,8 +261,8 @@ export async function buildSubscriptionRegistry(): Promise<void> {
 
     // Convert Map<string, Set<string>> to Record<string, string[]>
     const pointSubscribers: Record<string, string[]> = {};
-    for (const [pointId, compositeRefs] of pointMap.entries()) {
-      pointSubscribers[pointId] = Array.from(compositeRefs);
+    for (const [pointId, subscriberRefs] of pointMap.entries()) {
+      pointSubscribers[pointId] = Array.from(subscriberRefs);
     }
 
     const entry: SubscriptionRegistryEntry = {

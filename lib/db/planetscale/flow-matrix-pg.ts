@@ -1,5 +1,5 @@
 /**
- * Postgres-side energy-flow matrix recompute (behind `FLOW_MATRIX_COMPUTE_IN_PG`).
+ * Postgres-side energy-flow matrix recompute (runs in the daily aggregation pass).
  *
  * Materializes the per-local-day directional source→load energy matrix into
  * `point_readings_flow_1d` from PG `point_readings_agg_5m`. Built FROM 5m (signed `avg` per
@@ -23,7 +23,7 @@
  * at the day grain; late/out-of-order 5m corrections heal on the next recompute of the day.
  */
 
-import { and, eq, gte, lte, asc, or } from "drizzle-orm";
+import { and, eq, gte, lte, asc, or, sql } from "drizzle-orm";
 import { CalendarDate } from "@internationalized/date";
 import { planetscaleDb } from "./index";
 import { pointReadingsAgg5m, pointReadingsFlow1d } from "./schema";
@@ -181,6 +181,50 @@ export async function recomputeFlowMatrixForDay(
   });
 
   return { rowsUpserted: flowRows.length };
+}
+
+/**
+ * The earliest *local* day for which this logical system has any 5m data — i.e. the first day a
+ * Sankey could exist. Used to default a full-history recompute to "first data point → yesterday"
+ * instead of a fixed lookback window. Reads `min(interval_end)` across the same point refs the
+ * recompute integrates (may span child systems for a composite) and projects it to the local day
+ * via `timezoneOffsetMin` (same offset-shift convention as the FE's `toLocalYMD`). Returns `null`
+ * when the system has no 5m data at all.
+ */
+export async function getFirstFlowDay(
+  db: PgDb,
+  logicalSystem: LogicalSystem,
+): Promise<CalendarDate | null> {
+  if (logicalSystem.points.length === 0) return null;
+
+  const refConds = logicalSystem.points.map((p) =>
+    and(
+      eq(pointReadingsAgg5m.systemId, p.ref.systemId),
+      eq(pointReadingsAgg5m.pointId, p.ref.pointId),
+    ),
+  );
+  // Pull epoch-ms directly so we never round-trip a Postgres timestamp string (which `new Date`
+  // would parse as local time). `interval_end` is indexed, so this is a cheap min.
+  const [row] = await db
+    .select({
+      firstMs: sql<
+        number | null
+      >`extract(epoch from min(${pointReadingsAgg5m.intervalEnd})) * 1000`,
+    })
+    .from(pointReadingsAgg5m)
+    .where(or(...refConds));
+
+  const firstMs = row?.firstMs == null ? null : Number(row.firstMs);
+  if (firstMs == null || Number.isNaN(firstMs)) return null;
+
+  // Shift the UTC instant by the timezone offset, then read the calendar day (UTC getters on the
+  // shifted instant == local y/m/d), matching `getTodayInTimezone`/`toLocalYMD`.
+  const local = new Date(firstMs + logicalSystem.timezoneOffsetMin * 60_000);
+  return new CalendarDate(
+    local.getUTCFullYear(),
+    local.getUTCMonth() + 1,
+    local.getUTCDate(),
+  );
 }
 
 /**

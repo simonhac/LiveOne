@@ -4,22 +4,22 @@ import { requireDashboardAccess } from "@/lib/api-auth";
 import { parseDateRange } from "@/lib/date-utils";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { pointReadingsFlow1d } from "@/lib/db/planetscale/schema";
-import { toEnergyFlowMatrix } from "@/lib/aggregation/flow-node-meta";
+import { toDailyFlowMatrices } from "@/lib/aggregation/flow-node-meta";
 import { resolveLogicalSystem } from "@/lib/aggregation/logical-system";
 
 /**
  * GET /api/energy-flow-matrix?systemId=&start=&end=
  *
  * Serves the dashboard's long-range (30-day / month / arbitrary) energy-flow Sankey from the
- * materialized `point_readings_flow_1d`, summing the completed local days in [start, end]
- * (`YYYY-MM-DD`, inclusive). `day` is stored as text and sorts chronologically, so a plain
- * range filter + `SUM(energy_kwh) GROUP BY (source_path, load_path)` gives the range matrix —
- * energy is additive across days (see docs/architecture/energy-flow-matrix.md).
+ * materialized `point_readings_flow_1d`, as RAW per-day matrices for the completed local days in
+ * [start, end] (`YYYY-MM-DD`, inclusive) — it does NOT sum here. The client sums the days for the
+ * window view and indexes a single day for the hovered view, so the hovered Sankey shows that day's
+ * real energy (not a power snapshot). `day` is stored as text and sorts chronologically.
  *
  * v1: completed days only — the live partial "today so far" is NOT integrated here. Node
  * labels/colors resolve from the canonical paths via `lib/aggregation/flow-node-meta.ts`, so
- * this matches the browser Sankey by construction. Returns the `EnergyFlowMatrix` shape the
- * `EnergyFlowSankey` component consumes directly.
+ * this matches the browser Sankey by construction. Returns the `DailyFlowMatrices` shape the
+ * client reduces into the `EnergyFlowMatrix` the `EnergyFlowSankey` component consumes.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -77,12 +77,15 @@ export async function GET(request: NextRequest) {
       ? eq(pointReadingsFlow1d.areaId, logicalSystem.areaId)
       : sql`false`;
 
-    // Sum each (source, load) flow over the completed days in range.
+    // Raw per-day (source, load) flows over the completed days in range — NOT summed (the client
+    // sums for the window view, indexes one day for the hovered view). The PK is
+    // (area_id, day, source_path, load_path), so each (day, source, load) appears at most once.
     const rows = await planetscaleDb
       .select({
+        day: pointReadingsFlow1d.day,
         sourcePath: pointReadingsFlow1d.sourcePath,
         loadPath: pointReadingsFlow1d.loadPath,
-        energyKwh: sql<number>`sum(${pointReadingsFlow1d.energyKwh})`,
+        energyKwh: pointReadingsFlow1d.energyKwh,
       })
       .from(pointReadingsFlow1d)
       .where(
@@ -91,8 +94,7 @@ export async function GET(request: NextRequest) {
           gte(pointReadingsFlow1d.day, startDate.toString()),
           lte(pointReadingsFlow1d.day, endDate.toString()),
         ),
-      )
-      .groupBy(pointReadingsFlow1d.sourcePath, pointReadingsFlow1d.loadPath);
+      );
 
     const displayNameByStem = new Map<string, string>();
     for (const p of logicalSystem?.points ?? []) {
@@ -107,34 +109,12 @@ export async function GET(request: NextRequest) {
         !logicalSystem || !logicalSystem.isComplete
           ? "not-a-logical-system"
           : "not-materialized";
-      return NextResponse.json({
-        sources: [],
-        loads: [],
-        matrix: [],
-        sourceTotals: [],
-        loadTotals: [],
-        totalEnergy: 0,
-        reason,
-      });
+      return NextResponse.json({ sources: [], loads: [], days: [], reason });
     }
 
-    // Build the dense (unsorted) summed matrix from the grouped rows; the shared presenter sorts
-    // canonically, resolves node labels/colors, and computes totals — same as the sub-daily path.
-    const sourcePaths = [...new Set(rows.map((r) => r.sourcePath))];
-    const loadPaths = [...new Set(rows.map((r) => r.loadPath))];
-    const sourceIdx = new Map(sourcePaths.map((p, i) => [p, i]));
-    const loadIdx = new Map(loadPaths.map((p, i) => [p, i]));
-    const matrix: number[][] = sourcePaths.map(() =>
-      new Array<number>(loadPaths.length).fill(0),
-    );
-    for (const r of rows) {
-      matrix[sourceIdx.get(r.sourcePath)!][loadIdx.get(r.loadPath)!] =
-        Number(r.energyKwh) || 0;
-    }
-
-    return NextResponse.json(
-      toEnergyFlowMatrix(sourcePaths, loadPaths, matrix, displayNameByStem),
-    );
+    // Reshape into raw per-day matrices over the window's canonical-sorted union of nodes; the
+    // shared helper resolves node labels/colors, same as the sub-daily path.
+    return NextResponse.json(toDailyFlowMatrices(rows, displayNameByStem));
   } catch (error) {
     console.error("[energy-flow-matrix] error:", error);
     return NextResponse.json(

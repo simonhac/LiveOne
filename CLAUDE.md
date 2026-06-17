@@ -173,6 +173,22 @@ curl -H "x-claude: true" http://localhost:3000/api/cron/db-stats
 
 **Note**: The value must be exactly `"true"` (not `"1"` or other truthy values). This header only works in development mode.
 
+**`x-claude` is NOT enough when the Clerk middleware gates the route.** `x-claude` is honored
+inside the route handler (`requireAuth`), but `middleware.ts` runs `auth.protect()` at the edge
+_first_ and rewrites unauthenticated API calls to a 404 (`x-clerk-auth-reason: protect-rewrite`)
+before the handler ever sees the header. So `x-claude` only reaches routes that are public/shareable
+in `lib/route-matchers.ts` (e.g. `/api/cron/*`); anything else (e.g. `POST /api/areas/[areaId]/...`)
+404s. For those, mint a real Clerk session JWT and pass it as a Bearer token — a real session passes
+the middleware:
+
+```bash
+# Requires the target user (simon) to have an active browser session on the dev Clerk instance.
+JWT=$(npx tsx scripts/utils/get-test-token.ts 2>/dev/null | grep -E '^eyJ' | head -1)
+curl -H "Authorization: Bearer $JWT" -X POST http://localhost:3000/api/areas/<areaId>/recompute-flow -d '{...}'
+```
+
+The JWT expires after ~60s — mint it in the same command that uses it.
+
 ## Database Management
 
 ### PostgreSQL (primary)

@@ -46,7 +46,7 @@ jest.mock("@/lib/db/planetscale", () => ({
 jest.mock("@/lib/db/planetscale/schema", () => ({
   systems: { vendorType: "vendorType" },
   pointInfo: { systemId: "systemId", index: "index" },
-  areas: { id: "id", kind: "kind", legacySystemId: "legacySystemId" },
+  areas: { id: "id", legacySystemId: "legacySystemId" },
   areaBindings: {
     areaId: "areaId",
     pointSystemId: "pointSystemId",

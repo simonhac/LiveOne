@@ -86,19 +86,11 @@ export async function PUT(
   if (auth instanceof NextResponse) return auth;
 
   // Resolve the Area to write. A physical system that predates the runtime identity-Area seam may
-  // not have one yet — heal it here. A composite always has its Area (createCompositeArea).
+  // not have one yet — heal it here.
   const existingArea = await getAreaForSystem(systemId);
-  let areaId: string;
-  if (existingArea) {
-    areaId = existingArea.id;
-  } else if (auth.system.vendorType === "composite") {
-    return NextResponse.json(
-      { error: "Composite Area not found" },
-      { status: 500 },
-    );
-  } else {
-    areaId = await ensureIdentityArea(auth.system);
-  }
+  const areaId = existingArea
+    ? existingArea.id
+    : await ensureIdentityArea(auth.system);
 
   const db = requirePlanetscaleDb();
   const [row] = await db

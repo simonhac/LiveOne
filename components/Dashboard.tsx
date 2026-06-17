@@ -65,19 +65,14 @@ function tileKeyV3(t: TileV3, i: number): string {
   return t.id ?? `${t.view}-${t.deviceSystemId ?? "self"}-${i}`;
 }
 
-interface CompositionDashboardProps {
+interface DashboardProps {
   descriptor: DashboardV3;
   /** areaId -> its Area (addressing handle + label). May be empty while the readable-areas fetch is
    *  in flight — sections still render their skeleton layout from the descriptor in the meantime. */
   areaById: Map<string, ReadableArea>;
-  serveFlowFromPg?: boolean;
 }
 
-export default function CompositionDashboard({
-  descriptor,
-  areaById,
-  serveFlowFromPg = false,
-}: CompositionDashboardProps) {
+export default function Dashboard({ descriptor, areaById }: DashboardProps) {
   // Render every section straight from the descriptor — its Area (and so the live data) may not have
   // resolved yet, in which case each card draws a skeleton. We have enough to draw the layout
   // immediately, so there's no "Loading…" gate before the skeletons appear.
@@ -103,7 +98,6 @@ export default function CompositionDashboard({
           section={section}
           area={areaById.get(section.areaId)}
           showHeader={showHeaders}
-          serveFlowFromPg={serveFlowFromPg}
         />
       ))}
     </div>
@@ -115,13 +109,11 @@ function AreaSectionView({
   section,
   area,
   showHeader,
-  serveFlowFromPg,
 }: {
   section: AreaSectionV3;
   /** Undefined while the readable-areas fetch is in flight → the cards draw skeletons. */
   area?: ReadableArea;
   showHeader: boolean;
-  serveFlowFromPg: boolean;
 }) {
   const handle = area?.legacySystemId;
   const visible = section.cards.filter((c) => !c.hidden);
@@ -150,12 +142,7 @@ function AreaSectionView({
       if (chartsEmitted) return null;
       chartsEmitted = true;
       return handle != null ? (
-        <AreaSiteCharts
-          key="site-charts"
-          systemId={handle}
-          keys={chartKeys}
-          serveFlowFromPg={serveFlowFromPg}
-        />
+        <AreaSiteCharts key="site-charts" systemId={handle} keys={chartKeys} />
       ) : (
         <ChartSkeleton key="site-charts" />
       );
@@ -189,7 +176,7 @@ function AreaSectionView({
         );
       case "generator-runs":
         return handle != null ? (
-          <GeneratorRunsCard key={cardKeyV3(card, i)} systemId={handle} />
+          <AreaGeneratorRuns key={cardKeyV3(card, i)} systemId={handle} />
         ) : (
           <ChartSkeleton key={cardKeyV3(card, i)} />
         );
@@ -333,11 +320,9 @@ function TileCell({
 function AreaSiteCharts({
   systemId,
   keys,
-  serveFlowFromPg,
 }: {
   systemId: number;
   keys: Set<string>;
-  serveFlowFromPg: boolean;
 }) {
   const { isAnyModalOpen } = useModalContext();
   const { data } = useQuery(
@@ -362,7 +347,6 @@ function AreaSiteCharts({
     <SiteChartsCard
       systemId={String(systemId)}
       system={system}
-      serveFlowFromPg={serveFlowFromPg}
       siteCapable={siteCapable}
       cardVisible={(k) => keys.has(k)}
     />
@@ -375,6 +359,25 @@ function AreaSiteCharts({
  * Mirrors AreaSiteCharts; React Query dedupes the shared dashboardDataQuery fetch. Holds the layout
  * (skeleton) until the timezone is known.
  */
+/**
+ * The line chart's y-axis scaling hint, derived from the system's nameplate solar/inverter sizing
+ * (`systemInfo.solarSize` "9 kW" / `ratings` "7.5kW, 48V"). Used by the per-device viewer historically;
+ * resolved here so every section's lines chart scales the same. Undefined when no sizing is known.
+ */
+function maxPowerHintFromSystemInfo(systemInfo?: {
+  solarSize?: string;
+  ratings?: string;
+}): number | undefined {
+  const solarMatch = systemInfo?.solarSize?.match(/^(\d+(?:\.\d+)?)\s+kW$/i);
+  const solarKW = solarMatch ? parseFloat(solarMatch[1]) : undefined;
+  const ratingMatch = systemInfo?.ratings?.match(/(\d+(?:\.\d+)?)kW/i);
+  const inverterKW = ratingMatch ? parseFloat(ratingMatch[1]) : undefined;
+  if (solarKW !== undefined && inverterKW !== undefined) {
+    return Math.max(solarKW, inverterKW);
+  }
+  return solarKW ?? inverterKW;
+}
+
 function AreaLinesChart({ systemId }: { systemId: number }) {
   const { isAnyModalOpen } = useModalContext();
   const { data } = useQuery(
@@ -384,13 +387,33 @@ function AreaLinesChart({ systemId }: { systemId: number }) {
   if (tz == null) {
     return <ChartSkeleton />;
   }
+  const systemInfo = (
+    data as { systemInfo?: { solarSize?: string; ratings?: string } } | null
+  )?.systemInfo;
   return (
     <LinesChartCard
       systemId={systemId}
       className="h-full min-h-[360px]"
       timezoneOffsetMin={tz}
+      maxPowerHint={maxPowerHintFromSystemInfo(systemInfo)}
     />
   );
+}
+
+/**
+ * The generator-runs panel for a section — self-fetches the handle's timezone (the runs panel reads
+ * the temporal navigator, which needs it), then renders GeneratorRunsCard. Mirrors AreaLinesChart.
+ */
+function AreaGeneratorRuns({ systemId }: { systemId: number }) {
+  const { isAnyModalOpen } = useModalContext();
+  const { data } = useQuery(
+    dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
+  );
+  const tz = ((data ?? null) as AreaDatum | null)?.system?.timezoneOffsetMin;
+  if (tz == null) {
+    return <ChartSkeleton />;
+  }
+  return <GeneratorRunsCard systemId={systemId} timezoneOffsetMin={tz} />;
 }
 
 function AreaAmberNow({ systemId }: { systemId: number }) {

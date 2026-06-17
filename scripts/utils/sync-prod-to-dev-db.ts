@@ -88,6 +88,19 @@ const FULL: FullTable[] = [
     ],
     excludeCols: ["id"],
   },
+  // Run-tracking config. Upsert by the natural (system_id, role) key and exclude the surrogate
+  // uuid `id` (assigned independently on dev, like area_bindings) — dev keeps its own id, which the
+  // dev run-period recompute (db:recompute-dev-runs, see the workflow) uses for tracker_id. The
+  // run periods themselves are NOT copied here: device_run_periods has a composite PK (can't use
+  // mirror) and its rows shift/merge under recompute, so a copy would orphan stale rows — dev
+  // recomputes them from the synced readings instead.
+  {
+    name: "device_trackers",
+    mode: "full",
+    onConflict: "update",
+    conflictCols: ["system_id", "role"], // device_trackers_system_role_unique
+    excludeCols: ["id"],
+  },
   // Exact by-id mirror (see `mirror`). dashboards has TWO partial unique indexes —
   // (clerk_user_id, system_id) and (clerk_user_id, alias) — and BOTH columns are nullable, so
   // neither is a total non-null ON CONFLICT arbiter. The serial `id` is restore-aligned, so mirror by

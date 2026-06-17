@@ -4,7 +4,8 @@ name: Sync prod → liveone-dev
 # Reads prod with a SELECT-only role; writes only to liveone-dev. Between these runs
 # (and the occasional manual R2 full restore) liveone-dev tracks prod closely enough
 # for local dev + Vercel preview to share it. See scripts/utils/sync-prod-to-dev-db.ts
-# and scripts/utils/rebuild-dev-kv-from-db.ts (the two legs), or docs/sync-prod-to-dev.md.
+# scripts/utils/rebuild-dev-kv-from-db.ts, and recompute-dev-runs-from-db.ts (the legs), or
+# docs/sync-prod-to-dev.md.
 
 on:
   schedule:
@@ -59,6 +60,16 @@ jobs:
           DEV_OWNER_REMAP: ${{ secrets.DEV_OWNER_REMAP }}
           PLANETSCALE_PROD_BRANCH_ID: ${{ secrets.PLANETSCALE_PROD_BRANCH_ID }}
         run: npm run db:reown-dev
+
+      # Crons are off in dev/preview, so the run-period recompute never runs organically and
+      # device_run_periods isn't copied by the sync (composite PK can't mirror; recomputed rows
+      # shift). Rebuild the runs from the readings we just topped up, so the runs panel matches
+      # the chart in dev. Writes only device_run_periods, only to liveone-dev.
+      - name: Recompute dev run periods from liveone-dev
+        env:
+          PLANETSCALE_DATABASE_URL: ${{ secrets.LIVEONE_DEV_DATABASE_URL }}
+          PLANETSCALE_PROD_BRANCH_ID: ${{ secrets.PLANETSCALE_PROD_BRANCH_ID }}
+        run: npm run db:recompute-dev-runs
 
       # Crons are off in dev/preview, so nothing fills the dev: KV namespace organically.
       # Rebuild it from the DB we just topped up, so preview "live" cards stay consistent with

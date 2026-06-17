@@ -1,0 +1,1 @@
+ALTER TABLE "areas" DROP COLUMN "kind";

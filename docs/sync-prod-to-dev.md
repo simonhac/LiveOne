@@ -17,15 +17,20 @@ mechanics live in code (linked below).
 ## What runs, and when
 
 `.github/workflows/sync-prod-to-dev.yml` runs **every 2 hours** (`cron: "20 */2 * * *"`) and on
-**`workflow_dispatch`** (the manual "bring up to date" button). One job, two ordered steps:
+**`workflow_dispatch`** (the manual "bring up to date" button). One job, ordered steps:
 
-| Step       | Script                                    | npm                 | Writes                 |
-| ---------- | ----------------------------------------- | ------------------- | ---------------------- |
-| DB top-up  | `scripts/utils/sync-prod-to-dev-db.ts`    | `db:sync-dev-db`    | `liveone-dev` Postgres |
-| KV rebuild | `scripts/utils/rebuild-dev-kv-from-db.ts` | `db:rebuild-dev-kv` | `dev:` KV namespace    |
+| Step        | Script                                        | npm                     | Writes                 |
+| ----------- | --------------------------------------------- | ----------------------- | ---------------------- |
+| DB top-up   | `scripts/utils/sync-prod-to-dev-db.ts`        | `db:sync-dev-db`        | `liveone-dev` Postgres |
+| Run periods | `scripts/utils/recompute-dev-runs-from-db.ts` | `db:recompute-dev-runs` | `device_run_periods`   |
+| KV rebuild  | `scripts/utils/rebuild-dev-kv-from-db.ts`     | `db:rebuild-dev-kv`     | `dev:` KV namespace    |
 
-The KV rebuild runs **after** the DB sync so it reconstructs KV from the data that was just
-loaded — the two stay consistent. Any step failing trips the `Alert on failure` step
+Both later steps run **after** the DB sync so they reconstruct from the data that was just loaded —
+all three stay consistent. The run-period step exists because dev crons are off (nothing recomputes
+runs organically) and `device_run_periods` can't be copied by the DB sync — it has a composite PK
+(so no `mirror`) and its rows shift/merge under recompute, which a row-copy would orphan. The
+`device_trackers` config table _is_ copied by the DB sync; the runs are then recomputed from the
+synced `point_readings` via the same delete-and-reinsert the prod cron uses. Any step failing trips the `Alert on failure` step
 (`OBSERVATIONS_ALERT_WEBHOOK_URL`).
 
 > The schedule runs from the workflow file on the **default branch** — changing the cron only

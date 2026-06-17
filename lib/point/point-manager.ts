@@ -24,7 +24,7 @@ import { SystemWithPolling, SystemsManager } from "@/lib/systems-manager";
 import { uuidv7 } from "uuidv7";
 import micromatch from "micromatch";
 import { updateLatestPointValue } from "../kv-cache-manager";
-import { getCompositeBindingRefs } from "@/lib/areas/bindings";
+import { getAreaBindingRefs } from "@/lib/areas/bindings";
 import { getAreaForSystem } from "@/lib/areas/resolve";
 import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
 import {
@@ -254,15 +254,15 @@ export class PointManager {
   private async _resolvePointsForViewable(
     system: SystemWithPolling,
   ): Promise<PointInfo[]> {
-    const areasBacked = await SystemsManager.getInstance().isAreasBackedSystem(
-      system.id,
-    );
-    if (!areasBacked) {
+    // A real device loads its own point_info. An AREA VIEW (a multi-device Area handle with no real
+    // `systems` row) resolves area-natively: its typed `area_bindings` SELECT the points (the
+    // override); an Area with no bindings DEFAULTS to the union of its member devices' own points.
+    if (!(await SystemsManager.getInstance().isAreaHandle(system.id))) {
       return this._loadPointsForNonCompositeSystem(system.id);
     }
 
     const validPointRefs: PointReference[] = (
-      await getCompositeBindingRefs(system.id)
+      await getAreaBindingRefs(system.id)
     ).map((r) => PointReference.fromIds(r.pointSystemId, r.pointId));
 
     if (validPointRefs.length > 0) {
@@ -356,9 +356,9 @@ export class PointManager {
     typedOnly: boolean = false,
     includeInactive: boolean = false,
   ): Promise<PointInfo[]> {
-    // Look up the system object (needed for composite system handling)
+    // Resolve a real system OR an area view (multi-device Area handle) for the read data path.
     const systemsManager = SystemsManager.getInstance();
-    const system = await systemsManager.getSystem(systemId);
+    const system = await systemsManager.getViewableSystem(systemId);
 
     if (!system) {
       throw new Error(`System not found: ${systemId}`);

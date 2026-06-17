@@ -24,21 +24,19 @@ export type SystemWithPolling = System & {
 };
 
 /**
- * Synthesize a `SystemWithPolling` for a composite Area — the areas-backed "virtual system" that lets
- * the integer handle (`legacy_system_id`) keep addressing a composite after its legacy `systems` row
- * is deleted (migration 0014). Composites own no points, never poll, and resolve points/live values
- * from `area_bindings` + the KV fan-out, so device/polling fields are null. Returns null if the Area
- * has no `legacy_system_id` (not a composite migration seam).
+ * An "area view" — a SystemWithPolling shape synthesized from a multi-device Area whose integer
+ * addressing handle (`legacy_system_id`) has NO real `systems` row. It is the SERVER-ONLY resolution
+ * of that handle for the dashboard data path (points/flow/auth resolve via `area_bindings` + members);
+ * it is deliberately kept OUT of `systemsMap`, so an area view never appears in the systems/devices/
+ * admin lists or polling. Owns no points and never polls, so device/polling fields are null.
  */
-export function synthesizeCompositeSystem(
-  area: Area,
-): SystemWithPolling | null {
+function synthesizeAreaView(area: Area): SystemWithPolling | null {
   if (area.legacySystemId == null) return null;
   return {
     id: area.legacySystemId,
     ownerClerkUserId: area.ownerClerkUserId,
-    vendorType: "composite",
-    vendorSiteId: `composite:${area.legacySystemId}`,
+    vendorType: "area",
+    vendorSiteId: `area:${area.legacySystemId}`,
     status: area.status,
     displayName: area.displayName,
     alias: area.alias,
@@ -86,13 +84,13 @@ function isPgUniqueViolation(e: unknown): boolean {
   );
 }
 
-/** The fully-resolved systems config: real rows + synthesized areas-backed composites. */
+/**
+ * The fully-resolved systems config: real `systems` rows (systemsMap) plus the area views — Area
+ * handles with no real row, kept SEPARATE so they never leak into the systems/devices/admin lists.
+ */
 type SystemsState = {
-  map: Map<number, SystemWithPolling>;
-  // Handles that are areas-backed virtual systems (synthesized from a composite Area — no real
-  // `systems` row). The structural "this resolves its points from area_bindings, not its own
-  // point_info" signal, replacing the `vendorType === 'composite'` string check.
-  areasBackedIds: Set<number>;
+  systemsMap: Map<number, SystemWithPolling>;
+  areaViewsMap: Map<number, SystemWithPolling>;
 };
 
 /**
@@ -104,15 +102,15 @@ type SystemsState = {
  * Outside a request (Jest, scripts) `cache()` simply runs each call unmemoized — correct, just not
  * deduped; correctness never depends on the memoization.
  *
- * Reads the systems⋈polling_status join from Postgres (the only store), then synthesizes the
- * areas-backed composites.
+ * Reads the systems⋈polling_status join from Postgres (the only store), then synthesizes the area
+ * views into a separate map.
  *
  * NOTE: fetches all systems at once for simplicity — fine for small-to-medium deployments
  * (< 1000 systems). For larger ones, switch to targeted per-id queries.
  */
 const loadSystemsState = cache(async (): Promise<SystemsState> => {
-  const map = new Map<number, SystemWithPolling>();
-  const areasBackedIds = new Set<number>();
+  const systemsMap = new Map<number, SystemWithPolling>();
+  const areaViewsMap = new Map<number, SystemWithPolling>();
 
   // Join systems with polling_status to get everything in one query.
   const allSystemsWithPolling = await requirePlanetscaleDb()
@@ -121,33 +119,27 @@ const loadSystemsState = cache(async (): Promise<SystemsState> => {
     .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId));
 
   for (const row of allSystemsWithPolling) {
-    map.set(row.systems.id, {
+    systemsMap.set(row.systems.id, {
       ...row.systems,
       pollingStatus: row.polling_status,
     });
   }
 
-  // Areas-backed "virtual systems": synthesize one per Area whose addressing handle
-  // (`legacy_system_id`) has NO real `systems` row — i.e. a composite, after its row was deleted
-  // (migration 0014). Selecting by "no real row" via the `has()` guard, NOT `kind='composite'`, is
-  // the structural signal (retiring the composite special-case): an identity Area's handle keeps its
-  // real row, so it's skipped here. Areas-backed systems own no points, never poll, and resolve
-  // their points/live values from area_bindings + the KV fan-out.
+  // Area views: one per Area whose addressing handle (legacy_system_id) has NO real `systems` row
+  // (a multi-device Area). Loaded into a SEPARATE map — they resolve for the dashboard data path
+  // but never appear in the systems/devices/admin lists or polling.
   const handleAreas = await requirePlanetscaleDb()
     .select()
     .from(pgAreas)
     .where(isNotNull(pgAreas.legacySystemId));
   for (const area of handleAreas) {
     if (area.legacySystemId == null) continue;
-    if (map.has(area.legacySystemId)) continue; // real row wins (identity Areas)
-    const synthesized = synthesizeCompositeSystem(area);
-    if (synthesized) {
-      map.set(area.legacySystemId, synthesized);
-      areasBackedIds.add(area.legacySystemId);
-    }
+    if (systemsMap.has(area.legacySystemId)) continue; // real row wins (identity Areas)
+    const view = synthesizeAreaView(area);
+    if (view) areaViewsMap.set(area.legacySystemId, view);
   }
 
-  return { map, areasBackedIds };
+  return { systemsMap, areaViewsMap };
 });
 
 /**
@@ -172,18 +164,32 @@ export class SystemsManager {
    * Get system details by ID (with polling status)
    */
   async getSystem(systemId: number): Promise<SystemWithPolling | null> {
-    const { map } = await loadSystemsState();
-    return map.get(systemId) || null;
+    const { systemsMap } = await loadSystemsState();
+    return systemsMap.get(systemId) || null;
   }
 
   /**
-   * Whether `systemId` is an areas-backed virtual system (synthesized from a composite Area, with no
-   * real `systems` row) — i.e. it resolves its points from `area_bindings` rather than owning
-   * `point_info`. The structural replacement for `system.vendorType === 'composite'`.
+   * Resolve a handle for the DASHBOARD DATA PATH: a real system, OR an area view (a multi-device Area
+   * with no `systems` row). Use this — not getSystem — wherever an Area's whole-area data/auth/flow is
+   * served, so the area handle resolves. getSystem stays real-only (devices/admin/polling).
    */
-  async isAreasBackedSystem(systemId: number): Promise<boolean> {
-    const { areasBackedIds } = await loadSystemsState();
-    return areasBackedIds.has(systemId);
+  async getViewableSystem(systemId: number): Promise<SystemWithPolling | null> {
+    const { systemsMap, areaViewsMap } = await loadSystemsState();
+    return systemsMap.get(systemId) ?? areaViewsMap.get(systemId) ?? null;
+  }
+
+  /** Whether `systemId` is an area view (a multi-device Area handle with no real `systems` row). */
+  async isAreaHandle(systemId: number): Promise<boolean> {
+    const { areaViewsMap } = await loadSystemsState();
+    return areaViewsMap.has(systemId);
+  }
+
+  /** Active area-view handles (multi-device Area handles) — included in the daily flow recompute. */
+  async getActiveAreaHandles(): Promise<number[]> {
+    const { areaViewsMap } = await loadSystemsState();
+    return Array.from(areaViewsMap.values())
+      .filter((v) => v.status === "active")
+      .map((v) => v.id);
   }
 
   /**
@@ -192,8 +198,8 @@ export class SystemsManager {
   async getSystemByVendorSiteId(
     vendorSiteId: string,
   ): Promise<SystemWithPolling | null> {
-    const { map } = await loadSystemsState();
-    for (const system of map.values()) {
+    const { systemsMap } = await loadSystemsState();
+    for (const system of systemsMap.values()) {
       if (system.vendorSiteId === vendorSiteId) {
         return system;
       }
@@ -208,10 +214,10 @@ export class SystemsManager {
     username: string,
     alias: string,
   ): Promise<SystemWithPolling | null> {
-    const { map } = await loadSystemsState();
+    const { systemsMap } = await loadSystemsState();
 
     // Find all systems with matching alias
-    const matchingSystems = Array.from(map.values()).filter(
+    const matchingSystems = Array.from(systemsMap.values()).filter(
       (system) => system.alias === alias,
     );
 
@@ -244,25 +250,25 @@ export class SystemsManager {
    * Get all active systems only
    */
   async getActiveSystems(): Promise<SystemWithPolling[]> {
-    const { map } = await loadSystemsState();
-    return Array.from(map.values()).filter((s) => s.status === "active");
+    const { systemsMap } = await loadSystemsState();
+    return Array.from(systemsMap.values()).filter((s) => s.status === "active");
   }
 
   /**
    * Get all systems (including inactive)
    */
   async getAllSystems(): Promise<SystemWithPolling[]> {
-    const { map } = await loadSystemsState();
-    return Array.from(map.values());
+    const { systemsMap } = await loadSystemsState();
+    return Array.from(systemsMap.values());
   }
 
   /**
    * Get multiple systems by IDs
    */
   async getSystems(systemIds: number[]): Promise<SystemWithPolling[]> {
-    const { map } = await loadSystemsState();
+    const { systemsMap } = await loadSystemsState();
     return systemIds
-      .map((id) => map.get(id))
+      .map((id) => systemsMap.get(id))
       .filter((system) => system !== undefined);
   }
 
@@ -270,8 +276,8 @@ export class SystemsManager {
    * Check if a system exists and is active
    */
   async systemIsActive(systemId: number): Promise<boolean> {
-    const { map } = await loadSystemsState();
-    const system = map.get(systemId);
+    const { systemsMap } = await loadSystemsState();
+    const system = systemsMap.get(systemId);
     return system ? system.status === "active" : false;
   }
 
@@ -279,8 +285,8 @@ export class SystemsManager {
    * Check if a system exists (any status)
    */
   async systemExists(systemId: number): Promise<boolean> {
-    const { map } = await loadSystemsState();
-    return map.has(systemId);
+    const { systemsMap } = await loadSystemsState();
+    return systemsMap.has(systemId);
   }
 
   /**
@@ -291,11 +297,11 @@ export class SystemsManager {
    * @param activeOnly - Whether to filter to only active systems (default: true)
    */
   async getSystemsVisibleByUser(userId: string, activeOnly: boolean = true) {
-    const { map } = await loadSystemsState();
+    const { systemsMap } = await loadSystemsState();
     const isAdmin = await isUserAdmin();
 
     let visibleSystems: SystemWithPolling[] = [];
-    const allSystemsArray = Array.from(map.values());
+    const allSystemsArray = Array.from(systemsMap.values());
 
     if (isAdmin) {
       // Admins see all systems (optionally filtered by status)
@@ -338,6 +344,18 @@ export class SystemsManager {
         ownerClerkUserId: s.ownerClerkUserId,
         alias: s.alias,
       }));
+  }
+
+  /**
+   * The user's "primary" visible system — owned-first, else the first visible (by display name), or
+   * null if they can see none. Single source of truth for the `/dashboard` landing redirect and the
+   * "Go to Systems" (`/device`) redirect, which previously each copy-pasted this owned-first logic.
+   */
+  async getPrimaryVisibleSystem(userId: string) {
+    const visible = await this.getSystemsVisibleByUser(userId, true);
+    if (visible.length === 0) return null;
+    const owned = visible.filter((s) => s.ownerClerkUserId === userId);
+    return owned.length > 0 ? owned[0] : visible[0];
   }
 
   /**

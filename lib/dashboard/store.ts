@@ -1,61 +1,20 @@
 /**
- * Persistence for per-user, per-system dashboard descriptors (P2). Backed by the `dashboards`
- * table; absent row → the dashboard is auto-generated from buildDefaultDescriptor.
+ * Dashboard-row helpers: look up a dashboard by id (share-token target) and lazily mint a default
+ * dashboard row for a system so a share token always has a stable target. Descriptors are v3.
  */
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { dashboards } from "@/lib/db/planetscale/schema";
-import type { DashboardDescriptor } from "./descriptor";
-import { buildDefaultDescriptor } from "./descriptor";
+import { buildDefaultDashboardV3 } from "./v3";
 import { getAreaForSystem } from "@/lib/areas/resolve";
-import type { LatestPointValues } from "@/lib/types/api";
 
-export async function getSavedDescriptor(
-  clerkUserId: string,
-  systemId: number,
-): Promise<DashboardDescriptor | null> {
-  const rows = await requirePlanetscaleDb()
-    .select({ descriptor: dashboards.descriptor })
-    .from(dashboards)
-    .where(
-      and(
-        eq(dashboards.clerkUserId, clerkUserId),
-        eq(dashboards.systemId, systemId),
-      ),
-    )
-    .limit(1);
-  return rows[0]?.descriptor
-    ? (rows[0].descriptor as DashboardDescriptor)
-    : null;
-}
-
-export async function saveDescriptor(
-  clerkUserId: string,
-  systemId: number,
-  descriptor: DashboardDescriptor,
-  areaId?: string | null,
-): Promise<void> {
-  await requirePlanetscaleDb()
-    .insert(dashboards)
-    .values({ clerkUserId, systemId, descriptor, areaId: areaId ?? null })
-    .onConflictDoUpdate({
-      target: [dashboards.clerkUserId, dashboards.systemId],
-      // COALESCE so a flag-off save (areaId null) never wipes a previously-resolved area_id.
-      set: {
-        descriptor,
-        areaId: sql`COALESCE(excluded.area_id, ${dashboards.areaId})`,
-        updatedAt: new Date(),
-      },
-    });
-}
-
-/** A dashboard row by its id (the target of a dashboard share token). */
+/** A dashboard row by its id (the target of a dashboard share token). Descriptor is opaque JSONB. */
 export async function getDashboardById(id: number): Promise<{
   id: number;
   systemId: number | null;
   areaId: string | null;
-  descriptor: DashboardDescriptor;
+  descriptor: unknown;
 } | null> {
   const rows = await requirePlanetscaleDb()
     .select({
@@ -73,7 +32,7 @@ export async function getDashboardById(id: number): Promise<{
         id: r.id,
         systemId: r.systemId,
         areaId: r.areaId,
-        descriptor: r.descriptor as DashboardDescriptor,
+        descriptor: r.descriptor,
       }
     : null;
 }
@@ -99,7 +58,7 @@ export async function getDashboardIdForUserSystem(
 /**
  * The id of the caller's dashboard for `systemId`, creating a default row if none exists yet (so a
  * share token always has a stable target even for an un-customized dashboard). The default descriptor
- * is built server-side from the vendor type (buildDefaultDescriptor ignores `latest`).
+ * is a single-section v3 dashboard over the system's identity Area.
  */
 export async function getOrCreateDefaultDashboardId(
   clerkUserId: string,
@@ -109,11 +68,11 @@ export async function getOrCreateDefaultDashboardId(
   const existingId = await getDashboardIdForUserSystem(clerkUserId, systemId);
   if (existingId !== null) return existingId;
 
-  const descriptor = buildDefaultDescriptor(
-    { vendorType },
-    {} as LatestPointValues,
-  );
   const areaId = (await getAreaForSystem(systemId))?.id ?? null;
+  const descriptor = buildDefaultDashboardV3({
+    areaId: areaId ?? `system-${systemId}`,
+    vendorType,
+  });
   try {
     const [row] = await requirePlanetscaleDb()
       .insert(dashboards)
@@ -129,19 +88,4 @@ export async function getOrCreateDefaultDashboardId(
     if (raced !== null) return raced;
     throw err;
   }
-}
-
-/** Reset to default = drop the saved row. */
-export async function deleteDescriptor(
-  clerkUserId: string,
-  systemId: number,
-): Promise<void> {
-  await requirePlanetscaleDb()
-    .delete(dashboards)
-    .where(
-      and(
-        eq(dashboards.clerkUserId, clerkUserId),
-        eq(dashboards.systemId, systemId),
-      ),
-    );
 }

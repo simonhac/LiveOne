@@ -42,8 +42,9 @@ export interface CardDef {
   canRender: (ctx: CardContext) => boolean;
 }
 
-/** A "site" system aggregates load/generation series and shows the site charts + Sankey. */
-const isSiteVendor = (vt: string) => vt === "mondo" || vt === "composite";
+/** A "site" view aggregates load/generation series and shows the site charts + Sankey: the mondo site
+ *  vendor, or a multi-device Area view (synthesized vendorType "area"). */
+const isSiteVendor = (vt: string) => vt === "mondo" || vt === "area";
 
 export const CARD_REGISTRY: Record<DashboardCardType, CardDef> = {
   "amber-now": {
