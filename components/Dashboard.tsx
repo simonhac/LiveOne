@@ -375,6 +375,25 @@ function AreaSiteCharts({
  * Mirrors AreaSiteCharts; React Query dedupes the shared dashboardDataQuery fetch. Holds the layout
  * (skeleton) until the timezone is known.
  */
+/**
+ * The line chart's y-axis scaling hint, derived from the system's nameplate solar/inverter sizing
+ * (`systemInfo.solarSize` "9 kW" / `ratings` "7.5kW, 48V"). Used by the per-device viewer historically;
+ * resolved here so every section's lines chart scales the same. Undefined when no sizing is known.
+ */
+function maxPowerHintFromSystemInfo(systemInfo?: {
+  solarSize?: string;
+  ratings?: string;
+}): number | undefined {
+  const solarMatch = systemInfo?.solarSize?.match(/^(\d+(?:\.\d+)?)\s+kW$/i);
+  const solarKW = solarMatch ? parseFloat(solarMatch[1]) : undefined;
+  const ratingMatch = systemInfo?.ratings?.match(/(\d+(?:\.\d+)?)kW/i);
+  const inverterKW = ratingMatch ? parseFloat(ratingMatch[1]) : undefined;
+  if (solarKW !== undefined && inverterKW !== undefined) {
+    return Math.max(solarKW, inverterKW);
+  }
+  return solarKW ?? inverterKW;
+}
+
 function AreaLinesChart({ systemId }: { systemId: number }) {
   const { isAnyModalOpen } = useModalContext();
   const { data } = useQuery(
@@ -384,11 +403,15 @@ function AreaLinesChart({ systemId }: { systemId: number }) {
   if (tz == null) {
     return <ChartSkeleton />;
   }
+  const systemInfo = (
+    data as { systemInfo?: { solarSize?: string; ratings?: string } } | null
+  )?.systemInfo;
   return (
     <LinesChartCard
       systemId={systemId}
       className="h-full min-h-[360px]"
       timezoneOffsetMin={tz}
+      maxPowerHint={maxPowerHintFromSystemInfo(systemInfo)}
     />
   );
 }
