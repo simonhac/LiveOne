@@ -3,7 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { Settings2, Share2, Plus, ChevronDown } from "lucide-react";
+import { Settings, Share2, Plus, ChevronDown } from "lucide-react";
 import CompositionDashboard from "@/components/CompositionDashboard";
 import CompositionShareDialog from "@/components/CompositionShareDialog";
 import DashboardSettingsDialog from "@/components/DashboardSettingsDialog";
@@ -95,7 +95,7 @@ export default function CompositionDashboardClient({
                 title="Dashboard settings"
                 onClick={() => setRenameOpen(true)}
               >
-                <Settings2 className="h-4 w-4" />
+                <Settings className="h-4 w-4" />
               </HeaderButton>
               <HeaderButton
                 title="New dashboard"
