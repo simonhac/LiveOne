@@ -56,7 +56,6 @@ export async function POST(request: NextRequest) {
         mappings: metadata.mappings,
       });
       await buildSubscriptionRegistry();
-      SystemsManager.invalidateCache();
 
       // Success!
       return NextResponse.json({

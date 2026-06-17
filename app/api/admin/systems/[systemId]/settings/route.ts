@@ -229,7 +229,6 @@ export async function PATCH(
     if (isComposite) {
       const { updatedAt: _omit, ...areaPatch } = updates;
       await updateCompositeArea(systemId, areaPatch);
-      SystemsManager.invalidateCache();
     } else {
       await SystemsManager.getInstance().updateSystem(systemId, updates);
     }

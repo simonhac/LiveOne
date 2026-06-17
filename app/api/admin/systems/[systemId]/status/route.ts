@@ -42,7 +42,6 @@ export async function PATCH(
     // Update status on the right store: a composite's `areas` row, otherwise the `systems` row.
     if (existingSystem.vendorType === "composite") {
       await updateCompositeArea(systemId, { status });
-      SystemsManager.invalidateCache();
     } else {
       await SystemsManager.getInstance().updateSystem(systemId, { status });
     }

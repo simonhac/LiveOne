@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { eq, max, isNotNull } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
@@ -85,147 +86,94 @@ function isPgUniqueViolation(e: unknown): boolean {
   );
 }
 
-/**
- * Manages system data with caching to avoid repeated database queries
- * during a single request/operation.
- *
- * NOTE: Currently fetches all systems at once for simplicity.
- * This approach works well for small-to-medium deployments (< 1000 systems).
- * For larger deployments, consider:
- * - Implementing pagination or lazy loading
- * - Using a proper caching layer (Redis)
- * - Fetching only required systems per request
- */
-export class SystemsManager {
-  private static instance: SystemsManager | null = null;
-  private static lastLoadedAt: number = 0;
-  private static readonly CACHE_TTL_MS = 60 * 1000; // 1 minute TTL
-  private systemsMap: Map<number, SystemWithPolling> = new Map();
+/** The fully-resolved systems config: real rows + synthesized areas-backed composites. */
+type SystemsState = {
+  map: Map<number, SystemWithPolling>;
   // Handles that are areas-backed virtual systems (synthesized from a composite Area — no real
   // `systems` row). The structural "this resolves its points from area_bindings, not its own
   // point_info" signal, replacing the `vendorType === 'composite'` string check.
-  private areasBackedIds: Set<number> = new Set();
-  private loadPromise: Promise<void>;
+  areasBackedIds: Set<number>;
+};
 
-  private constructor() {
-    // Load systems immediately on instantiation
-    this.loadPromise = this.loadSystems();
+/**
+ * Load the full systems config once per request, memoized by React's `cache()`.
+ *
+ * `cache()` is scoped to a single server request (Server Components AND Route Handlers): every
+ * accessor below shares one load within a request, and nothing is shared across requests — config
+ * is therefore always fresh, with no TTL, no invalidation, and no stale-across-warm-lambdas problem.
+ * Outside a request (Jest, scripts) `cache()` simply runs each call unmemoized — correct, just not
+ * deduped; correctness never depends on the memoization.
+ *
+ * Reads the systems⋈polling_status join from Postgres (the only store), then synthesizes the
+ * areas-backed composites.
+ *
+ * NOTE: fetches all systems at once for simplicity — fine for small-to-medium deployments
+ * (< 1000 systems). For larger ones, switch to targeted per-id queries.
+ */
+const loadSystemsState = cache(async (): Promise<SystemsState> => {
+  const map = new Map<number, SystemWithPolling>();
+  const areasBackedIds = new Set<number>();
+
+  // Join systems with polling_status to get everything in one query.
+  const allSystemsWithPolling = await requirePlanetscaleDb()
+    .select()
+    .from(pgSystems)
+    .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId));
+
+  for (const row of allSystemsWithPolling) {
+    map.set(row.systems.id, {
+      ...row.systems,
+      pollingStatus: row.polling_status,
+    });
   }
 
-  /**
-   * Get cache status information
-   */
-  static getCacheStatus(): {
-    isLoaded: boolean;
-    lastLoadedAt: number;
-  } {
-    return {
-      isLoaded: SystemsManager.instance !== null,
-      lastLoadedAt: SystemsManager.lastLoadedAt,
-    };
+  // Areas-backed "virtual systems": synthesize one per Area whose addressing handle
+  // (`legacy_system_id`) has NO real `systems` row — i.e. a composite, after its row was deleted
+  // (migration 0014). Selecting by "no real row" via the `has()` guard, NOT `kind='composite'`, is
+  // the structural signal (retiring the composite special-case): an identity Area's handle keeps its
+  // real row, so it's skipped here. Areas-backed systems own no points, never poll, and resolve
+  // their points/live values from area_bindings + the KV fan-out.
+  const handleAreas = await requirePlanetscaleDb()
+    .select()
+    .from(pgAreas)
+    .where(isNotNull(pgAreas.legacySystemId));
+  for (const area of handleAreas) {
+    if (area.legacySystemId == null) continue;
+    if (map.has(area.legacySystemId)) continue; // real row wins (identity Areas)
+    const synthesized = synthesizeCompositeSystem(area);
+    if (synthesized) {
+      map.set(area.legacySystemId, synthesized);
+      areasBackedIds.add(area.legacySystemId);
+    }
   }
 
+  return { map, areasBackedIds };
+});
+
+/**
+ * Reads system config. A stateless facade over the per-request `cache()`-memoized
+ * `loadSystemsState()` — `getInstance()` does no DB work and holds no data, so the config is loaded
+ * (at most) once per request and is always fresh. Mutations write straight through; the next request
+ * loads the change automatically (no invalidation needed).
+ */
+export class SystemsManager {
+  private static instance: SystemsManager | null = null;
+
+  private constructor() {}
+
   /**
-   * Get the singleton instance of SystemsManager
-   * Automatically refreshes cache if TTL has expired
+   * Get the (stateless) SystemsManager facade. Cheap: no DB work, no cross-request cache.
    */
   static getInstance(): SystemsManager {
-    const now = Date.now();
-    const cacheAge = now - SystemsManager.lastLoadedAt;
-
-    // Clear and reload if cache is stale (older than TTL)
-    if (SystemsManager.instance && cacheAge > SystemsManager.CACHE_TTL_MS) {
-      console.log(
-        `[SystemsManager] Cache expired (age: ${Math.round(cacheAge / 1000)}s), reloading...`,
-      );
-      SystemsManager.instance = null;
-      SystemsManager.lastLoadedAt = 0;
-    }
-
-    if (!SystemsManager.instance) {
-      SystemsManager.instance = new SystemsManager();
-      SystemsManager.lastLoadedAt = now;
-    }
-    return SystemsManager.instance;
-  }
-
-  /**
-   * Invalidate the cache (useful for cron jobs that need fresh data)
-   *
-   * TEMPORARY: This is a workaround for the cache consistency issue where
-   * the singleton persists across requests in Vercel/Next.js, causing stale
-   * polling status data. We need a proper cache invalidation strategy.
-   *
-   * TODO: Implement proper cache management with TTL, invalidation on updates,
-   * or request-scoped instances instead of global singletons.
-   */
-  static invalidateCache(): void {
-    SystemsManager.instance = null;
-  }
-
-  /**
-   * @deprecated Use invalidateCache() instead
-   */
-  static clearInstance(): void {
-    SystemsManager.invalidateCache();
-  }
-
-  /**
-   * Load all systems with polling status into cache (called once on instantiation).
-   *
-   * Reads the systems⋈polling_status join from Postgres (the only store).
-   */
-  private async loadSystems() {
-    // Join systems with polling_status to get everything in one query.
-    const allSystemsWithPolling = await requirePlanetscaleDb()
-      .select()
-      .from(pgSystems)
-      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId));
-
-    // Create map for O(1) lookups
-    for (const row of allSystemsWithPolling) {
-      const systemWithPolling: SystemWithPolling = {
-        ...row.systems,
-        pollingStatus: row.polling_status,
-      };
-      this.systemsMap.set(row.systems.id, systemWithPolling);
-    }
-
-    // Areas-backed "virtual systems": synthesize one per Area whose addressing handle
-    // (`legacy_system_id`) has NO real `systems` row — i.e. a composite, after its row was deleted
-    // (migration 0014). Selecting by "no real row" via the `has()` guard, NOT `kind='composite'`, is
-    // the structural signal (retiring the composite special-case): an identity Area's handle keeps its
-    // real row, so it's skipped here. Areas-backed systems own no points, never poll, and resolve
-    // their points/live values from area_bindings + the KV fan-out.
-    const handleAreas = await requirePlanetscaleDb()
-      .select()
-      .from(pgAreas)
-      .where(isNotNull(pgAreas.legacySystemId));
-    for (const area of handleAreas) {
-      if (area.legacySystemId == null) continue;
-      if (this.systemsMap.has(area.legacySystemId)) continue; // real row wins (identity Areas)
-      const synthesized = synthesizeCompositeSystem(area);
-      if (synthesized) {
-        this.systemsMap.set(area.legacySystemId, synthesized);
-        this.areasBackedIds.add(area.legacySystemId);
-      }
-    }
-
-    const allSystemsArray = Array.from(this.systemsMap.values());
-    const activeCount = allSystemsArray.filter(
-      (s) => s.status === "active",
-    ).length;
-    console.log(
-      `[SystemsManager] DB HIT: Loaded ${allSystemsArray.length} systems (${activeCount} active) from database`,
-    );
+    return (SystemsManager.instance ??= new SystemsManager());
   }
 
   /**
    * Get system details by ID (with polling status)
    */
   async getSystem(systemId: number): Promise<SystemWithPolling | null> {
-    await this.loadPromise;
-    return this.systemsMap.get(systemId) || null;
+    const { map } = await loadSystemsState();
+    return map.get(systemId) || null;
   }
 
   /**
@@ -234,8 +182,8 @@ export class SystemsManager {
    * `point_info`. The structural replacement for `system.vendorType === 'composite'`.
    */
   async isAreasBackedSystem(systemId: number): Promise<boolean> {
-    await this.loadPromise;
-    return this.areasBackedIds.has(systemId);
+    const { areasBackedIds } = await loadSystemsState();
+    return areasBackedIds.has(systemId);
   }
 
   /**
@@ -244,8 +192,8 @@ export class SystemsManager {
   async getSystemByVendorSiteId(
     vendorSiteId: string,
   ): Promise<SystemWithPolling | null> {
-    await this.loadPromise;
-    for (const system of this.systemsMap.values()) {
+    const { map } = await loadSystemsState();
+    for (const system of map.values()) {
       if (system.vendorSiteId === vendorSiteId) {
         return system;
       }
@@ -260,10 +208,10 @@ export class SystemsManager {
     username: string,
     alias: string,
   ): Promise<SystemWithPolling | null> {
-    await this.loadPromise;
+    const { map } = await loadSystemsState();
 
     // Find all systems with matching alias
-    const matchingSystems = Array.from(this.systemsMap.values()).filter(
+    const matchingSystems = Array.from(map.values()).filter(
       (system) => system.alias === alias,
     );
 
@@ -296,27 +244,25 @@ export class SystemsManager {
    * Get all active systems only
    */
   async getActiveSystems(): Promise<SystemWithPolling[]> {
-    await this.loadPromise;
-    return Array.from(this.systemsMap.values()).filter(
-      (s) => s.status === "active",
-    );
+    const { map } = await loadSystemsState();
+    return Array.from(map.values()).filter((s) => s.status === "active");
   }
 
   /**
    * Get all systems (including inactive)
    */
   async getAllSystems(): Promise<SystemWithPolling[]> {
-    await this.loadPromise;
-    return Array.from(this.systemsMap.values());
+    const { map } = await loadSystemsState();
+    return Array.from(map.values());
   }
 
   /**
    * Get multiple systems by IDs
    */
   async getSystems(systemIds: number[]): Promise<SystemWithPolling[]> {
-    await this.loadPromise;
+    const { map } = await loadSystemsState();
     return systemIds
-      .map((id) => this.systemsMap.get(id))
+      .map((id) => map.get(id))
       .filter((system) => system !== undefined);
   }
 
@@ -324,8 +270,8 @@ export class SystemsManager {
    * Check if a system exists and is active
    */
   async systemIsActive(systemId: number): Promise<boolean> {
-    await this.loadPromise;
-    const system = this.systemsMap.get(systemId);
+    const { map } = await loadSystemsState();
+    const system = map.get(systemId);
     return system ? system.status === "active" : false;
   }
 
@@ -333,8 +279,8 @@ export class SystemsManager {
    * Check if a system exists (any status)
    */
   async systemExists(systemId: number): Promise<boolean> {
-    await this.loadPromise;
-    return this.systemsMap.has(systemId);
+    const { map } = await loadSystemsState();
+    return map.has(systemId);
   }
 
   /**
@@ -345,11 +291,11 @@ export class SystemsManager {
    * @param activeOnly - Whether to filter to only active systems (default: true)
    */
   async getSystemsVisibleByUser(userId: string, activeOnly: boolean = true) {
-    await this.loadPromise;
+    const { map } = await loadSystemsState();
     const isAdmin = await isUserAdmin();
 
     let visibleSystems: SystemWithPolling[] = [];
-    const allSystemsArray = Array.from(this.systemsMap.values());
+    const allSystemsArray = Array.from(map.values());
 
     if (isAdmin) {
       // Admins see all systems (optionally filtered by status)
@@ -395,13 +341,11 @@ export class SystemsManager {
   }
 
   /**
-   * Create a new system in the database and update the cache
+   * Create a new system in the database.
    * @param systemData - The system data to insert
    * @returns The created system
    */
   async createSystem(systemData: CreateSystemData): Promise<System> {
-    await this.loadPromise;
-
     const newSystem = await this.insertSystemToPg(systemData);
 
     console.log(
@@ -414,20 +358,12 @@ export class SystemsManager {
     // stops bare monitoring-only systems (e.g. public grid-region feeds) accruing pointless Area rows.
     // Serving works without an Area: a real device resolves its OWN point_info, not via an Area.
 
-    // Invalidate cache and refresh immediately
-    SystemsManager.invalidateCache();
-    const freshManager = SystemsManager.getInstance();
-    await freshManager.loadPromise;
-
-    console.log(
-      `[SystemsManager] Cache refreshed after creating system ${newSystem.id}`,
-    );
-
+    // No cache to invalidate: config is loaded per-request, so the next request sees the new system.
     return newSystem;
   }
 
   /**
-   * Update an existing system and invalidate the cache.
+   * Update an existing system.
    *
    * Updates Postgres only (config writes are Postgres-only). The patch maps 1:1 —
    * PG jsonb/timestamp columns accept plain objects/Dates directly, so no per-field
@@ -442,12 +378,10 @@ export class SystemsManager {
       .update(pgSystems)
       .set(values as Partial<InferSelectModel<typeof pgSystems>>)
       .where(eq(pgSystems.id, systemId));
-
-    SystemsManager.invalidateCache();
   }
 
   /**
-   * Delete a system and invalidate the cache.
+   * Delete a system.
    *
    * Deletes from Postgres only.
    */
@@ -455,8 +389,6 @@ export class SystemsManager {
     await requirePlanetscaleDb()
       .delete(pgSystems)
       .where(eq(pgSystems.id, systemId));
-
-    SystemsManager.invalidateCache();
   }
 
   /**

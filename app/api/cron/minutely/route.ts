@@ -366,8 +366,7 @@ export async function GET(request: NextRequest) {
 
     console.log("[Cron] Starting system polling...");
 
-    // Clear SystemsManager cache to ensure fresh polling status data
-    SystemsManager.invalidateCache();
+    // Config (incl. polling status) is loaded fresh per request, so no cache to clear.
     const systemsManager = SystemsManager.getInstance();
 
     // Get systems to poll
