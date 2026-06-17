@@ -8,7 +8,6 @@ import { fetchJson } from "@/lib/queries";
 import { X, Shield, Loader2, MapPin } from "lucide-react";
 import { useModalContext } from "@/contexts/ModalContext";
 import PointsTab from "./PointsTab";
-import CompositeTab from "./CompositeTab";
 import TeslaConfigTab from "./TeslaConfigTab";
 import AdminTab from "./AdminTab";
 import { TIMEZONE_GROUPS } from "@/lib/timezones";
@@ -49,7 +48,6 @@ export default function SystemSettingsDialog({
   systemId,
   vendorType,
   metadata,
-  ownerClerkUserId,
   isAdmin = false,
   onUpdate,
 }: SystemSettingsDialogProps) {
@@ -64,7 +62,6 @@ export default function SystemSettingsDialog({
   const [isDisplayNameDirty, setIsDisplayNameDirty] = useState(false);
   const [isAliasDirty, setIsAliasDirty] = useState(false);
   const [isTimezoneDirty, setIsTimezoneDirty] = useState(false);
-  const [isCompositeDirty, setIsCompositeDirty] = useState(false);
   const [isTeslaDirty, setIsTeslaDirty] = useState(false);
   const [isAdminDirty, setIsAdminDirty] = useState(false);
   const [aliasError, setAliasError] = useState<string | null>(null);
@@ -80,9 +77,8 @@ export default function SystemSettingsDialog({
   const [origLocationPostcode, setOrigLocationPostcode] = useState("");
   const [isLocationDirty, setIsLocationDirty] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "general" | "points" | "composite" | "tesla" | "admin" | "location"
+    "general" | "points" | "tesla" | "admin" | "location"
   >("general");
-  const compositeSaveRef = useRef<(() => Promise<any>) | null>(null);
   const teslaSaveRef = useRef<(() => Promise<any>) | null>(null);
   const adminSaveRef = useRef<(() => Promise<any>) | null>(null);
 
@@ -168,7 +164,6 @@ export default function SystemSettingsDialog({
       setIsDisplayNameDirty(false);
       setIsAliasDirty(false);
       setIsTimezoneDirty(false);
-      setIsCompositeDirty(false);
       setIsTeslaDirty(false);
       setIsAdminDirty(false);
       setAliasError(null);
@@ -238,7 +233,6 @@ export default function SystemSettingsDialog({
     isDisplayNameDirty ||
     isAliasDirty ||
     isTimezoneDirty ||
-    isCompositeDirty ||
     isTeslaDirty ||
     isAdminDirty ||
     isDefaultDirty ||
@@ -279,32 +273,6 @@ export default function SystemSettingsDialog({
 
         if (!response.ok) {
           throw new Error(data.error || "Failed to update system settings");
-        }
-      }
-
-      // Save composite configuration separately
-      if (isCompositeDirty && compositeSaveRef.current) {
-        const compositeMappings = await compositeSaveRef.current();
-
-        console.log("Composite mappings to save:", compositeMappings);
-
-        const response = await fetch(
-          `/api/admin/systems/${systemId}/composite-config`,
-          {
-            method: "PATCH",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ mappings: compositeMappings }),
-          },
-        );
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            data.error || "Failed to update composite configuration",
-          );
         }
       }
 
@@ -411,7 +379,6 @@ export default function SystemSettingsDialog({
       setIsDisplayNameDirty(false);
       setIsAliasDirty(false);
       setIsTimezoneDirty(false);
-      setIsCompositeDirty(false);
       setIsTeslaDirty(false);
       setIsAdminDirty(false);
       setIsDefaultDirty(false);
@@ -560,33 +527,16 @@ export default function SystemSettingsDialog({
                   <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
                 )}
               </button>
-              {vendorType !== "composite" && (
-                <button
-                  onClick={() => setActiveTab("points")}
-                  className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
-                    activeTab === "points"
-                      ? "text-white border-blue-500 bg-gray-700/50"
-                      : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
-                  }`}
-                >
-                  Points
-                </button>
-              )}
-              {vendorType === "composite" && (
-                <button
-                  onClick={() => setActiveTab("composite")}
-                  className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
-                    activeTab === "composite"
-                      ? "text-white border-blue-500 bg-gray-700/50"
-                      : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
-                  }`}
-                >
-                  Composite
-                  {isCompositeDirty && (
-                    <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
-                  )}
-                </button>
-              )}
+              <button
+                onClick={() => setActiveTab("points")}
+                className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+                  activeTab === "points"
+                    ? "text-white border-blue-500 bg-gray-700/50"
+                    : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
+                }`}
+              >
+                Points
+              </button>
               {vendorType === "tesla" && (
                 <button
                   onClick={() => setActiveTab("tesla")}
@@ -817,27 +767,10 @@ export default function SystemSettingsDialog({
                   </div>
                 </div>
 
-                {/* Points Tab Content - Only for non-composite systems */}
-                {vendorType !== "composite" && (
-                  <div className={activeTab === "points" ? "" : "hidden"}>
-                    <PointsTab systemId={systemId} shouldLoad={isOpen} />
-                  </div>
-                )}
-
-                {/* Composite Tab Content */}
-                {vendorType === "composite" && (
-                  <div className={activeTab === "composite" ? "" : "hidden"}>
-                    <CompositeTab
-                      systemId={systemId}
-                      shouldLoad={isOpen}
-                      onDirtyChange={setIsCompositeDirty}
-                      onSaveFunctionReady={(fn) => {
-                        compositeSaveRef.current = fn;
-                      }}
-                      ownerUserId={ownerClerkUserId}
-                    />
-                  </div>
-                )}
+                {/* Points Tab Content */}
+                <div className={activeTab === "points" ? "" : "hidden"}>
+                  <PointsTab systemId={systemId} shouldLoad={isOpen} />
+                </div>
 
                 {/* Tesla Tab Content */}
                 {vendorType === "tesla" && (
