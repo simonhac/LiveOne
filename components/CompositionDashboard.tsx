@@ -220,7 +220,7 @@ function TilesGrid({
   tiles: TileV3[];
 }) {
   const { isAnyModalOpen } = useModalContext();
-  const { data } = useQuery(
+  const { data, isLoading } = useQuery(
     dashboardDataQuery(handleSystemId, { paused: isAnyModalOpen }),
   );
   const datum = (data ?? null) as AreaDatum | null;
@@ -233,6 +233,22 @@ function TilesGrid({
     systemId: handleSystemId,
     canControl: false,
   });
+
+  // While the handle's data is still loading, show skeleton tiles (not "No live data", not a
+  // partial render) so the grid never flashes an empty/error state and every tile appears together.
+  if (isLoading) {
+    const n = tiles.filter((t) => !t.hidden).length || 4;
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 lg:gap-4 auto-rows-fr px-1">
+        {Array.from({ length: n }).map((_, i) => (
+          <div
+            key={i}
+            className="min-h-[120px] animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30"
+          />
+        ))}
+      </div>
+    );
+  }
 
   const cells: ReactNode[] = [];
   tiles.forEach((t, i) => {
@@ -277,9 +293,12 @@ function DeviceGridTile({ deviceSystemId }: { deviceSystemId: number }) {
   );
   const siteId = ((data ?? null) as AreaDatum | null)?.system?.vendorSiteId;
   const region = siteId && isNemRegion(siteId) ? siteId : null;
+  // Empty label (not "Grid") while the region/values are still loading: GridSignalsCard then renders
+  // null (its `!regionLabel && values === null` guard), so this tile is cleanly absent during load —
+  // matching the whole-area tiles — instead of flashing "Grid Grid".
   return (
     <GridSignalsCard
-      regionLabel={region ? nemRegionShortLabel(region) : "Grid"}
+      regionLabel={region ? nemRegionShortLabel(region) : ""}
       values={gridLatestFromData(data)}
     />
   );
@@ -304,6 +323,13 @@ function AreaSiteCharts({
     dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
   );
   const system = ((data ?? null) as AreaDatum | null)?.system;
+  // Hold the layout until `system` (vendorType) is known. Mounting SiteChartsCard with
+  // system=undefined disables its history query (isSiteVendor=false), which renders "No data
+  // available" before any real loading state. An empty min-height container avoids that flash;
+  // SiteChartsCard's own (delayed) spinner takes over once the system loads.
+  if (!system) {
+    return <div className="min-h-[360px]" />;
+  }
   return (
     <SiteChartsCard
       systemId={String(systemId)}
