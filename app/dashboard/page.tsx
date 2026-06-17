@@ -18,15 +18,11 @@ export default async function DashboardPage() {
     redirect(defaultRoute);
   }
 
-  const systemsManager = SystemsManager.getInstance();
+  // Fallback: the user's primary visible system (owned-first). null → nothing to show.
+  const primarySystem =
+    await SystemsManager.getInstance().getPrimaryVisibleSystem(userId);
 
-  // Get all systems visible to the user (owned + granted access)
-  const visibleSystems = await systemsManager.getSystemsVisibleByUser(
-    userId,
-    true,
-  );
-
-  if (visibleSystems.length === 0) {
+  if (!primarySystem) {
     // No default dashboard and no visible systems → nothing to show.
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
@@ -42,13 +38,6 @@ export default async function DashboardPage() {
       </div>
     );
   }
-
-  // Fallback: prioritize user-owned systems over first viewable system
-  const ownedSystems = visibleSystems.filter(
-    (s) => s.ownerClerkUserId === userId,
-  );
-  const primarySystem =
-    ownedSystems.length > 0 ? ownedSystems[0] : visibleSystems[0];
 
   redirect(`/device/${primarySystem.id}`);
 }

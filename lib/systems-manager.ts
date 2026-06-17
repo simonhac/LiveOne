@@ -23,21 +23,19 @@ export type SystemWithPolling = System & {
 };
 
 /**
- * Synthesize a `SystemWithPolling` for a composite Area — the areas-backed "virtual system" that lets
- * the integer handle (`legacy_system_id`) keep addressing a composite after its legacy `systems` row
- * is deleted (migration 0014). Composites own no points, never poll, and resolve points/live values
- * from `area_bindings` + the KV fan-out, so device/polling fields are null. Returns null if the Area
- * has no `legacy_system_id` (not a composite migration seam).
+ * An "area view" — a SystemWithPolling shape synthesized from a multi-device Area whose integer
+ * addressing handle (`legacy_system_id`) has NO real `systems` row. It is the SERVER-ONLY resolution
+ * of that handle for the dashboard data path (points/flow/auth resolve via `area_bindings` + members);
+ * it is deliberately kept OUT of `systemsMap`, so an area view never appears in the systems/devices/
+ * admin lists or polling. Owns no points and never polls, so device/polling fields are null.
  */
-export function synthesizeCompositeSystem(
-  area: Area,
-): SystemWithPolling | null {
+function synthesizeAreaView(area: Area): SystemWithPolling | null {
   if (area.legacySystemId == null) return null;
   return {
     id: area.legacySystemId,
     ownerClerkUserId: area.ownerClerkUserId,
-    vendorType: "composite",
-    vendorSiteId: `composite:${area.legacySystemId}`,
+    vendorType: "area",
+    vendorSiteId: `area:${area.legacySystemId}`,
     status: area.status,
     displayName: area.displayName,
     alias: area.alias,
@@ -101,10 +99,10 @@ export class SystemsManager {
   private static lastLoadedAt: number = 0;
   private static readonly CACHE_TTL_MS = 60 * 1000; // 1 minute TTL
   private systemsMap: Map<number, SystemWithPolling> = new Map();
-  // Handles that are areas-backed virtual systems (synthesized from a composite Area — no real
-  // `systems` row). The structural "this resolves its points from area_bindings, not its own
-  // point_info" signal, replacing the `vendorType === 'composite'` string check.
-  private areasBackedIds: Set<number> = new Set();
+  // Area views, keyed by addressing handle (legacy_system_id): a multi-device Area with NO real
+  // `systems` row. Kept SEPARATE from systemsMap so areas never leak into the systems/devices lists,
+  // but are still resolvable for the dashboard data path via getViewableSystem()/isAreaHandle().
+  private areaViewsMap: Map<number, SystemWithPolling> = new Map();
   private loadPromise: Promise<void>;
 
   private constructor() {
@@ -191,12 +189,9 @@ export class SystemsManager {
       this.systemsMap.set(row.systems.id, systemWithPolling);
     }
 
-    // Areas-backed "virtual systems": synthesize one per Area whose addressing handle
-    // (`legacy_system_id`) has NO real `systems` row — i.e. a composite, after its row was deleted
-    // (migration 0014). Selecting by "no real row" via the `has()` guard, NOT `kind='composite'`, is
-    // the structural signal (retiring the composite special-case): an identity Area's handle keeps its
-    // real row, so it's skipped here. Areas-backed systems own no points, never poll, and resolve
-    // their points/live values from area_bindings + the KV fan-out.
+    // Area views: one per Area whose addressing handle (legacy_system_id) has NO real `systems` row
+    // (a multi-device Area). Loaded into a SEPARATE map — they resolve for the dashboard data path
+    // but never appear in the systems/devices/admin lists or polling.
     const handleAreas = await requirePlanetscaleDb()
       .select()
       .from(pgAreas)
@@ -204,11 +199,8 @@ export class SystemsManager {
     for (const area of handleAreas) {
       if (area.legacySystemId == null) continue;
       if (this.systemsMap.has(area.legacySystemId)) continue; // real row wins (identity Areas)
-      const synthesized = synthesizeCompositeSystem(area);
-      if (synthesized) {
-        this.systemsMap.set(area.legacySystemId, synthesized);
-        this.areasBackedIds.add(area.legacySystemId);
-      }
+      const view = synthesizeAreaView(area);
+      if (view) this.areaViewsMap.set(area.legacySystemId, view);
     }
 
     const allSystemsArray = Array.from(this.systemsMap.values());
@@ -229,13 +221,29 @@ export class SystemsManager {
   }
 
   /**
-   * Whether `systemId` is an areas-backed virtual system (synthesized from a composite Area, with no
-   * real `systems` row) — i.e. it resolves its points from `area_bindings` rather than owning
-   * `point_info`. The structural replacement for `system.vendorType === 'composite'`.
+   * Resolve a handle for the DASHBOARD DATA PATH: a real system, OR an area view (a multi-device Area
+   * with no `systems` row). Use this — not getSystem — wherever an Area's whole-area data/auth/flow is
+   * served, so the area handle resolves. getSystem stays real-only (devices/admin/polling).
    */
-  async isAreasBackedSystem(systemId: number): Promise<boolean> {
+  async getViewableSystem(systemId: number): Promise<SystemWithPolling | null> {
     await this.loadPromise;
-    return this.areasBackedIds.has(systemId);
+    return (
+      this.systemsMap.get(systemId) ?? this.areaViewsMap.get(systemId) ?? null
+    );
+  }
+
+  /** Whether `systemId` is an area view (a multi-device Area handle with no real `systems` row). */
+  async isAreaHandle(systemId: number): Promise<boolean> {
+    await this.loadPromise;
+    return this.areaViewsMap.has(systemId);
+  }
+
+  /** Active area-view handles (multi-device Area handles) — included in the daily flow recompute. */
+  async getActiveAreaHandles(): Promise<number[]> {
+    await this.loadPromise;
+    return Array.from(this.areaViewsMap.values())
+      .filter((v) => v.status === "active")
+      .map((v) => v.id);
   }
 
   /**
@@ -392,6 +400,18 @@ export class SystemsManager {
         ownerClerkUserId: s.ownerClerkUserId,
         alias: s.alias,
       }));
+  }
+
+  /**
+   * The user's "primary" visible system — owned-first, else the first visible (by display name), or
+   * null if they can see none. Single source of truth for the `/dashboard` landing redirect and the
+   * "Go to Systems" (`/device`) redirect, which previously each copy-pasted this owned-first logic.
+   */
+  async getPrimaryVisibleSystem(userId: string) {
+    const visible = await this.getSystemsVisibleByUser(userId, true);
+    if (visible.length === 0) return null;
+    const owned = visible.filter((s) => s.ownerClerkUserId === userId);
+    return owned.length > 0 ? owned[0] : visible[0];
   }
 
   /**

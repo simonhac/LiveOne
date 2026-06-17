@@ -7,7 +7,7 @@ import {
   getDashboardByOwnerAlias,
   type CompositionDashboard,
 } from "@/lib/dashboard/dashboards";
-import CompositionDashboardClient from "@/components/CompositionDashboardClient";
+import DashboardClient from "@/components/DashboardClient";
 import { isDashboardV3, type DashboardV3 } from "@/lib/dashboard/v3";
 import { resolveAreasByIds } from "@/lib/areas/list";
 import { descriptorAreaIds } from "@/lib/dashboard/composition";
@@ -49,7 +49,7 @@ async function renderCompositionDashboard(
     ? raw
     : { version: 3, sections: [] };
   return (
-    <CompositionDashboardClient
+    <DashboardClient
       dashboard={{
         id: dashboard.id,
         displayName: dashboard.displayName,
@@ -92,7 +92,7 @@ export default async function DashboardPage({
           : { version: 3, sections: [] };
         const sharedAreas = await resolveAreasByIds(descriptorAreaIds(raw));
         return (
-          <CompositionDashboardClient
+          <DashboardClient
             dashboard={{
               id: composition.id,
               displayName: composition.displayName,

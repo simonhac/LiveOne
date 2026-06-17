@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/queries";
 import { useModalContext } from "@/contexts/ModalContext";
@@ -29,7 +29,6 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import CompositeTab from "./CompositeTab";
 import TeslaConnectFlow from "./TeslaConnectFlow";
 
 interface CredentialField {
@@ -55,9 +54,6 @@ interface AddSystemDialogProps {
 
 export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
   const router = useRouter();
-  const [compositeName, setCompositeName] = useState("");
-  const [isCompositeDirty, setIsCompositeDirty] = useState(false);
-  const compositeSaveRef = useRef<(() => Promise<any>) | null>(null);
   const [selectedVendor, setSelectedVendor] = useState<string>("");
   const [credentials, setCredentials] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -83,8 +79,6 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
     }
     if (!newOpen) {
       // Reset state when closing
-      setCompositeName("");
-      setIsCompositeDirty(false);
       setSelectedVendor("");
       setCredentials({});
       setError(null);
@@ -110,8 +104,6 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
-      setCompositeName("");
-      setIsCompositeDirty(false);
       setSelectedVendor("");
       setCredentials({});
       setError(null);
@@ -127,14 +119,11 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
   const handleVendorChange = (vendorType: string) => {
     setSelectedVendor(vendorType);
     setCredentials({});
-    setCompositeName("");
-    setIsCompositeDirty(false);
     setError(null);
     setTestSuccess(false);
     setSystemInfo(null);
   };
 
-  const isComposite = selectedVendor === "composite";
   const isOAuthRedirect =
     selectedVendorInfo?.addSystemFlow === "oauth-redirect";
 
@@ -234,51 +223,8 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
     },
   });
 
-  const createCompositeMutation = useMutation({
-    mutationFn: async () => {
-      // Get composite mappings from CompositeTab
-      const compositeMappings = await compositeSaveRef.current!();
-
-      const response = await fetch("/api/systems", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          vendorType: "composite",
-          displayName: compositeName,
-          metadata: {
-            mappings: compositeMappings,
-          },
-        }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok && data.success) {
-        return data;
-      }
-      throw new Error(data.error || "Failed to create composite system");
-    },
-    onMutate: () => {
-      setError(null);
-    },
-    onSuccess: (data) => {
-      // Success! Navigate to the new system
-      onOpenChange(false);
-      router.push(`/device/${data.systemId}`);
-      router.refresh();
-    },
-    onError: (err) => {
-      setError(
-        err instanceof Error && err.message
-          ? err.message
-          : "Failed to create composite system. Please try again.",
-      );
-    },
-  });
-
   const isTesting = testMutation.isPending;
-  const isCreating =
-    createMutation.isPending || createCompositeMutation.isPending;
+  const isCreating = createMutation.isPending;
 
   const handleTestConnection = () => {
     if (!canTestConnection()) return;
@@ -286,16 +232,8 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
   };
 
   const handleCreateSystem = () => {
-    if (isComposite) {
-      return handleCreateCompositeSystem();
-    }
     if (!testSuccess || !selectedVendorInfo) return;
     createMutation.mutate();
-  };
-
-  const handleCreateCompositeSystem = () => {
-    if (!compositeName.trim() || !compositeSaveRef.current) return;
-    createCompositeMutation.mutate();
   };
 
   return (
@@ -330,49 +268,9 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
                     {vendor.displayName}
                   </SelectItem>
                 ))}
-                <SelectItem value="composite">
-                  Composite (Combine Multiple Systems)
-                </SelectItem>
               </SelectContent>
             </Select>
           </div>
-
-          {/* Composite System Fields */}
-          {isComposite && (
-            <>
-              {/* Composite System Name */}
-              <div>
-                <Label
-                  htmlFor="compositeName"
-                  className="block mt-[16px] mb-[10px]"
-                >
-                  System Name
-                  <span className="text-red-500 ml-1">*</span>
-                </Label>
-                <Input
-                  id="compositeName"
-                  type="text"
-                  placeholder="e.g., My Combined System"
-                  value={compositeName}
-                  onChange={(e) => setCompositeName(e.target.value)}
-                  disabled={isCreating}
-                />
-              </div>
-
-              {/* Composite Configuration */}
-              <div className="space-y-1">
-                <h3 className="text-sm font-medium">Data Sources</h3>
-                <CompositeTab
-                  systemId={-1}
-                  shouldLoad={true}
-                  onDirtyChange={setIsCompositeDirty}
-                  onSaveFunctionReady={(fn) => {
-                    compositeSaveRef.current = fn;
-                  }}
-                />
-              </div>
-            </>
-          )}
 
           {/* OAuth redirect flow (Tesla Fleet API) */}
           {selectedVendorInfo && isOAuthRedirect && (
@@ -459,24 +357,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
           </Button>
 
           {!isOAuthRedirect &&
-            (isComposite ? (
-              <Button
-                onClick={handleCreateSystem}
-                disabled={
-                  !compositeName.trim() || !isCompositeDirty || isCreating
-                }
-                className="bg-green-600 hover:bg-green-700 w-[140px]"
-              >
-                {isCreating ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Creating System
-                  </>
-                ) : (
-                  "Create System"
-                )}
-              </Button>
-            ) : !testSuccess ? (
+            (!testSuccess ? (
               <Button
                 onClick={handleTestConnection}
                 disabled={!canTestConnection() || isTesting || isCreating}

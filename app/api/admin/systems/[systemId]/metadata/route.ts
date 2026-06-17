@@ -110,17 +110,6 @@ export async function PATCH(
     if (!system) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
-    // Composites are areas-backed and own no generic `systems.metadata`; their config is the
-    // role→point mapping, edited via composite-config.
-    if (system.vendorType === "composite") {
-      return NextResponse.json(
-        {
-          error:
-            "Generic metadata is not supported for composite systems — configure role→point mappings via composite-config.",
-        },
-        { status: 400 },
-      );
-    }
 
     // Shallow-merge the namespaced value into existing metadata (preserve sibling keys).
     const existing = readMetadata(system.metadata);

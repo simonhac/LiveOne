@@ -107,21 +107,14 @@ export default function MobileHeaderMenu({
                   <p className="text-white font-medium text-sm">Settings</p>
                 </div>
 
-                {/* View Data - Show for admin users, disabled for composite systems */}
+                {/* View Data - Show for admin users */}
                 {onViewData && isAdmin && (
                   <button
                     onClick={() => {
-                      if (vendorType !== "composite") {
-                        onClose();
-                        onViewData();
-                      }
+                      onClose();
+                      onViewData();
                     }}
-                    disabled={vendorType === "composite"}
-                    className={`w-full p-3 rounded text-left text-sm flex items-center gap-2 ${
-                      vendorType !== "composite"
-                        ? "bg-gray-700/50 hover:bg-gray-700 text-white transition-colors cursor-pointer"
-                        : "bg-gray-800/50 text-gray-500 cursor-not-allowed opacity-70"
-                    }`}
+                    className="w-full p-3 rounded text-left text-sm flex items-center gap-2 bg-gray-700/50 hover:bg-gray-700 text-white transition-colors cursor-pointer"
                   >
                     <Database className="w-4 h-4" />
                     View Data…

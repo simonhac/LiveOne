@@ -7,8 +7,6 @@
  * flat ordered list, not a vendor template).
  */
 import type { ReadableArea } from "@/lib/areas/list";
-import type { DashboardDescriptor } from "./descriptor";
-import type { DashboardCardType } from "./cards";
 import {
   buildDefaultDashboardV3,
   emptyDashboardV3,
@@ -33,52 +31,6 @@ export function buildSeedDescriptor(
     areaId: area.id,
     vendorType: system.vendorType,
   });
-}
-
-/**
- * Whether a card type can render for a given vendor type, using ONLY the vendor-deterministic subset
- * of `CARD_REGISTRY.canRender` (`tiles`/`grid-signals`/`sankey` are all pointless on pure-amber). The
- * data-driven predicates (`chart`, `sankey`, `amber-*`, `generator-runs`) need live `latest`, which
- * isn't available server-side, so they — and any unknown/future type — default to compatible. The
- * client gallery + renderer remain the authority for those.
- *
- * `sankey` is no longer site-vendor-only: it renders for ANY area with loads + sources (the energy-flow
- * matrix is keyed on logical paths, not vendor). The real "has a complete flow" gate is data-driven
- * (`CARD_REGISTRY.sankey.canRender` / the renderer returns null when there's no generation+load).
- */
-export function isCardTypeVendorCompatible(
-  type: DashboardCardType,
-  vendorType: string,
-): boolean {
-  switch (type) {
-    case "tiles":
-    case "grid-signals":
-    case "sankey":
-      return vendorType !== "amber";
-    default:
-      return true;
-  }
-}
-
-/**
- * Drop cards whose type can't render for their bound Area's vendor type (vendor-deterministic rules
- * only — see `isCardTypeVendorCompatible`). Cards with no `areaId` or an unresolvable vendor type are
- * KEPT (drop, never reject: matches the codebase's defensive ethos and can't brick a save). Used by
- * the authoring PATCH so a descriptor can't persist a permanently-broken card.
- */
-export function filterVendorIncompatibleCards(
-  descriptor: DashboardDescriptor,
-  vendorTypeByAreaId: Map<string, string>,
-): DashboardDescriptor {
-  const cards = descriptor.cards.filter((c) => {
-    if (!c.areaId) return true;
-    const vt = vendorTypeByAreaId.get(c.areaId);
-    if (vt == null) return true;
-    return isCardTypeVendorCompatible(c.type, vt);
-  });
-  return cards.length === descriptor.cards.length
-    ? descriptor
-    : { ...descriptor, cards };
 }
 
 /**

@@ -158,9 +158,9 @@ export async function setDefaultDashboard(
     return { success: false, error: validation.reason };
   }
 
-  // vendorType is required by getOrCreateDefaultDashboardId; SystemsManager resolves composites to
-  // their synthesized "composite" system.
-  const system = await SystemsManager.getInstance().getSystem(systemId);
+  // vendorType is required by getOrCreateDefaultDashboardId. Resolve via getViewableSystem so a
+  // multi-device Area handle (vendorType "area") works as a default, not just a real device.
+  const system = await SystemsManager.getInstance().getViewableSystem(systemId);
   if (!system) {
     return { success: false, error: "System not found" };
   }
