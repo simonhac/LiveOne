@@ -8,10 +8,10 @@
  * (`planetscaleDb`), batches large `INSERT … ON CONFLICT` into `point_readings_agg_5m`
  * (the same SQL the receiver uses), and BYPASSES QStash entirely.
  *
- * It writes DATA only — never schema. The region's system + its 3 points must already exist
+ * It writes DATA only — never schema. The region's system + its 4 points must already exist
  * (seed the system, then run one live poll / backfill so ensurePointInfo creates the points).
  *
- *   npx tsx scripts/openelectricity-bulk-ingest.ts \
+ *   npx tsx scripts/openelectricity/bulk-ingest.ts \
  *     --system=42 --region=NSW1 --date-start=2023-01-01 --date-end=2024-01-01 \
  *     --interval=5m --window=7d --batch-size=2000 --overwrite=false \
  *     --resume=auto --dry-run=false --aggregate-1d=true --verify=true
@@ -398,7 +398,7 @@ async function main() {
           fetchMarketData({
             region: opts.region,
             networkCode: opts.network,
-            metrics: ["price", "renewable_proportion"],
+            metrics: ["price", "renewable_proportion", "demand"],
             interval: opts.interval,
             dateStart: winStart,
             dateEnd: winEnd,

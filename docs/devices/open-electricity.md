@@ -21,10 +21,10 @@ One device (system) per NEM region. Modelled on Amber (the existing 5m-native ma
 | Registration       | `registry.ts` → `"openelectricity"`                                                                                                                                                       |
 | Interval class     | **5m-native** (`native-intervals.ts`) → receiver UPSERTs, so late revisions heal                                                                                                          |
 | Credentials        | app-wide env var **`OPEN_ELECTRICITY_API_KEY`** (Vercel prod/preview/dev; **not** per-user Clerk). The cron credential gate in `app/api/cron/minutely/route.ts` exempts `openelectricity` |
-| Provisioning       | seed script `scripts/seed-openelectricity-systems.ts` (one `systems` row per region) — not user-addable                                                                                   |
+| Provisioning       | seed script `scripts/openelectricity/seed-systems.ts` (one `systems` row per region) — not user-addable                                                                                   |
 | Scheduling         | custom dynamic `shouldPoll` via `scheduler.ts` (learned arrival window)                                                                                                                   |
 | Ingest             | `fetchData` → `insertPointReadingsAgg5m` → poll-collector → QStash → receiver UPSERT; latest → KV                                                                                         |
-| Backfill / history | online: `app/api/cron/openelectricity-backfill/route.ts` (`backfill.ts`); offline: `scripts/openelectricity-bulk-ingest.ts`                                                               |
+| Backfill / history | online: `app/api/cron/openelectricity-backfill/route.ts` (`backfill.ts`); offline: `scripts/openelectricity/bulk-ingest.ts`                                                               |
 | Tests              | `lib/vendors/openelectricity/__tests__/` (scheduler + mapper)                                                                                                                             |
 
 ### System model
@@ -99,7 +99,7 @@ Tiered, so any gap is filled by the cheapest mechanism that covers it:
 | ≤ ~15 min                 | normal rolling lookback — each poll re-requests the last **15 min** (`DEFAULT_LOOKBACK_MS`), so a just-published interval lands and recent revisions heal                                                                            |
 | 15 min – **24 h**         | **adaptive lookback** — when behind (we/OE were down), the poll extends its window back to `lastSeenIntervalEndMs`, capped at `MAX_AUTOHEAL_MS` (24 h ≈ 288 intervals, one fetch). The next successful poll auto-fills the whole gap |
 | > 24 h, bounded           | `console.warn` fires; run the **backfill route** (`/api/cron/openelectricity-backfill`, ≤ 31 days)                                                                                                                                   |
-| months/years / new region | the **bulk ingestor** (`scripts/openelectricity-bulk-ingest.ts`)                                                                                                                                                                     |
+| months/years / new region | the **bulk ingestor** (`scripts/openelectricity/bulk-ingest.ts`)                                                                                                                                                                     |
 
 The window-start computation is `adaptiveLookbackStartMs` (pure, unit-tested). The two backfill
 paths reuse the same client + mapper as the live adapter, so all three produce identical readings.
@@ -118,14 +118,14 @@ curl -X POST "$BASE/api/cron/openelectricity-backfill" \
 
 ### Bulk ingestor (offline, unbounded)
 
-`scripts/openelectricity-bulk-ingest.ts` — a standalone `tsx` CLI that connects directly to
+`scripts/openelectricity/bulk-ingest.ts` — a standalone `tsx` CLI that connects directly to
 Postgres and batches `INSERT … ON CONFLICT` into `point_readings_agg_5m` (the same SQL the receiver
 uses), **bypassing QStash** for throughput. Dry-run defaults **true**; chunks the range; honours
 rate limits with backoff; resumes from the already-stored `MAX(interval_end)`. The region's system +
-its 3 points must already exist (it writes data, never schema).
+its 4 points must already exist (it writes data, never schema).
 
 ```bash
-npx tsx scripts/openelectricity-bulk-ingest.ts \
+npx tsx scripts/openelectricity/bulk-ingest.ts \
   --system=42 --region=NSW1 --date-start=2023-01-01 --date-end=2024-01-01 \
   --interval=5m --dry-run=false --aggregate-1d=true
 ```
@@ -134,9 +134,9 @@ npx tsx scripts/openelectricity-bulk-ingest.ts \
 
 1. **Env:** `OPEN_ELECTRICITY_API_KEY` (already in Vercel prod/preview/dev; add to `.env.local` for
    local runs).
-2. **Seed the region systems:** `npx tsx scripts/seed-openelectricity-systems.ts` (default NSW1, VIC1;
+2. **Seed the region systems:** `npx tsx scripts/openelectricity/seed-systems.ts` (default NSW1, VIC1;
    idempotent). Points auto-create on the first poll via `ensurePointInfo`.
-3. **Force a poll (dev):** `GET /api/cron/minutely?systemId=<id>&force=true` — confirm 3
+3. **Force a poll (dev):** `GET /api/cron/minutely?systemId=<id>&force=true` — confirm 4
    `point_readings_agg_5m` rows UPSERT and KV latest values populate.
 4. **Verify coverage** (indexed, never `COUNT(*)`): `SELECT MIN(interval_end), MAX(interval_end)
 FROM point_readings_agg_5m WHERE system_id=<id> AND point_id=<idx>`.

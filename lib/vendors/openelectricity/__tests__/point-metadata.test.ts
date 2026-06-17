@@ -1,5 +1,6 @@
 import { describe, it, expect } from "@jest/globals";
 import {
+  DEMAND_POINT,
   EMISSIONS_INTENSITY_POINT,
   PRICE_POINT,
   RENEWABLE_PROPORTION_POINT,
@@ -64,6 +65,11 @@ const marketResp: OeNetworkResponse = {
       unit: "%",
       results: [{ name: "NSW1.renew", data: [[iso(10, 0), 42.1]] }],
     },
+    {
+      metric: "demand",
+      unit: "MW",
+      results: [{ name: "NSW1.demand", data: [[iso(10, 0), 6850]] }],
+    },
   ],
 };
 
@@ -85,20 +91,24 @@ describe("buildReadingsFromResponses", () => {
     expect(intensity.intervalEndMs).toBe(startMs(10, 0) + 5 * 60 * 1000);
   });
 
-  it("passes price and renewable proportion through directly, skipping nulls", () => {
+  it("passes price, renewable proportion and demand through directly, skipping nulls", () => {
     const price = readings.filter((r) => r.pointMetadata === PRICE_POINT);
     const renew = readings.filter(
       (r) => r.pointMetadata === RENEWABLE_PROPORTION_POINT,
     );
+    const demand = readings.filter((r) => r.pointMetadata === DEMAND_POINT);
     expect(price).toHaveLength(1); // 10:05 null skipped
     expect(price[0].rawValue).toBe(80.5);
     expect(price[0].intervalEndMs).toBe(startMs(10, 0) + 5 * 60 * 1000);
     expect(renew).toHaveLength(1);
     expect(renew[0].rawValue).toBe(42.1);
+    expect(demand).toHaveLength(1);
+    expect(demand[0].rawValue).toBe(6850);
+    expect(demand[0].intervalEndMs).toBe(startMs(10, 0) + 5 * 60 * 1000);
   });
 
-  it("produces exactly the three expected readings for this fixture", () => {
-    expect(readings).toHaveLength(3);
+  it("produces exactly the four expected readings for this fixture", () => {
+    expect(readings).toHaveLength(4);
   });
 
   it("skips intensity when emissions/power data is missing", () => {
@@ -106,7 +116,7 @@ describe("buildReadingsFromResponses", () => {
     expect(
       onlyMarket.some((r) => r.pointMetadata === EMISSIONS_INTENSITY_POINT),
     ).toBe(false);
-    expect(onlyMarket).toHaveLength(2); // price + renewables only
+    expect(onlyMarket).toHaveLength(3); // price + renewables + demand
   });
 
   it("skips intensity when emissions is 0 but power > 0 (transient OE artifact)", () => {
