@@ -114,3 +114,69 @@ export function computeFlowMatrix(input: {
     intervalsUsed,
   };
 }
+
+/**
+ * Snapshot of the source→load flow at a SINGLE sample (no integration). At the given `index` it
+ * allocates each load's instantaneous value across sources in proportion to each source's share of
+ * total generation at that same sample — the same proportional rule {@link computeFlowMatrix} uses
+ * per interval, but on the raw sample value rather than trapezoidal energy.
+ *
+ * The unit of the result is the unit of the input series at that sample: POWER (kW) for the 5m/30m
+ * charts, or that day's ENERGY (kWh) for the 1d (30D) chart. Same `FlowMatrixResult` shape, with
+ * row/column sums for the node totals, so it drops straight into the same sankey renderer.
+ */
+export function computeInstantFlowMatrix(input: {
+  sources: FlowSeries[];
+  loads: FlowSeries[];
+  index: number;
+}): FlowMatrixResult {
+  const { sources, loads, index } = input;
+
+  const matrix: number[][] = Array.from({ length: sources.length }, () =>
+    new Array<number>(loads.length).fill(0),
+  );
+  let intervalsUsed = 0;
+
+  let totalGenPower = 0;
+  for (const source of sources) {
+    const power = source.power[index];
+    if (power !== null && power !== undefined) totalGenPower += power;
+  }
+
+  if (totalGenPower > 0) {
+    let contributed = false;
+    for (let s = 0; s < sources.length; s++) {
+      const sourcePower = sources[s].power[index];
+      if (sourcePower === null || sourcePower === undefined) continue;
+      const sourceProportion = sourcePower / totalGenPower;
+
+      for (let l = 0; l < loads.length; l++) {
+        const loadPower = loads[l].power[index];
+        if (loadPower === null || loadPower === undefined) continue;
+        const contribution = loadPower * sourceProportion;
+        matrix[s][l] += contribution;
+        if (contribution !== 0) contributed = true;
+      }
+    }
+    if (contributed) intervalsUsed = 1;
+  }
+
+  const sourceTotals = matrix.map((row) => row.reduce((sum, v) => sum + v, 0));
+  const loadTotals = new Array<number>(loads.length).fill(0);
+  for (let l = 0; l < loads.length; l++) {
+    for (let s = 0; s < sources.length; s++) {
+      loadTotals[l] += matrix[s][l];
+    }
+  }
+  const totalEnergy = sourceTotals.reduce((sum, v) => sum + v, 0);
+
+  return {
+    sources: sources.map((s) => s.path),
+    loads: loads.map((l) => l.path),
+    matrix,
+    sourceTotals,
+    loadTotals,
+    totalEnergy,
+    intervalsUsed,
+  };
+}

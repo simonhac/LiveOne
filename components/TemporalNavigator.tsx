@@ -7,16 +7,12 @@ import { formatDateTimeRange } from "@/lib/fe-date-format";
 import { fromUnixTimestamp } from "@/lib/date-utils";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { getPeriodDuration } from "@/lib/charts/temporal";
+import { formatHoverTimestamp } from "@/lib/charts/scaffold";
+import { useChartFocus } from "@/lib/charts/ChartFocusContext";
 
 interface TemporalNavigatorProps {
   /** System/area timezone offset (minutes) — used to format the range label and encode prev/next URLs. */
   timezoneOffsetMin: number;
-  /**
-   * When set, the label shows this chart's hovered timestamp instead of the window range. Kept local
-   * to each chart (each navigator instance receives its own chart's hover), so the navigator never
-   * needs a cross-chart hover bus. Empty string / null ⇒ show the range.
-   */
-  hoverLabel?: string | null;
   /** Disables keyboard stepping while the chart's data is loading. */
   loading?: boolean;
   className?: string;
@@ -26,15 +22,19 @@ interface TemporalNavigatorProps {
  * The shared temporal navigator: a date-range label + prev/next buttons + the 1D/7D/30D switcher.
  * Self-wired to the URL via {@link useTemporalRange}, so multiple instances on a page (one per chart)
  * all read and write the same shared period + window. Rendered in each chart's header.
+ *
+ * The label shows the window range by default, switching to the hovered time/date whenever a point
+ * is focused on ANY chart in the cluster — read from the shared {@link useChartFocus} so every
+ * navigator instance shows the identical label, kept in sync across the line chart + site charts.
  */
 export default function TemporalNavigator({
   timezoneOffsetMin,
-  hoverLabel,
   loading = false,
   className = "",
 }: TemporalNavigatorProps) {
   const { period, start, end, isHistoricalMode, older, newer, setPeriod } =
     useTemporalRange({ timezoneOffsetMin });
+  const { focusedTime } = useChartFocus();
 
   // Keyboard navigation: ArrowLeft = older, ArrowRight = newer (historical only). Safe with multiple
   // navigator instances — older/newer are pure functions of the current URL, so concurrent firings
@@ -83,6 +83,16 @@ export default function TemporalNavigator({
     };
   })();
 
+  // Shared hover label: when a point is focused on any chart in the cluster, every navigator shows
+  // that instant (period-aware via the shared formatter) instead of the range. Desktop/mobile drop
+  // the year to match the range label's responsive width.
+  const hoverLabel = focusedTime
+    ? {
+        desktop: formatHoverTimestamp(focusedTime, period, false),
+        mobile: formatHoverTimestamp(focusedTime, period, true),
+      }
+    : null;
+
   return (
     <div className={`flex justify-end items-center ${className}`}>
       <div className="flex items-center gap-2 sm:gap-4">
@@ -90,14 +100,12 @@ export default function TemporalNavigator({
           className="text-xs sm:text-sm text-gray-400"
           style={{ fontFamily: "DM Sans, system-ui, sans-serif" }}
         >
-          {hoverLabel ? (
-            hoverLabel
-          ) : (
-            <>
-              <span className="hidden sm:inline">{rangeLabel.desktop}</span>
-              <span className="sm:hidden">{rangeLabel.mobile}</span>
-            </>
-          )}
+          <span className="hidden sm:inline">
+            {hoverLabel ? hoverLabel.desktop : rangeLabel.desktop}
+          </span>
+          <span className="sm:hidden">
+            {hoverLabel ? hoverLabel.mobile : rangeLabel.mobile}
+          </span>
         </span>
         {/* Prev/Next navigation buttons */}
         <div className="inline-flex rounded-md shadow-sm" role="group">

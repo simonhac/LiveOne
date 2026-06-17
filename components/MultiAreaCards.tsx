@@ -9,6 +9,7 @@ import { useTileNodes } from "@/app/components/cards/useTileNodes";
 import LinesChartCard from "@/components/LinesChartCard";
 import AmberCard from "@/components/AmberCard";
 import GeneratorRunsCard from "@/components/GeneratorRunsCard";
+import { ChartFocusProvider } from "@/lib/charts/ChartFocusContext";
 import { TILE_IDS } from "@/lib/dashboard/cards";
 import {
   cardIdentity,
@@ -161,11 +162,15 @@ function AreaChartCard({ systemId }: { systemId: number }) {
   );
   const tz = ((data ?? null) as AreaDatum | null)?.system?.timezoneOffsetMin;
   return (
-    <LinesChartCard
-      systemId={systemId}
-      className="h-full min-h-[360px]"
-      timezoneOffsetMin={tz ?? 600}
-    />
+    // This area's lone line chart still needs a focus scope so its navigator label tracks its own
+    // hover (and doesn't sync with other areas' charts).
+    <ChartFocusProvider>
+      <LinesChartCard
+        systemId={systemId}
+        className="h-full min-h-[360px]"
+        timezoneOffsetMin={tz ?? 600}
+      />
+    </ChartFocusProvider>
   );
 }
 

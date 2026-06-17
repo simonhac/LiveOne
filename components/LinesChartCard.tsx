@@ -6,12 +6,12 @@ import { historyQuery } from "@/lib/queries";
 import ChartTooltip from "./ChartTooltip";
 import TemporalNavigator from "./TemporalNavigator";
 import ServerErrorModal from "./ServerErrorModal";
-import { formatHoverTimestamp as formatHoverTimestampShared } from "@/lib/charts/scaffold";
 import DashboardChart from "./DashboardChart";
 import type { LineChartData as ChartData } from "@/lib/charts/types";
 import { buildSeriesParam, buildChartData } from "@/lib/charts/lines-data";
 import { encodeHistoryWindow } from "@/lib/charts/history-window";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
+import { useChartFocus, nearestIndex } from "@/lib/charts/ChartFocusContext";
 
 interface LinesChartCardProps {
   className?: string;
@@ -36,21 +36,9 @@ export default function LinesChartCard({
   const { period, start, end, isHistoricalMode } = useTemporalRange({
     timezoneOffsetMin,
   });
-  const [hoveredData, setHoveredData] = useState<{
-    solar: number | null;
-    load: number | null;
-    battery: number | null;
-    grid: number | null;
-    batterySOC: number | null;
-    timestamp: Date | null;
-  }>({
-    solar: null,
-    load: null,
-    battery: null,
-    grid: null,
-    batterySOC: null,
-    timestamp: null,
-  });
+  // Shared focus instant for this chart cluster — publish our hover here, and read it back so the
+  // red focus line + the values tooltip follow whatever point is focused on ANY chart in the section.
+  const { focusedTime, setFocusedTime } = useChartFocus();
   const chartRef = useRef<any>(null);
 
   // History data via React Query. The raw OpenNEM payload is cached; the windowing +
@@ -126,45 +114,45 @@ export default function LinesChartCard({
         clearTimeout(hoverTimeoutRef.current);
       }
 
-      // Debounce the hover update
+      // Debounce the hover update. Publish the hovered instant to the shared focus; the displayed
+      // values + red line derive from it below (so they also follow focus set by a sibling chart).
       hoverTimeoutRef.current = setTimeout(() => {
         if (activeElements && activeElements.length > 0) {
           const dataIndex = activeElements[0].index;
-          const solarValue = chartData.solar[dataIndex]; // Already converted to kW/kWh by convertToKw()
-          const loadValue = chartData.load[dataIndex]; // Already converted to kW/kWh by convertToKw()
-          const batteryPowerValue =
-            chartData.batteryW && chartData.batteryW[dataIndex] !== undefined
-              ? chartData.batteryW[dataIndex]
-              : null; // Already converted to kW by convertToKw()
-          const gridValue =
-            chartData.grid && chartData.grid[dataIndex] !== undefined
-              ? chartData.grid[dataIndex]
-              : null; // Already converted to kW/kWh by convertToKw()
-          const batteryValue = chartData.batterySOC[dataIndex];
-          const timestamp = chartData.timestamps[dataIndex];
-
-          setHoveredData({
-            solar: solarValue,
-            load: loadValue,
-            battery: batteryPowerValue,
-            grid: gridValue,
-            batterySOC: batteryValue,
-            timestamp: timestamp,
-          });
+          setFocusedTime(chartData.timestamps[dataIndex] ?? null);
         } else {
-          setHoveredData({
-            solar: null,
-            load: null,
-            battery: null,
-            grid: null,
-            batterySOC: null,
-            timestamp: null,
-          });
+          setFocusedTime(null);
         }
       }, 10); // Small debounce delay
     },
-    [chartData],
+    [chartData, setFocusedTime],
   );
+
+  // Values shown in the tooltip below the chart + the red focus line, derived from the shared focus
+  // instant mapped onto THIS chart's grid (so remote focus from the stacked charts works too).
+  const focusIndex = nearestIndex(chartData?.timestamps, focusedTime);
+  const hoveredData =
+    focusIndex != null && chartData
+      ? {
+          solar: chartData.solar[focusIndex] ?? null,
+          load: chartData.load[focusIndex] ?? null,
+          battery: chartData.batteryW?.[focusIndex] ?? null,
+          grid: chartData.grid?.[focusIndex] ?? null,
+          batterySOC: chartData.batterySOC[focusIndex] ?? null,
+          timestamp: chartData.timestamps[focusIndex] ?? null,
+        }
+      : {
+          solar: null,
+          load: null,
+          battery: null,
+          grid: null,
+          batterySOC: null,
+          timestamp: null,
+        };
+
+  const handleMouseLeave = useCallback(() => {
+    if (!("ontouchstart" in window)) setFocusedTime(null);
+  }, [setFocusedTime]);
 
   // X-axis window: prefer the rendered data's actual extent (keeps the axis + daytime/weekday
   // shading aligned with historical data); else the requested window; else the live trailing window.
@@ -231,10 +219,6 @@ export default function LinesChartCard({
         })()
       : null;
 
-  // Format timestamp based on time range (shared scaffold helper)
-  const formatHoverTimestamp = (date: Date | null, isMobile: boolean = false) =>
-    formatHoverTimestampShared(date, period, isMobile);
-
   // Render the chart content based on state
   const renderChartContent = () => {
     if (loading) {
@@ -273,8 +257,10 @@ export default function LinesChartCard({
           now={now}
           windowStart={windowStart}
           onHover={handleHover}
+          hoveredTimestamp={hoveredData.timestamp}
           chartRef={chartRef}
           className="flex-1 min-h-0"
+          onMouseLeave={handleMouseLeave}
         />
         <div className="flex justify-center mt-2 px-2 sm:px-0">
           <ChartTooltip
@@ -298,7 +284,6 @@ export default function LinesChartCard({
       <div className="mb-2 md:mb-3 px-1 md:px-0">
         <TemporalNavigator
           timezoneOffsetMin={timezoneOffsetMin}
-          hoverLabel={formatHoverTimestamp(hoveredData.timestamp)}
           loading={loading}
         />
       </div>
