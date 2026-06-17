@@ -330,6 +330,7 @@ export default function DeviceViewer({
                 <LinesChartCard
                   systemId={parseInt(systemId)}
                   className="h-full min-h-[400px]"
+                  timezoneOffsetMin={data?.system.timezoneOffsetMin ?? 600}
                   maxPowerHint={(() => {
                     // Parse solar size (format: "9 kW")
                     let solarKW: number | undefined;
