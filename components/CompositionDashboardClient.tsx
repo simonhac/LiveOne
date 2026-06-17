@@ -7,7 +7,9 @@ import { Settings, Share2, Plus, ChevronDown } from "lucide-react";
 import CompositionDashboard from "@/components/CompositionDashboard";
 import CompositionShareDialog from "@/components/CompositionShareDialog";
 import DashboardSettingsDialog from "@/components/DashboardSettingsDialog";
-import DashboardsMenu from "@/components/DashboardsMenu";
+import DashboardsMenu, {
+  usePrefetchDashboardsMenu,
+} from "@/components/DashboardsMenu";
 import NewDashboardDialog from "@/components/NewDashboardDialog";
 import { readableAreasQuery } from "@/lib/queries";
 import type { DashboardV3 } from "@/lib/dashboard/v3";
@@ -38,6 +40,10 @@ export default function CompositionDashboardClient({
   const [shareOpen, setShareOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
+
+  // Warm the switcher's dashboards + default so the dropdown paints fully on first open (no jump).
+  // The switcher is only shown to a real authed owner (not the read-only shared view).
+  usePrefetchDashboardsMenu(!sharedAreas);
 
   // areaId → Area: authed views fetch the caller's readable areas; the shared view gets them inline.
   const { data: areasResp } = useQuery(readableAreasQuery(!sharedAreas));

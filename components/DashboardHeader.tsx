@@ -31,7 +31,9 @@ import NewDashboardDialog from "@/components/NewDashboardDialog";
 import LastUpdateTime from "@/components/LastUpdateTime";
 import SystemInfoTooltip from "@/components/SystemInfoTooltip";
 import MobileHeaderMenu from "@/components/MobileHeaderMenu";
-import DashboardsMenu from "@/components/DashboardsMenu";
+import DashboardsMenu, {
+  usePrefetchDashboardsMenu,
+} from "@/components/DashboardsMenu";
 import { useDashboardCustomizeOptional } from "@/contexts/DashboardCustomizeContext";
 
 interface SystemInfo {
@@ -106,6 +108,9 @@ export default function DashboardHeader({
   shiftKeyDown = false,
 }: DashboardHeaderProps) {
   const pathname = usePathname();
+
+  // Warm the switcher's dashboards + default so the title dropdown paints fully on first open (no jump).
+  usePrefetchDashboardsMenu(!!userId);
 
   // Compute full title with subpage suffix (e.g., "Amber Test — Heatmap")
   const subpageSlug = pathname?.split("/").pop() || "";

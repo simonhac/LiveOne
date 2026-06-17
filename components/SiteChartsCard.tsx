@@ -391,6 +391,7 @@ export default function SiteChartsCard({
     data: siteData,
     isLoading: historyLoading,
     isFetching: historyFetching,
+    isPlaceholderData,
   } = useQuery(
     siteDataQuery({
       systemId: systemId ?? "",
@@ -433,8 +434,14 @@ export default function SiteChartsCard({
 
   // In historical mode, normalize the window to the server-aligned request window so prev/next
   // navigation steps from the actual fetched range. Guarded by equality so it converges.
+  //
+  // Skip while `isPlaceholderData` — during a navigation refetch React Query keeps the PREVIOUS
+  // window's data on screen (see siteDataQuery's placeholderData), whose requestStart/End belong
+  // to the old window. Snapping to those would revert a just-issued prev/next step. That was the
+  // "first click does nothing" bug: the first Older click flips isHistoricalMode false→true, which
+  // re-ran this effect against the stale live placeholder and reset the range back to live.
   useEffect(() => {
-    if (!siteData || !isHistoricalMode) return;
+    if (!siteData || !isHistoricalMode || isPlaceholderData) return;
     const { requestStart, requestEnd } = siteData;
     if (!requestStart || !requestEnd) return;
     setHistoryTimeRange((prev) =>
@@ -442,7 +449,7 @@ export default function SiteChartsCard({
         ? prev
         : { start: requestStart, end: requestEnd },
     );
-  }, [siteData, isHistoricalMode]);
+  }, [siteData, isHistoricalMode, isPlaceholderData]);
 
   // Long-range Sankey from Postgres (point_readings_flow_1d), gated by FLOW_MATRIX_SERVE_FROM_PG.
   // 30D only; a dependent query keyed on the site fetch's request window. When disabled / not yet
