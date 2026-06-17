@@ -663,8 +663,11 @@ export const areas = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(), // app supplies uuidv7(); default is a safety net
     ownerClerkUserId: text("owner_clerk_user_id"),
-    kind: text("kind").notNull(), // 'identity' | 'composite'
-    sourceSystemId: integer("source_system_id").references(() => systems.id), // set for kind='identity'
+    // 'identity' | 'composite'. RETIRED IN CODE (#105/#106) — nothing branches on it; identity-vs-composite
+    // is derived from area_devices membership. Column kept (NOT NULL) pending Phase D drop. See
+    // docs/architecture/areas-and-dashboards.md §5.
+    kind: text("kind").notNull(),
+    sourceSystemId: integer("source_system_id").references(() => systems.id), // single-device Area's source
     // The 1:1 migration seam + the stable integer ADDRESSING HANDLE for a composite (its old
     // systems.id). No FK to systems: a composite Area outlives its `systems` row (deleted in
     // migration 0014), and `getSystem(legacy_system_id)` then resolves to the synthesized virtual

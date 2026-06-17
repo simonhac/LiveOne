@@ -2,7 +2,9 @@
 
 > Status: foundation live · Phase 1 (sharing hardening) done · Phase 2a (default dashboard + scope seam)
 > done · Phase 2b-1 (multi-area cards) done · Phase 2b-2 (first-class composition dashboards) done (additive,
-> legacy per-system path kept) · Phase 3 planned.
+> legacy per-system path kept) · **Composite special-case retired (#105 + #106): an Area is now a grouping
+> of 1..N member devices — resolver unified, `kind` no longer read, `area_devices` membership live.** The
+> `areas.kind` _column_ drop + create-UX reframe is **Phase D** (still pending — §5). Phase 3 (HA export) planned.
 > Schema source of truth: `lib/db/planetscale/schema.ts` (Drizzle is authoritative — never hand-rolled
 > SQL, never `drizzle-kit push`). This doc holds the _why_ and the invariants; columns and routes live in
 > code.
@@ -22,17 +24,29 @@ canvas.**
 
 - **Points** are addressed by `(system_id, index)` but also carry a deterministic `point_uid` (uuidv5) —
   a stable identity that survives re-addressing.
-- **Every system gets a 1:1 identity Area** (`areas.kind='identity'`). **Composites are areas-backed
-  virtual systems** (`kind='composite'`) with no `systems` row — `SystemsManager.synthesizeCompositeSystem`
-  reconstructs them on demand, keyed on `areas.legacy_system_id` (the old `systems.id`), preserving integer
-  addressing with no UUID rewrite.
-- **`area_bindings` is the sole role→point source**; **`roles` is the single source of truth for role
-  semantics** (the HA `device_class`/`state_class`/unit/aggregability registry, projected from
-  `lib/roles/registry.ts`).
+- **An Area is a grouping of 1..N member devices** (`area_devices`). A **single-device Area** wraps one
+  physical system; a **multi-device Area** (the former "composite") groups several. There is **no special
+  "composite" concept** — a multi-device Area with no real `systems` row of its own is **areas-backed**:
+  `SystemsManager` synthesizes a virtual system on demand, keyed on `areas.legacy_system_id` (the old
+  `systems.id`), preserving integer addressing with no UUID rewrite. The point resolver
+  (`PointManager._resolvePointsForViewable`) dispatches on the **structural** "areas-backed (no real
+  `systems` row)" signal (`SystemsManager.isAreasBackedSystem`), **not** a `kind` string.
+- **Membership + override.** An Area's points resolve under membership + override: **`area_bindings`
+  _select_** the points when present (a curated multi-device Area — every Area that exists today has
+  bindings); with **no bindings** an Area **defaults to the union of its member devices' own points**.
+  `roles` is the single source of truth for role semantics (the HA `device_class`/`state_class`/unit/
+  aggregability registry, projected from `lib/roles/registry.ts`).
+- **Areas are lazy.** A system is **not** given an identity Area at create-time; one is minted on demand
+  the moment it's needed — when the system forms a complete flow role set (the daily recompute heal) or
+  when its location is set — so bare monitoring-only systems don't accrue pointless Area rows.
+- **`areas.kind` (`'identity'|'composite'`) is retired in code** (#105/#106 — no reader branches on it; the
+  admin list, the resolver, grid, and KV fan-out all derive identity-vs-composite from membership). The
+  _column_ is still physically present; dropping it is **Phase D** (§5).
 
-**Invariants.** Identity is append-only — areas map 1:1 to a system or a former composite; we never re-key
-an area in place. The flow matrix (`point_readings_flow_1d`) was _re-keyed_ from `system_id` to `area_id`
-with byte-identical rows — never recomputed.
+**Invariants.** The flow matrix (`point_readings_flow_1d`) is area-keyed with byte-identical rows — never
+recomputed, never re-keyed, FK never cascaded. The integer `legacy_system_id` handle is **load-bearing
+addressing — kept** (not a cleanup target; see §4). Every resolver-touching change is gated by a per-area
+parity assertion (`getActivePointsForSystem(handle)` byte-identical pre/post).
 
 **Areas are organizational, not the access boundary.** Access is **area/system-granular** (a share's scope
 is the union of its dashboard's card areas); point-level narrowing within an area is a future tightening.
@@ -207,11 +221,13 @@ area.
 
 **Decision (2026-06-16) — additive coexistence, NOT demolition.** The full retirement of the per-system
 path (deleting `DashboardClient` + the `heatmap/generator/amber/latest` subpages + the systems dropdown +
-`/api/dashboard/[systemId]` + migration `0018` dropping `system_id`/`area_id`) was **declined**: it is an
-app-wide demolition that removes the system-viewing UX and is **not required** — the additive `0017` schema
-lets composition dashboards (`display_name` rows) and legacy per-system customizations (`system_id` rows)
-coexist in one table. The per-system `DashboardClient` view stays; composition dashboards are first-class
-additions on top. `0018` and any deletion are deferred indefinitely (revisit only with a concrete driver).
+`/api/dashboard/[systemId]` + a migration dropping `dashboards.system_id`/`area_id`) was **declined**: it is
+an app-wide demolition that removes the system-viewing UX and is **not required** — the additive `0017`
+schema lets composition dashboards (`display_name` rows) and legacy per-system customizations (`system_id`
+rows) coexist in one table. The per-system `DashboardClient` view stays; composition dashboards are
+first-class additions on top. That deletion is deferred indefinitely (revisit only with a concrete driver).
+(Note: migration `0018` is unrelated — it is the `area_devices` membership table from the composite
+retirement, §5.)
 
 ### Phase 3 — Home Assistant export — ⬜
 
@@ -233,3 +249,55 @@ revisit only if a concrete need (not tidiness) appears.
 
 The foundation gates everything. Phase 2a (done) gates Phase 2b. Phase 3 is independent of Phase 2 and can
 proceed in parallel.
+
+## 5. Composite retirement — and the pending Phase D
+
+The semantic-layer cleanup that makes §1's "an Area is 1..N member devices" literally true in code. Two
+earlier waves got here: **composite `systems` rows deleted** → synthesized as areas-backed virtual systems
+(#89–92, migration `0014`); then the **special-case removed from the resolver** (#105 + #106).
+
+**Done — #105 + #106 (no `kind` column drop):**
+
+- **Unified resolver.** `PointManager._resolvePointsForViewable` is the one "resolve viewable points" path.
+  A real device loads its own `point_info`; an **areas-backed** handle resolves under membership + override
+  (§1). Dispatch is on the structural `SystemsManager.isAreasBackedSystem(id)` (no real `systems` row),
+  **not** `vendorType === 'composite'` / `kind`.
+- **`area_devices` membership table** (migration **`0018`**, applied to dev + `sydney` prod): `(area_id,
+system_id, ordinal)`. Backfill: a multi-device (composite) Area's members are the distinct
+  `area_bindings.point_system_id`; a single-device (identity) Area's member is its `source_system_id`. Kept
+  in lockstep on create/edit (`replaceAreaBindings`, `ensureIdentityArea`). `area_id` CASCADE is safe (the
+  table is rederivable); **no FK to `systems`** (a member may be a child system whose row was deleted in
+  `0014`).
+- **Union-default** (bindings-as-select): a binding-less multi-device Area resolves to the union of its
+  members' points — the capability that makes a plain "several devices in one Area" work with no curation.
+- **`kind` reads collapsed** everywhere: synthesis (`legacy_system_id` with no `systems` row), binding
+  reads, grid-role, admin (one "Areas" list by member count), KV fan-out.
+- **Lazy Areas:** no eager identity-Area at system create; minted on demand (complete-role-set heal, or on
+  location-set).
+
+Every step is gated by the per-area parity assertion (`getActivePointsForSystem(handle)` byte-identical),
+and `point_readings_flow_1d` + the integer `legacy_system_id` handle are untouched.
+
+### Phase D — drop `areas.kind` + create-UX reframe — ⬜ (pending; needs schema approval + a soak)
+
+The `areas.kind` column is still physically present (everything reads membership now, but a few non-resolver
+sites still _select_ it as a pass-through, and `sync.ts` still _writes_ it). Phase D finishes the job:
+
+1. **Purge the remaining `kind` references** — the pass-through selects/fields (`ReadableArea.kind`,
+   `ResolvedArea.kind`, `/api/areas`), the writes in `lib/areas/sync.ts` (`ensureIdentityArea`,
+   `createCompositeArea`), the `getCompositeAreaId` `kind='composite'` filter, and the constructed
+   `{ kind: 'identity' }` in `logical-system.ts`. Replace with membership-derived values where a label is
+   still wanted (single- vs multi-device).
+2. **Drop the column via expand-contract** (it is `NOT NULL`, so a one-shot drop races the deploy):
+   - **Migration D1** — `ALTER TABLE areas ALTER COLUMN kind DROP NOT NULL` (or add a default). Now old code
+     that still writes `kind` and new code that omits it both work. Apply to `sydney` first.
+   - **Deploy** the code from step 1 (nothing reads or writes `kind`).
+   - **Migration D2** — `ALTER TABLE areas DROP COLUMN kind`, behind a `DO`/`RAISE` guard that no reader
+     remains. Apply to `sydney`.
+3. **Create-UX reframe** — present the admin "create composite system + `{version:2, mappings}`" flow as
+   "create an Area → add member devices (`area_devices`) → optional role overrides." The backend is already
+   areas-only (#92); this is mostly presentation + writing membership. Keep the `{version:2, mappings}`
+   editor as the **override** editor.
+
+**Not in Phase D / not planned:** re-keying the serving path or `flow_1d` to UUID, and dropping
+`legacy_system_id` — the integer handle is load-bearing addressing (see "Not planned" above), kept.

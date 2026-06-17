@@ -80,26 +80,30 @@ export async function resolveLogicalSystem(
       displayName: p.name,
     }));
 
+  const isComplete = isCompleteRoleSet(points.map((p) => p.stem));
+
   // A logical system MUST map to an Area — `area_id` is the primary key of point_readings_flow_1d
-  // (P3-tail-1). If none resolves (a new/un-backfilled system), skip loudly rather than writing an
-  // un-keyed flow row.
+  // (P3-tail-1). If none resolves (areas are LAZY now — not minted at create-time), self-heal it here
+  // rather than write an un-keyed flow row.
   let area = await getAreaForSystem(systemId);
   if (!area) {
-    // Self-heal the System→Area seam: a physical system with no Area (created before the runtime seam,
-    // or a rare create-time miss) is minted its 1:1 identity Area now rather than silently dropped from
-    // the recompute. An areas-backed system is synthesized FROM an Area, so one reaching here with no
-    // Area is a genuine fault — don't fabricate an identity Area for it.
+    // An areas-backed system is synthesized FROM an Area, so one reaching here with no Area is a
+    // genuine fault — don't fabricate an identity Area for it.
     if (await SystemsManager.getInstance().isAreasBackedSystem(systemId)) {
       console.error(
         `[LogicalSystem] Areas-backed system ${systemId} has no Area — skipping flow recompute`,
       );
       return null;
     }
+    // Lazy-area gate: only mint an identity Area for a system that actually forms a COMPLETE flow role
+    // set (a real flow view). A monitoring-only / incomplete system gets NO Area and no flow row — it
+    // has no flow to record anyway, and the caller drops incomplete systems regardless.
+    if (!isComplete) return null;
     try {
       const areaId = await ensureIdentityArea(system);
       area = { id: areaId, kind: "identity" };
       console.warn(
-        `[LogicalSystem] Healed missing identity Area for system ${systemId} → ${areaId}`,
+        `[LogicalSystem] Healed missing identity Area for complete system ${systemId} → ${areaId}`,
       );
     } catch (e) {
       console.error(
@@ -115,7 +119,7 @@ export async function resolveLogicalSystem(
     areaId: area.id,
     timezoneOffsetMin: system.timezoneOffsetMin,
     points,
-    isComplete: isCompleteRoleSet(points.map((p) => p.stem)),
+    isComplete,
   };
 }
 

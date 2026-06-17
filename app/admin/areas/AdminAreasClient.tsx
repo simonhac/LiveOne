@@ -1,6 +1,6 @@
 "use client";
 
-import { Layers, Box, MapPin } from "lucide-react";
+import { Layers, MapPin } from "lucide-react";
 import type {
   AdminAreaData,
   AreaSourceSystem,
@@ -32,23 +32,14 @@ export default function AdminAreasClient({
 }: {
   areas: AdminAreaData[];
 }) {
-  const identity = areas.filter((a) => a.kind === "identity");
-  const composite = areas.filter((a) => a.kind === "composite");
-
   return (
     <div className="flex flex-col h-full max-h-full">
       <div className="flex-1 px-0 md:px-6 py-8 overflow-auto space-y-8">
         <AreaTable
-          title="Composite areas"
-          subtitle="Role-sets that bind points across multiple physical systems (the former composite systems)."
+          title="Areas"
+          subtitle="Each Area groups 1..N member devices; bindings are role→point overrides."
           icon={<Layers className="w-5 h-5 text-purple-400" />}
-          areas={composite}
-        />
-        <AreaTable
-          title="Identity areas"
-          subtitle="1:1 wrappers over a single physical system."
-          icon={<Box className="w-5 h-5 text-blue-400" />}
-          areas={identity}
+          areas={areas}
         />
       </div>
     </div>
@@ -108,12 +99,7 @@ function AreaTable({
             ) : (
               areas.map((area) => {
                 const location = formatLocation(area);
-                const sourceLine =
-                  area.kind === "composite"
-                    ? formatSourceSystems(area.sourceSystems)
-                    : area.sourceSystem
-                      ? `system ${area.sourceSystem.displayName || `ID: ${area.sourceSystem.id}`}`
-                      : "(no system)";
+                const sourceLine = formatSourceSystems(area.memberSystems);
                 return (
                   <tr
                     key={area.id}
