@@ -12,6 +12,7 @@ import {
 } from "@/lib/queries";
 import { normalizeAlias, isValidAlias } from "@/lib/dashboard/alias";
 import { recomputeAreaFlow } from "@/lib/areas/recompute-flow";
+import { isSystemQuery } from "@/lib/queries/keys";
 
 /**
  * Rename / set shortname / set-or-unset default / delete a composition dashboard. Extracted from
@@ -136,18 +137,30 @@ export default function DashboardSettingsDialog({
     try {
       let total = 0;
       let failed = 0;
+      const systemIds = new Set<number>();
       // Continue on a per-area error so one bad area doesn't abort the rest; report the aggregate.
       for (const areaId of areaIds) {
         try {
-          const { recomputed } = await recomputeAreaFlow(areaId, (days) =>
-            toast.loading(`Recomputing sankeys… ${total + days} days`, {
-              id: "recompute-flow",
-            }),
+          const { recomputed, systemId } = await recomputeAreaFlow(
+            areaId,
+            (days) =>
+              toast.loading(`Recomputing sankeys… ${total + days} days`, {
+                id: "recompute-flow",
+              }),
           );
           total += recomputed;
+          if (systemId != null) systemIds.add(systemId);
         } catch {
           failed += 1;
         }
+      }
+      // Blow away the cached chart/sankey data for the recomputed systems so the corrected Sankey shows
+      // immediately — siteData/flowMatrix are settled, long-`staleTime` queries that would otherwise
+      // serve the pre-recompute matrix until a hard refresh.
+      for (const systemId of systemIds) {
+        await queryClient.invalidateQueries({
+          predicate: (q) => isSystemQuery(systemId, q.queryKey),
+        });
       }
       const days = `${total} day${total === 1 ? "" : "s"}`;
       if (failed > 0) {

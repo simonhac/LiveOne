@@ -151,6 +151,9 @@ export async function POST(
   return NextResponse.json({
     ok: true,
     areaId,
+    // The area's handle (legacy_system_id) — the systemId the client's chart/sankey queries are keyed
+    // on, so the caller can invalidate exactly this system's cached data after the recompute.
+    systemId: area.legacySystemId,
     recomputed: days.length,
     rowsUpserted,
     from: days.length ? days[days.length - 1].toString() : null, // oldest
