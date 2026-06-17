@@ -218,8 +218,8 @@ export const TESLA_SCENARIOS: Record<
 };
 
 // ---------------------------------------------------------------------------
-// GridSignalsCard (GridLiveValues — price $/MWv-ish, emissions tCO2e/MWh, % )
-// Card converts: price/10 -> ¢, emissions*1000 -> g CO₂/kWh, renewables as %.
+// GridSignalsCard (GridLiveValues — price $/MWh, emissions tCO2e/MWh, %, demand MW)
+// Card shows: price as "$N/MWh", emissions*1000 -> g CO₂/kWh, renewables as %, demand as MW.
 // ---------------------------------------------------------------------------
 function gm(value: number, ageSeconds: number = FRESH) {
   return {
@@ -238,6 +238,7 @@ export const GRID_SIGNALS_SCENARIOS: Record<
       price: gm(50),
       emissionsIntensity: gm(0.12),
       renewables: gm(78),
+      demand: gm(6850),
     },
   },
   "low renewables": {
@@ -246,6 +247,7 @@ export const GRID_SIGNALS_SCENARIOS: Record<
       price: gm(90),
       emissionsIntensity: gm(0.65),
       renewables: gm(22),
+      demand: gm(5420),
     },
   },
   "negative price": {
@@ -254,6 +256,7 @@ export const GRID_SIGNALS_SCENARIOS: Record<
       price: gm(-30),
       emissionsIntensity: gm(0.1),
       renewables: gm(85),
+      demand: gm(1180),
     },
   },
   "missing metric": {
@@ -262,6 +265,7 @@ export const GRID_SIGNALS_SCENARIOS: Record<
       price: gm(60),
       emissionsIntensity: null,
       renewables: gm(40),
+      demand: gm(7240),
     },
   },
   stale: {
@@ -270,6 +274,7 @@ export const GRID_SIGNALS_SCENARIOS: Record<
       price: gm(50, STALE),
       emissionsIntensity: gm(0.12, STALE),
       renewables: gm(78, STALE),
+      demand: gm(6850, STALE),
     },
   },
 };

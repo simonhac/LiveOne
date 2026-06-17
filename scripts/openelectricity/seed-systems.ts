@@ -7,8 +7,8 @@
  * PointManager.ensurePointInfo().
  *
  * Usage:
- *   npx tsx scripts/seed-openelectricity-systems.ts                  # all 5 NEM regions (default)
- *   npx tsx scripts/seed-openelectricity-systems.ts --regions=NSW1,VIC1
+ *   npx tsx scripts/openelectricity/seed-systems.ts                  # all 5 NEM regions (default)
+ *   npx tsx scripts/openelectricity/seed-systems.ts --regions=NSW1,VIC1
  *
  * Targets whatever DB .env.local points at (dev branch by default). To seed prod,
  * point PLANETSCALE_DATABASE_URL at the sydney branch and set ALLOW_PROD_DB_IN_DEV=true.

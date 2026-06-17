@@ -143,7 +143,7 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
         fetchMarketData({
           region,
           networkCode: network,
-          metrics: ["price", "renewable_proportion"],
+          metrics: ["price", "renewable_proportion", "demand"],
           interval: "5m",
           dateStart,
           dateEnd,
@@ -258,7 +258,7 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
         const now = new Date();
         const { response } = await fetchMarketData({
           region,
-          metrics: ["price", "renewable_proportion"],
+          metrics: ["price", "renewable_proportion", "demand"],
           interval: "5m",
           dateStart: new Date(now.getTime() - 15 * 60 * 1000),
           dateEnd: now,

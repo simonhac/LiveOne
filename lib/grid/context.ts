@@ -82,7 +82,7 @@ export async function resolveGridContextForSystem(
       .limit(1);
     if (!oeSystem) {
       // Region derived but no public OE system seeded for it — the card silently can't render.
-      // Surface it so the gap is observable (seed via scripts/seed-openelectricity-systems.ts).
+      // Surface it so the gap is observable (seed via scripts/openelectricity/seed-systems.ts).
       console.warn(
         `[grid-context] system ${systemId} is in NEM region ${region} but no public ` +
           `OpenElectricity system is seeded for it — Local Grid card hidden.`,

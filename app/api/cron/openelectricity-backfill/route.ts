@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
   if (endCal.compare(startCal) + 1 > MAX_RANGE_DAYS) {
     return NextResponse.json(
       {
-        error: `Range exceeds ${MAX_RANGE_DAYS} days; use the offline bulk ingestor (scripts/openelectricity-bulk-ingest.ts) for large loads`,
+        error: `Range exceeds ${MAX_RANGE_DAYS} days; use the offline bulk ingestor (scripts/openelectricity/bulk-ingest.ts) for large loads`,
       },
       { status: 400 },
     );
