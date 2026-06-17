@@ -160,9 +160,25 @@ describe("CARD_REGISTRY canRender", () => {
     expect(CARD_REGISTRY["tiles"].canRender(ctx("composite"))).toBe(true);
     expect(CARD_REGISTRY["tiles"].canRender(ctx("amber"))).toBe(false);
   });
-  it("sankey only for site (mondo/composite) systems", () => {
-    expect(CARD_REGISTRY.sankey.canRender(ctx("composite"))).toBe(true);
-    expect(CARD_REGISTRY.sankey.canRender(ctx("mondo"))).toBe(true);
+  it("sankey is data-driven (solar + load present), NOT vendor-gated", () => {
+    const withData = {
+      "source.solar/power": { value: 1000 },
+      "load/power": { value: 500 },
+    } as unknown as LatestPointValues;
+    // Eligible for ANY vendor with a flow — a single selectronic just like a composite.
+    expect(
+      CARD_REGISTRY.sankey.canRender({
+        vendorType: "selectronic",
+        latest: withData,
+      }),
+    ).toBe(true);
+    expect(
+      CARD_REGISTRY.sankey.canRender({
+        vendorType: "composite",
+        latest: withData,
+      }),
+    ).toBe(true);
+    // No series → not eligible.
     expect(CARD_REGISTRY.sankey.canRender(ctx("selectronic"))).toBe(false);
   });
   it("chart is data-driven (solar + load present), NOT vendor-gated", () => {

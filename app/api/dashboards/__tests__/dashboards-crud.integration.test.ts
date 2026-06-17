@@ -6,7 +6,7 @@
  * - alias collision (409)
  * - rename
  * - no-escalation card reject (403)
- * - server card-type-for-Area validation (sankey on a sidebar-vendor area is silently dropped)
+ * - sankey on a sidebar-vendor area is KEPT (it works for any area with loads + sources; v3 doesn't drop)
  * - default set + UNSET via /api/user/preferences
  * - delete (then 404)
  *
@@ -131,34 +131,49 @@ describe("composition dashboards CRUD", () => {
     expect(patched.status).toBe(403);
   });
 
-  it("silently drops a card type its Area's vendor can't render (sankey on sidebar)", async () => {
+  it("keeps a sankey on a sidebar-vendor area (sankey works for any area with loads + sources)", async () => {
     const sidebarArea = readableAreas.find(
       (a) => a.vendorType !== "mondo" && a.vendorType !== "composite",
     );
     if (!sidebarArea) {
-      console.warn("no sidebar-vendor readable area; skipping drop assertion");
+      console.warn(
+        "no sidebar-vendor readable area; skipping sankey-keep assertion",
+      );
       return;
     }
-    const created = await createDashboard({ displayName: "IT card drop" });
+    const created = await createDashboard({ displayName: "IT sankey keep" });
     const id = created.data.id;
+    // The sankey is no longer site-vendor-only: a v3 PATCH persists it on ANY readable area (the
+    // data-driven renderer decides whether to draw it). It is NOT dropped.
     const patched = await api(`/api/dashboards/${id}`, {
       method: "PATCH",
       body: {
         descriptor: {
-          version: 2,
-          layout: "site",
-          cards: [
-            { type: "sankey", id: "drop-me", areaId: sidebarArea.id },
-            { type: "chart", id: "keep-me", areaId: sidebarArea.id },
+          version: 3,
+          sections: [
+            {
+              areaId: sidebarArea.id,
+              cards: [
+                { type: "sankey", id: "keep-sankey" },
+                {
+                  type: "chart",
+                  id: "keep-chart",
+                  chart: { variant: "lines" },
+                },
+              ],
+            },
           ],
         },
       },
     });
     expect(patched.status).toBe(200);
     const got = await api(`/api/dashboards/${id}`);
-    const ids = got.data.dashboard.descriptor.cards.map((c: any) => c.id);
-    expect(ids).toContain("keep-me");
-    expect(ids).not.toContain("drop-me");
+    const cards = got.data.dashboard.descriptor.sections.flatMap(
+      (s: any) => s.cards,
+    );
+    const types = cards.map((c: any) => c.type);
+    expect(types).toContain("sankey");
+    expect(types).toContain("chart");
   });
 
   it("sets then unsets the default dashboard", async () => {

@@ -6,10 +6,11 @@ import {
 import type { DashboardDescriptor } from "../descriptor";
 
 describe("isCardTypeVendorCompatible (vendor-deterministic gate)", () => {
-  it("sankey is site-vendor only", () => {
+  it("sankey is allowed for any vendor with loads + sources; only pure-amber is excluded", () => {
     expect(isCardTypeVendorCompatible("sankey", "mondo")).toBe(true);
     expect(isCardTypeVendorCompatible("sankey", "composite")).toBe(true);
-    expect(isCardTypeVendorCompatible("sankey", "selectronic")).toBe(false);
+    expect(isCardTypeVendorCompatible("sankey", "selectronic")).toBe(true);
+    expect(isCardTypeVendorCompatible("sankey", "enphase")).toBe(true);
     expect(isCardTypeVendorCompatible("sankey", "amber")).toBe(false);
   });
 
@@ -39,16 +40,20 @@ describe("filterVendorIncompatibleCards (drop, never reject)", () => {
     cards,
   });
 
-  it("drops a sankey bound to a sidebar-vendor area but keeps a chart on the same area", () => {
+  it("keeps a sankey on a sidebar vendor (loads + sources); drops one only on pure-amber", () => {
     const d = descriptor([
       { type: "sankey", id: "s", areaId: "area-sidebar" },
       { type: "chart", id: "c", areaId: "area-sidebar" },
+      { type: "sankey", id: "amber-sankey", areaId: "area-amber" },
     ]);
     const out = filterVendorIncompatibleCards(
       d,
-      new Map([["area-sidebar", "selectronic"]]),
+      new Map([
+        ["area-sidebar", "selectronic"],
+        ["area-amber", "amber"],
+      ]),
     );
-    expect(out.cards.map((c) => c.id)).toEqual(["c"]);
+    expect(out.cards.map((c) => c.id)).toEqual(["s", "c"]);
   });
 
   it("keeps cards whose area has no resolvable vendor type, and areaId-less cards", () => {

@@ -25,10 +25,15 @@ describe("buildSeedDescriptor", () => {
   });
 
   it("derives the starter card set from the seed system's vendor type", () => {
-    // site layout (mondo) includes a sankey; sidebar (selectronic) does not.
+    // site layout (mondo) has stacked charts; sidebar (selectronic) a lines chart. The sankey is opt-in
+    // (added explicitly), so it is in NO default — neither layout.
     const site = buildSeedDescriptor(AREA, { vendorType: "mondo" });
-    expect(site.sections[0].cards.some((c) => c.type === "sankey")).toBe(true);
+    expect(site.sections[0].cards.some((c) => c.type === "chart")).toBe(true);
+    expect(site.sections[0].cards.some((c) => c.type === "sankey")).toBe(false);
     const sidebar = buildSeedDescriptor(AREA, { vendorType: "selectronic" });
+    expect(sidebar.sections[0].cards.some((c) => c.type === "chart")).toBe(
+      true,
+    );
     expect(sidebar.sections[0].cards.some((c) => c.type === "sankey")).toBe(
       false,
     );

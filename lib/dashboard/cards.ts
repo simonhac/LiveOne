@@ -80,7 +80,10 @@ export const CARD_REGISTRY: Record<DashboardCardType, CardDef> = {
     type: "sankey",
     label: "Energy Flows",
     requiredRoles: ["solar", "load"],
-    canRender: (c) => isSiteVendor(c.vendorType),
+    // Data-driven, NOT vendor-driven: the energy-flow matrix is keyed on logical paths, so a sankey
+    // renders for ANY area with sources + loads (single selectronic, multi-device composite, …), not
+    // just the mondo/composite "site" layout. Same bar as the chart card.
+    canRender: (c) => chartHasData(c.latest),
   },
   "grid-signals": {
     type: "grid-signals",
@@ -161,7 +164,7 @@ const hasVal = (latest: LatestPointValues, path: string): boolean =>
  * Whether a system has enough series to draw a chart (either variant): solar AND a load signal,
  * using the same point paths as `availableTiles`. Gates the vendor-independent `chart` card.
  */
-function chartHasData(latest: LatestPointValues): boolean {
+export function chartHasData(latest: LatestPointValues): boolean {
   const solar =
     hasVal(latest, "source.solar/power") ||
     hasVal(latest, "source.solar.local/power") ||
