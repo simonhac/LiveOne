@@ -168,8 +168,12 @@ export default function GridSignalsCard({
   // Display values (client-side conversions per the OE stored units). Units render separately
   // (small + non-bold), so these are the bare numbers only.
   const priceText = price != null ? `${(price / 10).toFixed(1)}` : "—";
+  // 0 g/kWh is physically impossible for a generating grid (a transient OE artifact); show
+  // an em-dash rather than a bogus "0" until the next good reading lands.
   const emissionsText =
-    emissions != null ? `${Math.round(emissions * 1000)}` : "—";
+    emissions != null && emissions > 0
+      ? `${Math.round(emissions * 1000)}`
+      : "—";
   const renewablesText = renewables != null ? `${Math.round(renewables)}` : "—";
   const renewablesGreen = renewables != null && renewables > 50;
 

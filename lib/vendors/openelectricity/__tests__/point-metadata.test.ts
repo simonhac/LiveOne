@@ -108,4 +108,30 @@ describe("buildReadingsFromResponses", () => {
     ).toBe(false);
     expect(onlyMarket).toHaveLength(2); // price + renewables only
   });
+
+  it("skips intensity when emissions is 0 but power > 0 (transient OE artifact)", () => {
+    // The OE API can return a spurious 0 for the freshest/settling interval; a 0 emissions
+    // with real generation would compute a non-physical 0 intensity, so the interval is
+    // skipped (intensity undefined) rather than emitting a bogus 0.
+    const zeroEmissions: OeNetworkResponse = {
+      success: true,
+      data: [
+        {
+          metric: "power",
+          unit: "MW",
+          results: [{ name: "NSW1.power", data: [[iso(10, 0), 600]] }],
+        },
+        {
+          metric: "emissions",
+          unit: "t",
+          results: [{ name: "NSW1.emissions", data: [[iso(10, 0), 0]] }],
+        },
+      ],
+    };
+    const out = buildReadingsFromResponses(zeroEmissions, undefined, "5m");
+    expect(out.some((r) => r.pointMetadata === EMISSIONS_INTENSITY_POINT)).toBe(
+      false,
+    );
+    expect(out).toHaveLength(0);
+  });
 });
