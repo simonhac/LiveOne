@@ -319,8 +319,16 @@ async function fetchSiteData(
     return null;
   }
 
-  // Separate power and SoC series
-  let powerSeries = allSeries.filter((d) => d.type === "power");
+  // Separate power and SoC series. SoC series are typed "power" in the OpenNEM payload, so the
+  // type filter alone would pull them in; exclude them by path so they're handled only as the SoC
+  // overlay (socSeries / addSocSeries) below. Otherwise an empty SoC series (e.g. a battery SoC
+  // point with no 1d aggregates, which sorts first) would become powerSeries[0] and zero the whole
+  // chart's timeline in calculateTimeWindow.
+  let powerSeries = allSeries.filter(
+    (d) =>
+      d.type === "power" &&
+      !matchesLogicalPath(d.seriesPath!.pointPath, "bidi.battery", "soc"),
+  );
   if (powerSeries.length === 0) {
     console.warn("No power series data available in response");
     return null;
@@ -342,9 +350,12 @@ async function fetchSiteData(
     powerSeries.map((s) => s.id),
   );
 
-  // Calculate timestamps and time window
+  // Calculate timestamps and time window. Build the master timeline from a series that actually has
+  // data — a single empty/short leading series must never collapse the whole chart's timeline.
+  const timelineSeries =
+    powerSeries.find((s) => s.history.data.length > 0) ?? powerSeries[0];
   const { timestamps, selectedIndices, filteredTimestamps } =
-    calculateTimeWindow(powerSeries[0], period, startTime, endTime);
+    calculateTimeWindow(timelineSeries, period, startTime, endTime);
 
   return {
     powerSeries,
