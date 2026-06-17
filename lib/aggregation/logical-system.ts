@@ -87,14 +87,6 @@ export async function resolveLogicalSystem(
   // rather than write an un-keyed flow row.
   let area = await getAreaForSystem(systemId);
   if (!area) {
-    // An areas-backed system is synthesized FROM an Area, so one reaching here with no Area is a
-    // genuine fault — don't fabricate an identity Area for it.
-    if (await SystemsManager.getInstance().isAreasBackedSystem(systemId)) {
-      console.error(
-        `[LogicalSystem] Areas-backed system ${systemId} has no Area — skipping flow recompute`,
-      );
-      return null;
-    }
     // Lazy-area gate: only mint an identity Area for a system that actually forms a COMPLETE flow role
     // set (a real flow view). A monitoring-only / incomplete system gets NO Area and no flow row — it
     // has no flow to record anyway, and the caller drops incomplete systems regardless.

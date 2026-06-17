@@ -254,39 +254,7 @@ export class PointManager {
   private async _resolvePointsForViewable(
     system: SystemWithPolling,
   ): Promise<PointInfo[]> {
-    const areasBacked = await SystemsManager.getInstance().isAreasBackedSystem(
-      system.id,
-    );
-    if (!areasBacked) {
-      return this._loadPointsForNonCompositeSystem(system.id);
-    }
-
-    const validPointRefs: PointReference[] = (
-      await getCompositeBindingRefs(system.id)
-    ).map((r) => PointReference.fromIds(r.pointSystemId, r.pointId));
-
-    if (validPointRefs.length > 0) {
-      // Bindings present (override) → the bound child refs ARE the set. Fetch all in one query:
-      // OR-of-(system_id,id) against Postgres point_info.
-      const pgConditions = validPointRefs.map(
-        (ref) => sql`(system_id = ${ref.systemId} AND id = ${ref.pointId})`,
-      );
-      const pgRows = await requirePlanetscaleDb()
-        .select()
-        .from(pgPointInfoTable)
-        .where(sql`${sql.join(pgConditions, sql` OR `)}`);
-      return pgPointInfoRowsToServed(pgRows).map((row) => PointInfo.from(row));
-    }
-
-    // No bindings → default to the union of the Area's member devices' own points.
-    const area = await getAreaForSystem(system.id);
-    if (!area) return [];
-    const memberSystemIds = await getAreaDeviceSystemIds(area.id);
-    const unioned: PointInfo[] = [];
-    for (const sid of memberSystemIds) {
-      unioned.push(...(await this._loadPointsForNonCompositeSystem(sid)));
-    }
-    return unioned;
+    return this._loadPointsForNonCompositeSystem(system.id);
   }
 
   /**
