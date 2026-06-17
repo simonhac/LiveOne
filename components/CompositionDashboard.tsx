@@ -170,11 +170,7 @@ function AreaSectionView({
         );
       case "chart": // lines variant
         return handle != null ? (
-          <LinesChartCard
-            key={cardKeyV3(card, i)}
-            systemId={handle}
-            className="h-full min-h-[360px]"
-          />
+          <AreaLinesChart key={cardKeyV3(card, i)} systemId={handle} />
         ) : (
           <ChartSkeleton key={cardKeyV3(card, i)} />
         );
@@ -364,6 +360,30 @@ function AreaSiteCharts({
       serveFlowFromPg={serveFlowFromPg}
       siteCapable={siteCapable}
       cardVisible={(k) => keys.has(k)}
+    />
+  );
+}
+
+/**
+ * The line chart for a section — self-fetches the handle's `system` for its timezone (the temporal
+ * navigator needs it to format the range label + encode historical URLs), then renders LinesChartCard.
+ * Mirrors AreaSiteCharts; React Query dedupes the shared dashboardDataQuery fetch. Holds the layout
+ * (skeleton) until the timezone is known.
+ */
+function AreaLinesChart({ systemId }: { systemId: number }) {
+  const { isAnyModalOpen } = useModalContext();
+  const { data } = useQuery(
+    dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
+  );
+  const tz = ((data ?? null) as AreaDatum | null)?.system?.timezoneOffsetMin;
+  if (tz == null) {
+    return <ChartSkeleton />;
+  }
+  return (
+    <LinesChartCard
+      systemId={systemId}
+      className="h-full min-h-[360px]"
+      timezoneOffsetMin={tz}
     />
   );
 }

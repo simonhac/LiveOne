@@ -2,48 +2,40 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useRouter, useSearchParams } from "next/navigation";
 import { historyQuery } from "@/lib/queries";
 import ChartTooltip from "./ChartTooltip";
-import PeriodSwitcher from "./PeriodSwitcher";
+import TemporalNavigator from "./TemporalNavigator";
 import ServerErrorModal from "./ServerErrorModal";
 import { formatHoverTimestamp as formatHoverTimestampShared } from "@/lib/charts/scaffold";
 import DashboardChart from "./DashboardChart";
 import type { LineChartData as ChartData } from "@/lib/charts/types";
 import { buildSeriesParam, buildChartData } from "@/lib/charts/lines-data";
+import { encodeHistoryWindow } from "@/lib/charts/history-window";
+import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 
 interface LinesChartCardProps {
   className?: string;
   maxPowerHint?: number; // Max power in kW
   systemId: number; // System ID (e.g., 648, 1586)
-  initialPeriod?: "1D" | "7D" | "30D"; // Initial period from URL
+  /** System/area timezone offset (minutes) — drives the navigator label + historical URL encoding. */
+  timezoneOffsetMin: number;
 }
 
 export default function LinesChartCard({
   className = "",
   maxPowerHint,
   systemId,
-  initialPeriod,
+  timezoneOffsetMin,
 }: LinesChartCardProps) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
   const [serverError, setServerError] = useState<{
     type: "connection" | "server" | null;
     details?: string;
   }>({ type: null });
 
-  // Initialize timeRange from URL param or prop
-  const getInitialTimeRange = () => {
-    const urlPeriod = searchParams.get("period") as "1D" | "7D" | "30D" | null;
-    if (urlPeriod && ["1D", "7D", "30D"].includes(urlPeriod)) {
-      return urlPeriod;
-    }
-    return initialPeriod || "1D";
-  };
-
-  const [timeRange, setTimeRange] = useState<"1D" | "7D" | "30D">(
-    getInitialTimeRange(),
-  );
+  // Shared temporal-navigator state (period + historical window) from the URL.
+  const { period, start, end, isHistoricalMode } = useTemporalRange({
+    timezoneOffsetMin,
+  });
   const [hoveredData, setHoveredData] = useState<{
     solar: number | null;
     load: number | null;
@@ -65,9 +57,15 @@ export default function LinesChartCard({
   // unit-conversion transform runs in a useMemo so the derived ChartData stays referentially
   // stable between renders and recomputes only on refetch (boundary-aligned) or period change.
   const requestInterval: "5m" | "30m" | "1d" =
-    timeRange === "1D" ? "5m" : timeRange === "7D" ? "30m" : "1d";
-  const duration =
-    timeRange === "1D" ? "24h" : timeRange === "7D" ? "168h" : "30d";
+    period === "1D" ? "5m" : period === "7D" ? "30m" : "1d";
+  const duration = period === "1D" ? "24h" : period === "7D" ? "168h" : "30d";
+
+  // Live (no window) → trailing `last` window with boundary refetch; historical → an explicit
+  // settled window, encoded via the shared history-window encoder so it matches the site charts.
+  const historicalWindow =
+    isHistoricalMode && start && end
+      ? encodeHistoryWindow(start, end, requestInterval)
+      : null;
 
   const {
     data: rawHistory,
@@ -78,14 +76,27 @@ export default function LinesChartCard({
     historyQuery({
       systemId,
       interval: requestInterval,
-      last: duration,
       series: buildSeriesParam(requestInterval === "1d"),
+      timezoneOffsetMin,
+      ...(historicalWindow
+        ? {
+            startTime: historicalWindow.startTime,
+            endTime: historicalWindow.endTime,
+          }
+        : { last: duration }),
     }),
   );
 
   const chartData = useMemo<ChartData | null>(
-    () => buildChartData(rawHistory, timeRange),
-    [rawHistory, timeRange],
+    () =>
+      buildChartData(
+        rawHistory,
+        period,
+        start && end
+          ? { start: new Date(start), end: new Date(end) }
+          : undefined,
+      ),
+    [rawHistory, period, start, end],
   );
 
   const loading = isPending;
@@ -155,21 +166,22 @@ export default function LinesChartCard({
     [chartData],
   );
 
-  // Calculate the time window for x-axis
+  // X-axis window: prefer the rendered data's actual extent (keeps the axis + daytime/weekday
+  // shading aligned with historical data); else the requested window; else the live trailing window.
   const { now, windowStart } = useMemo(() => {
-    const now = new Date();
-    let windowHours: number;
-    if (timeRange === "1D") {
-      windowHours = 24;
-    } else if (timeRange === "7D") {
-      windowHours = 24 * 7;
-    } else {
-      // 30D
-      windowHours = 24 * 30;
+    if (chartData && chartData.timestamps.length > 0) {
+      const ts = chartData.timestamps;
+      return { windowStart: ts[0], now: ts[ts.length - 1] };
     }
+    if (start && end) {
+      return { windowStart: new Date(start), now: new Date(end) };
+    }
+    const now = new Date();
+    const windowHours =
+      period === "1D" ? 24 : period === "7D" ? 24 * 7 : 24 * 30;
     const windowStart = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
     return { now, windowStart };
-  }, [timeRange]);
+  }, [chartData, start, end, period]);
 
   // Cleanup hover timeout on unmount
   useEffect(() => {
@@ -221,7 +233,7 @@ export default function LinesChartCard({
 
   // Format timestamp based on time range (shared scaffold helper)
   const formatHoverTimestamp = (date: Date | null, isMobile: boolean = false) =>
-    formatHoverTimestampShared(date, timeRange, isMobile);
+    formatHoverTimestampShared(date, period, isMobile);
 
   // Render the chart content based on state
   const renderChartContent = () => {
@@ -257,7 +269,7 @@ export default function LinesChartCard({
           chartData={chartData}
           paddedSOCData={paddedSOCData}
           maxPowerHint={maxPowerHint}
-          timeRange={timeRange}
+          timeRange={period}
           now={now}
           windowStart={windowStart}
           onHover={handleHover}
@@ -283,31 +295,12 @@ export default function LinesChartCard({
     <div
       className={`md:bg-gray-800 md:border md:border-gray-700 md:rounded py-1 px-0 md:p-4 flex flex-col ${className}`}
     >
-      <div className="flex justify-end items-center mb-2 md:mb-3 px-1 md:px-0">
-        <div className="flex items-center gap-2 sm:gap-3">
-          <span
-            className="hidden sm:block text-xs text-gray-400 min-w-[200px] text-right whitespace-nowrap"
-            style={{ fontFamily: "DM Sans, system-ui, sans-serif" }}
-          >
-            {formatHoverTimestamp(hoveredData.timestamp)}
-          </span>
-          <span
-            className="sm:hidden text-xs text-gray-400 text-right whitespace-nowrap"
-            style={{ fontFamily: "DM Sans, system-ui, sans-serif" }}
-          >
-            {formatHoverTimestamp(hoveredData.timestamp, true)}
-          </span>
-          <PeriodSwitcher
-            value={timeRange}
-            onChange={(newPeriod) => {
-              setTimeRange(newPeriod);
-              // Update URL with new period
-              const params = new URLSearchParams(searchParams.toString());
-              params.set("period", newPeriod);
-              router.push(`?${params.toString()}`, { scroll: false });
-            }}
-          />
-        </div>
+      <div className="mb-2 md:mb-3 px-1 md:px-0">
+        <TemporalNavigator
+          timezoneOffsetMin={timezoneOffsetMin}
+          hoverLabel={formatHoverTimestamp(hoveredData.timestamp)}
+          loading={loading}
+        />
       </div>
       {renderChartContent()}
 

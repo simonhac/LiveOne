@@ -4,8 +4,7 @@ import { getColorForPath } from "@/lib/chart-colors";
 import type { EnergyFlowMatrix } from "./energy-flow-matrix";
 import { SeriesPath } from "@/lib/identifiers";
 import { matchesLogicalPath, stemSplit } from "@/lib/identifiers/logical-path";
-import { parseAbsolute, parseDate, toZoned } from "@internationalized/date";
-import { encodeI18nToUrlSafeString } from "@/lib/url-date";
+import { encodeHistoryWindow } from "@/lib/charts/history-window";
 
 export interface ProcessedSiteData {
   load: ChartData | null;
@@ -56,31 +55,10 @@ async function fetchHistoryData(
   // Build API URL - use absolute time if provided, otherwise use relative
   let apiUrl: string;
   if (startTime && endTime) {
-    // Historical data with specific time range
-    // Convert ISO timestamps to URL-safe format
-    let startEncoded: string;
-    let endEncoded: string;
-
-    if (requestInterval === "1d") {
-      // For daily intervals, use date-only format (CalendarDate)
-      const startDate = parseDate(startTime.split("T")[0]);
-      const endDate = parseDate(endTime.split("T")[0]);
-      startEncoded = encodeI18nToUrlSafeString(startDate) as string;
-      endEncoded = encodeI18nToUrlSafeString(endDate) as string;
-    } else {
-      // For minute intervals, use ZonedDateTime with UTC timezone
-      const startZoned = parseAbsolute(startTime, "UTC");
-      const endZoned = parseAbsolute(endTime, "UTC");
-      startEncoded = encodeI18nToUrlSafeString(
-        toZoned(startZoned, "UTC"),
-        true,
-      ) as string;
-      endEncoded = encodeI18nToUrlSafeString(
-        toZoned(endZoned, "UTC"),
-        true,
-      ) as string;
-    }
-
+    // Historical data with specific time range — encode via the shared history-window encoder
+    // (same encoding the line chart uses, so requests + cache keys stay aligned).
+    const { startTime: startEncoded, endTime: endEncoded } =
+      encodeHistoryWindow(startTime, endTime, requestInterval);
     apiUrl = `/api/history?interval=${requestInterval}&startTime=${startEncoded}&endTime=${endEncoded}&systemId=${systemId}&series=${seriesFilter}`;
   } else {
     // Current/live data - use relative time

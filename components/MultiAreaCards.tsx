@@ -105,9 +105,7 @@ function AreaCardBody({
   const systemId = area.legacySystemId;
   switch (card.type) {
     case "chart":
-      return (
-        <LinesChartCard systemId={systemId} className="h-full min-h-[360px]" />
-      );
+      return <AreaChartCard systemId={systemId} />;
     case "generator-runs":
       return <GeneratorRunsCard systemId={systemId} />;
     case "tiles":
@@ -152,6 +150,22 @@ function AreaTilesCard({ systemId }: { systemId: number }) {
         <Fragment key={`tile-${id}`}>{cardNodes[id]}</Fragment>
       ))}
     </div>
+  );
+}
+
+/** Another Area's line chart — self-fetches that area's tz (for the temporal navigator), then renders. */
+function AreaChartCard({ systemId }: { systemId: number }) {
+  const { isAnyModalOpen } = useModalContext();
+  const { data } = useQuery(
+    dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
+  );
+  const tz = ((data ?? null) as AreaDatum | null)?.system?.timezoneOffsetMin;
+  return (
+    <LinesChartCard
+      systemId={systemId}
+      className="h-full min-h-[360px]"
+      timezoneOffsetMin={tz ?? 600}
+    />
   );
 }
 

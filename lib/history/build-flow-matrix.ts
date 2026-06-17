@@ -8,16 +8,17 @@
  *
  * Parity: this mirrors the engine recompute (`lib/db/planetscale/flow-matrix-pg.ts`) — raw `avg`,
  * the same kW normalization, the same `buildFlowSeries`/`computeFlowMatrix` core — so the sub-daily
- * (5m) and materialized (1d) Sankeys agree by construction. No transform is applied because every
- * power point currently carries none and the engine that writes `flow_1d` applies none either;
- * keeping the two paths identical is the invariant. If a power-point transform is ever introduced,
- * BOTH this and the engine recompute must adopt the same handling together.
+ * (5m) and materialized (1d) Sankeys agree by construction. Both apply the point's `transform` through
+ * the shared `applyPowerTransform` (only "i" = invert matters for a power point — e.g. a grid/AC-source
+ * channel wired so import reads negative, a generator); it's applied IDENTICALLY here and in the engine
+ * recompute, so the two paths stay byte-identical. That shared helper is the single home for the rule.
  */
 
 import type { AggRow } from "@/lib/history/build-series";
 import type { LogicalSystem } from "@/lib/aggregation/logical-system";
 import {
   buildFlowSeries,
+  applyPowerTransform,
   ClassifiedPoint,
 } from "@/lib/aggregation/flow-series";
 import { computeFlowMatrix } from "@/lib/aggregation/flow-matrix-core";
@@ -67,7 +68,8 @@ export function buildFlowMatrixFromAggRows(
     const power = new Array<number | null>(timestamps.length).fill(null);
     for (const [t, v] of series) {
       const i = tIndex.get(t);
-      if (i !== undefined) power[i] = toKw(v, p.metricUnit);
+      if (i !== undefined)
+        power[i] = applyPowerTransform(toKw(v, p.metricUnit), p.transform);
     }
     classified.push({ stem: p.stem, power });
     if (!displayNameByStem.has(p.stem))
