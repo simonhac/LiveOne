@@ -22,12 +22,16 @@ export function buildSeriesParam(isEnergyMode: boolean): string {
 
 /**
  * Pure transform: raw OpenNEM payload → windowed, unit-converted ChartData. Runs in a
- * component useMemo (not select), so it recomputes only on refetch or period change — the
+ * component useMemo (not select), so it recomputes only on refetch / period / window change — the
  * `new Date()` window is therefore evaluated once per data change, keeping arrays stable.
+ *
+ * `window` selects an explicit historical range `[start, end]` (time-travel); when absent the data is
+ * windowed against the live trailing window ending at `now`.
  */
 export function buildChartData(
   rawHistory: any,
   timeRange: "1D" | "7D" | "30D",
+  window?: { start: Date; end: Date },
 ): ChartData | null {
   if (!rawHistory || !Array.isArray(rawHistory.data)) return null;
   const isEnergyMode = timeRange === "30D";
@@ -89,16 +93,21 @@ export function buildChartData(
       new Date(startTime.getTime() + index * intervalMs),
   );
 
-  const currentTime = new Date();
-  const windowHours =
-    timeRange === "1D" ? 24 : timeRange === "7D" ? 24 * 7 : 24 * 30;
-  const windowStart = new Date(
-    currentTime.getTime() - windowHours * 60 * 60 * 1000,
-  );
+  let windowStart: Date;
+  let windowEnd: Date;
+  if (window) {
+    windowStart = window.start;
+    windowEnd = window.end;
+  } else {
+    windowEnd = new Date();
+    const windowHours =
+      timeRange === "1D" ? 24 : timeRange === "7D" ? 24 * 7 : 24 * 30;
+    windowStart = new Date(windowEnd.getTime() - windowHours * 60 * 60 * 1000);
+  }
 
   const selectedIndices = timestamps
     .map((t, i) => ({ time: t, index: i }))
-    .filter(({ time }) => time >= windowStart && time <= currentTime)
+    .filter(({ time }) => time >= windowStart && time <= windowEnd)
     .map(({ index }) => index);
 
   const convertToKw = (value: number | null, units: string): number | null => {
