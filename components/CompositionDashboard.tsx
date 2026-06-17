@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Layers } from "lucide-react";
 import { dashboardDataQuery } from "@/lib/queries";
@@ -22,6 +22,7 @@ import type {
   CardV3,
   DashboardV3,
   TileV3,
+  TileView,
 } from "@/lib/dashboard/v3";
 import type { ReadableArea } from "@/lib/areas/list";
 import type { LatestPointValues } from "@/lib/types/api";
@@ -208,9 +209,8 @@ function AreaSectionView({
 }
 
 /**
- * A section's tiles. Whole-area tiles (no deviceSystemId) share ONE useTileNodes render on the section
- * handle; device-bound tiles (e.g. grid-signals) render as their own self-fetching component so each
- * owns its hooks. Tile order is the descriptor order.
+ * A section's tiles — one self-contained <TileCell> per descriptor tile, in order. The grid is a stable
+ * set of cells; each cell self-fetches and shows its own skeleton until ready (no whole-grid swap).
  */
 function TilesGrid({
   handleSystemId,
@@ -219,89 +219,82 @@ function TilesGrid({
   handleSystemId: number;
   tiles: TileV3[];
 }) {
+  const visible = tiles.filter((t) => !t.hidden);
+  if (visible.length === 0) return null;
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 lg:gap-4 auto-rows-fr px-1">
+      {visible.map((t, i) => (
+        <TileCell
+          key={tileKeyV3(t, i)}
+          view={t.view}
+          deviceSystemId={t.deviceSystemId}
+          handleSystemId={handleSystemId}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** A tile-shaped loading placeholder shown while a TileCell's data is in flight. */
+function TileSkeleton() {
+  return (
+    <div className="min-h-[120px] animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30" />
+  );
+}
+
+/**
+ * One tile — the SINGLE uniform rendering path for EVERY view, whole-area or device-bound. It
+ * self-fetches its system (`deviceSystemId ?? handle` — React Query dedupes, so all whole-area tiles
+ * share one request; a device tile adds one), shows its own skeleton while loading, then renders the
+ * view: standard views via the shared `useTileNodes` node-builder; `oe-grid` via `GridSignalsCard`
+ * (region from the device's `vendorSiteId`). The device tile is a VIEW CASE here — not a bespoke
+ * component — so it behaves identically to every other tile (same fetch, same skeleton); it just points
+ * at a member device.
+ */
+function TileCell({
+  view,
+  deviceSystemId,
+  handleSystemId,
+}: {
+  view: TileView;
+  deviceSystemId?: number;
+  handleSystemId: number;
+}) {
   const { isAnyModalOpen } = useModalContext();
+  const systemId = deviceSystemId ?? handleSystemId;
   const { data, isLoading } = useQuery(
-    dashboardDataQuery(handleSystemId, { paused: isAnyModalOpen }),
+    dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
   );
   const datum = (data ?? null) as AreaDatum | null;
   const latest = datum?.latest ?? {};
+  // useTileNodes is a hook → call it unconditionally. It's the standard-view node source; the oe-grid
+  // branch below ignores its output.
   const { cardNodes, available } = useTileNodes({
     latest,
     vendorType: datum?.system?.vendorType ?? "",
     getStaleThreshold: staleThreshold,
     showGrid: !!latest["bidi.grid/power"],
-    systemId: handleSystemId,
+    systemId,
     canControl: false,
   });
 
-  // While the handle's data is still loading, show skeleton tiles (not "No live data", not a
-  // partial render) so the grid never flashes an empty/error state and every tile appears together.
-  if (isLoading) {
-    const n = tiles.filter((t) => !t.hidden).length || 4;
+  if (isLoading) return <TileSkeleton />;
+
+  if (view === "oe-grid") {
+    const values = gridLatestFromData(data);
+    if (!values) return null;
+    const siteId = datum?.system?.vendorSiteId;
+    const region = siteId && isNemRegion(siteId) ? siteId : null;
     return (
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 lg:gap-4 auto-rows-fr px-1">
-        {Array.from({ length: n }).map((_, i) => (
-          <div
-            key={i}
-            className="min-h-[120px] animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30"
-          />
-        ))}
-      </div>
+      <GridSignalsCard
+        regionLabel={region ? nemRegionShortLabel(region) : ""}
+        values={values}
+      />
     );
   }
 
-  const cells: ReactNode[] = [];
-  tiles.forEach((t, i) => {
-    if (t.hidden) return;
-    if (t.view === "oe-grid") {
-      if (t.deviceSystemId != null)
-        cells.push(
-          <DeviceGridTile
-            key={tileKeyV3(t, i)}
-            deviceSystemId={t.deviceSystemId}
-          />,
-        );
-      return;
-    }
-    const view = t.view as TileId;
-    if (available[view])
-      cells.push(<Fragment key={tileKeyV3(t, i)}>{cardNodes[view]}</Fragment>);
-  });
-
-  if (cells.length === 0) {
-    return (
-      <div className="px-1 py-6 text-center text-sm text-gray-500">
-        No live data
-      </div>
-    );
-  }
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 lg:gap-4 auto-rows-fr px-1">
-      {cells}
-    </div>
-  );
-}
-
-/**
- * A grid-signals tile bound to a member device (the OE region system). Self-fetches that device; the
- * region label comes straight from its `vendorSiteId` (e.g. "VIC1") — no location lookup needed.
- */
-function DeviceGridTile({ deviceSystemId }: { deviceSystemId: number }) {
-  const { isAnyModalOpen } = useModalContext();
-  const { data } = useQuery(
-    dashboardDataQuery(deviceSystemId, { paused: isAnyModalOpen }),
-  );
-  const siteId = ((data ?? null) as AreaDatum | null)?.system?.vendorSiteId;
-  const region = siteId && isNemRegion(siteId) ? siteId : null;
-  // Empty label (not "Grid") while the region/values are still loading: GridSignalsCard then renders
-  // null (its `!regionLabel && values === null` guard), so this tile is cleanly absent during load —
-  // matching the whole-area tiles — instead of flashing "Grid Grid".
-  return (
-    <GridSignalsCard
-      regionLabel={region ? nemRegionShortLabel(region) : ""}
-      values={gridLatestFromData(data)}
-    />
-  );
+  const tileId = view as TileId;
+  return available[tileId] ? <>{cardNodes[tileId]}</> : null;
 }
 
 /**

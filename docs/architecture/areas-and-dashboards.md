@@ -301,3 +301,50 @@ sites still _select_ it as a pass-through, and `sync.ts` still _writes_ it). Pha
 
 **Not in Phase D / not planned:** re-keying the serving path or `flow_1d` to UUID, and dropping
 `legacy_system_id` — the integer handle is load-bearing addressing (see "Not planned" above), kept.
+
+## 6. Tile rendering — the unified tile model (in progress)
+
+> The descriptor is now the **nested v3** model — `Dashboard → AreaSection → Card → device-bound Tile`
+> (shipped #107; see `docs/plans/dashboard-nested-tile-model.md` §0, which supersedes the flat per-card
+> `areaId` framing in §§2–3: a section binds the Area, a card holds device-bound tiles). This section is
+> the plan for rendering those tiles uniformly. **Status:** its own PR, in progress.
+
+**Why.** The first v3 renderer special-cased the device-bound `oe-grid` (NEM grid) tile. The whole-area
+tiles are built together by `useTileNodes` from the section's **single** `dashboardDataQuery(handle)`,
+while `oe-grid` was a **separate** `DeviceGridTile` that self-fetched its member device and rendered
+`GridSignalsCard` directly. Two parallel tile paths — a DRY violation — and the special-cased tile
+loaded + skeletoned differently (popped in late). The loading skeleton also rendered the **configured**
+tile count, which then collapsed to the **available** count (e.g. Daylesford lists 7 tiles but supports 4) — a visible 2-rows→1-row reflow.
+
+**One tile path.** A tile is `(view, deviceSystemId?)`, and every tile — whole-area or device-bound —
+renders through the same **`<TileCell>`**:
+
+1. **`<TileCell view deviceSystemId? handleSystemId>`** self-fetches `dashboardDataQuery(deviceSystemId ?? handle)`
+   (React Query **dedupes by key**, so the N whole-area tiles share **one** request; a device tile adds one),
+   shows **its own skeleton** while its query is loading, then renders the view.
+2. **One view-render path inside the cell:** standard views go through the existing `useTileNodes`
+   node-builder (`cardNodes[view]`, synthesis helpers — master load, rest-of-house, solar breakdown —
+   untouched); **`oe-grid`** renders `GridSignalsCard` (fed by `gridLatestFromData` + the device's
+   `vendorSiteId` region) — a **view case inside `TileCell`**, not a bespoke `DeviceGridTile`. The separate
+   `DeviceGridTile` / `AreaGridSignalsCard` + the dead server-side `gridContext` plumbing are deleted. So
+   `oe-grid` is **structurally identical** to every other tile (same cell, same fetch, same skeleton); only
+   its leaf card differs (3 grid stats vs 1 value — content, not structure). (A full `renderTileView`
+   extraction from `useTileNodes` — no per-cell recompute — is a deferred clean-up; `useTileNodes`'s 4
+   `useMemo`s + 5 consumers make it a separate, riskier change, and the per-cell recompute is negligible.)
+3. **`TilesGrid` is a stable set of cells** — one `<TileCell>` per descriptor tile, in order. No separate
+   skeleton block that swaps the whole grid wholesale; each cell transitions skeleton → content on its own.
+
+**No reflow.** The skeleton count must equal the rendered count, so the **area strategy emits only the
+tiles the system supports**: `buildDefaultDashboardV3` becomes availability-aware (`availableViewsForDevice(latest)`
+from the handle's latest at default/seed time), so descriptor == rendered set. Daylesford re-seeds to its
+4 supported tiles (Kinkora already matches at 8). Each `TileCell` then goes skeleton → content with **no
+count change**.
+
+**Timing caveat (inherent, not a bug).** A device-bound tile reads a _different_ device, whose data can
+resolve a beat after the handle's — unavoidable for a separate data source — but it now behaves like any
+tile (skeleton → fills in), not a bespoke late-pop component.
+
+**Scope (its own PR), gated on the existing whole-area tiles rendering byte-identical:** refactor
+`useTileNodes` → `renderTileView` + `availableViewsForDevice`; add `TileCell`; fold `oe-grid` in as a
+view; make `buildDefaultDashboardV3` availability-aware; re-seed Daylesford. This is the `renderTileView`
+refactor the nested-tile design (`§3.3` of the plan) specified and the first cut skipped.
