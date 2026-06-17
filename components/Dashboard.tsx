@@ -65,7 +65,7 @@ function tileKeyV3(t: TileV3, i: number): string {
   return t.id ?? `${t.view}-${t.deviceSystemId ?? "self"}-${i}`;
 }
 
-interface CompositionDashboardProps {
+interface DashboardProps {
   descriptor: DashboardV3;
   /** areaId -> its Area (addressing handle + label). May be empty while the readable-areas fetch is
    *  in flight — sections still render their skeleton layout from the descriptor in the meantime. */
@@ -73,11 +73,11 @@ interface CompositionDashboardProps {
   serveFlowFromPg?: boolean;
 }
 
-export default function CompositionDashboard({
+export default function Dashboard({
   descriptor,
   areaById,
   serveFlowFromPg = false,
-}: CompositionDashboardProps) {
+}: DashboardProps) {
   // Render every section straight from the descriptor — its Area (and so the live data) may not have
   // resolved yet, in which case each card draws a skeleton. We have enough to draw the layout
   // immediately, so there's no "Loading…" gate before the skeletons appear.

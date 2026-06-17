@@ -20,7 +20,7 @@ import { isSystemQuery } from "@/lib/queries/keys";
 
 /**
  * Rename / set shortname / set-or-unset default / delete a composition dashboard. Extracted from
- * CompositionDashboardClient so the header dashboard switcher can open the same dialog. The default
+ * DashboardClient so the header dashboard switcher can open the same dialog. The default
  * state is read live from the user-preferences query (not a one-way latch), so the star and the
  * Set/Remove toggle always reflect server truth and a failed call can be retried.
  */

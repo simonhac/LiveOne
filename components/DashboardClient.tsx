@@ -4,7 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { Settings, Plus, ChevronDown } from "lucide-react";
-import CompositionDashboard from "@/components/CompositionDashboard";
+import Dashboard from "@/components/Dashboard";
 import DashboardSettingsDialog from "@/components/DashboardSettingsDialog";
 import DashboardsMenu, {
   usePrefetchDashboardsMenu,
@@ -14,7 +14,7 @@ import { readableAreasQuery } from "@/lib/queries";
 import { sectionAreaIdsV3, type DashboardV3 } from "@/lib/dashboard/v3";
 import type { ReadableArea } from "@/lib/areas/list";
 
-interface CompositionDashboardClientProps {
+interface DashboardClientProps {
   dashboard: {
     id: number;
     displayName: string | null;
@@ -28,12 +28,12 @@ interface CompositionDashboardClientProps {
   serveFlowFromPg?: boolean;
 }
 
-export default function CompositionDashboardClient({
+export default function DashboardClient({
   dashboard,
   canEdit,
   sharedAreas,
   serveFlowFromPg = false,
-}: CompositionDashboardClientProps) {
+}: DashboardClientProps) {
   const router = useRouter();
   const [renameOpen, setRenameOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
@@ -110,7 +110,7 @@ export default function CompositionDashboardClient({
       </header>
 
       <main className="mx-auto max-w-7xl px-1 py-4">
-        <CompositionDashboard
+        <Dashboard
           descriptor={dashboard.descriptor}
           areaById={areaById}
           serveFlowFromPg={serveFlowFromPg}
