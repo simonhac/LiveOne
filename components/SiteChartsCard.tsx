@@ -299,8 +299,7 @@ export default function SiteChartsCard({
   // is referentially stable between renders and slides forward only on each refetch.
   // Run the site-history query when the area has loads + sources. Caller-supplied `siteCapable` (data
   // driven) wins; otherwise fall back to the vendor check, so the legacy per-system page is unchanged.
-  const isSiteVendor =
-    system?.vendorType === "mondo" || system?.vendorType === "composite";
+  const isSiteVendor = system?.vendorType === "mondo";
   const runSiteQuery = siteCapable ?? isSiteVendor;
   const {
     data: siteData,
@@ -529,174 +528,162 @@ export default function SiteChartsCard({
 
   return (
     <>
-      {/* Charts - For mondo/composite systems, show charts with tables in single container */}
-      {/* Hide entire container for unconfigured composite systems */}
+      {/* Charts - show charts with tables in a single container */}
       {(cardVisible("chart:load") ||
         cardVisible("chart:generation") ||
-        cardVisible("sankey")) &&
-        (historyLoading ||
-          processedHistoryData.load ||
-          processedHistoryData.generation ||
-          system?.vendorType !== "composite") && (
-          <div
-            className={`overflow-hidden transition-opacity duration-200 ${
-              historyFetching && !historyLoading ? "opacity-60" : ""
-            }`}
-          >
-            {/* Shared header with date/time and period switcher */}
-            <div className="px-2 sm:px-4 pt-2 sm:pt-4 pb-1 sm:pb-2">
-              <TemporalNavigator
-                timezoneOffsetMin={system?.timezoneOffsetMin ?? 600}
-                loading={historyLoading}
-              />
-            </div>
-
-            {/* Loads Chart with Table */}
-            {cardVisible("chart:load") && (
-              <div className="px-2 sm:px-4 pt-1 sm:pt-2 pb-2 sm:pb-4">
-                <div className="flex flex-col md:flex-row md:gap-4">
-                  <div className="flex-1 min-w-0">
-                    <StackedChart
-                      mode="load"
-                      className="h-full min-h-[375px]"
-                      period={period}
-                      onHoverIndexChange={handleLoadHoverIndexChange}
-                      hoveredIndex={hoveredIndex}
-                      visibleSeries={
-                        loadVisibleSeries.size > 0
-                          ? loadVisibleSeries
-                          : undefined
-                      }
-                      data={processedHistoryData.load}
-                      isLoading={historyLoading}
-                    />
-                  </div>
-                  <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
-                    <EnergyTable
-                      chartData={loadChartData}
-                      mode="load"
-                      hoveredIndex={hoveredIndex}
-                      className="h-full"
-                      visibleSeries={
-                        loadVisibleSeries.size > 0
-                          ? loadVisibleSeries
-                          : undefined
-                      }
-                      onSeriesToggle={handleLoadSeriesToggle}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Generation Chart with Table */}
-            {cardVisible("chart:generation") && (
-              <div className="p-2 sm:p-4">
-                <div className="flex flex-col md:flex-row md:gap-4">
-                  <div className="flex-1 min-w-0">
-                    <StackedChart
-                      mode="generation"
-                      className="h-full min-h-[375px]"
-                      period={period}
-                      onHoverIndexChange={handleGenerationHoverIndexChange}
-                      hoveredIndex={hoveredIndex}
-                      visibleSeries={
-                        generationVisibleSeries.size > 0
-                          ? generationVisibleSeries
-                          : undefined
-                      }
-                      data={processedHistoryData.generation}
-                      isLoading={historyLoading}
-                    />
-                  </div>
-                  <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
-                    <EnergyTable
-                      chartData={generationChartData}
-                      mode="generation"
-                      hoveredIndex={hoveredIndex}
-                      className="h-full"
-                      visibleSeries={
-                        generationVisibleSeries.size > 0
-                          ? generationVisibleSeries
-                          : undefined
-                      }
-                      onSeriesToggle={handleGenerationSeriesToggle}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Energy Flow Sankey Diagram */}
-            {cardVisible("sankey") &&
-              processedHistoryData.generation &&
-              processedHistoryData.load &&
-              (() => {
-                // When a point is focused, show that instant instead of the whole-window total:
-                // an instantaneous flow at the hovered index — POWER (kW) for 1D/7D, or that single
-                // day's ENERGY (kWh) for 30D (the indexed value is a daily energy). Otherwise the
-                // cumulative matrix via selectFlowMatrix (PG flow_1d 30D → bundled 1D/7D → client calc).
-                const focused =
-                  hoveredIndex !== null
-                    ? calculateInstantFlowMatrix(
-                        processedHistoryData,
-                        hoveredIndex,
-                      )
-                    : null;
-                const matrix =
-                  focused ??
-                  selectFlowMatrix({
-                    processed: processedHistoryData,
-                    pgFlowMatrix,
-                    serveFlowFromPg,
-                    period,
-                  });
-                if (!matrix) return null;
-                const unit = focused && period !== "30D" ? "kW" : "kWh";
-                const tz = system?.timezoneOffsetMin;
-                // Label: the focused instant when hovering, else the window the sankey integrates over
-                // (a TIME range for 1D/7D, a DATE range for 30D).
-                const cd =
-                  processedHistoryData.load ?? processedHistoryData.generation;
-                const label = focusedTime
-                  ? formatHoverTimestamp(focusedTime, period, false)
-                  : cd && cd.timestamps.length > 0 && tz != null
-                    ? formatDateTimeRange(
-                        fromUnixTimestamp(
-                          cd.timestamps[0].getTime() / 1000,
-                          tz,
-                        ),
-                        fromUnixTimestamp(
-                          cd.timestamps[cd.timestamps.length - 1].getTime() /
-                            1000,
-                          tz,
-                        ),
-                        period !== "30D",
-                      )
-                    : null;
-                return (
-                  <div className="sm:p-4">
-                    <h3 className="text-base font-semibold text-gray-300 mb-2 px-2 sm:px-0">
-                      Flows
-                    </h3>
-                    <div className="flex justify-center">
-                      <EnergyFlowSankey
-                        matrix={matrix}
-                        unit={unit}
-                        width={600}
-                        height={680}
-                      />
-                    </div>
-                    {label && (
-                      <div className="mt-1 text-center text-xs text-gray-500">
-                        {label}
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
+        cardVisible("sankey")) && (
+        <div
+          className={`overflow-hidden transition-opacity duration-200 ${
+            historyFetching && !historyLoading ? "opacity-60" : ""
+          }`}
+        >
+          {/* Shared header with date/time and period switcher */}
+          <div className="px-2 sm:px-4 pt-2 sm:pt-4 pb-1 sm:pb-2">
+            <TemporalNavigator
+              timezoneOffsetMin={system?.timezoneOffsetMin ?? 600}
+              loading={historyLoading}
+            />
           </div>
-        )}
+
+          {/* Loads Chart with Table */}
+          {cardVisible("chart:load") && (
+            <div className="px-2 sm:px-4 pt-1 sm:pt-2 pb-2 sm:pb-4">
+              <div className="flex flex-col md:flex-row md:gap-4">
+                <div className="flex-1 min-w-0">
+                  <StackedChart
+                    mode="load"
+                    className="h-full min-h-[375px]"
+                    period={period}
+                    onHoverIndexChange={handleLoadHoverIndexChange}
+                    hoveredIndex={hoveredIndex}
+                    visibleSeries={
+                      loadVisibleSeries.size > 0 ? loadVisibleSeries : undefined
+                    }
+                    data={processedHistoryData.load}
+                    isLoading={historyLoading}
+                  />
+                </div>
+                <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+                  <EnergyTable
+                    chartData={loadChartData}
+                    mode="load"
+                    hoveredIndex={hoveredIndex}
+                    className="h-full"
+                    visibleSeries={
+                      loadVisibleSeries.size > 0 ? loadVisibleSeries : undefined
+                    }
+                    onSeriesToggle={handleLoadSeriesToggle}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Generation Chart with Table */}
+          {cardVisible("chart:generation") && (
+            <div className="p-2 sm:p-4">
+              <div className="flex flex-col md:flex-row md:gap-4">
+                <div className="flex-1 min-w-0">
+                  <StackedChart
+                    mode="generation"
+                    className="h-full min-h-[375px]"
+                    period={period}
+                    onHoverIndexChange={handleGenerationHoverIndexChange}
+                    hoveredIndex={hoveredIndex}
+                    visibleSeries={
+                      generationVisibleSeries.size > 0
+                        ? generationVisibleSeries
+                        : undefined
+                    }
+                    data={processedHistoryData.generation}
+                    isLoading={historyLoading}
+                  />
+                </div>
+                <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+                  <EnergyTable
+                    chartData={generationChartData}
+                    mode="generation"
+                    hoveredIndex={hoveredIndex}
+                    className="h-full"
+                    visibleSeries={
+                      generationVisibleSeries.size > 0
+                        ? generationVisibleSeries
+                        : undefined
+                    }
+                    onSeriesToggle={handleGenerationSeriesToggle}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Energy Flow Sankey Diagram */}
+          {cardVisible("sankey") &&
+            processedHistoryData.generation &&
+            processedHistoryData.load &&
+            (() => {
+              // When a point is focused, show that instant instead of the whole-window total:
+              // an instantaneous flow at the hovered index — POWER (kW) for 1D/7D, or that single
+              // day's ENERGY (kWh) for 30D (the indexed value is a daily energy). Otherwise the
+              // cumulative matrix via selectFlowMatrix (PG flow_1d 30D → bundled 1D/7D → client calc).
+              const focused =
+                hoveredIndex !== null
+                  ? calculateInstantFlowMatrix(
+                      processedHistoryData,
+                      hoveredIndex,
+                    )
+                  : null;
+              const matrix =
+                focused ??
+                selectFlowMatrix({
+                  processed: processedHistoryData,
+                  pgFlowMatrix,
+                  serveFlowFromPg,
+                  period,
+                });
+              if (!matrix) return null;
+              const unit = focused && period !== "30D" ? "kW" : "kWh";
+              const tz = system?.timezoneOffsetMin;
+              // Label: the focused instant when hovering, else the window the sankey integrates over
+              // (a TIME range for 1D/7D, a DATE range for 30D).
+              const cd =
+                processedHistoryData.load ?? processedHistoryData.generation;
+              const label = focusedTime
+                ? formatHoverTimestamp(focusedTime, period, false)
+                : cd && cd.timestamps.length > 0 && tz != null
+                  ? formatDateTimeRange(
+                      fromUnixTimestamp(cd.timestamps[0].getTime() / 1000, tz),
+                      fromUnixTimestamp(
+                        cd.timestamps[cd.timestamps.length - 1].getTime() /
+                          1000,
+                        tz,
+                      ),
+                      period !== "30D",
+                    )
+                  : null;
+              return (
+                <div className="sm:p-4">
+                  <h3 className="text-base font-semibold text-gray-300 mb-2 px-2 sm:px-0">
+                    Flows
+                  </h3>
+                  <div className="flex justify-center">
+                    <EnergyFlowSankey
+                      matrix={matrix}
+                      unit={unit}
+                      width={600}
+                      height={680}
+                    />
+                  </div>
+                  {label && (
+                    <div className="mt-1 text-center text-xs text-gray-500">
+                      {label}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+        </div>
+      )}
     </>
   );
 }

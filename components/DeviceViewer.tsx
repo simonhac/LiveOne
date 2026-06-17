@@ -215,7 +215,7 @@ export default function DeviceViewer({
     : vendorTypeForLayout === "amber";
   const isSiteLayout = activeDescriptor
     ? activeDescriptor.layout === "site"
-    : vendorTypeForLayout === "mondo" || vendorTypeForLayout === "composite";
+    : vendorTypeForLayout === "mondo";
 
   // cardVisible() is true while the descriptor is still loading (null); tilesCfg falls back to
   // SystemTiles' default order/visibility until then.
@@ -277,17 +277,6 @@ export default function DeviceViewer({
 
       {(data?.latest || (data && (isSiteLayout || isAmberLayout))) && (
         <div className="space-y-6">
-          {/* Show warning for unconfigured composite systems */}
-          {system?.vendorType === "composite" && siteHistoryEmpty && (
-            <div className="bg-yellow-900/50 border border-yellow-700 text-yellow-300 px-4 py-3 rounded flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5" />
-              <span>
-                Composite system needs to be configured before charts can be
-                displayed.
-              </span>
-            </div>
-          )}
-
           {/* Unified card grid: the power tiles + Local Grid (NEM) flow together in one responsive
               grid (HA "Sections" style). No per-vendor layout fork — order/visibility come from the
               descriptor. */}
