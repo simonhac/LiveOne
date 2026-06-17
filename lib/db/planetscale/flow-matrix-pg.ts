@@ -1,5 +1,5 @@
 /**
- * Postgres-side energy-flow matrix recompute (behind `FLOW_MATRIX_COMPUTE_IN_PG`).
+ * Postgres-side energy-flow matrix recompute (runs in the daily aggregation pass).
  *
  * Materializes the per-local-day directional source→load energy matrix into
  * `point_readings_flow_1d` from PG `point_readings_agg_5m`. Built FROM 5m (signed `avg` per

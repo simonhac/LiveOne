@@ -25,7 +25,6 @@ import {
   type LogicalSystem,
 } from "@/lib/aggregation/logical-system";
 import { buildFlowMatrixFromAggRows } from "@/lib/history/build-flow-matrix";
-import { FLOW_MATRIX_SERVE_FROM_PG } from "@/lib/db/routing";
 import type { EnergyFlowMatrix } from "@/lib/energy-flow-matrix";
 
 // Initialize manager instances
@@ -573,9 +572,9 @@ export async function GET(request: NextRequest) {
 
     const interval = basicParams.interval as "5m" | "30m" | "1d";
 
-    // Optional energy-flow Sankey bundled with the history payload (?include=sankey). Gated by the
-    // single serve flag. Only sub-daily intervals are computed here (the in-hand signed 5m rows);
-    // 1d / long-range is served from the materialized flow_1d endpoint instead.
+    // Optional energy-flow Sankey bundled with the history payload (?include=sankey). Only sub-daily
+    // intervals are computed here (the in-hand signed 5m rows); 1d / long-range is served from the
+    // materialized flow_1d endpoint instead.
     const includeParam = searchParams.get("include");
     const includeSankey = includeParam
       ? includeParam
@@ -586,9 +585,7 @@ export async function GET(request: NextRequest) {
     let sankey: { logicalSystem: LogicalSystem } | undefined;
     let sankeyOmittedReason: string | undefined;
     if (includeSankey) {
-      if (!FLOW_MATRIX_SERVE_FROM_PG) {
-        sankeyOmittedReason = "serving-disabled";
-      } else if (interval === "1d") {
+      if (interval === "1d") {
         sankeyOmittedReason = "1d-served-from-flow-matrix-endpoint";
       } else {
         const logicalSystem = await resolveLogicalSystem(basicParams.systemId!);

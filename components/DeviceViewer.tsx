@@ -35,8 +35,6 @@ interface DeviceViewerProps {
   systemExists: boolean;
   isAdmin: boolean;
   userId?: string;
-  /** When true, the long-range (30D) Sankey is served from PG (FLOW_MATRIX_SERVE_FROM_PG). */
-  serveFlowFromPg?: boolean;
   /**
    * The "Local Grid (NEM)" card's cross-system context (the public OpenElectricity region serving
    * this device's location), resolved server-side. Null when off-grid / no region / flags off — the
@@ -59,7 +57,6 @@ export default function DeviceViewer({
   system,
   hasAccess,
   systemExists,
-  serveFlowFromPg = false,
   gridContext = null,
   hasGenerator = false,
 }: DeviceViewerProps) {
@@ -179,13 +176,7 @@ export default function DeviceViewer({
           </div>
         ))}
 
-      {descriptor && (
-        <Dashboard
-          descriptor={descriptor}
-          areaById={areaById}
-          serveFlowFromPg={serveFlowFromPg}
-        />
-      )}
+      {descriptor && <Dashboard descriptor={descriptor} areaById={areaById} />}
     </main>
   );
 }

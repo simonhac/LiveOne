@@ -16,6 +16,7 @@
 
 import { getColorForPath } from "@/lib/chart-colors";
 import type {
+  DailyFlowMatrices,
   EnergyFlowMatrix,
   EnergyFlowNode,
 } from "@/lib/energy-flow-matrix";
@@ -166,4 +167,55 @@ export function toEnergyFlowMatrix(
     loadTotals,
     totalEnergy,
   };
+}
+
+/**
+ * Reshape raw `point_readings_flow_1d` rows into per-day energy matrices WITHOUT summing across days
+ * (the client sums for the window view or picks a day for the hovered view). The node arrays are the
+ * canonical-sorted union of paths across the whole window, so every day's dense matrix shares one
+ * index order. Totals are intentionally omitted here — derived by the client per view.
+ */
+export function toDailyFlowMatrices(
+  rows: {
+    day: string;
+    sourcePath: string;
+    loadPath: string;
+    energyKwh: unknown;
+  }[],
+  displayNameByStem: Map<string, string>,
+): DailyFlowMatrices {
+  const sourcePaths = [...new Set(rows.map((r) => r.sourcePath))].sort(
+    compareSourcePaths,
+  );
+  const loadPaths = [...new Set(rows.map((r) => r.loadPath))].sort(
+    compareLoadPaths,
+  );
+  const sourceIdx = new Map(sourcePaths.map((p, i) => [p, i]));
+  const loadIdx = new Map(loadPaths.map((p, i) => [p, i]));
+
+  const byDay = new Map<string, number[][]>();
+  for (const r of rows) {
+    let matrix = byDay.get(r.day);
+    if (!matrix) {
+      matrix = sourcePaths.map(() =>
+        new Array<number>(loadPaths.length).fill(0),
+      );
+      byDay.set(r.day, matrix);
+    }
+    matrix[sourceIdx.get(r.sourcePath)!][loadIdx.get(r.loadPath)!] =
+      Number(r.energyKwh) || 0;
+  }
+
+  const node = (path: string): EnergyFlowNode => ({
+    id: path,
+    label: labelForFlowPath(path, displayNameByStem),
+    color: colorForFlowPath(path),
+  });
+
+  // `day` is stored as text and sorts chronologically.
+  const days = [...byDay.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([day, matrix]) => ({ day, matrix }));
+
+  return { sources: sourcePaths.map(node), loads: loadPaths.map(node), days };
 }

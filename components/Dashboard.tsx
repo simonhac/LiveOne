@@ -70,14 +70,9 @@ interface DashboardProps {
   /** areaId -> its Area (addressing handle + label). May be empty while the readable-areas fetch is
    *  in flight — sections still render their skeleton layout from the descriptor in the meantime. */
   areaById: Map<string, ReadableArea>;
-  serveFlowFromPg?: boolean;
 }
 
-export default function Dashboard({
-  descriptor,
-  areaById,
-  serveFlowFromPg = false,
-}: DashboardProps) {
+export default function Dashboard({ descriptor, areaById }: DashboardProps) {
   // Render every section straight from the descriptor — its Area (and so the live data) may not have
   // resolved yet, in which case each card draws a skeleton. We have enough to draw the layout
   // immediately, so there's no "Loading…" gate before the skeletons appear.
@@ -103,7 +98,6 @@ export default function Dashboard({
           section={section}
           area={areaById.get(section.areaId)}
           showHeader={showHeaders}
-          serveFlowFromPg={serveFlowFromPg}
         />
       ))}
     </div>
@@ -115,13 +109,11 @@ function AreaSectionView({
   section,
   area,
   showHeader,
-  serveFlowFromPg,
 }: {
   section: AreaSectionV3;
   /** Undefined while the readable-areas fetch is in flight → the cards draw skeletons. */
   area?: ReadableArea;
   showHeader: boolean;
-  serveFlowFromPg: boolean;
 }) {
   const handle = area?.legacySystemId;
   const visible = section.cards.filter((c) => !c.hidden);
@@ -150,12 +142,7 @@ function AreaSectionView({
       if (chartsEmitted) return null;
       chartsEmitted = true;
       return handle != null ? (
-        <AreaSiteCharts
-          key="site-charts"
-          systemId={handle}
-          keys={chartKeys}
-          serveFlowFromPg={serveFlowFromPg}
-        />
+        <AreaSiteCharts key="site-charts" systemId={handle} keys={chartKeys} />
       ) : (
         <ChartSkeleton key="site-charts" />
       );
@@ -333,11 +320,9 @@ function TileCell({
 function AreaSiteCharts({
   systemId,
   keys,
-  serveFlowFromPg,
 }: {
   systemId: number;
   keys: Set<string>;
-  serveFlowFromPg: boolean;
 }) {
   const { isAnyModalOpen } = useModalContext();
   const { data } = useQuery(
@@ -362,7 +347,6 @@ function AreaSiteCharts({
     <SiteChartsCard
       systemId={String(systemId)}
       system={system}
-      serveFlowFromPg={serveFlowFromPg}
       siteCapable={siteCapable}
       cardVisible={(k) => keys.has(k)}
     />

@@ -1,7 +1,6 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { isUserAdmin } from "@/lib/auth-utils";
-import { FLOW_MATRIX_SERVE_FROM_PG } from "@/lib/db/routing";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import {
   getDashboard,
@@ -58,7 +57,6 @@ async function renderCompositionDashboard(
         descriptor,
       }}
       canEdit={canEdit}
-      serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
     />
   );
 }
@@ -103,7 +101,6 @@ export default async function DashboardPage({
             }}
             canEdit={false}
             sharedAreas={sharedAreas}
-            serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
           />
         );
       }

@@ -25,14 +25,12 @@ interface DashboardClientProps {
   canEdit: boolean;
   /** Read-only shared view: referenced Areas resolved server-side (no authed areas fetch). */
   sharedAreas?: ReadableArea[];
-  serveFlowFromPg?: boolean;
 }
 
 export default function DashboardClient({
   dashboard,
   canEdit,
   sharedAreas,
-  serveFlowFromPg = false,
 }: DashboardClientProps) {
   const router = useRouter();
   const [renameOpen, setRenameOpen] = useState(false);
@@ -110,11 +108,7 @@ export default function DashboardClient({
       </header>
 
       <main className="mx-auto max-w-7xl px-1 py-4">
-        <Dashboard
-          descriptor={dashboard.descriptor}
-          areaById={areaById}
-          serveFlowFromPg={serveFlowFromPg}
-        />
+        <Dashboard descriptor={dashboard.descriptor} areaById={areaById} />
       </main>
 
       {canEdit && (
