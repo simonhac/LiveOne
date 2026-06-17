@@ -8,14 +8,14 @@
 import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { dashboards } from "@/lib/db/planetscale/schema";
-import type { DashboardDescriptor } from "./descriptor";
+import { allCardsV3, isDashboardV3, type DashboardV3 } from "./v3";
 
 export interface CompositionDashboard {
   id: number;
   ownerClerkUserId: string;
   displayName: string | null;
   alias: string | null;
-  descriptor: DashboardDescriptor;
+  descriptor: DashboardV3;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -45,7 +45,7 @@ export async function createDashboard(args: {
   ownerClerkUserId: string;
   displayName: string;
   alias?: string | null;
-  descriptor: DashboardDescriptor;
+  descriptor: DashboardV3;
 }): Promise<number> {
   try {
     const [row] = await requirePlanetscaleDb()
@@ -78,7 +78,7 @@ function rowToDashboard(r: {
     ownerClerkUserId: r.clerkUserId,
     displayName: r.displayName,
     alias: r.alias,
-    descriptor: r.descriptor as DashboardDescriptor,
+    descriptor: r.descriptor as DashboardV3,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   };
@@ -140,9 +140,11 @@ export async function listDashboardsForOwner(
     id: r.id,
     displayName: r.displayName,
     alias: r.alias,
-    cardCount: Array.isArray((r.descriptor as DashboardDescriptor)?.cards)
-      ? (r.descriptor as DashboardDescriptor).cards.length
-      : 0,
+    cardCount: isDashboardV3(r.descriptor)
+      ? allCardsV3(r.descriptor).length
+      : Array.isArray((r.descriptor as { cards?: unknown[] })?.cards)
+        ? (r.descriptor as { cards: unknown[] }).cards.length
+        : 0,
     updatedAt: r.updatedAt,
   }));
 }
@@ -152,7 +154,7 @@ export async function updateDashboard(
   patch: {
     displayName?: string;
     alias?: string | null;
-    descriptor?: DashboardDescriptor;
+    descriptor?: DashboardV3;
   },
 ): Promise<void> {
   const set: Record<string, unknown> = { updatedAt: new Date() };

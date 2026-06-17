@@ -21,8 +21,9 @@ import {
   type CompositionDashboard,
 } from "@/lib/dashboard/dashboards";
 import CompositionDashboardClient from "@/components/CompositionDashboardClient";
+import { isDashboardV3, type DashboardV3 } from "@/lib/dashboard/v3";
 import { resolveAreasByIds } from "@/lib/areas/list";
-import type { GridContext } from "@/lib/grid/types";
+import { descriptorAreaIds } from "@/lib/dashboard/composition";
 import type { DashboardDescriptor } from "@/lib/dashboard/descriptor";
 
 interface PageProps {
@@ -49,42 +50,27 @@ async function resolveClerkUserIdByUsername(
 }
 
 /**
- * Render a composition-first dashboard (Phase 2b-2). Resolves the NEM region server-side for each
- * Area that has a grid-signals card (region derives from the Area's location); other card types
- * self-resolve client-side.
+ * Render a nested (v3) dashboard. The descriptor is opaque JSONB; every card/tile self-resolves
+ * client-side against its Area's handle or a named member device (the `oe-grid` tile reads the OE
+ * region member directly — no server-side region derivation).
  */
 async function renderCompositionDashboard(
   dashboard: CompositionDashboard,
   canEdit: boolean,
 ) {
-  const gridAreaIds = [
-    ...new Set(
-      dashboard.descriptor.cards
-        .filter((c) => c.type === "grid-signals" && c.areaId)
-        .map((c) => c.areaId as string),
-    ),
-  ];
-  const gridContextByArea: Record<string, GridContext | null> = {};
-  if (gridAreaIds.length > 0) {
-    const areas = await resolveAreasByIds(gridAreaIds);
-    await Promise.all(
-      areas.map(async (a) => {
-        gridContextByArea[a.id] = await resolveGridContextForSystem(
-          a.legacySystemId,
-        );
-      }),
-    );
-  }
+  const raw: unknown = dashboard.descriptor;
+  const descriptor: DashboardV3 = isDashboardV3(raw)
+    ? raw
+    : { version: 3, sections: [] };
   return (
     <CompositionDashboardClient
       dashboard={{
         id: dashboard.id,
         displayName: dashboard.displayName,
         alias: dashboard.alias,
-        descriptor: dashboard.descriptor,
+        descriptor,
       }}
       canEdit={canEdit}
-      gridContextByArea={gridContextByArea}
       serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
     />
   );
@@ -124,10 +110,9 @@ export default async function DashboardPage({
         // call. The share token authorizes each area's data fetch via the live union scope.
         const referencedAreaIds = [
           ...new Set(
-            [
-              dash.areaId,
-              ...(descriptor?.cards ?? []).map((c) => c.areaId),
-            ].filter((x): x is string => typeof x === "string"),
+            [dash.areaId, ...descriptorAreaIds(dash.descriptor)].filter(
+              (x): x is string => typeof x === "string",
+            ),
           ),
         ];
         const [gridContext, hasGenerator, sharedAreas] = await Promise.all([

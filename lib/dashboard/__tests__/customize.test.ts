@@ -49,7 +49,7 @@ describe("normalizeDescriptor", () => {
         {
           type: "tiles",
           // only 2 of the tiles, reordered; "battery" hidden
-          tiles: { order: ["grid", "solar"], hidden: ["battery"] },
+          tiles: { order: ["house-to-grid", "solar"], hidden: ["battery"] },
         },
         { type: "chart", id: "chart:lines", hidden: true },
       ],
@@ -57,7 +57,7 @@ describe("normalizeDescriptor", () => {
     const out = normalizeDescriptor(saved, def);
     const cfg = tilesConfigOf(out);
     // saved order preserved first, the rest appended
-    expect(cfg.order.slice(0, 2)).toEqual(["grid", "solar"]);
+    expect(cfg.order.slice(0, 2)).toEqual(["house-to-grid", "solar"]);
     expect(new Set(cfg.order)).toEqual(new Set(TILE_IDS));
     expect(cfg.hidden).toEqual(["battery"]);
     expect(isCardVisible(out, "chart:lines")).toBe(false); // hidden carried
@@ -95,7 +95,7 @@ describe("availableTiles", () => {
       "solar",
       "load",
       "battery",
-      "grid",
+      "house-to-grid",
     ]);
   });
 

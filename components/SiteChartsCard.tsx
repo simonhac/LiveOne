@@ -763,7 +763,9 @@ export default function SiteChartsCard({
     <>
       {/* Charts - For mondo/composite systems, show charts with tables in single container */}
       {/* Hide entire container for unconfigured composite systems */}
-      {(cardVisible("chart:load") || cardVisible("chart:generation")) &&
+      {(cardVisible("chart:load") ||
+        cardVisible("chart:generation") ||
+        cardVisible("sankey")) &&
         (historyLoading ||
           processedHistoryData.load ||
           processedHistoryData.generation ||

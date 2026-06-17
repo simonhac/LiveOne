@@ -16,7 +16,7 @@
  */
 import { PointManager } from "@/lib/point/point-manager";
 import { getLegacySystemIdForArea } from "@/lib/areas/resolve";
-import type { DashboardDescriptor } from "./descriptor";
+import { descriptorAreaIds } from "./composition";
 
 export interface DashboardReadAccess {
   /** Distinct physical systems the dashboard's points live on (a composite spans children). */
@@ -34,7 +34,8 @@ export interface DashboardScopeInput {
    * 2b-2) which has no home system — its scope is purely the union of its cards' Areas.
    */
   systemId: number | null;
-  descriptor: DashboardDescriptor;
+  /** The dashboard descriptor (v3 composition, or a legacy v2 per-system descriptor). */
+  descriptor: unknown;
 }
 
 /** Pure shaping of point refs → the dedup'd read-access set. Extracted for unit testing. */
@@ -60,9 +61,7 @@ export async function allowedSystemIds(
 ): Promise<number[]> {
   const areaIds = new Set<string>();
   if (input.defaultAreaId) areaIds.add(input.defaultAreaId);
-  for (const c of input.descriptor.cards) {
-    if (c.areaId) areaIds.add(c.areaId);
-  }
+  for (const aid of descriptorAreaIds(input.descriptor)) areaIds.add(aid);
 
   // No resolvable Areas → a legacy single-system dashboard (address by its systemId), or an empty
   // composition dashboard (no systemId, no cards) → empty scope.

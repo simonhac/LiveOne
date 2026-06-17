@@ -34,7 +34,7 @@ export function offAreaCards(
   legacySystemIdOf: (areaId: string) => number | undefined,
   pageSystemId: number,
 ): ModuleCardInstance[] {
-  if (!descriptor) return [];
+  if (!descriptor || !Array.isArray(descriptor.cards)) return [];
   return descriptor.cards.filter((c) => {
     if (c.hidden || !c.areaId || !MULTI_AREA_SET.has(c.type)) return false;
     const sid = legacySystemIdOf(c.areaId);
