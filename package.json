@@ -24,6 +24,7 @@
     "db:sync-dev-db": "tsx scripts/utils/sync-prod-to-dev-db.ts",
     "db:reown-dev": "tsx scripts/utils/reown-dev-data.ts",
     "db:rebuild-dev-kv": "tsx scripts/utils/rebuild-dev-kv-from-db.ts",
+    "db:recompute-dev-runs": "tsx scripts/utils/recompute-dev-runs-from-db.ts",
     "prepare": "husky"
   },
   "keywords": [],
