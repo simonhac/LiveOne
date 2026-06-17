@@ -15,6 +15,7 @@ import ShareLinksPanel, {
   type ShareApi,
   type ShareTokenRow,
 } from "@/components/ShareLinksPanel";
+import GrantsPanel from "@/components/GrantsPanel";
 import { recomputeAreaFlow } from "@/lib/areas/recompute-flow";
 import { isSystemQuery } from "@/lib/queries/keys";
 
@@ -52,7 +53,9 @@ export default function DashboardSettingsDialog({
   const [recomputing, setRecomputing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"general" | "share">("general");
+  const [activeTab, setActiveTab] = useState<"general" | "share" | "people">(
+    "general",
+  );
 
   const isDefault = prefs?.preferences.defaultDashboardId === id;
   const aliasValid = isValidAlias(alias.trim());
@@ -264,6 +267,16 @@ export default function DashboardSettingsDialog({
               >
                 Share
               </button>
+              <button
+                onClick={() => setActiveTab("people")}
+                className={`border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
+                  activeTab === "people"
+                    ? "border-blue-500 bg-gray-700/50 text-white"
+                    : "border-transparent text-gray-400 hover:border-gray-600 hover:text-gray-300"
+                }`}
+              >
+                People
+              </button>
             </div>
           </div>
           {activeTab === "share" ? (
@@ -273,6 +286,10 @@ export default function DashboardSettingsDialog({
                 shareUrl={shareUrl}
                 enabled={activeTab === "share"}
               />
+            </div>
+          ) : activeTab === "people" ? (
+            <div className="px-6 py-4">
+              <GrantsPanel dashboardId={id} enabled={activeTab === "people"} />
             </div>
           ) : (
             <div className="space-y-4 px-6 py-4">

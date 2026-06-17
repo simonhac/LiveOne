@@ -4,7 +4,7 @@ import { listReadableAreas } from "@/lib/areas/list";
 import { SystemsManager } from "@/lib/systems-manager";
 import {
   createDashboard,
-  listDashboardsForOwner,
+  listAccessibleDashboards,
   DashboardAliasTakenError,
 } from "@/lib/dashboard/dashboards";
 import {
@@ -14,7 +14,7 @@ import {
 
 /**
  * Composition-first dashboards (Phase 2b-2), owner-scoped.
- *   GET  /api/dashboards            → the caller's dashboards (summaries)
+ *   GET  /api/dashboards            → the caller's dashboards (owned ∪ shared-with-them; each tagged)
  *   POST /api/dashboards            → create one ({ displayName, alias?, seedAreaId? })
  *
  * `seedAreaId` (optional) prefills the new dashboard with that Area's default card set — a starting
@@ -23,7 +23,7 @@ import {
 export async function GET(request: NextRequest) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
-  const dashboards = await listDashboardsForOwner(auth.userId);
+  const dashboards = await listAccessibleDashboards(auth.userId);
   return NextResponse.json({ dashboards });
 }
 

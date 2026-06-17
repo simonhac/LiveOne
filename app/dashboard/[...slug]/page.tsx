@@ -8,6 +8,7 @@ import {
   type CompositionDashboard,
 } from "@/lib/dashboard/dashboards";
 import DashboardClient from "@/components/DashboardClient";
+import { getGrant } from "@/lib/dashboard/grants";
 import { isDashboardV3, type DashboardV3 } from "@/lib/dashboard/v3";
 import { resolveAreasByIds } from "@/lib/areas/list";
 import { descriptorAreaIds } from "@/lib/dashboard/composition";
@@ -43,6 +44,7 @@ async function resolveClerkUserIdByUsername(
 async function renderCompositionDashboard(
   dashboard: CompositionDashboard,
   canEdit: boolean,
+  sharedAreas?: Awaited<ReturnType<typeof resolveAreasByIds>>,
 ) {
   const raw: unknown = dashboard.descriptor;
   const descriptor: DashboardV3 = isDashboardV3(raw)
@@ -57,6 +59,7 @@ async function renderCompositionDashboard(
         descriptor,
       }}
       canEdit={canEdit}
+      sharedAreas={sharedAreas}
     />
   );
 }
@@ -127,8 +130,15 @@ export default async function DashboardPage({
     const dashboard = await getDashboard(parseInt(compositionId, 10));
     if (!dashboard) redirect("/dashboard");
     const canEdit = dashboard.ownerClerkUserId === userId || isAdmin;
-    if (!canEdit) redirect("/dashboard"); // sharing a composition dashboard arrives via ?access=
-    return await renderCompositionDashboard(dashboard, canEdit);
+    // A signed-in non-owner with a grant views read-only; a true stranger is bounced (a public,
+    // sign-in-free share still arrives via ?access=). Grantees get the descriptor's Areas resolved
+    // server-side (like the token path) so the client never calls the system-scoped /api/areas/readable.
+    const grant = canEdit ? null : await getGrant(dashboard.id, userId);
+    if (!canEdit && !grant) redirect("/dashboard");
+    const sharedAreas = grant
+      ? await resolveAreasByIds(descriptorAreaIds(dashboard.descriptor))
+      : undefined;
+    return await renderCompositionDashboard(dashboard, canEdit, sharedAreas);
   }
 
   // Pretty owner-scoped alias: `/dashboard/{user}/{shortname}`. A composition dashboard the caller
