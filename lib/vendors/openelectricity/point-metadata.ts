@@ -109,6 +109,10 @@ export function buildReadingsFromResponses(
   for (const [startMs, emissions] of emissionsSeries) {
     const basisVal = basisSeries.get(startMs);
     if (basisVal == null) continue;
+    // A generating grid always emits (>0); the OE API can return a transient 0 for the
+    // freshest/settling interval, which would compute a non-physical 0 intensity. Skip it
+    // (intensity undefined) — the next poll re-pulls the window and heals the interval.
+    if (!(emissions > 0)) continue;
     // power (MW) × hours → MWh; energy is already MWh.
     const energyMWh =
       basis === "power" ? basisVal * (intervalMs / MS_PER_HOUR) : basisVal;
