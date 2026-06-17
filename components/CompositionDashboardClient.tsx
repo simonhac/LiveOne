@@ -38,9 +38,7 @@ export default function CompositionDashboardClient({
   const [switcherOpen, setSwitcherOpen] = useState(false);
 
   // areaId → Area: authed views fetch the caller's readable areas; the shared view gets them inline.
-  const { data: areasResp, isLoading: areasLoading } = useQuery(
-    readableAreasQuery(!sharedAreas),
-  );
+  const { data: areasResp } = useQuery(readableAreasQuery(!sharedAreas));
   const readableAreas: ReadableArea[] = sharedAreas ?? areasResp?.areas ?? [];
   const areaById = useMemo(
     () => new Map(readableAreas.map((a) => [a.id, a] as const)),
@@ -106,7 +104,6 @@ export default function CompositionDashboardClient({
         <CompositionDashboard
           descriptor={dashboard.descriptor}
           areaById={areaById}
-          areasLoading={!sharedAreas && areasLoading}
           serveFlowFromPg={serveFlowFromPg}
         />
       </main>

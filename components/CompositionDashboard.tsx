@@ -65,33 +65,23 @@ function tileKeyV3(t: TileV3, i: number): string {
 
 interface CompositionDashboardProps {
   descriptor: DashboardV3;
-  /** areaId -> its Area (addressing handle + label). */
+  /** areaId -> its Area (addressing handle + label). May be empty while the readable-areas fetch is
+   *  in flight — sections still render their skeleton layout from the descriptor in the meantime. */
   areaById: Map<string, ReadableArea>;
-  /** The readable-areas fetch is still in flight (so an empty areaById is "loading", not "empty"). */
-  areasLoading?: boolean;
   serveFlowFromPg?: boolean;
 }
 
 export default function CompositionDashboard({
   descriptor,
   areaById,
-  areasLoading = false,
   serveFlowFromPg = false,
 }: CompositionDashboardProps) {
-  const sections = descriptor.sections.filter(
-    (s) => !s.hidden && areaById.has(s.areaId),
-  );
+  // Render every section straight from the descriptor — its Area (and so the live data) may not have
+  // resolved yet, in which case each card draws a skeleton. We have enough to draw the layout
+  // immediately, so there's no "Loading…" gate before the skeletons appear.
+  const sections = descriptor.sections.filter((s) => !s.hidden);
 
   if (sections.length === 0) {
-    // Distinguish "areas still loading" (sections exist but their Areas haven't resolved) from a
-    // genuinely empty dashboard, so we don't flash "no cards yet" on every load.
-    if (areasLoading && descriptor.sections.length > 0) {
-      return (
-        <div className="px-1 py-16 text-center text-sm text-gray-500">
-          Loading…
-        </div>
-      );
-    }
     return (
       <div className="mx-auto max-w-md px-4 py-16 text-center text-gray-400">
         <Layers className="mx-auto mb-3 h-10 w-10 text-gray-600" />
@@ -109,7 +99,7 @@ export default function CompositionDashboard({
         <AreaSectionView
           key={section.areaId}
           section={section}
-          area={areaById.get(section.areaId)!}
+          area={areaById.get(section.areaId)}
           showHeader={showHeaders}
           serveFlowFromPg={serveFlowFromPg}
         />
@@ -126,11 +116,12 @@ function AreaSectionView({
   serveFlowFromPg,
 }: {
   section: AreaSectionV3;
-  area: ReadableArea;
+  /** Undefined while the readable-areas fetch is in flight → the cards draw skeletons. */
+  area?: ReadableArea;
   showHeader: boolean;
   serveFlowFromPg: boolean;
 }) {
-  const handle = area.legacySystemId;
+  const handle = area?.legacySystemId;
   const visible = section.cards.filter((c) => !c.hidden);
 
   // Collapse all stacked-areas charts + sankey of this section into ONE SiteChartsCard (shared period
@@ -149,16 +140,20 @@ function AreaSectionView({
     const isStacked =
       card.type === "sankey" ||
       (card.type === "chart" && card.chart?.variant === "stacked-areas");
+    // Each card draws a skeleton until the Area's handle is known (then its leaf self-fetches and
+    // shows its own loading state). TilesGrid handles the no-handle case internally (skeleton cells).
     if (isStacked) {
       if (chartsEmitted) return null;
       chartsEmitted = true;
-      return (
+      return handle != null ? (
         <AreaSiteCharts
           key="site-charts"
           systemId={handle}
           keys={chartKeys}
           serveFlowFromPg={serveFlowFromPg}
         />
+      ) : (
+        <ChartSkeleton key="site-charts" />
       );
     }
     switch (card.type) {
@@ -171,19 +166,33 @@ function AreaSectionView({
           />
         );
       case "chart": // lines variant
-        return (
+        return handle != null ? (
           <LinesChartCard
             key={cardKeyV3(card, i)}
             systemId={handle}
             className="h-full min-h-[360px]"
           />
+        ) : (
+          <ChartSkeleton key={cardKeyV3(card, i)} />
         );
       case "amber-now":
-        return <AreaAmberNow key={cardKeyV3(card, i)} systemId={handle} />;
+        return handle != null ? (
+          <AreaAmberNow key={cardKeyV3(card, i)} systemId={handle} />
+        ) : (
+          <ChartSkeleton key={cardKeyV3(card, i)} />
+        );
       case "amber-timeline":
-        return <AreaAmberTimeline key={cardKeyV3(card, i)} systemId={handle} />;
+        return handle != null ? (
+          <AreaAmberTimeline key={cardKeyV3(card, i)} systemId={handle} />
+        ) : (
+          <ChartSkeleton key={cardKeyV3(card, i)} />
+        );
       case "generator-runs":
-        return <GeneratorRunsCard key={cardKeyV3(card, i)} systemId={handle} />;
+        return handle != null ? (
+          <GeneratorRunsCard key={cardKeyV3(card, i)} systemId={handle} />
+        ) : (
+          <ChartSkeleton key={cardKeyV3(card, i)} />
+        );
       default:
         return null;
     }
@@ -197,7 +206,7 @@ function AreaSectionView({
           : ""
       }
     >
-      {showHeader && (
+      {showHeader && area && (
         <div className="flex items-center gap-1.5 px-1 pb-2 text-xs font-medium uppercase tracking-wide text-gray-400">
           <Layers className="h-3.5 w-3.5" />
           <span>{area.displayName}</span>
@@ -216,21 +225,26 @@ function TilesGrid({
   handleSystemId,
   tiles,
 }: {
-  handleSystemId: number;
+  /** Undefined while the Area is still resolving → skeleton cells (count from the descriptor). */
+  handleSystemId?: number;
   tiles: TileV3[];
 }) {
   const visible = tiles.filter((t) => !t.hidden);
   if (visible.length === 0) return null;
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 lg:gap-4 auto-rows-fr px-1">
-      {visible.map((t, i) => (
-        <TileCell
-          key={tileKeyV3(t, i)}
-          view={t.view}
-          deviceSystemId={t.deviceSystemId}
-          handleSystemId={handleSystemId}
-        />
-      ))}
+      {visible.map((t, i) =>
+        handleSystemId == null ? (
+          <TileSkeleton key={tileKeyV3(t, i)} />
+        ) : (
+          <TileCell
+            key={tileKeyV3(t, i)}
+            view={t.view}
+            deviceSystemId={t.deviceSystemId}
+            handleSystemId={handleSystemId}
+          />
+        ),
+      )}
     </div>
   );
 }
@@ -239,6 +253,13 @@ function TilesGrid({
 function TileSkeleton() {
   return (
     <div className="min-h-[120px] animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30" />
+  );
+}
+
+/** A card-height loading placeholder for non-tile cards (charts / sankey / amber / generator-runs). */
+function ChartSkeleton() {
+  return (
+    <div className="min-h-[360px] animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30" />
   );
 }
 
