@@ -24,7 +24,7 @@ import { SystemWithPolling, SystemsManager } from "@/lib/systems-manager";
 import { uuidv7 } from "uuidv7";
 import micromatch from "micromatch";
 import { updateLatestPointValue } from "../kv-cache-manager";
-import { getCompositeBindingRefs } from "@/lib/areas/bindings";
+import { getAreaBindingRefs } from "@/lib/areas/bindings";
 import { getAreaForSystem } from "@/lib/areas/resolve";
 import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
 import {
@@ -262,7 +262,7 @@ export class PointManager {
     }
 
     const validPointRefs: PointReference[] = (
-      await getCompositeBindingRefs(system.id)
+      await getAreaBindingRefs(system.id)
     ).map((r) => PointReference.fromIds(r.pointSystemId, r.pointId));
 
     if (validPointRefs.length > 0) {

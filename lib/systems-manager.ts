@@ -34,7 +34,7 @@ function synthesizeAreaView(area: Area): SystemWithPolling | null {
   return {
     id: area.legacySystemId,
     ownerClerkUserId: area.ownerClerkUserId,
-    vendorType: "composite",
+    vendorType: "area",
     vendorSiteId: `area:${area.legacySystemId}`,
     status: area.status,
     displayName: area.displayName,

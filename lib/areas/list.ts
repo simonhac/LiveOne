@@ -68,9 +68,9 @@ export async function listReadableAreas(
       displayName: r.displayName,
       kind: r.kind as "identity" | "composite",
       legacySystemId: r.legacySystemId,
-      // Real handle → its vendor type; a multi-device Area handle (no real system) → "composite"
-      // (drives the "site"/unified layout). Layout ownership moves to the dashboard in a later phase.
-      vendorType: vendorBySystemId.get(r.legacySystemId) ?? "composite",
+      // Real handle → its vendor type; a multi-device Area handle (no real system) → "area"
+      // (drives the "site"/unified layout via getLayout).
+      vendorType: vendorBySystemId.get(r.legacySystemId) ?? "area",
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 }

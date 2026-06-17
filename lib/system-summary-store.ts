@@ -189,10 +189,10 @@ function getSubscriptionsKey(systemId: number): string {
 }
 
 /**
- * Get all composite system IDs that subscribe to a source system
+ * Get all subscriber system IDs that subscribe to a source system
  *
  * @param sourceSystemId - Source system ID
- * @returns Array of unique composite system IDs
+ * @returns Array of unique subscriber system IDs
  */
 export async function getSubscriberSystemIds(
   sourceSystemId: number,
@@ -207,10 +207,10 @@ export async function getSubscriberSystemIds(
     return [];
   }
 
-  // Extract unique composite system IDs from all point subscribers
+  // Extract unique subscriber system IDs from all point subscribers
   const subscriberIds = new Set<number>();
-  for (const compositeRefs of Object.values(entry.pointSubscribers)) {
-    for (const ref of compositeRefs) {
+  for (const subscriberRefs of Object.values(entry.pointSubscribers)) {
+    for (const ref of subscriberRefs) {
       // Parse "systemId.pointIndex" format
       const [systemIdStr] = ref.split(".");
       const systemId = parseInt(systemIdStr);
@@ -226,7 +226,7 @@ export async function getSubscriberSystemIds(
 /**
  * Update summary for a subscriber system using its current latest values
  *
- * @param subscriberSystemId - Composite system ID to update
+ * @param subscriberSystemId - Subscriber system ID to update
  */
 export async function updateSubscriberSummary(
   subscriberSystemId: number,
