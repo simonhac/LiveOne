@@ -5,13 +5,29 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/queries";
-import { X, Shield, Loader2 } from "lucide-react";
+import { X, Shield, Loader2, MapPin } from "lucide-react";
 import { useModalContext } from "@/contexts/ModalContext";
 import PointsTab from "./PointsTab";
 import CompositeTab from "./CompositeTab";
 import TeslaConfigTab from "./TeslaConfigTab";
 import AdminTab from "./AdminTab";
 import { TIMEZONE_GROUPS } from "@/lib/timezones";
+import {
+  nemRegionForLocation,
+  nemRegionShortLabel,
+} from "@/lib/vendors/openelectricity/region";
+
+// State/territory codes. WA/NT are valid locations but off the NEM (the preview says so).
+const AU_STATES = [
+  "NSW",
+  "ACT",
+  "VIC",
+  "QLD",
+  "SA",
+  "TAS",
+  "WA",
+  "NT",
+] as const;
 
 interface SystemSettingsDialogProps {
   isOpen: boolean;
@@ -56,8 +72,15 @@ export default function SystemSettingsDialog({
   const [isDefaultSystem, setIsDefaultSystem] = useState(false);
   const [originalIsDefault, setOriginalIsDefault] = useState(false);
   const [isDefaultDirty, setIsDefaultDirty] = useState(false);
+  // Location (folded in from the former AreaLocationDialog) — sets the site's NEM region for the
+  // Local Grid card. country is fixed to AU (the NEM is Australia-only).
+  const [locationState, setLocationState] = useState("");
+  const [locationPostcode, setLocationPostcode] = useState("");
+  const [origLocationState, setOrigLocationState] = useState("");
+  const [origLocationPostcode, setOrigLocationPostcode] = useState("");
+  const [isLocationDirty, setIsLocationDirty] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "general" | "points" | "composite" | "tesla" | "admin"
+    "general" | "points" | "composite" | "tesla" | "admin" | "location"
   >("general");
   const compositeSaveRef = useRef<(() => Promise<any>) | null>(null);
   const teslaSaveRef = useRef<(() => Promise<any>) | null>(null);
@@ -156,6 +179,34 @@ export default function SystemSettingsDialog({
     setIsDefaultDirty(false);
   }, [settingsData]);
 
+  // Fetch the site's location when the dialog opens (separate from the admin settings query).
+  const { data: locationData } = useQuery({
+    queryKey: ["system", systemId, "location"],
+    queryFn: () =>
+      fetchJson<{
+        location?: { state?: string | null; postcode?: string | null };
+      }>(`/api/systems/${systemId}/location`),
+    enabled: isOpen && !!systemId,
+  });
+
+  useEffect(() => {
+    if (!locationData) return;
+    const st = locationData.location?.state ?? "";
+    const pc = locationData.location?.postcode ?? "";
+    setLocationState(st);
+    setLocationPostcode(pc);
+    setOrigLocationState(st);
+    setOrigLocationPostcode(pc);
+    setIsLocationDirty(false);
+  }, [locationData]);
+
+  // Live region preview from the current form — same derivation the server uses.
+  const locationRegion = nemRegionForLocation({
+    country: "AU",
+    state: locationState || undefined,
+    postcode: locationPostcode || undefined,
+  });
+
   const validateAlias = (value: string): string | null => {
     if (!value) return null; // Empty is valid (optional field)
     if (!/^[a-zA-Z0-9_]+$/.test(value)) {
@@ -190,7 +241,8 @@ export default function SystemSettingsDialog({
     isCompositeDirty ||
     isTeslaDirty ||
     isAdminDirty ||
-    isDefaultDirty;
+    isDefaultDirty ||
+    isLocationDirty;
   const hasGeneralChanges =
     isDisplayNameDirty || isAliasDirty || isTimezoneDirty || isDefaultDirty;
 
@@ -320,6 +372,25 @@ export default function SystemSettingsDialog({
         }
       }
 
+      // Save the site's location (state + optional postcode → NEM region for the Local Grid card).
+      // "" clears the field (see mergeAreaLocation). country is AU for the NEM.
+      if (isLocationDirty) {
+        const response = await fetch(`/api/systems/${systemId}/location`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            country: "AU",
+            state: locationState || "",
+            postcode: locationPostcode.trim() || "",
+          }),
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || "Failed to update location");
+        }
+      }
+
       // Prepare updates to pass to dashboard (before resetting dirty flags)
       const updates: { displayName?: string; alias?: string | null } = {};
       if (isDisplayNameDirty) updates.displayName = editedDisplayName;
@@ -345,10 +416,16 @@ export default function SystemSettingsDialog({
       setIsAdminDirty(false);
       setIsDefaultDirty(false);
       setOriginalIsDefault(isDefaultSystem);
+      setIsLocationDirty(false);
+      setOrigLocationState(locationState);
+      setOrigLocationPostcode(locationPostcode);
 
       // Refresh this dialog's settings query so a reopen shows the saved values
       queryClient.invalidateQueries({
         queryKey: ["system", systemId, "settings"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["system", systemId, "location"],
       });
 
       // Close modal
@@ -382,9 +459,19 @@ export default function SystemSettingsDialog({
     setIsDisplayNameDirty(false);
     setIsAliasDirty(false);
     setIsTimezoneDirty(false);
+    setLocationState(origLocationState);
+    setLocationPostcode(origLocationPostcode);
+    setIsLocationDirty(false);
     setAliasError(null);
     onClose();
-  }, [displayName, alias, displayTimezone, onClose]);
+  }, [
+    displayName,
+    alias,
+    displayTimezone,
+    origLocationState,
+    origLocationPostcode,
+    onClose,
+  ]);
 
   // Prevent body scroll when modal is open
   useEffect(() => {
@@ -457,6 +544,19 @@ export default function SystemSettingsDialog({
               >
                 General
                 {hasGeneralChanges && (
+                  <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
+                )}
+              </button>
+              <button
+                onClick={() => setActiveTab("location")}
+                className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+                  activeTab === "location"
+                    ? "text-white border-blue-500 bg-gray-700/50"
+                    : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
+                }`}
+              >
+                Location
+                {isLocationDirty && (
                   <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
                 )}
               </button>
@@ -634,6 +734,86 @@ export default function SystemSettingsDialog({
                         </p>
                       </div>
                     </label>
+                  </div>
+                </div>
+
+                {/* Location Tab Content */}
+                <div className={activeTab === "location" ? "" : "hidden"}>
+                  <p className="text-sm text-gray-400 mb-4">
+                    Your site&apos;s state sets the National Electricity Market
+                    (NEM) region used by the Local Grid card (price, emissions,
+                    renewables).
+                  </p>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      State / territory
+                    </label>
+                    <select
+                      value={locationState}
+                      onChange={(e) => {
+                        setLocationState(e.target.value);
+                        setIsLocationDirty(
+                          e.target.value !== origLocationState ||
+                            locationPostcode !== origLocationPostcode,
+                        );
+                      }}
+                      disabled={isSaving}
+                      className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="">Not set</option>
+                      {AU_STATES.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Postcode (optional)
+                    </label>
+                    <p className="text-xs text-gray-400 mb-2">
+                      Used only if no state is set.
+                    </p>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={locationPostcode}
+                      maxLength={4}
+                      onChange={(e) => {
+                        const pc = e.target.value.replace(/[^\d]/g, "");
+                        setLocationPostcode(pc);
+                        setIsLocationDirty(
+                          locationState !== origLocationState ||
+                            pc !== origLocationPostcode,
+                        );
+                      }}
+                      placeholder="e.g. 3000"
+                      disabled={isSaving}
+                      className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  {/* Live region preview */}
+                  <div className="mt-4 rounded-lg bg-gray-900/70 px-4 py-3 ring-1 ring-gray-700/80">
+                    <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-gray-500">
+                      <MapPin className="w-3.5 h-3.5" />
+                      Grid region
+                    </div>
+                    <p className="mt-0.5 text-sm">
+                      {locationRegion ? (
+                        <span className="font-semibold text-blue-300">
+                          {nemRegionShortLabel(locationRegion)} (
+                          {locationRegion})
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">
+                          Not on the NEM — no grid card
+                        </span>
+                      )}
+                    </p>
                   </div>
                 </div>
 

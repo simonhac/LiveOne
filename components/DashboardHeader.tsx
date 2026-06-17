@@ -22,10 +22,6 @@ import {
   RefreshCw,
   Menu,
   X,
-  SlidersHorizontal,
-  Share2,
-  MapPin,
-  LayoutDashboard,
 } from "lucide-react";
 import NewDashboardDialog from "@/components/NewDashboardDialog";
 import LastUpdateTime from "@/components/LastUpdateTime";
@@ -34,7 +30,6 @@ import MobileHeaderMenu from "@/components/MobileHeaderMenu";
 import DashboardsMenu, {
   usePrefetchDashboardsMenu,
 } from "@/components/DashboardsMenu";
-import { useDashboardCustomizeOptional } from "@/contexts/DashboardCustomizeContext";
 
 interface SystemInfo {
   model?: string;
@@ -123,9 +118,6 @@ export default function DashboardHeader({
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [showNewDashboard, setShowNewDashboard] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  // Customize (P2) — opens the dialog owned by DashboardClient. Only present when the dashboard is
-  // loaded and persistence is enabled (DashboardClient sets canCustomize).
-  const customize = useDashboardCustomizeOptional();
   const [isMobileSystemDropdownOpen, setIsMobileSystemDropdownOpen] =
     useState(false);
   const [longPressActive, setLongPressActive] = useState(false);
@@ -437,19 +429,7 @@ export default function DashboardHeader({
                       </button>
                     )}
 
-                    {/* New (composition-first) dashboard — Phase 2b-2. Always available. */}
-                    <button
-                      onClick={() => {
-                        setShowSettingsDropdown(false);
-                        setShowNewDashboard(true);
-                      }}
-                      className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
-                    >
-                      <LayoutDashboard className="w-4 h-4" />
-                      New Dashboard…
-                    </button>
-
-                    {/* System Settings */}
+                    {/* Device Settings */}
                     {onSystemSettings && (
                       <button
                         onClick={() => {
@@ -459,49 +439,7 @@ export default function DashboardHeader({
                         className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
                       >
                         <SettingsIcon className="w-4 h-4" />
-                        System Settings…
-                      </button>
-                    )}
-
-                    {/* Customise dashboard (P2) — present once the dashboard is loaded */}
-                    {customize?.canCustomize && (
-                      <button
-                        onClick={() => {
-                          setShowSettingsDropdown(false);
-                          customize.openCustomize();
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
-                      >
-                        <SlidersHorizontal className="w-4 h-4" />
-                        Customise…
-                      </button>
-                    )}
-
-                    {/* Share dashboard (P4) — owner-only public read-only link */}
-                    {customize?.canShare && (
-                      <button
-                        onClick={() => {
-                          setShowSettingsDropdown(false);
-                          customize.openShare();
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
-                      >
-                        <Share2 className="w-4 h-4" />
-                        Share…
-                      </button>
-                    )}
-
-                    {/* Location — owner-only; sets the site's NEM region for the Local Grid card */}
-                    {customize?.canSetLocation && (
-                      <button
-                        onClick={() => {
-                          setShowSettingsDropdown(false);
-                          customize.openLocation();
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
-                      >
-                        <MapPin className="w-4 h-4" />
-                        Location…
+                        Device Settings…
                       </button>
                     )}
                   </div>

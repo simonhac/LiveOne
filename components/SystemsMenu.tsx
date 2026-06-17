@@ -95,7 +95,7 @@ export default function SystemsMenu({
               .map((param) => `${param}=${searchParams.get(param)}`)
               .join("&");
 
-            // Extract subpage from current path (e.g., /heatmap from /dashboard/user/system/heatmap)
+            // Extract subpage from current path (e.g., /heatmap from /device/user/system/heatmap)
             const pathParts = window.location.pathname
               .split("/")
               .filter(Boolean);
@@ -117,8 +117,8 @@ export default function SystemsMenu({
     // Prefer username/shortname path if available, otherwise use system ID
     const basePath =
       system.ownerUsername && system.alias
-        ? `/dashboard/${system.ownerUsername}/${system.alias}`
-        : `/dashboard/${system.id}`;
+        ? `/device/${system.ownerUsername}/${system.alias}`
+        : `/device/${system.id}`;
     const fullPath = `${basePath}${subpage}`;
     const href = queryString ? `${fullPath}?${queryString}` : fullPath;
 

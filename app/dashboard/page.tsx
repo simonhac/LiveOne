@@ -50,5 +50,5 @@ export default async function DashboardPage() {
   const primarySystem =
     ownedSystems.length > 0 ? ownedSystems[0] : visibleSystems[0];
 
-  redirect(`/dashboard/${primarySystem.id}`);
+  redirect(`/device/${primarySystem.id}`);
 }

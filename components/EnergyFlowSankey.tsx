@@ -12,6 +12,8 @@ import { EnergyFlowMatrix } from "@/lib/energy-flow-matrix";
 
 interface EnergyFlowSankeyProps {
   matrix: EnergyFlowMatrix;
+  /** Unit shown on node values + link tooltips: cumulative window energy ("kWh") or focused-point power ("kW"). */
+  unit?: "kWh" | "kW";
   width?: number;
   height?: number;
 }
@@ -54,6 +56,7 @@ function shortenLabel(label: string): string {
  */
 export default function EnergyFlowSankey({
   matrix,
+  unit = "kWh",
   width = 600,
   height = 680,
 }: EnergyFlowSankeyProps) {
@@ -362,7 +365,7 @@ export default function EnergyFlowSankey({
         "http://www.w3.org/2000/svg",
         "title",
       );
-      title.textContent = `${link.source.name} → ${link.target.name}: ${link.value.toFixed(1)} kWh`;
+      title.textContent = `${link.source.name} → ${link.target.name}: ${link.value.toFixed(1)} ${unit}`;
       path.appendChild(title);
 
       svgElement.appendChild(path);
@@ -503,7 +506,7 @@ export default function EnergyFlowSankey({
             unitText.setAttribute("font-size", "8px");
             unitText.setAttribute("fill", "#000000");
             unitText.setAttribute("opacity", "0.8");
-            unitText.textContent = "kWh";
+            unitText.textContent = unit;
             svgElement.appendChild(unitText);
           }
         }
@@ -575,7 +578,7 @@ export default function EnergyFlowSankey({
         svgElement.appendChild(loadsLabel);
       }
     }
-  }, [matrix, actualWidth, height, isMobile]);
+  }, [matrix, unit, actualWidth, height, isMobile]);
 
   return (
     <div ref={containerRef} className="w-full flex justify-center">
