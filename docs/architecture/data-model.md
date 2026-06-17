@@ -16,19 +16,19 @@
 
 ## Table inventory (PG)
 
-| Table                   | One-liner                                                                                              |
-| ----------------------- | ------------------------------------------------------------------------------------------------------ |
-| `systems`               | One row per monitored energy system (or composite). Owner, vendor, status, timezone, metadata.         |
-| `polling_status`        | Per-system collection health (last poll/success/error, streaks, counters).                             |
-| `users`                 | Per-user preferences (default system). Identity itself lives in Clerk.                                 |
-| `user_systems`          | User↔system access grants (`owner`/`admin`/`viewer`).                                                 |
-| `sessions`              | One row per vendor communication session. UUIDv7 text PKs (historical ids are stringified ints).       |
-| `point_info`            | Point registry: identity, physical/logical paths, metric type/unit, display config.                    |
-| `point_readings`        | Raw time-series, one row per point per measurement time.                                               |
-| `point_readings_agg_5m` | 5-minute aggregates (avg/min/max/last/delta).                                                          |
-| `point_readings_agg_1d` | Daily aggregates, keyed by local-time `day` (YYYY-MM-DD).                                              |
-| `share_tokens`          | View-only share links (3-word phrases) scoped to an owner's systems.                                   |
-| `observations_outbox`   | Transactional outbox: durable copy of each poll's `QueueMessage`, drained to QStash by the relay cron. |
+| Table                   | One-liner                                                                                                                                                                   |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `systems`               | One row per monitored physical system (a vendor connection). Owner, vendor, status, timezone, metadata. (Multi-device "composite" areas have NO `systems` row — see below.) |
+| `polling_status`        | Per-system collection health (last poll/success/error, streaks, counters).                                                                                                  |
+| `users`                 | Per-user preferences (default system). Identity itself lives in Clerk.                                                                                                      |
+| `user_systems`          | User↔system access grants (`owner`/`admin`/`viewer`).                                                                                                                      |
+| `sessions`              | One row per vendor communication session. UUIDv7 text PKs (historical ids are stringified ints).                                                                            |
+| `point_info`            | Point registry: identity, physical/logical paths, metric type/unit, display config.                                                                                         |
+| `point_readings`        | Raw time-series, one row per point per measurement time.                                                                                                                    |
+| `point_readings_agg_5m` | 5-minute aggregates (avg/min/max/last/delta).                                                                                                                               |
+| `point_readings_agg_1d` | Daily aggregates, keyed by local-time `day` (YYYY-MM-DD).                                                                                                                   |
+| `share_tokens`          | View-only share links (3-word phrases) scoped to an owner's systems.                                                                                                        |
+| `observations_outbox`   | Transactional outbox: durable copy of each poll's `QueueMessage`, drained to QStash by the relay cron.                                                                      |
 
 ## Invariants
 
@@ -80,25 +80,22 @@ These are load-bearing; don't violate them without updating
 `point_readings.data_quality` ∈ `good` (default) / `error` / `estimated` / `interpolated`.
 Readings can carry `value` (numeric), `value_str` (e.g. tariff codes), or `error`.
 
-### Composite systems
+### Multi-device areas (formerly "composite systems")
 
-`systems.vendor_type = 'composite'`: virtual systems that aggregate points from other systems.
-Never polled, no credentials, no nesting. The mapping lives in `systems.metadata`:
+A **multi-device Area** groups several physical systems' points into one view (the former "composite").
+It is **not** a `systems` row — it is an **areas-backed virtual system**: `SystemsManager` synthesizes one
+on demand (runtime `vendor_type = 'composite'`, never polled, no credentials, no nesting), keyed on
+`areas.legacy_system_id` (its stable integer handle). Membership and the role→point mapping live in the
+**semantic layer**, not `systems.metadata` (that JSON blob is retired):
 
-```json
-{
-  "version": 1,
-  "mappings": {
-    "solar": ["liveone.system1.source.solar.local.power.avg"],
-    "battery": ["liveone.system1.bidi.battery.power.avg"],
-    "load": ["liveone.system2.load.total.power.avg"],
-    "grid": ["liveone.system1.bidi.grid.power.avg"]
-  }
-}
-```
+- **`area_devices`** — the Area's 1..N member devices.
+- **`area_bindings`** — typed role→point **overrides**; when present they _select_ the Area's points,
+  otherwise the Area defaults to the **union** of its members' own points.
 
-The KV subscription registry maps source points → subscribing composites so latest-value
-updates fan out. See [points.md](points.md) for path grammar and composite rules.
+A single-device Area (the former "identity area") is the same machinery with one member and no bindings.
+The KV subscription registry maps source points → subscribing handles so latest-value updates fan out. See
+[areas-and-dashboards.md](areas-and-dashboards.md) for the full model and [points.md](points.md) for path
+grammar.
 
 ### Vendor credentials
 

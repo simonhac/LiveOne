@@ -1,5 +1,14 @@
 # Plan: Replace "composite areas" with first-class areas that contain multiple devices
 
+> **Status: Phases A–C + tail DONE and merged (#105 + #106). Phase D pending.** This is the original
+> planning doc, kept for detail; the live summary + invariants now live in
+> [`../architecture/areas-and-dashboards.md` §5](../architecture/areas-and-dashboards.md). Shipped: Phase A
+> (unified resolver), Phase B (`area_devices` + migration `0018`, applied to dev + `sydney` prod), Phase C
+> (membership + override / union-default, lazy areas, `kind` reads collapsed), and the tail (admin
+> one-Areas list, KV fan-out generalization). **Only Phase D remains** — drop the `areas.kind` column (via
+> expand-contract) + the create-UX reframe; needs schema approval + a soak. See §5 of the canonical doc for
+> the precise Phase-D steps.
+
 ## Context
 
 Today the semantic layer carries an `areas.kind` distinction with two parallel mechanisms:
