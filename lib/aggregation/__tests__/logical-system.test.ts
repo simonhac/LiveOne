@@ -61,26 +61,23 @@ function fakePoint(stem: string, name: string) {
 }
 
 describe("resolveLogicalSystem (Area is mandatory — P3-tail-1)", () => {
-  const getSystem = jest.fn<(id: number) => Promise<unknown>>();
-  const isAreasBackedSystem = jest.fn<(id: number) => Promise<boolean>>();
+  // resolveLogicalSystem resolves a real system OR an area view via getViewableSystem.
+  const getViewableSystem = jest.fn<(id: number) => Promise<unknown>>();
   const getActivePointsForSystem =
     jest.fn<(id: number, typedOnly: boolean) => Promise<unknown[]>>();
 
   beforeEach(() => {
     jest.clearAllMocks();
     (SystemsManager.getInstance as jest.MockedFunction<any>).mockReturnValue({
-      getSystem,
-      isAreasBackedSystem,
+      getViewableSystem,
     });
     (PointManager.getInstance as jest.MockedFunction<any>).mockReturnValue({
       getActivePointsForSystem,
     });
-    getSystem.mockResolvedValue({
+    getViewableSystem.mockResolvedValue({
       vendorType: "selectronic",
       timezoneOffsetMin: 600,
     });
-    // Default: a real device (own point_info), not an areas-backed virtual system.
-    isAreasBackedSystem.mockResolvedValue(false);
     getActivePointsForSystem.mockResolvedValue([
       fakePoint("source.solar.local", "Solar"),
       fakePoint("load.hws", "Hot Water"),
@@ -128,19 +125,6 @@ describe("resolveLogicalSystem (Area is mandatory — P3-tail-1)", () => {
     expect(ensureIdentityArea).not.toHaveBeenCalled();
   });
 
-  it("does NOT fabricate an Area for an areas-backed system with no Area (genuine fault)", async () => {
-    isAreasBackedSystem.mockResolvedValue(true);
-    (getAreaForSystem as jest.MockedFunction<any>).mockResolvedValue(null);
-    const errSpy = jest.spyOn(console, "error").mockImplementation(() => {});
-    const ls = await resolveLogicalSystem(1);
-    expect(ls).toBeNull();
-    expect(ensureIdentityArea).not.toHaveBeenCalled();
-    expect(errSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Areas-backed system 1 has no Area"),
-    );
-    errSpy.mockRestore();
-  });
-
   it("returns null when the heal itself fails", async () => {
     (getAreaForSystem as jest.MockedFunction<any>).mockResolvedValue(null);
     (ensureIdentityArea as jest.MockedFunction<any>).mockRejectedValue(
@@ -157,7 +141,7 @@ describe("resolveLogicalSystem (Area is mandatory — P3-tail-1)", () => {
   });
 
   it("returns null for a non-existent system without consulting Areas", async () => {
-    getSystem.mockResolvedValue(null);
+    getViewableSystem.mockResolvedValue(null);
     const ls = await resolveLogicalSystem(999);
     expect(ls).toBeNull();
     expect(getAreaForSystem).not.toHaveBeenCalled();

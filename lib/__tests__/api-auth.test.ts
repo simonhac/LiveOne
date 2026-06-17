@@ -53,6 +53,10 @@ beforeEach(() => {
   }));
   mockGetInstance.mockReturnValue({
     getSystem,
+    // Dashboard access resolves real systems via getViewableSystem and gates area handles on
+    // isAreaHandle; these tests use real owned systems, so the handle check is always false.
+    getViewableSystem: getSystem,
+    isAreaHandle: jest.fn(async () => false),
   } as unknown as ReturnType<typeof SystemsManager.getInstance>);
   mockValidate.mockResolvedValue({ token: "tok", dashboardId: 1 });
   mockGetDashboard.mockResolvedValue({
