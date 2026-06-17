@@ -20,6 +20,13 @@ declare global {
   var __planetscaleDb: ReturnType<typeof drizzle> | undefined;
 }
 
+/** disable-ish ssl signal (DB_SSL or a URL `sslmode`): "disable" / "false" / "0" / "disabled". */
+function isSslDisabled(value: string | null | undefined): boolean {
+  return ["0", "false", "disable", "disabled"].includes(
+    (value ?? "").toLowerCase(),
+  );
+}
+
 /**
  * Build the Postgres connection config from env.
  *
@@ -30,14 +37,34 @@ declare global {
 function getPoolConfig(): PoolConfig | null {
   const url = process.env.PLANETSCALE_DATABASE_URL;
   if (url) {
-    return { connectionString: url };
+    // Parse the URL ourselves and set TLS explicitly instead of letting
+    // node-postgres' bundled pg-connection-string interpret the ssl params.
+    // It can't handle `sslrootcert=system` (the Node "use the OS trust store"
+    // value) — it tries to `open('system')` as a file → ENOENT and the
+    // connection dies. Managed Postgres here connects encrypted-without-strict-CA
+    // (same as the DB_* path below), so strip the URL's ssl params and apply that
+    // explicitly. `sslmode=disable` (or DB_SSL=disable) still opts out, for a
+    // local plaintext server.
+    try {
+      const u = new URL(url);
+      const sslDisabled =
+        isSslDisabled(u.searchParams.get("sslmode")) ||
+        isSslDisabled(process.env.DB_SSL);
+      for (const p of ["sslmode", "sslrootcert", "sslcert", "sslkey", "ssl"]) {
+        u.searchParams.delete(p);
+      }
+      return {
+        connectionString: u.toString(),
+        ssl: sslDisabled ? false : { rejectUnauthorized: false },
+      };
+    } catch {
+      // Not a parseable URL — hand it to pg as-is and let it surface the error.
+      return { connectionString: url };
+    }
   }
 
   const host = process.env.DB_HOST;
   if (host) {
-    const sslDisabled = ["0", "false", "disable", "disabled"].includes(
-      (process.env.DB_SSL ?? "").toLowerCase(),
-    );
     return {
       host,
       port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 5432,
@@ -46,7 +73,9 @@ function getPoolConfig(): PoolConfig | null {
       password: process.env.DB_PASSWORD,
       // Managed Postgres requires TLS. Default to encrypted-without-strict-CA,
       // which works across providers; set DB_SSL=disable for a local server.
-      ssl: sslDisabled ? false : { rejectUnauthorized: false },
+      ssl: isSslDisabled(process.env.DB_SSL)
+        ? false
+        : { rejectUnauthorized: false },
     };
   }
 
