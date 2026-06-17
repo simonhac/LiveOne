@@ -9,11 +9,8 @@ import {
   DashboardAliasTakenError,
   type CompositionDashboard,
 } from "@/lib/dashboard/dashboards";
-import {
-  descriptorAreaIds,
-  filterVendorIncompatibleCards,
-} from "@/lib/dashboard/composition";
-import type { DashboardDescriptor } from "@/lib/dashboard/descriptor";
+import { descriptorAreaIds } from "@/lib/dashboard/composition";
+import { isDashboardV3, type DashboardV3 } from "@/lib/dashboard/v3";
 
 /**
  * A single composition dashboard (Phase 2b-2). GET (owner/admin), PATCH (owner — rename/alias/edit
@@ -71,7 +68,7 @@ export async function PATCH(
   const patch: {
     displayName?: string;
     alias?: string | null;
-    descriptor?: DashboardDescriptor;
+    descriptor?: DashboardV3;
   } = {};
 
   if (typeof body?.displayName === "string") {
@@ -91,18 +88,14 @@ export async function PATCH(
         : null;
   }
   if (body?.descriptor !== undefined) {
-    const descriptor = body.descriptor as DashboardDescriptor;
-    if (
-      !descriptor ||
-      descriptor.version !== 2 ||
-      !Array.isArray(descriptor.cards)
-    ) {
+    const descriptor = body.descriptor;
+    if (!isDashboardV3(descriptor)) {
       return NextResponse.json(
-        { error: "A version-2 descriptor is required" },
+        { error: "A version-3 descriptor is required" },
         { status: 400 },
       );
     }
-    // No-escalation authoring check: every card's Area must be readable by the owner.
+    // No-escalation authoring check: every section's Area must be readable by the owner.
     const areaIds = descriptorAreaIds(descriptor);
     if (areaIds.length > 0) {
       const readableAreas = await listReadableAreas(
@@ -111,22 +104,12 @@ export async function PATCH(
       const readable = new Set(readableAreas.map((a) => a.id));
       if (areaIds.some((aid) => !readable.has(aid))) {
         return NextResponse.json(
-          { error: "A card references an area you cannot read" },
+          { error: "A section references an area you cannot read" },
           { status: 403 },
         );
       }
-      // Drop (don't reject) any card that can't render for its Area's vendor type, so a descriptor
-      // never persists a permanently-broken card. Vendor-deterministic rules only — see composition.ts.
-      const vendorTypeByAreaId = new Map(
-        readableAreas.map((a) => [a.id, a.vendorType] as const),
-      );
-      patch.descriptor = filterVendorIncompatibleCards(
-        descriptor,
-        vendorTypeByAreaId,
-      );
-    } else {
-      patch.descriptor = descriptor;
     }
+    patch.descriptor = descriptor;
   }
 
   try {

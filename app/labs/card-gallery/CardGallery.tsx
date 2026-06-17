@@ -280,7 +280,9 @@ export default function CardGallery() {
           defaultScenario="importing"
           presetWidths={POWER_WIDTHS}
           playground={{ w: 200, h: 140 }}
-          render={(s) => <TileCell latest={GRID_SCENARIOS[s]} id="grid" />}
+          render={(s) => (
+            <TileCell latest={GRID_SCENARIOS[s]} id="house-to-grid" />
+          )}
         />
 
         <CardSection

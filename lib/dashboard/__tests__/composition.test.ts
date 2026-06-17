@@ -8,37 +8,47 @@ import {
 const AREA = { id: "11111111-2222-3333-4444-555555555555" };
 
 describe("emptyCompositionDescriptor", () => {
-  it("is a v2 descriptor with no cards", () => {
+  it("is a v3 descriptor with no sections", () => {
     const d = emptyCompositionDescriptor();
-    expect(d.version).toBe(2);
-    expect(d.cards).toEqual([]);
+    expect(d.version).toBe(3);
+    expect(d.sections).toEqual([]);
   });
 });
 
 describe("buildSeedDescriptor", () => {
-  it("stamps every card with the seed Area id + a unique instance id", () => {
-    // selectronic → sidebar layout: tiles, chart:lines, generator-runs.
+  it("binds one AreaSection to the seed Area with a non-empty card set", () => {
     const d = buildSeedDescriptor(AREA, { vendorType: "selectronic" });
-    expect(d.cards.length).toBeGreaterThan(0);
-    for (const c of d.cards) {
-      expect(c.areaId).toBe(AREA.id);
-      expect(typeof c.id).toBe("string");
-    }
-    const ids = d.cards.map((c) => c.id);
-    expect(new Set(ids).size).toBe(ids.length); // all ids unique
+    expect(d.version).toBe(3);
+    expect(d.sections.length).toBe(1);
+    expect(d.sections[0].areaId).toBe(AREA.id);
+    expect(d.sections[0].cards.length).toBeGreaterThan(0);
   });
 
   it("derives the starter card set from the seed system's vendor type", () => {
+    // site layout (mondo) includes a sankey; sidebar (selectronic) does not.
     const site = buildSeedDescriptor(AREA, { vendorType: "mondo" });
-    // site layout includes a sankey; sidebar (selectronic) does not.
-    expect(site.cards.some((c) => c.type === "sankey")).toBe(true);
+    expect(site.sections[0].cards.some((c) => c.type === "sankey")).toBe(true);
     const sidebar = buildSeedDescriptor(AREA, { vendorType: "selectronic" });
-    expect(sidebar.cards.some((c) => c.type === "sankey")).toBe(false);
+    expect(sidebar.sections[0].cards.some((c) => c.type === "sankey")).toBe(
+      false,
+    );
   });
 });
 
 describe("descriptorAreaIds", () => {
-  it("returns the distinct areaIds across cards", () => {
+  it("returns the distinct section areaIds for a v3 descriptor", () => {
+    const d = {
+      version: 3 as const,
+      sections: [
+        { areaId: "area-1", cards: [] },
+        { areaId: "area-2", cards: [] },
+        { areaId: "area-1", cards: [] }, // duplicate → deduped
+      ],
+    };
+    expect(descriptorAreaIds(d).sort()).toEqual(["area-1", "area-2"]);
+  });
+
+  it("returns the distinct card areaIds for a legacy v2 descriptor", () => {
     const d = {
       version: 2 as const,
       layout: "site" as const,

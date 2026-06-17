@@ -44,7 +44,10 @@ describe("normalizeDescriptor — singleton back-compat", () => {
       layout: "sidebar",
       cards: [
         { type: "generator-runs", hidden: true },
-        { type: "tiles", tiles: { order: ["grid", "solar"], hidden: ["ev"] } },
+        {
+          type: "tiles",
+          tiles: { order: ["house-to-grid", "solar"], hidden: ["ev"] },
+        },
         // a type not in the sidebar default → dropped
         { type: "amber-now" },
       ],
@@ -59,7 +62,7 @@ describe("normalizeDescriptor — singleton back-compat", () => {
     expect(isCardVisible(out, "generator-runs")).toBe(false); // hidden carried
     expect(
       out.cards.find((c) => c.type === "tiles")?.tiles?.order.slice(0, 2),
-    ).toEqual(["grid", "solar"]);
+    ).toEqual(["house-to-grid", "solar"]);
   });
 });
 

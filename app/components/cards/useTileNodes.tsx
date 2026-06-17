@@ -512,7 +512,7 @@ export function useTileNodes({
     load: hasLoadData,
     hotWater: hwsTemp !== null,
     battery: batterySoc !== null,
-    grid: showGrid && getPointValue("bidi.grid/power") !== null,
+    "house-to-grid": showGrid && getPointValue("bidi.grid/power") !== null,
     amber: hasAmberData,
     ev: hasTeslaData,
   };
@@ -627,7 +627,7 @@ export function useTileNodes({
         }
       />
     ),
-    grid: (
+    "house-to-grid": (
       <Tile
         title="Grid"
         value={

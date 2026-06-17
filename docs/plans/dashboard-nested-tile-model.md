@@ -1,7 +1,124 @@
 # Design: Nested Dashboard-Construction Model + grid-signals Retirement
 
-**Status:** Design (not implementation). **Author:** Lead architect, merging three perspectives.
-**Goal:** One clean nested model — `Dashboard → AreaSection → Card → Tile` — that reproduces `/dashboard/8` exactly and generalizes to N areas; retire the bespoke grid-signals card; keep the legacy `DashboardClient` working until a final flagged cutover.
+**Status:** Read-path **IMPLEMENTED** + verified on dev (2026-06-17). **Goal:** One clean nested model —
+`Dashboard → AreaSection → Card → Tile` — that reproduces `/dashboard/8` and generalizes to N areas;
+retire the bespoke grid-signals card as a device-bound tile.
+
+> §§1–8 below are the **original design** (three merged perspectives). The build **deliberately diverged**
+> from it once the constraint relaxed to "it's only us and the current thing is broken — go hard, no
+> migration." **§0 is authoritative**; where §§2.1 / 6 / 7 conflict with §0, §0 wins (they're kept for
+> rationale: the problem statement §1, the grid-signals retirement §4, and the parity proof §4.3 still hold).
+
+---
+
+## 0. Realized implementation (what actually shipped — authoritative)
+
+The cautious machinery (lazy `migrateToV3`, `legacyViewOf`, the `UNIFIED_RENDERER` flag, the 6-phase
+parity-gated rollout) was **dropped**: there is exactly **one** dashboard and the old composition renderer
+was broken, so we built the clean model directly, replaced the broken renderer, and **re-seeded the one
+descriptor** rather than migrating.
+
+**Model — leaner than §2.1.** Types live in **`lib/dashboard/v3.ts`** (not `descriptor.ts`). Store only
+choices + structure; **derive everything that comes from the Area**:
+
+```ts
+export type TileView = TileId | "oe-grid"; // TileId = solar|load|hotWater|battery|house-to-grid|amber|ev
+export interface TileV3 {
+  view: TileView;
+  deviceSystemId?: number;
+  id?: string;
+  hidden?: boolean;
+  features?: TileFeature[];
+}
+export interface CardV3 {
+  type: DashboardCardType;
+  id?: string;
+  hidden?: boolean;
+  tiles?: TileV3[];
+  chart?: ChartCardConfig;
+}
+export interface AreaSectionV3 {
+  areaId: string;
+  layout?: DashboardLayout;
+  hidden?: boolean;
+  cards: CardV3[];
+}
+export interface DashboardV3 {
+  version: 3;
+  sections: AreaSectionV3[];
+}
+```
+
+vs the original §2.1, an `AreaSection` **dropped** `handleSystemId` (= `area.legacy_system_id`, derived
+from `areaId`), made `layout` an **optional override** (else `getLayout(area.vendorType)`), and dropped
+`title` (the header shows the Area name only when there are 2+ sections). So a section is just
+`{ areaId, cards }` in the common case.
+
+**Two renames (vocabulary):**
+
+- the household import/export TileId **`grid` → `house-to-grid`** (distinct from the point role `grid`,
+  the point key `bidi.grid/power`, and the `grid` subsystem — all unchanged).
+- the NEM grid tile-**view** **`grid-signals` → `oe-grid`** (OpenElectricity). The legacy **card type**
+  `"grid-signals"` is untouched — it's the retiring card, a different namespace, deleted at cutover.
+
+**Renderer.** `components/CompositionDashboard.tsx` was **rewritten in place** to consume `DashboardV3`
+(no separate `DashboardRenderer`/`AreaSection`/`TilesGrid` files). Single section ⇒ frameless stack
+(`/dashboard/8` look); the stacked-areas charts + sankey of a section **collapse into one `SiteChartsCard`**
+via `cardVisible` (shared period header — the simple resolution of §5.4, no `AreaSiteChartsProvider`); the
+`oe-grid` tile self-fetches its member device and reads the region label from that device's `vendorSiteId`.
+
+**Read-path wiring.** `app/dashboard/[...slug]/page.tsx` gates the composition branch on `isDashboardV3`
+and passes the descriptor straight through (the server-side `gridContextByArea` resolution is gone).
+`CompositionDashboardClient` retypes the descriptor to `DashboardV3` and **drops the v2 customize editor**
+(switcher/rename/new kept).
+
+**Data.** VIC1 (system 12) added to the Kinkora area's `area_devices` (dev); **parity held** —
+`getActivePointsForSystem(8)` byte-identical across all 15 handles (the §4.3 proof). The one Kinkora
+dashboard (id 38 on dev) re-seeded to v3 by `scripts/temp/seed-kinkora-v3-dashboard.ts` (hand-authored).
+
+**The dashboard definition (the lean Kinkora descriptor):**
+
+```jsonc
+{
+  "version": 3,
+  "sections": [
+    {
+      "areaId": "<kinkora-area-uuid>", // layout + header DERIVED from the Area
+      "cards": [
+        {
+          "type": "tiles",
+          "tiles": [
+            { "view": "solar" },
+            { "view": "load" },
+            { "view": "hotWater" },
+            { "view": "battery" },
+            { "view": "house-to-grid" },
+            { "view": "amber" },
+            { "view": "ev" },
+            { "view": "oe-grid", "deviceSystemId": 12 }, // the VIC grid: a tile bound to the OE region member
+          ],
+        },
+        {
+          "type": "chart",
+          "id": "chart:load",
+          "chart": { "variant": "stacked-areas", "split": "load" },
+        },
+        {
+          "type": "chart",
+          "id": "chart:generation",
+          "chart": { "variant": "stacked-areas", "split": "generation" },
+        },
+        { "type": "sankey" },
+      ],
+    },
+  ],
+}
+```
+
+**Deferred (follow-ups):** a **v3-native configurator** (the v2 one was removed); the **legacy
+`DashboardClient` cutover** (it still reads v2; `lib/grid/context.ts` + the `grid-signals` card type live
+on until then); a v3-aware path for **shared `?access=` composition views** and any server descriptor
+consumer that still assumes top-level `cards`.
 
 ---
 

@@ -119,7 +119,7 @@ export type TileId =
   | "load"
   | "hotWater"
   | "battery"
-  | "grid"
+  | "house-to-grid"
   | "amber"
   | "ev";
 
@@ -129,7 +129,7 @@ export const TILE_IDS: readonly TileId[] = [
   "load",
   "hotWater",
   "battery",
-  "grid",
+  "house-to-grid",
   "amber",
   "ev",
 ];
@@ -145,7 +145,11 @@ export const TILES: Record<TileId, TileDef> = {
   load: { id: "load", label: "Load", requiredRoles: ["load"] },
   hotWater: { id: "hotWater", label: "Hot Water", requiredRoles: ["load"] },
   battery: { id: "battery", label: "Battery", requiredRoles: ["battery"] },
-  grid: { id: "grid", label: "Grid", requiredRoles: ["grid"] },
+  "house-to-grid": {
+    id: "house-to-grid",
+    label: "Grid",
+    requiredRoles: ["grid"],
+  },
   amber: { id: "amber", label: "Amber Price" },
   ev: { id: "ev", label: "EV" },
 };
@@ -201,7 +205,7 @@ export function availableTiles(latest: LatestPointValues): TileId[] {
     // The modelled hot-water temperature is a first-class derived point in `latest`.
     hotWater: hasVal(latest, "load.hws/temperature"),
     battery: hasVal(latest, "bidi.battery/soc"),
-    grid: hasVal(latest, "bidi.grid/power"),
+    "house-to-grid": hasVal(latest, "bidi.grid/power"),
     amber: hasVal(latest, "bidi.grid.import/rate"),
     ev: hasVal(latest, "ev.battery/soc"),
   };

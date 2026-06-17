@@ -7,33 +7,32 @@
  * flat ordered list, not a vendor template).
  */
 import type { ReadableArea } from "@/lib/areas/list";
-import { buildDefaultDescriptor, type DashboardDescriptor } from "./descriptor";
+import type { DashboardDescriptor } from "./descriptor";
 import type { DashboardCardType } from "./cards";
-import type { LatestPointValues } from "@/lib/types/api";
+import {
+  buildDefaultDashboardV3,
+  emptyDashboardV3,
+  isDashboardV3,
+  type DashboardV3,
+} from "./v3";
 
-/** An empty composition dashboard — no cards yet (the user adds them from the picker). */
-export function emptyCompositionDescriptor(): DashboardDescriptor {
-  return { version: 2, layout: "site", cards: [] };
+/** An empty composition dashboard — no sections yet (the user adds them in the configurator). */
+export function emptyCompositionDescriptor(): DashboardV3 {
+  return emptyDashboardV3();
 }
 
 /**
- * Seed a composition dashboard from an Area's default card set: the cards `buildDefaultDescriptor`
- * picks for that Area's system, each stamped with the Area's id + a unique instance id. This is pure
- * STARTING CONTENT — the Area is not a "home"; the user freely adds/removes cards afterwards.
+ * Seed a composition dashboard from an Area's default card set (the v3 area strategy): one AreaSection
+ * bound to the Area, vendor-appropriate cards. Pure STARTING CONTENT — the user freely edits afterwards.
  */
 export function buildSeedDescriptor(
   area: Pick<ReadableArea, "id">,
   system: { vendorType: string },
-): DashboardDescriptor {
-  const base = buildDefaultDescriptor(system, {} as LatestPointValues);
-  const short = area.id.slice(0, 8);
-  const cards = base.cards.map((c, i) => ({
-    ...c,
-    // Unique per-instance id so two Areas' same-type cards never collide on identity.
-    id: `${c.id ?? c.type}@${short}-${i}`,
+): DashboardV3 {
+  return buildDefaultDashboardV3({
     areaId: area.id,
-  }));
-  return { version: 2, layout: base.layout, cards };
+    vendorType: system.vendorType,
+  });
 }
 
 /**
@@ -79,12 +78,22 @@ export function filterVendorIncompatibleCards(
     : { ...descriptor, cards };
 }
 
-/** The distinct Area ids a composition descriptor references (its scope set). */
-export function descriptorAreaIds(descriptor: DashboardDescriptor): string[] {
+/**
+ * The distinct Area ids a dashboard descriptor references (its scope set). Handles BOTH shapes: v3
+ * (each section's `areaId`) and the legacy per-system v2 (each card's `areaId`). Used by the read-access
+ * scope (access.ts) and the authoring no-escalation check, so it must never assume one shape.
+ */
+export function descriptorAreaIds(descriptor: unknown): string[] {
+  if (isDashboardV3(descriptor)) {
+    return [...new Set(descriptor.sections.map((s) => s.areaId))];
+  }
+  const cards = (descriptor as { cards?: { areaId?: unknown }[] } | null)
+    ?.cards;
+  if (!Array.isArray(cards)) return [];
   return [
     ...new Set(
-      descriptor.cards
-        .map((c) => c.areaId)
+      cards
+        .map((c) => c?.areaId)
         .filter((x): x is string => typeof x === "string"),
     ),
   ];
