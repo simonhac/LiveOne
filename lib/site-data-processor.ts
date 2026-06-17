@@ -5,6 +5,7 @@ import type { EnergyFlowMatrix } from "./energy-flow-matrix";
 import { SeriesPath } from "@/lib/identifiers";
 import { matchesLogicalPath, stemSplit } from "@/lib/identifiers/logical-path";
 import { encodeHistoryWindow } from "@/lib/charts/history-window";
+import { fetchJson } from "@/lib/queries/fetcher";
 
 export interface ProcessedSiteData {
   load: ChartData | null;
@@ -70,15 +71,9 @@ async function fetchHistoryData(
   // — when off it simply isn't returned and we fall back to the client-side calc.
   if (requestInterval !== "1d") apiUrl += "&include=sankey";
 
-  const response = await fetch(apiUrl, {
-    credentials: "same-origin",
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch data: ${response.status}`);
-  }
-
-  const data = await response.json();
+  // Use the shared fetcher so a dashboard share token (?access=) in the page URL is propagated
+  // to the same-origin /api request (bare fetch would drop it → 401 on shared views).
+  const data = await fetchJson<any>(apiUrl);
 
   // Check if we have data
   if (!data || !data.data || !Array.isArray(data.data)) {
