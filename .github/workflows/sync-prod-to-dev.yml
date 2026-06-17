@@ -48,6 +48,18 @@ jobs:
           PLANETSCALE_PROD_BRANCH_ID: ${{ secrets.PLANETSCALE_PROD_BRANCH_ID }}
         run: npm run db:sync-dev-db
 
+      # Dev/preview use a SEPARATE Clerk instance, so your dev login has a different clerk_user_id
+      # than prod. The sync copies prod-owned rows, so re-own them to your dev id — DEV_OWNER_REMAP
+      # secret = "prodId:devId" — so your dev login sees the same areas/dashboards as prod. No-op if
+      # the secret is unset; non-fatal (continue-on-error) so it never blocks the data sync.
+      - name: Re-own dev data to the dev login
+        continue-on-error: true
+        env:
+          LIVEONE_DEV_DATABASE_URL: ${{ secrets.LIVEONE_DEV_DATABASE_URL }}
+          DEV_OWNER_REMAP: ${{ secrets.DEV_OWNER_REMAP }}
+          PLANETSCALE_PROD_BRANCH_ID: ${{ secrets.PLANETSCALE_PROD_BRANCH_ID }}
+        run: npm run db:reown-dev
+
       # Crons are off in dev/preview, so nothing fills the dev: KV namespace organically.
       # Rebuild it from the DB we just topped up, so preview "live" cards stay consistent with
       # the synced data. No prod KV access needed — derived purely from liveone-dev.
