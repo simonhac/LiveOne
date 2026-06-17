@@ -5,7 +5,12 @@ import {
   labelForFlowPath,
   compareSourcePaths,
   compareLoadPaths,
+  toDailyFlowMatrices,
 } from "../flow-node-meta";
+import {
+  sumDailyFlowMatrices,
+  pickDailyFlowMatrix,
+} from "../../energy-flow-matrix";
 import { CHART_COLORS, getColorForPath } from "../../chart-colors";
 
 describe("flowPathToDeviceStem", () => {
@@ -110,5 +115,56 @@ describe("ordering", () => {
       "load.hws",
       "load.rest-of-house",
     ]);
+  });
+});
+
+describe("toDailyFlowMatrices + client reducers", () => {
+  const names = new Map<string, string>();
+  // Two days, same node sets; day 2 omits the grid row (sparse).
+  const rows = [
+    {
+      day: "2026-06-01",
+      sourcePath: "source.solar",
+      loadPath: "load",
+      energyKwh: 10,
+    },
+    {
+      day: "2026-06-01",
+      sourcePath: "source.grid",
+      loadPath: "load",
+      energyKwh: 4,
+    },
+    {
+      day: "2026-06-02",
+      sourcePath: "source.solar",
+      loadPath: "load",
+      energyKwh: 6,
+    },
+  ];
+
+  it("reshapes raw rows into per-day matrices over a shared, canonical node order (NOT summed)", () => {
+    const d = toDailyFlowMatrices(rows, names);
+    expect(d.sources.map((s) => s.id)).toEqual(["source.solar", "source.grid"]);
+    expect(d.loads.map((l) => l.id)).toEqual(["load"]);
+    expect(d.days.map((x) => x.day)).toEqual(["2026-06-01", "2026-06-02"]);
+    // [solar, grid] x [load]
+    expect(d.days[0].matrix).toEqual([[10], [4]]);
+    expect(d.days[1].matrix).toEqual([[6], [0]]); // grid absent on day 2 -> 0, same shape
+  });
+
+  it("sumDailyFlowMatrices adds the window and computes totals", () => {
+    const sum = sumDailyFlowMatrices(toDailyFlowMatrices(rows, names))!;
+    expect(sum.matrix).toEqual([[16], [4]]); // solar 10+6, grid 4+0
+    expect(sum.sourceTotals).toEqual([16, 4]);
+    expect(sum.loadTotals).toEqual([20]);
+    expect(sum.totalEnergy).toBe(20);
+  });
+
+  it("pickDailyFlowMatrix returns that one day's energy (the hovered Sankey)", () => {
+    const d = toDailyFlowMatrices(rows, names);
+    const day1 = pickDailyFlowMatrix(d, "2026-06-01")!;
+    expect(day1.matrix).toEqual([[10], [4]]);
+    expect(day1.totalEnergy).toBe(14);
+    expect(pickDailyFlowMatrix(d, "2026-06-09")).toBeNull(); // out of range
   });
 });
