@@ -1,9 +1,8 @@
 import { cache } from "react";
-import { eq, max, isNotNull } from "drizzle-orm";
+import { eq, max, isNotNull, isNull, and, or } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
-import { isUserAdmin } from "@/lib/auth-utils";
 import { isProduction } from "@/lib/env";
-import { clerkClient } from "@clerk/nextjs/server";
+import { getUserIdByUsername } from "@/lib/user-cache";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   systems as pgSystems,
@@ -27,8 +26,8 @@ export type SystemWithPolling = System & {
  * An "area view" — a SystemWithPolling shape synthesized from a multi-device Area whose integer
  * addressing handle (`legacy_system_id`) has NO real `systems` row. It is the SERVER-ONLY resolution
  * of that handle for the dashboard data path (points/flow/auth resolve via `area_bindings` + members);
- * it is deliberately kept OUT of `systemsMap`, so an area view never appears in the systems/devices/
- * admin lists or polling. Owns no points and never polls, so device/polling fields are null.
+ * it is deliberately kept OUT of the systems/devices/admin lists. Owns no points and never polls, so
+ * device/polling fields are null.
  */
 function synthesizeAreaView(area: Area): SystemWithPolling | null {
   if (area.legacySystemId == null) return null;
@@ -84,256 +83,217 @@ function isPgUniqueViolation(e: unknown): boolean {
   );
 }
 
-/**
- * The fully-resolved systems config: real `systems` rows (systemsMap) plus the area views — Area
- * handles with no real row, kept SEPARATE so they never leak into the systems/devices/admin lists.
- */
-type SystemsState = {
-  systemsMap: Map<number, SystemWithPolling>;
-  areaViewsMap: Map<number, SystemWithPolling>;
-};
+/** Flatten a systems⋈polling_status join row (any extra joined tables are ignored). */
+function toSystemWithPolling(row: {
+  systems: System;
+  polling_status: PollingStatus | null;
+}): SystemWithPolling {
+  return { ...row.systems, pollingStatus: row.polling_status };
+}
 
 /**
- * Load the full systems config once per request, memoized by React's `cache()`.
- *
- * `cache()` is scoped to a single server request (Server Components AND Route Handlers): every
- * accessor below shares one load within a request, and nothing is shared across requests — config
- * is therefore always fresh, with no TTL, no invalidation, and no stale-across-warm-lambdas problem.
- * Outside a request (Jest, scripts) `cache()` simply runs each call unmemoized — correct, just not
- * deduped; correctness never depends on the memoization.
- *
- * Reads the systems⋈polling_status join from Postgres (the only store), then synthesizes the area
- * views into a separate map.
- *
- * NOTE: fetches all systems at once for simplicity — fine for small-to-medium deployments
- * (< 1000 systems). For larger ones, switch to targeted per-id queries.
+ * Per-request memoized point lookup of a real system by id (with polling status). React's `cache()`
+ * dedupes repeated lookups of the same id within a single request; nothing is shared across requests,
+ * so config is always fresh. Outside a request (Jest/scripts) it just runs unmemoized.
  */
-const loadSystemsState = cache(async (): Promise<SystemsState> => {
-  const systemsMap = new Map<number, SystemWithPolling>();
-  const areaViewsMap = new Map<number, SystemWithPolling>();
+const fetchSystemById = cache(
+  async (id: number): Promise<SystemWithPolling | null> => {
+    const [row] = await requirePlanetscaleDb()
+      .select()
+      .from(pgSystems)
+      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId))
+      .where(eq(pgSystems.id, id))
+      .limit(1);
+    return row ? toSystemWithPolling(row) : null;
+  },
+);
 
-  // Join systems with polling_status to get everything in one query.
-  const allSystemsWithPolling = await requirePlanetscaleDb()
-    .select()
-    .from(pgSystems)
-    .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId));
-
-  for (const row of allSystemsWithPolling) {
-    systemsMap.set(row.systems.id, {
-      ...row.systems,
-      pollingStatus: row.polling_status,
-    });
-  }
-
-  // Area views: one per Area whose addressing handle (legacy_system_id) has NO real `systems` row
-  // (a multi-device Area). Loaded into a SEPARATE map — they resolve for the dashboard data path
-  // but never appear in the systems/devices/admin lists or polling.
-  const handleAreas = await requirePlanetscaleDb()
+/** Per-request memoized lookup of the Area whose addressing handle is `id` → synthesized area view. */
+const fetchAreaByHandle = cache(async (id: number): Promise<Area | null> => {
+  const [area] = await requirePlanetscaleDb()
     .select()
     .from(pgAreas)
-    .where(isNotNull(pgAreas.legacySystemId));
-  for (const area of handleAreas) {
-    if (area.legacySystemId == null) continue;
-    if (systemsMap.has(area.legacySystemId)) continue; // real row wins (identity Areas)
-    const view = synthesizeAreaView(area);
-    if (view) areaViewsMap.set(area.legacySystemId, view);
-  }
-
-  return { systemsMap, areaViewsMap };
+    .where(eq(pgAreas.legacySystemId, id))
+    .limit(1);
+  return area ?? null;
 });
 
+/** Per-request memoized lookup of a real system by vendor site id (OAuth/webhook dedup). */
+const fetchSystemByVendorSiteId = cache(
+  async (vendorSiteId: string): Promise<SystemWithPolling | null> => {
+    const [row] = await requirePlanetscaleDb()
+      .select()
+      .from(pgSystems)
+      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId))
+      .where(eq(pgSystems.vendorSiteId, vendorSiteId))
+      .limit(1);
+    return row ? toSystemWithPolling(row) : null;
+  },
+);
+
 /**
- * Reads system config. A stateless facade over the per-request `cache()`-memoized
- * `loadSystemsState()` — `getInstance()` does no DB work and holds no data, so the config is loaded
- * (at most) once per request and is always fresh. Mutations write straight through; the next request
- * loads the change automatically (no invalidation needed).
+ * Reads system config via targeted, indexed queries — no fleet-wide load. Each access is either an
+ * O(1) point lookup (by id / vendor site id) or a query bounded by what one user can see; all are
+ * memoized per-request by React's `cache()`. `getInstance()` is a stateless facade (no DB work, no
+ * cross-request cache); mutations write straight through and the next request reads them.
+ *
+ * Scales to large fleets because nothing materializes all systems. Two callers remain inherently
+ * "all" — `getAllSystems` (admin table; paginated in a later phase) and `getActiveSystems` (the
+ * poll-all cron; a collection-sharding concern, not a query-shape one).
  */
 export class SystemsManager {
   private static instance: SystemsManager | null = null;
 
   private constructor() {}
 
-  /**
-   * Get the (stateless) SystemsManager facade. Cheap: no DB work, no cross-request cache.
-   */
+  /** Get the (stateless) SystemsManager facade. Cheap: no DB work, no cross-request cache. */
   static getInstance(): SystemsManager {
     return (SystemsManager.instance ??= new SystemsManager());
   }
 
-  /**
-   * Get system details by ID (with polling status)
-   */
+  /** Get a real system by id (with polling status). */
   async getSystem(systemId: number): Promise<SystemWithPolling | null> {
-    const { systemsMap } = await loadSystemsState();
-    return systemsMap.get(systemId) || null;
+    return fetchSystemById(systemId);
   }
 
   /**
    * Resolve a handle for the DASHBOARD DATA PATH: a real system, OR an area view (a multi-device Area
    * with no `systems` row). Use this — not getSystem — wherever an Area's whole-area data/auth/flow is
-   * served, so the area handle resolves. getSystem stays real-only (devices/admin/polling).
+   * served. getSystem stays real-only (devices/admin/polling).
    */
   async getViewableSystem(systemId: number): Promise<SystemWithPolling | null> {
-    const { systemsMap, areaViewsMap } = await loadSystemsState();
-    return systemsMap.get(systemId) ?? areaViewsMap.get(systemId) ?? null;
+    const real = await fetchSystemById(systemId);
+    if (real) return real; // real row wins (identity Areas)
+    const area = await fetchAreaByHandle(systemId);
+    return area ? synthesizeAreaView(area) : null;
   }
 
   /** Whether `systemId` is an area view (a multi-device Area handle with no real `systems` row). */
   async isAreaHandle(systemId: number): Promise<boolean> {
-    const { areaViewsMap } = await loadSystemsState();
-    return areaViewsMap.has(systemId);
+    if (await fetchSystemById(systemId)) return false; // real row wins
+    return (await fetchAreaByHandle(systemId)) != null;
   }
 
-  /** Active area-view handles (multi-device Area handles) — included in the daily flow recompute. */
-  async getActiveAreaHandles(): Promise<number[]> {
-    const { areaViewsMap } = await loadSystemsState();
-    return Array.from(areaViewsMap.values())
-      .filter((v) => v.status === "active")
-      .map((v) => v.id);
-  }
-
-  /**
-   * Get system by vendor site ID
-   */
+  /** Get a real system by vendor site id (first match; vendor site ids are not unique). */
   async getSystemByVendorSiteId(
     vendorSiteId: string,
   ): Promise<SystemWithPolling | null> {
-    const { systemsMap } = await loadSystemsState();
-    for (const system of systemsMap.values()) {
-      if (system.vendorSiteId === vendorSiteId) {
-        return system;
-      }
-    }
-    return null;
+    return fetchSystemByVendorSiteId(vendorSiteId);
   }
 
   /**
-   * Get system by username and alias
+   * Resolve a system from a pretty `/device/{username}/{alias}` URL. Resolves the username to a Clerk
+   * id first (cached), then a single indexed lookup on the unique (owner, alias) pair.
    */
   async getSystemByUsernameAndAlias(
     username: string,
     alias: string,
   ): Promise<SystemWithPolling | null> {
-    const { systemsMap } = await loadSystemsState();
+    const ownerClerkUserId = await getUserIdByUsername(username);
+    if (!ownerClerkUserId) return null;
 
-    // Find all systems with matching alias
-    const matchingSystems = Array.from(systemsMap.values()).filter(
-      (system) => system.alias === alias,
-    );
-
-    if (matchingSystems.length === 0) {
-      return null;
-    }
-
-    // Query Clerk to find which system owner has this username
-    const client = await clerkClient();
-
-    for (const system of matchingSystems) {
-      if (!system.ownerClerkUserId) continue;
-
-      try {
-        const user = await client.users.getUser(system.ownerClerkUserId);
-        if (user.username === username) {
-          return system;
-        }
-      } catch (error) {
-        // User not found or error - skip this system
-        console.error(`Error fetching user ${system.ownerClerkUserId}:`, error);
-        continue;
-      }
-    }
-
-    return null;
+    const [row] = await requirePlanetscaleDb()
+      .select()
+      .from(pgSystems)
+      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId))
+      .where(
+        and(
+          eq(pgSystems.ownerClerkUserId, ownerClerkUserId),
+          eq(pgSystems.alias, alias),
+        ),
+      )
+      .limit(1);
+    return row ? toSystemWithPolling(row) : null;
   }
 
-  /**
-   * Get all active systems only
-   */
+  /** All active real systems. Inherently fleet-wide (poll-all cron / flow recompute). */
   async getActiveSystems(): Promise<SystemWithPolling[]> {
-    const { systemsMap } = await loadSystemsState();
-    return Array.from(systemsMap.values()).filter((s) => s.status === "active");
+    const rows = await requirePlanetscaleDb()
+      .select()
+      .from(pgSystems)
+      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId))
+      .where(eq(pgSystems.status, "active"));
+    return rows.map(toSystemWithPolling);
   }
 
   /**
-   * Get all systems (including inactive)
+   * All real systems (any status). Inherently fleet-wide — used by the admin systems table, which a
+   * later phase will paginate/search. Avoid in request-hot paths.
    */
   async getAllSystems(): Promise<SystemWithPolling[]> {
-    const { systemsMap } = await loadSystemsState();
-    return Array.from(systemsMap.values());
+    const rows = await requirePlanetscaleDb()
+      .select()
+      .from(pgSystems)
+      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId));
+    return rows.map(toSystemWithPolling);
+  }
+
+  /** Real systems owned by a user (any status). Indexed on owner_clerk_user_id. */
+  async getSystemsByOwner(userId: string): Promise<SystemWithPolling[]> {
+    const rows = await requirePlanetscaleDb()
+      .select()
+      .from(pgSystems)
+      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId))
+      .where(eq(pgSystems.ownerClerkUserId, userId));
+    return rows.map(toSystemWithPolling);
+  }
+
+  /** Active area-view handles (multi-device Area handles, no real row) — for the daily flow recompute. */
+  async getActiveAreaHandles(): Promise<number[]> {
+    const rows = await requirePlanetscaleDb()
+      .select({ id: pgAreas.legacySystemId })
+      .from(pgAreas)
+      .leftJoin(pgSystems, eq(pgSystems.id, pgAreas.legacySystemId))
+      .where(
+        and(
+          isNotNull(pgAreas.legacySystemId),
+          isNull(pgSystems.id), // no real row ⇒ it's an area view
+          eq(pgAreas.status, "active"),
+        ),
+      );
+    return rows.map((r) => r.id).filter((id): id is number => id != null);
   }
 
   /**
-   * Get multiple systems by IDs
-   */
-  async getSystems(systemIds: number[]): Promise<SystemWithPolling[]> {
-    const { systemsMap } = await loadSystemsState();
-    return systemIds
-      .map((id) => systemsMap.get(id))
-      .filter((system) => system !== undefined);
-  }
-
-  /**
-   * Check if a system exists and is active
-   */
-  async systemIsActive(systemId: number): Promise<boolean> {
-    const { systemsMap } = await loadSystemsState();
-    const system = systemsMap.get(systemId);
-    return system ? system.status === "active" : false;
-  }
-
-  /**
-   * Check if a system exists (any status)
-   */
-  async systemExists(systemId: number): Promise<boolean> {
-    const { systemsMap } = await loadSystemsState();
-    return systemsMap.has(systemId);
-  }
-
-  /**
-   * Get all systems visible to a user (for dropdown menus, etc.)
-   * - Admins see all active systems
-   * - Regular users see their own active systems and systems they have access to
-   * @param userId - The clerk user ID
-   * @param activeOnly - Whether to filter to only active systems (default: true)
+   * Systems visible to a user for the switcher: the ones they OWN, are GRANTED (via user_systems), or
+   * that are PUBLIC (ownerless, readable by everyone). Bounded indexed queries — no fleet load and no
+   * admin-sees-all branch: an admin's cross-system reach is the admin systems table, not this list.
+   * Area views are intentionally excluded (the switcher lists real devices only).
    */
   async getSystemsVisibleByUser(userId: string, activeOnly: boolean = true) {
-    const { systemsMap } = await loadSystemsState();
-    const isAdmin = await isUserAdmin();
+    const db = requirePlanetscaleDb();
 
-    let visibleSystems: SystemWithPolling[] = [];
-    const allSystemsArray = Array.from(systemsMap.values());
+    // Owned + public in one indexed pass; granted via the user_systems join.
+    const ownedOrPublic = await db
+      .select()
+      .from(pgSystems)
+      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId))
+      .where(
+        or(
+          eq(pgSystems.ownerClerkUserId, userId),
+          isNull(pgSystems.ownerClerkUserId),
+        ),
+      );
+    const granted = await db
+      .select()
+      .from(pgSystems)
+      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId))
+      .innerJoin(
+        pgUserSystems,
+        and(
+          eq(pgUserSystems.systemId, pgSystems.id),
+          eq(pgUserSystems.clerkUserId, userId),
+        ),
+      );
 
-    if (isAdmin) {
-      // Admins see all systems (optionally filtered by status)
-      visibleSystems = allSystemsArray
-        .filter((s) => !activeOnly || s.status === "active")
-        .filter((s) => s.displayName && s.vendorSiteId); // Must have display name and vendor site ID
-    } else {
-      // Systems the user has been granted access to
-      const grantedAccess = await requirePlanetscaleDb()
-        .select()
-        .from(pgUserSystems)
-        .where(eq(pgUserSystems.clerkUserId, userId));
-      const grantedSystemIds = new Set(grantedAccess.map((ua) => ua.systemId));
+    const byId = new Map<number, SystemWithPolling>();
+    for (const r of ownedOrPublic)
+      byId.set(r.systems.id, toSystemWithPolling(r));
+    for (const r of granted) byId.set(r.systems.id, toSystemWithPolling(r));
 
-      // A user sees: systems they own + systems shared with them + PUBLIC (ownerless)
-      // systems, which are readable by everyone. Dedupe by id.
-      const visibleById = new Map<number, SystemWithPolling>();
-      for (const s of allSystemsArray) {
-        const isOwner = s.ownerClerkUserId === userId;
-        const isGranted = grantedSystemIds.has(s.id);
-        const isPublic = s.ownerClerkUserId == null;
-        if (isOwner || isGranted || isPublic) visibleById.set(s.id, s);
-      }
-
-      // Filter by status and required fields
-      visibleSystems = Array.from(visibleById.values())
-        .filter((s) => !activeOnly || s.status === "active")
-        .filter((s) => s.displayName && s.vendorSiteId);
-    }
-
-    // Sort by display name and return simplified objects
-    return visibleSystems
+    return Array.from(byId.values())
+      .filter((s) => !activeOnly || s.status === "active")
+      .filter((s) => s.displayName && s.vendorSiteId) // must have display name + vendor site id
       .sort((a, b) => a.displayName.localeCompare(b.displayName))
       .map((s) => ({
         id: s.id,
@@ -376,7 +336,7 @@ export class SystemsManager {
     // stops bare monitoring-only systems (e.g. public grid-region feeds) accruing pointless Area rows.
     // Serving works without an Area: a real device resolves its OWN point_info, not via an Area.
 
-    // No cache to invalidate: config is loaded per-request, so the next request sees the new system.
+    // No cache to invalidate: config is read per-request, so the next request sees the new system.
     return newSystem;
   }
 

@@ -33,10 +33,8 @@ export async function POST(request: NextRequest) {
     // updateSystem writes), then mark each Tesla system removed via updateSystem (keyed
     // by id).
     const systemsManager = SystemsManager.getInstance();
-    const allSystems = await systemsManager.getAllSystems();
-    const teslaSystems = allSystems.filter(
-      (s) => s.ownerClerkUserId === userId && s.vendorType === "tesla",
-    );
+    const ownedSystems = await systemsManager.getSystemsByOwner(userId);
+    const teslaSystems = ownedSystems.filter((s) => s.vendorType === "tesla");
 
     for (const s of teslaSystems) {
       await systemsManager.updateSystem(s.id, {
