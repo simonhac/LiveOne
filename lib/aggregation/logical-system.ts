@@ -94,7 +94,7 @@ export async function resolveLogicalSystem(
     if (!isComplete) return null;
     try {
       const areaId = await ensureIdentityArea(system);
-      area = { id: areaId, kind: "identity" };
+      area = { id: areaId };
       console.warn(
         `[LogicalSystem] Healed missing identity Area for complete system ${systemId} → ${areaId}`,
       );

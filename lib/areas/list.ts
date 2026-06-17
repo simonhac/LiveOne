@@ -16,7 +16,6 @@ export interface ReadableArea {
   /** Area uuid (what a card's `areaId` holds). */
   id: string;
   displayName: string;
-  kind: "identity" | "composite";
   /** The integer addressing handle — the systemId a card binds its data queries to. */
   legacySystemId: number;
   /** The bound system's vendor type — lets the card picker grey out vendor-incompatible card types. */
@@ -52,7 +51,6 @@ export async function listReadableAreas(
     .select({
       id: areas.id,
       displayName: areas.displayName,
-      kind: areas.kind,
       legacySystemId: areas.legacySystemId,
     })
     .from(areas)
@@ -66,7 +64,6 @@ export async function listReadableAreas(
     .map((r) => ({
       id: r.id,
       displayName: r.displayName,
-      kind: r.kind as "identity" | "composite",
       legacySystemId: r.legacySystemId,
       // Real handle → its vendor type; a multi-device Area handle (no real system) → "area"
       // (drives the "site"/unified layout via getLayout).
@@ -89,7 +86,6 @@ export async function resolveAreasByIds(
     .select({
       id: areas.id,
       displayName: areas.displayName,
-      kind: areas.kind,
       legacySystemId: areas.legacySystemId,
     })
     .from(areas)
@@ -101,7 +97,6 @@ export async function resolveAreasByIds(
     present.map(async (r) => ({
       id: r.id,
       displayName: r.displayName,
-      kind: r.kind as "identity" | "composite",
       legacySystemId: r.legacySystemId,
       vendorType:
         (await SystemsManager.getInstance().getViewableSystem(r.legacySystemId))

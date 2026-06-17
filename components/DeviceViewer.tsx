@@ -87,7 +87,6 @@ export default function DeviceViewer({
     const area: ReadableArea = {
       id: `device-${handle}`,
       displayName: data.system.displayName,
-      kind: "identity",
       legacySystemId: handle,
       vendorType: data.system.vendorType,
     };
