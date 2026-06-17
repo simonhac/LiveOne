@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
-import { Trash2, X, Star } from "lucide-react";
+import { Trash2, X, Star, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import {
   userPreferencesQuery,
@@ -11,6 +11,7 @@ import {
   MY_DASHBOARDS_KEY,
 } from "@/lib/queries";
 import { normalizeAlias, isValidAlias } from "@/lib/dashboard/alias";
+import { recomputeAreaFlow } from "@/lib/areas/recompute-flow";
 
 /**
  * Rename / set shortname / set-or-unset default / delete a composition dashboard. Extracted from
@@ -24,6 +25,7 @@ export default function DashboardSettingsDialog({
   id,
   initialName,
   initialAlias,
+  areaIds,
   onDeleted,
   onSaved,
 }: {
@@ -32,6 +34,8 @@ export default function DashboardSettingsDialog({
   id: number;
   initialName: string;
   initialAlias: string;
+  /** The dashboard's area ids — enables "Recompute sankeys" (owner/admin only, per the API). */
+  areaIds?: string[];
   onDeleted: () => void;
   onSaved: () => void;
 }) {
@@ -40,6 +44,7 @@ export default function DashboardSettingsDialog({
   const [name, setName] = useState(initialName);
   const [alias, setAlias] = useState(initialAlias);
   const [busy, setBusy] = useState(false);
+  const [recomputing, setRecomputing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -124,6 +129,40 @@ export default function DashboardSettingsDialog({
     }
   };
 
+  const recompute = async () => {
+    if (!areaIds || areaIds.length === 0 || recomputing) return;
+    setRecomputing(true);
+    setError(null);
+    try {
+      let total = 0;
+      let failed = 0;
+      // Continue on a per-area error so one bad area doesn't abort the rest; report the aggregate.
+      for (const areaId of areaIds) {
+        try {
+          const { recomputed } = await recomputeAreaFlow(areaId, (days) =>
+            toast.loading(`Recomputing sankeys… ${total + days} days`, {
+              id: "recompute-flow",
+            }),
+          );
+          total += recomputed;
+        } catch {
+          failed += 1;
+        }
+      }
+      const days = `${total} day${total === 1 ? "" : "s"}`;
+      if (failed > 0) {
+        toast.error(
+          `Recomputed ${days}; ${failed} area${failed === 1 ? "" : "s"} failed`,
+          { id: "recompute-flow" },
+        );
+      } else {
+        toast.success(`Recomputed ${days}`, { id: "recompute-flow" });
+      }
+    } finally {
+      setRecomputing(false);
+    }
+  };
+
   return createPortal(
     <>
       <div
@@ -183,6 +222,24 @@ export default function DashboardSettingsDialog({
                 ? "Remove as default dashboard"
                 : "Set as my default dashboard"}
             </button>
+            {areaIds && areaIds.length > 0 && (
+              <div className="border-t border-gray-700/60 pt-4">
+                <button
+                  onClick={recompute}
+                  disabled={recomputing || busy}
+                  className="inline-flex items-center gap-1.5 text-sm text-gray-300 transition-colors hover:text-white disabled:opacity-60"
+                >
+                  <RefreshCw
+                    className={`h-4 w-4 ${recomputing ? "animate-spin" : ""}`}
+                  />
+                  {recomputing ? "Recomputing sankeys…" : "Recompute sankeys"}
+                </button>
+                <p className="mt-1 text-xs text-gray-500">
+                  Rebuilds the energy-flow (Sankey) history for this dashboard —
+                  e.g. after a point sign or role change.
+                </p>
+              </div>
+            )}
             {error && <p className="text-sm text-red-400">{error}</p>}
           </div>
           <div className="flex items-center justify-between gap-3 border-t border-gray-700 px-6 py-4">
