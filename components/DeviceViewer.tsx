@@ -17,6 +17,7 @@ import AmberNow from "@/components/AmberNow";
 import AmberSmallCard from "@/components/AmberSmallCard";
 import SiteChartsCard from "@/components/SiteChartsCard";
 import GeneratorRunsCard from "@/components/GeneratorRunsCard";
+import { ChartFocusProvider } from "@/lib/charts/ChartFocusContext";
 import { useTileNodes } from "@/app/components/cards/useTileNodes";
 import {
   buildDefaultDescriptor,
@@ -314,53 +315,56 @@ export default function DeviceViewer({
             />
           )}
 
-          {/* Full-width charts (descriptor-gated, no layout fork). */}
+          {/* Full-width charts (descriptor-gated, no layout fork). One shared chart-focus so the
+              line chart + stacked charts + Sankey sync their hover/highlight. */}
           {(isAdmin || system?.status !== "removed") && (
-            <div className="space-y-4 px-1">
-              {/* Site-charts cluster (load + generation charts, tables, Sankey). The inner
+            <ChartFocusProvider>
+              <div className="space-y-4 px-1">
+                {/* Site-charts cluster (load + generation charts, tables, Sankey). The inner
                   cardVisible gates no-op for non-site systems. */}
-              <SiteChartsCard
-                systemId={systemId}
-                system={system}
-                serveFlowFromPg={serveFlowFromPg}
-                cardVisible={cardVisible}
-                onHistoryEmptyChange={setSiteHistoryEmpty}
-              />
-              {cardVisible("chart:lines") && (
-                <LinesChartCard
-                  systemId={parseInt(systemId)}
-                  className="h-full min-h-[400px]"
-                  timezoneOffsetMin={data?.system.timezoneOffsetMin ?? 600}
-                  maxPowerHint={(() => {
-                    // Parse solar size (format: "9 kW")
-                    let solarKW: number | undefined;
-                    if (systemInfo?.solarSize) {
-                      const solarMatch = systemInfo.solarSize.match(
-                        /^(\d+(?:\.\d+)?)\s+kW$/i,
-                      );
-                      if (solarMatch) {
-                        solarKW = parseFloat(solarMatch[1]);
-                      }
-                    }
-
-                    // Parse inverter rating (format: "7.5kW, 48V")
-                    let inverterKW: number | undefined;
-                    if (systemInfo?.ratings) {
-                      const ratingMatch =
-                        systemInfo.ratings.match(/(\d+(?:\.\d+)?)kW/i);
-                      if (ratingMatch) {
-                        inverterKW = parseFloat(ratingMatch[1]);
-                      }
-                    }
-
-                    if (solarKW !== undefined && inverterKW !== undefined) {
-                      return Math.max(solarKW, inverterKW);
-                    }
-                    return solarKW ?? inverterKW;
-                  })()}
+                <SiteChartsCard
+                  systemId={systemId}
+                  system={system}
+                  serveFlowFromPg={serveFlowFromPg}
+                  cardVisible={cardVisible}
+                  onHistoryEmptyChange={setSiteHistoryEmpty}
                 />
-              )}
-            </div>
+                {cardVisible("chart:lines") && (
+                  <LinesChartCard
+                    systemId={parseInt(systemId)}
+                    className="h-full min-h-[400px]"
+                    timezoneOffsetMin={data?.system.timezoneOffsetMin ?? 600}
+                    maxPowerHint={(() => {
+                      // Parse solar size (format: "9 kW")
+                      let solarKW: number | undefined;
+                      if (systemInfo?.solarSize) {
+                        const solarMatch = systemInfo.solarSize.match(
+                          /^(\d+(?:\.\d+)?)\s+kW$/i,
+                        );
+                        if (solarMatch) {
+                          solarKW = parseFloat(solarMatch[1]);
+                        }
+                      }
+
+                      // Parse inverter rating (format: "7.5kW, 48V")
+                      let inverterKW: number | undefined;
+                      if (systemInfo?.ratings) {
+                        const ratingMatch =
+                          systemInfo.ratings.match(/(\d+(?:\.\d+)?)kW/i);
+                        if (ratingMatch) {
+                          inverterKW = parseFloat(ratingMatch[1]);
+                        }
+                      }
+
+                      if (solarKW !== undefined && inverterKW !== undefined) {
+                        return Math.max(solarKW, inverterKW);
+                      }
+                      return solarKW ?? inverterKW;
+                    })()}
+                  />
+                )}
+              </div>
+            </ChartFocusProvider>
           )}
 
           {/* Generator runs — only when this system has an enabled generator tracker */}

@@ -1,5 +1,9 @@
 import { ProcessedSiteData } from "./site-data-processor";
-import { computeFlowMatrix, FlowSeries } from "./aggregation/flow-matrix-core";
+import {
+  computeFlowMatrix,
+  computeInstantFlowMatrix,
+  FlowSeries,
+} from "./aggregation/flow-matrix-core";
 import { resolveSolarSources } from "./aggregation/flow-series";
 import { getColorForPath } from "./chart-colors";
 
@@ -36,20 +40,22 @@ export interface EnergyFlowMatrix {
   totalEnergy: number; // Grand total
 }
 
+/** Node metadata + pure power/energy series ready for the flow-matrix core, plus the shared timestamps. */
+interface PreparedFlowInputs {
+  sources: EnergyFlowNode[];
+  loads: EnergyFlowNode[];
+  sourceSeries: FlowSeries[];
+  loadSeries: FlowSeries[];
+  timestamps: number[];
+}
+
 /**
- * Calculate energy flow matrix from processed Mondo data
- *
- * For each time interval:
- * 1. Calculate the energy consumed by each load (trapezoidal integration)
- * 2. Distribute that energy proportionally across sources based on their
- *    instantaneous power contribution at that moment
- *
- * @param data Processed Mondo data containing both generation and load series
- * @returns Energy flow matrix with cumulative energy from each source to each load
+ * Shared preparation for both the cumulative {@link calculateEnergyFlowMatrix} and the focused-point
+ * {@link calculateInstantFlowMatrix}: validate, drop SoC series, resolve solar sources (per-array
+ * leaves + synthetic residual, no double counting), and build node metadata + the pure `FlowSeries`
+ * the core consumes. Returns null when there's nothing to diagram (missing generation OR load).
  */
-export function calculateEnergyFlowMatrix(
-  data: ProcessedSiteData,
-): EnergyFlowMatrix | null {
+function prepareFlowInputs(data: ProcessedSiteData): PreparedFlowInputs | null {
   // Validate input
   if (!data.generation || !data.load) {
     console.warn("Missing generation or load data");
@@ -140,9 +146,7 @@ export function calculateEnergyFlowMatrix(
     color: s.color,
   }));
 
-  // Delegate the integration to the shared, pure core so this live path and the engine's
-  // daily recompute (lib/db/planetscale/flow-matrix-pg.ts) compute identical values by
-  // construction. Identity is carried as `path`; results map back by index.
+  // Identity is carried as `path`; results map back by index.
   const sourceSeries: FlowSeries[] = aggregatedGeneration.map((s) => ({
     path: s.id,
     power: s.data,
@@ -152,15 +156,75 @@ export function calculateEnergyFlowMatrix(
     power: s.data,
   }));
 
-  const result = computeFlowMatrix({
-    timestamps: generation.timestamps.map((t) => t.getTime()),
-    sources: sourceSeries,
-    loads: loadSeries,
-  });
-
   return {
     sources,
     loads,
+    sourceSeries,
+    loadSeries,
+    timestamps: generation.timestamps.map((t) => t.getTime()),
+  };
+}
+
+/**
+ * Calculate energy flow matrix from processed Mondo data
+ *
+ * For each time interval:
+ * 1. Calculate the energy consumed by each load (trapezoidal integration)
+ * 2. Distribute that energy proportionally across sources based on their
+ *    instantaneous power contribution at that moment
+ *
+ * @param data Processed Mondo data containing both generation and load series
+ * @returns Energy flow matrix with cumulative energy from each source to each load
+ */
+export function calculateEnergyFlowMatrix(
+  data: ProcessedSiteData,
+): EnergyFlowMatrix | null {
+  const prepared = prepareFlowInputs(data);
+  if (!prepared) return null;
+
+  // Delegate the integration to the shared, pure core so this live path and the engine's
+  // daily recompute (lib/db/planetscale/flow-matrix-pg.ts) compute identical values by
+  // construction.
+  const result = computeFlowMatrix({
+    timestamps: prepared.timestamps,
+    sources: prepared.sourceSeries,
+    loads: prepared.loadSeries,
+  });
+
+  return {
+    sources: prepared.sources,
+    loads: prepared.loads,
+    matrix: result.matrix,
+    sourceTotals: result.sourceTotals,
+    loadTotals: result.loadTotals,
+    totalEnergy: result.totalEnergy,
+  };
+}
+
+/**
+ * Flow matrix for a SINGLE focused sample (the hovered point), instead of the whole-window total.
+ * Reuses the same node preparation as {@link calculateEnergyFlowMatrix}, then snapshots the flow at
+ * `index` via {@link computeInstantFlowMatrix}. Values carry the series' own unit at that sample —
+ * POWER (kW) for the 5m/30m charts, that day's ENERGY (kWh) for the 1d (30D) chart. Returns null
+ * when there's no complete flow or the index is out of range.
+ */
+export function calculateInstantFlowMatrix(
+  data: ProcessedSiteData,
+  index: number,
+): EnergyFlowMatrix | null {
+  const prepared = prepareFlowInputs(data);
+  if (!prepared) return null;
+  if (index < 0 || index >= prepared.timestamps.length) return null;
+
+  const result = computeInstantFlowMatrix({
+    sources: prepared.sourceSeries,
+    loads: prepared.loadSeries,
+    index,
+  });
+
+  return {
+    sources: prepared.sources,
+    loads: prepared.loads,
     matrix: result.matrix,
     sourceTotals: result.sourceTotals,
     loadTotals: result.loadTotals,

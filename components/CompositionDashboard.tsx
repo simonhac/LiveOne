@@ -8,6 +8,7 @@ import { useModalContext } from "@/contexts/ModalContext";
 import { useTileNodes } from "@/app/components/cards/useTileNodes";
 import LinesChartCard from "@/components/LinesChartCard";
 import SiteChartsCard from "@/components/SiteChartsCard";
+import { ChartFocusProvider } from "@/lib/charts/ChartFocusContext";
 import AmberCard from "@/components/AmberCard";
 import AmberSmallCard from "@/components/AmberSmallCard";
 import AmberNow from "@/components/AmberNow";
@@ -211,7 +212,11 @@ function AreaSectionView({
           <span>{area.displayName}</span>
         </div>
       )}
-      <div className="space-y-4">{body}</div>
+      {/* One shared chart-focus per section: the line chart + stacked charts + Sankey of this Area
+          sync their hover/highlight; areas don't cross-sync. */}
+      <ChartFocusProvider>
+        <div className="space-y-4">{body}</div>
+      </ChartFocusProvider>
     </section>
   );
 }

@@ -46,6 +46,8 @@ type LinesProps = CommonProps & {
   chartData: LineChartData;
   paddedSOCData: PaddedSOCData | null;
   maxPowerHint?: number;
+  /** Shared focus instant → red vertical line (synced with the stacked charts). */
+  hoveredTimestamp?: Date | null;
 };
 
 type StackedProps = CommonProps & {
@@ -62,7 +64,15 @@ const FONT = { size: 10, family: "DM Sans, system-ui, sans-serif" };
 
 /** Overlaid-line / energy-bar options (the lines chart). */
 function buildLineChartOptions(p: LinesProps): ChartOptions<any> {
-  const { timeRange, now, windowStart, onHover, chartData, maxPowerHint } = p;
+  const {
+    timeRange,
+    now,
+    windowStart,
+    onHover,
+    chartData,
+    maxPowerHint,
+    hoveredTimestamp,
+  } = p;
   return {
     responsive: true,
     maintainAspectRatio: false,
@@ -75,7 +85,23 @@ function buildLineChartOptions(p: LinesProps): ChartOptions<any> {
       legend: { display: false },
       tooltip: { enabled: false },
       annotation: {
-        annotations: buildShadingAnnotations(timeRange, now, windowStart),
+        animation: false, // Immediate updates so the focus line tracks the pointer crisply
+        annotations: [
+          ...buildShadingAnnotations(timeRange, now, windowStart),
+          // Red vertical line at the shared focus instant (synced with the stacked charts).
+          ...(hoveredTimestamp
+            ? [
+                {
+                  type: "line",
+                  scaleID: "x",
+                  value: hoveredTimestamp.getTime(),
+                  borderColor: "rgb(239, 68, 68)", // Red color
+                  borderWidth: 1,
+                  borderDash: [],
+                },
+              ]
+            : []),
+        ],
       },
     },
     scales: {

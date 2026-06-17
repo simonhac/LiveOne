@@ -9,12 +9,16 @@ import DashboardChart from "@/components/DashboardChart";
 import EnergyTable from "@/components/EnergyTable";
 import type { ProcessedSiteData } from "@/lib/site-data-processor";
 import EnergyFlowSankey from "@/components/EnergyFlowSankey";
-import { selectFlowMatrix } from "@/lib/energy-flow-matrix";
+import {
+  selectFlowMatrix,
+  calculateInstantFlowMatrix,
+} from "@/lib/energy-flow-matrix";
 import TemporalNavigator from "@/components/TemporalNavigator";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
+import { useChartFocus, nearestIndex } from "@/lib/charts/ChartFocusContext";
 import { formatDateTimeRange } from "@/lib/fe-date-format";
+import { formatHoverTimestamp } from "@/lib/charts/scaffold";
 import { fromUnixTimestamp } from "@/lib/date-utils";
-import { format } from "date-fns";
 import { CalendarX2 } from "lucide-react";
 
 interface SiteChartsCardProps {
@@ -271,11 +275,14 @@ export default function SiteChartsCard({
   const { period, start, end } = useTemporalRange({
     timezoneOffsetMin: system?.timezoneOffsetMin ?? 600,
   });
+  // Shared focus instant for this chart cluster — the load + generation charts publish their hover
+  // here, and the red focus line / EnergyTable highlight / Sankey all read it back, so they also
+  // follow focus set by the sibling line chart.
+  const { focusedTime, setFocusedTime } = useChartFocus();
 
   const [loadChartData, setLoadChartData] = useState<ChartData | null>(null);
   const [generationChartData, setGenerationChartData] =
     useState<ChartData | null>(null);
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null); // Single hover index for both charts
   const [activeChart, setActiveChart] = useState<"load" | "generation" | null>(
     null,
   ); // Track which chart was last touched
@@ -371,47 +378,66 @@ export default function SiteChartsCard({
   // Prev/next navigation + keyboard handling now live in the shared TemporalNavigator (driven by the
   // URL via useTemporalRange) — rendered in this card's header below.
 
-  // Hover handlers that track which chart is active on touch devices
+  // Hover handlers that track which chart is active on touch devices. Each reports a row index into
+  // its own chart's data; we resolve it to a TIMESTAMP and publish that to the shared focus (so the
+  // line chart, which has a different grid, can map it back to its own nearest index).
   const handleLoadHoverIndexChange = useCallback(
     (index: number | null) => {
+      const ts =
+        index !== null
+          ? (processedHistoryData.load?.timestamps[index] ?? null)
+          : null;
       // On touch devices, only accept updates from the active chart
       if ("ontouchstart" in window) {
         if (index !== null) {
           // New touch - this chart becomes active
           setActiveChart("load");
-          setHoveredIndex(index);
+          setFocusedTime(ts);
         } else if (activeChart === "load") {
           // Only clear if this was the active chart
-          setHoveredIndex(null);
+          setFocusedTime(null);
         }
         // Ignore clear events from non-active charts
       } else {
         // On desktop, accept all updates (normal mouse behavior)
-        setHoveredIndex(index);
+        setFocusedTime(ts);
       }
     },
-    [activeChart],
+    [activeChart, processedHistoryData.load, setFocusedTime],
   );
 
   const handleGenerationHoverIndexChange = useCallback(
     (index: number | null) => {
+      const ts =
+        index !== null
+          ? (processedHistoryData.generation?.timestamps[index] ?? null)
+          : null;
       // On touch devices, only accept updates from the active chart
       if ("ontouchstart" in window) {
         if (index !== null) {
           // New touch - this chart becomes active
           setActiveChart("generation");
-          setHoveredIndex(index);
+          setFocusedTime(ts);
         } else if (activeChart === "generation") {
           // Only clear if this was the active chart
-          setHoveredIndex(null);
+          setFocusedTime(null);
         }
         // Ignore clear events from non-active charts
       } else {
         // On desktop, accept all updates (normal mouse behavior)
-        setHoveredIndex(index);
+        setFocusedTime(ts);
       }
     },
-    [activeChart],
+    [activeChart, processedHistoryData.generation, setFocusedTime],
+  );
+
+  // The shared focus instant resolved to a row index on the site charts' grid (load + generation
+  // share one timestamp axis). Drives the red hover line, the EnergyTable highlight, and the
+  // focused-point Sankey below.
+  const hoveredIndex = nearestIndex(
+    processedHistoryData.load?.timestamps ??
+      processedHistoryData.generation?.timestamps,
+    focusedTime,
   );
 
   // Global touch handler to clear hover when touching outside charts
@@ -423,7 +449,7 @@ export default function SiteChartsCard({
 
       if (!isInChart) {
         setActiveChart(null);
-        setHoveredIndex(null);
+        setFocusedTime(null);
       }
     };
 
@@ -501,22 +527,6 @@ export default function SiteChartsCard({
     }
   };
 
-  // Hovered timestamp shown in this card's navigator label (kept local to this card's shared hover
-  // index across the load + generation charts; null ⇒ the navigator shows the window range).
-  const navHoverLabel =
-    hoveredIndex !== null && (loadChartData || generationChartData)
-      ? format(
-          loadChartData?.timestamps[hoveredIndex] ||
-            generationChartData?.timestamps[hoveredIndex] ||
-            new Date(),
-          period === "1D"
-            ? "h:mma"
-            : period === "7D"
-              ? "EEE, d MMM h:mma"
-              : "EEE, d MMM",
-        )
-      : null;
-
   return (
     <>
       {/* Charts - For mondo/composite systems, show charts with tables in single container */}
@@ -537,7 +547,6 @@ export default function SiteChartsCard({
             <div className="px-2 sm:px-4 pt-2 sm:pt-4 pb-1 sm:pb-2">
               <TemporalNavigator
                 timezoneOffsetMin={system?.timezoneOffsetMin ?? 600}
-                hoverLabel={navHoverLabel}
                 loading={historyLoading}
               />
             </div>
@@ -623,21 +632,35 @@ export default function SiteChartsCard({
               processedHistoryData.generation &&
               processedHistoryData.load &&
               (() => {
-                // Sankey source precedence (PG flow_1d 30D → history-bundled 1D/7D → client calc) lives
-                // in selectFlowMatrix, shared so this and any other sankey site can't diverge.
-                const matrix = selectFlowMatrix({
-                  processed: processedHistoryData,
-                  pgFlowMatrix,
-                  serveFlowFromPg,
-                  period,
-                });
+                // When a point is focused, show that instant instead of the whole-window total:
+                // an instantaneous flow at the hovered index — POWER (kW) for 1D/7D, or that single
+                // day's ENERGY (kWh) for 30D (the indexed value is a daily energy). Otherwise the
+                // cumulative matrix via selectFlowMatrix (PG flow_1d 30D → bundled 1D/7D → client calc).
+                const focused =
+                  hoveredIndex !== null
+                    ? calculateInstantFlowMatrix(
+                        processedHistoryData,
+                        hoveredIndex,
+                      )
+                    : null;
+                const matrix =
+                  focused ??
+                  selectFlowMatrix({
+                    processed: processedHistoryData,
+                    pgFlowMatrix,
+                    serveFlowFromPg,
+                    period,
+                  });
                 if (!matrix) return null;
-                // The window the sankey integrates over: a TIME range for 1D/7D, a DATE range for 30D.
+                const unit = focused && period !== "30D" ? "kW" : "kWh";
+                const tz = system?.timezoneOffsetMin;
+                // Label: the focused instant when hovering, else the window the sankey integrates over
+                // (a TIME range for 1D/7D, a DATE range for 30D).
                 const cd =
                   processedHistoryData.load ?? processedHistoryData.generation;
-                const tz = system?.timezoneOffsetMin;
-                const rangeLabel =
-                  cd && cd.timestamps.length > 0 && tz != null
+                const label = focusedTime
+                  ? formatHoverTimestamp(focusedTime, period, false)
+                  : cd && cd.timestamps.length > 0 && tz != null
                     ? formatDateTimeRange(
                         fromUnixTimestamp(
                           cd.timestamps[0].getTime() / 1000,
@@ -659,13 +682,14 @@ export default function SiteChartsCard({
                     <div className="flex justify-center">
                       <EnergyFlowSankey
                         matrix={matrix}
+                        unit={unit}
                         width={600}
                         height={680}
                       />
                     </div>
-                    {rangeLabel && (
+                    {label && (
                       <div className="mt-1 text-center text-xs text-gray-500">
-                        {rangeLabel}
+                        {label}
                       </div>
                     )}
                   </div>
