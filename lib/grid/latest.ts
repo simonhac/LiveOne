@@ -5,10 +5,11 @@
  * dashboard reads — just for the public OpenElectricity region system (resolved via gridContext).
  * No bespoke endpoint: this is a pure selector over that payload.
  *
- * The three OE grid-signal logical-path keys (logicalPathStem + "/" + metricType):
+ * The four OE grid-signal logical-path keys (logicalPathStem + "/" + metricType):
  *   - grid.price/rate                   ($/MWh)
  *   - grid.emissionsIntensity/intensity (tCO2e/MWh)
  *   - grid.renewables/proportion        (%)
+ *   - grid.demand/power                 (MW)
  * Display-unit conversion happens in the card.
  */
 
@@ -16,6 +17,7 @@ export const GRID_LATEST_PATHS = {
   price: "grid.price/rate",
   emissionsIntensity: "grid.emissionsIntensity/intensity",
   renewables: "grid.renewables/proportion",
+  demand: "grid.demand/power",
 } as const;
 
 export interface GridMetric {
@@ -28,6 +30,7 @@ export interface GridLiveValues {
   price: GridMetric | null;
   emissionsIntensity: GridMetric | null;
   renewables: GridMetric | null;
+  demand: GridMetric | null;
 }
 
 /** A latest-values map entry — value plus a timestamp (ISO string, or a revived Date). */
@@ -62,7 +65,8 @@ export function gridLatestFromData(data: unknown): GridLiveValues | null {
   const price = pick(latest, GRID_LATEST_PATHS.price);
   const emissionsIntensity = pick(latest, GRID_LATEST_PATHS.emissionsIntensity);
   const renewables = pick(latest, GRID_LATEST_PATHS.renewables);
-  if (!price && !emissionsIntensity && !renewables) return null;
+  const demand = pick(latest, GRID_LATEST_PATHS.demand);
+  if (!price && !emissionsIntensity && !renewables && !demand) return null;
 
-  return { price, emissionsIntensity, renewables };
+  return { price, emissionsIntensity, renewables, demand };
 }

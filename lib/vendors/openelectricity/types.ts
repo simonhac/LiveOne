@@ -6,6 +6,7 @@
  *   - emissions intensity (tCO2e/MWh) — COMPUTED from `emissions` ÷ energy (no native metric)
  *   - spot price ($/MWh)              — `price` metric (market endpoint)
  *   - renewable proportion (%)        — `renewable_proportion` metric (market endpoint)
+ *   - operational demand (MW)         — `demand` metric (market endpoint)
  *
  * Two endpoints are involved (no single endpoint serves all the metrics we need):
  *   - /v4/data/network/{network}   → power, emissions (+ energy, market_value, storage_battery)
@@ -33,7 +34,7 @@ export function isNemRegion(value: string): value is NemRegion {
 /** Metrics served by /v4/data/network/{network}. */
 export type OeDataMetric = "power" | "energy" | "emissions";
 /** Metrics served by /v4/market/network/{network}. */
-export type OeMarketMetric = "price" | "renewable_proportion";
+export type OeMarketMetric = "price" | "renewable_proportion" | "demand";
 export type OeMetric = OeDataMetric | OeMarketMetric;
 
 export type OeEndpoint = "data" | "market";

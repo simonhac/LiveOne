@@ -62,15 +62,15 @@ function Stat({
 }
 
 /**
- * Presentational "<region> Grid" card (e.g. "NSW Grid"). Shows three live grid signals for the
- * household's local NEM region: spot price (¢/kWh), emissions intensity (g CO₂e/kWh), and
- * renewables (%). No data fetching happens here — the typed `values` prop is supplied by the
- * caller (cross-system OE region fetch).
+ * Presentational "<region> Grid" card (e.g. "NSW Grid"). Shows four live grid signals for the
+ * household's local NEM region: spot price ($/MWh), emissions intensity (g CO₂e/kWh),
+ * renewables (%), and operational demand (MW). No data fetching happens here — the typed `values`
+ * prop is supplied by the caller (cross-system OE region fetch).
  *
- * Layout: three compact, label-less stats (bold value + a power-card-style unit, like solar's
+ * Layout: four compact, label-less stats (bold value + a power-card-style unit, like solar's
  * "kW") in an `@container` grid that reflows by the card's OWN width — 1 column when narrow, then
- * 2/3 columns as it widens. Price keeps ¢ attached ("1.5¢/kWh"), emissions abbreviates to "EI"
- * (emissions intensity), renewables reads "<n>% RE". Values never truncate.
+ * 2/3/4 columns as it widens. Price reads "$N/MWh", emissions abbreviates to "EI"
+ * (emissions intensity), renewables reads "<n>% RE", demand reads "<n> MW". Values never truncate.
  *
  * Staleness follows Tile: the newest measurementTime across the present
  * metrics is compared against `staleThresholdSeconds` (recomputed every second);
@@ -99,12 +99,14 @@ export default function GridSignalsCard({
   const price = values?.price?.value ?? null;
   const emissions = values?.emissionsIntensity?.value ?? null;
   const renewables = values?.renewables?.value ?? null;
+  const demand = values?.demand?.value ?? null;
 
   // Newest measurement time across the present metrics (epoch ms), or null.
   const measurementTimes = [
     values?.price?.measurementTime,
     values?.emissionsIntensity?.measurementTime,
     values?.renewables?.measurementTime,
+    values?.demand?.measurementTime,
   ]
     .filter((t): t is string => typeof t === "string")
     .map((t) => new Date(t).getTime())
@@ -167,7 +169,8 @@ export default function GridSignalsCard({
 
   // Display values (client-side conversions per the OE stored units). Units render separately
   // (small + non-bold), so these are the bare numbers only.
-  const priceText = price != null ? `${(price / 10).toFixed(1)}` : "—";
+  // Price is stored in $/MWh; show it directly as integer dollars ("$2/MWh").
+  const priceText = price != null ? `$${Math.round(price)}` : "—";
   // 0 g/kWh is physically impossible for a generating grid (a transient OE artifact); show
   // an em-dash rather than a bogus "0" until the next good reading lands.
   const emissionsText =
@@ -176,6 +179,9 @@ export default function GridSignalsCard({
       : "—";
   const renewablesText = renewables != null ? `${Math.round(renewables)}` : "—";
   const renewablesGreen = renewables != null && renewables > 50;
+  // Operational demand is stored in MW; show integer MW with a thousands separator ("7,234").
+  const demandText =
+    demand != null ? Math.round(demand).toLocaleString("en-AU") : "—";
 
   // Card title, e.g. "NSW Grid". The caller passes the short NEM label ("NSW"); strip a trailing
   // region index defensively so a raw "NSW1" still renders "NSW Grid".
@@ -231,20 +237,13 @@ export default function GridSignalsCard({
           )}
         </div>
 
-        {/* Compact, label-less stats: bold value + power-card-style unit. 1 → 2 → 3 columns as the
-            card widens (its OWN width via @container). Price keeps ¢ attached to the number;
-            emissions uses "EI" (emissions intensity); renewables is "<n>% RE". */}
-        <div className="grid grid-cols-1 gap-x-4 gap-y-1 @[180px]:grid-cols-2 @[300px]:grid-cols-3">
+        {/* Compact, label-less stats: bold value + power-card-style unit. 1 → 2 → 3 → 4 columns as
+            the card widens (its OWN width via @container). Price reads "$N/MWh"; emissions uses
+            "EI" (emissions intensity); renewables is "<n>% RE"; demand is "<n> MW". */}
+        <div className="grid grid-cols-1 gap-x-4 gap-y-1 @[180px]:grid-cols-2 @[300px]:grid-cols-3 @[400px]:grid-cols-4">
           <Stat
             value={priceText}
-            unit={
-              price != null ? (
-                <>
-                  <Unit>¢</Unit>
-                  <Unit muted>/kWh</Unit>
-                </>
-              ) : undefined
-            }
+            unit={price != null ? <Unit muted>/MWh</Unit> : undefined}
           />
           <Stat
             value={emissionsText}
@@ -270,6 +269,16 @@ export default function GridSignalsCard({
             }
             valueClassName={
               renewablesGreen ? "text-green-400" : "text-gray-200"
+            }
+          />
+          <Stat
+            value={demandText}
+            unit={
+              demand != null ? (
+                <Unit gap muted>
+                  MW
+                </Unit>
+              ) : undefined
             }
           />
         </div>

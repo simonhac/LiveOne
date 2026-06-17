@@ -7,7 +7,7 @@
  * rebuilds 1d aggregates for the range afterwards.
  *
  * For large historical loads (months/years) use the offline bulk ingestor instead
- * (scripts/openelectricity-bulk-ingest.ts) — it bypasses the queue for throughput.
+ * (scripts/openelectricity/bulk-ingest.ts) — it bypasses the queue for throughput.
  */
 
 import type { CalendarDate } from "@internationalized/date";
@@ -101,7 +101,7 @@ export async function backfillRange(
           fetchMarketData({
             region: args.region,
             networkCode: network,
-            metrics: ["price", "renewable_proportion"],
+            metrics: ["price", "renewable_proportion", "demand"],
             interval: "5m",
             dateStart: chunkStart,
             dateEnd: chunkEnd,

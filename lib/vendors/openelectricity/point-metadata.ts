@@ -1,13 +1,14 @@
 /**
  * OpenElectricity point definitions + response→reading mapper.
  *
- * Three stored points per region, all under the `grid` subsystem:
+ * Four stored points per region, all under the `grid` subsystem:
  *   - grid.emissionsIntensity (tCO2e/MWh) — COMPUTED: emissions ÷ energy
  *   - grid.price ($/MWh)                  — direct (market `price`)
  *   - grid.renewables (%)                 — direct (market `renewable_proportion`)
+ *   - grid.demand (MW)                    — direct (market `demand`)
  *
  * The same mapper is used by the live adapter, the backfill downloader, and the bulk
- * ingestor so the three paths produce identical readings.
+ * ingestor so the paths produce identical readings.
  */
 
 import type { PointMetadata } from "@/lib/point/point-manager";
@@ -45,11 +46,22 @@ export const RENEWABLE_PROPORTION_POINT: PointMetadata = {
   transform: null,
 };
 
+export const DEMAND_POINT: PointMetadata = {
+  physicalPathTail: "nem/demand",
+  logicalPathStem: "grid.demand",
+  defaultName: "Operational demand",
+  subsystem: "grid",
+  metricType: "power",
+  metricUnit: "MW",
+  transform: null,
+};
+
 /** All points this integration stores, in display order. */
 export const OPENELECTRICITY_POINTS: readonly PointMetadata[] = [
   EMISSIONS_INTENSITY_POINT,
   PRICE_POINT,
   RENEWABLE_PROPORTION_POINT,
+  DEMAND_POINT,
 ];
 
 const INTERVAL_MS: Record<OeInterval, number> = {
@@ -140,6 +152,14 @@ export function buildReadingsFromResponses(
   )) {
     out.push({
       pointMetadata: RENEWABLE_PROPORTION_POINT,
+      rawValue: value,
+      intervalEndMs: startMs + intervalMs,
+      dataQuality,
+    });
+  }
+  for (const [startMs, value] of indexSeries(marketResp, "demand")) {
+    out.push({
+      pointMetadata: DEMAND_POINT,
       rawValue: value,
       intervalEndMs: startMs + intervalMs,
       dataQuality,
