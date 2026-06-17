@@ -109,6 +109,23 @@ export function splitSignedSeries(
 }
 
 /**
+ * Apply a power point's `transform` to a signed kW value before it enters the flow matrix. Only "i"
+ * (invert: ×−1) is meaningful for a power point — e.g. a grid / AC-source channel wired so that IMPORT
+ * reads negative (a generator), which `splitSignedSeries`'s convention would otherwise misclassify as
+ * export (a load). MUST be applied IDENTICALLY by every flow-matrix builder — the sub-daily
+ * `buildFlowMatrixFromAggRows` and the engine's `recomputeFlow1dForDay` — so the 5m and materialized
+ * (1d) Sankeys stay byte-identical. "d" (differentiate) is an energy-counter transform, not meaningful
+ * for an instantaneous power series, so it's a no-op here.
+ */
+export function applyPowerTransform(
+  value: number | null,
+  transform: string | null,
+): number | null {
+  if (value === null) return null;
+  return transform === "i" ? -value : value;
+}
+
+/**
  * Per-interval sum of several series. An interval is null if ANY contributor is null there —
  * matching how the browser pipeline accumulates total generation and child-load sums (a missing
  * input makes the total unknowable, not zero).

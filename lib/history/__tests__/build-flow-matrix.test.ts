@@ -69,9 +69,15 @@ function makeAggRows(points: LogicalSystemPoint[]): AggRow[] {
   return rows;
 }
 
-/** The "engine" answer: classify the kW series directly through the shared core. */
+/** The "engine" answer: classify the kW series directly through the shared core (honouring `transform`). */
 function expectedMatrix(points: LogicalSystemPoint[]) {
-  const classified = points.map((p) => ({ stem: p.stem, power: KW[p.stem] }));
+  const classified = points.map((p) => ({
+    stem: p.stem,
+    power:
+      p.transform === "i"
+        ? KW[p.stem].map((v) => (v === null ? null : -v))
+        : KW[p.stem],
+  }));
   const { sources, loads } = buildFlowSeries(classified);
   const result = computeFlowMatrix({ timestamps: T, sources, loads });
   const names = new Map(points.map((p) => [p.stem, p.displayName]));
@@ -114,5 +120,20 @@ describe("buildFlowMatrixFromAggRows", () => {
 
   it("returns null when no rows are supplied", () => {
     expect(buildFlowMatrixFromAggRows([], LS)).toBeNull();
+  });
+
+  it("applies a point's invert transform ('i') — a grid wired so import reads negative", () => {
+    // Daylesford's case: the AC-source/grid channel is a generator, wired so IMPORT reads negative.
+    // transform 'i' negates it before the source/load split, so the generator's feed-in is counted as
+    // Grid Import (a source), not Grid Export (a load). The raw rows are unchanged — the builder inverts.
+    const points = POINTS.map((p) =>
+      p.stem === "bidi.grid" ? { ...p, transform: "i" as string } : p,
+    );
+    const ls: LogicalSystem = { ...LS, points };
+
+    const actual = buildFlowMatrixFromAggRows(makeAggRows(points), ls);
+    // Matches the core run on the INVERTED grid series, and DIFFERS from the un-inverted matrix.
+    expect(actual).toEqual(expectedMatrix(points));
+    expect(actual).not.toEqual(expectedMatrix(POINTS));
   });
 });
