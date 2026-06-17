@@ -97,6 +97,12 @@ export interface BuildDefaultV3Opts {
   gridDeviceSystemId?: number;
   /** The Area's system has an enabled generator run-tracker → appends a `generator-runs` card. */
   hasGenerator?: boolean;
+  /**
+   * The whole-area tile views the system actually supports (from its latest). Omitted ⇒ all TILE_IDS.
+   * Supplying it keeps the descriptor's tile set == the rendered set, so the loading skeleton doesn't
+   * over-count then collapse (e.g. a sidebar system that only has solar/load/battery/grid).
+   */
+  availableViews?: readonly TileView[];
 }
 
 /**
@@ -121,7 +127,10 @@ export function buildDefaultDashboardV3(opts: BuildDefaultV3Opts): DashboardV3 {
     };
   }
 
-  const tiles: TileV3[] = TILE_IDS.map((view) => ({ view }));
+  const supported = opts.availableViews
+    ? TILE_IDS.filter((v) => opts.availableViews!.includes(v))
+    : [...TILE_IDS];
+  const tiles: TileV3[] = supported.map((view) => ({ view }));
   if (opts.gridDeviceSystemId != null) {
     tiles.push({ view: "oe-grid", deviceSystemId: opts.gridDeviceSystemId });
   }
