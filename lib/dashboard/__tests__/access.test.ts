@@ -16,16 +16,23 @@ import {
 } from "@/lib/dashboard/access";
 import { getLegacySystemIdForArea } from "@/lib/areas/resolve";
 import { PointManager } from "@/lib/point/point-manager";
-import type {
-  DashboardDescriptor,
-  ModuleCardInstance,
-} from "@/lib/dashboard/descriptor";
+import type { DashboardV3 } from "@/lib/dashboard/v3";
 
 const mockGetLegacy = jest.mocked(getLegacySystemIdForArea);
 const mockGetInstance = jest.mocked(PointManager.getInstance);
 
-function descriptor(cards: ModuleCardInstance[]): DashboardDescriptor {
-  return { version: 2, layout: "site", cards };
+// Build a v3 descriptor whose SECTION areaIds are the distinct areaIds of the given cards — the only
+// thing the share-scope resolvers read (via descriptorAreaIds). Cards without an areaId contribute none.
+function descriptor(
+  cards: { type: string; id?: string; areaId?: string }[],
+): DashboardV3 {
+  const areaIds = [
+    ...new Set(cards.map((c) => c.areaId).filter((x): x is string => !!x)),
+  ];
+  return {
+    version: 3,
+    sections: areaIds.map((areaId) => ({ areaId, cards: [] })),
+  };
 }
 
 /** A fake PointInfo whose getReference() returns the given ref (the only method the resolver uses). */

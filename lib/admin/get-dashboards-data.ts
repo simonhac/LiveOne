@@ -14,7 +14,6 @@ import {
   dashboardGrants,
 } from "@/lib/db/planetscale/schema";
 import { SystemsManager } from "@/lib/systems-manager";
-import type { DashboardDescriptor } from "@/lib/dashboard/descriptor";
 import { allCardsV3, isDashboardV3 } from "@/lib/dashboard/v3";
 
 export interface AdminDashboardRow {
@@ -118,7 +117,6 @@ export async function getAdminDashboardsData(): Promise<AdminDashboardsResult> {
 
   const dashboardsData: AdminDashboardRow[] = allDashboards.map((d) => {
     const userInfo = userCache.get(d.clerkUserId);
-    const descriptor = d.descriptor as DashboardDescriptor | null;
     return {
       id: d.id,
       owner: {
@@ -134,7 +132,7 @@ export async function getAdminDashboardsData(): Promise<AdminDashboardsResult> {
       areaId: d.areaId,
       cardCount: isDashboardV3(d.descriptor)
         ? allCardsV3(d.descriptor).length
-        : (descriptor?.cards?.length ?? 0),
+        : 0,
       shareTokenCount: shareCounts.get(d.id) ?? 0,
       grantCount: grantCounts.get(d.id) ?? 0,
       createdAt: d.createdAt.toISOString(),
