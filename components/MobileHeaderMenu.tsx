@@ -11,11 +11,7 @@ import {
   Plus,
   Database,
   RefreshCw,
-  SlidersHorizontal,
-  Share2,
-  MapPin,
 } from "lucide-react";
-import { useDashboardCustomizeOptional } from "@/contexts/DashboardCustomizeContext";
 
 interface SystemInfo {
   model?: string;
@@ -59,7 +55,6 @@ export default function MobileHeaderMenu({
   isDryRunMode = false,
 }: MobileHeaderMenuProps) {
   const { user } = useUser();
-  const customize = useDashboardCustomizeOptional();
 
   if (!isOpen) return null;
 
@@ -184,7 +179,7 @@ export default function MobileHeaderMenu({
                   </button>
                 )}
 
-                {/* System Settings */}
+                {/* Device Settings */}
                 {onSystemSettings && (
                   <button
                     onClick={() => {
@@ -194,47 +189,7 @@ export default function MobileHeaderMenu({
                     className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
                   >
                     <Settings className="w-4 h-4" />
-                    System Settings…
-                  </button>
-                )}
-
-                {/* Customise dashboard (P2) */}
-                {customize?.canCustomize && (
-                  <button
-                    onClick={() => {
-                      onClose();
-                      customize.openCustomize();
-                    }}
-                    className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
-                  >
-                    <SlidersHorizontal className="w-4 h-4" />
-                    Customise…
-                  </button>
-                )}
-
-                {/* Share dashboard (P4) — owner-only public read-only link */}
-                {customize?.canShare && (
-                  <button
-                    onClick={() => {
-                      onClose();
-                      customize.openShare();
-                    }}
-                    className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
-                  >
-                    <Share2 className="w-4 h-4" />
-                    Share…
-                  </button>
-                )}
-                {customize?.canSetLocation && (
-                  <button
-                    onClick={() => {
-                      onClose();
-                      customize.openLocation();
-                    }}
-                    className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
-                  >
-                    <MapPin className="w-4 h-4" />
-                    Location…
+                    Device Settings…
                   </button>
                 )}
               </div>

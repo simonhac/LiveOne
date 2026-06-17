@@ -140,7 +140,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
 
   const handleOAuthConnected = (systemId: number) => {
     onOpenChange(false);
-    router.push(`/dashboard/${systemId}`);
+    router.push(`/device/${systemId}`);
     router.refresh();
   };
 
@@ -222,7 +222,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
     onSuccess: (data) => {
       // Success! Navigate to the new system
       onOpenChange(false);
-      router.push(`/dashboard/${data.systemId}`);
+      router.push(`/device/${data.systemId}`);
       router.refresh();
     },
     onError: (err) => {
@@ -264,7 +264,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
     onSuccess: (data) => {
       // Success! Navigate to the new system
       onOpenChange(false);
-      router.push(`/dashboard/${data.systemId}`);
+      router.push(`/device/${data.systemId}`);
       router.refresh();
     },
     onError: (err) => {
