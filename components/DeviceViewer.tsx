@@ -372,6 +372,7 @@ export default function DeviceViewer({
             <div className="mt-4 px-1">
               <GeneratorRunsCard
                 systemId={parseInt(systemId)}
+                timezoneOffsetMin={data!.system.timezoneOffsetMin ?? 600}
                 runningOverride={generatorRunningFromLatest(data!.latest)}
               />
             </div>

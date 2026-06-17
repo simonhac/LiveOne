@@ -189,7 +189,7 @@ function AreaSectionView({
         );
       case "generator-runs":
         return handle != null ? (
-          <GeneratorRunsCard key={cardKeyV3(card, i)} systemId={handle} />
+          <AreaGeneratorRuns key={cardKeyV3(card, i)} systemId={handle} />
         ) : (
           <ChartSkeleton key={cardKeyV3(card, i)} />
         );
@@ -391,6 +391,22 @@ function AreaLinesChart({ systemId }: { systemId: number }) {
       timezoneOffsetMin={tz}
     />
   );
+}
+
+/**
+ * The generator-runs panel for a section — self-fetches the handle's timezone (the runs panel reads
+ * the temporal navigator, which needs it), then renders GeneratorRunsCard. Mirrors AreaLinesChart.
+ */
+function AreaGeneratorRuns({ systemId }: { systemId: number }) {
+  const { isAnyModalOpen } = useModalContext();
+  const { data } = useQuery(
+    dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
+  );
+  const tz = ((data ?? null) as AreaDatum | null)?.system?.timezoneOffsetMin;
+  if (tz == null) {
+    return <ChartSkeleton />;
+  }
+  return <GeneratorRunsCard systemId={systemId} timezoneOffsetMin={tz} />;
 }
 
 function AreaAmberNow({ systemId }: { systemId: number }) {

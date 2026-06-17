@@ -108,7 +108,7 @@ function AreaCardBody({
     case "chart":
       return <AreaChartCard systemId={systemId} />;
     case "generator-runs":
-      return <GeneratorRunsCard systemId={systemId} />;
+      return <AreaGeneratorRuns systemId={systemId} />;
     case "tiles":
       return <AreaTilesCard systemId={systemId} />;
     case "amber-timeline":
@@ -171,6 +171,19 @@ function AreaChartCard({ systemId }: { systemId: number }) {
         timezoneOffsetMin={tz ?? 600}
       />
     </ChartFocusProvider>
+  );
+}
+
+/** Another Area's generator-runs panel — self-fetches that area's tz (the runs panel reads the
+ * temporal navigator), then renders the shared card. Mirrors AreaChartCard. */
+function AreaGeneratorRuns({ systemId }: { systemId: number }) {
+  const { isAnyModalOpen } = useModalContext();
+  const { data } = useQuery(
+    dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
+  );
+  const tz = ((data ?? null) as AreaDatum | null)?.system?.timezoneOffsetMin;
+  return (
+    <GeneratorRunsCard systemId={systemId} timezoneOffsetMin={tz ?? 600} />
   );
 }
 

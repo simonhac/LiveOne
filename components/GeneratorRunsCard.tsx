@@ -1,11 +1,9 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { runPeriodsQuery } from "@/lib/queries";
-
-const PAGE_SIZE = 10;
+import { useTemporalRange } from "@/lib/charts/useTemporalRange";
+import { getPeriodDuration } from "@/lib/charts/temporal";
 
 /** Format a duration in seconds as "2h 30m" / "45m" / "3h". */
 function formatDuration(seconds: number): string {
@@ -17,9 +15,18 @@ function formatDuration(seconds: number): string {
 }
 
 /**
- * A compact dashboard panel listing a device's most recent generator runs, paged 10 at a time.
+ * A dashboard panel listing a device's generator runs WITHIN the temporal-navigator window — the
+ * same 1D/7D/30D + prev/next window the charts respect (read via {@link useTemporalRange}). A run
+ * that overlaps the window is shown in full.
+ *
+ * The footer totals (run count, run-time, kWh) sum the FULL value of every overlapping run — a run
+ * that extends before/after the window is counted whole (its generation isn't uniform, so it can't
+ * be meaningfully clipped). Such a run is marked with an asterisk and a footnote appears under the
+ * table explaining it (only when at least one run is marked).
+ *
  * Shown on dashboards whose system has an enabled generator tracker (see lib/dashboard/cards.ts
- * "generator-runs"). Reads the bounded, paged run-periods API.
+ * "generator-runs"). In live mode it requests period mode (`1d`/`7d`/`30d`, stable query key);
+ * in historical mode it requests the explicit `start`/`end` range from the URL.
  *
  * `runningOverride` carries the live running state from the generic latest map (the derived
  * `source.generator/running` point) so the badge comes from /api/data like every other live value;
@@ -27,25 +34,54 @@ function formatDuration(seconds: number): string {
  */
 export default function GeneratorRunsCard({
   systemId,
+  timezoneOffsetMin,
   runningOverride,
 }: {
   systemId: number;
+  timezoneOffsetMin: number;
   runningOverride?: boolean;
 }) {
-  const [offset, setOffset] = useState(0);
+  const { period, start, end, isHistoricalMode } = useTemporalRange({
+    timezoneOffsetMin,
+  });
 
   const { data, isPending, isError } = useQuery(
-    runPeriodsQuery({
-      systemId,
-      role: "generator",
-      limit: PAGE_SIZE,
-      offset,
-    }),
+    runPeriodsQuery(
+      isHistoricalMode && start && end
+        ? { systemId, role: "generator", start, end }
+        : { systemId, role: "generator", period: period.toLowerCase() },
+    ),
   );
 
-  const events = data?.events ?? [];
-  const hasMore = !!data?.hasMore;
-  const page = Math.floor(offset / PAGE_SIZE) + 1;
+  // The strict window the navigator is showing, used only to flag runs that extend beyond it.
+  const nowMs = Date.now();
+  const windowEndMs = isHistoricalMode && end ? Date.parse(end) : nowMs;
+  const windowStartMs =
+    isHistoricalMode && start
+      ? Date.parse(start)
+      : nowMs - getPeriodDuration(period);
+
+  // Server returns events oldest-first; show newest-first in the panel. Decorate each with its
+  // duration/energy and whether it spans outside the window, and accumulate the (full-value) totals.
+  const rows = (data?.events ? [...data.events].reverse() : []).map((e) => {
+    const startMs = e.startTimeISO ? Date.parse(e.startTimeISO) : NaN;
+    const endMs = e.running
+      ? nowMs
+      : e.endTimeISO
+        ? Date.parse(e.endTimeISO)
+        : nowMs;
+    const durationSec = e.running
+      ? (nowMs - startMs) / 1000
+      : (e.durationSeconds ?? null);
+    const spansOutside =
+      (Number.isFinite(startMs) && startMs < windowStartMs) ||
+      endMs > windowEndMs;
+    return { e, durationSec, spansOutside };
+  });
+
+  const totalSeconds = rows.reduce((s, r) => s + (r.durationSec ?? 0), 0);
+  const totalEnergyKwh = rows.reduce((s, r) => s + r.e.energyKwh, 0);
+  const anyOutside = rows.some((r) => r.spansOutside);
 
   const th = "px-4 py-2 text-xs font-medium text-gray-200";
   const td = "px-4 py-2 text-sm";
@@ -62,29 +98,6 @@ export default function GeneratorRunsCard({
             </span>
           )}
         </h2>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-            disabled={offset === 0}
-            className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-            title="Newer"
-            aria-label="Newer runs"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <span className="text-xs text-gray-400 tabular-nums px-1">
-            {page}
-          </span>
-          <button
-            onClick={() => setOffset(offset + PAGE_SIZE)}
-            disabled={!hasMore}
-            className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-            title="Older"
-            aria-label="Older runs"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
       </div>
 
       {isPending && !data ? (
@@ -93,50 +106,72 @@ export default function GeneratorRunsCard({
         <div className="px-4 py-6 text-sm text-red-400">
           Failed to load generator runs
         </div>
-      ) : events.length === 0 ? (
+      ) : rows.length === 0 ? (
         <div className="px-4 py-6 text-sm text-gray-400">
-          No generator runs recorded
+          No generator runs in this period
         </div>
       ) : (
-        <table className="w-full">
-          <thead className="bg-gray-700">
-            <tr>
-              <th className={`${th} text-left`}>Date</th>
-              <th className={`${th} text-left`}>Time</th>
-              <th className={`${th} text-right`}>Duration</th>
-              <th className={`${th} text-right`}>Energy (kWh)</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-700">
-            {events.map((e, i) => {
-              const durationSec =
-                e.running && e.startTimeISO
-                  ? (Date.now() - Date.parse(e.startTimeISO)) / 1000
-                  : (e.durationSeconds ?? null);
-              return (
-                <tr
-                  key={i}
-                  className="text-gray-100 odd:bg-gray-800 even:bg-gray-750"
-                >
-                  <td className={td}>{e.date}</td>
+        <>
+          <div className="max-h-[420px] overflow-y-auto">
+            <table className="w-full">
+              <thead className="bg-gray-700 sticky top-0">
+                <tr>
+                  <th className={`${th} text-left`}>Date</th>
+                  <th className={`${th} text-left`}>Time</th>
+                  <th className={`${th} text-right`}>Duration</th>
+                  <th className={`${th} text-right`}>Energy (kWh)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700">
+                {rows.map(({ e, durationSec, spansOutside }, i) => (
+                  <tr
+                    key={i}
+                    className="text-gray-100 odd:bg-gray-800 even:bg-gray-750"
+                  >
+                    <td className={td}>{e.date}</td>
+                    <td className={td}>
+                      {e.running
+                        ? `${e.startTime} – now`
+                        : e.endTime === null || e.startTime === e.endTime
+                          ? e.startTime
+                          : `${e.startTime} - ${e.endTime}`}
+                      {spansOutside && (
+                        <sup className="text-amber-400 font-semibold">*</sup>
+                      )}
+                    </td>
+                    <td className={`${td} text-right tabular-nums`}>
+                      {durationSec != null ? formatDuration(durationSec) : "—"}
+                    </td>
+                    <td className={`${td} text-right tabular-nums`}>
+                      {e.energyKwh.toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="sticky bottom-0">
+                <tr className="bg-gray-700 text-gray-100 font-medium border-t border-gray-600">
                   <td className={td}>
-                    {e.running
-                      ? `${e.startTime} – now`
-                      : e.endTime === null || e.startTime === e.endTime
-                        ? e.startTime
-                        : `${e.startTime} - ${e.endTime}`}
+                    {rows.length} {rows.length === 1 ? "run" : "runs"}
+                  </td>
+                  <td className={td} />
+                  <td className={`${td} text-right tabular-nums`}>
+                    {formatDuration(totalSeconds)}
                   </td>
                   <td className={`${td} text-right tabular-nums`}>
-                    {durationSec != null ? formatDuration(durationSec) : "—"}
-                  </td>
-                  <td className={`${td} text-right tabular-nums`}>
-                    {e.energyKwh.toFixed(2)}
+                    {totalEnergyKwh.toFixed(2)}
                   </td>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              </tfoot>
+            </table>
+          </div>
+          {anyOutside && (
+            <div className="px-4 py-2 text-xs text-gray-400 border-t border-gray-700">
+              <span className="text-amber-400 font-semibold">*</span> Run
+              extends beyond the selected period; its full duration and energy
+              are included in the totals.
+            </div>
+          )}
+        </>
       )}
     </div>
   );
