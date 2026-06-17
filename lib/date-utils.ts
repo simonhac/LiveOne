@@ -623,7 +623,7 @@ export function getNextMinuteBoundary(
  * Format a Date in a specific IANA timezone
  * @param date - JavaScript Date object
  * @param displayTimezone - IANA timezone string (e.g., "Australia/Melbourne", "Europe/London")
- * @param formatStr - Format string: "HH:mm" or "d MMM"
+ * @param formatStr - Format string: "HH:mm", "d MMM", or "EEE d MMM"
  * @returns Formatted string in the display timezone
  */
 export function formatInTimezone(
@@ -636,22 +636,33 @@ export function formatInTimezone(
   if (formatStr === "HH:mm") {
     return `${String(zoned.hour).padStart(2, "0")}:${String(zoned.minute).padStart(2, "0")}`;
   } else if (formatStr === "d MMM") {
-    const months = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-    ];
-    return `${zoned.day} ${months[zoned.month - 1]}`;
+    return `${zoned.day} ${MONTHS_SHORT[zoned.month - 1]}`;
+  } else if (formatStr === "EEE d MMM") {
+    // Derive the weekday from the local calendar date (timezone-safe — UTC math on the
+    // already-zoned y/m/d, so the runtime TZ never leaks in).
+    const dow =
+      WEEKDAYS_SHORT[
+        new Date(Date.UTC(zoned.year, zoned.month - 1, zoned.day)).getUTCDay()
+      ];
+    return `${dow} ${zoned.day} ${MONTHS_SHORT[zoned.month - 1]}`;
   }
 
   throw new Error(`Unsupported format string: ${formatStr}`);
 }
+
+const MONTHS_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+const WEEKDAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
