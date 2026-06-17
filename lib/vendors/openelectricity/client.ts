@@ -137,6 +137,21 @@ async function fetchSeries(
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    // OE returns 404 "No [market] data available for network <net> in the specified time range"
+    // when the requested window sits entirely ahead of the newest published interval — i.e. normal
+    // leading-edge publication lag, not an error. The `data` and `market` endpoints publish out of
+    // step (minutes apart), so on any given poll one leg can be empty while the other has rows.
+    // Treat it as an empty result so callers ingest the populated leg and don't fail the whole poll;
+    // the next poll's lookback re-pulls the window once OE publishes. (Other 404s / 5xx still throw.)
+    if (res.status === 404 && /in the specified time range/i.test(text)) {
+      console.warn(
+        `[OpenElectricity] ${endpoint} window has no data yet (404, leading-edge lag); treating as empty.`,
+      );
+      return {
+        response: { success: true, data: [], total_records: 0 },
+        rateLimit,
+      };
+    }
     throw new OpenElectricityApiError(
       `OpenElectricity ${endpoint} API error (${res.status}): ${text}`,
       res.status,
