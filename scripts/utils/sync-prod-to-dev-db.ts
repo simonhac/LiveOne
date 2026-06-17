@@ -40,6 +40,11 @@ type FullTable = {
   onConflict: "update" | "nothing";
   conflictCols?: string[]; // natural unique key when the PK is a divergent surrogate
   excludeCols?: string[]; // drop the surrogate id so dev keeps/assigns its own
+  // Exact by-PK mirror: copy the prod serial `id` (restore-aligned), upsert on the PK, and DELETE
+  // dev rows whose id is absent from prod. The ONLY correct keying when no single unique index is a
+  // total non-null key (dashboards has TWO partial unique indexes, neither total). Wrapped in a txn;
+  // realigns the serial after; FK children cascade on the orphan delete. Ignores conflictCols/excludeCols.
+  mirror?: boolean;
 };
 type IncrementalTable = {
   name: string;
@@ -83,13 +88,13 @@ const FULL: FullTable[] = [
     ],
     excludeCols: ["id"],
   },
-  {
-    name: "dashboards",
-    mode: "full",
-    onConflict: "update",
-    conflictCols: ["clerk_user_id", "system_id"],
-    excludeCols: ["id"],
-  },
+  // Exact by-id mirror (see `mirror`). dashboards has TWO partial unique indexes —
+  // (clerk_user_id, system_id) and (clerk_user_id, alias) — and BOTH columns are nullable, so
+  // neither is a total non-null ON CONFLICT arbiter. The serial `id` is restore-aligned, so mirror by
+  // PK and delete dev-only/divergent rows. Self-heals the composition-dashboard duplicates that caused
+  // the alias collision. Cascade-deletes dev-only dashboard_share_tokens/grants for absent dashboards —
+  // fine, dev is disposable.
+  { name: "dashboards", mode: "full", onConflict: "update", mirror: true },
 ];
 
 // Large, time-keyed tables — incremental. sessions before point_readings so the
@@ -207,16 +212,25 @@ function syncTable(
   scratch: string,
   t: Table,
 ): { table: string; rows: number } {
-  const exclude = new Set((t as IncrementalTable).excludeCols ?? []);
+  const mirror = t.mode === "full" && t.mirror === true; // narrows t to FullTable
+  const exclude = new Set(
+    mirror ? [] : ((t as IncrementalTable).excludeCols ?? []),
+  );
   const cols = columnsOf(devUrl, t.name).filter((c) => !exclude.has(c));
   if (cols.length === 0)
     throw new Error(`no columns found for ${t.name} (schema mismatch?)`);
   const colList = cols.join(", ");
 
-  const conflictCols =
-    (t as IncrementalTable).conflictCols ?? pkOf(devUrl, t.name);
+  const pk = pkOf(devUrl, t.name);
+  const conflictCols = mirror
+    ? pk
+    : ((t as IncrementalTable).conflictCols ?? pk);
   if (conflictCols.length === 0)
     throw new Error(`no conflict key for ${t.name}`);
+  if (mirror && pk.length !== 1)
+    throw new Error(
+      `mirror ${t.name} requires a single-column PK (got ${pk.length})`,
+    );
 
   // Source predicate: incremental ⇒ rows newer than (dev max − overlap).
   let predicate = "";
@@ -266,13 +280,33 @@ function syncTable(
     ? `WHERE ${(t as IncrementalTable).filter}`
     : "";
 
-  exec(
-    devUrl,
-    `INSERT INTO public.${t.name} (${colList})
+  const upsert = `INSERT INTO public.${t.name} (${colList})
        SELECT ${colList} FROM sync_staging.${t.name} ${filter}
-       ON CONFLICT (${conflictCols.join(", ")}) ${action};
+       ON CONFLICT (${conflictCols.join(", ")}) ${action};`;
+
+  if (mirror) {
+    const idCol = conflictCols[0];
+    // ONE transaction so a crash can't leave dev half-synced: delete orphans FIRST (frees the
+    // colliding alias/system values held by divergent dev rows), upsert prod rows by PK, realign the
+    // serial (is_called=true ⇒ next nextval = max+1). id is NOT NULL so `NOT IN` is safe.
+    exec(
+      devUrl,
+      `BEGIN;
+       DELETE FROM public.${t.name}
+         WHERE ${idCol} NOT IN (SELECT ${idCol} FROM sync_staging.${t.name});
+       ${upsert}
+       SELECT setval(pg_get_serial_sequence('public.${t.name}', '${idCol}'),
+                     GREATEST((SELECT max(${idCol}) FROM public.${t.name}), 1), true);
+       COMMIT;
+       DROP TABLE sync_staging.${t.name};`,
+    );
+  } else {
+    exec(
+      devUrl,
+      `${upsert}
      DROP TABLE sync_staging.${t.name};`,
-  );
+    );
+  }
 
   return { table: t.name, rows };
 }
