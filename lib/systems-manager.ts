@@ -395,6 +395,18 @@ export class SystemsManager {
   }
 
   /**
+   * The user's "primary" visible system — owned-first, else the first visible (by display name), or
+   * null if they can see none. Single source of truth for the `/dashboard` landing redirect and the
+   * "Go to Systems" (`/device`) redirect, which previously each copy-pasted this owned-first logic.
+   */
+  async getPrimaryVisibleSystem(userId: string) {
+    const visible = await this.getSystemsVisibleByUser(userId, true);
+    if (visible.length === 0) return null;
+    const owned = visible.filter((s) => s.ownerClerkUserId === userId);
+    return owned.length > 0 ? owned[0] : visible[0];
+  }
+
+  /**
    * Create a new system in the database and update the cache
    * @param systemData - The system data to insert
    * @returns The created system

@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { Star } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Star, LayoutDashboard } from "lucide-react";
+import { myDashboardsQuery, userPreferencesQuery } from "@/lib/queries";
 
 interface AvailableSystem {
   id: number;
@@ -20,6 +22,10 @@ interface SystemsMenuProps {
   isAdmin?: boolean;
   defaultSystemId?: number | null;
   onSystemSelect?: (systemId: number) => void;
+  /** Close the parent dropdown after picking the "Go to Dashboards" cross-nav row. */
+  onNavigate?: () => void;
+  /** Only fetch the dashboards/default for the "Go to Dashboards" footer when this is a real owner. */
+  enabled?: boolean;
   preserveQueryParams?: string[];
   className?: string;
   itemClassName?: string;
@@ -34,23 +40,40 @@ export default function SystemsMenu({
   isAdmin = false,
   defaultSystemId,
   onSystemSelect,
+  onNavigate,
+  enabled = true,
   preserveQueryParams = ["period"],
   className = "",
   itemClassName = "block px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 transition-colors",
   activeItemClassName = "bg-gray-700",
   isMobile = false,
 }: SystemsMenuProps) {
+  // "Go to Dashboards" cross-nav: jump to the user's default composition dashboard if set (and still
+  // in the list), else the first one. Same queries the header prefetches (usePrefetchDashboardsMenu)
+  // → deduped, no extra fetch. Hidden when the user has no composition dashboards.
+  const { data: dashData } = useQuery(myDashboardsQuery(enabled));
+  const { data: prefs } = useQuery(userPreferencesQuery(enabled));
+  const dashboards = dashData?.dashboards ?? [];
+  const defaultDashboardId = prefs?.preferences.defaultDashboardId ?? null;
+  const goToDashboardId = dashboards.some((d) => d.id === defaultDashboardId)
+    ? defaultDashboardId
+    : (dashboards[0]?.id ?? null);
+  // Devices only: drop composite / areas-backed virtual systems — they're a dashboard/area construct,
+  // not a physical device, and are slated for removal. Public grid-data sources (e.g. OpenElectricity,
+  // vendorType "openelectricity") count as physical and stay.
+  const devices = availableSystems.filter((s) => s.vendorType !== "composite");
+
   // Separate owned vs granted systems
-  const ownedSystems = availableSystems
+  const ownedSystems = devices
     .filter((s) => s.ownerClerkUserId === userId)
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
   // Public (ownerless) systems are visible to everyone.
-  const publicSystems = availableSystems
+  const publicSystems = devices
     .filter((s) => s.ownerClerkUserId == null)
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
-  const grantedSystems = availableSystems
+  const grantedSystems = devices
     .filter((s) => s.ownerClerkUserId != null && s.ownerClerkUserId !== userId)
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
@@ -156,10 +179,27 @@ export default function SystemsMenu({
       {grantedSystems.map(renderSystemItem)}
 
       {/* Admin note for many systems */}
-      {isAdmin && availableSystems.length >= 10 && (
+      {isAdmin && devices.length >= 10 && (
         <div className="px-4 py-2 text-xs text-gray-500 border-t border-gray-700">
-          Showing first {availableSystems.length} systems
+          Showing first {devices.length} systems
         </div>
+      )}
+
+      {/* Cross-nav back to the dashboards world — symmetric with DashboardsMenu's "Go to Devices". */}
+      {goToDashboardId != null && (
+        <>
+          <div className="border-t border-gray-700 my-1"></div>
+          <Link
+            href={`/dashboard/id/${goToDashboardId}`}
+            onClick={onNavigate}
+            className={`${itemClassName} flex items-center gap-2 text-gray-300 hover:text-white ${
+              isMobile ? "first:rounded-t-lg last:rounded-b-lg" : ""
+            }`}
+          >
+            <LayoutDashboard className="w-4 h-4" />
+            Go to Dashboards
+          </Link>
+        </>
       )}
     </div>
   );

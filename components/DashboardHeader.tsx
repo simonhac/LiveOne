@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { UserButton } from "@clerk/nextjs";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 // Map subpage slugs to display titles
 const SUBPAGE_TITLES: Record<string, string> = {
@@ -23,13 +23,11 @@ import {
   Menu,
   X,
 } from "lucide-react";
-import NewDashboardDialog from "@/components/NewDashboardDialog";
 import LastUpdateTime from "@/components/LastUpdateTime";
 import SystemInfoTooltip from "@/components/SystemInfoTooltip";
 import MobileHeaderMenu from "@/components/MobileHeaderMenu";
-import DashboardsMenu, {
-  usePrefetchDashboardsMenu,
-} from "@/components/DashboardsMenu";
+import SystemsMenu from "@/components/SystemsMenu";
+import { usePrefetchDashboardsMenu } from "@/components/DashboardsMenu";
 
 interface SystemInfo {
   model?: string;
@@ -86,6 +84,7 @@ export interface DashboardHeaderProps {
 
 export default function DashboardHeader({
   displayName,
+  systemId,
   vendorSiteId,
   lastUpdate,
   systemInfo,
@@ -94,6 +93,8 @@ export default function DashboardHeader({
   systemStatus,
   isAdmin,
   userId,
+  availableSystems = [],
+  defaultSystemId,
   onLogout,
   onTestConnection,
   onViewData,
@@ -103,8 +104,9 @@ export default function DashboardHeader({
   shiftKeyDown = false,
 }: DashboardHeaderProps) {
   const pathname = usePathname();
+  const router = useRouter();
 
-  // Warm the switcher's dashboards + default so the title dropdown paints fully on first open (no jump).
+  // Warm the dashboards + default so the systems-menu's "Go to Dashboards" cross-nav resolves instantly.
   usePrefetchDashboardsMenu(!!userId);
 
   // Compute full title with subpage suffix (e.g., "Amber Test — Heatmap")
@@ -116,7 +118,6 @@ export default function DashboardHeader({
 
   const [showSystemDropdown, setShowSystemDropdown] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
-  const [showNewDashboard, setShowNewDashboard] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMobileSystemDropdownOpen, setIsMobileSystemDropdownOpen] =
     useState(false);
@@ -148,6 +149,27 @@ export default function DashboardHeader({
       longPressTimer.current = null;
     }
     setLongPressActive(false);
+  };
+
+  // Mobile system switch: SystemsMenu's mobile rows are buttons (no <Link>), so navigate here.
+  // Mirrors SystemsMenu's desktop href logic — pretty /device/{user}/{alias} when available, else id,
+  // preserving the current subpage (only /amber when the target is also an amber system).
+  const handleMobileSystemSelect = (selectedId: number) => {
+    const system = availableSystems.find((s) => s.id === selectedId);
+    const basePath =
+      system?.ownerUsername && system?.alias
+        ? `/device/${system.ownerUsername}/${system.alias}`
+        : `/device/${selectedId}`;
+    const knownSubpages = ["heatmap", "generator", "amber", "latest"];
+    const pathParts = window.location.pathname.split("/").filter(Boolean);
+    const lastPart = pathParts[pathParts.length - 1];
+    const subpage = knownSubpages.includes(lastPart)
+      ? lastPart === "amber" && system?.vendorType !== "amber"
+        ? ""
+        : `/${lastPart}`
+      : "";
+    router.push(`${basePath}${subpage}`);
+    setIsMobileSystemDropdownOpen(false);
   };
 
   // Reset long-press when menu closes
@@ -222,12 +244,17 @@ export default function DashboardHeader({
                 </h1>
               )}
 
-              {/* Dashboards Dropdown Menu */}
+              {/* Systems Dropdown Menu (with "Go to Dashboards" cross-nav at the bottom) */}
               {isMobileSystemDropdownOpen && userId && (
                 <div className="absolute top-full left-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
-                  <DashboardsMenu
+                  <SystemsMenu
+                    availableSystems={availableSystems}
+                    currentSystemId={systemId}
+                    userId={userId}
+                    isAdmin={isAdmin}
+                    defaultSystemId={defaultSystemId}
                     enabled={!!userId}
-                    onNew={() => setShowNewDashboard(true)}
+                    onSystemSelect={handleMobileSystemSelect}
                     onNavigate={() => setIsMobileSystemDropdownOpen(false)}
                     isMobile={true}
                     itemClassName="w-full text-left px-4 py-2 text-sm hover:bg-gray-700 transition-colors first:rounded-t-lg last:rounded-b-lg text-white"
@@ -311,9 +338,14 @@ export default function DashboardHeader({
                 {showSystemDropdown && (
                   <div className="absolute top-full left-0 mt-2 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
                     <div className="py-1">
-                      <DashboardsMenu
+                      <SystemsMenu
+                        availableSystems={availableSystems}
+                        currentSystemId={systemId}
+                        userId={userId}
+                        isAdmin={isAdmin}
+                        defaultSystemId={defaultSystemId}
                         enabled={!!userId}
-                        onNew={() => setShowNewDashboard(true)}
+                        onSystemSelect={() => setShowSystemDropdown(false)}
                         onNavigate={() => setShowSystemDropdown(false)}
                       />
                     </div>
@@ -457,10 +489,6 @@ export default function DashboardHeader({
           </div>
         </div>
       </div>
-      <NewDashboardDialog
-        isOpen={showNewDashboard}
-        onClose={() => setShowNewDashboard(false)}
-      />
     </header>
   );
 }
