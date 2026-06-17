@@ -214,7 +214,8 @@ export async function requireDashboardAccess(
           descriptor: dash.descriptor,
         });
         if (allowed.includes(systemId)) {
-          const system = await SystemsManager.getInstance().getSystem(systemId);
+          const system =
+            await SystemsManager.getInstance().getViewableSystem(systemId);
           if (system) {
             return {
               system,
@@ -227,6 +228,29 @@ export async function requireDashboardAccess(
         }
       }
     }
+  }
+
+  // Area-view handle (a multi-device Area with no real `systems` row): resolve access area-natively
+  // (owner / admin / public). requireSystemAccess stays strict (real systems + /device routes).
+  const sm = SystemsManager.getInstance();
+  if (await sm.isAreaHandle(systemId)) {
+    const ctx = await getAuthContext(request);
+    const view = await sm.getViewableSystem(systemId);
+    if (!view) {
+      return NextResponse.json({ error: "System not found" }, { status: 404 });
+    }
+    const isOwner = ctx.userId === view.ownerClerkUserId;
+    const isPublic = view.ownerClerkUserId == null;
+    const canRead = ctx.isAdmin || ctx.isClaudeDev || isOwner || isPublic;
+    if (!canRead && !ctx.userId) return unauthorized();
+    if (!canRead) return forbidden("No access to this area");
+    return {
+      system: view,
+      userId: ctx.userId ?? null,
+      canRead: true,
+      canWrite: ctx.isAdmin || isOwner,
+      viaShareToken: false,
+    };
   }
 
   const result = await requireSystemAccess(request, systemId);

@@ -60,7 +60,8 @@ export interface LogicalSystem {
 export async function resolveLogicalSystem(
   systemId: number,
 ): Promise<LogicalSystem | null> {
-  const system = await SystemsManager.getInstance().getSystem(systemId);
+  // Resolve a real system OR an area view (multi-device Area handle) — both have a Sankey view.
+  const system = await SystemsManager.getInstance().getViewableSystem(systemId);
   if (!system) return null;
 
   // typedOnly=true drops points without a logical_path_stem (same exclusion as the engine recompute).
@@ -121,9 +122,10 @@ export async function resolveLogicalSystem(
  * `SELECT DISTINCT system_id FROM agg_5m` driver structurally excluded.
  */
 export async function listCompleteLogicalSystems(): Promise<LogicalSystem[]> {
-  const systems = await SystemsManager.getInstance().getActiveSystems();
-  const resolved = await Promise.all(
-    systems.map((s) => resolveLogicalSystem(s.id)),
-  );
+  const sm = SystemsManager.getInstance();
+  const systems = await sm.getActiveSystems();
+  const areaHandles = await sm.getActiveAreaHandles();
+  const ids = [...systems.map((s) => s.id), ...areaHandles];
+  const resolved = await Promise.all(ids.map((id) => resolveLogicalSystem(id)));
   return resolved.filter((ls): ls is LogicalSystem => !!ls && ls.isComplete);
 }

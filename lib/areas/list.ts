@@ -7,7 +7,7 @@
  * `resolveAreasByIds` resolves a specific set of Area uuids to their addressing handle + label,
  * used by the read-only shared view (where the scope is already fixed by the token).
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -36,8 +36,17 @@ export async function listReadableAreas(
     true,
   );
   const systemIds = systems.map((s) => s.id);
-  if (systemIds.length === 0) return [];
   const vendorBySystemId = new Map(systems.map((s) => [s.id, s.vendorType]));
+
+  // Areas a user can read: the identity Areas of every visible system, PLUS Areas they OWN — the
+  // latter catches multi-device ("composite") Areas whose handle is not itself a real system.
+  const accessCond =
+    systemIds.length > 0
+      ? or(
+          eq(areas.ownerClerkUserId, userId),
+          inArray(areas.legacySystemId, systemIds),
+        )
+      : eq(areas.ownerClerkUserId, userId);
 
   const rows = await requirePlanetscaleDb()
     .select({
@@ -47,9 +56,7 @@ export async function listReadableAreas(
       legacySystemId: areas.legacySystemId,
     })
     .from(areas)
-    .where(
-      and(inArray(areas.legacySystemId, systemIds), eq(areas.status, "active")),
-    );
+    .where(and(eq(areas.status, "active"), accessCond));
 
   return rows
     .filter(
@@ -61,7 +68,9 @@ export async function listReadableAreas(
       displayName: r.displayName,
       kind: r.kind as "identity" | "composite",
       legacySystemId: r.legacySystemId,
-      vendorType: vendorBySystemId.get(r.legacySystemId) ?? "",
+      // Real handle → its vendor type; a multi-device Area handle (no real system) → "composite"
+      // (drives the "site"/unified layout). Layout ownership moves to the dashboard in a later phase.
+      vendorType: vendorBySystemId.get(r.legacySystemId) ?? "composite",
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
@@ -95,7 +104,7 @@ export async function resolveAreasByIds(
       kind: r.kind as "identity" | "composite",
       legacySystemId: r.legacySystemId,
       vendorType:
-        (await SystemsManager.getInstance().getSystem(r.legacySystemId))
+        (await SystemsManager.getInstance().getViewableSystem(r.legacySystemId))
           ?.vendorType ?? "",
     })),
   );

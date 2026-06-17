@@ -1,4 +1,4 @@
-import { eq, max } from "drizzle-orm";
+import { eq, max, isNotNull } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { isProduction } from "@/lib/env";
@@ -21,6 +21,38 @@ export type Area = InferSelectModel<typeof pgAreas>;
 export type SystemWithPolling = System & {
   pollingStatus?: PollingStatus | null;
 };
+
+/**
+ * An "area view" — a SystemWithPolling shape synthesized from a multi-device Area whose integer
+ * addressing handle (`legacy_system_id`) has NO real `systems` row. It is the SERVER-ONLY resolution
+ * of that handle for the dashboard data path (points/flow/auth resolve via `area_bindings` + members);
+ * it is deliberately kept OUT of `systemsMap`, so an area view never appears in the systems/devices/
+ * admin lists or polling. Owns no points and never polls, so device/polling fields are null.
+ */
+function synthesizeAreaView(area: Area): SystemWithPolling | null {
+  if (area.legacySystemId == null) return null;
+  return {
+    id: area.legacySystemId,
+    ownerClerkUserId: area.ownerClerkUserId,
+    vendorType: "composite",
+    vendorSiteId: `area:${area.legacySystemId}`,
+    status: area.status,
+    displayName: area.displayName,
+    alias: area.alias,
+    model: null,
+    serial: null,
+    ratings: null,
+    solarSize: null,
+    batterySize: null,
+    location: area.location,
+    metadata: null,
+    timezoneOffsetMin: area.timezoneOffsetMin,
+    displayTimezone: area.displayTimezone,
+    createdAt: area.createdAt,
+    updatedAt: area.updatedAt,
+    pollingStatus: null,
+  };
+}
 
 // Input shape for creating a system (shared by createSystem and its routed inserts).
 type CreateSystemData = {
@@ -67,6 +99,10 @@ export class SystemsManager {
   private static lastLoadedAt: number = 0;
   private static readonly CACHE_TTL_MS = 60 * 1000; // 1 minute TTL
   private systemsMap: Map<number, SystemWithPolling> = new Map();
+  // Area views, keyed by addressing handle (legacy_system_id): a multi-device Area with NO real
+  // `systems` row. Kept SEPARATE from systemsMap so areas never leak into the systems/devices lists,
+  // but are still resolvable for the dashboard data path via getViewableSystem()/isAreaHandle().
+  private areaViewsMap: Map<number, SystemWithPolling> = new Map();
   private loadPromise: Promise<void>;
 
   private constructor() {
@@ -153,6 +189,20 @@ export class SystemsManager {
       this.systemsMap.set(row.systems.id, systemWithPolling);
     }
 
+    // Area views: one per Area whose addressing handle (legacy_system_id) has NO real `systems` row
+    // (a multi-device Area). Loaded into a SEPARATE map — they resolve for the dashboard data path
+    // but never appear in the systems/devices/admin lists or polling.
+    const handleAreas = await requirePlanetscaleDb()
+      .select()
+      .from(pgAreas)
+      .where(isNotNull(pgAreas.legacySystemId));
+    for (const area of handleAreas) {
+      if (area.legacySystemId == null) continue;
+      if (this.systemsMap.has(area.legacySystemId)) continue; // real row wins (identity Areas)
+      const view = synthesizeAreaView(area);
+      if (view) this.areaViewsMap.set(area.legacySystemId, view);
+    }
+
     const allSystemsArray = Array.from(this.systemsMap.values());
     const activeCount = allSystemsArray.filter(
       (s) => s.status === "active",
@@ -168,6 +218,32 @@ export class SystemsManager {
   async getSystem(systemId: number): Promise<SystemWithPolling | null> {
     await this.loadPromise;
     return this.systemsMap.get(systemId) || null;
+  }
+
+  /**
+   * Resolve a handle for the DASHBOARD DATA PATH: a real system, OR an area view (a multi-device Area
+   * with no `systems` row). Use this — not getSystem — wherever an Area's whole-area data/auth/flow is
+   * served, so the area handle resolves. getSystem stays real-only (devices/admin/polling).
+   */
+  async getViewableSystem(systemId: number): Promise<SystemWithPolling | null> {
+    await this.loadPromise;
+    return (
+      this.systemsMap.get(systemId) ?? this.areaViewsMap.get(systemId) ?? null
+    );
+  }
+
+  /** Whether `systemId` is an area view (a multi-device Area handle with no real `systems` row). */
+  async isAreaHandle(systemId: number): Promise<boolean> {
+    await this.loadPromise;
+    return this.areaViewsMap.has(systemId);
+  }
+
+  /** Active area-view handles (multi-device Area handles) — included in the daily flow recompute. */
+  async getActiveAreaHandles(): Promise<number[]> {
+    await this.loadPromise;
+    return Array.from(this.areaViewsMap.values())
+      .filter((v) => v.status === "active")
+      .map((v) => v.id);
   }
 
   /**

@@ -254,7 +254,39 @@ export class PointManager {
   private async _resolvePointsForViewable(
     system: SystemWithPolling,
   ): Promise<PointInfo[]> {
-    return this._loadPointsForNonCompositeSystem(system.id);
+    // A real device loads its own point_info. An AREA VIEW (a multi-device Area handle with no real
+    // `systems` row) resolves area-natively: its typed `area_bindings` SELECT the points (the
+    // override); an Area with no bindings DEFAULTS to the union of its member devices' own points.
+    if (!(await SystemsManager.getInstance().isAreaHandle(system.id))) {
+      return this._loadPointsForNonCompositeSystem(system.id);
+    }
+
+    const validPointRefs: PointReference[] = (
+      await getCompositeBindingRefs(system.id)
+    ).map((r) => PointReference.fromIds(r.pointSystemId, r.pointId));
+
+    if (validPointRefs.length > 0) {
+      // Bindings present (override) → the bound child refs ARE the set. Fetch all in one query:
+      // OR-of-(system_id,id) against Postgres point_info.
+      const pgConditions = validPointRefs.map(
+        (ref) => sql`(system_id = ${ref.systemId} AND id = ${ref.pointId})`,
+      );
+      const pgRows = await requirePlanetscaleDb()
+        .select()
+        .from(pgPointInfoTable)
+        .where(sql`${sql.join(pgConditions, sql` OR `)}`);
+      return pgPointInfoRowsToServed(pgRows).map((row) => PointInfo.from(row));
+    }
+
+    // No bindings → default to the union of the Area's member devices' own points.
+    const area = await getAreaForSystem(system.id);
+    if (!area) return [];
+    const memberSystemIds = await getAreaDeviceSystemIds(area.id);
+    const unioned: PointInfo[] = [];
+    for (const sid of memberSystemIds) {
+      unioned.push(...(await this._loadPointsForNonCompositeSystem(sid)));
+    }
+    return unioned;
   }
 
   /**
@@ -324,9 +356,9 @@ export class PointManager {
     typedOnly: boolean = false,
     includeInactive: boolean = false,
   ): Promise<PointInfo[]> {
-    // Look up the system object (needed for composite system handling)
+    // Resolve a real system OR an area view (multi-device Area handle) for the read data path.
     const systemsManager = SystemsManager.getInstance();
-    const system = await systemsManager.getSystem(systemId);
+    const system = await systemsManager.getViewableSystem(systemId);
 
     if (!system) {
       throw new Error(`System not found: ${systemId}`);
