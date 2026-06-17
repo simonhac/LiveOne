@@ -348,3 +348,33 @@ tile (skeleton → fills in), not a bespoke late-pop component.
 `useTileNodes` → `renderTileView` + `availableViewsForDevice`; add `TileCell`; fold `oe-grid` in as a
 view; make `buildDefaultDashboardV3` availability-aware; re-seed Daylesford. This is the `renderTileView`
 refactor the nested-tile design (`§3.3` of the plan) specified and the first cut skipped.
+
+## 7. Dashboard settings menu + composition sharing (in progress)
+
+**Context.** The v3 cutover (#107) left the composition dashboard with minimal chrome (switcher /
+rename / new): the v2 customize editor was dropped, and the share UX only ever lived in the legacy
+**system-keyed** `DashboardClient` (`DashboardShareDialog` → `/api/dashboard/[systemId]/share`). The
+per-dashboard sharing **backend (P4) is already complete** — `dashboard_share_tokens` + the full token
+lifecycle in `lib/dashboard/sharing.ts` (`create`/`validate`/`list`/`revoke`/`rename`
+`DashboardShareToken`), `dashboard_grants`, and `resolveDashboardReadPoints` scope (now v3-aware, §"cutover").
+What's missing is only the **API route, the UI, and the composition shared-view render**.
+
+**Build (this PR):**
+
+1. **API — `app/api/dashboards/[id]/share/route.ts`** (owner/admin only, reusing the `[id]/route.ts`
+   `loadOwned` guard): `POST` mints a token (`createDashboardShareToken`, optional `label`/`expiresInDays`),
+   `GET` lists (`listDashboardShareTokens`), `DELETE`/`PATCH` revoke/rename. Thin wrappers over `sharing.ts`.
+2. **Read-side — `page.tsx`.** A `?access=<token>` for a **composition** dashboard (null `system_id`)
+   now renders `CompositionDashboardClient` **read-only**: validate the token → `getDashboard` → resolve
+   the descriptor's section areas (`descriptorAreaIds` → `resolveAreasByIds`) as `sharedAreas` → render
+   with `canEdit=false`. Per-area data fetches carry the token and are authorized by the live union scope
+   (`requireDashboardAccess`, v3-aware). Replaces the current "composition share → redirect to sign-in" stub.
+3. **UI — a Settings (gear) menu** on the composition dashboard, consolidating the scattered chrome:
+   **Share** (mint a read-only link, copy, list/revoke), **Rename / Shortname / Set-default / Delete**
+   (the existing `DashboardSettingsDialog`), and a **Customize** entry that opens the v3 configurator (#23,
+   a follow-up). Lead with **Share** — the gap the user hit.
+
+**Scope:** Share + the Settings menu land here; the **configurator** (#23) and **`dashboard_grants`**
+(invite a specific person, vs. a public read-only link) are deferred follow-ups. This finishes the §2
+"the dashboard is the unit of sharing" story for composition dashboards (it was previously only wired for
+legacy per-system dashboards).

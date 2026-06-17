@@ -132,6 +132,31 @@ export default async function DashboardPage({
           />
         );
       }
+
+      // Composition dashboard shared view (no home system). The token is authoritative; render the v3
+      // descriptor read-only with the referenced Areas resolved server-side, so each card's data fetch
+      // (token-authorized by the live union scope) runs without an authed /api/areas/readable call.
+      const composition = await getDashboard(valid.dashboardId);
+      if (composition && composition.displayName) {
+        const raw: unknown = composition.descriptor;
+        const descriptor: DashboardV3 = isDashboardV3(raw)
+          ? raw
+          : { version: 3, sections: [] };
+        const sharedAreas = await resolveAreasByIds(descriptorAreaIds(raw));
+        return (
+          <CompositionDashboardClient
+            dashboard={{
+              id: composition.id,
+              displayName: composition.displayName,
+              alias: composition.alias,
+              descriptor,
+            }}
+            canEdit={false}
+            sharedAreas={sharedAreas}
+            serveFlowFromPg={FLOW_MATRIX_SERVE_FROM_PG}
+          />
+        );
+      }
     }
   }
 
