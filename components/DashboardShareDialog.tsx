@@ -425,7 +425,9 @@ export default function DashboardShareDialog({
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-700 bg-gray-900/60 text-left text-[11px] uppercase tracking-wide text-gray-500">
-                      <th className="py-2 pl-3 pr-2 font-medium">Name</th>
+                      <th className="w-full py-2 pl-3 pr-2 font-medium">
+                        Name
+                      </th>
                       <th className="hidden px-2 py-2 font-medium sm:table-cell">
                         Expires
                       </th>
@@ -480,7 +482,7 @@ export default function DashboardShareDialog({
                             </td>
                           ) : (
                             <>
-                              <td className="max-w-0 py-2 pl-3 pr-2">
+                              <td className="w-full max-w-0 py-2 pl-3 pr-2">
                                 <span
                                   className={`block truncate font-medium ${
                                     hasName
