@@ -146,10 +146,10 @@ function AreaCardBody({
         const key =
           card.chart.split === "generation" ? "chart:generation" : "chart:load";
         return (
-          <SiteChartsCard
-            systemId={String(systemId)}
+          <AreaSiteChartCard
+            systemId={systemId}
             serveFlowFromPg={serveFlowFromPg}
-            cardVisible={(k) => k === key}
+            cardKey={key}
           />
         );
       }
@@ -158,10 +158,10 @@ function AreaCardBody({
       );
     case "sankey":
       return (
-        <SiteChartsCard
-          systemId={String(systemId)}
+        <AreaSiteChartCard
+          systemId={systemId}
           serveFlowFromPg={serveFlowFromPg}
-          cardVisible={(k) => k === "sankey"}
+          cardKey="sankey"
         />
       );
     case "amber-now":
@@ -209,6 +209,36 @@ function AreaTilesCard({ systemId }: { systemId: number }) {
         <Fragment key={`tile-${id}`}>{cardNodes[id]}</Fragment>
       ))}
     </div>
+  );
+}
+
+/**
+ * A site stacked-areas chart / sankey for an Area. Self-fetches the Area's `system` (vendorType +
+ * timezone) and passes it to SiteChartsCard — which gates its site-history query on
+ * `isSiteVendor = system.vendorType ∈ {mondo, composite}`, so without the system prop it renders
+ * "No data". `cardKey` selects which sub-card to show (`chart:load` / `chart:generation` / `sankey`).
+ */
+function AreaSiteChartCard({
+  systemId,
+  serveFlowFromPg,
+  cardKey,
+}: {
+  systemId: number;
+  serveFlowFromPg: boolean;
+  cardKey: string;
+}) {
+  const { isAnyModalOpen } = useModalContext();
+  const { data } = useQuery(
+    dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
+  );
+  const system = ((data ?? null) as AreaDatum | null)?.system;
+  return (
+    <SiteChartsCard
+      systemId={String(systemId)}
+      system={system}
+      serveFlowFromPg={serveFlowFromPg}
+      cardVisible={(k) => k === cardKey}
+    />
   );
 }
 
