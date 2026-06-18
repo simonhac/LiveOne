@@ -28,8 +28,8 @@ export async function getAreaForSystem(
 
 /**
  * The integer addressing handle (`legacy_system_id`) for an Area uuid — the inverse of
- * `getAreaForSystem`. For an identity Area this is the physical `systems.id`; for a composite it is
- * the areas-backed virtual-system handle that `getActivePointsForSystem` resolves to child points.
+ * `getAreaForSystem`. For an area-of-one this is the physical `systems.id`; for a multi-device area it
+ * is the areas-backed virtual-system handle that `getActivePointsForSystem` resolves to child points.
  * Returns null when the uuid is unknown or the Area carries no handle. Used to map a dashboard's
  * per-card Areas back to the systemIds its share scope authorizes.
  */

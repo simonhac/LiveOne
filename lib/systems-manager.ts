@@ -198,7 +198,7 @@ export class SystemsManager {
       .where(isNotNull(pgAreas.legacySystemId));
     for (const area of handleAreas) {
       if (area.legacySystemId == null) continue;
-      if (this.systemsMap.has(area.legacySystemId)) continue; // real row wins (identity Areas)
+      if (this.systemsMap.has(area.legacySystemId)) continue; // real systems row wins (an area-of-one)
       const view = synthesizeAreaView(area);
       if (view) this.areaViewsMap.set(area.legacySystemId, view);
     }
@@ -428,7 +428,7 @@ export class SystemsManager {
       `[SystemsManager] Created system ${newSystem.id} (${systemData.vendorType}) for user ${systemData.ownerClerkUserId}`,
     );
 
-    // Areas are LAZY: a new system gets no identity Area at create-time. One is minted on demand the
+    // Areas are LAZY: a new system gets no area-of-one at create-time. One is minted on demand the
     // moment it's actually needed — when the system forms a complete flow role set (the daily
     // `resolveLogicalSystem` heal) or when its location is set (`/api/systems/[id]/location`). This
     // stops bare monitoring-only systems (e.g. public grid-region feeds) accruing pointless Area rows.

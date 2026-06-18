@@ -46,8 +46,8 @@ export async function resolveGridContextForSystem(
     const db = requirePlanetscaleDb();
 
     // b. The Area for this system carries the location we derive the region from. Works for both an
-    //    identity Area (1:1 over a physical system) and a composite Area ("Kinkora Unified") — the
-    //    composite's location describes the composite site, set on the Area row like any other.
+    //    area-of-one (1:1 over a physical system) and a multi-device area ("Kinkora Unified") — the
+    //    multi-device area's location describes the whole site, set on the Area row like any other.
     const [area] = await db
       .select({ location: areas.location })
       .from(areas)
@@ -61,9 +61,9 @@ export async function resolveGridContextForSystem(
     const region = nemRegionForLocation(location);
     if (!region) return null;
 
-    // d. Grid-connected check: the system must play the grid role. A composite has no own
+    // d. Grid-connected check: the system must play the grid role. A multi-device area has no own
     //    point_info — its grid role is a binding to a child system's grid point — so check its
-    //    bindings; an identity system checks its own points. Off-grid systems have neither.
+    //    bindings; a single device checks its own points. Off-grid systems have neither.
     const hasGridPoint = await systemPlaysGridRole(db, systemId);
     if (!hasGridPoint) return null;
 

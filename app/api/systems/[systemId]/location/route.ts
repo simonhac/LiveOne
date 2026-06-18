@@ -3,8 +3,7 @@ import { eq } from "drizzle-orm";
 import { requireSystemAccess } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
-import { getAreaForSystem } from "@/lib/areas/resolve";
-import { ensureIdentityArea } from "@/lib/areas/sync";
+import { ensureAreaOfOne } from "@/lib/areas/sync";
 import {
   mergeAreaLocation,
   type AreaLocationPatch,
@@ -19,9 +18,9 @@ import type { AreaLocation } from "@/lib/areas/types";
  * `area_id` override), so it has no single location. Stored on `areas.location`; DERIVES the NEM grid
  * region for the Local Grid card (lib/grid/context.ts), which itself resolves region per-Area.
  *
- * Keyed on `systemId` (all addressing is still integer-systemId today): resolves the system's Area
- * (identity or composite) and, for a physical system that predates the runtime identity-Area seam,
- * heals it via `ensureIdentityArea`.
+ * Keyed on `systemId` (all addressing is still integer-systemId today): resolves the system's
+ * area-of-one and, for a physical system that predates the runtime Area seam, heals it (and its
+ * single member) via `ensureAreaOfOne`.
  *
  * GET: read access. PUT: owner/admin write — merge-patches the location and returns the derived region.
  */
@@ -86,12 +85,10 @@ export async function PUT(
   });
   if (auth instanceof NextResponse) return auth;
 
-  // Resolve the Area to write. A physical system that predates the runtime identity-Area seam may
-  // not have one yet — heal it here.
-  const existingArea = await getAreaForSystem(systemId);
-  const areaId = existingArea
-    ? existingArea.id
-    : await ensureIdentityArea(auth.system);
+  // Resolve the Area to write. Always ensure the system's area-of-one — even when it already exists —
+  // so a prior location edit can't leave a member-less area-of-one behind (ensureAreaOfOne heals the
+  // single area_devices member on the existing-area branch too). Idempotent.
+  const areaId = await ensureAreaOfOne(auth.system);
 
   const db = requirePlanetscaleDb();
   const [row] = await db
@@ -108,7 +105,7 @@ export async function PUT(
     .set({ location: merged, updatedAt: new Date() })
     .where(eq(areas.id, areaId));
 
-  // A composite's synthesized virtual system copies areas.location — refresh so it reflects the edit.
+  // A multi-device area's synthesized virtual system copies areas.location — refresh so it reflects the edit.
   SystemsManager.invalidateCache();
 
   return NextResponse.json({

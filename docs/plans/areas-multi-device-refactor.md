@@ -1,13 +1,14 @@
 # Plan: Replace "composite areas" with first-class areas that contain multiple devices
 
-> **Status: Phases A–C + tail DONE and merged (#105 + #106). Phase D pending.** This is the original
-> planning doc, kept for detail; the live summary + invariants now live in
-> [`../architecture/areas-and-dashboards.md` §5](../architecture/areas-and-dashboards.md). Shipped: Phase A
-> (unified resolver), Phase B (`area_devices` + migration `0018`, applied to dev + `sydney` prod), Phase C
-> (membership + override / union-default, lazy areas, `kind` reads collapsed), and the tail (admin
-> one-Areas list, KV fan-out generalization). **Only Phase D remains** — drop the `areas.kind` column (via
-> expand-contract) + the create-UX reframe; needs schema approval + a soak. See §5 of the canonical doc for
-> the precise Phase-D steps.
+> **Status: Phases A–D DONE — the `areas.kind` column was dropped in migration `0019` (#128). Only the
+> create-UX reframe remains.** This is the original planning doc, kept for detail; the live summary +
+> invariants now live in [`../architecture/areas-and-dashboards.md` §5](../architecture/areas-and-dashboards.md).
+> Shipped: Phase A (unified resolver), Phase B (`area_devices` + migration `0018`, applied to dev + `sydney`
+> prod), Phase C (membership + override / union-default, lazy areas, `kind` reads collapsed), the tail (admin
+> one-Areas list, KV fan-out generalization), and **Phase D — `DROP COLUMN kind` (migration `0019`, #128,
+> applied to `sydney` prod 2026-06-18)**. The single-vs-multi distinction is now purely structural
+> (membership), in vocabulary **area-of-one** vs **multi-device area**. The only remaining tail is the
+> create-UX reframe. The Phase-D detail below is retained as a historical record of how the drop was done.
 
 ## Context
 

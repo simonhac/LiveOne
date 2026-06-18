@@ -58,7 +58,7 @@ export async function getDashboardIdForUserSystem(
 /**
  * The id of the caller's dashboard for `systemId`, creating a default row if none exists yet (so a
  * share token always has a stable target even for an un-customized dashboard). The default descriptor
- * is a single-section v3 dashboard over the system's identity Area.
+ * is a single-section v3 dashboard over the system's area-of-one.
  */
 export async function getOrCreateDefaultDashboardId(
   clerkUserId: string,

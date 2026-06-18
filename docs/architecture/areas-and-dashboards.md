@@ -4,7 +4,8 @@
 > done · Phase 2b-1 (multi-area cards) done · Phase 2b-2 (first-class composition dashboards) done (additive,
 > legacy per-system path kept) · **Composite special-case retired (#105 + #106): an Area is now a grouping
 > of 1..N member devices — resolver unified, `kind` no longer read, `area_devices` membership live.** The
-> `areas.kind` _column_ drop + create-UX reframe is **Phase D** (still pending — §5). The unified tile
+> `areas.kind` _column_ was **dropped in migration `0019`** (#128); only the create-UX reframe remains of
+> **Phase D** (§5). The unified tile
 > model (§6, #110), composition sharing + settings menu (§7, #112), and the generalized sankey (§8,
 > #116–118) have all shipped. Phase 3 (HA export) planned.
 > Schema source of truth: `lib/db/planetscale/schema.ts` (Drizzle is authoritative — never hand-rolled
@@ -38,12 +39,13 @@ canvas.**
   bindings); with **no bindings** an Area **defaults to the union of its member devices' own points**.
   `roles` is the single source of truth for role semantics (the HA `device_class`/`state_class`/unit/
   aggregability registry, projected from `lib/roles/registry.ts`).
-- **Areas are lazy.** A system is **not** given an identity Area at create-time; one is minted on demand
+- **Areas are lazy.** A system is **not** given an area-of-one at create-time; one is minted on demand
   the moment it's needed — when the system forms a complete flow role set (the daily recompute heal) or
   when its location is set — so bare monitoring-only systems don't accrue pointless Area rows.
-- **`areas.kind` (`'identity'|'composite'`) is retired in code** (#105/#106 — no reader branches on it; the
-  admin list, the resolver, grid, and KV fan-out all derive identity-vs-composite from membership). The
-  _column_ is still physically present; dropping it is **Phase D** (§5).
+- **`areas.kind` (`'identity'|'composite'`) is gone** — retired in code (#105/#106 — no reader branches on
+  it; the admin list, the resolver, grid, and KV fan-out all derive single-vs-multi from membership) and the
+  _column_ was **dropped in migration `0019`** (#128). The distinction is purely structural (membership),
+  captured in vocabulary as **area-of-one** vs **multi-device area**.
 
 **Invariants.** The flow matrix (`point_readings_flow_1d`) is area-keyed with byte-identical rows — never
 recomputed, never re-keyed, FK never cascaded. The integer `legacy_system_id` handle is **load-bearing
@@ -252,13 +254,14 @@ revisit only if a concrete need (not tidiness) appears.
 The foundation gates everything. Phase 2a (done) gates Phase 2b. Phase 3 is independent of Phase 2 and can
 proceed in parallel.
 
-## 5. Composite retirement — and the pending Phase D
+## 5. Composite retirement — Phase D (`kind` column drop) done
 
-The semantic-layer cleanup that makes §1's "an Area is 1..N member devices" literally true in code. Two
-earlier waves got here: **composite `systems` rows deleted** → synthesized as areas-backed virtual systems
-(#89–92, migration `0014`); then the **special-case removed from the resolver** (#105 + #106).
+The semantic-layer cleanup that makes §1's "an Area is 1..N member devices" literally true in code. Three
+waves got here: **composite `systems` rows deleted** → synthesized as areas-backed virtual systems
+(#89–92, migration `0014`); the **special-case removed from the resolver** (#105 + #106); then the **`kind`
+column dropped** (#128, migration `0019`).
 
-**Done — #105 + #106 (no `kind` column drop):**
+**Done — #105 + #106 (resolver/membership), then the `kind` column drop (#128):**
 
 - **Unified resolver.** `PointManager._resolvePointsForViewable` is the one "resolve viewable points" path.
   A real device loads its own `point_info`; an **areas-backed** handle resolves under membership + override
@@ -266,43 +269,35 @@ earlier waves got here: **composite `systems` rows deleted** → synthesized as 
   **not** `vendorType === 'composite'` / `kind`.
 - **`area_devices` membership table** (migration **`0018`**, applied to dev + `sydney` prod): `(area_id,
 system_id, ordinal)`. Backfill: a multi-device (composite) Area's members are the distinct
-  `area_bindings.point_system_id`; a single-device (identity) Area's member is its `source_system_id`. Kept
-  in lockstep on create/edit (`replaceAreaBindings`, `ensureIdentityArea`). `area_id` CASCADE is safe (the
+  `area_bindings.point_system_id`; a single-device area's member is its `source_system_id`. Kept
+  in lockstep on create/edit (`replaceAreaBindings`, `ensureAreaOfOne`). `area_id` CASCADE is safe (the
   table is rederivable); **no FK to `systems`** (a member may be a child system whose row was deleted in
   `0014`).
 - **Union-default** (bindings-as-select): a binding-less multi-device Area resolves to the union of its
   members' points — the capability that makes a plain "several devices in one Area" work with no curation.
 - **`kind` reads collapsed** everywhere: synthesis (`legacy_system_id` with no `systems` row), binding
   reads, grid-role, admin (one "Areas" list by member count), KV fan-out.
-- **Lazy Areas:** no eager identity-Area at system create; minted on demand (complete-role-set heal, or on
+- **Lazy Areas:** no eager area-of-one at system create; minted on demand (complete-role-set heal, or on
   location-set).
 
 Every step is gated by the per-area parity assertion (`getActivePointsForSystem(handle)` byte-identical),
 and `point_readings_flow_1d` + the integer `legacy_system_id` handle are untouched.
 
-### Phase D — drop `areas.kind` + create-UX reframe — ⬜ (pending; needs schema approval + a soak)
+### Phase D — drop `areas.kind` — ✅ done (#128, migration `0019`); create-UX reframe — ⬜ (pending)
 
-The `areas.kind` column is still physically present (everything reads membership now, but a few non-resolver
-sites still _select_ it as a pass-through, and `sync.ts` still _writes_ it). Phase D finishes the job:
+The `areas.kind` column has been **dropped** (migration `0019`, PR #128, applied to `sydney` prod
+2026-06-18). No code reads or writes `kind` — the pass-through selects/fields, the `sync.ts` writes, the
+`getCompositeAreaId` `kind='composite'` filter, and the constructed `{ kind: 'identity' }` in
+`logical-system.ts` are all gone. The single-vs-multi distinction is purely structural (membership),
+captured in vocabulary as **area-of-one** vs **multi-device area**. The remaining tail:
 
-1. **Purge the remaining `kind` references** — the pass-through selects/fields (`ReadableArea.kind`,
-   `ResolvedArea.kind`, `/api/areas`), the writes in `lib/areas/sync.ts` (`ensureIdentityArea`,
-   `createCompositeArea`), the `getCompositeAreaId` `kind='composite'` filter, and the constructed
-   `{ kind: 'identity' }` in `logical-system.ts`. Replace with membership-derived values where a label is
-   still wanted (single- vs multi-device).
-2. **Drop the column via expand-contract** (it is `NOT NULL`, so a one-shot drop races the deploy):
-   - **Migration D1** — `ALTER TABLE areas ALTER COLUMN kind DROP NOT NULL` (or add a default). Now old code
-     that still writes `kind` and new code that omits it both work. Apply to `sydney` first.
-   - **Deploy** the code from step 1 (nothing reads or writes `kind`).
-   - **Migration D2** — `ALTER TABLE areas DROP COLUMN kind`, behind a `DO`/`RAISE` guard that no reader
-     remains. Apply to `sydney`.
-3. **Create-UX reframe** — present the admin "create composite system + `{version:2, mappings}`" flow as
-   "create an Area → add member devices (`area_devices`) → optional role overrides." The backend is already
-   areas-only (#92); this is mostly presentation + writing membership. Keep the `{version:2, mappings}`
-   editor as the **override** editor.
+- **Create-UX reframe** — present the admin "create composite system + `{version:2, mappings}`" flow as
+  "create an Area → add member devices (`area_devices`) → optional role overrides." The backend is already
+  areas-only (#92); this is mostly presentation + writing membership. Keep the `{version:2, mappings}`
+  editor as the **override** editor.
 
-**Not in Phase D / not planned:** re-keying the serving path or `flow_1d` to UUID, and dropping
-`legacy_system_id` — the integer handle is load-bearing addressing (see "Not planned" above), kept.
+**Not planned:** re-keying the serving path or `flow_1d` to UUID, and dropping `legacy_system_id` — the
+integer handle is load-bearing addressing (see "Not planned" above), kept.
 
 ## 6. Tile rendering — the unified tile model — ✅ shipped (#110)
 
