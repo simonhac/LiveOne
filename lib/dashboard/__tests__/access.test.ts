@@ -86,7 +86,7 @@ describe("allowedSystemIds — the share-scope system set", () => {
   });
 
   it("stays the singleton when the default area maps back to the dashboard's own system", async () => {
-    mockGetLegacy.mockResolvedValue(7); // the system's identity area → 7
+    mockGetLegacy.mockResolvedValue(7); // the system's area-of-one → 7
     const out = await allowedSystemIds({
       defaultAreaId: "area-self",
       systemId: 7,

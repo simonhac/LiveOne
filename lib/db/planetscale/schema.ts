@@ -149,14 +149,14 @@ export const users = pgTable(
   "users",
   {
     clerkUserId: text("clerk_user_id").primaryKey(),
-    // LEGACY default landing handle (plain int, no FK to systems): a user may default to a composite,
-    // whose areas-backed virtual system has no `systems` row after migration 0014. Superseded by
+    // LEGACY default landing handle (plain int, no FK to systems): a user may default to a multi-device
+    // area, whose areas-backed virtual system has no `systems` row after migration 0014. Superseded by
     // default_dashboard_id (Phase 2); kept as a fallback that getValidDefaultDashboardId lazily
     // migrates + keeps in sync. Not dropped this phase.
     defaultSystemId: integer("default_system_id"),
     // Forward-correct default landing DASHBOARD (Phase 2). FK to dashboards.id is safe — a dashboard
-    // row always physically exists, composite or not (unlike default_system_id, which may name a
-    // composite virtual system with no `systems` row). ON DELETE SET NULL so deleting the dashboard
+    // row always physically exists, whatever its handle (unlike default_system_id, which may name a
+    // multi-device area's virtual system with no `systems` row). ON DELETE SET NULL so deleting the dashboard
     // silently clears the default. (forward ref: `dashboards` is declared later in this module.)
     defaultDashboardId: integer("default_dashboard_id").references(
       () => dashboards.id,
@@ -421,20 +421,20 @@ export const pointReadingsAgg1d = pgTable(
 // load_path)`, because per-interval energy is additive.
 //
 // `area_id` is the LOGICAL SYSTEM / view the flows belong to (`resolveLogicalSystem`):
-// an identity Area over a single physical system, OR a composite Area whose points are drawn
-// from CHILD systems. For a composite the cross-system origin is collapsed into the Area
+// an area-of-one over a single physical system, OR a multi-device area whose points are drawn
+// from CHILD systems. For a multi-device area the cross-system origin is collapsed into the Area
 // (provenance is not preserved on the row); `source_path`/`load_path` are stems in that view's
 // namespace. All flows in a row therefore belong to one view — cross-system *edges* (a source
-// on one system, a load on another) are not representable in this shape. NOTE: a composite Area
-// and its members' identity Areas each get their own rows, so a portfolio rollup must never sum
-// a composite AND its members.
+// on one system, a load on another) are not representable in this shape. NOTE: a multi-device area
+// and its members' areas-of-one each get their own rows, so a portfolio rollup must never sum
+// a multi-device area AND its members.
 // ============================================================================
 export const pointReadingsFlow1d = pgTable(
   "point_readings_flow_1d",
   {
     // The Area this view belongs to — the logical-system identity (P3-tail-1). Part of the
-    // composite primary key. An identity Area is a 1:1 wrapper over a single physical system; a
-    // composite Area collapses its members' provenance into one namespace. See
+    // composite primary key. An area-of-one is a 1:1 wrapper over a single physical system; a
+    // multi-device area collapses its members' provenance into one namespace. See
     // areas-and-dashboards.md (P3). (Replaced the legacy `system_id` keying in migration 0013.)
     areaId: uuid("area_id")
       .notNull()
@@ -650,15 +650,17 @@ export const roles = pgTable("roles", {
 
 // ============================================================================
 // Areas - the SEMANTIC layer (P3). A named role-set that binds physical points
-// into a coherent energy site. Replaces vendor_type='composite' fake systems rows.
+// into a coherent energy site. Replaced vendor_type='composite' fake systems rows.
 //
-//   kind='identity'  → 1:1 wrapper over a single physical system (source_system_id).
-//   kind='composite' → bindings drawn from points across ≥2 systems.
+// An Area is a grouping of 1..N member devices (`area_devices`):
+//   area-of-one   → 1:1 wrapper over a single physical system (`source_system_id`).
+//   multi-device  → points drawn from across ≥2 member systems (via `area_bindings`).
+// The single-vs-multi distinction is STRUCTURAL (membership), not a stored `kind` — the
+// `kind` column was dropped in migration 0019.
 //
-// `id` is a GUID (decoupled from systems.id). `legacy_system_id` is the systems.id
-// this Area was migrated from (identity: == source_system_id; composite: the composite
-// shim row) — it is the 1:1 seam that drives the point_readings_flow_1d.area_id re-key
-// and keeps the composite shim joined through the soak. Droppable post-soak.
+// `id` is a GUID (decoupled from systems.id). `legacy_system_id` is the integer ADDRESSING
+// HANDLE: an area-of-one's == its `source_system_id`; a multi-device area's == the old
+// composite shim's systems.id. It drives the point_readings_flow_1d.area_id keying.
 // Areas are organizational, NOT the access boundary (access stays system-granular until P4).
 // ============================================================================
 export const areas = pgTable(
@@ -666,11 +668,12 @@ export const areas = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(), // app supplies uuidv7(); default is a safety net
     ownerClerkUserId: text("owner_clerk_user_id"),
-    sourceSystemId: integer("source_system_id").references(() => systems.id), // single-device Area's source
-    // The 1:1 migration seam + the stable integer ADDRESSING HANDLE for a composite (its old
-    // systems.id). No FK to systems: a composite Area outlives its `systems` row (deleted in
-    // migration 0014), and `getSystem(legacy_system_id)` then resolves to the synthesized virtual
-    // system. The unique index below stays as the addressing invariant (one Area per handle).
+    sourceSystemId: integer("source_system_id").references(() => systems.id), // an area-of-one's single member/source
+    // The 1:1 migration seam + the stable integer ADDRESSING HANDLE. For a multi-device area it is
+    // the old composite shim's systems.id; no FK to systems, since that area outlives its `systems`
+    // row (deleted in migration 0014), and `getSystem(legacy_system_id)` then resolves to the
+    // synthesized virtual system. The unique index below stays as the addressing invariant (one Area
+    // per handle).
     legacySystemId: integer("legacy_system_id"),
     displayName: text("display_name").notNull(),
     alias: text("alias"),
@@ -751,13 +754,13 @@ export const areaBindings = pgTable(
 );
 
 // ============================================================================
-// Area devices - explicit area→member-device membership (composite retirement, Phase B).
+// Area devices - explicit area→member-device membership (the unified 1..N model, Phase B).
 //
-// Unifies the two implicit membership models into one: an identity Area has a single member (its
-// `source_system_id`); a composite Area's members are the DISTINCT `area_bindings.point_system_id`s.
+// Unifies the two implicit membership models into one: an area-of-one has a single member (its
+// `source_system_id`); a multi-device area's members are the DISTINCT `area_bindings.point_system_id`s.
 // Making membership first-class lets an Area be "a grouping of 1..N member devices" and lets roles
-// later DEFAULT from each member's own point_info (with area_bindings as an override) — retiring the
-// composite special-case. `system_id` is a plain int (like `areas.legacy_system_id`) with NO FK to
+// DEFAULT from each member's own point_info (with area_bindings as an override) — so there is no
+// single-vs-multi special-case. `system_id` is a plain int (like `areas.legacy_system_id`) with NO FK to
 // systems: a member may be a child system whose `systems` row was deleted (migration 0014). The table
 // is fully rederivable, so the `area_id` CASCADE is safe and does NOT loosen point_readings_flow_1d's
 // data-loss firewall (that table is untouched).
@@ -785,7 +788,7 @@ export const areaDevices = pgTable(
 // (decision: "choose any power point"), independent of area_bindings.
 // Null behaviour columns inherit per-role code defaults (lib/run-tracking/defaults.ts).
 // `system_id` is the logical system (== areas.legacy_system_id seam); `area_id` is a nullable
-// forward-only seam to be backfilled when identity Areas land. See docs (run-tracking).
+// forward-only seam to be backfilled when areas-of-one land. See docs (run-tracking).
 // ============================================================================
 export const deviceTrackers = pgTable(
   "device_trackers",

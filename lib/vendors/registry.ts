@@ -30,8 +30,8 @@ export class VendorRegistry {
     this.adapters.set("mondo", new MondoAdapter());
     this.adapters.set("amber", new AmberAdapter());
     this.adapters.set("tesla", new TeslaAdapter());
-    // 'composite' is no longer a vendor: composites are areas-backed virtual systems handled
-    // outside the adapter path (the minutely cron skips them; live values come via the KV fan-out).
+    // 'composite' is no longer a vendor: a multi-device area is an areas-backed virtual system handled
+    // outside the adapter path (the minutely cron skips it; live values come via the KV fan-out).
     this.adapters.set("openelectricity", new OpenElectricityAdapter());
 
     this.initialized = true;

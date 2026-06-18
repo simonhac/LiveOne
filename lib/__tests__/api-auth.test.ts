@@ -53,6 +53,10 @@ beforeEach(() => {
   }));
   mockGetInstance.mockReturnValue({
     getSystem,
+    // These tests use REAL systems, so the area-handle branch is never taken and a viewable
+    // system resolves to the system itself.
+    getViewableSystem: getSystem,
+    isAreaHandle: jest.fn(async () => false),
   } as unknown as ReturnType<typeof SystemsManager.getInstance>);
   mockValidate.mockResolvedValue({ token: "tok", dashboardId: 1 });
   mockGetDashboard.mockResolvedValue({

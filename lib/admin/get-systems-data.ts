@@ -171,8 +171,8 @@ export async function getAdminSystemsData(
   const { latestValuesTimeoutMs = 100, skipLatestValues = false } = options;
 
   const systemsManager = SystemsManager.getInstance();
-  // Only real (physical, polled) systems belong in the admin Systems list. Composites are
-  // areas-backed virtual systems (synthesized by getAllSystems) and live on /admin/areas.
+  // Only real (physical, polled) systems belong in the admin Systems list. The leftover composite
+  // shim rows are areas-backed (their points live on member systems) and live on /admin/areas.
   const allSystems = (await systemsManager.getAllSystems()).filter(
     (s) => s.vendorType !== "composite",
   );

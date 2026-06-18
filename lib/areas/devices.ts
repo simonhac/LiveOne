@@ -1,10 +1,10 @@
 /**
- * Reads over the `area_devices` membership table (composite retirement, Phase B).
+ * Reads over the `area_devices` membership table (the unified 1..N model, Phase B).
  *
- * An Area is a grouping of 1..N member devices. This is the explicit, unified membership: an identity
- * Area has one member (its source system); a composite Area's members are the distinct child systems of
- * its bindings. Phase C's resolver consumes this to default each member's own points (with
- * `area_bindings` as an override), replacing the composite special-case.
+ * An Area is a grouping of 1..N member devices. This is the explicit, unified membership: an
+ * area-of-one has one member (its source system); a multi-device area's members are the distinct child
+ * systems of its bindings. Phase C's resolver consumes this to default each member's own points (with
+ * `area_bindings` as an override), so there is no single-vs-multi special-case.
  */
 import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
@@ -24,11 +24,11 @@ export async function getAreaDeviceSystemIds(
 
 /**
  * The member-device points to fan out for **binding-less** areas-backed handles — i.e. multi-device
- * Areas that resolve under union-default (no `area_bindings` to select). For each such handle, every
- * member device's `point_info` point, as `(handle, pointSystemId, pointId)`. Composites WITH bindings
- * are covered by `getAllCompositeBindings` instead, so this is empty for today's data (both prod
- * composites have bindings) — it only lights up when a plain multi-device Area appears. SQL-only (no
- * resolver dependency) so the KV registry can consume it without an import cycle.
+ * areas that resolve under union-default (no `area_bindings` to select). For each such handle, every
+ * member device's `point_info` point, as `(handle, pointSystemId, pointId)`. Multi-device areas WITH
+ * bindings are covered by `getAllCompositeBindings` instead, so this is empty for today's data (both
+ * prod multi-device areas have bindings) — it only lights up when a binding-less multi-device area
+ * appears. SQL-only (no resolver dependency) so the KV registry can consume it without an import cycle.
  */
 export async function getBindinglessAreaMemberPoints(): Promise<
   { handle: number; pointSystemId: number; pointId: number }[]

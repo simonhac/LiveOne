@@ -65,8 +65,8 @@ export async function getAreaBindings(): Promise<AreaBindingRow[]> {
     })
     .from(areaBindings)
     .innerJoin(areas, eq(areaBindings.areaId, areas.id))
-    // No `kind` filter: the innerJoin already restricts to Areas that HAVE bindings — exactly the
-    // multi-device Areas; identity Areas contribute none.
+    // The innerJoin already restricts to Areas that HAVE bindings — exactly the multi-device areas;
+    // an area-of-one contributes none.
     .orderBy(areas.legacySystemId, areaBindings.ordinal);
   // legacySystemId is nullable in the schema but always set for a handle-addressed Area.
   return rows.filter((r): r is AreaBindingRow => r.handle !== null);

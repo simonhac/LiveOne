@@ -23,8 +23,8 @@ export interface ReadableArea {
 }
 
 /**
- * The Areas a user may read = the identity/composite Areas of every system visible to them
- * (`getSystemsVisibleByUser`). The dashboard owner can compose a card from any of these, and the
+ * The Areas a user may read = the Areas (areas-of-one and multi-device) of every system visible to
+ * them (`getSystemsVisibleByUser`). The dashboard owner can compose a card from any of these, and the
  * authoring check (PUT /api/dashboard/[systemId]) rejects a card binding any Area outside this set.
  */
 export async function listReadableAreas(
@@ -37,8 +37,8 @@ export async function listReadableAreas(
   const systemIds = systems.map((s) => s.id);
   const vendorBySystemId = new Map(systems.map((s) => [s.id, s.vendorType]));
 
-  // Areas a user can read: the identity Areas of every visible system, PLUS Areas they OWN — the
-  // latter catches multi-device ("composite") Areas whose handle is not itself a real system.
+  // Areas a user can read: the area-of-one of every visible system, PLUS Areas they OWN — the
+  // latter catches multi-device areas whose handle is not itself a real system.
   const accessCond =
     systemIds.length > 0
       ? or(
