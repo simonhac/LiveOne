@@ -8,6 +8,7 @@ import { eq, and } from "drizzle-orm";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboardById } from "@/lib/dashboard/store";
 import { allowedSystemIds } from "@/lib/dashboard/access";
+import { grantedSystemScopeForUser } from "@/lib/dashboard/grants";
 
 // Authorization result with context
 export interface AuthContext {
@@ -241,7 +242,12 @@ export async function requireDashboardAccess(
     }
     const isOwner = ctx.userId === view.ownerClerkUserId;
     const isPublic = view.ownerClerkUserId == null;
-    const canRead = ctx.isAdmin || ctx.isClaudeDev || isOwner || isPublic;
+    // A grantee of a dashboard whose scope includes this area handle gets read-only access.
+    const grantReadOk =
+      ctx.userId != null &&
+      (await grantedSystemScopeForUser(ctx.userId)).has(systemId);
+    const canRead =
+      ctx.isAdmin || ctx.isClaudeDev || isOwner || isPublic || grantReadOk;
     if (!canRead && !ctx.userId) return unauthorized();
     if (!canRead) return forbidden("No access to this area");
     return {
@@ -254,7 +260,29 @@ export async function requireDashboardAccess(
   }
 
   const result = await requireSystemAccess(request, systemId);
-  if (result instanceof NextResponse) return result;
+  if (result instanceof NextResponse) {
+    // Grant fallback: an authed grantee gets read-only access to systems within the scope of any
+    // dashboard shared with them (the same scope a share token would grant), without needing system
+    // ownership/viewer access. Only consulted once normal system auth has denied.
+    const ctx = await getAuthContext(request);
+    if (
+      ctx.userId != null &&
+      (await grantedSystemScopeForUser(ctx.userId)).has(systemId)
+    ) {
+      const system =
+        await SystemsManager.getInstance().getViewableSystem(systemId);
+      if (system) {
+        return {
+          system,
+          userId: ctx.userId,
+          canRead: true,
+          canWrite: false,
+          viaShareToken: false,
+        };
+      }
+    }
+    return result;
+  }
   return {
     system: result.system,
     userId: result.userId,

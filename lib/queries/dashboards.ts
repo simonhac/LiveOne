@@ -11,6 +11,8 @@ export interface DashboardSummaryDTO {
   alias: string | null;
   cardCount: number;
   updatedAt: string;
+  /** "owner" = the signed-in user owns it; "shared" = reachable via a grant (read-only). */
+  access: "owner" | "shared";
 }
 
 export interface MyDashboardsResponse {

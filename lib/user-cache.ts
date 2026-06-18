@@ -55,6 +55,25 @@ export async function getUserIdByUsername(
 }
 
 /**
+ * Get Clerk user ID by email address (no cache — invites are infrequent).
+ *
+ * @param email - Email address to look up
+ * @returns Clerk user ID or null if no user has that email
+ */
+export async function getUserIdByEmail(email: string): Promise<string | null> {
+  try {
+    const client = await clerkClient();
+    const users = await client.users.getUserList({
+      emailAddress: [email],
+    });
+    return users.data[0]?.id ?? null;
+  } catch (error) {
+    console.error("Failed to lookup email from Clerk:", error);
+    return null;
+  }
+}
+
+/**
  * Cache a username → Clerk ID mapping
  *
  * @param username - Username

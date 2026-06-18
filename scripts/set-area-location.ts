@@ -1,8 +1,8 @@
 #!/usr/bin/env tsx
 /**
- * Set an identity Area's physical location (`areas.location` jsonb).
+ * Set an area-of-one's physical location (`areas.location` jsonb).
  *
- * Ensures the identity Area exists for the given system (via ensureIdentityArea), then writes the
+ * Ensures the area-of-one exists for the given system (via ensureAreaOfOne), then writes the
  * `AreaLocation` object. The location is used to DERIVE downstream facts (e.g. the NEM grid region
  * via lib/vendors/openelectricity/region.ts) — it never stores a derived value.
  *
@@ -28,7 +28,7 @@ function getArg(name: string): string | undefined {
 async function main() {
   const { planetscaleDb } = await import("@/lib/db/planetscale");
   const { systems, areas } = await import("@/lib/db/planetscale/schema");
-  const { ensureIdentityArea } = await import("@/lib/areas/sync");
+  const { ensureAreaOfOne } = await import("@/lib/areas/sync");
 
   if (!planetscaleDb) {
     console.error(
@@ -91,12 +91,12 @@ async function main() {
   }
   if (system.vendorType === "composite") {
     console.error(
-      `❌ system ${systemId} is a composite; identity Areas are for physical systems only.`,
+      `❌ system ${systemId} is a composite shim; an area-of-one is for physical systems only.`,
     );
     process.exit(1);
   }
 
-  const areaId = await ensureIdentityArea(system);
+  const areaId = await ensureAreaOfOne(system);
 
   // Merge over the existing location so unspecified fields are preserved across re-runs.
   const [areaRow] = await planetscaleDb

@@ -163,7 +163,7 @@ export class SystemsManager {
    */
   async getViewableSystem(systemId: number): Promise<SystemWithPolling | null> {
     const real = await fetchSystemById(systemId);
-    if (real) return real; // real row wins (identity Areas)
+    if (real) return real; // real row wins (an area-of-one)
     const area = await fetchAreaByHandle(systemId);
     return area ? synthesizeAreaView(area) : null;
   }
@@ -330,7 +330,7 @@ export class SystemsManager {
       `[SystemsManager] Created system ${newSystem.id} (${systemData.vendorType}) for user ${systemData.ownerClerkUserId}`,
     );
 
-    // Areas are LAZY: a new system gets no identity Area at create-time. One is minted on demand the
+    // Areas are LAZY: a new system gets no area-of-one at create-time. One is minted on demand the
     // moment it's actually needed — when the system forms a complete flow role set (the daily
     // `resolveLogicalSystem` heal) or when its location is set (`/api/systems/[id]/location`). This
     // stops bare monitoring-only systems (e.g. public grid-region feeds) accruing pointless Area rows.

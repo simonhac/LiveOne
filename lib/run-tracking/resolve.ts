@@ -4,8 +4,8 @@
  * (per-instance columns merged with per-role code defaults), and the system's timezone.
  *
  * Point refs use a plain {systemId, pointId} shape (NOT the PointReference class, which rejects
- * pointId 0 — point_info indexes start at 0). For a composite the signal point belongs to a CHILD
- * system, so signalSystemId may differ from the tracker's logical systemId.
+ * pointId 0 — point_info indexes start at 0). For a multi-device area the signal point belongs to a
+ * CHILD system, so signalSystemId may differ from the tracker's logical systemId.
  */
 import { eq, and } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";

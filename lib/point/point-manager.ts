@@ -170,12 +170,10 @@ export class PointManager {
   }
 
   /**
-   * Load points directly from database for non-composite systems
-   * PRIVATE: External callers should use getActivePointsForSystem instead
+   * Load a device's own points directly from its `point_info`.
+   * PRIVATE: External callers should use getActivePointsForSystem instead.
    */
-  private async _loadPointsForNonCompositeSystem(
-    systemId: number,
-  ): Promise<PointInfo[]> {
+  private async _loadOwnPoints(systemId: number): Promise<PointInfo[]> {
     const pgRows = await requirePlanetscaleDb()
       .select()
       .from(pgPointInfoTable)
@@ -188,9 +186,9 @@ export class PointManager {
   /**
    * Get all series for a system (includes all active points, even without type hierarchy)
    * Results are cached per system
-   * Works for both composite and non-composite systems
+   * Works for any viewable handle (a real device or a multi-device area)
    *
-   * @param system - The system (composite or non-composite)
+   * @param system - The viewable system (a real device or a multi-device area)
    */
   private async getAllSeriesForSystem(
     system: SystemWithPolling,
@@ -239,26 +237,28 @@ export class PointManager {
   /**
    * Resolve the viewable points for a system handle — the single "resolve viewable" path.
    *
-   * A **real device** loads its own `point_info`. An **areas-backed virtual system** (an Area with no
-   * real `systems` row) resolves under the membership + override model: its typed `area_bindings`
-   * SELECT the points (the override), and a curated multi-device Area — every existing composite —
-   * HAS bindings, so its bound child refs ARE the set (unchanged). An Area with NO bindings DEFAULTS
-   * to the union of its member devices' own points (a plain "several devices in one Area"). Dispatched
-   * on the structural `isAreasBackedSystem` signal, not the `vendorType === 'composite'` string.
+   * An Area is a grouping of 1..N member devices. A **real device** (an area-of-one's source, addressed
+   * by its own `systems.id`) loads its own `point_info`. A **multi-device area** (an areas-backed handle
+   * with no real `systems` row) resolves under the membership + override model: its typed `area_bindings`
+   * SELECT the points (the override), and a curated multi-device area HAS bindings, so its bound child
+   * refs ARE the set (unchanged). An area with NO bindings DEFAULTS to the union of its member devices'
+   * own points (a plain "several devices in one area"). Dispatched on the structural area-handle signal
+   * (no real `systems` row), not a vendorType string.
    *
-   * Parity: every existing areas-backed handle has bindings, so the union-default branch is dormant
-   * for current data — behaviour is byte-identical (verified by the per-area parity gate).
+   * Parity: an area-of-one's union-of-one is byte-identical to loading the device's own points, and
+   * every existing multi-device area has bindings, so the union-default branch is dormant for current
+   * data (verified by the per-area parity gate).
    *
    * PRIVATE: external callers should use getActivePointsForSystem instead.
    */
   private async _resolvePointsForViewable(
     system: SystemWithPolling,
   ): Promise<PointInfo[]> {
-    // A real device loads its own point_info. An AREA VIEW (a multi-device Area handle with no real
+    // A real device loads its own point_info. A multi-device area (an area handle with no real
     // `systems` row) resolves area-natively: its typed `area_bindings` SELECT the points (the
-    // override); an Area with no bindings DEFAULTS to the union of its member devices' own points.
+    // override); an area with no bindings DEFAULTS to the union of its member devices' own points.
     if (!(await SystemsManager.getInstance().isAreaHandle(system.id))) {
-      return this._loadPointsForNonCompositeSystem(system.id);
+      return this._loadOwnPoints(system.id);
     }
 
     const validPointRefs: PointReference[] = (
@@ -278,23 +278,23 @@ export class PointManager {
       return pgPointInfoRowsToServed(pgRows).map((row) => PointInfo.from(row));
     }
 
-    // No bindings → default to the union of the Area's member devices' own points.
+    // No bindings → default to the union of the area's member devices' own points.
     const area = await getAreaForSystem(system.id);
     if (!area) return [];
     const memberSystemIds = await getAreaDeviceSystemIds(area.id);
     const unioned: PointInfo[] = [];
     for (const sid of memberSystemIds) {
-      unioned.push(...(await this._loadPointsForNonCompositeSystem(sid)));
+      unioned.push(...(await this._loadOwnPoints(sid)));
     }
     return unioned;
   }
 
   /**
-   * Get series for a system (works for both composite and non-composite systems)
+   * Get series for a system (works for any viewable handle — a real device or a multi-device area)
    *
    * Uses cache and applies filtering by pattern/interval/typedOnly
    *
-   * @param system - The system (composite or non-composite)
+   * @param system - The viewable system (a real device or a multi-device area)
    * @param filter - Optional array of glob patterns to match against series paths (without system prefix)
    * @param interval - Optional interval to filter by ("5m" or "1d")
    * @param typedOnly - If true, only includes points with type hierarchy (excludes fallback paths). Default: false
@@ -344,7 +344,7 @@ export class PointManager {
   }
 
   /**
-   * Get all active points for a system (handles both composite and non-composite systems)
+   * Get all active points for a system (handles any viewable handle — a real device or a multi-device area)
    * This is the primary public API for getting point information
    *
    * @param systemId - The system ID

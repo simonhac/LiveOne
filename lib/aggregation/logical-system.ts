@@ -1,15 +1,15 @@
 /**
  * Logical-system resolver — the single authority for "which physical points play which energy-flow
  * roles" for a Sankey view. A *logical system* is a complete source/load role set; it is either a
- * composite (`vendor_type='composite'`, role→point mappings in `area_bindings`) or a single
- * physical system whose own points already cover the roles. Both resolve to the same shape here, so
+ * multi-device area (its role→point mappings curated in `area_bindings`) or a single physical system
+ * (an area-of-one) whose own points already cover the roles. Both resolve to the same shape here, so
  * every Sankey path — the engine's daily recompute, the sub-daily history compute, and the FE —
  * consumes one definition instead of re-deriving role classification independently.
  *
- * This wraps `PointManager.getActivePointsForSystem`, which already handles the composite-vs-single
- * split (composite points come back keyed by their *child* `systemId`, preserving physical origin).
- * The actual role split (battery→source/load, solar leaf/residual, rest-of-house) stays in
- * `buildFlowSeries`; this module only answers "which points, with which stems."
+ * This wraps `PointManager.getActivePointsForSystem`, which already resolves points uniformly for any
+ * handle (a multi-device area's points come back keyed by their *child* `systemId`, preserving
+ * physical origin). The actual role split (battery→source/load, solar leaf/residual, rest-of-house)
+ * stays in `buildFlowSeries`; this module only answers "which points, with which stems."
  */
 
 import { PointReference } from "@/lib/identifiers";
@@ -17,14 +17,14 @@ import { PointManager } from "@/lib/point/point-manager";
 import { SystemsManager } from "@/lib/systems-manager";
 import { isCompleteRoleSet } from "@/lib/roles/registry";
 import { getAreaForSystem } from "@/lib/areas/resolve";
-import { ensureIdentityArea } from "@/lib/areas/sync";
+import { ensureAreaOfOne } from "@/lib/areas/sync";
 
 // Re-exported for back-compat: the role taxonomy now lives in lib/roles/registry.ts.
 export { isCompleteRoleSet };
 
 /** A power point participating in a logical system, carrying its physical origin. */
 export interface LogicalSystemPoint {
-  /** Physical origin: {systemId, pointId} — for a composite this is the child system. */
+  /** Physical origin: {systemId, pointId} — for a multi-device area this is the child system. */
   ref: PointReference;
   /** Canonical logical-path stem, e.g. "source.solar.local" | "bidi.battery" | "load.hws". */
   stem: string;
@@ -37,7 +37,7 @@ export interface LogicalSystemPoint {
 }
 
 export interface LogicalSystem {
-  /** The logical-system id == systems.id (composite or single). */
+  /** The logical-system handle == legacy_system_id (an area-of-one's systems.id, or a multi-device area handle). */
   id: number;
   /**
    * The Area this view belongs to (the area whose `legacy_system_id == id`). Always present:
@@ -47,7 +47,7 @@ export interface LogicalSystem {
    */
   areaId: string;
   timezoneOffsetMin: number;
-  /** Participating power points (may span physical systems for a composite). */
+  /** Participating power points (may span physical systems for a multi-device area). */
   points: LogicalSystemPoint[];
   /** Has at least one source role and one load role → a Sankey can be built. */
   isComplete: boolean;
@@ -88,15 +88,15 @@ export async function resolveLogicalSystem(
   // rather than write an un-keyed flow row.
   let area = await getAreaForSystem(systemId);
   if (!area) {
-    // Lazy-area gate: only mint an identity Area for a system that actually forms a COMPLETE flow role
+    // Lazy-area gate: only mint an area-of-one for a system that actually forms a COMPLETE flow role
     // set (a real flow view). A monitoring-only / incomplete system gets NO Area and no flow row — it
     // has no flow to record anyway, and the caller drops incomplete systems regardless.
     if (!isComplete) return null;
     try {
-      const areaId = await ensureIdentityArea(system);
+      const areaId = await ensureAreaOfOne(system);
       area = { id: areaId };
       console.warn(
-        `[LogicalSystem] Healed missing identity Area for complete system ${systemId} → ${areaId}`,
+        `[LogicalSystem] Healed missing area-of-one for complete system ${systemId} → ${areaId}`,
       );
     } catch (e) {
       console.error(
@@ -118,7 +118,7 @@ export async function resolveLogicalSystem(
 
 /**
  * All active systems that form a complete logical system (a usable source/load role set). This is
- * the set the daily flow recompute should analyse — it includes composites, which the legacy
+ * the set the daily flow recompute should analyse — it includes multi-device areas, which the legacy
  * `SELECT DISTINCT system_id FROM agg_5m` driver structurally excluded.
  */
 export async function listCompleteLogicalSystems(): Promise<LogicalSystem[]> {

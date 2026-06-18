@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSystemAccess } from "@/lib/api-auth";
+import { requireDashboardAccess } from "@/lib/api-auth";
 import { and, asc, desc, eq, gte, isNull, lte, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
@@ -24,7 +24,7 @@ function magnitudeKw(w: number | null): number {
 function toEvent(r: DeviceRunPeriod, tz: string) {
   return {
     // Legacy generator-events contract:
-    date: formatInTimezone(r.startTime, tz, "d MMM"),
+    date: formatInTimezone(r.startTime, tz, "EEE d MMM"),
     startTime: formatInTimezone(r.startTime, tz, "HH:mm"),
     endTime: r.endTime ? formatInTimezone(r.endTime, tz, "HH:mm") : null,
     running: r.endTime === null,
@@ -62,7 +62,7 @@ export async function GET(
       );
     }
 
-    const authResult = await requireSystemAccess(request, systemId);
+    const authResult = await requireDashboardAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
 
     const { searchParams } = new URL(request.url);

@@ -120,7 +120,7 @@ export async function getAdminAreasData(): Promise<AdminAreasResult> {
       ? userCache.get(area.ownerClerkUserId)
       : null;
 
-    // Uniform: an Area's member devices are its `area_devices` rows — no identity/composite branch.
+    // Uniform: an Area's member devices are its `area_devices` rows — no single-vs-multi branch.
     const memberIds = await getAreaDeviceSystemIds(area.id);
     const memberSystems: AreaSourceSystem[] = (
       await Promise.all(

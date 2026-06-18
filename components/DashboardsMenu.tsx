@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Star, Plus, HardDrive } from "lucide-react";
+import { Star, Plus, HardDrive, Users } from "lucide-react";
 import { myDashboardsQuery, userPreferencesQuery } from "@/lib/queries";
 
 interface DashboardsMenuProps {
@@ -63,6 +63,7 @@ export default function DashboardsMenu({
       {dashboards.map((d) => {
         const isActive = d.id === currentDashboardId;
         const isDefault = d.id === defaultId;
+        const isShared = d.access === "shared";
         return (
           <Link
             key={d.id}
@@ -73,6 +74,12 @@ export default function DashboardsMenu({
             <span className="truncate">{d.displayName ?? "Untitled"}</span>
             {isDefault && (
               <Star className="h-3.5 w-3.5 flex-shrink-0 fill-yellow-400 text-yellow-400" />
+            )}
+            {isShared && (
+              <Users
+                className="h-3.5 w-3.5 flex-shrink-0 text-gray-400"
+                aria-label="Shared with you"
+              />
             )}
           </Link>
         );

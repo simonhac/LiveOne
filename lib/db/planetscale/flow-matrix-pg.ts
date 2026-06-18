@@ -8,10 +8,11 @@
  * load_path)`, since per-interval energy is additive. See docs/architecture/energy-flow-matrix.md.
  *
  * Driven by a LOGICAL SYSTEM (`lib/aggregation/logical-system.ts`) — the role→point mapping — so a
- * single physical system and a composite are handled identically: the recompute reads `agg_5m` for
- * the logical system's point refs (which may span *child* systems for a composite) and writes the
- * resulting matrix under the logical system's Area. Provenance is collapsed into that Area (matching
- * the live dashboard's composite stitching); a flow row's `area_id` is the VIEW the flows belong to.
+ * single physical system and a multi-device area are handled identically: the recompute reads `agg_5m`
+ * for the logical system's point refs (which may span *child* systems for a multi-device area) and
+ * writes the resulting matrix under the logical system's Area. Provenance is collapsed into that Area
+ * (matching the live dashboard's multi-device stitching); a flow row's `area_id` is the VIEW the flows
+ * belong to.
  *
  * The series assembly (battery/grid split, solar leaf/residual, rest-of-house) and the integration
  * math live in the shared, db-free modules `lib/aggregation/flow-series.ts` and
@@ -158,8 +159,8 @@ export async function recomputeFlowMatrixForDay(
       const energyKwh = result.matrix[s][l];
       if (energyKwh > MIN_FLOW_KWH) {
         flowRows.push({
-          // point_readings_flow_1d is keyed by the view's Area (P3-tail-1). Identity Areas are
-          // 1:1 wrappers, so rows are byte-identical to the old system_id keying — never a recompute.
+          // point_readings_flow_1d is keyed by the view's Area (P3-tail-1). An area-of-one is a
+          // 1:1 wrapper, so rows are byte-identical to the old system_id keying — never a recompute.
           areaId: logicalSystem.areaId,
           day: dayStr,
           sourcePath: result.sources[s],

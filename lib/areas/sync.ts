@@ -1,10 +1,12 @@
 /**
- * Write side of the Areas tables: ensure a physical system's 1:1 identity Area.
+ * Write side of the Areas tables: ensure a physical system's area-of-one.
  *
- * Identity Areas (`ensureIdentityArea`) are the runtime counterpart to the one-off migration backfill:
- * every physical system gets an Area keyed `legacy_system_id == systems.id`, so the System→Area seam
- * has a live path. Without it `getAreaForSystem`/`resolveLogicalSystem` return null and the system
- * silently drops out of the flow recompute, grid-region derivation, and share-scope.
+ * An Area is a grouping of 1..N member devices; an **area-of-one** (`ensureAreaOfOne`) is the
+ * degenerate single-member case that wraps one physical system. It is the runtime counterpart to the
+ * one-off migration backfill: every physical system gets an Area keyed `legacy_system_id == systems.id`
+ * with a single `area_devices` member, so the System→Area seam has a live path. Without it
+ * `getAreaForSystem`/`resolveLogicalSystem` return null and the system silently drops out of the flow
+ * recompute, grid-region derivation, and share-scope.
  */
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, areaDevices } from "@/lib/db/planetscale/schema";
@@ -33,8 +35,8 @@ async function getAreaIdByLegacyHandle(
   return row?.id ?? null;
 }
 
-/** Minimal physical-system shape `ensureIdentityArea` needs — a structural subset of `System`. */
-export type IdentitySystemInput = {
+/** Minimal physical-system shape `ensureAreaOfOne` needs — a structural subset of `System`. */
+export type AreaOfOneSystemInput = {
   id: number;
   ownerClerkUserId: string | null;
   displayName: string;
@@ -44,21 +46,22 @@ export type IdentitySystemInput = {
 };
 
 /**
- * Ensure the 1:1 identity Area for a physical system exists, returning its id. Idempotent and
- * race-safe: located by the `areas_legacy_system_unique` index on `legacy_system_id == system.id`, so
- * a concurrent create loses with a unique violation and we re-read the winner's id.
+ * Ensure the area-of-one for a physical system exists, returning its id. Idempotent and race-safe:
+ * located by the `areas_legacy_system_unique` index on `legacy_system_id == system.id`, so a
+ * concurrent create loses with a unique violation and we re-read the winner's id. Always (re)heals the
+ * single `area_devices` member so a system can never be left with a member-less area-of-one.
  *
- * Call at system create-time (`SystemsManager.createSystem`); `resolveLogicalSystem` also heals via
- * this for legacy/edge systems.
+ * Call at system create-time (`SystemsManager.createSystem`); `resolveLogicalSystem` and the location
+ * route also heal via this for legacy/edge systems.
  */
-export async function ensureIdentityArea(
-  system: IdentitySystemInput,
+export async function ensureAreaOfOne(
+  system: AreaOfOneSystemInput,
   db: Db = requirePlanetscaleDb(),
 ): Promise<string> {
   const existingId = await getAreaIdByLegacyHandle(system.id, db);
   if (existingId) {
     // Heal membership for an Area created before area_devices existed (idempotent).
-    await ensureIdentityMember(db, existingId, system.id);
+    await ensureMember(db, existingId, system.id);
     return existingId;
   }
 
@@ -75,14 +78,14 @@ export async function ensureIdentityArea(
       displayTimezone: system.displayTimezone,
       status: system.status,
     });
-    await ensureIdentityMember(db, areaId, system.id);
+    await ensureMember(db, areaId, system.id);
     return areaId;
   } catch (e) {
     // Lost a create race (areas_legacy_system_unique) — re-read the winner's id.
     if (isUniqueViolation(e)) {
       const winner = await getAreaIdByLegacyHandle(system.id, db);
       if (winner) {
-        await ensureIdentityMember(db, winner, system.id);
+        await ensureMember(db, winner, system.id);
         return winner;
       }
     }
@@ -90,8 +93,8 @@ export async function ensureIdentityArea(
   }
 }
 
-/** An identity Area's single member is its source system. Idempotent (PK conflict → no-op). */
-async function ensureIdentityMember(
+/** An area-of-one's single member is its source system. Idempotent (PK conflict → no-op). */
+async function ensureMember(
   db: Db,
   areaId: string,
   systemId: number,
