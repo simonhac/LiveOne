@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSystemAccess } from "@/lib/api-auth";
+import { requireDashboardAccess } from "@/lib/api-auth";
 import { and, asc, desc, eq, gte, isNull, lte, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
@@ -62,7 +62,7 @@ export async function GET(
       );
     }
 
-    const authResult = await requireSystemAccess(request, systemId);
+    const authResult = await requireDashboardAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
 
     const { searchParams } = new URL(request.url);
