@@ -16,16 +16,11 @@ export async function GET(
 
     const { userId } = await params;
 
-    // Get all systems using SystemsManager
+    // Systems owned by this user (excluding composite/area systems and non-active systems)
     const systemsManager = SystemsManager.getInstance();
-    const allSystems = await systemsManager.getAllSystems();
-
-    // Filter to systems owned by this user (excluding composite systems and non-active systems)
-    const nonCompositeSystems = allSystems.filter(
-      (s) =>
-        s.ownerClerkUserId === userId &&
-        s.vendorType !== "composite" &&
-        s.status === "active",
+    const ownedSystems = await systemsManager.getSystemsByOwner(userId);
+    const nonCompositeSystems = ownedSystems.filter(
+      (s) => s.vendorType !== "composite" && s.status === "active",
     );
 
     if (nonCompositeSystems.length === 0) {

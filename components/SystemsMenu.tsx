@@ -178,13 +178,6 @@ export default function SystemsMenu({
         )}
       {grantedSystems.map(renderSystemItem)}
 
-      {/* Admin note for many systems */}
-      {isAdmin && devices.length >= 10 && (
-        <div className="px-4 py-2 text-xs text-gray-500 border-t border-gray-700">
-          Showing first {devices.length} systems
-        </div>
-      )}
-
       {/* Cross-nav back to the dashboards world — symmetric with DashboardsMenu's "Go to Devices". */}
       {goToDashboardId != null && (
         <>

@@ -82,6 +82,8 @@ export const systems = pgTable(
   (table) => ({
     ownerClerkUserIdx: index("owner_clerk_user_idx").on(table.ownerClerkUserId),
     statusIdx: index("systems_status_idx").on(table.status),
+    // Indexed lookup for getSystemByVendorSiteId (OAuth/webhook dedup) — avoids a fleet scan at scale.
+    vendorSiteIdIdx: index("systems_vendor_site_id_idx").on(table.vendorSiteId),
     aliasUnique: uniqueIndex("alias_unique").on(
       table.ownerClerkUserId,
       table.alias,

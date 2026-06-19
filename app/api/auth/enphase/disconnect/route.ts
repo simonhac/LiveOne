@@ -36,9 +36,9 @@ export async function POST(request: NextRequest) {
     // updateSystem writes), then mark each Enphase system removed via updateSystem (keyed
     // by id).
     const systemsManager = SystemsManager.getInstance();
-    const allSystems = await systemsManager.getAllSystems();
-    const enphaseSystems = allSystems.filter(
-      (s) => s.ownerClerkUserId === userId && s.vendorType === "enphase",
+    const ownedSystems = await systemsManager.getSystemsByOwner(userId);
+    const enphaseSystems = ownedSystems.filter(
+      (s) => s.vendorType === "enphase",
     );
 
     for (const s of enphaseSystems) {

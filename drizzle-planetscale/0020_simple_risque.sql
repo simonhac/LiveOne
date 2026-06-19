@@ -1,0 +1,1 @@
+CREATE INDEX "systems_vendor_site_id_idx" ON "systems" USING btree ("vendor_site_id");

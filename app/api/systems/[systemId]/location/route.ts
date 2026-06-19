@@ -9,7 +9,6 @@ import {
   type AreaLocationPatch,
 } from "@/lib/areas/location";
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
-import { SystemsManager } from "@/lib/systems-manager";
 import type { AreaLocation } from "@/lib/areas/types";
 
 /**
@@ -105,9 +104,8 @@ export async function PUT(
     .set({ location: merged, updatedAt: new Date() })
     .where(eq(areas.id, areaId));
 
-  // A multi-device area's synthesized virtual system copies areas.location — refresh so it reflects the edit.
-  SystemsManager.invalidateCache();
-
+  // A multi-device area's synthesized virtual system copies areas.location; it's loaded fresh per
+  // request, so the edit is reflected on the next read with nothing to invalidate.
   return NextResponse.json({
     location: merged,
     region: nemRegionForLocation(merged),

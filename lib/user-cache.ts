@@ -1,5 +1,5 @@
 /**
- * User cache for fast username → Clerk ID lookups
+ * User cache for username → Clerk ID lookups
  */
 
 import { kv, kvKey } from "./kv";
@@ -14,8 +14,11 @@ export interface UsernameCacheEntry {
 }
 
 /**
- * Get Clerk user ID by username
- * Checks cache first, falls back to Clerk API if not found
+ * Get Clerk user ID by username.
+ *
+ * The cache is only a lookup hint: Clerk usernames can change outside this app, so a cached entry is
+ * verified against the live Clerk user before it is returned. If it is stale, remove it and resolve
+ * the requested username again from Clerk.
  *
  * @param username - Username to lookup
  * @returns Clerk user ID or null if not found
@@ -23,17 +26,33 @@ export interface UsernameCacheEntry {
 export async function getUserIdByUsername(
   username: string,
 ): Promise<string | null> {
-  // Try cache first (fast path)
+  let client: Awaited<ReturnType<typeof clerkClient>>;
+  try {
+    client = await clerkClient();
+  } catch (error) {
+    console.error("Failed to create Clerk client for username lookup:", error);
+    return null;
+  }
+
+  // Try cache first, but verify it before trusting it.
   const cached = await kv.get<UsernameCacheEntry>(
     kvKey(`username:${username}`),
   );
   if (cached) {
-    return cached.clerkId;
+    try {
+      const user = await client.users.getUser(cached.clerkId);
+      if (user.username === username) {
+        return cached.clerkId;
+      }
+    } catch (error) {
+      console.error("Failed to verify cached username from Clerk:", error);
+    }
+
+    await invalidateUsernameCache(username);
   }
 
-  // Cache miss - query Clerk API
+  // Cache miss or stale entry - query Clerk API by the requested username.
   try {
-    const client = await clerkClient();
     const users = await client.users.getUserList({
       username: [username],
     });
