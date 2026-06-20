@@ -1,0 +1,31 @@
+name: liveone PG backup dashboard → R2
+
+# Render the static backup-history dashboard from the private R2 run-logs and publish it to the PUBLIC
+# dashboard bucket, after each backup. Isolated (its own workflow) so a dashboard failure never affects
+# backups. Via the reusable the-gitfather workflow.
+# Requires the DASHBOARD_R2_BUCKET var + DASHBOARD_R2_* secrets to be set (a separate public bucket +
+# write-only token); until then this workflow will fail harmlessly without touching the backups.
+
+on:
+  workflow_run:
+    workflows: ["liveone PG backup → R2"] # must match the backup caller's name:
+    types: [completed]
+  workflow_dispatch: {}
+
+concurrency:
+  group: pg-dashboard
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    uses: simonhac/the-gitfather/.github/workflows/pg-dashboard.yml@main
+    with:
+      profile: pg-backup/liveone.env
+      r2_bucket: ${{ vars.R2_BUCKET }}
+      dashboard_r2_bucket: ${{ vars.DASHBOARD_R2_BUCKET }}
+    secrets:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      DASHBOARD_R2_ACCESS_KEY_ID: ${{ secrets.DASHBOARD_R2_ACCESS_KEY_ID }}
+      DASHBOARD_R2_SECRET_ACCESS_KEY: ${{ secrets.DASHBOARD_R2_SECRET_ACCESS_KEY }}

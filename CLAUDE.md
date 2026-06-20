@@ -281,8 +281,9 @@ move to versioned drizzle-kit Postgres migrations but the principles still gate 
 #### Before running ANY destructive migration
 
 1. **Back up production first** — confirm a recent PITR window and take a one-off base backup
-   (`pscale backup create`); for an off-site copy, the `pg-backup` GitHub Action ships a daily
-   `pg_dump` to R2.
+   (`pscale backup create`); for an off-site copy, the `pg-backup` GitHub Action ships a 2-hourly
+   `pg_dump` to R2 (via the [the-gitfather](https://github.com/simonhac/the-gitfather) reusable
+   workflows; profile `pg-backup/liveone.env`).
 2. **Test on a copy** — restore a base backup into a throwaway PlanetScale branch and run the
    migration there before touching prod; verify row counts on the critical tables afterward.
 3. **Validate row counts before any DROP** — never drop/replace a table without first asserting
@@ -433,5 +434,5 @@ curl -X POST https://liveone.vercel.app/api/cron/daily \
 3. Batch inserts; PG autovacuums and handles large batches
 4. Use prepared statements for repeated queries
 
-- when backing up prod **Postgres**, PITR schedules run automatically and `pscale backup create` makes a one-off base backup; off-site copies ship daily to R2 via the `pg-backup` GitHub Action
+- when backing up prod **Postgres**, PITR schedules run automatically and `pscale backup create` makes a one-off base backup; off-site copies ship 2-hourly to R2 via the `pg-backup` GitHub Action — a thin caller of the [the-gitfather](https://github.com/simonhac/the-gitfather) reusable workflows (GFS 2hourly→daily→weekly→monthly + restore-drill + hourly staleness self-heal + a published backup-history dashboard). Project config lives in `pg-backup/liveone.env`; secrets/vars in the GitHub repo. `scripts/utils/restore-drill-pg.sh` is retained as the manual restore / `liveone-dev` seed helper (it handles both the new raw `.dump` and legacy `.dump.gz`).
 - don't use NPM run to check for typescript errors
