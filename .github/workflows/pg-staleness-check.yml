@@ -1,0 +1,32 @@
+name: liveone PG staleness check
+
+# Hourly: assert a fresh 2hourly backup landed in R2, and self-heal a missed tick by re-triggering
+# pg-backup.yml (GitHub Actions cron is best-effort). Complements the backup's dead-man's-switch ping.
+# Via the reusable the-gitfather workflow.
+
+on:
+  schedule:
+    - cron: "20 * * * *" # hourly, off the top of the hour
+  workflow_dispatch: {}
+
+concurrency:
+  group: pg-staleness-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    permissions:
+      actions: write   # lets the self-heal call `gh workflow run pg-backup.yml`
+      contents: read
+    uses: simonhac/the-gitfather/.github/workflows/pg-staleness-check.yml@main
+    with:
+      profile: pg-backup/liveone.env
+      backup_workflow: pg-backup.yml
+      r2_bucket: ${{ vars.R2_BUCKET }}
+      slack_channel: ${{ vars.SLACK_CHANNEL }}
+    secrets:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}              # optional
+      ALERT_WEBHOOK_URL: ${{ secrets.OBSERVATIONS_ALERT_WEBHOOK_URL }}

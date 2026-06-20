@@ -1,13 +1,14 @@
-name: PG off-site backup → R2
+name: liveone PG backup → R2     # keep this name — pg-dashboard's workflow_run references it
 
-# Daily provider-independent backup of the PlanetScale Sydney Postgres branch to Cloudflare R2.
-# Complements PlanetScale PITR (which lives on PlanetScale infra). See
-# docs/turso-pg-migration.md → "Off-site backup — provider-independent DR".
+# Off-site GFS Postgres → R2 backup, via the reusable the-gitfather workflow. 2-hourly grandson tier
+# promoted to daily/weekly/monthly at the profile's ANCHOR_HOUR_UTC. Project config lives in
+# pg-backup/liveone.env; the engine + docs are at https://github.com/simonhac/the-gitfather.
+# Secrets are passed explicitly (the engine repo is a different repo, so `secrets: inherit` won't carry).
 
 on:
   schedule:
-    - cron: "17 16 * * *" # 16:17 UTC daily ≈ 02:17 Sydney; off the top-of-hour cron rush
-  workflow_dispatch: {} # allow manual runs
+    - cron: "17 */2 * * *" # every 2 h at :17 (off the top-of-hour rush); the 16:17 UTC run also promotes
+  workflow_dispatch: {}
 
 concurrency:
   group: pg-backup
@@ -15,35 +16,16 @@ concurrency:
 
 jobs:
   backup:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install pg_dump 17, rclone, age
-        run: |
-          set -euo pipefail
-          sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
-          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
-            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client-17 rclone age
-          # pg_wrapper otherwise defaults to the runner's preinstalled PG16 client, which refuses
-          # to dump the 17.10 server ("server version mismatch"). Put the v17 binaries first.
-          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
-
-      - name: Verify pg_dump version
-        run: pg_dump --version
-
-      - name: Dump + upload to R2
-        env:
-          PG_BACKUP_DATABASE_URL: ${{ secrets.PG_BACKUP_DATABASE_URL }}
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_BUCKET: ${{ vars.R2_BUCKET }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AGE_RECIPIENT: ${{ vars.AGE_RECIPIENT }} # optional; empty = no client-side encryption
-          ALERT_WEBHOOK_URL: ${{ secrets.OBSERVATIONS_ALERT_WEBHOOK_URL }}
-        run: bash scripts/utils/backup-pg-to-r2.sh
+    uses: simonhac/the-gitfather/.github/workflows/pg-backup.yml@main
+    with:
+      profile: pg-backup/liveone.env
+      r2_bucket: ${{ vars.R2_BUCKET }}
+      slack_channel: ${{ vars.SLACK_CHANNEL }}
+    secrets:
+      PG_BACKUP_DATABASE_URL: ${{ secrets.PG_BACKUP_DATABASE_URL }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}              # optional — daily Slack status row
+      HEARTBEAT_URL: ${{ secrets.HEARTBEAT_URL }}                 # optional — dead-man's-switch
+      ALERT_WEBHOOK_URL: ${{ secrets.OBSERVATIONS_ALERT_WEBHOOK_URL }}  # reuse liveone's existing failure webhook
