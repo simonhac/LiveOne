@@ -1,0 +1,31 @@
+name: liveone PG durable verify
+
+# Daily proof that EVERY durable off-site object is intact — the "0 restore errors" leg of 3-2-1-1-0,
+# via the reusable the-gitfather workflow. Supersedes the old weekly restore-drill: it hash-checks each
+# daily/weekly/monthly object against the SHA-256 recorded at backup time, full-restores the freshest
+# daily, and re-restores the newest weekly/monthly past verify-durable.retest-days. Filters by the .dump
+# extension, so liveone's legacy .dump.gz objects are skipped (never restored or alarmed).
+
+on:
+  schedule:
+    - cron: "37 18 * * *" # daily, after the 16:17 UTC anchor backup ≈ 04:37 Sydney
+  workflow_dispatch: {}
+
+concurrency:
+  group: pg-durable-verify
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    uses: simonhac/the-gitfather/.github/workflows/pg-durable-verify.yml@main
+    with:
+      profile: pg-backup/liveone.yaml
+      r2_bucket: ${{ vars.R2_BUCKET }}
+      slack_channel: ${{ vars.SLACK_CHANNEL }}
+    secrets:
+      PG_BACKUP_DATABASE_URL: ${{ secrets.PG_BACKUP_DATABASE_URL }}  # read-only — the live row-count reference
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}              # optional
+      ALERT_WEBHOOK_URL: ${{ secrets.OBSERVATIONS_ALERT_WEBHOOK_URL }}

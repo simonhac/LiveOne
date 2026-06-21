@@ -482,17 +482,22 @@ Mon 2026-06-15 17:37 UTC), and a staleness alert (no new object in > 26 h).
 
 **Update 2026-06-20 — migrated to [the-gitfather](https://github.com/simonhac/the-gitfather).** The
 backup now runs via that repo's reusable workflows (thin callers in `.github/workflows/pg-{backup,
-restore-drill,staleness-check,dashboard}.yml` + the non-secret profile `pg-backup/liveone.env`).
+durable-verify,staleness-check,dashboard}.yml` + the non-secret YAML profile `pg-backup/liveone.yaml`).
 Deltas vs the v1 design above: **2-hourly** grandson tier promoted to daily/weekly/monthly (one dump,
 server-side R2→R2 copy — the `2hourly/` prefix gets a 2-day lifecycle); the raw `-Fc` dump is uploaded
-**without the extra gzip** (`.dump`, not `.dump.gz` — `-Fc` is already compressed); the previously
-"pending" **staleness check now exists** (hourly, self-heals a missed tick); and a **restore-verified
-heatmap dashboard** is published from an append-only R2 run-log (backfilled from the existing objects via
-`scripts/temp/backfill-gitfather-runlog.ts`). Failure alerting keeps `OBSERVATIONS_ALERT_WEBHOOK_URL`
-(wired as the toolkit's `ALERT_WEBHOOK_URL`) and adds an optional Slack-bot daily status row.
-`backup-pg-to-r2.sh` was removed (the engine lives in the-gitfather); `restore-drill-pg.sh` is retained
-as the manual restore / `liveone-dev` seed helper (handles both `.dump` and legacy `.dump.gz`). Legacy
-`.dump.gz` objects coexist until they age out.
+**without the extra gzip** (`.dump`, not `.dump.gz` — `-Fc` is already compressed) and carries a
+**SHA-256** recorded in the run-log; a **daily durable-verify** (hash-checks every durable object +
+restores the freshest daily / aged weekly+monthly) **supersedes the old weekly restore-drill**; the
+previously "pending" **staleness check now exists** (twice-hourly, self-heals a missed tick); and a
+**restore-verified heatmap dashboard** is published from an append-only R2 run-log. The engine ignores
+the legacy `.dump.gz` objects entirely (it filters by the `.dump` extension), so they coexist untouched
+until they age out on their existing lifecycle. **Retention is pinned to liveone's existing R2 lifecycle
+(daily 21d / weekly 70d / monthly 400d)** so the migration's only R2 change is _adding_ rules for the new
+`2hourly/`, `_status/`, `_log/` prefixes — the durable-tier rules + WORM locks are untouched. Failure
+alerting keeps `OBSERVATIONS_ALERT_WEBHOOK_URL` (wired as the toolkit's `ALERT_WEBHOOK_URL`) and adds an
+optional Slack-bot daily status row. `backup-pg-to-r2.sh` was removed (the engine lives in
+the-gitfather); `restore-drill-pg.sh` is retained as the manual restore / `liveone-dev` seed helper
+(handles both `.dump` and legacy `.dump.gz`).
 
 ## Top risks & how they're handled
 

@@ -1,0 +1,45 @@
+# the-gitfather profile for liveone — NON-SECRET config for the off-site Postgres → R2 backups.
+#
+# Credentials (PG_BACKUP_DATABASE_URL, R2_*, SLACK_BOT_TOKEN, HEARTBEAT_URL, ALERT_WEBHOOK_URL,
+# DASHBOARD_R2_*) come from GitHub secrets/vars via the caller workflows in .github/workflows/pg-*.yml
+# — never from here. Engine + reference: https://github.com/simonhac/the-gitfather
+
+# Object-key layout: <backup-prefix>/<tier>/<name>-<stamp>.<ext>
+# Keep liveone's existing layout so new .dump objects coexist with the legacy .dump.gz until they age
+# out. The new tooling filters by the .dump extension, so the legacy .dump.gz objects are invisible to
+# it (never restored, hash-checked, or alarmed) and untouched.
+name: liveone
+backup-prefix: pg/sydney
+timezone: Australia/Sydney      # Slack daily-row + dashboard heatmap rendering tz
+encryption: none                # liveone sets no AGE_RECIPIENT; dumps sit in a private (R2-encrypted) bucket
+anchor-hour-utc: 16             # the 16:xx UTC run promotes to daily/weekly/monthly ≈ 02:xx Sydney
+
+dump:
+  # Full custom-format dump, restorable into a vanilla Postgres. Exclude the PlanetScale-managed schema
+  # so a provider-loss restore is clean (matches the Sydney cutover). No gzip: -Fc is already compressed.
+  flags: "-Fc --no-owner --no-privileges --exclude-schema=pscale_extensions"
+  client-major: 17              # Sydney runs PG 17.10 — the dump client must be >= the server
+  min-bytes: 104857600          # 100 MB floor — keep liveone's existing sanity gate (toolkit default 1 MB)
+
+# GFS retention. INFORMATIONAL — R2 lifecycle rules do the actual deleting; these must MATCH them and
+# drive the dashboard's aging math. Pinned to liveone's EXISTING lifecycle (daily 21d / weekly 70d /
+# monthly 400d) so the existing objects are untouched; only the new 2hourly/ tier rule is added.
+retention:
+  grandson: 2 days              # 2-hourly
+  son: 3 weeks                  # daily   — 21 days
+  father: 10 weeks              # weekly  — 70 days
+  grandfather: 400 days         # monthly
+
+# Restore checks (used by the daily durable-verify and the optional drill): the sentinel must restore
+# to ≥ min-row-ratio × live (n_live_tup estimate); nonempty-tables must exist with ≥1 row.
+drill:
+  row-count-table: point_readings
+  nonempty-tables: [sessions, point_readings_agg_5m]
+  min-row-ratio: 0.95
+
+staleness:
+  max-age-hours: 5              # alert if the newest 2hourly object is older than this
+  heal-workflow: pg-backup.yml  # self-heal re-triggers this caller workflow on a missed tick
+
+dashboard:
+  label: liveone
