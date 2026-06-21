@@ -1,14 +1,19 @@
 name: liveone PG backup → R2     # keep this name — pg-dashboard's workflow_run references it
 
 # Off-site GFS Postgres → R2 backup, via the reusable the-gitfather workflow. 2-hourly grandson tier
-# promoted to daily/weekly/monthly at the profile's ANCHOR_HOUR_UTC. Project config lives in
-# pg-backup/liveone.env; the engine + docs are at https://github.com/simonhac/the-gitfather.
+# promoted to daily/weekly/monthly at the profile's anchor-hour-utc. Project config lives in
+# pg-backup/liveone.yaml; the engine + docs are at https://github.com/simonhac/the-gitfather.
 # Secrets are passed explicitly (the engine repo is a different repo, so `secrets: inherit` won't carry).
 
 on:
   schedule:
     - cron: "17 */2 * * *" # every 2 h at :17 (off the top-of-hour rush); the 16:17 UTC run also promotes
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why this run fired; the self-heal passes 'self-heal' (drives the Slack-row marker)."
+        type: string
+        default: manual
 
 concurrency:
   group: pg-backup
@@ -18,9 +23,10 @@ jobs:
   backup:
     uses: simonhac/the-gitfather/.github/workflows/pg-backup.yml@main
     with:
-      profile: pg-backup/liveone.env
+      profile: pg-backup/liveone.yaml
       r2_bucket: ${{ vars.R2_BUCKET }}
       slack_channel: ${{ vars.SLACK_CHANNEL }}
+      trigger: ${{ github.event_name == 'schedule' && 'schedule' || github.event.inputs.reason }}
     secrets:
       PG_BACKUP_DATABASE_URL: ${{ secrets.PG_BACKUP_DATABASE_URL }}
       R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}

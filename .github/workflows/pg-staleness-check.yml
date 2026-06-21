@@ -6,7 +6,8 @@ name: liveone PG staleness check
 
 on:
   schedule:
-    - cron: "20 * * * *" # hourly, off the top of the hour
+    - cron: "20 * * * *" # twice hourly, off the top of the hour, so one dropped
+    - cron: "50 * * * *" # scheduler tick doesn't blind the watchdog for an hour+
   workflow_dispatch: {}
 
 concurrency:
@@ -20,8 +21,7 @@ jobs:
       contents: read
     uses: simonhac/the-gitfather/.github/workflows/pg-staleness-check.yml@main
     with:
-      profile: pg-backup/liveone.env
-      backup_workflow: pg-backup.yml
+      profile: pg-backup/liveone.yaml   # self-heal target is the profile's staleness.heal-workflow
       r2_bucket: ${{ vars.R2_BUCKET }}
       slack_channel: ${{ vars.SLACK_CHANNEL }}
     secrets:

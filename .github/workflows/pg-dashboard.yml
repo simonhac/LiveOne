@@ -20,7 +20,7 @@ jobs:
   publish:
     uses: simonhac/the-gitfather/.github/workflows/pg-dashboard.yml@main
     with:
-      profile: pg-backup/liveone.env
+      profile: pg-backup/liveone.yaml
       r2_bucket: ${{ vars.R2_BUCKET }}
       dashboard_r2_bucket: ${{ vars.DASHBOARD_R2_BUCKET }}
     secrets:
