@@ -22,13 +22,13 @@ dump:
   min-bytes: 104857600          # 100 MB floor — keep liveone's existing sanity gate (toolkit default 1 MB)
 
 # GFS retention. INFORMATIONAL — R2 lifecycle rules do the actual deleting; these must MATCH them and
-# drive the dashboard's aging math. Pinned to liveone's EXISTING lifecycle (daily 21d / weekly 70d /
-# monthly 400d) so the existing objects are untouched; only the new 2hourly/ tier rule is added.
+# drive the dashboard's aging math. Matches the R2 lifecycle: daily 21d / weekly 91d / monthly 365d
+# (+ 2hourly 2d).
 retention:
   grandson: 2 days              # 2-hourly
   son: 3 weeks                  # daily   — 21 days
-  father: 10 weeks              # weekly  — 70 days
-  grandfather: 400 days         # monthly
+  father: 13 weeks              # weekly  — 91 days
+  grandfather: 12 months        # monthly — 365 days
 
 # Restore checks (used by the daily durable-verify and the optional drill): the sentinel must restore
 # to ≥ min-row-ratio × live (n_live_tup estimate); nonempty-tables must exist with ≥1 row.
@@ -43,3 +43,6 @@ staleness:
 
 dashboard:
   label: liveone
+  # Shared dashboard: one moofer-ops bucket + ops.moofer.com domain, keyed <path-prefix>/<name>/index.html.
+  path-prefix: backups
+  url: "https://ops.moofer.com/backups/liveone/index.html"   # engine uploads here; Slack header links to it
