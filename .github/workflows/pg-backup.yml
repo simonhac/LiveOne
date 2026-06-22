@@ -34,4 +34,5 @@ jobs:
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}              # optional — daily Slack status row
       HEARTBEAT_URL: ${{ secrets.HEARTBEAT_URL }}                 # optional — dead-man's-switch
-      ALERT_WEBHOOK_URL: ${{ secrets.OBSERVATIONS_ALERT_WEBHOOK_URL }}  # reuse liveone's existing failure webhook
+      # ALERT_WEBHOOK_URL intentionally NOT passed: the Slack bot already posts to this channel, so the
+      # webhook fallback would duplicate every alert. (Engine still supports it for no-bot consumers.)

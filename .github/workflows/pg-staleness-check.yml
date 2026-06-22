@@ -29,4 +29,4 @@ jobs:
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}              # optional
-      ALERT_WEBHOOK_URL: ${{ secrets.OBSERVATIONS_ALERT_WEBHOOK_URL }}
+      # ALERT_WEBHOOK_URL intentionally NOT passed — the Slack bot covers this channel (no duplicate alerts).
