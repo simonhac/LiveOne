@@ -7,8 +7,7 @@ name: liveone PG durable verify
 # extension, so liveone's legacy .dump.gz objects are skipped (never restored or alarmed).
 
 on:
-  schedule:
-    - cron: "37 18 * * *" # daily, after the 16:17 UTC anchor backup ≈ 04:37 Sydney
+  # Scheduling is driven by the Cloudflare scheduler (simonhac/the-gitfather → scheduler/) via workflow_dispatch.
   workflow_dispatch: {}
 
 concurrency:
