@@ -5,9 +5,7 @@ name: liveone PG staleness check
 # Via the reusable the-gitfather workflow.
 
 on:
-  schedule:
-    - cron: "20 * * * *" # twice hourly, off the top of the hour, so one dropped
-    - cron: "50 * * * *" # scheduler tick doesn't blind the watchdog for an hour+
+  # Scheduling is driven by the Cloudflare scheduler (simonhac/the-gitfather → scheduler/) via workflow_dispatch.
   workflow_dispatch: {}
 
 concurrency:

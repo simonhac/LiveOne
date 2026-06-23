@@ -6,8 +6,8 @@ name: liveone PG backup → R2     # keep this name — pg-dashboard's workflow_
 # Secrets are passed explicitly (the engine repo is a different repo, so `secrets: inherit` won't carry).
 
 on:
-  schedule:
-    - cron: "17 */2 * * *" # every 2 h at :17 (off the top-of-hour rush); the 16:17 UTC run also promotes
+  # Scheduling is driven by the Cloudflare scheduler (simonhac/the-gitfather → scheduler/), which fires
+  # this via workflow_dispatch. No GitHub cron; the staleness watchdog + HEARTBEAT_URL remain the backstop.
   workflow_dispatch:
     inputs:
       reason:
