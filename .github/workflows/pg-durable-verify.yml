@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   verify:
+    permissions: { contents: read, actions: read }   # optional — lets failure alerts link to THIS job's log page (jobs API); see the-gitfather README
     uses: simonhac/the-gitfather/.github/workflows/pg-durable-verify.yml@main
     with:
       profile: pg-backup/liveone.yaml
