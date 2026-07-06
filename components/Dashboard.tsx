@@ -70,9 +70,15 @@ interface DashboardProps {
   /** areaId -> its Area (addressing handle + label). May be empty while the readable-areas fetch is
    *  in flight — sections still render their skeleton layout from the descriptor in the meantime. */
   areaById: Map<string, ReadableArea>;
+  /** Owner/editable view: opens the Add-area dialog from the empty state. Omitted on shared views. */
+  onAddArea?: () => void;
 }
 
-export default function Dashboard({ descriptor, areaById }: DashboardProps) {
+export default function Dashboard({
+  descriptor,
+  areaById,
+  onAddArea,
+}: DashboardProps) {
   // Render every section straight from the descriptor — its Area (and so the live data) may not have
   // resolved yet, in which case each card draws a skeleton. We have enough to draw the layout
   // immediately, so there's no "Loading…" gate before the skeletons appear.
@@ -85,6 +91,15 @@ export default function Dashboard({ descriptor, areaById }: DashboardProps) {
         <p className="text-sm">
           This dashboard has no cards yet. Add an area to get started.
         </p>
+        {onAddArea && (
+          <button
+            onClick={onAddArea}
+            className="mt-4 inline-flex items-center gap-1.5 rounded-md border border-gray-700 px-3 py-1.5 text-sm text-gray-300 transition-colors hover:bg-gray-800 hover:text-white"
+          >
+            <Layers className="h-4 w-4" />
+            Add area
+          </button>
+        )}
       </div>
     );
   }
