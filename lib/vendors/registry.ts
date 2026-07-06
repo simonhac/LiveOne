@@ -6,6 +6,7 @@ import { MondoAdapter } from "./mondo/adapter";
 import { AmberAdapter } from "./amber/adapter";
 import { TeslaAdapter } from "./tesla/adapter";
 import { OpenElectricityAdapter } from "./openelectricity/adapter";
+import { SigenergyAdapter } from "./sigenergy/adapter";
 import { SystemsManager } from "@/lib/systems-manager";
 
 /**
@@ -33,6 +34,7 @@ export class VendorRegistry {
     // 'composite' is no longer a vendor: a multi-device area is an areas-backed virtual system handled
     // outside the adapter path (the minutely cron skips it; live values come via the KV fan-out).
     this.adapters.set("openelectricity", new OpenElectricityAdapter());
+    this.adapters.set("sigenergy", new SigenergyAdapter());
 
     this.initialized = true;
 

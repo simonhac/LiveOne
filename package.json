@@ -25,6 +25,7 @@
     "db:reown-dev": "tsx scripts/utils/reown-dev-data.ts",
     "db:rebuild-dev-kv": "tsx scripts/utils/rebuild-dev-kv-from-db.ts",
     "db:recompute-dev-runs": "tsx scripts/utils/recompute-dev-runs-from-db.ts",
+    "sigen:poll": "tsx --env-file=.env.local scripts/sigenergy/poll.ts",
     "prepare": "husky"
   },
   "keywords": [],
