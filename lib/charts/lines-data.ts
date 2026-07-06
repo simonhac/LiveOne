@@ -110,6 +110,12 @@ export function buildChartData(
     .filter(({ time }) => time >= windowStart && time <= windowEnd)
     .map(({ index }) => index);
 
+  // No data points fall within the window (e.g. a brand-new device with no aggregates yet, or a
+  // historical window before the device existed). Treat as "no data" so the card renders its empty
+  // state instead of an empty chart — and so downstream code never dereferences timestamps[0] on an
+  // empty array (the `firstTime.getTime()` crash in the SoC-padding path).
+  if (selectedIndices.length === 0) return null;
+
   const convertToKw = (value: number | null, units: string): number | null => {
     if (value === null) return null;
     const unitsLower = units?.toLowerCase() || "";
