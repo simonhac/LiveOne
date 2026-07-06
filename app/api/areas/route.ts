@@ -1,9 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
-import { requireSystemAccess } from "@/lib/api-auth";
+import { requireAuth, requireSystemAccess } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, areaBindings } from "@/lib/db/planetscale/schema";
 import { getAreaForSystem } from "@/lib/areas/resolve";
+import { SystemsManager } from "@/lib/systems-manager";
+import { mergeAreaLocation } from "@/lib/areas/location";
+import {
+  createArea,
+  assertMembersReadable,
+  refreshAreaServing,
+  AreaAliasTakenError,
+  AreaAccessError,
+  AreaValidationError,
+} from "@/lib/areas/create";
+import { locationPatchFromBody } from "@/lib/areas/http";
 
 /**
  * GET /api/areas?systemId=N — the P3 Area for a system, read-only.
@@ -67,4 +78,92 @@ export async function GET(request: NextRequest) {
     .orderBy(areaBindings.ordinal);
 
   return NextResponse.json({ area, bindings });
+}
+
+/**
+ * POST /api/areas — create a multi-device "site" area (the self-serve area builder).
+ *
+ * Body: `{ displayName, alias?, timezoneOffsetMin?, displayTimezone?, location?, memberSystemIds:number[] }`.
+ * The site is owner-scoped (owner forced to the caller) and always gets a SYNTHETIC handle, so it can
+ * grow from one member to many without re-keying. Each member must be readable by the caller (no
+ * escalation). Timezone defaults from the first member. Returns `{ id, legacySystemId }`.
+ */
+export async function POST(request: NextRequest) {
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
+
+  const body = await request.json().catch(() => null);
+  const displayName =
+    typeof body?.displayName === "string" ? body.displayName.trim() : "";
+  if (!displayName) {
+    return NextResponse.json(
+      { error: "displayName is required" },
+      { status: 400 },
+    );
+  }
+  const alias =
+    typeof body?.alias === "string" && body.alias.trim()
+      ? body.alias.trim()
+      : null;
+
+  const rawMembers: unknown[] = Array.isArray(body?.memberSystemIds)
+    ? body.memberSystemIds
+    : [];
+  const memberSystemIds: number[] = [
+    ...new Set(rawMembers.filter((n): n is number => Number.isInteger(n))),
+  ];
+  if (memberSystemIds.length === 0) {
+    return NextResponse.json(
+      { error: "At least one member device is required" },
+      { status: 400 },
+    );
+  }
+
+  try {
+    await assertMembersReadable(auth.userId, auth.isAdmin, memberSystemIds);
+  } catch (err) {
+    if (err instanceof AreaAccessError)
+      return NextResponse.json({ error: err.message }, { status: 403 });
+    if (err instanceof AreaValidationError)
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    throw err;
+  }
+
+  // Timezone defaults from the first member device.
+  const first = await SystemsManager.getInstance().getSystem(
+    memberSystemIds[0],
+  );
+  const timezoneOffsetMin =
+    typeof body?.timezoneOffsetMin === "number"
+      ? body.timezoneOffsetMin
+      : (first?.timezoneOffsetMin ?? 600);
+  const displayTimezone =
+    typeof body?.displayTimezone === "string" && body.displayTimezone
+      ? body.displayTimezone
+      : (first?.displayTimezone ?? "Australia/Sydney");
+
+  const location = body?.location
+    ? mergeAreaLocation(null, locationPatchFromBody(body.location))
+    : null;
+
+  try {
+    const created = await createArea({
+      ownerClerkUserId: auth.userId,
+      displayName,
+      alias,
+      timezoneOffsetMin,
+      displayTimezone,
+      location,
+      memberSystemIds,
+    });
+    await refreshAreaServing(created.id);
+    return NextResponse.json(created);
+  } catch (err) {
+    if (err instanceof AreaAliasTakenError)
+      return NextResponse.json(
+        { error: "That shortname is already in use" },
+        { status: 409 },
+      );
+    throw err;
+  }
 }

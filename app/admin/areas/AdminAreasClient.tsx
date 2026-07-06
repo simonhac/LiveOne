@@ -1,10 +1,13 @@
 "use client";
 
-import { Layers, MapPin } from "lucide-react";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Layers, MapPin, Pencil, Plus } from "lucide-react";
 import type {
   AdminAreaData,
   AreaSourceSystem,
 } from "@/lib/admin/get-areas-data";
+import AreaBuilderDialog from "@/components/area-builder/AreaBuilderDialog";
 
 /**
  * Format an area's source systems: "(drawn from Kinkora Fronius and ID: 9)".
@@ -32,6 +35,12 @@ export default function AdminAreasClient({
 }: {
   areas: AdminAreaData[];
 }) {
+  const router = useRouter();
+  // `undefined` = closed; `null` = create mode; a uuid = edit that area.
+  const [dialogAreaId, setDialogAreaId] = useState<string | null | undefined>(
+    undefined,
+  );
+
   return (
     <div className="flex flex-col h-full max-h-full">
       <div className="flex-1 px-0 md:px-6 py-8 overflow-auto space-y-8">
@@ -40,8 +49,16 @@ export default function AdminAreasClient({
           subtitle="Each Area groups 1..N member devices; bindings are role→point overrides."
           icon={<Layers className="w-5 h-5 text-purple-400" />}
           areas={areas}
+          onNew={() => setDialogAreaId(null)}
+          onEdit={(id) => setDialogAreaId(id)}
         />
       </div>
+      <AreaBuilderDialog
+        isOpen={dialogAreaId !== undefined}
+        areaId={dialogAreaId ?? null}
+        onClose={() => setDialogAreaId(undefined)}
+        onSaved={() => router.refresh()}
+      />
     </div>
   );
 }
@@ -51,21 +68,34 @@ function AreaTable({
   subtitle,
   icon,
   areas,
+  onNew,
+  onEdit,
 }: {
   title: string;
   subtitle: string;
   icon: React.ReactNode;
   areas: AdminAreaData[];
+  onNew: () => void;
+  onEdit: (areaId: string) => void;
 }) {
   return (
     <div className="bg-gray-800 border border-gray-700 md:rounded overflow-hidden flex flex-col">
-      <div className="px-2 md:px-6 py-4 border-b border-gray-700">
-        <div className="flex items-center gap-2">
-          {icon}
-          <h2 className="text-lg font-semibold text-white">{title}</h2>
-          <span className="text-sm text-gray-500">({areas.length})</span>
+      <div className="px-2 md:px-6 py-4 border-b border-gray-700 flex items-start justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-2">
+            {icon}
+            <h2 className="text-lg font-semibold text-white">{title}</h2>
+            <span className="text-sm text-gray-500">({areas.length})</span>
+          </div>
+          <p className="text-xs text-gray-500 mt-1">{subtitle}</p>
         </div>
-        <p className="text-xs text-gray-500 mt-1">{subtitle}</p>
+        <button
+          onClick={onNew}
+          className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-blue-700 whitespace-nowrap"
+        >
+          <Plus className="w-4 h-4" />
+          New site
+        </button>
       </div>
 
       <div className="overflow-auto">
@@ -84,13 +114,14 @@ function AreaTable({
               <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                 Timezone
               </th>
+              <th className="px-2 md:px-6 py-3" />
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-700">
             {areas.length === 0 ? (
               <tr>
                 <td
-                  colSpan={4}
+                  colSpan={5}
                   className="px-2 md:px-6 py-6 text-sm text-gray-500 text-center"
                 >
                   No areas
@@ -159,6 +190,16 @@ function AreaTable({
                       <span className="text-xs text-gray-400">
                         {area.displayTimezone}
                       </span>
+                    </td>
+                    <td className="px-2 md:px-6 py-4 align-top text-right">
+                      <button
+                        onClick={() => onEdit(area.id)}
+                        title="Edit area"
+                        className="inline-flex items-center gap-1 rounded-md border border-gray-600 px-2 py-1 text-xs text-gray-300 transition-colors hover:text-white hover:border-gray-500"
+                      >
+                        <Pencil className="w-3 h-3" />
+                        Edit
+                      </button>
                     </td>
                   </tr>
                 );

@@ -5,11 +5,12 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/queries";
-import { X, Shield, Loader2, MapPin } from "lucide-react";
+import { X, Shield, Loader2, MapPin, Layers } from "lucide-react";
 import { useModalContext } from "@/contexts/ModalContext";
 import PointsTab from "./PointsTab";
 import TeslaConfigTab from "./TeslaConfigTab";
 import AdminTab from "./AdminTab";
+import AreaBuilderDialog from "@/components/area-builder/AreaBuilderDialog";
 import { TIMEZONE_GROUPS } from "@/lib/timezones";
 import {
   nemRegionForLocation,
@@ -76,6 +77,7 @@ export default function SystemSettingsDialog({
   const [origLocationState, setOrigLocationState] = useState("");
   const [origLocationPostcode, setOrigLocationPostcode] = useState("");
   const [isLocationDirty, setIsLocationDirty] = useState(false);
+  const [showAreaBuilder, setShowAreaBuilder] = useState(false);
   const [activeTab, setActiveTab] = useState<
     "general" | "points" | "tesla" | "admin" | "location"
   >("general");
@@ -765,6 +767,22 @@ export default function SystemSettingsDialog({
                       )}
                     </p>
                   </div>
+
+                  {/* Create a site (multi-device Area) seeded from this device */}
+                  <div className="mt-4 border-t border-gray-700 pt-4">
+                    <p className="mb-2 text-xs text-gray-500">
+                      Combine this device with others into a “site” you can put
+                      on a custom dashboard.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowAreaBuilder(true)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-gray-600 px-3 py-2 text-sm text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
+                    >
+                      <Layers className="w-4 h-4 text-purple-400" />
+                      Create a site from this device
+                    </button>
+                  </div>
                 </div>
 
                 {/* Points Tab Content */}
@@ -832,6 +850,14 @@ export default function SystemSettingsDialog({
           </div>
         </div>
       </div>
+
+      <AreaBuilderDialog
+        isOpen={showAreaBuilder}
+        areaId={null}
+        initialMemberSystemId={systemId ?? undefined}
+        onClose={() => setShowAreaBuilder(false)}
+        onSaved={() => router.refresh()}
+      />
     </>,
     document.body,
   );
