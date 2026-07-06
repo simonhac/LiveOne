@@ -4,11 +4,12 @@
  * Areas are the SEMANTIC layer: an Area is a grouping of 1..N **member devices** (`area_devices`). A
  * single-device Area wraps one physical system; a multi-device Area draws points from several (the
  * former vendor_type='composite' fake systems, now areas-backed virtual systems). Membership is read
- * uniformly from `area_devices` — there is no `kind` branch. This powers /admin/areas.
+ * uniformly from `area_devices` — there is no `kind` branch. This powers /admin/areas (all areas)
+ * and the owner-facing /areas page (the caller's own active areas).
  */
 
 import { clerkClient } from "@clerk/nextjs/server";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, areaBindings } from "@/lib/db/planetscale/schema";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -62,11 +63,16 @@ async function resolveSystem(
   };
 }
 
-export async function getAdminAreasData(): Promise<AdminAreasResult> {
+/**
+ * Shape a set of already-selected `areas` rows into full `AdminAreaData` — the expensive part
+ * (binding counts, Clerk owner batch-fetch, member-system resolution). Shared by the global admin
+ * view and the owner-scoped `/areas` view so the shaping lives in exactly one place.
+ */
+async function shapeAreas(
+  allAreas: (typeof areas.$inferSelect)[],
+): Promise<AdminAreaData[]> {
   const db = requirePlanetscaleDb();
   const systemsManager = SystemsManager.getInstance();
-
-  const allAreas = await db.select().from(areas).orderBy(areas.displayName);
 
   // Binding counts per area (one grouped query).
   const bindingCountRows = await db
@@ -103,10 +109,7 @@ export async function getAdminAreasData(): Promise<AdminAreasResult> {
             userName: user.username || null,
           });
         } catch (error) {
-          console.warn(
-            `[getAdminAreasData] Failed to fetch user ${id}:`,
-            error,
-          );
+          console.warn(`[shapeAreas] Failed to fetch user ${id}:`, error);
           userCache.set(id, { email: null, userName: null });
         }
       }),
@@ -154,6 +157,33 @@ export async function getAdminAreasData(): Promise<AdminAreasResult> {
     });
   }
 
+  return areasData;
+}
+
+/** Every Area (admin view — all owners, includes archived). Powers `/admin/areas`. */
+export async function getAdminAreasData(): Promise<AdminAreasResult> {
+  const db = requirePlanetscaleDb();
+  const allAreas = await db.select().from(areas).orderBy(areas.displayName);
+  const areasData = await shapeAreas(allAreas);
+  return {
+    success: true,
+    areas: areasData,
+    totalAreas: areasData.length,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/** The active Areas a single owner owns. Powers the owner-facing `/areas` page. */
+export async function getOwnerAreasData(
+  userId: string,
+): Promise<AdminAreasResult> {
+  const db = requirePlanetscaleDb();
+  const allAreas = await db
+    .select()
+    .from(areas)
+    .where(and(eq(areas.ownerClerkUserId, userId), eq(areas.status, "active")))
+    .orderBy(areas.displayName);
+  const areasData = await shapeAreas(allAreas);
   return {
     success: true,
     areas: areasData,

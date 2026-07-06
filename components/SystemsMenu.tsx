@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Star, LayoutDashboard } from "lucide-react";
+import { Star, LayoutDashboard, Layers } from "lucide-react";
 import { myDashboardsQuery, userPreferencesQuery } from "@/lib/queries";
 
 interface AvailableSystem {
@@ -177,6 +177,19 @@ export default function SystemsMenu({
           <div className="border-t border-gray-700 my-1"></div>
         )}
       {grantedSystems.map(renderSystemItem)}
+
+      {/* Manage the owner's Areas/sites (the /areas list — browse, edit, create). */}
+      <div className="border-t border-gray-700 my-1"></div>
+      <Link
+        href="/areas"
+        onClick={onNavigate}
+        className={`${itemClassName} flex items-center gap-2 text-gray-300 hover:text-white ${
+          isMobile ? "first:rounded-t-lg last:rounded-b-lg" : ""
+        }`}
+      >
+        <Layers className="w-4 h-4" />
+        Manage sites
+      </Link>
 
       {/* Cross-nav back to the dashboards world — symmetric with DashboardsMenu's "Go to Devices". */}
       {goToDashboardId != null && (

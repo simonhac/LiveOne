@@ -3,13 +3,14 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { Settings, Plus, ChevronDown } from "lucide-react";
+import { Settings, Plus, Layers, ChevronDown } from "lucide-react";
 import Dashboard from "@/components/Dashboard";
 import DashboardSettingsDialog from "@/components/DashboardSettingsDialog";
 import DashboardsMenu, {
   usePrefetchDashboardsMenu,
 } from "@/components/DashboardsMenu";
 import NewDashboardDialog from "@/components/NewDashboardDialog";
+import AddAreaDialog from "@/components/AddAreaDialog";
 import { readableAreasQuery } from "@/lib/queries";
 import { sectionAreaIdsV3, type DashboardV3 } from "@/lib/dashboard/v3";
 import type { ReadableArea } from "@/lib/areas/list";
@@ -35,6 +36,7 @@ export default function DashboardClient({
   const router = useRouter();
   const [renameOpen, setRenameOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
+  const [addAreaOpen, setAddAreaOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
 
   // Warm the switcher's dashboards + default so the dropdown paints fully on first open (no jump).
@@ -97,6 +99,12 @@ export default function DashboardClient({
                 <Settings className="h-4 w-4" />
               </HeaderButton>
               <HeaderButton
+                title="Add area"
+                onClick={() => setAddAreaOpen(true)}
+              >
+                <Layers className="h-4 w-4" />
+              </HeaderButton>
+              <HeaderButton
                 title="New dashboard"
                 onClick={() => setNewOpen(true)}
               >
@@ -108,7 +116,11 @@ export default function DashboardClient({
       </header>
 
       <main className="mx-auto max-w-7xl px-1 py-4">
-        <Dashboard descriptor={dashboard.descriptor} areaById={areaById} />
+        <Dashboard
+          descriptor={dashboard.descriptor}
+          areaById={areaById}
+          onAddArea={canEdit ? () => setAddAreaOpen(true) : undefined}
+        />
       </main>
 
       {canEdit && (
@@ -121,6 +133,14 @@ export default function DashboardClient({
             initialAlias={dashboard.alias ?? ""}
             areaIds={sectionAreaIdsV3(dashboard.descriptor)}
             onDeleted={() => router.push("/dashboard")}
+            onSaved={() => router.refresh()}
+          />
+          <AddAreaDialog
+            isOpen={addAreaOpen}
+            onClose={() => setAddAreaOpen(false)}
+            dashboardId={dashboard.id}
+            descriptor={dashboard.descriptor}
+            readableAreas={readableAreas}
             onSaved={() => router.refresh()}
           />
           <NewDashboardDialog
