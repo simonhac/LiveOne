@@ -180,11 +180,14 @@ export default function LinesChartCard({
     };
   }, []);
 
-  // For energy mode, pad the SOC data to extend the fill to chart edges
+  // For energy mode, pad the SOC data to extend the fill to chart edges. Guard on a non-empty
+  // timestamps array: empty SoC arrays are still truthy, so without this a data-less window (new
+  // device) would run the IIFE and crash on `timestamps[0].getTime()` (undefined).
   const paddedSOCData =
     chartData?.mode === "energy" &&
-    chartData.batterySOCMin &&
-    chartData.batterySOCMax
+    chartData.timestamps.length > 0 &&
+    chartData.batterySOCMin?.length &&
+    chartData.batterySOCMax?.length
       ? (() => {
           // Get the first and last timestamps from the data
           const timestamps = [...chartData.timestamps];
