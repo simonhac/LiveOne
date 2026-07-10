@@ -7,6 +7,7 @@ import { AmberAdapter } from "./amber/adapter";
 import { TeslaAdapter } from "./tesla/adapter";
 import { OpenElectricityAdapter } from "./openelectricity/adapter";
 import { SigenergyAdapter } from "./sigenergy/adapter";
+import { DeepSeaAdapter } from "./deepsea/adapter";
 import { SystemsManager } from "@/lib/systems-manager";
 
 /**
@@ -35,6 +36,7 @@ export class VendorRegistry {
     // outside the adapter path (the minutely cron skips it; live values come via the KV fan-out).
     this.adapters.set("openelectricity", new OpenElectricityAdapter());
     this.adapters.set("sigenergy", new SigenergyAdapter());
+    this.adapters.set("deepsea", new DeepSeaAdapter());
 
     this.initialized = true;
 

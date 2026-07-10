@@ -15,6 +15,7 @@ const publicRoutes = [
   "/api/health", // Health check endpoint for monitoring
   "/api/cron(.*)", // Cron endpoints have their own authentication via CRON_SECRET
   "/api/push(.*)", // Push endpoints authenticate via API key in request body
+  "/api/gush(.*)", // gusher generic push receiver — authenticates via API key in request body
   "/api/observations(.*)", // QStash receiver — authenticates via QStash signature, not Clerk
   "/api/auth(.*)", // Vendor OAuth (Tesla/Enphase) connect/callback/disconnect — the vendor redirect carries no Clerk session; handlers enforce userId themselves
   "/api/enphase-proxy", // Debug endpoint - WARNING: No access controls

@@ -20,7 +20,8 @@ export type VendorType =
   | "fusher"
   | "fronius"
   | "tesla"
-  | "sigenergy";
+  | "sigenergy"
+  | "deepsea";
 
 // Generic credentials interface - vendors define their own specific shapes
 export interface VendorCredentials {
