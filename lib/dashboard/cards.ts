@@ -22,7 +22,8 @@ export type DashboardCardType =
   | "chart"
   | "sankey"
   | "grid-signals"
-  | "generator-runs";
+  | "generator-runs"
+  | "device-metrics";
 
 export type DashboardLayout = "amber" | "site" | "sidebar";
 
@@ -104,6 +105,15 @@ export const CARD_REGISTRY: Record<DashboardCardType, CardDef> = {
     // Eligible only where the system has an enabled generator run-tracker.
     canRender: (c) => !!c.hasGenerator,
   },
+  "device-metrics": {
+    type: "device-metrics",
+    label: "Device Metrics",
+    // NO requiredRoles — the whole point of this card is to surface a device's raw instrumentation
+    // points (voltage/rpm/temperature/…) straight from point_info, with no energy-flow role. Loose,
+    // data-driven gallery hint: any non-amber device with at least one numeric reading. Auto-inclusion
+    // on the device viewer is separately gated in buildDefaultDashboardV3 (tile-less devices only).
+    canRender: (c) => c.vendorType !== "amber" && hasAnyNumeric(c.latest),
+  },
 };
 
 /** The layout the default dashboard uses for a system (mirrors the vendor_type ladder). */
@@ -160,6 +170,10 @@ export const TILES: Record<TileId, TileDef> = {
 
 const hasVal = (latest: LatestPointValues, path: string): boolean =>
   latest[path]?.value != null;
+
+/** Whether the system has any numeric latest value (gates the role-free device-metrics card). */
+const hasAnyNumeric = (latest: LatestPointValues): boolean =>
+  Object.values(latest).some((v) => typeof v?.value === "number");
 
 /**
  * Whether a system has enough series to draw a chart (either variant): solar AND a load signal,

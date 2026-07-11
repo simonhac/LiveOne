@@ -58,6 +58,11 @@ export interface CardV3 {
   hidden?: boolean;
   tiles?: TileV3[]; // type === "tiles"
   chart?: ChartCardConfig; // type === "chart"
+  /**
+   * The member device this card reads (mirrors TileV3.deviceSystemId). Used by section-agnostic,
+   * device-bound cards (e.g. `device-metrics`): omit ⇒ the section's own handle (whole-area).
+   */
+  deviceSystemId?: number; // type === "device-metrics"
 }
 
 /**
@@ -139,6 +144,22 @@ export function buildDefaultDashboardV3(opts: BuildDefaultV3Opts): DashboardV3 {
   const supported = opts.availableViews
     ? TILE_IDS.filter((v) => opts.availableViews!.includes(v))
     : [...TILE_IDS];
+
+  // Instrumentation-only device (a generator, a sensor pack, …): the tile catalog represents NONE of
+  // its points, and it has no OE grid member. Only the live DeviceViewer supplies availableViews (the
+  // seed/AddArea paths omit it, so persisted & composition dashboards are untouched — composition.test
+  // stays green), so this fires only for the on-the-fly `/device/{id}` page. Show just the generic
+  // device-metrics card (+ generator-runs if tracked) instead of an empty tiles grid + empty chart.
+  if (
+    opts.availableViews != null &&
+    supported.length === 0 &&
+    opts.gridDeviceSystemId == null
+  ) {
+    const cards: CardV3[] = [{ type: "device-metrics" }];
+    if (opts.hasGenerator) cards.push({ type: "generator-runs" });
+    return { version: 3, sections: [{ areaId: opts.areaId, cards }] };
+  }
+
   const tiles: TileV3[] = supported.map((view) => ({ view }));
   if (opts.gridDeviceSystemId != null) {
     tiles.push({ view: "oe-grid", deviceSystemId: opts.gridDeviceSystemId });
