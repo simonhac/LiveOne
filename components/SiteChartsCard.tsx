@@ -34,10 +34,9 @@ interface SiteChartsCardProps {
   systemId: string;
   system?: any; // System object from database
   /**
-   * Whether to run the site-history query (the data behind the charts + sankey). Lets the caller drive
-   * it from a DATA signal ("this area has loads + sources") rather than the vendor type, so the sankey
-   * works for any such area. Omitted ⇒ falls back to the vendor check (mondo/composite), preserving the
-   * legacy per-system page.
+   * Whether to run the site-history query (the data behind the charts + sankey). The caller drives it
+   * from a DATA signal ("this area has loads + sources", from capability chart-eligibility) rather than
+   * the vendor type, so the sankey works for any such area. Omitted ⇒ off.
    */
   siteCapable?: boolean;
   cardVisible: (idOrType: string) => boolean;

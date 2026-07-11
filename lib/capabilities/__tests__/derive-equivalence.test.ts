@@ -1,27 +1,82 @@
 /**
- * Equivalence gate for the capability model (P3 acceptance test = P0 rendering-parity spec).
+ * Equivalence gate for the capability model.
  *
  * Proves — EXHAUSTIVELY over the power set of the realistic point-path universe — that deriving
- * capabilities from `latest` and filtering the catalog reproduces today's hardcoded string-path
+ * capabilities from `latest` and filtering the catalog reproduces the ORIGINAL hardcoded string-path
  * derivers BYTE-IDENTICALLY:
- *   availableTilesFromCaps(capabilitiesFromLatest(latest)) === availableTiles(latest)
- *   satisfies(caps, CARD_CATALOG.chart.requires)          === chartHasData(latest)
+ *   availableTilesFromCaps(capabilitiesFromLatest(latest)) === (old availableTiles)
+ *   satisfies(caps, CARD_CATALOG.chart.requires)          === (old chartHasData)
  *
- * When this stays green, the P4 cutover (repoint availableTiles/chartHasData at the capability model)
- * cannot change behaviour for any combination of the paths the 3 live installs carry.
+ * The old `availableTiles`/`chartHasData` (formerly in lib/dashboard/cards.ts) were deleted at the P5
+ * cleanup once the capability model replaced them; their exact logic is INLINED here as the reference
+ * oracle so this invariant is pinned permanently, not just during the transition.
  */
 import { describe, it, expect } from "@jest/globals";
 import type { LatestPointValue, LatestPointValues } from "@/lib/types/api";
-import { availableTiles, chartHasData, TILE_IDS } from "@/lib/dashboard/cards";
 import { capabilitiesFromLatest } from "@/lib/capabilities/derive";
 import {
   availableTilesFromCaps,
   CARD_CATALOG,
   satisfies,
   TILE_ORDER,
+  type TileId,
 } from "@/lib/capabilities/catalog";
 
-/** Every logical path any of the 3 live installs (or the current derivers) can carry. */
+// ── The original derivers, inlined verbatim as the reference oracle ─────────────────────────────
+const LEGACY_TILE_IDS: readonly TileId[] = [
+  "solar",
+  "load",
+  "hotWater",
+  "battery",
+  "house-to-grid",
+  "amber",
+  "ev",
+];
+const hasVal = (latest: LatestPointValues, path: string): boolean =>
+  latest[path]?.value != null;
+function legacyAvailableTiles(latest: LatestPointValues): TileId[] {
+  const solar =
+    hasVal(latest, "source.solar/power") ||
+    hasVal(latest, "source.solar.local/power") ||
+    hasVal(latest, "source.solar.remote/power");
+  const anyLoad =
+    hasVal(latest, "load/power") ||
+    Object.keys(latest).some(
+      (p) => p.startsWith("load.") && p.endsWith("/power") && hasVal(latest, p),
+    );
+  const load =
+    anyLoad ||
+    solar ||
+    hasVal(latest, "bidi.battery/power") ||
+    hasVal(latest, "bidi.grid/power");
+  const available: Record<TileId, boolean> = {
+    solar,
+    load,
+    hotWater: hasVal(latest, "load.hws/temperature"),
+    battery: hasVal(latest, "bidi.battery/soc"),
+    "house-to-grid": hasVal(latest, "bidi.grid/power"),
+    amber: hasVal(latest, "bidi.grid.import/rate"),
+    ev: hasVal(latest, "ev.battery/soc"),
+  };
+  return LEGACY_TILE_IDS.filter((id) => available[id]);
+}
+function legacyChartHasData(latest: LatestPointValues): boolean {
+  const solar =
+    hasVal(latest, "source.solar/power") ||
+    hasVal(latest, "source.solar.local/power") ||
+    hasVal(latest, "source.solar.remote/power");
+  const load =
+    hasVal(latest, "load/power") ||
+    Object.keys(latest).some(
+      (p) => p.startsWith("load.") && p.endsWith("/power") && hasVal(latest, p),
+    ) ||
+    solar ||
+    hasVal(latest, "bidi.battery/power") ||
+    hasVal(latest, "bidi.grid/power");
+  return solar && load;
+}
+
+/** Every logical path any of the 3 live installs (or the original derivers) can carry. */
 const UNIVERSE = [
   "source.solar/power",
   "source.solar.local/power",
@@ -53,20 +108,18 @@ function latestForMask(mask: number): LatestPointValues {
   return latest;
 }
 
-describe("capability model reproduces the current derivers", () => {
-  it("catalog tile order matches TILE_IDS", () => {
-    expect([...TILE_ORDER]).toEqual([...TILE_IDS]);
+describe("capability model reproduces the original derivers", () => {
+  it("catalog tile order matches the original TILE_IDS", () => {
+    expect([...TILE_ORDER]).toEqual([...LEGACY_TILE_IDS]);
   });
 
-  it("availableTilesFromCaps ∘ capabilitiesFromLatest === availableTiles, for EVERY path subset", () => {
+  it("availableTilesFromCaps ∘ capabilitiesFromLatest === (old availableTiles), for EVERY path subset", () => {
     const total = 1 << UNIVERSE.length; // 2^11 = 2048 combinations
     for (let mask = 0; mask < total; mask++) {
       const latest = latestForMask(mask);
       const viaCaps = availableTilesFromCaps(capabilitiesFromLatest(latest));
-      const viaLegacy = availableTiles(latest);
-      // Compare as ordered id lists (both are TILE_IDS-ordered).
+      const viaLegacy = legacyAvailableTiles(latest);
       if (viaCaps.join(",") !== viaLegacy.join(",")) {
-        // Surface the offending subset for debuggability.
         expect({ mask, paths: Object.keys(latest), viaCaps }).toEqual({
           mask,
           paths: Object.keys(latest),
@@ -76,13 +129,14 @@ describe("capability model reproduces the current derivers", () => {
     }
   });
 
-  it("chart eligibility from capabilities === chartHasData, for EVERY path subset", () => {
+  it("chart eligibility from capabilities === (old chartHasData), for EVERY path subset", () => {
     const total = 1 << UNIVERSE.length;
     for (let mask = 0; mask < total; mask++) {
       const latest = latestForMask(mask);
       const caps = capabilitiesFromLatest(latest);
-      const viaCaps = satisfies(caps, CARD_CATALOG.chart.requires);
-      expect(viaCaps).toBe(chartHasData(latest));
+      expect(satisfies(caps, CARD_CATALOG.chart.requires)).toBe(
+        legacyChartHasData(latest),
+      );
     }
   });
 
@@ -94,7 +148,7 @@ describe("capability model reproduces the current derivers", () => {
       },
     };
     expect(availableTilesFromCaps(capabilitiesFromLatest(latest))).toEqual([]);
-    expect(availableTiles(latest)).toEqual([]);
+    expect(legacyAvailableTiles(latest)).toEqual([]);
   });
 });
 
@@ -112,9 +166,9 @@ describe("representative live-install shapes", () => {
       "ev.battery/soc",
     ]);
     const caps = capabilitiesFromLatest(latest);
-    expect(availableTilesFromCaps(caps)).toEqual(availableTiles(latest));
+    expect(availableTilesFromCaps(caps)).toEqual(legacyAvailableTiles(latest));
     expect(satisfies(caps, CARD_CATALOG.chart.requires)).toBe(
-      chartHasData(latest),
+      legacyChartHasData(latest),
     );
   });
 
@@ -130,7 +184,7 @@ describe("representative live-install shapes", () => {
       "ev.battery/soc",
     ]);
     const caps = capabilitiesFromLatest(latest);
-    expect(availableTilesFromCaps(caps)).toEqual(availableTiles(latest));
+    expect(availableTilesFromCaps(caps)).toEqual(legacyAvailableTiles(latest));
   });
 
   it("daylesford (selectronic): solar+battery+load+grid, no amber/ev/hws", () => {
@@ -142,9 +196,9 @@ describe("representative live-install shapes", () => {
       "bidi.grid/power",
     ]);
     const caps = capabilitiesFromLatest(latest);
-    expect(availableTilesFromCaps(caps)).toEqual(availableTiles(latest));
+    expect(availableTilesFromCaps(caps)).toEqual(legacyAvailableTiles(latest));
     expect(satisfies(caps, CARD_CATALOG.chart.requires)).toBe(
-      chartHasData(latest),
+      legacyChartHasData(latest),
     );
   });
 });

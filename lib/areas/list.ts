@@ -18,8 +18,6 @@ export interface ReadableArea {
   displayName: string;
   /** The integer addressing handle — the systemId a card binds its data queries to. */
   legacySystemId: number;
-  /** The bound system's vendor type — lets the card picker grey out vendor-incompatible card types. */
-  vendorType: string;
 }
 
 /**
@@ -35,7 +33,6 @@ export async function listReadableAreas(
     true,
   );
   const systemIds = systems.map((s) => s.id);
-  const vendorBySystemId = new Map(systems.map((s) => [s.id, s.vendorType]));
 
   // Areas a user can read: the area-of-one of every visible system, PLUS Areas they OWN — the
   // latter catches multi-device areas whose handle is not itself a real system.
@@ -65,9 +62,6 @@ export async function listReadableAreas(
       id: r.id,
       displayName: r.displayName,
       legacySystemId: r.legacySystemId,
-      // Real handle → its vendor type; a multi-device Area handle (no real system) → "area"
-      // (drives the "site"/unified layout via getLayout).
-      vendorType: vendorBySystemId.get(r.legacySystemId) ?? "area",
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
@@ -93,14 +87,9 @@ export async function resolveAreasByIds(
   const present = rows.filter(
     (r): r is typeof r & { legacySystemId: number } => r.legacySystemId != null,
   );
-  return Promise.all(
-    present.map(async (r) => ({
-      id: r.id,
-      displayName: r.displayName,
-      legacySystemId: r.legacySystemId,
-      vendorType:
-        (await SystemsManager.getInstance().getViewableSystem(r.legacySystemId))
-          ?.vendorType ?? "",
-    })),
-  );
+  return present.map((r) => ({
+    id: r.id,
+    displayName: r.displayName,
+    legacySystemId: r.legacySystemId,
+  }));
 }

@@ -1,41 +1,26 @@
 /**
- * Equivalence gate for buildAreaStrategy vs the vendor-keyed buildDefaultDashboardV3.
+ * Golden test for buildAreaStrategy — the capability-driven default-dashboard builder.
  *
- * Proves the capability-driven strategy reproduces the current default-dashboard builder byte-for-byte
- * across the representative contexts — so the P4 cutover (repoint callers at buildAreaStrategy) doesn't
- * change what a fresh dashboard / the /device viewer produces. Matched pairs: the OLD opts and the NEW
- * capability context that should yield the identical descriptor.
+ * The golden descriptors were captured from the previous vendor-keyed builder (buildDefaultDashboardV3)
+ * at the P4 cutover, where buildAreaStrategy was proven byte-identical to it across these contexts. That
+ * builder is now deleted, so this pins the capability strategy's output directly: each case pairs a
+ * capability context with the exact descriptor it must produce.
  */
 import { describe, it, expect } from "@jest/globals";
-import {
-  buildDefaultDashboardV3,
-  type BuildDefaultV3Opts,
-} from "@/lib/dashboard/v3";
-import { getLayout } from "@/lib/dashboard/cards";
 import {
   buildAreaStrategy,
   type AreaStrategyContext,
 } from "@/lib/capabilities/strategy";
 import type { CapabilityId } from "@/lib/capabilities/registry";
+import type { DashboardV3 } from "@/lib/dashboard/v3";
 
 const caps = (...ids: CapabilityId[]) => new Set<CapabilityId>(ids);
 const A = "area-uuid";
+const golden = (json: string): DashboardV3 => JSON.parse(json) as DashboardV3;
 
-// Each case: the OLD opts, and the NEW context that must produce the identical descriptor.
-const CASES: {
-  name: string;
-  old: BuildDefaultV3Opts;
-  ctx: AreaStrategyContext;
-}[] = [
+const CASES: { name: string; ctx: AreaStrategyContext; want: DashboardV3 }[] = [
   {
     name: "sidebar device + generator (device viewer)",
-    old: {
-      areaId: A,
-      vendorType: "selectronic",
-      availableViews: ["solar", "load", "battery", "house-to-grid"],
-      hasGenerator: true,
-      leadWithDeviceMetrics: true,
-    },
     ctx: {
       areaId: A,
       capabilities: caps(
@@ -49,25 +34,12 @@ const CASES: {
       aggregate: false,
       leadWithDeviceMetrics: true,
     },
+    want: golden(
+      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics","variant":"table"},{"type":"tiles","tiles":[{"view":"solar"},{"view":"load"},{"view":"battery"},{"view":"house-to-grid"}]},{"type":"chart","id":"chart:lines","chart":{"variant":"lines"}},{"type":"generator-runs"}]}]}',
+    ),
   },
   {
     name: "site multi-device + oe-grid tile",
-    old: {
-      areaId: A,
-      vendorType: "area",
-      availableViews: [
-        "solar",
-        "load",
-        "hotWater",
-        "battery",
-        "house-to-grid",
-        "amber",
-        "ev",
-      ],
-      gridDeviceSystemId: 12,
-      hasGenerator: false,
-      leadWithDeviceMetrics: true,
-    },
     ctx: {
       areaId: A,
       capabilities: caps(
@@ -84,36 +56,36 @@ const CASES: {
       gridDeviceSystemId: 12,
       leadWithDeviceMetrics: true,
     },
+    want: golden(
+      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics","variant":"table"},{"type":"tiles","tiles":[{"view":"solar"},{"view":"load"},{"view":"hotWater"},{"view":"battery"},{"view":"house-to-grid"},{"view":"amber"},{"view":"ev"},{"view":"oe-grid","deviceSystemId":12}]},{"type":"chart","id":"chart:load","chart":{"variant":"stacked-areas","split":"load"}},{"type":"chart","id":"chart:generation","chart":{"variant":"stacked-areas","split":"generation"}}]}]}',
+    ),
   },
   {
     name: "amber pricing-only",
-    old: { areaId: A, vendorType: "amber", leadWithDeviceMetrics: true },
     ctx: {
       areaId: A,
       capabilities: caps("grid/rate"),
       aggregate: false,
       leadWithDeviceMetrics: true,
     },
+    want: golden(
+      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics","variant":"table"},{"type":"amber-now"},{"type":"amber-timeline"}]}]}',
+    ),
   },
   {
     name: "instrumentation-only device (generator/sensor pack)",
-    old: {
-      areaId: A,
-      vendorType: "deepsea",
-      availableViews: [],
-      hasGenerator: false,
-      leadWithDeviceMetrics: true,
-    },
     ctx: {
       areaId: A,
       capabilities: caps("instrumentation"),
       aggregate: false,
       leadWithDeviceMetrics: true,
     },
+    want: golden(
+      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics","variant":"table"}]}]}',
+    ),
   },
   {
-    name: "seed with full caps == old no-availableViews (all tiles, lines)",
-    old: { areaId: A, vendorType: "selectronic" },
+    name: "seed, full caps (all tiles, lines, no lead)",
     ctx: {
       areaId: A,
       capabilities: caps(
@@ -127,17 +99,16 @@ const CASES: {
       ),
       aggregate: false,
     },
+    want: golden(
+      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"tiles","tiles":[{"view":"solar"},{"view":"load"},{"view":"hotWater"},{"view":"battery"},{"view":"house-to-grid"},{"view":"amber"},{"view":"ev"}]},{"type":"chart","id":"chart:lines","chart":{"variant":"lines"}}]}]}',
+    ),
   },
 ];
 
-describe("buildAreaStrategy reproduces buildDefaultDashboardV3", () => {
+describe("buildAreaStrategy golden output", () => {
   for (const c of CASES) {
     it(c.name, () => {
-      // Sanity: the aggregate flag must correspond to the old vendor→layout for the matched pair.
-      if (c.old.vendorType !== "amber") {
-        expect(c.ctx.aggregate).toBe(getLayout(c.old.vendorType) === "site");
-      }
-      expect(buildAreaStrategy(c.ctx)).toEqual(buildDefaultDashboardV3(c.old));
+      expect(buildAreaStrategy(c.ctx)).toEqual(c.want);
     });
   }
 });

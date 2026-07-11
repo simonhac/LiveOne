@@ -88,7 +88,6 @@ export default function DeviceViewer({
       id: `device-${handle}`,
       displayName: data.system.displayName,
       legacySystemId: handle,
-      vendorType: data.system.vendorType,
     };
     const latest = data.latest ?? {};
     // Capability-driven default view — no vendorType branch. `generator-running` is a compound
