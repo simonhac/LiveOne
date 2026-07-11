@@ -13,6 +13,7 @@ import AmberCard from "@/components/AmberCard";
 import AmberSmallCard from "@/components/AmberSmallCard";
 import AmberNow from "@/components/AmberNow";
 import GeneratorRunsCard from "@/components/GeneratorRunsCard";
+import DeviceMetricsCard from "@/components/DeviceMetricsCard";
 import GridSignalsCard from "@/components/GridSignalsCard";
 import { gridLatestFromData } from "@/lib/grid/latest";
 import { nemRegionShortLabel } from "@/lib/vendors/openelectricity/region";
@@ -191,7 +192,20 @@ function AreaSectionView({
         );
       case "generator-runs":
         return handle != null ? (
-          <AreaGeneratorRuns key={cardKeyV3(card, i)} systemId={handle} />
+          <AreaGeneratorRuns
+            key={cardKeyV3(card, i)}
+            systemId={card.deviceSystemId ?? handle}
+          />
+        ) : (
+          <ChartSkeleton key={cardKeyV3(card, i)} />
+        );
+      case "device-metrics":
+        return handle != null ? (
+          <AreaDeviceMetrics
+            key={cardKeyV3(card, i)}
+            systemId={card.deviceSystemId ?? handle}
+            variant={card.variant}
+          />
         ) : (
           <ChartSkeleton key={cardKeyV3(card, i)} />
         );
@@ -429,6 +443,33 @@ function AreaGeneratorRuns({ systemId }: { systemId: number }) {
     return <ChartSkeleton />;
   }
   return <GeneratorRunsCard systemId={systemId} timezoneOffsetMin={tz} />;
+}
+
+/**
+ * The device-metrics panel for a section — a grid of the device's raw numeric points (no role). Self-
+ * fetches the handle's `system` only to derive the vendor-appropriate stale threshold; DeviceMetricsCard
+ * owns its own readings query (and its loading/empty states), so no skeleton gate is needed here.
+ */
+function AreaDeviceMetrics({
+  systemId,
+  variant,
+}: {
+  systemId: number;
+  variant?: "grid" | "table";
+}) {
+  const { isAnyModalOpen } = useModalContext();
+  const { data } = useQuery(
+    dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
+  );
+  const vendorType =
+    ((data ?? null) as AreaDatum | null)?.system?.vendorType ?? "";
+  return (
+    <DeviceMetricsCard
+      systemId={systemId}
+      staleThresholdSeconds={staleThreshold(vendorType)}
+      variant={variant}
+    />
+  );
 }
 
 function AreaAmberNow({ systemId }: { systemId: number }) {

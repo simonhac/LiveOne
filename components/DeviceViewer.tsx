@@ -93,6 +93,8 @@ export default function DeviceViewer({
       availableViews: availableTiles(data.latest ?? {}),
       gridDeviceSystemId: gridContext?.regionSystemId,
       hasGenerator,
+      // Lead the device view with the generic all-values table (works for every device).
+      leadWithDeviceMetrics: true,
     });
     return { descriptor: d, areaById: new Map([[area.id, area]]) };
   }, [data?.system, data?.latest, systemId, gridContext, hasGenerator]);

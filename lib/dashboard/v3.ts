@@ -58,6 +58,19 @@ export interface CardV3 {
   hidden?: boolean;
   tiles?: TileV3[]; // type === "tiles"
   chart?: ChartCardConfig; // type === "chart"
+  /**
+   * The member device this card reads (mirrors TileV3.deviceSystemId). Used by section-agnostic,
+   * device-bound cards (`device-metrics`, `generator-runs`): omit ⇒ the section's own handle
+   * (whole-area). Needed when a multi-device area's handle isn't where the card's data lives —
+   * e.g. run periods are keyed by a member `system_id`, not the synthetic area handle.
+   */
+  deviceSystemId?: number; // type === "device-metrics" | "generator-runs"
+  /**
+   * `device-metrics` presentation: `grid` (the historical gauge-tile grid) or `table` (a compact
+   * two-column name → formatted-value list). Omitted ⇒ `grid`. The device viewer leads with the
+   * `table` variant; instrumentation-only fallbacks keep it too.
+   */
+  variant?: "grid" | "table"; // type === "device-metrics"
 }
 
 /**
@@ -112,6 +125,12 @@ export interface BuildDefaultV3Opts {
    * over-count then collapse (e.g. a sidebar system that only has solar/load/battery/grid).
    */
   availableViews?: readonly TileView[];
+  /**
+   * Lead every layout with a generic all-values `device-metrics` card (the `table` variant) as the
+   * FIRST card. Only the live `/device/{id}` DeviceViewer sets this, so the device view (direct and
+   * via the rail browser) gets the panel while persisted / composition dashboards are untouched.
+   */
+  leadWithDeviceMetrics?: boolean;
 }
 
 /**
@@ -123,6 +142,13 @@ export interface BuildDefaultV3Opts {
 export function buildDefaultDashboardV3(opts: BuildDefaultV3Opts): DashboardV3 {
   const layout = getLayout(opts.vendorType);
 
+  // The generic all-values panel that leads the device view (name → formatted value, works for any
+  // device). Only emitted when the caller (the DeviceViewer) opts in, so other descriptor builders
+  // are unaffected. `deviceMetricsLead` is the prefix; `[]` when not leading.
+  const deviceMetricsLead: CardV3[] = opts.leadWithDeviceMetrics
+    ? [{ type: "device-metrics", variant: "table" }]
+    : [];
+
   if (layout === "amber") {
     // An Amber price dashboard: the two amber cards, no tiles/charts.
     return {
@@ -130,7 +156,11 @@ export function buildDefaultDashboardV3(opts: BuildDefaultV3Opts): DashboardV3 {
       sections: [
         {
           areaId: opts.areaId,
-          cards: [{ type: "amber-now" }, { type: "amber-timeline" }],
+          cards: [
+            ...deviceMetricsLead,
+            { type: "amber-now" },
+            { type: "amber-timeline" },
+          ],
         },
       ],
     };
@@ -139,11 +169,30 @@ export function buildDefaultDashboardV3(opts: BuildDefaultV3Opts): DashboardV3 {
   const supported = opts.availableViews
     ? TILE_IDS.filter((v) => opts.availableViews!.includes(v))
     : [...TILE_IDS];
+
+  // Instrumentation-only device (a generator, a sensor pack, …): the tile catalog represents NONE of
+  // its points, and it has no OE grid member. Only the live DeviceViewer supplies availableViews (the
+  // seed/AddArea paths omit it, so persisted & composition dashboards are untouched — composition.test
+  // stays green), so this fires only for the on-the-fly `/device/{id}` page. Show just the generic
+  // device-metrics card (+ generator-runs if tracked) instead of an empty tiles grid + empty chart.
+  if (
+    opts.availableViews != null &&
+    supported.length === 0 &&
+    opts.gridDeviceSystemId == null
+  ) {
+    // Already leads with device-metrics — honor the requested variant (table when leading), no dup.
+    const cards: CardV3[] = opts.leadWithDeviceMetrics
+      ? [...deviceMetricsLead]
+      : [{ type: "device-metrics" }];
+    if (opts.hasGenerator) cards.push({ type: "generator-runs" });
+    return { version: 3, sections: [{ areaId: opts.areaId, cards }] };
+  }
+
   const tiles: TileV3[] = supported.map((view) => ({ view }));
   if (opts.gridDeviceSystemId != null) {
     tiles.push({ view: "oe-grid", deviceSystemId: opts.gridDeviceSystemId });
   }
-  const cards: CardV3[] = [{ type: "tiles", tiles }];
+  const cards: CardV3[] = [...deviceMetricsLead, { type: "tiles", tiles }];
 
   if (layout === "site") {
     // Site (mondo/composite): the two stacked-area charts. The sankey is NOT a default — it's an opt-in
