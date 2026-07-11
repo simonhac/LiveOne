@@ -9,7 +9,8 @@
  *   GUSH_ENDPOINT           gusher URL (default http://localhost:3000/api/gush)
  *   MUSHER_API_KEY          the system's gusher apiKey (gk_…)   [required unless --dry]
  *   MUSHER_SITE_ID          vendorSiteId (default "sheephouse")
- *   COLLECTOR_INTERVAL_SEC  poll interval (default 60)
+ *   COLLECTOR_INTERVAL_SEC        idle poll interval, boundary-aligned (default 300 = every 5 min)
+ *   COLLECTOR_ACTIVE_INTERVAL_SEC poll interval while the generator is running (default 60 = 1 min)
  *   DEEPSEA_HOST/PORT/UNIT_ID   DSE connection (defaults 10.0.1.244 / 502 / 10)
  *
  * Flags:
@@ -50,7 +51,10 @@ async function main() {
   const endpoint =
     process.env.GUSH_ENDPOINT ?? "http://localhost:3000/api/gush";
   const siteId = process.env.MUSHER_SITE_ID ?? "sheephouse";
-  const intervalSec = Number(process.env.COLLECTOR_INTERVAL_SEC ?? "60");
+  const intervalSec = Number(process.env.COLLECTOR_INTERVAL_SEC ?? "300");
+  const activeIntervalSec = Number(
+    process.env.COLLECTOR_ACTIVE_INTERVAL_SEC ?? "60",
+  );
   const ts = () => new Date().toISOString();
   const log = (m: string) => console.log(`${ts()} ${m}`);
 
@@ -87,7 +91,7 @@ async function main() {
   });
 
   log(
-    `collector → ${endpoint}  site=${siteId}  (${once ? "once" : intervalSec + "s loop"})`,
+    `collector → ${endpoint}  site=${siteId}  (${once ? "once" : `${intervalSec}s idle / ${activeIntervalSec}s active, boundary-aligned`})`,
   );
 
   const ok = await pusher.test();
@@ -95,7 +99,13 @@ async function main() {
   if (!ok) process.exit(2);
 
   const entries: Entry[] = [{ source: musher, pusher }];
-  await runLoop(entries, { intervalMs: intervalSec * 1000, once, log });
+  await runLoop(entries, {
+    intervalMs: intervalSec * 1000,
+    activeIntervalMs: activeIntervalSec * 1000,
+    alignToBoundary: true,
+    once,
+    log,
+  });
   process.exit(0);
 }
 

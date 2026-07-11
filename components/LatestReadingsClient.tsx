@@ -256,7 +256,12 @@ export default function LatestReadingsClient({
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-white">
                     {item.value != null ? (
-                      formatValueWithUnit(item.value, item.metricUnit)
+                      formatValueWithUnit(
+                        item.value,
+                        item.metricUnit,
+                        item.displayUnit,
+                        item.displayFormat,
+                      )
                     ) : (
                       <span className="text-gray-600">—</span>
                     )}

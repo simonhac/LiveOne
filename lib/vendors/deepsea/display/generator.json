@@ -1,0 +1,10 @@
+{
+  "battery_v": { "unit": "V", "format": "0.0" },
+  "charge_alt_v": { "unit": "V", "format": "0.0" },
+  "engine_rpm": { "unit": "rpm", "format": "0" },
+  "gen_freq_hz": { "unit": "Hz", "format": "0.0" },
+  "oil_pressure_kpa": { "unit": "kPa", "format": "0" },
+  "coolant_temp_c": { "unit": "°C", "format": "0.0" },
+  "oil_temp_c": { "unit": "°C", "format": "0.0" },
+  "fuel_level_pct": { "unit": "%", "format": "0" }
+}

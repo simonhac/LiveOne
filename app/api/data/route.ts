@@ -7,6 +7,7 @@ import { getLatestPointValues } from "@/lib/kv-cache-manager";
 import { jsonResponse } from "@/lib/json";
 import { SystemsManager } from "@/lib/systems-manager";
 import { PointManager } from "@/lib/point/point-manager";
+import { resolvePointDisplay } from "@/lib/point/display/registry";
 import { clerkClient } from "@clerk/nextjs/server";
 
 /**
@@ -26,6 +27,9 @@ interface LatestReadingRow {
   pointName: string;
   sessionId?: string;
   sessionLabel?: string;
+  /** Resolved from the central display registry (unit + Excel number format), null when uncovered. */
+  displayUnit?: string;
+  displayFormat?: string;
 }
 
 export async function GET(request: NextRequest) {
@@ -123,6 +127,14 @@ export async function GET(request: NextRequest) {
       readings = expectedPoints
         .map((point): LatestReadingRow => {
           const logicalPath = point.getLogicalPath();
+          const display = resolvePointDisplay(
+            system.vendorType,
+            point.subsystem,
+            point.physicalPathTail,
+          );
+          const displayFields = display
+            ? { displayUnit: display.unit, displayFormat: display.format }
+            : {};
           const cached = logicalPath ? latest[logicalPath] : null;
           if (cached) {
             // Numeric → boolean when the unit says so (the readings table renders true/false).
@@ -152,6 +164,7 @@ export async function GET(request: NextRequest) {
               ...(cached.sessionLabel != null && {
                 sessionLabel: cached.sessionLabel,
               }),
+              ...displayFields,
             };
           }
           // No cached value — expected-but-missing point.
@@ -160,6 +173,7 @@ export async function GET(request: NextRequest) {
             logicalPath,
             metricUnit: point.metricUnit,
             pointName: point.name,
+            ...displayFields,
           };
         })
         .sort(
