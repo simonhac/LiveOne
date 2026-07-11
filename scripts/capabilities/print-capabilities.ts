@@ -18,7 +18,6 @@ import {
   availableTilesFromCaps,
   availableAreaCards,
 } from "@/lib/capabilities/catalog";
-import { availableTiles } from "@/lib/dashboard/cards";
 import { getLatestValues } from "@/lib/latest-values-store";
 import type { LatestPointValues } from "@/lib/types/api";
 
@@ -49,15 +48,11 @@ async function main() {
         : "  ✅ presence ⊆ config",
     );
 
-    // Capability-derived tiles must equal today's availableTiles(latest).
-    const tilesCap = availableTilesFromCaps(presence);
-    const tilesLegacy = availableTiles(latest);
-    const same = tilesCap.join(",") === tilesLegacy.join(",");
-    console.log("  tiles(caps)  :", tilesCap.join(", ") || "∅");
+    // Capability-derived tiles from the presence set (equivalence to the old availableTiles is pinned
+    // by lib/capabilities/__tests__/derive-equivalence.test.ts).
     console.log(
-      same
-        ? "  ✅ tiles(caps) == availableTiles(latest)"
-        : `  ⚠️  MISMATCH vs legacy: ${tilesLegacy.join(", ")}`,
+      "  tiles(caps)  :",
+      availableTilesFromCaps(presence).join(", ") || "∅",
     );
 
     console.log(
