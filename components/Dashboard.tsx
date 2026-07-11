@@ -192,7 +192,10 @@ function AreaSectionView({
         );
       case "generator-runs":
         return handle != null ? (
-          <AreaGeneratorRuns key={cardKeyV3(card, i)} systemId={handle} />
+          <AreaGeneratorRuns
+            key={cardKeyV3(card, i)}
+            systemId={card.deviceSystemId ?? handle}
+          />
         ) : (
           <ChartSkeleton key={cardKeyV3(card, i)} />
         );

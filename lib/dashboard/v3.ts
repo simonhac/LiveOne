@@ -60,9 +60,11 @@ export interface CardV3 {
   chart?: ChartCardConfig; // type === "chart"
   /**
    * The member device this card reads (mirrors TileV3.deviceSystemId). Used by section-agnostic,
-   * device-bound cards (e.g. `device-metrics`): omit ⇒ the section's own handle (whole-area).
+   * device-bound cards (`device-metrics`, `generator-runs`): omit ⇒ the section's own handle
+   * (whole-area). Needed when a multi-device area's handle isn't where the card's data lives —
+   * e.g. run periods are keyed by a member `system_id`, not the synthetic area handle.
    */
-  deviceSystemId?: number; // type === "device-metrics"
+  deviceSystemId?: number; // type === "device-metrics" | "generator-runs"
 }
 
 /**
