@@ -12,7 +12,7 @@ sources:
   # or directly on the LAN from a Pi. Poll==push: 5 min idle, 1 min while the genset is running.
   - type: deepsea
     siteId: sheephouse
-    apiKeyEnv: SHEEPHOUSE_API_KEY
+    apiKeyEnv: MUSHER_API_KEY # reuse the hub's existing system-14 gusher key (no rotation at cutover)
     host: 10.0.1.244
     port: 502
     unitId: 10
@@ -21,11 +21,16 @@ sources:
 
   # Fronius at Kinkora (fusher) — one site, two inverters (master + slave), aggregated. The Site
   # self-polls each inverter every 2 s; the run-loop pushes the minutely report once per minute.
+  # → LiveOne system 5 (vendor_type=fusher, vendor_site_id=kinkora), reusing its existing point_info.
+  # Kinkora's LAN is ALSO 10.0.1.0/24 (same as sheephouse); the hub keeps the sites apart with
+  # per-inverter /32 routes (KINKORA_DEVICE_CIDRS = 10.0.1.190/32,10.0.1.191/32) — the distinct device
+  # IPs (.190/.191 here vs sheephouse .244) never collide, so never route the whole /24.
   - type: fronius
     siteId: kinkora
     apiKeyEnv: KINKORA_API_KEY
     invPollSec: 2
     pushSec: 60
     inverters:
-      - host: 10.1.0.11 # master (auto-detected by Site P_Load if isMaster omitted)
-      - host: 10.1.0.12
+      - host: 10.0.1.190 # master — S/N 31347675 (master675.local)
+        isMaster: true
+      - host: 10.0.1.191 # slave  — S/N 31347674 (slave674.local)

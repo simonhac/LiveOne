@@ -6,14 +6,15 @@
 # The inspector is fronted by Cloudflare Access (cloudflared) at usher.liveone.energy — the Fly IP
 # exposes ONLY the WireGuard UDP port. The sources are configured in the baked usher.yaml (USHER_CONFIG).
 #
-# Deploy from the repo root (monorepo build context):
-#   fly deploy -c packages/usher/deploy/fly/fly.toml --dockerfile packages/usher/deploy/fly/Dockerfile
+# Deploy from the repo root (monorepo build context = "." ; the Dockerfile path in [build] below is
+# resolved relative to THIS fly.toml's directory):
+#   fly deploy . -c packages/usher/deploy/fly/fly.toml --ha=false
 #
 # Secrets (fly secrets set …), NOT here:
 #   WG_PRIVKEY               hub WireGuard private key (reuse the probe's → hub pubkey unchanged)
 #   SHEEPHOUSE_PEER_PUBKEY   sheephouse UDM WG public key
 #   KINKORA_PEER_PUBKEY      kinkora UDM WG public key
-#   KINKORA_DEVICE_CIDRS     the two Fronius inverter /32s, comma-separated (e.g. "10.1.0.11/32,10.1.0.12/32")
+#   KINKORA_DEVICE_CIDRS     the two Fronius inverter /32s, comma-separated ("10.0.1.190/32,10.0.1.191/32")
 #   TUNNEL_TOKEN             cloudflared tunnel token (Cloudflare Access → usher.liveone.energy)
 #   SHEEPHOUSE_API_KEY       gusher gk_ key for system "sheephouse"
 #   KINKORA_API_KEY          gusher gk_ key for system "kinkora"
@@ -21,7 +22,7 @@ app = "liveone-flyhub"
 primary_region = "syd"
 
 [build]
-  dockerfile = "packages/usher/deploy/fly/Dockerfile"
+  dockerfile = "Dockerfile"
 
 [env]
   # Non-secret WG addressing (peer pubkeys + inverter CIDRs are secrets; see above).
