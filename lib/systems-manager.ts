@@ -4,6 +4,7 @@ import type { InferSelectModel } from "drizzle-orm";
 import { isProduction } from "@/lib/env";
 import { getUserIdByUsername } from "@/lib/user-cache";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { ensureAreaOfOne } from "@/lib/areas/sync";
 import {
   systems as pgSystems,
   pollingStatus as pgPollingStatus,
@@ -331,11 +332,19 @@ export class SystemsManager {
       `[SystemsManager] Created system ${newSystem.id} (${systemData.vendorType}) for user ${systemData.ownerClerkUserId}`,
     );
 
-    // Areas are LAZY: a new system gets no area-of-one at create-time. One is minted on demand the
-    // moment it's actually needed — when the system forms a complete flow role set (the daily
-    // `resolveLogicalSystem` heal) or when its location is set (`/api/systems/[id]/location`). This
-    // stops bare monitoring-only systems (e.g. public grid-region feeds) accruing pointless Area rows.
-    // Serving works without an Area: a real device resolves its OWN point_info, not via an Area.
+    // Every device gets a first-class area-of-one EAGERLY at create-time, so the device view, the
+    // membership (`area_devices`), and flow keying resolve against a real Area — no synthesized shim.
+    // Best-effort: an area-mint failure must NEVER orphan the freshly-created system row, so we
+    // log-and-continue; the daily `resolveLogicalSystem` heal and the location route remain backstops.
+    // `ensureAreaOfOne` is idempotent + race-safe on `areas_legacy_system_unique`.
+    try {
+      await ensureAreaOfOne(newSystem);
+    } catch (e) {
+      console.warn(
+        `[SystemsManager] area-of-one mint deferred for system ${newSystem.id}:`,
+        e,
+      );
+    }
 
     // No cache to invalidate: config is read per-request, so the next request sees the new system.
     return newSystem;
