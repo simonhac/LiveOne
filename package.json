@@ -26,6 +26,8 @@
     "db:rebuild-dev-kv": "tsx scripts/utils/rebuild-dev-kv-from-db.ts",
     "db:recompute-dev-runs": "tsx scripts/utils/recompute-dev-runs-from-db.ts",
     "sigen:poll": "tsx --env-file=.env.local scripts/sigenergy/poll.ts",
+    "deepsea:poll": "tsx --env-file=.env.local scripts/deepsea/poll.ts",
+    "collector": "tsx --env-file=.env.local scripts/collector/index.ts",
     "prepare": "husky"
   },
   "keywords": [],
@@ -116,6 +118,7 @@
     "husky": "^9.1.7",
     "jest": "^30.0.5",
     "lint-staged": "^16.2.4",
+    "modbus-serial": "^8.0.25",
     "prettier": "^3.6.2",
     "ts-jest": "^29.4.1"
   },
