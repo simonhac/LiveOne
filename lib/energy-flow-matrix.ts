@@ -96,6 +96,63 @@ export function pickDailyFlowMatrix(
   return matrixWithTotals(d.sources, d.loads, day.matrix);
 }
 
+/** A source node is solar iff its id is the bare parent or a `source.solar.<leaf>` (incl. `.residual`). */
+function isSolarSourceId(id: string): boolean {
+  return id === "source.solar" || id.startsWith("source.solar.");
+}
+
+/**
+ * Collapse every solar source node (`source.solar`, per-array `source.solar.<leaf>`, and the synthetic
+ * `source.solar.residual`) into a single "Solar" source — the "combine solar arrays" Sankey option.
+ *
+ * Pure `EnergyFlowMatrix → EnergyFlowMatrix`, applied client-side after matrix selection, so it works
+ * uniformly for the 30D (summed/hovered) and 1D/7D (window/instant) matrices. The combined row is the
+ * element-wise sum of the solar rows across loads, placed at the FIRST solar node's position; non-solar
+ * sources keep their order; loads are untouched (column sums are invariant under summing rows, so every
+ * load total is unchanged). No-op (returns the input) when there are 0 or 1 solar sources. `matrixWithTotals`
+ * recomputes all totals, so they can't drift. Leaves `source.battery`/`load.battery` alone → composes with
+ * the battery-middle layout (combine first, layout after).
+ */
+export function combineSolarSources(
+  matrix: EnergyFlowMatrix,
+): EnergyFlowMatrix {
+  const solarIdx = matrix.sources
+    .map((s, i) => (isSolarSourceId(s.id) ? i : -1))
+    .filter((i) => i >= 0);
+  if (solarIdx.length <= 1) return matrix; // nothing to combine
+
+  const firstSolar = solarIdx[0];
+  const solarSet = new Set(solarIdx);
+  const loadCount = matrix.loads.length;
+
+  const combined: EnergyFlowNode = {
+    id: "source.solar",
+    label: "Solar",
+    // `getColorForPath` splits on "/" then ".", so a bare stem yields gray — pass the `/power` form to
+    // get the canonical solar-primary yellow (mirrors colorForFlowPath, without the import cycle).
+    color: getColorForPath("source.solar/power"),
+  };
+
+  const newSources: EnergyFlowNode[] = [];
+  const newMatrix: number[][] = [];
+  matrix.sources.forEach((src, i) => {
+    if (i === firstSolar) {
+      newSources.push(combined);
+      const row = new Array<number>(loadCount).fill(0);
+      for (const si of solarIdx) {
+        for (let l = 0; l < loadCount; l++) row[l] += matrix.matrix[si][l] ?? 0;
+      }
+      newMatrix.push(row);
+    } else if (!solarSet.has(i)) {
+      newSources.push(src);
+      newMatrix.push([...matrix.matrix[i]]);
+    }
+    // else: a non-first solar row — folded into `combined`
+  });
+
+  return matrixWithTotals(newSources, matrix.loads, newMatrix);
+}
+
 /** Node metadata + pure power/energy series ready for the flow-matrix core, plus the shared timestamps. */
 interface PreparedFlowInputs {
   sources: EnergyFlowNode[];
