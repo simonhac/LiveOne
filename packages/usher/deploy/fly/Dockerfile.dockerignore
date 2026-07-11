@@ -1,0 +1,6 @@
+# The Fly build context is the repo root — keep heavy/irrelevant paths out of the image build.
+**/node_modules
+**/.next
+**/.next-build
+.git
+**/*.log

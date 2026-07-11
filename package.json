@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "A modern web service that bridges Selectronic SP PRO inverters to MQTT, providing real-time monitoring and data publishing for solar/battery systems.",
   "main": "index.js",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "concurrently \"next dev\" \"tsc --noEmit --watch\"",
     "dev:no-typecheck": "next dev",
@@ -26,9 +29,9 @@
     "db:rebuild-dev-kv": "tsx scripts/utils/rebuild-dev-kv-from-db.ts",
     "db:recompute-dev-runs": "tsx scripts/utils/recompute-dev-runs-from-db.ts",
     "sigen:poll": "tsx --env-file=.env.local scripts/sigenergy/poll.ts",
-    "deepsea:poll": "tsx --env-file=.env.local scripts/deepsea/poll.ts",
-    "collector": "tsx --env-file=.env.local scripts/collector/index.ts",
-    "build:collector": "esbuild scripts/collector/index.ts --bundle --platform=node --target=node20 --format=cjs --external:modbus-serial --outfile=scripts/collector/fly/collector.cjs",
+    "deepsea:poll": "npm run --workspace @liveone/usher deepsea:poll",
+    "usher": "npm run --workspace @liveone/usher usher",
+    "build:usher": "npm run --workspace @liveone/usher build",
     "prepare": "husky"
   },
   "keywords": [],

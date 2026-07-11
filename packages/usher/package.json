@@ -1,0 +1,37 @@
+{
+  "name": "@liveone/usher",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The usher — a host app (Fly or Raspberry Pi) that manages device source plugins (musher = DeepSea, fusher = Fronius) and pushes self-describing readings to gusher (/api/gush). Serves a live inspector dashboard.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "usher": "tsx --env-file=../../.env.local cli.ts",
+    "discover:fronius": "tsx tools/discover-fronius.ts",
+    "deepsea:poll": "tsx --env-file=../../.env.local tools/deepsea-poll.ts"
+  },
+  "dependencies": {
+    "@liveone/protocol": "1.0.0",
+    "axios": "^1.11.0",
+    "chart.js": "^4.5.0",
+    "date-fns": "^4.1.0",
+    "lucide-react": "^0.539.0",
+    "modbus-serial": "^8.0.25",
+    "next": "^15.4.11",
+    "react": "^19.1.1",
+    "react-chartjs-2": "^5.3.0",
+    "react-dom": "^19.1.1",
+    "yaml": "^2.5.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.12",
+    "@types/node": "^24.3.0",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "tailwindcss": "^4.1.12",
+    "tsx": "^4.20.4",
+    "typescript": "^5.9.2"
+  }
+}

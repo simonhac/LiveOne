@@ -1,0 +1,31 @@
+# usher.yaml — the sources this usher deployment manages.
+#
+# Copy to usher.yaml (gitignored) and edit for the deployment. The SAME file shape works whether the
+# usher runs on Fly (reaching devices over WireGuard) or on a Raspberry Pi (on the site LAN) — only
+# the device hosts differ. Secrets stay OUT of this file: `apiKeyEnv` names the env var / Fly secret
+# holding that system's `gk_` gusher key.
+
+gushEndpoint: https://www.liveone.energy/api/gush
+
+sources:
+  # DeepSea generator at Daylesford (musher). Reached over the sheephouse WireGuard tunnel on Fly,
+  # or directly on the LAN from a Pi. Poll==push: 5 min idle, 1 min while the genset is running.
+  - type: deepsea
+    siteId: sheephouse
+    apiKeyEnv: SHEEPHOUSE_API_KEY
+    host: 10.0.1.244
+    port: 502
+    unitId: 10
+    pollSec: 300
+    activeSec: 60
+
+  # Fronius at Kinkora (fusher) — one site, two inverters (master + slave), aggregated. The Site
+  # self-polls each inverter every 2 s; the run-loop pushes the minutely report once per minute.
+  - type: fronius
+    siteId: kinkora
+    apiKeyEnv: KINKORA_API_KEY
+    invPollSec: 2
+    pushSec: 60
+    inverters:
+      - host: 10.1.0.11 # master (auto-detected by Site P_Load if isMaster omitted)
+      - host: 10.1.0.12

@@ -2,7 +2,13 @@
 module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
-  roots: ["<rootDir>/lib", "<rootDir>/app", "<rootDir>/scripts"],
+  roots: [
+    "<rootDir>/lib",
+    "<rootDir>/app",
+    "<rootDir>/scripts",
+    "<rootDir>/packages",
+  ],
+  modulePathIgnorePatterns: ["/\\.next/", "/\\.next-build/"],
   testMatch: [
     "**/__tests__/**/*.test.ts",
     "**/__tests__/**/*.integration.test.ts", // Include all tests
