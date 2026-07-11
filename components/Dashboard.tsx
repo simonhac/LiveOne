@@ -18,7 +18,8 @@ import GridSignalsCard from "@/components/GridSignalsCard";
 import { gridLatestFromData } from "@/lib/grid/latest";
 import { nemRegionShortLabel } from "@/lib/vendors/openelectricity/region";
 import { isNemRegion } from "@/lib/vendors/openelectricity/types";
-import { getLayout, chartHasData } from "@/lib/dashboard/cards";
+import { capabilitiesFromLatest } from "@/lib/capabilities/derive";
+import { satisfies, CARD_CATALOG } from "@/lib/capabilities/catalog";
 import type { TileId } from "@/lib/dashboard/cards";
 import type {
   AreaSectionV3,
@@ -365,7 +366,7 @@ function TileCell({
  * The collapsed site charts (+ sankey) for a section. Self-fetches the handle's `system` (vendorType +
  * timezone) and `latest`, and renders SiteChartsCard for ANY area that has loads + sources — not just
  * mondo/composite "site" vendors. `keys` selects which sub-charts show (chart:load / chart:generation /
- * sankey). The "has loads + sources" decision is data-driven (`chartHasData`), so a selectronic area
+ * sankey). The "has loads + sources" decision is data-driven (capability chart eligibility), so a selectronic area
  * with a sankey card renders the sankey here just like a composite would; site vendors keep rendering
  * via their layout even before `latest` resolves.
  */
@@ -392,10 +393,13 @@ function AreaSiteCharts({
   if (!system) {
     return <div className="min-h-[360px]" />;
   }
-  // Render the charts/sankey for site vendors (by layout, even before `latest` lands — preserves the
-  // existing composite loading UX) OR any area whose data actually carries sources + loads.
-  const siteCapable =
-    getLayout(system.vendorType) === "site" || chartHasData(latest);
+  // Data-driven (no vendor branch): render the charts/sankey for any area whose data carries sources
+  // + loads (== the old `chartHasData`; `system` and `latest` arrive together, so no eager-by-vendor
+  // pre-render is needed). The sankey/charts keep their own data gate downstream (two-layer contract).
+  const siteCapable = satisfies(
+    capabilitiesFromLatest(latest),
+    CARD_CATALOG.chart.requires,
+  );
   if (!siteCapable) return null;
   return (
     <SiteChartsCard

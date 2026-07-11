@@ -95,3 +95,39 @@ export function unionCapabilities(
   for (const s of sets) for (const c of s) out.add(c);
   return out;
 }
+
+/**
+ * Whether a set of logical paths warrants the AGGREGATE (stacked-area site) chart layout rather than a
+ * single lines chart — the vendor-free replacement for `getLayout(vendorType) === "site"`.
+ *
+ * The signal is a **sub-LOAD breakdown** (`load.<sub>/power`, e.g. `load.hvac`, `load.pool`): a
+ * whole-home meter (mondo) or a multi-device area carries these, so the stacked load/generation split
+ * is meaningful. A single inverter (selectronic/sigenergy) reports only the master `load/power` — and
+ * note it may still report sub-SOURCES like `source.solar.local`, which are NOT a stacking signal
+ * (verified: selectronic is sidebar despite carrying `source.solar.local`). Hot water (`load.hws`) is
+ * excluded — a derived helper load, not a site sub-load.
+ */
+const SUB_LOAD_BREAKDOWN = /^load\.([^/]+)\/power$/;
+function pathsAggregate(paths: Iterable<string>): boolean {
+  for (const p of paths) {
+    const m = SUB_LOAD_BREAKDOWN.exec(p);
+    if (m && m[1] !== "hws") return true;
+  }
+  return false;
+}
+
+/** Aggregate-layout check from the runtime `latest` map (client / device viewer). */
+export function isAggregateFromLatest(latest: LatestPointValues): boolean {
+  return pathsAggregate(Object.keys(latest));
+}
+
+/** Aggregate-layout check from configured points (server / area over its member union). */
+export function isAggregateFromPoints(points: PointClass[]): boolean {
+  return pathsAggregate(
+    points
+      .map((p) =>
+        p.logicalPathStem ? `${p.logicalPathStem}/${p.metricType}` : "",
+      )
+      .filter(Boolean),
+  );
+}

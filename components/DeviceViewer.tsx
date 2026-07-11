@@ -8,8 +8,11 @@ import { useModalContext } from "@/contexts/ModalContext";
 import { dashboardDataQuery } from "@/lib/queries";
 import type { GridContext } from "@/lib/grid/types";
 import Dashboard from "@/components/Dashboard";
-import { buildDefaultDashboardV3 } from "@/lib/dashboard/v3";
-import { availableTiles } from "@/lib/dashboard/cards";
+import { buildAreaStrategy } from "@/lib/capabilities/strategy";
+import {
+  capabilitiesFromLatest,
+  isAggregateFromLatest,
+} from "@/lib/capabilities/derive";
 import type { ReadableArea } from "@/lib/areas/list";
 import type { LatestPointValues } from "@/lib/types/api";
 
@@ -48,7 +51,7 @@ interface DeviceViewerProps {
 /**
  * Read-only per-system viewer ("Device"), served at /device/{id}. Renders the system's DEFAULT layout
  * via the SAME v3 renderer the composition dashboards use (`<Dashboard>`): a single AreaSection over the
- * device's own handle, built by `buildDefaultDashboardV3`. No Customise / Share / Location controls
+ * device's own handle, built by `buildAreaStrategy` from its capabilities. No Customise / Share / Location controls
  * (those live on Dashboards). This component owns only the device-level chrome (loading / error /
  * removed banners); every card self-fetches inside `<Dashboard>`.
  */
@@ -87,12 +90,17 @@ export default function DeviceViewer({
       legacySystemId: handle,
       vendorType: data.system.vendorType,
     };
-    const d = buildDefaultDashboardV3({
+    const latest = data.latest ?? {};
+    // Capability-driven default view — no vendorType branch. `generator-running` is a compound
+    // capability (from device_trackers, server-resolved as `hasGenerator`), so it isn't in the
+    // latest-derived set and is injected here.
+    const caps = capabilitiesFromLatest(latest);
+    if (hasGenerator) caps.add("generator-running");
+    const d = buildAreaStrategy({
       areaId: area.id,
-      vendorType: data.system.vendorType,
-      availableViews: availableTiles(data.latest ?? {}),
+      capabilities: caps,
+      aggregate: isAggregateFromLatest(latest),
       gridDeviceSystemId: gridContext?.regionSystemId,
-      hasGenerator,
       // Lead the device view with the generic all-values table (works for every device).
       leadWithDeviceMetrics: true,
     });
