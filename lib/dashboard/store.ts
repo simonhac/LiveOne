@@ -6,7 +6,7 @@
 import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { dashboards } from "@/lib/db/planetscale/schema";
-import { buildDefaultDashboardV3 } from "./v3";
+import { buildAreaStrategyForHandle } from "@/lib/capabilities/server";
 import { getAreaForSystem } from "@/lib/areas/resolve";
 
 /** A dashboard row by its id (the target of a dashboard share token). Descriptor is opaque JSONB. */
@@ -63,16 +63,15 @@ export async function getDashboardIdForUserSystem(
 export async function getOrCreateDefaultDashboardId(
   clerkUserId: string,
   systemId: number,
-  vendorType: string,
 ): Promise<number> {
   const existingId = await getDashboardIdForUserSystem(clerkUserId, systemId);
   if (existingId !== null) return existingId;
 
   const areaId = (await getAreaForSystem(systemId))?.id ?? null;
-  const descriptor = buildDefaultDashboardV3({
-    areaId: areaId ?? `system-${systemId}`,
-    vendorType,
-  });
+  const descriptor = await buildAreaStrategyForHandle(
+    areaId ?? `system-${systemId}`,
+    systemId,
+  );
   try {
     const [row] = await requirePlanetscaleDb()
       .insert(dashboards)

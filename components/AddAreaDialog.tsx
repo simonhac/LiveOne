@@ -8,17 +8,18 @@ import { toast } from "sonner";
 import { useModalContext } from "@/contexts/ModalContext";
 import { readableAreasQuery } from "@/lib/queries";
 import {
-  buildDefaultDashboardV3,
   sectionAreaIdsV3,
+  type AreaSectionV3,
   type DashboardV3,
 } from "@/lib/dashboard/v3";
 import type { ReadableArea } from "@/lib/areas/list";
 
 /**
- * Add an Area section to an EXISTING dashboard — the MVP of the deferred v3 configurator. Appends one
- * `AreaSectionV3` (built with the SAME default card set as the "seed from area" create path,
- * `buildDefaultDashboardV3`) to the current descriptor and PATCHes the whole thing back. Add-only;
- * remove/reorder is a later follow-up. The picker excludes areas already on the dashboard.
+ * Add an Area section to an EXISTING dashboard — the MVP of the deferred v3 configurator. Fetches the
+ * Area's capability-derived default section from the server (the SAME builder the "seed from area"
+ * create path uses, `buildAreaStrategyForHandle`) and appends it to the current descriptor, then PATCHes
+ * the whole thing back. Add-only; remove/reorder is a later follow-up. The picker excludes areas already
+ * on the dashboard.
  */
 export default function AddAreaDialog({
   isOpen,
@@ -67,11 +68,14 @@ export default function AddAreaDialog({
     setBusy(true);
     setError(null);
     try {
-      // Same default section the "seed from area" create path builds (buildSeedDescriptor).
-      const section = buildDefaultDashboardV3({
-        areaId: area.id,
-        vendorType: area.vendorType,
-      }).sections[0];
+      // The Area's capability-derived default section, built server-side (same builder as the seed path).
+      const secRes = await fetch(`/api/areas/${area.id}/default-section`);
+      if (!secRes.ok) {
+        const body = await secRes.json().catch(() => ({}));
+        setError(body?.error ?? "Could not build the area's default cards");
+        return;
+      }
+      const { section } = (await secRes.json()) as { section: AreaSectionV3 };
       const next: DashboardV3 = {
         ...descriptor,
         sections: [...descriptor.sections, section],

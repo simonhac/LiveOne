@@ -53,6 +53,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type { AreaLocation } from "@/lib/areas/types";
+import type { DeviceConfig } from "@/lib/capabilities/config";
 
 // ============================================================================
 // Systems table - stores inverter system information
@@ -74,6 +75,10 @@ export const systems = pgTable(
     batterySize: text("battery_size"),
     location: jsonb("location"),
     metadata: jsonb("metadata"),
+    // Typed, user-editable per-device config (capability on/off overrides, nameplate kW, update
+    // cadence, …). Distinct from `metadata` (adapter-owned credentials/diagnostics). Grows without
+    // migrations. See lib/capabilities/config.ts.
+    config: jsonb("config").$type<DeviceConfig>(),
     timezoneOffsetMin: integer("timezone_offset_min").notNull(),
     displayTimezone: text("display_timezone").notNull(),
     createdAt: timestamp("created_at").notNull().defaultNow(),

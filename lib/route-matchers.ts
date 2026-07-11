@@ -40,15 +40,15 @@ export const isPublicRoute = createRouteMatcher(publicRoutes);
 // GET/HEAD-only check in middleware.ts (a share token never authorizes a write). Add a route here only
 // after confirming its handler validates the token and exposes nothing beyond the dashboard's scope.
 //
-// Note the trailing slashes: `/api/system/(.*)` matches `/api/system/1/...` but NOT the plural
-// `/api/systems` (admin), and `/api/dashboard(.*)` covers both `/api/dashboard/...` and
-// `/api/dashboard-share/...`.
+// Note the trailing slash: `/api/system/(.*)` matches `/api/system/1/...` but NOT the plural
+// `/api/systems` (admin). The composition dashboard descriptor is resolved server-side in page.tsx
+// (never client-fetched in the shared view), so no `/api/dashboard(.*)` entry is needed — and keeping
+// it out also stops it over-matching the plural `/api/dashboards` CRUD (which stays Clerk-gated).
 const shareableRoutes = [
   "/dashboard(.*)", // the shared dashboard page (validates the token server-side)
   "/api/data", // live values + readings — requireDashboardAccess
   "/api/history", // time series — requireDashboardAccess
   "/api/energy-flow-matrix", // sankey — requireDashboardAccess
-  "/api/dashboard(.*)", // saved descriptor (GET) + /api/dashboard-share/[token] consume
   "/api/system/(.*)", // per-system read endpoints the cards use (latest, run-periods)
 ];
 

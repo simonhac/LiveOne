@@ -5,7 +5,7 @@
  *
  * Design rule: store only CHOICES + STRUCTURE; DERIVE everything that comes from the Area. So a section
  * carries just `{ areaId, cards }` in the common case — the handle (area.legacy_system_id), the layout
- * (getLayout(area.vendorType)) and the header (shown only when there are multiple sections) are all
+ * (from the Area's capabilities) and the header (shown only when there are multiple sections) are all
  * resolved at render time from the Area, never stored.
  *
  * Key ideas:
@@ -14,7 +14,6 @@
  *    name a device -> that specific member (e.g. the OpenElectricity region system for the `oe-grid`
  *    view, a member device of the Area).
  */
-import { getLayout, TILE_IDS } from "./cards";
 import type { DashboardCardType, DashboardLayout, TileId } from "./cards";
 
 /** A chart card's config — lines (sidebar) vs stacked-areas (site load/generation halves). */
@@ -111,117 +110,8 @@ export function sectionAreaIdsV3(d: DashboardV3): string[] {
   return [...new Set(d.sections.map((s) => s.areaId))];
 }
 
-export interface BuildDefaultV3Opts {
-  areaId: string;
-  /** The Area's vendorType — selects the default card set + layout (site | sidebar | amber). */
-  vendorType: string;
-  /** OE region member device (e.g. VIC1 = 12) → appends the `oe-grid` tile. Omit if the Area has none. */
-  gridDeviceSystemId?: number;
-  /** The Area's system has an enabled generator run-tracker → appends a `generator-runs` card. */
-  hasGenerator?: boolean;
-  /**
-   * The whole-area tile views the system actually supports (from its latest). Omitted ⇒ all TILE_IDS.
-   * Supplying it keeps the descriptor's tile set == the rendered set, so the loading skeleton doesn't
-   * over-count then collapse (e.g. a sidebar system that only has solar/load/battery/grid).
-   */
-  availableViews?: readonly TileView[];
-  /**
-   * Lead every layout with a generic all-values `device-metrics` card (the `table` variant) as the
-   * FIRST card. Only the live `/device/{id}` DeviceViewer sets this, so the device view (direct and
-   * via the rail browser) gets the panel while persisted / composition dashboards are untouched.
-   */
-  leadWithDeviceMetrics?: boolean;
-}
-
-/**
- * The v3 default dashboard for an Area (the "area strategy") — one AreaSection, vendor-appropriate
- * cards. Native v3 (no v2 round-trip): the same card sets `buildDefaultDescriptor` picks, expressed
- * nested, with the retired grid-signals card folded into the `oe-grid` tile. Layout is DERIVED from
- * the vendorType at render time, so it is not stored (omitted from the section).
- */
-export function buildDefaultDashboardV3(opts: BuildDefaultV3Opts): DashboardV3 {
-  const layout = getLayout(opts.vendorType);
-
-  // The generic all-values panel that leads the device view (name → formatted value, works for any
-  // device). Only emitted when the caller (the DeviceViewer) opts in, so other descriptor builders
-  // are unaffected. `deviceMetricsLead` is the prefix; `[]` when not leading.
-  const deviceMetricsLead: CardV3[] = opts.leadWithDeviceMetrics
-    ? [{ type: "device-metrics", variant: "table" }]
-    : [];
-
-  if (layout === "amber") {
-    // An Amber price dashboard: the two amber cards, no tiles/charts.
-    return {
-      version: 3,
-      sections: [
-        {
-          areaId: opts.areaId,
-          cards: [
-            ...deviceMetricsLead,
-            { type: "amber-now" },
-            { type: "amber-timeline" },
-          ],
-        },
-      ],
-    };
-  }
-
-  const supported = opts.availableViews
-    ? TILE_IDS.filter((v) => opts.availableViews!.includes(v))
-    : [...TILE_IDS];
-
-  // Instrumentation-only device (a generator, a sensor pack, …): the tile catalog represents NONE of
-  // its points, and it has no OE grid member. Only the live DeviceViewer supplies availableViews (the
-  // seed/AddArea paths omit it, so persisted & composition dashboards are untouched — composition.test
-  // stays green), so this fires only for the on-the-fly `/device/{id}` page. Show just the generic
-  // device-metrics card (+ generator-runs if tracked) instead of an empty tiles grid + empty chart.
-  if (
-    opts.availableViews != null &&
-    supported.length === 0 &&
-    opts.gridDeviceSystemId == null
-  ) {
-    // Already leads with device-metrics — honor the requested variant (table when leading), no dup.
-    const cards: CardV3[] = opts.leadWithDeviceMetrics
-      ? [...deviceMetricsLead]
-      : [{ type: "device-metrics" }];
-    if (opts.hasGenerator) cards.push({ type: "generator-runs" });
-    return { version: 3, sections: [{ areaId: opts.areaId, cards }] };
-  }
-
-  const tiles: TileV3[] = supported.map((view) => ({ view }));
-  if (opts.gridDeviceSystemId != null) {
-    tiles.push({ view: "oe-grid", deviceSystemId: opts.gridDeviceSystemId });
-  }
-  const cards: CardV3[] = [...deviceMetricsLead, { type: "tiles", tiles }];
-
-  if (layout === "site") {
-    // Site (mondo/composite): the two stacked-area charts. The sankey is NOT a default — it's an opt-in
-    // card you add (it works for any area with loads + sources), so it's never auto-given here.
-    cards.push(
-      {
-        type: "chart",
-        id: "chart:load",
-        chart: { variant: "stacked-areas", split: "load" },
-      },
-      {
-        type: "chart",
-        id: "chart:generation",
-        chart: { variant: "stacked-areas", split: "generation" },
-      },
-    );
-  } else {
-    // Sidebar (selectronic/enphase/...): a single lines chart.
-    cards.push({
-      type: "chart",
-      id: "chart:lines",
-      chart: { variant: "lines" },
-    });
-  }
-
-  if (opts.hasGenerator) cards.push({ type: "generator-runs" });
-
-  return { version: 3, sections: [{ areaId: opts.areaId, cards }] };
-}
+// The default dashboard for an Area (the "area strategy") is built from its CAPABILITIES by
+// `buildAreaStrategy` / `buildAreaStrategyForHandle` (lib/capabilities/*) — no vendorType template.
 
 /** An empty v3 dashboard (no sections yet — the user adds them via the configurator). */
 export function emptyDashboardV3(): DashboardV3 {

@@ -79,8 +79,6 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     "/api/data",
     "/api/history",
     "/api/energy-flow-matrix",
-    "/api/dashboard/1",
-    "/api/dashboard-share/keen-fruity-tapir",
     "/api/system/1/latest",
     "/api/system/1/run-periods",
   ];
@@ -89,11 +87,13 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
   });
 
   // A stray ?access= must NOT reach these — they stay Clerk-gated. Note the plural `/api/systems`
-  // (admin) must NOT be caught by the singular `/api/system/(.*)` rule.
+  // (admin) must NOT be caught by the singular `/api/system/(.*)` rule; likewise the plural
+  // `/api/dashboards` CRUD (there is no `/api/dashboard(.*)` shareable entry).
   const notShareable = [
     "/api/test/cache",
     "/api/admin/storage",
     "/api/systems",
+    "/api/dashboards/5",
     "/api/share-tokens",
     "/api/user/preferences",
   ];
@@ -116,7 +116,7 @@ describe("share-link bypass decision (mirrors middleware.ts)", () => {
     expect(bypassesAuth(req("/api/test/cache?access=tok"))).toBe(false);
   });
   it("does NOT bypass a write (POST) even on a share-eligible route", () => {
-    expect(bypassesAuth(req("/api/dashboard/1?access=tok", "POST"))).toBe(
+    expect(bypassesAuth(req("/api/data?systemId=1&access=tok", "POST"))).toBe(
       false,
     );
   });

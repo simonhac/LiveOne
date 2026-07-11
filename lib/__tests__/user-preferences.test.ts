@@ -96,7 +96,7 @@ describe("getValidDefaultDashboardId", () => {
     mockGetOrCreate.mockResolvedValue(77);
     const out = await getValidDefaultDashboardId(USER);
     expect(out).toEqual({ dashboardId: 77, systemId: 5 });
-    expect(mockGetOrCreate).toHaveBeenCalledWith(USER, 5, "selectronic");
+    expect(mockGetOrCreate).toHaveBeenCalledWith(USER, 5);
     // Adopted: both columns written (forward id + legacy kept in sync).
     expect(updates).toContainEqual(
       expect.objectContaining({ defaultDashboardId: 77, defaultSystemId: 5 }),
