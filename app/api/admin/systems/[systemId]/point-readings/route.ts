@@ -4,6 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
 import { PointInfo } from "@/lib/point/point-info";
+import { resolvePointDisplay } from "@/lib/point/display/registry";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 import { fetchAdminPivotRowsPg } from "@/lib/db/planetscale/readings-read-pg";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
@@ -172,6 +173,12 @@ export async function GET(
     headers.sessionLabel = null; // Special column, no point info
 
     sortedPoints.forEach((p) => {
+      // Resolve display metadata (unit + Excel number format) from the central registry.
+      const display = resolvePointDisplay(
+        system.vendorType,
+        p.subsystem,
+        p.physicalPathTail,
+      );
       // Create PointInfo for the header
       const pointInfoObj = new PointInfo(
         p.index,
@@ -187,6 +194,8 @@ export async function GET(
         p.active,
         p.createdAtMs,
         p.updatedAtMs,
+        display?.unit ?? null,
+        display?.format ?? null,
       );
 
       headers[`point_${p.index}`] = pointInfoObj;

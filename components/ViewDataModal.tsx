@@ -23,6 +23,7 @@ import SessionInfoModal from "./SessionInfoModal";
 import PointReadingInspectorModal from "./PointReadingInspectorModal";
 import { PointInfo } from "@/lib/point/point-info";
 import { getContextualUnitDisplay } from "@/lib/point/unit-display";
+import { applyExcelFormat } from "@/lib/point/display/excel-format";
 
 // Group data rows by timestamp and combine session labels
 function groupDataByTimestamp(data: any[]): any[] {
@@ -440,6 +441,12 @@ export default function ViewDataModal({
     // From here on, value should be a number
     const numValue = Number(value);
 
+    // Central display registry wins when it covers this point: format the raw value per the
+    // point's Excel-style number format (no metricType-based scaling).
+    if (pointInfo?.displayFormat) {
+      return applyExcelFormat(numValue, pointInfo.displayFormat);
+    }
+
     if (pointInfo?.metricType === "energy") {
       // For differentiated points in raw view, show as MWh with 3 decimal places
       if (pointInfo?.transform === "d" && source === "raw") {
@@ -489,6 +496,9 @@ export default function ViewDataModal({
   const getUnitDisplay = (key: string, pointInfo: PointInfo | null) => {
     // Session label has no type/unit display
     if (key === "sessionLabel") return "";
+
+    // Central display registry wins for the header unit too.
+    if (pointInfo?.displayUnit) return pointInfo.displayUnit;
 
     if (!pointInfo?.metricType) return "";
 

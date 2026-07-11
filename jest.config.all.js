@@ -1,17 +1,14 @@
 /** @type {import('jest').Config} */
 module.exports = {
-  preset: 'ts-jest',
-  testEnvironment: 'node',
-  roots: ['<rootDir>/lib', '<rootDir>/app'],
+  preset: "ts-jest",
+  testEnvironment: "node",
+  roots: ["<rootDir>/lib", "<rootDir>/app", "<rootDir>/scripts"],
   testMatch: [
-    '**/__tests__/**/*.test.ts',
-    '**/__tests__/**/*.integration.test.ts'  // Include all tests
+    "**/__tests__/**/*.test.ts",
+    "**/__tests__/**/*.integration.test.ts", // Include all tests
   ],
-  collectCoverageFrom: [
-    'lib/**/*.ts',
-    '!lib/**/*.d.ts',
-  ],
+  collectCoverageFrom: ["lib/**/*.ts", "!lib/**/*.d.ts"],
   moduleNameMapper: {
-    '^@/(.*)$': '<rootDir>/$1',
+    "^@/(.*)$": "<rootDir>/$1",
   },
 };

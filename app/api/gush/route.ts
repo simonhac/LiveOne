@@ -22,6 +22,13 @@ import type { GushRequestBody } from "@/lib/push/types";
  * `(systemId, pointId, measurementTime)`.
  */
 
+/** Mask a secret for storage in the (admin-visible) session record: keep a short prefix/suffix hint. */
+function maskSecret(secret: string | null | undefined): string {
+  if (!secret) return "";
+  if (secret.length <= 8) return "…";
+  return `${secret.slice(0, 3)}…${secret.slice(-4)}`;
+}
+
 async function recordFailedSession(
   sessionStart: Date,
   systemId: number,
@@ -184,6 +191,9 @@ export async function POST(request: NextRequest) {
         `readings=${data.readings?.length ?? 0} stored=${readingsToInsert.length}`,
     );
 
+    // Raw Comms: the exact body received over the wire, with only the apiKey masked.
+    const redactedBody = { ...data, apiKey: maskSecret(data.apiKey) };
+
     let session: SessionInfo;
     try {
       session = await sessionManager.createSession({
@@ -222,10 +232,7 @@ export async function POST(request: NextRequest) {
         {
           duration: Date.now() - sessionStart.getTime(),
           successful: true,
-          response: {
-            sessionLabel: data.sessionLabel,
-            readings: readingsToInsert.length,
-          },
+          response: redactedBody,
           numRows: readingsToInsert.length,
         },
         collector.observations,
@@ -253,7 +260,7 @@ export async function POST(request: NextRequest) {
           successful: false,
           errorCode: null,
           error: errorMessage,
-          response: { sessionLabel: data.sessionLabel },
+          response: redactedBody,
           numRows: 0,
         },
         collector.observations,

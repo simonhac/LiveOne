@@ -14,6 +14,9 @@ export interface LatestReadingValue {
   pointName: string;
   sessionId?: string;
   sessionLabel?: string;
+  /** Central display registry: display unit + Excel number format (absent when uncovered). */
+  displayUnit?: string;
+  displayFormat?: string;
 }
 
 interface LatestReadingsResponse {

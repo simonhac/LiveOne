@@ -1,0 +1,8 @@
+{
+  "name": "liveone-flyhub",
+  "private": true,
+  "description": "Runtime deps for the collector hub image. Collector code is bundled to collector.cjs (modbus-serial is external, installed here).",
+  "dependencies": {
+    "modbus-serial": "^8.0.25"
+  }
+}

@@ -96,3 +96,6 @@ daylesford_grid_readings_*.csv
 
 # Claude Code runtime artifacts (machine/process-local state)
 .claude/scheduled_tasks.lock
+
+# collector hub build artifact (esbuild bundle; produced by `npm run build:collector`)
+scripts/collector/fly/collector.cjs

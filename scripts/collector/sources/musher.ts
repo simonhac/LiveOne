@@ -17,7 +17,7 @@ export const DEEPSEA_MANIFEST: Manifest = [
   {
     key: "oilPressureKpa",
     physicalPathTail: "oil_pressure_kpa",
-    logicalPathStem: "generator.oil",
+    logicalPathStem: "source.generator.oil",
     metricType: "pressure",
     metricUnit: "kPa",
     defaultName: "Oil Pressure",
@@ -26,7 +26,7 @@ export const DEEPSEA_MANIFEST: Manifest = [
   {
     key: "coolantTempC",
     physicalPathTail: "coolant_temp_c",
-    logicalPathStem: "generator.coolant",
+    logicalPathStem: "source.generator.coolant",
     metricType: "temperature",
     metricUnit: "°C",
     defaultName: "Coolant Temp",
@@ -35,7 +35,7 @@ export const DEEPSEA_MANIFEST: Manifest = [
   {
     key: "oilTempC",
     physicalPathTail: "oil_temp_c",
-    logicalPathStem: "generator.oil",
+    logicalPathStem: "source.generator.oil",
     metricType: "temperature",
     metricUnit: "°C",
     defaultName: "Oil Temp",
@@ -44,7 +44,7 @@ export const DEEPSEA_MANIFEST: Manifest = [
   {
     key: "fuelLevelPct",
     physicalPathTail: "fuel_level_pct",
-    logicalPathStem: "generator.fuel",
+    logicalPathStem: "source.generator.fuel",
     metricType: "level",
     metricUnit: "%",
     defaultName: "Fuel Level",
@@ -53,7 +53,7 @@ export const DEEPSEA_MANIFEST: Manifest = [
   {
     key: "chargeAltV",
     physicalPathTail: "charge_alt_v",
-    logicalPathStem: "generator.charge_alt",
+    logicalPathStem: "source.generator.charge_alt",
     metricType: "voltage",
     metricUnit: "V",
     defaultName: "Charge Alternator",
@@ -62,7 +62,7 @@ export const DEEPSEA_MANIFEST: Manifest = [
   {
     key: "batteryV",
     physicalPathTail: "battery_v",
-    logicalPathStem: "generator.battery",
+    logicalPathStem: "source.generator.battery",
     metricType: "voltage",
     metricUnit: "V",
     defaultName: "Battery Voltage",
@@ -71,7 +71,7 @@ export const DEEPSEA_MANIFEST: Manifest = [
   {
     key: "engineRpm",
     physicalPathTail: "engine_rpm",
-    logicalPathStem: "generator.engine",
+    logicalPathStem: "source.generator.engine",
     metricType: "speed",
     metricUnit: "rpm",
     defaultName: "Engine Speed",
@@ -80,7 +80,7 @@ export const DEEPSEA_MANIFEST: Manifest = [
   {
     key: "genFreqHz",
     physicalPathTail: "gen_freq_hz",
-    logicalPathStem: "generator.output",
+    logicalPathStem: "source.generator.output",
     metricType: "frequency",
     metricUnit: "Hz",
     defaultName: "Generator Frequency",
@@ -114,11 +114,25 @@ export function createMusher(opts: MusherOptions): Source {
         const values: Values = {};
         for (const r of dump.readings) values[r.field.key] = r.value;
         return values;
-      } catch (e) {
-        // drop a possibly-dead socket so the next tick reconnects (Starlink blips etc.)
+      } finally {
+        // Reconnect fresh every tick. A persistent Modbus/TCP connection left idle across the poll
+        // interval (5 min) is silently dropped by the DSE / NAT / stateful firewall, and
+        // modbus-serial's read timeout does NOT fire on the dead socket → the next read hangs
+        // forever. Closing after each read makes every tick reconnect (connect() is timeout-bounded),
+        // sidestepping the stale socket. (The run loop's per-tick timeout + reset is the backstop.)
         await dse.close().catch(() => {});
-        throw e;
       }
+    },
+    // Running when the engine is turning / producing — drives the loop's faster (1-min) cadence.
+    isRunning(values: Values): boolean {
+      return (
+        Number(values.engineRpm ?? 0) > 0 || Number(values.genFreqHz ?? 0) > 0
+      );
+    },
+    // Drop the socket after a failed/timed-out tick so the next read reconnects (the DSE client
+    // otherwise reuses a `connected=true` handle whose socket may have silently died).
+    async reset(): Promise<void> {
+      await dse.close().catch(() => {});
     },
   };
 }

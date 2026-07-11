@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { formatRelativeTime, formatDateTime } from "@/lib/fe-date-format";
 import { getUnitDisplay } from "@/lib/point/unit-display";
+import { applyExcelFormat } from "@/lib/point/display/excel-format";
 import { latestReadingsQuery } from "@/lib/queries";
 import SessionInfoModal from "@/components/SessionInfoModal";
 
@@ -35,6 +36,8 @@ interface LatestReadingsClientProps {
 function formatValueWithUnit(
   value: number | string | boolean,
   metricUnit: string,
+  displayUnitOverride?: string,
+  displayFormat?: string,
 ): string | React.ReactElement {
   // Handle json metricUnit (e.g., location) - value is a JSON string
   if (metricUnit === "json" && typeof value === "string") {
@@ -61,6 +64,14 @@ function formatValueWithUnit(
   // Handle string values (like tariff codes)
   if (typeof value === "string") {
     return value;
+  }
+
+  // Central display registry wins when it covers this point: format the raw value per its
+  // Excel-style number format and use the registry's display unit.
+  if (displayFormat) {
+    const unit = displayUnitOverride || getUnitDisplay(metricUnit);
+    const formatted = applyExcelFormat(value, displayFormat);
+    return unit ? `${formatted} ${unit}` : formatted;
   }
 
   // Format numeric values based on unit
@@ -319,7 +330,12 @@ export default function LatestReadingsClient({
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-white">
                     {item.value != null ? (
-                      formatValueWithUnit(item.value, item.metricUnit)
+                      formatValueWithUnit(
+                        item.value,
+                        item.metricUnit,
+                        item.displayUnit,
+                        item.displayFormat,
+                      )
                     ) : (
                       <span className="text-gray-600">—</span>
                     )}

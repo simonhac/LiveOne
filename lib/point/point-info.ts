@@ -23,6 +23,10 @@ export class PointInfo {
     public readonly active: boolean,
     public readonly createdAtMs: number,
     public readonly updatedAtMs: number | null,
+    // Resolved from the central display registry (lib/point/display) server-side; null when no
+    // manifest covers this point. `displayFormat` is an Excel-style number format (e.g. "0.0").
+    public readonly displayUnit: string | null = null,
+    public readonly displayFormat: string | null = null,
   ) {}
 
   /**
@@ -137,6 +141,8 @@ export class PointInfo {
     active: boolean;
     createdAtMs: number;
     updatedAtMs: number | null;
+    displayUnit?: string | null;
+    displayFormat?: string | null;
   }): PointInfo {
     return new PointInfo(
       data.index,
@@ -152,6 +158,8 @@ export class PointInfo {
       data.active,
       data.createdAtMs,
       data.updatedAtMs,
+      data.displayUnit ?? null,
+      data.displayFormat ?? null,
     );
   }
 }
