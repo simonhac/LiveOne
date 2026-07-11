@@ -46,6 +46,7 @@ function synthesizeAreaView(area: Area): SystemWithPolling | null {
     batterySize: null,
     location: area.location,
     metadata: null,
+    config: null,
     timezoneOffsetMin: area.timezoneOffsetMin,
     displayTimezone: area.displayTimezone,
     createdAt: area.createdAt,

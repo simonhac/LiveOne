@@ -148,6 +148,13 @@
       "when": 1781739127379,
       "tag": "0020_simple_risque",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1783805477341,
+      "tag": "0021_blue_oracle",
+      "breakpoints": true
     }
   ]
 }

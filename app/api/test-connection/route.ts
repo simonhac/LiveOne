@@ -135,6 +135,7 @@ export async function POST(request: NextRequest) {
       batterySize: null,
       location: null,
       metadata: null,
+      config: null,
       timezoneOffsetMin: 600, // Default to AEST, adapter can override
       displayTimezone: "Australia/Melbourne", // Default timezone for test system
       createdAt: new Date(),
