@@ -9,14 +9,13 @@
  *  - DSE register address = page * 256 + offset. Function 3 (read holding registers).
  *  - 32-bit values span two registers, MOST-SIGNIFICANT-WORD FIRST:
  *      value = (reg[i] << 16) | reg[i+1], then two's-complement if signed, then × scale.
- *  - Sentinels (per width) decode to null (n/a):
- *      u16 0xFFFF/0xFFFE (0xFFFC = transducer fault); s16 0x7FFF/0x7FFE;
- *      u32 0xFFFFFFFF/0xFFFFFFFE;                       s32 0x7FFFFFFF/0x7FFFFFFE.
- *    On single/split-phase sets, the unused phases return the full-width sentinel → null.
+ *  - Sentinels decode to null (n/a): GenComm reserves the TOP 8 CODES of each width
+ *      (unsigned 0x…F8–0x…FF; signed the mirror 0x7F…F8–0x7F…FF). On single/split-phase
+ *      sets, the unused phases return the full-width sentinel → null.
  *  - Slave/unit id defaults to 10 (DeepSea's default, NOT 1).
- *  - Each GenComm page is read as one FC3 request; page 7 INTERLEAVES 16-bit registers
- *    among 32-bit accumulators, so we decode per-field by (offset, words), never as a
- *    contiguous all-32-bit block.
+ *  - Reads are batched into gap-aware SEGMENTS per page (page 7 interleaves 16-bit
+ *    registers among 32-bit accumulators, and has an unsupported hybrid gap); fields are
+ *    decoded per-field by (offset, words), never as a contiguous all-32-bit block.
  *
  * READ-ONLY: this module only issues FC3 reads — it never writes to the controller.
  * (The control page — 4104/4105 remote start/stop keys — is deliberately NOT mapped.)

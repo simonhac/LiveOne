@@ -31,28 +31,56 @@ do **not** touch. Read the CLI live output with `npm run deepsea:poll` (Teleport
   register map under a public number — it's supplied by DSE Technical Support on request. SP-228
   REV A (hosted by Winco) is a verbatim distribution of the standard.
 
+## Live findings (2026-07-11)
+
+First full read against the actual controller (over Teleport). The battery-voltage anchor
+(13.7 V, 12 V system) and clock/run-time/starts all decoded correctly, confirming the addressing
+and 32-bit math beyond Page-4. What the live data taught us:
+
+- **The set is single-phase.** L1 registers read real values (0 V/A/W while stopped); L2/L3 return
+  the sentinel → `null`. Same on the mains side. So for this asset, only L1 + the totals matter.
+- **Genset was stopped** (Auto standby): `772 = Auto`, 0 rpm / 0 Hz / 0 W, all alarms clear.
+  Run time **49.5 h**, **56** starts.
+- **Engine operating state `1408` is unimplemented here** — it returns `0xFFFF`, not a state enum.
+  Use **RPM (`1030`) / frequency (`1031`) / total power (`1536`)** as the "is it running" signal
+  (Victron does the same: falls back to `RPM > 100`).
+- **⚠ Generator kWh `1800` read 0 despite 49.5 h of run time.** Either the energy accumulator isn't
+  populated on this unit (no power measured) or the address/scale is off. **Re-check `1800` while
+  the genset is actually running and loaded** before trusting it as the energy signal.
+- **Plant-battery `1880/1882` are unsupported** (Modbus exception 1, illegal function) → dropped.
+- **Named-alarm count = 80** → 20 alarm words (`39425–39444`); all nibbles clear.
+- **Controller clock `1792` looked ~8 h ahead of wall-clock time.** The epoch decode is correct,
+  but the DSE's own clock/zone appears mis-set — verify it before relying on the maintenance
+  timestamps (`1794/1796`), which are relative to it.
+- **Sentinel band widened (bug fix).** A live power factor returned `0x7FFD`, a sentinel
+  (under-range) that was being decoded as `327.65`. GenComm reserves the **top 8 codes** of each
+  width, not just the top 2 — the client now treats the whole band as `null`.
+
 ## Addressing & decode rules
 
 - **Absolute holding-register address = `page × 256 + offset`.** Read with FC3.
 - **16-bit** values are one register; **32-bit** values are two registers, **most-significant-word
   first** (big-endian): `value = (reg[i] << 16) | reg[i+1]`, then two's-complement if signed, then
   `× scale`. _If a 32-bit value looks wildly wrong, try the swapped word order._
-- **"Not available / not fitted / out-of-range" sentinels decode to `null`** (per value width):
+- **"Not available / out-of-range / fault" sentinels decode to `null`.** GenComm reserves the
+  **top 8 codes** of each width (not just the top two — a live PF returned `0x7FFD`):
 
-  | Width | Sentinels → null                                 |
-  | ----- | ------------------------------------------------ |
-  | u16   | `0xFFFF`, `0xFFFE` (`0xFFFC` = transducer fault) |
-  | i16   | `0x7FFF`, `0x7FFE`                               |
-  | u32   | `0xFFFFFFFF`, `0xFFFFFFFE`                       |
-  | i32   | `0x7FFFFFFF`, `0x7FFFFFFE`                       |
+  | Width | Sentinel band → null        |
+  | ----- | --------------------------- |
+  | u16   | `0xFFF8` … `0xFFFF`         |
+  | i16   | `0x7FF8` … `0x7FFF`         |
+  | u32   | `0xFFFFFFF8` … `0xFFFFFFFF` |
+  | i32   | `0x7FFFFFF8` … `0x7FFFFFFF` |
 
   On single-/split-phase sets the unused phases return the full-width sentinel → `null`.
-  Enum "not available" values: engine-state `15`, control-mode `65535`, phase-rotation `65535`.
+  Some enums also carry a "not available" value that isn't in the sentinel band: engine-state `15`.
 
 - **Mixed-width page hazard:** do **not** read a page as one contiguous all-32-bit block. Page 7
-  interleaves 16-bit registers (Plant Battery Charge State @ offset 92 / 1884; Fuel Efficiency @
-  offset 100 / 1892) among 32-bit accumulators. Decode per-field by `(offset, words)`. The client
-  reads each page as one FC3 request and indexes fields by offset, which handles this correctly.
+  interleaves 16-bit registers (e.g. Fuel Efficiency @ offset 100 / 1892) among 32-bit
+  accumulators. The client reads each page in gap-aware **segments** and decodes per-field by
+  `(offset, words)`, which handles the interleave — and, because segments split at large gaps,
+  keeps an unsupported register (e.g. the hybrid plant-battery gap that returns _illegal function_)
+  from failing the rest of the page.
 
 ## GenComm page allocation
 
