@@ -6,32 +6,15 @@
  * self-fetches its Area's data. `layout` is vestigial for composition dashboards (the renderer is a
  * flat ordered list, not a vendor template).
  */
-import type { ReadableArea } from "@/lib/areas/list";
-import {
-  buildDefaultDashboardV3,
-  emptyDashboardV3,
-  isDashboardV3,
-  type DashboardV3,
-} from "./v3";
+import { emptyDashboardV3, isDashboardV3, type DashboardV3 } from "./v3";
 
 /** An empty composition dashboard — no sections yet (the user adds them in the configurator). */
 export function emptyCompositionDescriptor(): DashboardV3 {
   return emptyDashboardV3();
 }
 
-/**
- * Seed a composition dashboard from an Area's default card set (the v3 area strategy): one AreaSection
- * bound to the Area, vendor-appropriate cards. Pure STARTING CONTENT — the user freely edits afterwards.
- */
-export function buildSeedDescriptor(
-  area: Pick<ReadableArea, "id">,
-  system: { vendorType: string },
-): DashboardV3 {
-  return buildDefaultDashboardV3({
-    areaId: area.id,
-    vendorType: system.vendorType,
-  });
-}
+// A composition dashboard's default card set (the "seed") is built server-side from the Area's
+// CAPABILITIES via `buildAreaStrategyForHandle` (lib/capabilities/server.ts) — no vendor template.
 
 /**
  * The distinct Area ids a dashboard descriptor references (its scope set). Handles BOTH shapes: v3

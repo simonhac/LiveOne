@@ -1,42 +1,14 @@
 import { describe, it, expect } from "@jest/globals";
-import {
-  emptyCompositionDescriptor,
-  buildSeedDescriptor,
-  descriptorAreaIds,
-} from "../composition";
+import { emptyCompositionDescriptor, descriptorAreaIds } from "../composition";
 
-const AREA = { id: "11111111-2222-3333-4444-555555555555" };
+// buildSeedDescriptor was removed: a composition seed is now built server-side from the Area's
+// capabilities via buildAreaStrategyForHandle (covered by lib/capabilities/__tests__/strategy-*.test.ts).
 
 describe("emptyCompositionDescriptor", () => {
   it("is a v3 descriptor with no sections", () => {
     const d = emptyCompositionDescriptor();
     expect(d.version).toBe(3);
     expect(d.sections).toEqual([]);
-  });
-});
-
-describe("buildSeedDescriptor", () => {
-  it("binds one AreaSection to the seed Area with a non-empty card set", () => {
-    const d = buildSeedDescriptor(AREA, { vendorType: "selectronic" });
-    expect(d.version).toBe(3);
-    expect(d.sections.length).toBe(1);
-    expect(d.sections[0].areaId).toBe(AREA.id);
-    expect(d.sections[0].cards.length).toBeGreaterThan(0);
-  });
-
-  it("derives the starter card set from the seed system's vendor type", () => {
-    // site layout (mondo) has stacked charts; sidebar (selectronic) a lines chart. The sankey is opt-in
-    // (added explicitly), so it is in NO default — neither layout.
-    const site = buildSeedDescriptor(AREA, { vendorType: "mondo" });
-    expect(site.sections[0].cards.some((c) => c.type === "chart")).toBe(true);
-    expect(site.sections[0].cards.some((c) => c.type === "sankey")).toBe(false);
-    const sidebar = buildSeedDescriptor(AREA, { vendorType: "selectronic" });
-    expect(sidebar.sections[0].cards.some((c) => c.type === "chart")).toBe(
-      true,
-    );
-    expect(sidebar.sections[0].cards.some((c) => c.type === "sankey")).toBe(
-      false,
-    );
   });
 });
 

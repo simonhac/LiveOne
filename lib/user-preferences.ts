@@ -158,8 +158,7 @@ export async function setDefaultDashboard(
     return { success: false, error: validation.reason };
   }
 
-  // vendorType is required by getOrCreateDefaultDashboardId. Resolve via getViewableSystem so a
-  // multi-device Area handle (vendorType "area") works as a default, not just a real device.
+  // Validate the handle resolves (a real device or a multi-device Area handle) before minting a default.
   const system = await SystemsManager.getInstance().getViewableSystem(systemId);
   if (!system) {
     return { success: false, error: "System not found" };
@@ -168,7 +167,6 @@ export async function setDefaultDashboard(
   const dashboardId = await getOrCreateDefaultDashboardId(
     clerkUserId,
     systemId,
-    system.vendorType,
   );
   await writeDefaults(clerkUserId, { dashboardId, systemId });
   return { success: true };
@@ -280,7 +278,6 @@ export async function getValidDefaultDashboardId(
     const dashboardId = await getOrCreateDefaultDashboardId(
       clerkUserId,
       systemId,
-      system.vendorType,
     );
     await writeDefaults(clerkUserId, { dashboardId, systemId });
     return { dashboardId, systemId };

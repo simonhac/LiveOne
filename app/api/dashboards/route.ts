@@ -1,16 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { listReadableAreas } from "@/lib/areas/list";
-import { SystemsManager } from "@/lib/systems-manager";
+import { buildAreaStrategyForHandle } from "@/lib/capabilities/server";
 import {
   createDashboard,
   listAccessibleDashboards,
   DashboardAliasTakenError,
 } from "@/lib/dashboard/dashboards";
-import {
-  buildSeedDescriptor,
-  emptyCompositionDescriptor,
-} from "@/lib/dashboard/composition";
+import { emptyCompositionDescriptor } from "@/lib/dashboard/composition";
 
 /**
  * Composition-first dashboards (Phase 2b-2), owner-scoped.
@@ -59,12 +56,7 @@ export async function POST(request: NextRequest) {
         { status: 403 },
       );
     }
-    const system = await SystemsManager.getInstance().getSystem(
-      area.legacySystemId,
-    );
-    descriptor = buildSeedDescriptor(area, {
-      vendorType: system?.vendorType ?? "",
-    });
+    descriptor = await buildAreaStrategyForHandle(area.id, area.legacySystemId);
   }
 
   try {

@@ -8,6 +8,12 @@ jest.mock("@/lib/db/planetscale", () => ({
 jest.mock("@/lib/areas/resolve", () => ({
   getAreaForSystem: jest.fn(),
 }));
+// The default descriptor is built server-side from capabilities; stub it (no point/DB layer needed here).
+jest.mock("@/lib/capabilities/server", () => ({
+  buildAreaStrategyForHandle: jest
+    .fn<() => Promise<unknown>>()
+    .mockResolvedValue({ version: 3, sections: [] }),
+}));
 
 import { getOrCreateDefaultDashboardId } from "@/lib/dashboard/store";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
@@ -52,14 +58,14 @@ beforeEach(() => {
 describe("getOrCreateDefaultDashboardId", () => {
   it("returns the existing dashboard id without inserting", async () => {
     selectQueue = [[{ id: 42 }]]; // getDashboardIdForUserSystem finds a row
-    const id = await getOrCreateDefaultDashboardId("user_a", 1, "selectronic");
+    const id = await getOrCreateDefaultDashboardId("user_a", 1);
     expect(id).toBe(42);
   });
 
   it("inserts a default row when none exists", async () => {
     selectQueue = [[]]; // no existing row
     insertOutcome = { kind: "ok", id: 999 };
-    const id = await getOrCreateDefaultDashboardId("user_a", 1, "selectronic");
+    const id = await getOrCreateDefaultDashboardId("user_a", 1);
     expect(id).toBe(999);
   });
 
@@ -67,7 +73,7 @@ describe("getOrCreateDefaultDashboardId", () => {
     // 1st select: none. insert: loses the race (unique violation). 2nd select: the winner's row.
     selectQueue = [[], [{ id: 777 }]];
     insertOutcome = { kind: "conflict" };
-    const id = await getOrCreateDefaultDashboardId("user_a", 1, "selectronic");
+    const id = await getOrCreateDefaultDashboardId("user_a", 1);
     expect(id).toBe(777);
   });
 
@@ -75,7 +81,7 @@ describe("getOrCreateDefaultDashboardId", () => {
     selectQueue = [[], []];
     insertOutcome = { kind: "conflict" };
     await expect(
-      getOrCreateDefaultDashboardId("user_a", 1, "selectronic"),
+      getOrCreateDefaultDashboardId("user_a", 1),
     ).rejects.toMatchObject({ code: "23505" });
   });
 });

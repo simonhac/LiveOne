@@ -20,12 +20,17 @@ import { getAreaForSystem } from "@/lib/areas/resolve";
 import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
 import { hasEnabledTracker } from "@/lib/run-tracking/resolve";
 import { resolveGridContextForSystem } from "@/lib/grid/context";
-import { capabilitiesFromPoints } from "@/lib/capabilities/derive";
+import {
+  capabilitiesFromPoints,
+  isAggregateFromPoints,
+} from "@/lib/capabilities/derive";
 import {
   applyCapabilityConfig,
   type DeviceConfig,
 } from "@/lib/capabilities/config";
+import { buildAreaStrategy } from "@/lib/capabilities/strategy";
 import type { CapabilityId } from "@/lib/capabilities/registry";
+import type { DashboardV3 } from "@/lib/dashboard/v3";
 
 /** The member systemIds behind a handle: an area's `area_devices`, or the handle itself (a real device). */
 export async function memberSystemIds(handle: number): Promise<number[]> {
@@ -68,4 +73,30 @@ export async function capabilitiesForSystem(
 
   // Per-device config overrides (no-op when unconfigured — parity preserved).
   return applyCapabilityConfig(caps, { capabilities: mergedOverrides });
+}
+
+/**
+ * Build the default dashboard (the "area strategy") for a handle straight from its CONFIG capabilities —
+ * the server-side, vendor-free seed builder that replaces `buildDefaultDashboardV3(vendorType, …)`.
+ * `areaId` is the section's Area uuid (what the descriptor stores); `handle` is the integer
+ * `legacy_system_id` the resolvers key on. A capability-correct seed: it includes the generator-runs
+ * card / oe-grid tile / only the supported tiles when the area actually has them.
+ */
+export async function buildAreaStrategyForHandle(
+  areaId: string,
+  handle: number,
+  opts?: { leadWithDeviceMetrics?: boolean },
+): Promise<DashboardV3> {
+  const pm = PointManager.getInstance();
+  const points = await pm.getActivePointsForSystem(handle, false, false);
+  const capabilities = await capabilitiesForSystem(handle);
+  const gridDeviceSystemId = (await resolveGridContextForSystem(handle))
+    ?.regionSystemId;
+  return buildAreaStrategy({
+    areaId,
+    capabilities,
+    aggregate: isAggregateFromPoints(points),
+    gridDeviceSystemId,
+    leadWithDeviceMetrics: opts?.leadWithDeviceMetrics,
+  });
 }
