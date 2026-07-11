@@ -11,6 +11,9 @@ import { SystemsManager } from "@/lib/systems-manager";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { resolveGridContextForSystem } from "@/lib/grid/context";
 import { hasEnabledTracker } from "@/lib/run-tracking/resolve";
+import { getUserIdByUsername } from "@/lib/user-cache";
+import { resolveDefaultDashboardRoute } from "@/lib/user-preferences";
+import { getViewerDevices } from "@/lib/devices/viewer-devices";
 
 interface PageProps {
   params: Promise<{
@@ -95,7 +98,18 @@ export default async function DevicePage({ params }: PageProps) {
 
       systemId = system?.id?.toString() || segment;
     } else {
-      // Non-numeric single segment - not supported
+      // Non-numeric single segment: the `/device/{user}` browser landing. Resolve the username; if it's
+      // the viewer (or an admin), land on that user's primary visible device — the persistent rail
+      // (app/device/layout.tsx) shows the full list. Otherwise fall back to /dashboard (no exposure of
+      // another user's device list; the rail always reflects the viewer's own devices anyway).
+      const ownerId = await getUserIdByUsername(segment);
+      if (ownerId && (ownerId === userId || isAdmin)) {
+        const primary = await systemsManager.getPrimaryVisibleSystem(ownerId);
+        if (primary) {
+          redirect(`/device/${primary.id}`);
+        }
+        redirect((await resolveDefaultDashboardRoute(ownerId)) ?? "/dashboard");
+      }
       redirect("/dashboard");
     }
   } else if (slug.length === 2 && !subPageRoute) {
@@ -127,22 +141,10 @@ export default async function DevicePage({ params }: PageProps) {
       system.ownerClerkUserId === userId || system.ownerClerkUserId == null;
   }
 
-  // Fetch available systems for the user - only active systems
-  const availableSystems = await systemsManager.getSystemsVisibleByUser(
-    userId,
-    true,
-  ); // true = active only
-
-  // Get current user's username for their own systems (enables username/shortname paths)
-  const clerk = await clerkClient();
-  const currentUser = await clerk.users.getUser(userId);
-  const currentUsername = currentUser.username || null;
-
-  // Add username to systems owned by current user
-  const systemsWithUsernames = availableSystems.map((sys) => ({
-    ...sys,
-    ownerUsername: sys.ownerClerkUserId === userId ? currentUsername : null,
-  }));
+  // The viewer's visible devices (active only) + their username for pretty `/device/{user}/{alias}`
+  // paths — shared (cache()d) with the rail layout so the query + Clerk lookup run once per request.
+  const { systems: systemsWithUsernames, currentUsername } =
+    await getViewerDevices(userId);
 
   // Render special routes based on last segment
   if (systemIdentifier && system && subPageRoute) {
