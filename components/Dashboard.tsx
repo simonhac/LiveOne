@@ -204,6 +204,7 @@ function AreaSectionView({
           <AreaDeviceMetrics
             key={cardKeyV3(card, i)}
             systemId={card.deviceSystemId ?? handle}
+            variant={card.variant}
           />
         ) : (
           <ChartSkeleton key={cardKeyV3(card, i)} />
@@ -449,7 +450,13 @@ function AreaGeneratorRuns({ systemId }: { systemId: number }) {
  * fetches the handle's `system` only to derive the vendor-appropriate stale threshold; DeviceMetricsCard
  * owns its own readings query (and its loading/empty states), so no skeleton gate is needed here.
  */
-function AreaDeviceMetrics({ systemId }: { systemId: number }) {
+function AreaDeviceMetrics({
+  systemId,
+  variant,
+}: {
+  systemId: number;
+  variant?: "grid" | "table";
+}) {
   const { isAnyModalOpen } = useModalContext();
   const { data } = useQuery(
     dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
@@ -460,6 +467,7 @@ function AreaDeviceMetrics({ systemId }: { systemId: number }) {
     <DeviceMetricsCard
       systemId={systemId}
       staleThresholdSeconds={staleThreshold(vendorType)}
+      variant={variant}
     />
   );
 }

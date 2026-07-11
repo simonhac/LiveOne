@@ -65,6 +65,12 @@ export interface CardV3 {
    * e.g. run periods are keyed by a member `system_id`, not the synthetic area handle.
    */
   deviceSystemId?: number; // type === "device-metrics" | "generator-runs"
+  /**
+   * `device-metrics` presentation: `grid` (the historical gauge-tile grid) or `table` (a compact
+   * two-column name → formatted-value list). Omitted ⇒ `grid`. The device viewer leads with the
+   * `table` variant; instrumentation-only fallbacks keep it too.
+   */
+  variant?: "grid" | "table"; // type === "device-metrics"
 }
 
 /**
@@ -119,6 +125,12 @@ export interface BuildDefaultV3Opts {
    * over-count then collapse (e.g. a sidebar system that only has solar/load/battery/grid).
    */
   availableViews?: readonly TileView[];
+  /**
+   * Lead every layout with a generic all-values `device-metrics` card (the `table` variant) as the
+   * FIRST card. Only the live `/device/{id}` DeviceViewer sets this, so the device view (direct and
+   * via the rail browser) gets the panel while persisted / composition dashboards are untouched.
+   */
+  leadWithDeviceMetrics?: boolean;
 }
 
 /**
@@ -130,6 +142,13 @@ export interface BuildDefaultV3Opts {
 export function buildDefaultDashboardV3(opts: BuildDefaultV3Opts): DashboardV3 {
   const layout = getLayout(opts.vendorType);
 
+  // The generic all-values panel that leads the device view (name → formatted value, works for any
+  // device). Only emitted when the caller (the DeviceViewer) opts in, so other descriptor builders
+  // are unaffected. `deviceMetricsLead` is the prefix; `[]` when not leading.
+  const deviceMetricsLead: CardV3[] = opts.leadWithDeviceMetrics
+    ? [{ type: "device-metrics", variant: "table" }]
+    : [];
+
   if (layout === "amber") {
     // An Amber price dashboard: the two amber cards, no tiles/charts.
     return {
@@ -137,7 +156,11 @@ export function buildDefaultDashboardV3(opts: BuildDefaultV3Opts): DashboardV3 {
       sections: [
         {
           areaId: opts.areaId,
-          cards: [{ type: "amber-now" }, { type: "amber-timeline" }],
+          cards: [
+            ...deviceMetricsLead,
+            { type: "amber-now" },
+            { type: "amber-timeline" },
+          ],
         },
       ],
     };
@@ -157,7 +180,10 @@ export function buildDefaultDashboardV3(opts: BuildDefaultV3Opts): DashboardV3 {
     supported.length === 0 &&
     opts.gridDeviceSystemId == null
   ) {
-    const cards: CardV3[] = [{ type: "device-metrics" }];
+    // Already leads with device-metrics — honor the requested variant (table when leading), no dup.
+    const cards: CardV3[] = opts.leadWithDeviceMetrics
+      ? [...deviceMetricsLead]
+      : [{ type: "device-metrics" }];
     if (opts.hasGenerator) cards.push({ type: "generator-runs" });
     return { version: 3, sections: [{ areaId: opts.areaId, cards }] };
   }
@@ -166,7 +192,7 @@ export function buildDefaultDashboardV3(opts: BuildDefaultV3Opts): DashboardV3 {
   if (opts.gridDeviceSystemId != null) {
     tiles.push({ view: "oe-grid", deviceSystemId: opts.gridDeviceSystemId });
   }
-  const cards: CardV3[] = [{ type: "tiles", tiles }];
+  const cards: CardV3[] = [...deviceMetricsLead, { type: "tiles", tiles }];
 
   if (layout === "site") {
     // Site (mondo/composite): the two stacked-area charts. The sankey is NOT a default — it's an opt-in
