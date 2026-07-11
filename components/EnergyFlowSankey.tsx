@@ -10,17 +10,39 @@ import {
 } from "d3-sankey";
 import { EnergyFlowMatrix } from "@/lib/energy-flow-matrix";
 
+/** How the Sankey lays out storage. "columns" = classic sources→loads bipartite; "battery-middle" =
+ *  3-column with the battery relocated to a central STORAGE column (charge in, discharge out). */
+export type SankeyLayout = "columns" | "battery-middle";
+
+/** User-configurable Sankey display options (persisted per sankey, see FlowsSettingsMenu). */
+export interface SankeyOptions {
+  combineSolar: boolean;
+  batteryMiddle: boolean;
+}
+
+export const DEFAULT_SANKEY_OPTIONS: SankeyOptions = {
+  combineSolar: false,
+  batteryMiddle: false,
+};
+
 interface EnergyFlowSankeyProps {
   matrix: EnergyFlowMatrix;
   /** Unit shown on node values + link tooltips: cumulative window energy ("kWh") or focused-point power ("kW"). */
   unit?: "kWh" | "kW";
+  /** Column layout: classic two-column (default) or battery relocated to a middle STORAGE column. */
+  layout?: SankeyLayout;
   width?: number;
   height?: number;
 }
 
 interface SankeyNodeData {
+  /** Canonical flow path (e.g. "source.solar", "source.battery"); used to identify the battery. */
+  id?: string;
   name: string;
   color: string;
+  /** This node's own total energy (kWh) or power (kW) — carried so the draw loop needn't reverse-map
+   *  filtered→original indices. NOT named `value`: d3-sankey overwrites `node.value` during layout. */
+  total: number;
 }
 
 interface SankeyLinkData {
@@ -46,6 +68,147 @@ function shortenLabel(label: string): string {
 
 // Colors now come from the matrix nodes (energy-flow-matrix.ts uses centralized colors)
 
+const LINK_MIN = 0.01; // ignore negligible flows (kWh/kW)
+
+/** Classic two-column graph: every source above threshold → a left node, every load → a right node. */
+function buildColumnsGraph(
+  matrix: EnergyFlowMatrix,
+  minEnergy: number,
+): { nodes: SankeyNodeData[]; links: SankeyLinkData[] } {
+  const nodes: SankeyNodeData[] = [];
+  const links: SankeyLinkData[] = [];
+
+  const srcNode = new Map<number, number>(); // matrix source idx → node idx
+  matrix.sources.forEach((s, i) => {
+    if (matrix.sourceTotals[i] < minEnergy) return;
+    srcNode.set(i, nodes.length);
+    nodes.push({
+      id: s.id,
+      name: shortenLabel(s.label),
+      color: s.color,
+      total: matrix.sourceTotals[i],
+    });
+  });
+
+  const loadNode = new Map<number, number>(); // matrix load idx → node idx
+  matrix.loads.forEach((l, j) => {
+    if (matrix.loadTotals[j] < minEnergy) return;
+    loadNode.set(j, nodes.length);
+    nodes.push({
+      id: l.id,
+      name: shortenLabel(l.label),
+      color: l.color,
+      total: matrix.loadTotals[j],
+    });
+  });
+
+  for (const [s, sn] of srcNode) {
+    for (const [l, ln] of loadNode) {
+      const v = matrix.matrix[s][l];
+      if (v > LINK_MIN) links.push({ source: sn, target: ln, value: v });
+    }
+  }
+  return { nodes, links };
+}
+
+/**
+ * Three-column graph: the battery is relocated to a central STORAGE node. Non-battery sources flow into
+ * the battery (charge, `matrix[s][load.battery]`) or directly to loads (`matrix[s][l]`); the battery flows
+ * out to loads (discharge, `matrix[source.battery][l]`). d3-sankey's default `justify` alignment then
+ * places the battery (which has BOTH in- and out-links) in the middle column and every load (a sink, no
+ * out-links) in the rightmost — including loads fed only by a direct source link. If the battery only
+ * charges OR only discharges in-window it naturally collapses back to two columns on the acting side.
+ */
+function buildBatteryMiddleGraph(
+  matrix: EnergyFlowMatrix,
+  minEnergy: number,
+  bs: number, // source idx of source.battery (discharge), or -1
+  bl: number, // load idx of load.battery (charge), or -1
+): { nodes: SankeyNodeData[]; links: SankeyLinkData[] } {
+  const nodes: SankeyNodeData[] = [];
+  const links: SankeyLinkData[] = [];
+
+  const leftNode = new Map<number, number>(); // non-battery source idx → node idx
+  matrix.sources.forEach((s, i) => {
+    if (i === bs || matrix.sourceTotals[i] < minEnergy) return;
+    leftNode.set(i, nodes.length);
+    nodes.push({
+      id: s.id,
+      name: shortenLabel(s.label),
+      color: s.color,
+      total: matrix.sourceTotals[i],
+    });
+  });
+
+  // Middle battery node. Sized to max(charge in, discharge out) — inflow ≠ outflow across the window
+  // (round-trip loss / SoC drift) is expected; d3-sankey sizes the box to the larger side either way.
+  const chargeTotal = bl >= 0 ? matrix.loadTotals[bl] : 0;
+  const dischargeTotal = bs >= 0 ? matrix.sourceTotals[bs] : 0;
+  const batteryColor =
+    (bs >= 0 ? matrix.sources[bs].color : undefined) ??
+    (bl >= 0 ? matrix.loads[bl].color : undefined) ??
+    "#22c55e";
+  const batteryIdx = nodes.length;
+  nodes.push({
+    id: "bidi.battery",
+    name: "Battery",
+    color: batteryColor,
+    total: Math.max(chargeTotal, dischargeTotal),
+  });
+
+  const rightNode = new Map<number, number>(); // non-battery load idx → node idx
+  matrix.loads.forEach((l, j) => {
+    if (j === bl || matrix.loadTotals[j] < minEnergy) return;
+    rightNode.set(j, nodes.length);
+    nodes.push({
+      id: l.id,
+      name: shortenLabel(l.label),
+      color: l.color,
+      total: matrix.loadTotals[j],
+    });
+  });
+
+  for (const [s, sn] of leftNode) {
+    for (const [l, ln] of rightNode) {
+      const v = matrix.matrix[s][l];
+      if (v > LINK_MIN) links.push({ source: sn, target: ln, value: v }); // direct
+    }
+    if (bl >= 0) {
+      const charge = matrix.matrix[s][bl];
+      if (charge > LINK_MIN)
+        links.push({ source: sn, target: batteryIdx, value: charge });
+    }
+  }
+  if (bs >= 0) {
+    for (const [l, ln] of rightNode) {
+      const discharge = matrix.matrix[bs][l];
+      if (discharge > LINK_MIN)
+        links.push({ source: batteryIdx, target: ln, value: discharge });
+    }
+  }
+  return { nodes, links };
+}
+
+/**
+ * Build the d3-sankey node/link model for a layout. `battery-middle` needs a battery present and above
+ * the display threshold on at least one side; otherwise it degrades to the classic two-column graph.
+ */
+function buildFlowGraph(
+  matrix: EnergyFlowMatrix,
+  layout: SankeyLayout,
+  minEnergy: number,
+): { nodes: SankeyNodeData[]; links: SankeyLinkData[] } {
+  if (layout === "battery-middle") {
+    const bs = matrix.sources.findIndex((n) => n.id === "source.battery");
+    const bl = matrix.loads.findIndex((n) => n.id === "load.battery");
+    const hasBattery =
+      (bs >= 0 && matrix.sourceTotals[bs] >= minEnergy) ||
+      (bl >= 0 && matrix.loadTotals[bl] >= minEnergy);
+    if (hasBattery) return buildBatteryMiddleGraph(matrix, minEnergy, bs, bl);
+  }
+  return buildColumnsGraph(matrix, minEnergy);
+}
+
 /**
  * Energy Flow Sankey Diagram
  *
@@ -57,6 +220,7 @@ function shortenLabel(label: string): string {
 export default function EnergyFlowSankey({
   matrix,
   unit = "kWh",
+  layout = "columns",
   width = 600,
   height = 680,
 }: EnergyFlowSankeyProps) {
@@ -95,68 +259,10 @@ export default function EnergyFlowSankey({
     // Filter out sources and loads with < 0.1 kWh
     const MIN_ENERGY = 0.1;
 
-    const filteredSources = matrix.sources.filter(
-      (_, i) => matrix.sourceTotals[i] >= MIN_ENERGY,
-    );
-    const filteredLoads = matrix.loads.filter(
-      (_, i) => matrix.loadTotals[i] >= MIN_ENERGY,
-    );
-
-    // Create mapping from original indices to filtered indices
-    const sourceIndexMap = new Map<number, number>();
-    const loadIndexMap = new Map<number, number>();
-
-    let filteredSourceIdx = 0;
-    matrix.sources.forEach((_, i) => {
-      if (matrix.sourceTotals[i] >= MIN_ENERGY) {
-        sourceIndexMap.set(i, filteredSourceIdx++);
-      }
-    });
-
-    let filteredLoadIdx = 0;
-    matrix.loads.forEach((_, i) => {
-      if (matrix.loadTotals[i] >= MIN_ENERGY) {
-        loadIndexMap.set(i, filteredLoadIdx++);
-      }
-    });
-
-    // Prepare data for d3-sankey with custom colors and shortened labels
-    const nodes: SankeyNodeData[] = [
-      // Sources (left side)
-      ...filteredSources.map((source) => ({
-        name: shortenLabel(source.label),
-        color: source.color, // Use color from matrix (centralized colors)
-      })),
-      // Loads (right side)
-      ...filteredLoads.map((load) => ({
-        name: shortenLabel(load.label),
-        color: load.color, // Use color from matrix (centralized colors)
-      })),
-    ];
-
-    const links: SankeyLinkData[] = [];
-    const sourceCount = filteredSources.length;
-
-    // Create links from matrix data (only for filtered sources/loads)
-    for (let s = 0; s < matrix.sources.length; s++) {
-      const filteredSourceIdx = sourceIndexMap.get(s);
-      if (filteredSourceIdx === undefined) continue; // Skip filtered out sources
-
-      for (let l = 0; l < matrix.loads.length; l++) {
-        const filteredLoadIdx = loadIndexMap.get(l);
-        if (filteredLoadIdx === undefined) continue; // Skip filtered out loads
-
-        const value = matrix.matrix[s][l];
-        if (value > 0.01) {
-          // Only include links with meaningful energy flow
-          links.push({
-            source: filteredSourceIdx,
-            target: sourceCount + filteredLoadIdx,
-            value,
-          });
-        }
-      }
-    }
+    // Build the node/link model for the chosen layout. Each node carries its own `total`, so the draw
+    // loop below reads it directly (no filtered→original index reverse-mapping). Columns are discovered
+    // from the laid-out x-positions, so this supports 2 (columns) or 3 (battery-middle) columns.
+    const { nodes, links } = buildFlowGraph(matrix, layout, MIN_ENERGY);
 
     // If there are no nodes or links, show a message instead of rendering
     if (nodes.length === 0 || links.length === 0) {
@@ -174,8 +280,10 @@ export default function EnergyFlowSankey({
       return;
     }
 
-    // Configure sankey layout with responsive margins and node width
-    const nodeWidth = isMobile ? 86 : 96; // 10px narrower on mobile
+    // Configure sankey layout with responsive margins and node width. Battery-middle adds a third
+    // column, so shrink the nodes a touch on mobile to leave room for the ribbons.
+    const nodeWidth =
+      layout === "battery-middle" && isMobile ? 72 : isMobile ? 86 : 96;
     const margin = isMobile
       ? { left: 0, right: 0, top: 35, bottom: 20 } // No margins on mobile
       : { left: 60, right: 60, top: 35, bottom: 20 };
@@ -262,8 +370,17 @@ export default function EnergyFlowSankey({
       }
     };
 
-    reflowColumn(graph.nodes.slice(0, sourceCount));
-    reflowColumn(graph.nodes.slice(sourceCount));
+    // Reflow every column, discovered from the laid-out x-positions (d3-sankey assigns each node's x0
+    // once and never moves it). Grouping by x0 handles 2 (columns) or 3 (battery-middle) columns
+    // uniformly; in two-column mode these are the same two groups as before → pixel-identical.
+    const columnsByX = new Map<number, any[]>();
+    for (const node of graph.nodes as any[]) {
+      const key = Math.round(node.x0);
+      const group = columnsByX.get(key);
+      if (group) group.push(node);
+      else columnsByX.set(key, [node]);
+    }
+    for (const columnNodes of columnsByX.values()) reflowColumn(columnNodes);
 
     // Update link coordinates to match the shifted nodes. Each node moves
     // rigidly, so a link's within-node offset is preserved by shifting its
@@ -371,39 +488,23 @@ export default function EnergyFlowSankey({
       svgElement.appendChild(path);
     });
 
-    // Calculate total energy for filtered nodes
-    const filteredTotalEnergy = [...sourceIndexMap.keys()].reduce(
-      (sum, i) => sum + matrix.sourceTotals[i],
+    // Percentage denominator: total energy entering the leftmost column. In two-column mode this is the
+    // sum of source totals (unchanged from before); in battery-middle it is external generation (the
+    // battery sits in the middle column, so it's excluded — an intentional "share of generation" reading).
+    const leftmostX = Math.min(...columnsByX.keys());
+    const leftColumnTotal = (columnsByX.get(leftmostX) ?? []).reduce(
+      (sum, n: any) => sum + (n.total ?? 0),
       0,
     );
 
-    // Draw nodes with labels inside
+    // Draw nodes with labels inside. Each node carries its own `total` (set in buildFlowGraph), so no
+    // filtered→original index reverse-mapping is needed.
     graph.nodes.forEach((node: any) => {
-      const isSource = node.index < sourceCount;
-      const nodeIdx = isSource ? node.index : node.index - sourceCount;
-
-      // Get original index from filtered index
-      let originalIdx = -1;
-      if (isSource) {
-        for (const [origIdx, filtIdx] of sourceIndexMap.entries()) {
-          if (filtIdx === nodeIdx) {
-            originalIdx = origIdx;
-            break;
-          }
-        }
-      } else {
-        for (const [origIdx, filtIdx] of loadIndexMap.entries()) {
-          if (filtIdx === nodeIdx) {
-            originalIdx = origIdx;
-            break;
-          }
-        }
-      }
-
-      const totalEnergy = isSource
-        ? matrix.sourceTotals[originalIdx]
-        : matrix.loadTotals[originalIdx];
-      const percentage = ((totalEnergy / filteredTotalEnergy) * 100).toFixed(0);
+      const totalEnergy = node.total ?? 0;
+      const percentage =
+        leftColumnTotal > 0
+          ? ((totalEnergy / leftColumnTotal) * 100).toFixed(0)
+          : "0";
 
       // Draw rectangle
       const rect = document.createElementNS(
@@ -530,55 +631,37 @@ export default function EnergyFlowSankey({
       }
     });
 
-    // Add column headers
-    if (graph.nodes.length > 0) {
-      // Find leftmost source node and rightmost load node for positioning
-      const sourceNodes = graph.nodes.slice(0, sourceCount);
-      const loadNodes = graph.nodes.slice(sourceCount);
+    // Add column headers, driven by the discovered columns: leftmost = SOURCES, rightmost = LOADS, any
+    // interior column (only present in battery-middle) = STORAGE.
+    const drawColumnHeader = (text: string, columnNodes: any[]) => {
+      if (columnNodes.length === 0) return;
+      const n = columnNodes[0];
+      const x = (n.x0 + n.x1) / 2;
+      const label = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "text",
+      );
+      label.setAttribute("x", String(x));
+      label.setAttribute("y", String(margin.top - 10));
+      label.setAttribute("text-anchor", "middle");
+      label.setAttribute("font-family", "DM Sans, sans-serif");
+      label.setAttribute("font-size", "12px");
+      label.setAttribute("font-weight", "600");
+      label.setAttribute("fill", "#FFFFFF");
+      label.setAttribute("opacity", "0.7");
+      label.textContent = text;
+      svgElement.appendChild(label);
+    };
 
-      if (sourceNodes.length > 0) {
-        // "SOURCES" label above left column
-        const firstSourceNode = sourceNodes[0] as any;
-        const sourceLabelX = (firstSourceNode.x0 + firstSourceNode.x1) / 2;
-
-        const sourcesLabel = document.createElementNS(
-          "http://www.w3.org/2000/svg",
-          "text",
-        );
-        sourcesLabel.setAttribute("x", String(sourceLabelX));
-        sourcesLabel.setAttribute("y", String(margin.top - 10));
-        sourcesLabel.setAttribute("text-anchor", "middle");
-        sourcesLabel.setAttribute("font-family", "DM Sans, sans-serif");
-        sourcesLabel.setAttribute("font-size", "12px");
-        sourcesLabel.setAttribute("font-weight", "600");
-        sourcesLabel.setAttribute("fill", "#FFFFFF");
-        sourcesLabel.setAttribute("opacity", "0.7");
-        sourcesLabel.textContent = "SOURCES";
-        svgElement.appendChild(sourcesLabel);
-      }
-
-      if (loadNodes.length > 0) {
-        // "LOADS" label above right column
-        const firstLoadNode = loadNodes[0] as any;
-        const loadLabelX = (firstLoadNode.x0 + firstLoadNode.x1) / 2;
-
-        const loadsLabel = document.createElementNS(
-          "http://www.w3.org/2000/svg",
-          "text",
-        );
-        loadsLabel.setAttribute("x", String(loadLabelX));
-        loadsLabel.setAttribute("y", String(margin.top - 10));
-        loadsLabel.setAttribute("text-anchor", "middle");
-        loadsLabel.setAttribute("font-family", "DM Sans, sans-serif");
-        loadsLabel.setAttribute("font-size", "12px");
-        loadsLabel.setAttribute("font-weight", "600");
-        loadsLabel.setAttribute("fill", "#FFFFFF");
-        loadsLabel.setAttribute("opacity", "0.7");
-        loadsLabel.textContent = "LOADS";
-        svgElement.appendChild(loadsLabel);
-      }
+    const columnXs = [...columnsByX.keys()].sort((a, b) => a - b);
+    const minColumnX = columnXs[0];
+    const maxColumnX = columnXs[columnXs.length - 1];
+    for (const x of columnXs) {
+      const text =
+        x === minColumnX ? "SOURCES" : x === maxColumnX ? "LOADS" : "STORAGE";
+      drawColumnHeader(text, columnsByX.get(x) ?? []);
     }
-  }, [matrix, unit, actualWidth, height, isMobile]);
+  }, [matrix, unit, layout, actualWidth, height, isMobile]);
 
   return (
     <div ref={containerRef} className="w-full flex justify-center">

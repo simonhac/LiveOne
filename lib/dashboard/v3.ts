@@ -228,4 +228,32 @@ export function emptyDashboardV3(): DashboardV3 {
   return { version: 3, sections: [] };
 }
 
+/**
+ * Guarantee every sankey card carries a stable `id` — the `sankeyId` slot of the per-sankey display-
+ * options key (`sankeyId:areaId:dashboardId`). One sankey per area, so a lone card is given the
+ * deterministic id `"sankey"` (matching the render-side fallback in Dashboard.tsx); a hypothetical 2nd+
+ * sankey in one section gets `"sankey:1"`, `"sankey:2"`, … Idempotent — existing ids are preserved.
+ * Run on every descriptor WRITE (create + update) so persisted descriptors are never missing the id.
+ */
+export function ensureSankeyCardIds(descriptor: DashboardV3): DashboardV3 {
+  return {
+    ...descriptor,
+    sections: descriptor.sections.map((section) => {
+      let sankeyOrdinal = 0;
+      return {
+        ...section,
+        cards: section.cards.map((card) => {
+          if (card.type !== "sankey") return card;
+          const ordinal = sankeyOrdinal++;
+          if (card.id) return card;
+          return {
+            ...card,
+            id: ordinal === 0 ? "sankey" : `sankey:${ordinal}`,
+          };
+        }),
+      };
+    }),
+  };
+}
+
 export type { DashboardCardType };

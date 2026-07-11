@@ -117,6 +117,7 @@ export default function DashboardClient({
 
       <main className="mx-auto max-w-7xl px-1 py-4">
         <Dashboard
+          dashboardId={dashboard.id}
           descriptor={dashboard.descriptor}
           areaById={areaById}
           onAddArea={canEdit ? () => setAddAreaOpen(true) : undefined}

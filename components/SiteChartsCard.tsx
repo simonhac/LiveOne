@@ -8,12 +8,19 @@ import { type ChartData } from "@/lib/charts/types";
 import DashboardChart from "@/components/DashboardChart";
 import EnergyTable from "@/components/EnergyTable";
 import type { ProcessedSiteData } from "@/lib/site-data-processor";
-import EnergyFlowSankey from "@/components/EnergyFlowSankey";
+import EnergyFlowSankey, {
+  type SankeyOptions,
+  DEFAULT_SANKEY_OPTIONS,
+} from "@/components/EnergyFlowSankey";
+import FlowsSettingsMenu, {
+  type SankeyCapabilities,
+} from "@/components/FlowsSettingsMenu";
 import {
   selectFlowMatrix,
   calculateInstantFlowMatrix,
   sumDailyFlowMatrices,
   pickDailyFlowMatrix,
+  combineSolarSources,
 } from "@/lib/energy-flow-matrix";
 import TemporalNavigator from "@/components/TemporalNavigator";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
@@ -41,6 +48,26 @@ interface SiteChartsCardProps {
    * loading or once data is present. The site-data query itself lives here.
    */
   onHistoryEmptyChange?: (empty: boolean) => void;
+  /**
+   * Opaque key the Sankey display options are persisted under (localStorage `sankey.options:<key>`).
+   * The dashboard composes it as `sankeyId:areaId:dashboardId` so each sankey remembers independently.
+   * Omitted (e.g. legacy per-system page) ⇒ falls back to `systemId`.
+   */
+  sankeyOptionsKey?: string;
+}
+
+const SANKEY_OPTIONS_STORAGE_PREFIX = "sankey.options:";
+
+/** Defensive parse of persisted Sankey options — unknown/malformed fields fall back to the default. */
+function coerceSankeyOptions(raw: unknown): SankeyOptions {
+  const next = { ...DEFAULT_SANKEY_OPTIONS };
+  if (raw && typeof raw === "object") {
+    const r = raw as Record<string, unknown>;
+    if (typeof r.combineSolar === "boolean") next.combineSolar = r.combineSolar;
+    if (typeof r.batteryMiddle === "boolean")
+      next.batteryMiddle = r.batteryMiddle;
+  }
+  return next;
 }
 
 interface StackedChartProps {
@@ -265,6 +292,7 @@ export default function SiteChartsCard({
   siteCapable,
   cardVisible,
   onHistoryEmptyChange,
+  sankeyOptionsKey,
 }: SiteChartsCardProps) {
   // Get modal context to pause polling when modals are open
   const { isAnyModalOpen } = useModalContext();
@@ -291,6 +319,38 @@ export default function SiteChartsCard({
   const [generationVisibleSeries, setGenerationVisibleSeries] = useState<
     Set<string>
   >(new Set());
+
+  // Sankey display options ("combine solar" / "battery in the middle"), persisted per sankey in
+  // localStorage under `sankey.options:<key>` (composite `sankeyId:areaId:dashboardId`, falling back to
+  // the systemId handle). Loaded in a mount/key-change effect so the first paint matches SSR (no
+  // hydration mismatch) and switching dashboards/areas swaps the remembered options.
+  const sankeyStorageKey = `${SANKEY_OPTIONS_STORAGE_PREFIX}${sankeyOptionsKey ?? systemId}`;
+  const [sankeyOptions, setSankeyOptions] = useState<SankeyOptions>(
+    DEFAULT_SANKEY_OPTIONS,
+  );
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(sankeyStorageKey);
+      setSankeyOptions(
+        stored
+          ? coerceSankeyOptions(JSON.parse(stored))
+          : DEFAULT_SANKEY_OPTIONS,
+      );
+    } catch {
+      setSankeyOptions(DEFAULT_SANKEY_OPTIONS);
+    }
+  }, [sankeyStorageKey]);
+  const persistSankeyOptions = useCallback(
+    (next: SankeyOptions) => {
+      setSankeyOptions(next);
+      try {
+        localStorage.setItem(sankeyStorageKey, JSON.stringify(next));
+      } catch {
+        // ignore storage failures (private mode, quota, disabled storage)
+      }
+    },
+    [sankeyStorageKey],
+  );
 
   // Mondo/composite "site" history via React Query. A live window refetches on the 5-min
   // boundary; an explicit historical window (prev/next navigation) is settled (no polling).
@@ -658,6 +718,21 @@ export default function SiteChartsCard({
                   matrix = instant ?? selectFlowMatrix(processedHistoryData);
                 }
                 if (!matrix) return null;
+                // Capabilities from the RAW matrix node set (hover-invariant; computed BEFORE the
+                // combine-solar transform so an enabled toggle doesn't read as "disabled").
+                const solarCount = matrix.sources.filter(
+                  (s) =>
+                    s.id === "source.solar" || s.id.startsWith("source.solar."),
+                ).length;
+                const sankeyCapabilities: SankeyCapabilities = {
+                  canCombineSolar: solarCount >= 2,
+                  hasBattery:
+                    matrix.sources.some((s) => s.id === "source.battery") ||
+                    matrix.loads.some((l) => l.id === "load.battery"),
+                };
+                const displayMatrix = sankeyOptions.combineSolar
+                  ? combineSolarSources(matrix)
+                  : matrix;
                 const unit = focused && period !== "30D" ? "kW" : "kWh";
                 const tz = system?.timezoneOffsetMin;
                 // Label: the focused instant when hovering, else the window the sankey integrates over
@@ -682,13 +757,25 @@ export default function SiteChartsCard({
                     : null;
                 return (
                   <div className="sm:p-4">
-                    <h3 className="text-base font-semibold text-gray-300 mb-2 px-2 sm:px-0">
-                      Flows
-                    </h3>
+                    <div className="mb-2 flex items-center justify-between px-2 sm:px-0">
+                      <h3 className="text-base font-semibold text-gray-300">
+                        Flows
+                      </h3>
+                      <FlowsSettingsMenu
+                        options={sankeyOptions}
+                        capabilities={sankeyCapabilities}
+                        onChange={persistSankeyOptions}
+                      />
+                    </div>
                     <div className="flex justify-center">
                       <EnergyFlowSankey
-                        matrix={matrix}
+                        matrix={displayMatrix}
                         unit={unit}
+                        layout={
+                          sankeyOptions.batteryMiddle
+                            ? "battery-middle"
+                            : "columns"
+                        }
                         width={600}
                         height={680}
                       />

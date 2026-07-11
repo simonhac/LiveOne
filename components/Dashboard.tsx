@@ -67,6 +67,9 @@ function tileKeyV3(t: TileV3, i: number): string {
 }
 
 interface DashboardProps {
+  /** This dashboard's id — part of the per-sankey options key (`sankeyId:areaId:dashboardId`). Omitted
+   *  by the per-device viewer (no saved dashboard) → the sankey options fall back to keying on the handle. */
+  dashboardId?: number;
   descriptor: DashboardV3;
   /** areaId -> its Area (addressing handle + label). May be empty while the readable-areas fetch is
    *  in flight — sections still render their skeleton layout from the descriptor in the meantime. */
@@ -76,6 +79,7 @@ interface DashboardProps {
 }
 
 export default function Dashboard({
+  dashboardId,
   descriptor,
   areaById,
   onAddArea,
@@ -111,6 +115,7 @@ export default function Dashboard({
       {sections.map((section) => (
         <AreaSectionView
           key={section.areaId}
+          dashboardId={dashboardId}
           section={section}
           area={areaById.get(section.areaId)}
           showHeader={showHeaders}
@@ -122,10 +127,12 @@ export default function Dashboard({
 
 /** One Area's cards, stacked. Header only in multi-area dashboards; single-area = frameless (/dashboard/8). */
 function AreaSectionView({
+  dashboardId,
   section,
   area,
   showHeader,
 }: {
+  dashboardId?: number;
   section: AreaSectionV3;
   /** Undefined while the readable-areas fetch is in flight → the cards draw skeletons. */
   area?: ReadableArea;
@@ -133,6 +140,17 @@ function AreaSectionView({
 }) {
   const handle = area?.legacySystemId;
   const visible = section.cards.filter((c) => !c.hidden);
+
+  // Per-sankey persistence key for the Flows options: `sankeyId:areaId:dashboardId`. `ensureSankeyCardIds`
+  // guarantees a persisted sankey card always has an id; the `?? "sankey"` only covers a legacy row not yet
+  // re-saved, and matches the normalizer's own default so the key never drifts. (One sankey per area, so
+  // areaId + dashboardId already disambiguate.) No dashboardId (per-device viewer) ⇒ undefined key, and
+  // SiteChartsCard falls back to keying on the handle.
+  const sankeyCardId = visible.find((c) => c.type === "sankey")?.id ?? "sankey";
+  const sankeyOptionsKey =
+    dashboardId != null
+      ? `${sankeyCardId}:${section.areaId}:${dashboardId}`
+      : undefined;
 
   // Collapse this section's stacked-areas charts + sankey into ONE SiteChartsCard (shared period +
   // hover), exactly like the legacy unified view; `lines` charts stay standalone. SiteChartsCard works
@@ -158,7 +176,12 @@ function AreaSectionView({
       if (chartsEmitted) return null;
       chartsEmitted = true;
       return handle != null ? (
-        <AreaSiteCharts key="site-charts" systemId={handle} keys={chartKeys} />
+        <AreaSiteCharts
+          key="site-charts"
+          systemId={handle}
+          keys={chartKeys}
+          sankeyOptionsKey={sankeyOptionsKey}
+        />
       ) : (
         <ChartSkeleton key="site-charts" />
       );
@@ -349,9 +372,11 @@ function TileCell({
 function AreaSiteCharts({
   systemId,
   keys,
+  sankeyOptionsKey,
 }: {
   systemId: number;
   keys: Set<string>;
+  sankeyOptionsKey?: string;
 }) {
   const { isAnyModalOpen } = useModalContext();
   const { data } = useQuery(
@@ -378,6 +403,7 @@ function AreaSiteCharts({
       system={system}
       siteCapable={siteCapable}
       cardVisible={(k) => keys.has(k)}
+      sankeyOptionsKey={sankeyOptionsKey}
     />
   );
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "@jest/globals";
 import {
   calculateEnergyFlowMatrix,
+  combineSolarSources,
   EnergyFlowMatrix,
 } from "../energy-flow-matrix";
 import { ProcessedSiteData } from "../site-data-processor";
@@ -478,5 +479,101 @@ describe("calculateEnergyFlowMatrix", () => {
     expect(result.sourceTotals[remoteIdx]).toBeCloseTo(3, 6);
     expect(result.sourceTotals[batteryIdx]).toBeCloseTo(2, 6);
     expect(result.totalEnergy).toBeCloseTo(10, 6);
+  });
+});
+
+describe("combineSolarSources", () => {
+  // Build a minimal matrix from source/load ids + a dense [src][load] grid, deriving the totals the
+  // same way matrixWithTotals does so the fixtures are internally consistent.
+  const build = (
+    sourceIds: string[],
+    loadIds: string[],
+    matrix: number[][],
+  ): EnergyFlowMatrix => {
+    const sources = sourceIds.map((id) => ({ id, label: id, color: "#000" }));
+    const loads = loadIds.map((id) => ({ id, label: id, color: "#000" }));
+    const sourceTotals = matrix.map((row) => row.reduce((a, b) => a + b, 0));
+    const loadTotals = loads.map((_, l) =>
+      matrix.reduce((a, row) => a + (row[l] ?? 0), 0),
+    );
+    const totalEnergy = sourceTotals.reduce((a, b) => a + b, 0);
+    return { sources, loads, matrix, sourceTotals, loadTotals, totalEnergy };
+  };
+
+  it("collapses solar leaves + residual into one Solar source, summing the rows", () => {
+    // sources: solar.local, battery(discharge), solar.remote, solar.residual; loads: load, load.battery
+    const m = build(
+      [
+        "source.solar.local",
+        "source.battery",
+        "source.solar.remote",
+        "source.solar.residual",
+      ],
+      ["load", "load.battery"],
+      [
+        [4, 1], // solar.local
+        [2, 0], // battery
+        [3, 0], // solar.remote
+        [1, 0], // solar.residual
+      ],
+    );
+
+    const out = combineSolarSources(m);
+
+    // One combined Solar node at the FIRST solar position; battery follows.
+    expect(out.sources.map((s) => s.id)).toEqual([
+      "source.solar",
+      "source.battery",
+    ]);
+    expect(out.sources[0].label).toBe("Solar");
+    expect(out.sources[0].color).toBeTruthy(); // canonical solar color, not empty/gray fallback
+
+    // Combined row = local + remote + residual, element-wise across loads.
+    expect(out.matrix).toEqual([
+      [8, 1],
+      [2, 0],
+    ]);
+    expect(out.sourceTotals).toEqual([9, 2]);
+
+    // Loads are untouched: column sums (and grand total) are invariant under summing rows.
+    expect(out.loadTotals).toEqual([10, 1]);
+    expect(out.loads).toEqual(m.loads);
+    expect(out.totalEnergy).toBe(11);
+  });
+
+  it("places the combined node at the first solar index, preserving non-solar order", () => {
+    const m = build(
+      ["source.grid", "source.solar.local", "source.solar.remote"],
+      ["load"],
+      [[1], [2], [3]],
+    );
+
+    const out = combineSolarSources(m);
+
+    expect(out.sources.map((s) => s.id)).toEqual([
+      "source.grid",
+      "source.solar",
+    ]);
+    expect(out.matrix).toEqual([[1], [5]]);
+    expect(out.sourceTotals).toEqual([1, 5]);
+  });
+
+  it("is a no-op (returns the same matrix) with one solar source", () => {
+    const m = build(
+      ["source.solar.local", "source.battery"],
+      ["load"],
+      [[5], [2]],
+    );
+    expect(combineSolarSources(m)).toBe(m);
+  });
+
+  it("is a no-op with the bare source.solar total only", () => {
+    const m = build(["source.solar", "source.grid"], ["load"], [[5], [2]]);
+    expect(combineSolarSources(m)).toBe(m);
+  });
+
+  it("is a no-op with no solar sources", () => {
+    const m = build(["source.grid", "source.battery"], ["load"], [[5], [2]]);
+    expect(combineSolarSources(m)).toBe(m);
   });
 });
