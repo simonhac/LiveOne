@@ -1,0 +1,47 @@
+# usher hub — permanent Fly.io WireGuard hub (app "liveone-flyhub").
+#
+# One usher manages both sites over WireGuard:
+#   • sheephouse UDM (Daylesford, Starlink CGNAT) → DeepSea generator (musher)
+#   • kinkora UDM (standard DSL) → two Fronius inverters (fusher)
+# The inspector is fronted by Cloudflare Access (cloudflared) at usher.liveone.energy — the Fly IP
+# exposes ONLY the WireGuard UDP port. The sources are configured in the baked usher.yaml (USHER_CONFIG).
+#
+# Deploy from the repo root (monorepo build context):
+#   fly deploy -c packages/usher/deploy/fly/fly.toml --dockerfile packages/usher/deploy/fly/Dockerfile
+#
+# Secrets (fly secrets set …), NOT here:
+#   WG_PRIVKEY               hub WireGuard private key (reuse the probe's → hub pubkey unchanged)
+#   SHEEPHOUSE_PEER_PUBKEY   sheephouse UDM WG public key
+#   KINKORA_PEER_PUBKEY      kinkora UDM WG public key
+#   KINKORA_DEVICE_CIDRS     the two Fronius inverter /32s, comma-separated (e.g. "10.1.0.11/32,10.1.0.12/32")
+#   TUNNEL_TOKEN             cloudflared tunnel token (Cloudflare Access → usher.liveone.energy)
+#   SHEEPHOUSE_API_KEY       gusher gk_ key for system "sheephouse"
+#   KINKORA_API_KEY          gusher gk_ key for system "kinkora"
+app = "liveone-flyhub"
+primary_region = "syd"
+
+[build]
+  dockerfile = "packages/usher/deploy/fly/Dockerfile"
+
+[env]
+  # Non-secret WG addressing (peer pubkeys + inverter CIDRs are secrets; see above).
+  WG_ADDR = "10.9.0.1/24"
+  SHEEPHOUSE_PEER_WG_IP = "10.9.0.2/32"
+  SHEEPHOUSE_DEVICE_CIDRS = "10.0.1.244/32"
+  KINKORA_PEER_WG_IP = "10.9.0.3/32"
+
+# WireGuard inbound on the dedicated IPv4. Always-on hub (no autostop) so the UDMs stay handshook.
+# No HTTP service is published — the inspector is reached only via the Cloudflare tunnel.
+[[services]]
+  protocol = "udp"
+  internal_port = 51820
+  auto_stop_machines = false
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 51820
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

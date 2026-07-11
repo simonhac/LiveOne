@@ -1,0 +1,22 @@
+[Unit]
+Description=LiveOne usher (device sources -> gusher)
+Documentation=https://github.com/simonhac/liveone
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Deploy the Next.js standalone output to /opt/usher (see README) so server.js is at:
+#   /opt/usher/packages/usher/server.js
+WorkingDirectory=/opt/usher
+# Secrets + config path live here (chmod 600): SHEEPHOUSE_API_KEY / KINKORA_API_KEY / USHER_CONFIG / PORT
+EnvironmentFile=/etc/usher/usher.env
+ExecStart=/usr/bin/node /opt/usher/packages/usher/server.js
+Restart=always
+RestartSec=5
+User=usher
+Group=usher
+# The usher polls the LAN directly (no WireGuard) and pushes out over HTTPS.
+
+[Install]
+WantedBy=multi-user.target

@@ -2,7 +2,7 @@
 
 Reference for the Modbus registers we read from the DeepSea generator controller. The
 machine-readable source of truth is the `REGISTERS` array in
-[`scripts/deepsea/dse-client.ts`](./deepsea/dse-client.ts); this doc explains the _why_,
+[`packages/usher/clients/dse-client.ts`](../packages/usher/clients/dse-client.ts); this doc explains the _why_,
 the decode rules, the enum/alarm interpretations, and the control/write path we deliberately
 do **not** touch. Read the CLI live output with `npm run deepsea:poll` (Teleport VPN up).
 
@@ -102,7 +102,7 @@ Confidence: **H** = matches live anchors or two independent sources; **M** = sin
 plausible/internally consistent; **L** = arithmetic fine, label/offset uncorroborated. `Size`:
 `u`/`i` = unsigned/signed, `16`/`32` = bits.
 
-<!-- Tables generated from scripts/deepsea/dse-client.ts REGISTERS; keep in sync. -->
+<!-- Tables generated from packages/usher/clients/dse-client.ts REGISTERS; keep in sync. -->
 
 #### Engine
 
@@ -378,4 +378,4 @@ Run `npm run deepsea:poll` (add `--raw` to see raw words). Confirm:
   independent code cross-check for the mode (772), engine-state (1408), energy ×0.1 scaling (1800),
   run time (1798), starts (1808), and the control-key pair (35701/35732/35733).
 - **DSE7410 MkII & DSE7420 MkII Operator Manual** `057-263`; **Configuration Suite manual** `057-262`.
-- Ground truth: `scripts/deepsea/dse-client.ts` (Page-4 offsets 0–7, proven live 2026-07-10).
+- Ground truth: `packages/usher/clients/dse-client.ts` (Page-4 offsets 0–7, proven live 2026-07-10).

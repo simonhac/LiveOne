@@ -1,0 +1,16 @@
+# deps (hoisted to the workspace root; a local dir may still appear for non-hoistable pkgs)
+/node_modules
+
+# next
+/.next/
+/out/
+next-env.d.ts
+
+# build artifacts
+*.tsbuildinfo
+
+# local env
+.env*.local
+
+# per-deployment config (real hosts); usher.example.yaml is the committed template
+/usher.yaml
