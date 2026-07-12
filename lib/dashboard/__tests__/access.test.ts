@@ -69,53 +69,87 @@ describe("toReadAccess — dashboard read-scope shaping", () => {
   });
 });
 
-describe("allowedSystemIds — the share-scope system set (purely descriptor-derived)", () => {
+describe("allowedSystemIds — the share-scope system set (handles + member systems)", () => {
   beforeEach(() => {
     mockGetLegacy.mockReset();
+    mockGetInstance.mockReset();
   });
 
+  /** Wire getActivePointsForSystem(handle) → the given points, keyed by handle. */
+  function withPoints(map: Record<number, ReturnType<typeof pt>[]>) {
+    const getActivePointsForSystem = jest.fn(
+      async (sid: number) => map[sid] ?? [],
+    );
+    mockGetInstance.mockReturnValue({
+      getActivePointsForSystem,
+    } as unknown as ReturnType<typeof PointManager.getInstance>);
+  }
+
   it("is empty for a descriptor with no sections", async () => {
+    withPoints({});
     const out = await allowedSystemIds({ descriptor: descriptor([]) });
     expect(out).toEqual([]);
     // No Area uuids → no resolution happens at all.
     expect(mockGetLegacy).not.toHaveBeenCalled();
   });
 
-  it("maps a single section's area uuid → its legacy_system_id", async () => {
-    mockGetLegacy.mockResolvedValue(7); // the section's area → sys 7
+  it("an area-of-one → just its own systemId", async () => {
+    mockGetLegacy.mockResolvedValue(7); // area → real system 7
+    withPoints({ 7: [pt(7, 0), pt(7, 1)] });
     const out = await allowedSystemIds({
-      descriptor: descriptor([{ type: "tiles", areaId: "area-self" }]),
+      descriptor: descriptor([{ type: "tiles", areaId: "a7" }]),
     });
     expect(out).toEqual([7]);
   });
 
-  it("unions distinct section areas, deduped", async () => {
-    mockGetLegacy.mockImplementation(async (areaId: string) => {
-      const map: Record<string, number> = {
-        A: 5,
-        B: 9,
-        C: 11,
-        D: 9, // duplicate target
-      };
-      return map[areaId] ?? null;
+  it("a multi-device area → the handle AND its member systems (authorizes member-scoped cards)", async () => {
+    mockGetLegacy.mockResolvedValue(1000002); // area handle
+    withPoints({ 1000002: [pt(1, 0), pt(14, 0), pt(1, 5)] }); // members 1 + 14
+    const out = await allowedSystemIds({
+      descriptor: descriptor([{ type: "tiles", areaId: "site" }]),
+    });
+    expect([...out].sort((a, b) => a - b)).toEqual([1, 14, 1000002]);
+  });
+
+  it("unions distinct section areas (handles + members), deduped", async () => {
+    mockGetLegacy.mockImplementation(
+      async (areaId: string) =>
+        (({ A: 1000002, B: 8 }) as Record<string, number>)[areaId] ?? null,
+    );
+    withPoints({
+      1000002: [pt(1, 0), pt(14, 0)],
+      8: [pt(5, 0), pt(6, 0)], // Kinkora-style child systems
     });
     const out = await allowedSystemIds({
       descriptor: descriptor([
         { type: "tiles", areaId: "A" },
         { type: "chart", id: "c1", areaId: "B" },
-        { type: "chart", id: "c2", areaId: "C" },
-        { type: "chart", id: "c3", areaId: "D" },
       ]),
     });
-    expect([...out].sort((a, b) => a - b)).toEqual([5, 9, 11]);
+    expect([...out].sort((a, b) => a - b)).toEqual([1, 5, 6, 8, 14, 1000002]);
   });
 
   it("drops a dangling/deleted area uuid (no escalation, no throw)", async () => {
     mockGetLegacy.mockResolvedValue(null); // uuid unknown
+    withPoints({});
     const out = await allowedSystemIds({
       descriptor: descriptor([{ type: "chart", id: "c1", areaId: "ghost" }]),
     });
     expect(out).toEqual([]);
+  });
+
+  it("keeps the handle even when its points can't resolve (throw caught)", async () => {
+    mockGetLegacy.mockResolvedValue(1000002);
+    const getActivePointsForSystem = jest.fn(async () => {
+      throw new Error("System not found");
+    });
+    mockGetInstance.mockReturnValue({
+      getActivePointsForSystem,
+    } as unknown as ReturnType<typeof PointManager.getInstance>);
+    const out = await allowedSystemIds({
+      descriptor: descriptor([{ type: "tiles", areaId: "site" }]),
+    });
+    expect(out).toEqual([1000002]);
   });
 });
 
