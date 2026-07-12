@@ -52,3 +52,30 @@ export interface SigenergyData {
   loadW: number | null;
   evW: number | null;
 }
+
+/**
+ * A day's energy statistics from `/data-process/sigen/station/statistics/energy` (dateFlag=1).
+ * `totals` are the day's kWh totals; `intervals` is the 5-minute `itemList` whose energy fields are
+ * CUMULATIVE-since-local-midnight kWh counters (reset at midnight; `dataTime` = interval START).
+ */
+export interface SigenergyEnergyTotals {
+  powerGeneration: number | null; // PV generation (kWh)
+  powerUse: number | null; // household consumption (kWh)
+  powerToGrid: number | null; // export (kWh)
+  powerFromGrid: number | null; // import (kWh)
+  esCharging: number | null; // battery charge (kWh)
+  esDischarging: number | null; // battery discharge (kWh)
+}
+
+export interface SigenergyEnergyInterval extends SigenergyEnergyTotals {
+  /** Local wall-clock start of the 5-min interval, "YYYYMMDD HH:MM". */
+  dataTime: string;
+}
+
+export interface SigenergyDayEnergy {
+  /** The queried day, YYYYMMDD. */
+  date: string;
+  totals: SigenergyEnergyTotals;
+  intervals: SigenergyEnergyInterval[];
+  raw: unknown;
+}

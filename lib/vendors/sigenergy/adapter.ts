@@ -27,6 +27,8 @@ export class SigenergyAdapter extends BaseVendorAdapter {
 
   protected pollIntervalMinutes = 5;
   protected toleranceSeconds = 30;
+  // Poll on absolute 5-min boundaries (:00, :05 …) and retry each minute until a reading lands.
+  protected alignToBoundary = true;
 
   readonly credentialFields: CredentialField[] = [
     {
@@ -92,6 +94,17 @@ export class SigenergyAdapter extends BaseVendorAdapter {
         data,
         context.startedAt.getTime(),
       );
+
+      // An all-null snapshot yields zero readings. Treat it as a failure (not a silent success) so
+      // boundary-aligned scheduling keeps retrying this window instead of accepting an empty record.
+      if (readings.length === 0) {
+        return {
+          success: false,
+          error: "Empty energy-flow snapshot (all metrics null)",
+          errorCode: "empty",
+          rawResponse: flow.raw,
+        };
+      }
 
       console.log(
         `[Sigenergy] Fetch OK — Solar: ${data.solarW}W  Load: ${data.loadW}W  Battery: ${data.batteryW}W` +

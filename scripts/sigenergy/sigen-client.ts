@@ -89,6 +89,49 @@ export interface SigenEnergyFlow {
   load: number | null;
   ev: number | null;
   batterySoc: number | null; // %
+  /**
+   * Today's cumulative PV generation (kWh) — an ENERGY ACCUMULATOR already present in the
+   * energy-flow response but not consumed by the LiveOne adapter. Resets at local midnight.
+   */
+  pvDayNrg: number | null;
+  /** Extra instantaneous power channels (kW), present on some installs. */
+  generator: number | null;
+  heatPump: number | null;
+  thirdPv: number | null;
+  /** Station status / grid-connection flags, when present. */
+  stationStatus: string | null;
+  onGrid: boolean | null;
+  raw: unknown;
+}
+
+/** One day's energy breakdown (all kWh) from the station statistics endpoint. */
+export interface SigenEnergyStatRow {
+  /** Date label for a per-day row (as returned by the API), or null for a range total. */
+  date: string | null;
+  powerGeneration: number | null; // PV generation
+  powerFromGrid: number | null; // grid import (buy)
+  powerToGrid: number | null; // grid export (sell)
+  esCharging: number | null; // battery charge
+  esDischarging: number | null; // battery discharge
+  powerUse: number | null; // total home consumption
+  powerSelfConsumption: number | null; // PV self-consumption
+  powerOneself: number | null; // load self-sufficiency
+}
+
+export interface SigenEnergyStats {
+  /** Daily energy totals for the queried day (dateFlag=1 expects a single day: startDate==endDate). */
+  totals: SigenEnergyStatRow;
+  /** Number of 5-minute `itemList` rows returned (0 if none) — the intraday power series for backfill. */
+  intervalCount: number;
+  raw: unknown;
+}
+
+/** OpenAPI system summary — running generation totals (kWh). */
+export interface SigenSystemSummary {
+  dailyPowerGeneration: number | null;
+  monthlyPowerGeneration: number | null;
+  annualPowerGeneration: number | null;
+  lifetimePowerGeneration: number | null;
   raw: unknown;
 }
 
@@ -113,6 +156,82 @@ function pickNumber(obj: unknown, keys: string[]): number | null {
     if (!Number.isNaN(n)) return n;
   }
   return null;
+}
+
+/** Pull the first non-empty string-ish value found among candidate keys. */
+function pickString(obj: unknown, keys: string[]): string | null {
+  if (!obj || typeof obj !== "object") return null;
+  const record = obj as Record<string, unknown>;
+  for (const key of keys) {
+    const v = record[key];
+    if (v == null || v === "") continue;
+    return String(v);
+  }
+  return null;
+}
+
+/** Pull the first boolean-ish value found among candidate keys (accepts bool/number/string). */
+function pickBool(obj: unknown, keys: string[]): boolean | null {
+  if (!obj || typeof obj !== "object") return null;
+  const record = obj as Record<string, unknown>;
+  for (const key of keys) {
+    const v = record[key];
+    if (v == null || v === "") continue;
+    if (typeof v === "boolean") return v;
+    if (typeof v === "number") return v !== 0;
+    if (typeof v === "string") return v === "true" || v === "1";
+  }
+  return null;
+}
+
+/** Some endpoints return `data` as a JSON-encoded string — re-parse it if so, else pass through. */
+function maybeJson(v: unknown): unknown {
+  if (typeof v !== "string") return v;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return v;
+  }
+}
+
+/** Extract the 8 daily energy fields from a statistics record (defensive candidate-key matching). */
+function extractStatRow(rec: unknown, date: string | null): SigenEnergyStatRow {
+  return {
+    date,
+    powerGeneration: pickNumber(rec, [
+      "powerGeneration",
+      "pvGeneration",
+      "generation",
+    ]),
+    powerFromGrid: pickNumber(rec, [
+      "powerFromGrid",
+      "gridImport",
+      "buyPower",
+      "importEnergy",
+    ]),
+    powerToGrid: pickNumber(rec, [
+      "powerToGrid",
+      "gridExport",
+      "sellPower",
+      "exportEnergy",
+    ]),
+    esCharging: pickNumber(rec, [
+      "esCharging",
+      "batteryCharge",
+      "chargingEnergy",
+    ]),
+    esDischarging: pickNumber(rec, [
+      "esDischarging",
+      "batteryDischarge",
+      "dischargingEnergy",
+    ]),
+    powerUse: pickNumber(rec, ["powerUse", "consumption", "loadEnergy"]),
+    powerSelfConsumption: pickNumber(rec, [
+      "powerSelfConsumption",
+      "selfConsumption",
+    ]),
+    powerOneself: pickNumber(rec, ["powerOneself", "selfSufficiency"]),
+  };
 }
 
 /** Best-effort station-id extraction from a home/station/system response of unknown shape. */
@@ -490,6 +609,94 @@ export class SigenClient {
         "batterySOC",
         "batteryStateOfCharge",
       ]),
+      // Today's cumulative PV generation (kWh) — already in this payload, just never read by the adapter.
+      pvDayNrg: pickNumber(d, [
+        "pvDayNrg",
+        "pvDayEnergy",
+        "pvEnergyDay",
+        "dayPvEnergy",
+        "pvDayNrgKwh",
+      ]),
+      generator: pickNumber(d, ["generatorPower", "genPower"]),
+      heatPump: pickNumber(d, ["heatPumpPower", "hpPower"]),
+      thirdPv: pickNumber(d, ["thirdPvPower", "thirdPartyPvPower"]),
+      stationStatus: pickString(d, [
+        "stationStatus",
+        "status",
+        "onOffGridStatus",
+      ]),
+      onGrid: pickBool(d, ["onGrid"]),
+      raw: json,
+    };
+  }
+
+  /**
+   * Fetch one day's ENERGY STATISTICS for a station (legacy app API). READ-ONLY.
+   *
+   * `GET /data-process/sigen/station/statistics/energy` with `dateFlag=1` returns a SINGLE day's
+   * energy breakdown — PV generation, household consumption (`powerUse`), grid import/export,
+   * battery charge/discharge, self-consumption — plus a 5-minute `itemList` power series for that
+   * day. `dateFlag=1` expects `startDate == endDate`; a multi-day span returns zeros (verified),
+   * so callers loop day-by-day. Field names reverse-engineered from GerardBrowne/sig-data.
+   */
+  async getEnergyStatistics(
+    stationId: string,
+    date: string, // YYYYMMDD — the single day to fetch
+    dateFlag = 1, // 1 = day (2/3 likely month/year — unverified)
+  ): Promise<SigenEnergyStats> {
+    await this.ensureToken();
+    const t = this.token!;
+    if (t.authMode !== "legacy") {
+      throw new SigenError(
+        "getEnergyStatistics is only implemented for legacy auth — the openapi path has no confirmed per-day endpoint (try getSystemSummary with --auth=openapi).",
+        "shape",
+      );
+    }
+    const url =
+      `${legacyBase(this.region)}/data-process/sigen/station/statistics/energy` +
+      `?stationId=${encodeURIComponent(stationId)}` +
+      `&startDate=${encodeURIComponent(date)}` +
+      `&endDate=${encodeURIComponent(date)}` +
+      `&dateFlag=${dateFlag}` +
+      `&fulfill=false`;
+    const json = await this.apiGet(url);
+    const d = maybeJson(this.unwrap(json));
+    const rec = Array.isArray(d) ? (d[0] ?? {}) : d;
+    const totals = extractStatRow(rec, date);
+    const itemList =
+      rec && typeof rec === "object"
+        ? (rec as Record<string, unknown>).itemList
+        : undefined;
+    return {
+      totals,
+      intervalCount: Array.isArray(itemList) ? itemList.length : 0,
+      raw: json,
+    };
+  }
+
+  /**
+   * Fetch the OpenAPI system summary — running generation totals (kWh). READ-ONLY.
+   * Requires openapi auth (the legacy host has no equivalent `/summary`).
+   */
+  async getSystemSummary(systemId: string): Promise<SigenSystemSummary> {
+    await this.ensureToken();
+    const t = this.token!;
+    if (t.authMode !== "openapi") {
+      throw new SigenError(
+        "getSystemSummary requires openapi auth (run with --auth=openapi).",
+        "shape",
+      );
+    }
+    const url = `${openapiBase(this.region)}/openapi/systems/${encodeURIComponent(
+      systemId,
+    )}/summary`;
+    const json = await this.apiGet(url);
+    const d = this.unwrap(json);
+    return {
+      dailyPowerGeneration: pickNumber(d, ["dailyPowerGeneration"]),
+      monthlyPowerGeneration: pickNumber(d, ["monthlyPowerGeneration"]),
+      annualPowerGeneration: pickNumber(d, ["annualPowerGeneration"]),
+      lifetimePowerGeneration: pickNumber(d, ["lifetimePowerGeneration"]),
       raw: json,
     };
   }

@@ -8,6 +8,10 @@
  *   - **Amber** — sends late, multi-day `updateUsage` revisions (estimated → billable) that overwrite
  *     past 5m intervals.
  *   - **Enphase** — pulls per-day 5m series.
+ *   - **Sigenergy** — HYBRID: its live 5-min poll writes raw POWER `point_readings` (recomputed in PG
+ *     like any raw vendor), while a separate daily statistics job publishes queue-fed 5m ENERGY
+ *     aggregates. It is listed here so the receiver UPSERTS that energy 5m. The raw power path is
+ *     unaffected (the raw→5m recompute is per-point and never touches the queue-fed energy points).
  *
  * This matters for the aggregation path: raw-vendor 5m/1d are RECOMPUTED in Postgres from PG's own
  * raw, whereas 5m-native 5m is QUEUE-FED (the receiver mirrors what the vendor
@@ -24,6 +28,7 @@ export const FIVE_MIN_NATIVE_VENDOR_TYPES: ReadonlySet<string> = new Set([
   "amber",
   "enphase",
   "openelectricity",
+  "sigenergy", // hybrid: raw power + queue-fed daily-statistics energy (see header)
 ]);
 
 /**

@@ -26,6 +26,8 @@
  *   --region=aus|eu|apac|us|cn   override region (default from env or "aus")
  *   --raw                  print full raw JSON for each API response
  *   --probe-ratelimit      fire two back-to-back energy-flow calls to confirm the sub-5-min throttle
+ *   --stats (--energy)     fetch the daily ENERGY breakdown; range via --start/--end or --days
+ *   --summary              fetch the OpenAPI generation summary (requires --auth=openapi)
  *   --help                 show this help
  *
  * READ-ONLY: this tool only issues GET/login requests to the owner's own account. It writes nothing.
@@ -48,6 +50,11 @@ type Args = {
   region?: SigenRegion;
   raw: boolean;
   probeRateLimit: boolean;
+  stats: boolean; // fetch the daily energy-statistics breakdown
+  summary: boolean; // fetch the OpenAPI generation summary (requires --auth=openapi)
+  start?: string; // stats range start (YYYY-MM-DD)
+  end?: string; // stats range end (YYYY-MM-DD)
+  days: number; // stats range length when start/end omitted
   help: boolean;
 };
 
@@ -65,6 +72,10 @@ function parseArgs(argv: string[]): Args {
     return Number.isFinite(n) ? n : dflt;
   };
   const countGiven = flags.has("count");
+  const str = (k: string) => {
+    const v = flags.get(k);
+    return typeof v === "string" ? v : undefined;
+  };
   return {
     once: flags.has("once") || !countGiven,
     count: countGiven ? Math.max(1, Math.floor(num("count", 1))) : 1,
@@ -73,6 +84,11 @@ function parseArgs(argv: string[]): Args {
     region: (flags.get("region") as SigenRegion | undefined) || undefined,
     raw: flags.has("raw"),
     probeRateLimit: flags.has("probe-ratelimit"),
+    stats: flags.has("stats") || flags.has("energy"),
+    summary: flags.has("summary"),
+    start: str("start"),
+    end: str("end"),
+    days: Math.max(1, Math.floor(num("days", 1))),
     help: flags.has("help"),
   };
 }
@@ -88,6 +104,11 @@ Usage: npm run sigen:poll -- [flags]
   --region=aus|eu|apac|us|cn   override region (default env SIGENERGY_REGION or "aus")
   --raw                  print full raw JSON for each response
   --probe-ratelimit      two back-to-back calls to confirm the sub-5-min throttle
+  --stats (--energy)     fetch the daily ENERGY breakdown (generation/import/export/charge/discharge)
+  --start=YYYY-MM-DD     stats range start (default: --days back from today)
+  --end=YYYY-MM-DD       stats range end   (default: today)
+  --days=N               stats range length when --start/--end omitted (default 1 = today)
+  --summary              fetch the OpenAPI generation summary (needs --auth=openapi)
   --help                 show this help
 
 Credentials (in .env.local): SIGENERGY_USERNAME, SIGENERGY_PASSWORD, SIGENERGY_REGION (optional).
@@ -105,8 +126,12 @@ function fmtPower(kw: number | null): string {
   return `${kw.toFixed(3)} kW (${w} W)`;
 }
 
+function fmtKwh(v: number | null): string {
+  return v == null ? "—" : `${v.toFixed(2)} kWh`;
+}
+
 function fmtSnapshot(flow: SigenEnergyFlow): string {
-  const rows = [
+  const rows: [string, string][] = [
     ["PV", fmtPower(flow.pv)],
     ["Battery", fmtPower(flow.battery)],
     [
@@ -116,8 +141,64 @@ function fmtSnapshot(flow: SigenEnergyFlow): string {
     ["Grid", fmtPower(flow.grid)],
     ["Load", fmtPower(flow.load)],
     ["EV charger", fmtPower(flow.ev)],
+    // Energy accumulator already present in this payload (today's PV generation, kWh).
+    ["PV today", fmtKwh(flow.pvDayNrg)],
   ];
+  // Extra channels only when the install reports them.
+  if (flow.generator != null)
+    rows.push(["Generator", fmtPower(flow.generator)]);
+  if (flow.heatPump != null) rows.push(["Heat pump", fmtPower(flow.heatPump)]);
+  if (flow.thirdPv != null) rows.push(["3rd-party PV", fmtPower(flow.thirdPv)]);
+  if (flow.stationStatus != null) rows.push(["Status", flow.stationStatus]);
+  if (flow.onGrid != null) rows.push(["On-grid", flow.onGrid ? "yes" : "no"]);
   return rows.map(([k, v]) => `    ${k.padEnd(12)} ${v}`).join("\n");
+}
+
+/** Format a Date as YYYYMMDD (the statistics endpoint's date format). */
+function toYmd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}${m}${day}`;
+}
+
+/** Accept YYYY-MM-DD or YYYYMMDD, normalise to YYYYMMDD. */
+function parseYmd(s: string): string {
+  return s.replace(/-/g, "");
+}
+
+/** Resolve the stats date range (YYYYMMDD) from --start/--end or --days. */
+function resolveRange(args: Args): { startYmd: string; endYmd: string } {
+  const now = new Date();
+  if (args.start || args.end) {
+    const endYmd = args.end ? parseYmd(args.end) : toYmd(now);
+    const startYmd = args.start ? parseYmd(args.start) : endYmd;
+    return { startYmd, endYmd };
+  }
+  const start = new Date(now);
+  start.setDate(start.getDate() - (args.days - 1));
+  return { startYmd: toYmd(start), endYmd: toYmd(now) };
+}
+
+/** Inclusive list of YYYYMMDD strings from startYmd to endYmd (the stats endpoint is one-day-per-call). */
+function enumerateDays(startYmd: string, endYmd: string): string[] {
+  const toDate = (ymd: string) =>
+    new Date(
+      Number(ymd.slice(0, 4)),
+      Number(ymd.slice(4, 6)) - 1,
+      Number(ymd.slice(6, 8)),
+    );
+  const out: string[] = [];
+  const end = toDate(endYmd);
+  for (let d = toDate(startYmd); d <= end; d.setDate(d.getDate() + 1)) {
+    out.push(toYmd(d));
+  }
+  return out;
+}
+
+/** Right-aligned kWh column value ("—" for null). */
+function kwhCol(v: number | null): string {
+  return (v == null ? "—" : v.toFixed(2)).padStart(8);
 }
 
 function nowIso(): string {
@@ -212,6 +293,72 @@ async function main() {
     console.log(indent(JSON.stringify(first.raw, null, 2), 6));
   }
   console.log("");
+
+  // Energy statistics — the daily kWh breakdown, one call per day. ------------
+  if (args.stats) {
+    const { startYmd, endYmd } = resolveRange(args);
+    const days = enumerateDays(startYmd, endYmd);
+    console.log(
+      `▸ Energy statistics (daily kWh) — ${days.length} day(s) ${startYmd}…${endYmd}:`,
+    );
+    console.log(
+      `   ${"date".padEnd(10)}  ${"gen".padStart(8)} ${"load".padStart(8)} ${"import".padStart(8)} ${"export".padStart(8)} ${"chg".padStart(8)} ${"dis".padStart(8)}   ivl`,
+    );
+    let firstRaw: unknown = null;
+    const sum = { gen: 0, load: 0, imp: 0, exp: 0, chg: 0, dis: 0 };
+    for (const day of days) {
+      try {
+        const s = await client.getEnergyStatistics(station.stationId, day, 1);
+        const r = s.totals;
+        if (firstRaw == null) firstRaw = s.raw;
+        sum.gen += r.powerGeneration ?? 0;
+        sum.load += r.powerUse ?? 0;
+        sum.imp += r.powerFromGrid ?? 0;
+        sum.exp += r.powerToGrid ?? 0;
+        sum.chg += r.esCharging ?? 0;
+        sum.dis += r.esDischarging ?? 0;
+        console.log(
+          `   ${day.padEnd(10)}  ${kwhCol(r.powerGeneration)} ${kwhCol(r.powerUse)} ${kwhCol(r.powerFromGrid)} ${kwhCol(r.powerToGrid)} ${kwhCol(r.esCharging)} ${kwhCol(r.esDischarging)}   ${String(s.intervalCount).padStart(3)}`,
+        );
+      } catch (err) {
+        console.log(
+          `   ${day.padEnd(10)}  ❌ ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    if (days.length > 1) {
+      console.log(
+        `   ${"TOTAL".padEnd(10)}  ${kwhCol(sum.gen)} ${kwhCol(sum.load)} ${kwhCol(sum.imp)} ${kwhCol(sum.exp)} ${kwhCol(sum.chg)} ${kwhCol(sum.dis)}`,
+      );
+    }
+    console.log(
+      "   (gen=generation, load=household consumption, ivl=5-min intraday rows available)",
+    );
+    if (args.raw && firstRaw != null) {
+      console.log("   raw statistics response (first day):");
+      console.log(indent(JSON.stringify(firstRaw, null, 2), 6));
+    }
+    console.log("");
+  }
+
+  // OpenAPI generation summary — running totals. ------------------------------
+  if (args.summary) {
+    console.log("▸ Generation summary (OpenAPI, kWh):");
+    try {
+      const summary = await client.getSystemSummary(station.stationId);
+      console.log(`   today    ${fmtKwh(summary.dailyPowerGeneration)}`);
+      console.log(`   month    ${fmtKwh(summary.monthlyPowerGeneration)}`);
+      console.log(`   year     ${fmtKwh(summary.annualPowerGeneration)}`);
+      console.log(`   lifetime ${fmtKwh(summary.lifetimePowerGeneration)}`);
+      if (args.raw) {
+        console.log("   raw summary response:");
+        console.log(indent(JSON.stringify(summary.raw, null, 2), 6));
+      }
+    } catch (err) {
+      console.log(`   ❌ ${err instanceof Error ? err.message : String(err)}`);
+    }
+    console.log("");
+  }
 
   // 4a) Rate-limit probe ------------------------------------------------------
   if (args.probeRateLimit) {

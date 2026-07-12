@@ -11,10 +11,13 @@
  * with, so it is the default; `authMode` can force either.
  */
 
-import { createCipheriv } from "node:crypto";
+import { createCipheriv, createHash } from "node:crypto";
 import type {
   SigenRegion,
+  SigenergyDayEnergy,
   SigenergyEnergyFlow,
+  SigenergyEnergyInterval,
+  SigenergyEnergyTotals,
   SigenergyStationInfo,
 } from "./types";
 
@@ -90,18 +93,47 @@ function pickNumber(obj: unknown, keys: string[]): number | null {
   return null;
 }
 
+/** The statistics endpoint sometimes returns `data` as a JSON-encoded string — re-parse if so. */
+function maybeJson(v: unknown): unknown {
+  if (typeof v !== "string") return v;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return v;
+  }
+}
+
+/** Extract the six energy fields (kWh) from a statistics record or an itemList row. */
+function extractEnergyTotals(rec: unknown): SigenergyEnergyTotals {
+  return {
+    powerGeneration: pickNumber(rec, ["powerGeneration"]),
+    powerUse: pickNumber(rec, ["powerUse"]),
+    powerToGrid: pickNumber(rec, ["powerToGrid"]),
+    powerFromGrid: pickNumber(rec, ["powerFromGrid"]),
+    esCharging: pickNumber(rec, ["esCharging"]),
+    esDischarging: pickNumber(rec, ["esDischarging"]),
+  };
+}
+
 export class SigenergyClient {
   private readonly username: string;
   private readonly password: string;
   private readonly region: SigenRegion;
   private readonly authMode: SigenAuthMode;
   private token: SigenToken | null = null;
+  // Stable per-account device id (a real phone sends a constant one). Reused across every login and
+  // refresh so we present as one device rather than a brand-new one on each call / serverless cold start.
+  private readonly deviceId: string;
 
   constructor(opts: SigenergyClientOptions) {
     this.username = opts.username;
     this.password = opts.password;
     this.region = opts.region ?? "aus";
     this.authMode = opts.authMode ?? "legacy";
+    this.deviceId = createHash("sha256")
+      .update(`liveone:${this.username}:${this.region}`)
+      .digest("hex")
+      .slice(0, 32);
   }
 
   /** Shared fetch wrapper that maps HTTP + API-level status into typed SigenergyErrors. */
@@ -197,7 +229,7 @@ export class SigenergyClient {
       username: this.username,
       password: encryptPassword(this.password),
       scope: "server",
-      userDeviceId: String(Date.now()),
+      userDeviceId: this.deviceId,
     });
     const json = await this.apiFetch(
       `${legacyBase(this.region)}/auth/oauth/token`,
@@ -296,7 +328,7 @@ export class SigenergyClient {
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: this.token.refreshToken,
-      userDeviceId: String(Date.now()),
+      userDeviceId: this.deviceId,
     });
     try {
       const json = await this.apiFetch(
@@ -403,5 +435,45 @@ export class SigenergyClient {
       batterySoc: pickNumber(d, ["batterySoc", "soc", "batterySOC"]),
       raw: json,
     };
+  }
+
+  /**
+   * Fetch one day's ENERGY STATISTICS (legacy app API). READ-ONLY.
+   *
+   * `GET /data-process/sigen/station/statistics/energy` with `dateFlag=1` returns the day's kWh totals
+   * plus a 5-minute `itemList` whose energy fields are cumulative-since-local-midnight kWh counters.
+   * `dateFlag=1` expects `startDate == endDate` (a multi-day span returns zeros — verified), so callers
+   * loop day-by-day. The collector (`statistics.ts`) differences the counters into interval energy.
+   */
+  async getEnergyStatistics(
+    stationId: string,
+    date: string, // YYYYMMDD
+    dateFlag = 1,
+  ): Promise<SigenergyDayEnergy> {
+    await this.ensureToken();
+    if (this.token!.authMode !== "legacy") {
+      throw new SigenergyError(
+        "getEnergyStatistics requires legacy auth (no confirmed openapi per-day endpoint)",
+        "shape",
+      );
+    }
+    const url =
+      `${legacyBase(this.region)}/data-process/sigen/station/statistics/energy` +
+      `?stationId=${encodeURIComponent(stationId)}` +
+      `&startDate=${encodeURIComponent(date)}` +
+      `&endDate=${encodeURIComponent(date)}` +
+      `&dateFlag=${dateFlag}` +
+      `&fulfill=false`;
+    const json = await this.apiGet(url);
+    const d = maybeJson(this.unwrap(json)) as Record<string, unknown>;
+    const totals = extractEnergyTotals(d);
+    const rawList = Array.isArray(d.itemList) ? d.itemList : [];
+    const intervals: SigenergyEnergyInterval[] = rawList
+      .filter((r): r is Record<string, unknown> => !!r && typeof r === "object")
+      .map((r) => ({
+        dataTime: String(r.dataTime ?? ""),
+        ...extractEnergyTotals(r),
+      }));
+    return { date, totals, intervals, raw: json };
   }
 }

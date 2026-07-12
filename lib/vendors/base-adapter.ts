@@ -45,6 +45,14 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   protected toleranceSeconds = 30; // Default to 30 seconds tolerance
 
   /**
+   * When true, poll on absolute `pollIntervalMinutes` boundaries (:00, :05, :10 … in UTC) and, if
+   * no reading has yet been recorded for the current window, retry every minute until one succeeds —
+   * then stay quiet until the next boundary. When false (default), use the legacy drift-based
+   * cadence keyed off `lastPollTime`.
+   */
+  protected alignToBoundary = false;
+
+  /**
    * Evaluate whether this system should be polled now
    * @param system - The system to evaluate
    * @param lastPollTime - Time of last poll
@@ -56,6 +64,10 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     lastPollTime: Date | null,
     now: Date,
   ): ScheduleEvaluation {
+    if (this.alignToBoundary) {
+      return this.evaluateBoundarySchedule(system, now);
+    }
+
     const targetIntervalMs = this.pollIntervalMinutes * 60 * 1000;
     const toleranceMs = this.toleranceSeconds * 1000;
 
@@ -98,6 +110,43 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     return {
       shouldPoll: false,
       reason: `Not due yet (polls every ${this.pollIntervalMinutes} min)`,
+      nextPollTime,
+    };
+  }
+
+  /**
+   * Boundary-aligned schedule (opt-in via `alignToBoundary`). Poll on absolute
+   * `pollIntervalMinutes` boundaries and, until a reading is recorded for the current window, retry
+   * every minute (the minutely cron re-evaluates each tick). Keyed off `lastSuccessTime`, which is
+   * already loaded with the system, so it needs no extra state and survives serverless cold starts.
+   */
+  private evaluateBoundarySchedule(
+    system: SystemWithPolling,
+    now: Date,
+  ): ScheduleEvaluation {
+    const intervalMs = this.pollIntervalMinutes * 60 * 1000;
+    const boundaryMs = Math.floor(now.getTime() / intervalMs) * intervalMs;
+    const lastSuccess = system.pollingStatus?.lastSuccessTime ?? null;
+    const recorded = lastSuccess != null && lastSuccess.getTime() >= boundaryMs;
+    const nextPollTime = getNextMinuteBoundary(
+      this.pollIntervalMinutes,
+      system.timezoneOffsetMin,
+    );
+
+    if (recorded) {
+      return {
+        shouldPoll: false,
+        reason: "Recorded this window",
+        nextPollTime,
+      };
+    }
+
+    const atBoundary = now.getTime() - boundaryMs < 60 * 1000;
+    return {
+      shouldPoll: true,
+      reason: atBoundary
+        ? "Boundary poll"
+        : "Retry until next boundary (window not yet recorded)",
       nextPollTime,
     };
   }
