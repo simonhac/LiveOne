@@ -66,10 +66,6 @@ export default function SystemSettingsDialog({
   const [isTeslaDirty, setIsTeslaDirty] = useState(false);
   const [isAdminDirty, setIsAdminDirty] = useState(false);
   const [aliasError, setAliasError] = useState<string | null>(null);
-  // Default system state
-  const [isDefaultSystem, setIsDefaultSystem] = useState(false);
-  const [originalIsDefault, setOriginalIsDefault] = useState(false);
-  const [isDefaultDirty, setIsDefaultDirty] = useState(false);
   // Location (folded in from the former AreaLocationDialog) — sets the site's NEM region for the
   // Local Grid card. country is fixed to AU (the NEM is Australia-only).
   const [locationState, setLocationState] = useState("");
@@ -117,21 +113,7 @@ export default function SystemSettingsDialog({
         };
       }>(`/api/admin/systems/${systemId}/settings`);
 
-      // Fetch user preferences to check if this is the default system
-      let isCurrentDefault = false;
-      try {
-        const prefs = await fetchJson<{
-          success: boolean;
-          preferences?: { defaultSystemId?: number | null };
-        }>("/api/user/preferences");
-        if (prefs.success && prefs.preferences) {
-          isCurrentDefault = prefs.preferences.defaultSystemId === systemId;
-        }
-      } catch (error) {
-        console.error("Error fetching user preferences:", error);
-      }
-
-      return { settings, isCurrentDefault };
+      return { settings };
     },
     enabled: isOpen && !!systemId,
   });
@@ -143,7 +125,7 @@ export default function SystemSettingsDialog({
   useEffect(() => {
     if (!settingsData) return;
 
-    const { settings: data, isCurrentDefault } = settingsData;
+    const { settings: data } = settingsData;
 
     if (data.success && data.settings) {
       const {
@@ -170,10 +152,6 @@ export default function SystemSettingsDialog({
       setIsAdminDirty(false);
       setAliasError(null);
     }
-
-    setIsDefaultSystem(isCurrentDefault);
-    setOriginalIsDefault(isCurrentDefault);
-    setIsDefaultDirty(false);
   }, [settingsData]);
 
   // Fetch the site's location when the dialog opens (separate from the admin settings query).
@@ -237,10 +215,9 @@ export default function SystemSettingsDialog({
     isTimezoneDirty ||
     isTeslaDirty ||
     isAdminDirty ||
-    isDefaultDirty ||
     isLocationDirty;
   const hasGeneralChanges =
-    isDisplayNameDirty || isAliasDirty || isTimezoneDirty || isDefaultDirty;
+    isDisplayNameDirty || isAliasDirty || isTimezoneDirty;
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -324,24 +301,6 @@ export default function SystemSettingsDialog({
         }
       }
 
-      // Save default system preference
-      if (isDefaultDirty) {
-        const response = await fetch("/api/user/preferences", {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            defaultSystemId: isDefaultSystem ? systemId : null,
-          }),
-        });
-
-        if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error || "Failed to update default system");
-        }
-      }
-
       // Save the site's location (state + optional postcode → NEM region for the Local Grid card).
       // "" clears the field (see mergeAreaLocation). country is AU for the NEM.
       if (isLocationDirty) {
@@ -383,8 +342,6 @@ export default function SystemSettingsDialog({
       setIsTimezoneDirty(false);
       setIsTeslaDirty(false);
       setIsAdminDirty(false);
-      setIsDefaultDirty(false);
-      setOriginalIsDefault(isDefaultSystem);
       setIsLocationDirty(false);
       setOrigLocationState(locationState);
       setOrigLocationPostcode(locationPostcode);
@@ -659,33 +616,6 @@ export default function SystemSettingsDialog({
                         </optgroup>
                       ))}
                     </select>
-                  </div>
-
-                  {/* Default System Toggle */}
-                  <div className="mt-6 pt-4 border-t border-gray-700">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={isDefaultSystem}
-                        onChange={(e) => {
-                          setIsDefaultSystem(e.target.checked);
-                          setIsDefaultDirty(
-                            e.target.checked !== originalIsDefault,
-                          );
-                        }}
-                        className="w-5 h-5 rounded border-gray-600 bg-gray-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-800"
-                        disabled={isSaving}
-                      />
-                      <div>
-                        <span className="text-sm font-medium text-gray-300">
-                          Set as my default system
-                        </span>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          This system will open automatically when you visit the
-                          dashboard
-                        </p>
-                      </div>
-                    </label>
                   </div>
                 </div>
 

@@ -6,7 +6,7 @@ import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { userSystems } from "@/lib/db/planetscale/schema";
 import { eq, and } from "drizzle-orm";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
-import { getDashboardById } from "@/lib/dashboard/store";
+import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
 import { grantedSystemScopeForUser } from "@/lib/dashboard/grants";
 
@@ -203,15 +203,12 @@ export async function requireDashboardAccess(
   if (token) {
     const valid = await validateDashboardShareToken(token);
     if (valid) {
-      const dash = await getDashboardById(valid.dashboardId);
-      // Authorize when `systemId` is within the dashboard's read scope — the UNION of its card Areas
-      // (areas-and-dashboards.md §2). For today's single-area dashboards this is the singleton
-      // {dash.systemId}, so it's identical to the former strict equality; an escalation attempt
+      const dash = await getDashboard(valid.dashboardId);
+      // Authorize when `systemId` is within the dashboard's read scope — the UNION of its section
+      // Areas (areas-and-dashboards.md §2), derived purely from the descriptor. An escalation attempt
       // (?systemId=<other>&access=<token>) is excluded and falls through to normal auth.
       if (dash) {
         const allowed = await allowedSystemIds({
-          defaultAreaId: dash.areaId,
-          systemId: dash.systemId,
           descriptor: dash.descriptor,
         });
         if (allowed.includes(systemId)) {

@@ -54,7 +54,6 @@ export async function GET(request: NextRequest) {
   const [area] = await db
     .select({
       id: areas.id,
-      sourceSystemId: areas.sourceSystemId,
       legacySystemId: areas.legacySystemId,
       displayName: areas.displayName,
       alias: areas.alias,

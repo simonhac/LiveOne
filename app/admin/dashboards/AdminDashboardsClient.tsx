@@ -44,7 +44,7 @@ export default function AdminDashboardsClient({
                     Owner
                   </th>
                   <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
-                    Target
+                    Dashboard
                   </th>
                   <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                     Cards
@@ -88,19 +88,12 @@ export default function AdminDashboardsClient({
                         )}
                       </td>
                       <td className="px-2 md:px-6 py-4 align-top">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm text-white">
-                            {d.systemName || `System ${d.systemId}`}
-                          </span>
-                          <span className="text-sm text-gray-500">
-                            ID: {d.systemId}
-                          </span>
+                        <div className="text-sm text-white">
+                          {d.displayName || `Dashboard ${d.id}`}
                         </div>
-                        {d.areaId && (
-                          <div className="text-xs text-gray-500 mt-0.5 font-mono">
-                            area {d.areaId.slice(0, 8)}…
-                          </div>
-                        )}
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {d.alias ? `/${d.alias} · ` : ""}ID: {d.id}
+                        </div>
                       </td>
                       <td className="px-2 md:px-6 py-4 align-top">
                         <span className="text-sm text-gray-300">

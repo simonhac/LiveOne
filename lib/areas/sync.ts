@@ -70,7 +70,6 @@ export async function ensureAreaOfOne(
     await db.insert(areas).values({
       id: areaId,
       ownerClerkUserId: system.ownerClerkUserId,
-      sourceSystemId: system.id,
       legacySystemId: system.id,
       displayName: system.displayName,
       alias: null,

@@ -16,7 +16,7 @@ jest.mock("@/lib/db/planetscale", () => ({ requirePlanetscaleDb: jest.fn() }));
 jest.mock("@/lib/dashboard/sharing", () => ({
   validateDashboardShareToken: jest.fn(),
 }));
-jest.mock("@/lib/dashboard/store", () => ({ getDashboardById: jest.fn() }));
+jest.mock("@/lib/dashboard/dashboards", () => ({ getDashboard: jest.fn() }));
 jest.mock("@/lib/dashboard/access", () => ({ allowedSystemIds: jest.fn() }));
 jest.mock("@/lib/systems-manager", () => ({
   SystemsManager: { getInstance: jest.fn() },
@@ -24,12 +24,12 @@ jest.mock("@/lib/systems-manager", () => ({
 
 import { requireDashboardAccess } from "@/lib/api-auth";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
-import { getDashboardById } from "@/lib/dashboard/store";
+import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
 import { SystemsManager } from "@/lib/systems-manager";
 
 const mockValidate = jest.mocked(validateDashboardShareToken);
-const mockGetDashboard = jest.mocked(getDashboardById);
+const mockGetDashboard = jest.mocked(getDashboard);
 const mockAllowed = jest.mocked(allowedSystemIds);
 const mockGetInstance = jest.mocked(SystemsManager.getInstance);
 
@@ -61,9 +61,12 @@ beforeEach(() => {
   mockValidate.mockResolvedValue({ token: "tok", dashboardId: 1 });
   mockGetDashboard.mockResolvedValue({
     id: 1,
-    systemId: 42,
-    areaId: null,
-    descriptor: { version: 2, layout: "site", cards: [] },
+    ownerClerkUserId: "owner",
+    displayName: "Test",
+    alias: null,
+    descriptor: { version: 3, sections: [] },
+    createdAt: new Date(),
+    updatedAt: new Date(),
   });
 });
 
