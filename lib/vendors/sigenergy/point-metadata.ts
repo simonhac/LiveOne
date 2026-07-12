@@ -127,3 +127,90 @@ export function buildSigenergyReadings(
   }
   return readings;
 }
+
+/**
+ * ENERGY points, fed from the daily statistics endpoint's 5-minute `itemList` (NOT the live poll).
+ *
+ * The `itemList` carries cumulative-since-local-midnight kWh counters; the statistics collector
+ * (`statistics.ts`) differences consecutive samples into per-interval energy (Wh) and writes them as
+ * 5m-native aggregates. So these are `metricType:"energy", transform:null` (interval energy, summed —
+ * the Enphase `enwh` model), NOT `transform:"d"` counters — the collector has already differenced and
+ * tail-reconciled, sidestepping the midnight reset. Stems mirror Selectronic's energy points so the
+ * energy-mode chart globs in `lib/charts/lines-data.ts` (solar / load / grid `energy.delta`) resolve.
+ *
+ * `counterField` is the cumulative-counter key in each `itemList` row / the daily-total key.
+ */
+export type SigenergyEnergyCounterField =
+  | "powerGeneration"
+  | "powerUse"
+  | "powerToGrid"
+  | "powerFromGrid"
+  | "esCharging"
+  | "esDischarging";
+
+export interface SigenergyEnergyPointConfig {
+  counterField: SigenergyEnergyCounterField;
+  metadata: PointMetadata;
+}
+
+const energyMeta = (
+  physicalPathTail: string,
+  logicalPathStem: string,
+  defaultName: string,
+  subsystem: string,
+): PointMetadata => ({
+  physicalPathTail,
+  logicalPathStem,
+  defaultName,
+  subsystem,
+  metricType: "energy",
+  metricUnit: "Wh",
+  transform: null,
+});
+
+export const SIGENERGY_ENERGY_POINTS: SigenergyEnergyPointConfig[] = [
+  {
+    counterField: "powerGeneration",
+    metadata: energyMeta("solar_interval_wh", "source.solar", "Solar", "solar"),
+  },
+  {
+    counterField: "powerUse",
+    metadata: energyMeta("load_interval_wh", "load", "Load", "load"),
+  },
+  {
+    counterField: "powerFromGrid",
+    metadata: energyMeta(
+      "grid_import_interval_wh",
+      "bidi.grid.import",
+      "Import",
+      "grid",
+    ),
+  },
+  {
+    counterField: "powerToGrid",
+    metadata: energyMeta(
+      "grid_export_interval_wh",
+      "bidi.grid.export",
+      "Export",
+      "grid",
+    ),
+  },
+  {
+    counterField: "esCharging",
+    metadata: energyMeta(
+      "battery_charge_interval_wh",
+      "bidi.battery.charge",
+      "Battery Charge",
+      "battery",
+    ),
+  },
+  {
+    counterField: "esDischarging",
+    metadata: energyMeta(
+      "battery_discharge_interval_wh",
+      "bidi.battery.discharge",
+      "Battery Discharge",
+      "battery",
+    ),
+  },
+];
