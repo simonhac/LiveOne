@@ -49,7 +49,8 @@ async function main() {
   const legacy = (
     await db.execute(sql`
       SELECT d.id, d.display_name, d.system_id, d.area_id,
-             (SELECT count(*) FROM dashboard_share_tokens t WHERE t.dashboard_id = d.id)::int AS token_count,
+             (SELECT count(*) FROM dashboard_share_tokens t
+              WHERE t.dashboard_id = d.id AND t.revoked_at_ms IS NULL)::int AS token_count,
              (SELECT count(*) FROM dashboard_grants g WHERE g.dashboard_id = d.id)::int AS grant_count
       FROM dashboards d
       WHERE d.system_id IS NOT NULL

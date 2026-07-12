@@ -56,10 +56,9 @@ export default function SystemsMenu({
   const goToDashboardId = dashboards.some((d) => d.id === defaultDashboardId)
     ? defaultDashboardId
     : (dashboards[0]?.id ?? null);
-  // Devices only: drop composite / areas-backed virtual systems — they're a dashboard/area construct,
-  // not a physical device, and are slated for removal. Public grid-data sources (e.g. OpenElectricity,
-  // vendorType "openelectricity") count as physical and stay.
-  const devices = availableSystems.filter((s) => s.vendorType !== "composite");
+  // Physical devices. Areas-backed virtual systems are already excluded upstream (never in the
+  // systems/devices lists); public grid-data sources (e.g. OpenElectricity) count as physical and stay.
+  const devices = availableSystems;
 
   // Separate owned vs granted systems
   const ownedSystems = devices

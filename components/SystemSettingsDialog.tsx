@@ -9,6 +9,7 @@ import { X, Shield, Loader2, MapPin, Layers } from "lucide-react";
 import { useModalContext } from "@/contexts/ModalContext";
 import PointsTab from "./PointsTab";
 import TeslaConfigTab from "./TeslaConfigTab";
+import DeviceConfigTab from "./DeviceConfigTab";
 import AdminTab from "./AdminTab";
 import AreaBuilderDialog from "@/components/area-builder/AreaBuilderDialog";
 import { TIMEZONE_GROUPS } from "@/lib/timezones";
@@ -64,6 +65,7 @@ export default function SystemSettingsDialog({
   const [isAliasDirty, setIsAliasDirty] = useState(false);
   const [isTimezoneDirty, setIsTimezoneDirty] = useState(false);
   const [isTeslaDirty, setIsTeslaDirty] = useState(false);
+  const [isConfigDirty, setIsConfigDirty] = useState(false);
   const [isAdminDirty, setIsAdminDirty] = useState(false);
   const [aliasError, setAliasError] = useState<string | null>(null);
   // Location (folded in from the former AreaLocationDialog) — sets the site's NEM region for the
@@ -75,9 +77,10 @@ export default function SystemSettingsDialog({
   const [isLocationDirty, setIsLocationDirty] = useState(false);
   const [showAreaBuilder, setShowAreaBuilder] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "general" | "points" | "tesla" | "admin" | "location"
+    "general" | "points" | "tesla" | "config" | "admin" | "location"
   >("general");
   const teslaSaveRef = useRef<(() => Promise<any>) | null>(null);
+  const configSaveRef = useRef<(() => Promise<any>) | null>(null);
   const adminSaveRef = useRef<(() => Promise<any>) | null>(null);
 
   // Register this modal with the global modal context
@@ -149,6 +152,7 @@ export default function SystemSettingsDialog({
       setIsAliasDirty(false);
       setIsTimezoneDirty(false);
       setIsTeslaDirty(false);
+      setIsConfigDirty(false);
       setIsAdminDirty(false);
       setAliasError(null);
     }
@@ -214,6 +218,7 @@ export default function SystemSettingsDialog({
     isAliasDirty ||
     isTimezoneDirty ||
     isTeslaDirty ||
+    isConfigDirty ||
     isAdminDirty ||
     isLocationDirty;
   const hasGeneralChanges =
@@ -274,6 +279,27 @@ export default function SystemSettingsDialog({
 
         if (!response.ok) {
           throw new Error(data.error || "Failed to update Tesla configuration");
+        }
+      }
+
+      // Save per-device config (capability overrides + nameplateKw + updateCadenceSeconds).
+      if (isConfigDirty && configSaveRef.current) {
+        const deviceConfig = await configSaveRef.current();
+
+        const response = await fetch(`/api/admin/systems/${systemId}/config`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(deviceConfig),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || "Failed to update device configuration",
+          );
         }
       }
 
@@ -341,6 +367,7 @@ export default function SystemSettingsDialog({
       setIsAliasDirty(false);
       setIsTimezoneDirty(false);
       setIsTeslaDirty(false);
+      setIsConfigDirty(false);
       setIsAdminDirty(false);
       setIsLocationDirty(false);
       setOrigLocationState(locationState);
@@ -352,6 +379,14 @@ export default function SystemSettingsDialog({
       });
       queryClient.invalidateQueries({
         queryKey: ["system", systemId, "location"],
+      });
+      // Config edits change capability eligibility + stale/sizing — refresh the config query and the
+      // system's live dashboard data so open cards re-derive.
+      queryClient.invalidateQueries({
+        queryKey: ["system", systemId, "config"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["data", String(systemId)],
       });
 
       // Close modal
@@ -495,6 +530,19 @@ export default function SystemSettingsDialog({
                 }`}
               >
                 Points
+              </button>
+              <button
+                onClick={() => setActiveTab("config")}
+                className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+                  activeTab === "config"
+                    ? "text-white border-blue-500 bg-gray-700/50"
+                    : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
+                }`}
+              >
+                Capabilities
+                {isConfigDirty && (
+                  <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
+                )}
               </button>
               {vendorType === "tesla" && (
                 <button
@@ -718,6 +766,18 @@ export default function SystemSettingsDialog({
                 {/* Points Tab Content */}
                 <div className={activeTab === "points" ? "" : "hidden"}>
                   <PointsTab systemId={systemId} shouldLoad={isOpen} />
+                </div>
+
+                {/* Capabilities / Config Tab Content */}
+                <div className={activeTab === "config" ? "" : "hidden"}>
+                  <DeviceConfigTab
+                    systemId={systemId}
+                    shouldLoad={isOpen}
+                    onDirtyChange={setIsConfigDirty}
+                    onSaveFunctionReady={(fn) => {
+                      configSaveRef.current = fn;
+                    }}
+                  />
                 </div>
 
                 {/* Tesla Tab Content */}
