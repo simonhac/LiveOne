@@ -1,8 +1,8 @@
 /**
  * Shared function to fetch admin dashboards data (server-side rendering + API).
  *
- * A dashboard is a per-user, per-system presentation descriptor (P2). Access is keyed on
- * (clerk_user_id, system_id); `area_id` is the forward seam. This powers /admin/dashboards.
+ * A dashboard is a v3 composition descriptor owned by a user; its cards each carry their own Area.
+ * This powers /admin/dashboards.
  */
 
 import { clerkClient } from "@clerk/nextjs/server";
@@ -13,7 +13,6 @@ import {
   dashboardShareTokens,
   dashboardGrants,
 } from "@/lib/db/planetscale/schema";
-import { SystemsManager } from "@/lib/systems-manager";
 import { allCardsV3, isDashboardV3 } from "@/lib/dashboard/v3";
 
 export interface AdminDashboardRow {
@@ -25,9 +24,6 @@ export interface AdminDashboardRow {
   };
   displayName: string | null;
   alias: string | null;
-  systemId: number | null;
-  systemName: string | null;
-  areaId: string | null;
   cardCount: number;
   shareTokenCount: number;
   grantCount: number;
@@ -44,12 +40,11 @@ export interface AdminDashboardsResult {
 
 export async function getAdminDashboardsData(): Promise<AdminDashboardsResult> {
   const db = requirePlanetscaleDb();
-  const systemsManager = SystemsManager.getInstance();
 
   const allDashboards = await db
     .select()
     .from(dashboards)
-    .orderBy(dashboards.clerkUserId, dashboards.systemId);
+    .orderBy(dashboards.clerkUserId, dashboards.id);
 
   // Share-token and grant counts per dashboard (two grouped queries).
   const [shareRows, grantRows] = await Promise.all([
@@ -98,23 +93,6 @@ export async function getAdminDashboardsData(): Promise<AdminDashboardsResult> {
     );
   }
 
-  // Resolve system display names (works for real + composite handles). Composition dashboards
-  // (Phase 2b-2) have a null system_id — skip them here.
-  const systemIds = [
-    ...new Set(
-      allDashboards
-        .map((d) => d.systemId)
-        .filter((x): x is number => x != null),
-    ),
-  ];
-  const systemNames = new Map<number, string>();
-  await Promise.all(
-    systemIds.map(async (id) => {
-      const system = await systemsManager.getSystem(id);
-      if (system) systemNames.set(id, system.displayName);
-    }),
-  );
-
   const dashboardsData: AdminDashboardRow[] = allDashboards.map((d) => {
     const userInfo = userCache.get(d.clerkUserId);
     return {
@@ -126,10 +104,6 @@ export async function getAdminDashboardsData(): Promise<AdminDashboardsResult> {
       },
       displayName: d.displayName,
       alias: d.alias,
-      systemId: d.systemId,
-      systemName:
-        d.systemId != null ? (systemNames.get(d.systemId) ?? null) : null,
-      areaId: d.areaId,
       cardCount: isDashboardV3(d.descriptor)
         ? allCardsV3(d.descriptor).length
         : 0,

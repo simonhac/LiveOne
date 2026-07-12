@@ -19,11 +19,9 @@ export async function GET(
     // Systems owned by this user (excluding composite/area systems and non-active systems)
     const systemsManager = SystemsManager.getInstance();
     const ownedSystems = await systemsManager.getSystemsByOwner(userId);
-    const nonCompositeSystems = ownedSystems.filter(
-      (s) => s.vendorType !== "composite" && s.status === "active",
-    );
+    const activeSystems = ownedSystems.filter((s) => s.status === "active");
 
-    if (nonCompositeSystems.length === 0) {
+    if (activeSystems.length === 0) {
       return NextResponse.json({
         success: true,
         availablePoints: [],
@@ -32,7 +30,7 @@ export async function GET(
     }
 
     // Get all active points from these systems
-    const systemIds = nonCompositeSystems.map((s) => s.id);
+    const systemIds = activeSystems.map((s) => s.id);
     const pgPoints = await requirePlanetscaleDb()
       .select()
       .from(pointInfo)
@@ -67,7 +65,7 @@ export async function GET(
       }
 
       // Find the system for this point
-      const system = nonCompositeSystems.find((s) => s.id === row.systemId);
+      const system = activeSystems.find((s) => s.id === row.systemId);
       if (!system) {
         continue;
       }
@@ -87,7 +85,7 @@ export async function GET(
     }
 
     // Build the referencedSystems list
-    const referencedSystems = nonCompositeSystems
+    const referencedSystems = activeSystems
       .filter((s) => referencedSystemIds.has(s.id))
       .map((s) => ({
         id: s.id,

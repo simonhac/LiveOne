@@ -9,6 +9,7 @@ import { X, Shield, Loader2, MapPin, Layers } from "lucide-react";
 import { useModalContext } from "@/contexts/ModalContext";
 import PointsTab from "./PointsTab";
 import TeslaConfigTab from "./TeslaConfigTab";
+import DeviceConfigTab from "./DeviceConfigTab";
 import AdminTab from "./AdminTab";
 import AreaBuilderDialog from "@/components/area-builder/AreaBuilderDialog";
 import { TIMEZONE_GROUPS } from "@/lib/timezones";
@@ -64,12 +65,9 @@ export default function SystemSettingsDialog({
   const [isAliasDirty, setIsAliasDirty] = useState(false);
   const [isTimezoneDirty, setIsTimezoneDirty] = useState(false);
   const [isTeslaDirty, setIsTeslaDirty] = useState(false);
+  const [isConfigDirty, setIsConfigDirty] = useState(false);
   const [isAdminDirty, setIsAdminDirty] = useState(false);
   const [aliasError, setAliasError] = useState<string | null>(null);
-  // Default system state
-  const [isDefaultSystem, setIsDefaultSystem] = useState(false);
-  const [originalIsDefault, setOriginalIsDefault] = useState(false);
-  const [isDefaultDirty, setIsDefaultDirty] = useState(false);
   // Location (folded in from the former AreaLocationDialog) — sets the site's NEM region for the
   // Local Grid card. country is fixed to AU (the NEM is Australia-only).
   const [locationState, setLocationState] = useState("");
@@ -79,9 +77,10 @@ export default function SystemSettingsDialog({
   const [isLocationDirty, setIsLocationDirty] = useState(false);
   const [showAreaBuilder, setShowAreaBuilder] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "general" | "points" | "tesla" | "admin" | "location"
+    "general" | "points" | "tesla" | "config" | "admin" | "location"
   >("general");
   const teslaSaveRef = useRef<(() => Promise<any>) | null>(null);
+  const configSaveRef = useRef<(() => Promise<any>) | null>(null);
   const adminSaveRef = useRef<(() => Promise<any>) | null>(null);
 
   // Register this modal with the global modal context
@@ -117,21 +116,7 @@ export default function SystemSettingsDialog({
         };
       }>(`/api/admin/systems/${systemId}/settings`);
 
-      // Fetch user preferences to check if this is the default system
-      let isCurrentDefault = false;
-      try {
-        const prefs = await fetchJson<{
-          success: boolean;
-          preferences?: { defaultSystemId?: number | null };
-        }>("/api/user/preferences");
-        if (prefs.success && prefs.preferences) {
-          isCurrentDefault = prefs.preferences.defaultSystemId === systemId;
-        }
-      } catch (error) {
-        console.error("Error fetching user preferences:", error);
-      }
-
-      return { settings, isCurrentDefault };
+      return { settings };
     },
     enabled: isOpen && !!systemId,
   });
@@ -143,7 +128,7 @@ export default function SystemSettingsDialog({
   useEffect(() => {
     if (!settingsData) return;
 
-    const { settings: data, isCurrentDefault } = settingsData;
+    const { settings: data } = settingsData;
 
     if (data.success && data.settings) {
       const {
@@ -167,13 +152,10 @@ export default function SystemSettingsDialog({
       setIsAliasDirty(false);
       setIsTimezoneDirty(false);
       setIsTeslaDirty(false);
+      setIsConfigDirty(false);
       setIsAdminDirty(false);
       setAliasError(null);
     }
-
-    setIsDefaultSystem(isCurrentDefault);
-    setOriginalIsDefault(isCurrentDefault);
-    setIsDefaultDirty(false);
   }, [settingsData]);
 
   // Fetch the site's location when the dialog opens (separate from the admin settings query).
@@ -236,11 +218,11 @@ export default function SystemSettingsDialog({
     isAliasDirty ||
     isTimezoneDirty ||
     isTeslaDirty ||
+    isConfigDirty ||
     isAdminDirty ||
-    isDefaultDirty ||
     isLocationDirty;
   const hasGeneralChanges =
-    isDisplayNameDirty || isAliasDirty || isTimezoneDirty || isDefaultDirty;
+    isDisplayNameDirty || isAliasDirty || isTimezoneDirty;
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -300,6 +282,27 @@ export default function SystemSettingsDialog({
         }
       }
 
+      // Save per-device config (capability overrides + nameplateKw + updateCadenceSeconds).
+      if (isConfigDirty && configSaveRef.current) {
+        const deviceConfig = await configSaveRef.current();
+
+        const response = await fetch(`/api/admin/systems/${systemId}/config`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(deviceConfig),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || "Failed to update device configuration",
+          );
+        }
+      }
+
       // Save admin settings separately
       if (isAdminDirty && adminSaveRef.current) {
         const adminData = await adminSaveRef.current();
@@ -321,24 +324,6 @@ export default function SystemSettingsDialog({
 
         if (!response.ok) {
           throw new Error(data.error || "Failed to update admin settings");
-        }
-      }
-
-      // Save default system preference
-      if (isDefaultDirty) {
-        const response = await fetch("/api/user/preferences", {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            defaultSystemId: isDefaultSystem ? systemId : null,
-          }),
-        });
-
-        if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error || "Failed to update default system");
         }
       }
 
@@ -382,9 +367,8 @@ export default function SystemSettingsDialog({
       setIsAliasDirty(false);
       setIsTimezoneDirty(false);
       setIsTeslaDirty(false);
+      setIsConfigDirty(false);
       setIsAdminDirty(false);
-      setIsDefaultDirty(false);
-      setOriginalIsDefault(isDefaultSystem);
       setIsLocationDirty(false);
       setOrigLocationState(locationState);
       setOrigLocationPostcode(locationPostcode);
@@ -395,6 +379,14 @@ export default function SystemSettingsDialog({
       });
       queryClient.invalidateQueries({
         queryKey: ["system", systemId, "location"],
+      });
+      // Config edits change capability eligibility + stale/sizing — refresh the config query and the
+      // system's live dashboard data so open cards re-derive.
+      queryClient.invalidateQueries({
+        queryKey: ["system", systemId, "config"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["data", String(systemId)],
       });
 
       // Close modal
@@ -539,6 +531,19 @@ export default function SystemSettingsDialog({
               >
                 Points
               </button>
+              <button
+                onClick={() => setActiveTab("config")}
+                className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+                  activeTab === "config"
+                    ? "text-white border-blue-500 bg-gray-700/50"
+                    : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
+                }`}
+              >
+                Capabilities
+                {isConfigDirty && (
+                  <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
+                )}
+              </button>
               {vendorType === "tesla" && (
                 <button
                   onClick={() => setActiveTab("tesla")}
@@ -660,33 +665,6 @@ export default function SystemSettingsDialog({
                       ))}
                     </select>
                   </div>
-
-                  {/* Default System Toggle */}
-                  <div className="mt-6 pt-4 border-t border-gray-700">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={isDefaultSystem}
-                        onChange={(e) => {
-                          setIsDefaultSystem(e.target.checked);
-                          setIsDefaultDirty(
-                            e.target.checked !== originalIsDefault,
-                          );
-                        }}
-                        className="w-5 h-5 rounded border-gray-600 bg-gray-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-800"
-                        disabled={isSaving}
-                      />
-                      <div>
-                        <span className="text-sm font-medium text-gray-300">
-                          Set as my default system
-                        </span>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          This system will open automatically when you visit the
-                          dashboard
-                        </p>
-                      </div>
-                    </label>
-                  </div>
                 </div>
 
                 {/* Location Tab Content */}
@@ -788,6 +766,18 @@ export default function SystemSettingsDialog({
                 {/* Points Tab Content */}
                 <div className={activeTab === "points" ? "" : "hidden"}>
                   <PointsTab systemId={systemId} shouldLoad={isOpen} />
+                </div>
+
+                {/* Capabilities / Config Tab Content */}
+                <div className={activeTab === "config" ? "" : "hidden"}>
+                  <DeviceConfigTab
+                    systemId={systemId}
+                    shouldLoad={isOpen}
+                    onDirtyChange={setIsConfigDirty}
+                    onSaveFunctionReady={(fn) => {
+                      configSaveRef.current = fn;
+                    }}
+                  />
                 </div>
 
                 {/* Tesla Tab Content */}

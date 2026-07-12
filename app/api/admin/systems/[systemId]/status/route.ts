@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { clearDefaultForAllUsers } from "@/lib/user-preferences";
 import { SystemsManager } from "@/lib/systems-manager";
 
 export async function PATCH(
@@ -39,11 +38,8 @@ export async function PATCH(
 
     await SystemsManager.getInstance().updateSystem(systemId, { status });
 
-    // Clear default system preference for all users if system is being removed
-    if (status === "removed") {
-      await clearDefaultForAllUsers(systemId);
-    }
-
+    // Defaults are dashboard-based now (default_dashboard_id, ON DELETE SET NULL); a removed system
+    // leaves its dashboards intact, so there is no per-system default to clear here.
     console.log(
       `System ${systemId} status changed to ${status} by admin ${authResult.userId}`,
     );

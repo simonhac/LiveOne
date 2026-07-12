@@ -171,11 +171,9 @@ export async function getAdminSystemsData(
   const { latestValuesTimeoutMs = 100, skipLatestValues = false } = options;
 
   const systemsManager = SystemsManager.getInstance();
-  // Only real (physical, polled) systems belong in the admin Systems list. The leftover composite
-  // shim rows are areas-backed (their points live on member systems) and live on /admin/areas.
-  const allSystems = (await systemsManager.getAllSystems()).filter(
-    (s) => s.vendorType !== "composite",
-  );
+  // Only real (physical, polled) systems belong in the admin Systems list. Areas-backed virtual
+  // systems are never in the systems table (synthesized on demand) and live on /admin/areas.
+  const allSystems = await systemsManager.getAllSystems();
 
   // Get unique owner user IDs to fetch user info in batch
   const ownerUserIds = [

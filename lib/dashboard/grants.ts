@@ -11,7 +11,7 @@ import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { dashboardGrants } from "@/lib/db/planetscale/schema";
 import type { DashboardGrant } from "@/lib/db/planetscale/schema";
-import { getDashboardById } from "@/lib/dashboard/store";
+import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
 
 export type DashboardGrantRole = "owner" | "admin" | "viewer";
@@ -103,13 +103,9 @@ export async function grantedSystemScopeForUser(
   const dashboardIds = await listGrantsForUser(clerkUserId);
   const scope = new Set<number>();
   for (const id of dashboardIds) {
-    const dash = await getDashboardById(id);
+    const dash = await getDashboard(id);
     if (!dash) continue;
-    const allowed = await allowedSystemIds({
-      defaultAreaId: dash.areaId,
-      systemId: dash.systemId,
-      descriptor: dash.descriptor,
-    });
+    const allowed = await allowedSystemIds({ descriptor: dash.descriptor });
     for (const sid of allowed) scope.add(sid);
   }
   return scope;

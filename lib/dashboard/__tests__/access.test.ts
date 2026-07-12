@@ -69,62 +69,87 @@ describe("toReadAccess — dashboard read-scope shaping", () => {
   });
 });
 
-describe("allowedSystemIds — the share-scope system set", () => {
+describe("allowedSystemIds — the share-scope system set (handles + member systems)", () => {
   beforeEach(() => {
     mockGetLegacy.mockReset();
+    mockGetInstance.mockReset();
   });
 
-  it("is the singleton {systemId} for today's single-area dashboard (areaId-less cards, no default area) — INERT", async () => {
-    const out = await allowedSystemIds({
-      defaultAreaId: null,
-      systemId: 42,
-      descriptor: descriptor([{ type: "tiles" }, { type: "sankey" }]),
-    });
-    expect(out).toEqual([42]);
-    // Early return: no Area resolution happens at all.
+  /** Wire getActivePointsForSystem(handle) → the given points, keyed by handle. */
+  function withPoints(map: Record<number, ReturnType<typeof pt>[]>) {
+    const getActivePointsForSystem = jest.fn(
+      async (sid: number) => map[sid] ?? [],
+    );
+    mockGetInstance.mockReturnValue({
+      getActivePointsForSystem,
+    } as unknown as ReturnType<typeof PointManager.getInstance>);
+  }
+
+  it("is empty for a descriptor with no sections", async () => {
+    withPoints({});
+    const out = await allowedSystemIds({ descriptor: descriptor([]) });
+    expect(out).toEqual([]);
+    // No Area uuids → no resolution happens at all.
     expect(mockGetLegacy).not.toHaveBeenCalled();
   });
 
-  it("stays the singleton when the default area maps back to the dashboard's own system", async () => {
-    mockGetLegacy.mockResolvedValue(7); // the system's area-of-one → 7
+  it("an area-of-one → just its own systemId", async () => {
+    mockGetLegacy.mockResolvedValue(7); // area → real system 7
+    withPoints({ 7: [pt(7, 0), pt(7, 1)] });
     const out = await allowedSystemIds({
-      defaultAreaId: "area-self",
-      systemId: 7,
-      descriptor: descriptor([{ type: "tiles" }]),
+      descriptor: descriptor([{ type: "tiles", areaId: "a7" }]),
     });
     expect(out).toEqual([7]);
   });
 
-  it("unions distinct card areas (default ∪ per-card), deduped", async () => {
-    mockGetLegacy.mockImplementation(async (areaId: string) => {
-      const map: Record<string, number> = {
-        A: 5, // default area → sys 5 (== systemId)
-        B: 9,
-        C: 11,
-        D: 9, // duplicate target
-      };
-      return map[areaId] ?? null;
-    });
+  it("a multi-device area → the handle AND its member systems (authorizes member-scoped cards)", async () => {
+    mockGetLegacy.mockResolvedValue(1000002); // area handle
+    withPoints({ 1000002: [pt(1, 0), pt(14, 0), pt(1, 5)] }); // members 1 + 14
     const out = await allowedSystemIds({
-      defaultAreaId: "A",
-      systemId: 5,
-      descriptor: descriptor([
-        { type: "chart", id: "c1", areaId: "B" },
-        { type: "chart", id: "c2", areaId: "C" },
-        { type: "chart", id: "c3", areaId: "D" },
-      ]),
+      descriptor: descriptor([{ type: "tiles", areaId: "site" }]),
     });
-    expect([...out].sort((a, b) => a - b)).toEqual([5, 9, 11]);
+    expect([...out].sort((a, b) => a - b)).toEqual([1, 14, 1000002]);
   });
 
-  it("drops a dangling/deleted area uuid (no escalation, no throw) but keeps the own system", async () => {
-    mockGetLegacy.mockResolvedValue(null); // uuid unknown
+  it("unions distinct section areas (handles + members), deduped", async () => {
+    mockGetLegacy.mockImplementation(
+      async (areaId: string) =>
+        (({ A: 1000002, B: 8 }) as Record<string, number>)[areaId] ?? null,
+    );
+    withPoints({
+      1000002: [pt(1, 0), pt(14, 0)],
+      8: [pt(5, 0), pt(6, 0)], // Kinkora-style child systems
+    });
     const out = await allowedSystemIds({
-      defaultAreaId: null,
-      systemId: 5,
+      descriptor: descriptor([
+        { type: "tiles", areaId: "A" },
+        { type: "chart", id: "c1", areaId: "B" },
+      ]),
+    });
+    expect([...out].sort((a, b) => a - b)).toEqual([1, 5, 6, 8, 14, 1000002]);
+  });
+
+  it("drops a dangling/deleted area uuid (no escalation, no throw)", async () => {
+    mockGetLegacy.mockResolvedValue(null); // uuid unknown
+    withPoints({});
+    const out = await allowedSystemIds({
       descriptor: descriptor([{ type: "chart", id: "c1", areaId: "ghost" }]),
     });
-    expect(out).toEqual([5]);
+    expect(out).toEqual([]);
+  });
+
+  it("keeps the handle even when its points can't resolve (throw caught)", async () => {
+    mockGetLegacy.mockResolvedValue(1000002);
+    const getActivePointsForSystem = jest.fn(async () => {
+      throw new Error("System not found");
+    });
+    mockGetInstance.mockReturnValue({
+      getActivePointsForSystem,
+    } as unknown as ReturnType<typeof PointManager.getInstance>);
+    const out = await allowedSystemIds({
+      descriptor: descriptor([{ type: "tiles", areaId: "site" }]),
+    });
+    expect(out).toEqual([1000002]);
   });
 });
 
@@ -143,9 +168,7 @@ describe("resolveDashboardReadPoints — union of points across allowed areas", 
     } as unknown as ReturnType<typeof PointManager.getInstance>);
 
     const out = await resolveDashboardReadPoints({
-      defaultAreaId: "composite",
-      systemId: 10001,
-      descriptor: descriptor([{ type: "tiles" }]),
+      descriptor: descriptor([{ type: "tiles", areaId: "composite" }]),
     });
     expect(out.systemIds).toEqual([5, 6]);
     expect(out.points).toHaveLength(3);
@@ -164,9 +187,10 @@ describe("resolveDashboardReadPoints — union of points across allowed areas", 
     } as unknown as ReturnType<typeof PointManager.getInstance>);
 
     const out = await resolveDashboardReadPoints({
-      defaultAreaId: "good",
-      systemId: 5,
-      descriptor: descriptor([{ type: "chart", id: "c1", areaId: "gone" }]),
+      descriptor: descriptor([
+        { type: "tiles", areaId: "good" },
+        { type: "chart", id: "c1", areaId: "gone" },
+      ]),
     });
     // sys 999 threw and was skipped; sys 5's points survive.
     expect(out.systemIds).toEqual([5]);

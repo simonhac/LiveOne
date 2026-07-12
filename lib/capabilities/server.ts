@@ -43,12 +43,14 @@ export async function memberSystemIds(handle: number): Promise<number[]> {
 }
 
 /**
- * The capability set a handle offers from config. `handle` is a real system id OR an area's
- * `legacy_system_id` — both resolve through `getActivePointsForSystem`.
+ * Shared computation behind `capabilitiesForSystem` and `derivedCapabilitiesForSystem`: the DERIVED
+ * capability set (atomic points + the generator/grid-signals compound predicates) plus the merged
+ * per-member config overrides — everything except the final `applyCapabilityConfig`.
  */
-export async function capabilitiesForSystem(
-  handle: number,
-): Promise<Set<CapabilityId>> {
+async function resolveDeviceCapabilities(handle: number): Promise<{
+  derived: Set<CapabilityId>;
+  overrides: DeviceConfig["capabilities"];
+}> {
   const pm = PointManager.getInstance();
   const sm = SystemsManager.getInstance();
   const points = await pm.getActivePointsForSystem(handle, false, false);
@@ -57,12 +59,12 @@ export async function capabilitiesForSystem(
   // Walk the member devices once: gather generator-run-tracking + merge their config overrides
   // (later member wins for the same capability). A device's own handle is its own single member.
   const members = await memberSystemIds(handle);
-  const mergedOverrides: DeviceConfig["capabilities"] = {};
+  const overrides: DeviceConfig["capabilities"] = {};
   let hasGenerator = false;
   for (const sid of members) {
     const sys = await sm.getSystem(sid);
     if (sys?.config?.capabilities)
-      Object.assign(mergedOverrides, sys.config.capabilities);
+      Object.assign(overrides, sys.config.capabilities);
     if (!hasGenerator && (await hasEnabledTracker(sid, "generator")))
       hasGenerator = true;
   }
@@ -71,8 +73,30 @@ export async function capabilitiesForSystem(
   // grid-signals: the area's location derives a NEM region + a seeded OE region system.
   if (await resolveGridContextForSystem(handle)) caps.add("grid-signals");
 
+  return { derived: caps, overrides };
+}
+
+/**
+ * The capability set a handle offers from config. `handle` is a real system id OR an area's
+ * `legacy_system_id` — both resolve through `getActivePointsForSystem`.
+ */
+export async function capabilitiesForSystem(
+  handle: number,
+): Promise<Set<CapabilityId>> {
+  const { derived, overrides } = await resolveDeviceCapabilities(handle);
   // Per-device config overrides (no-op when unconfigured — parity preserved).
-  return applyCapabilityConfig(caps, { capabilities: mergedOverrides });
+  return applyCapabilityConfig(derived, { capabilities: overrides });
+}
+
+/**
+ * The capability set a handle offers **before** its own config overrides are applied — the "Default"
+ * baseline the configurator annotates each toggle with. Same computation as `capabilitiesForSystem`
+ * minus the final `applyCapabilityConfig`.
+ */
+export async function derivedCapabilitiesForSystem(
+  handle: number,
+): Promise<Set<CapabilityId>> {
+  return (await resolveDeviceCapabilities(handle)).derived;
 }
 
 /**
