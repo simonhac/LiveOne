@@ -461,6 +461,54 @@ export const pointReadingsFlow1d = pgTable(
 );
 
 // ============================================================================
+// point_readings_flow_attr_1d — the METRIC LEGS of the flow accounting, a SUPERSET of
+// point_readings_flow_1d. Same edges + keying (area_id, day, source_path, load_path), but it ALSO
+// carries energy, so `flow_1d` is a strict SUBSET. Populated in the same daily pass from the unified
+// `computeFlowAccounting`: `energy_kwh` (from the flow allocation — matches `flow_1d` by construction)
+// plus the attributed emissions/renewable/cost (energy × each source's per-interval intensity: grid from
+// OpenElectricity/Amber, battery from the provenance blend, solar = clean/free). The metric columns are
+// NULLABLE (intensity unknown for that edge/day → null; never perturbs energy). `estimated_kwh` is the
+// confidence denominator ("% estimated"); `finalized_at` marks a day past the ~72h estimated→final cutoff.
+// CUTOVER (once trusted): repoint the Sankey/flow read at this table's energy columns and drop `flow_1d`.
+// ============================================================================
+export const pointReadingsFlowAttr1d = pgTable(
+  "point_readings_flow_attr_1d",
+  {
+    areaId: uuid("area_id")
+      .notNull()
+      .references(() => areas.id),
+    day: text("day").notNull(), // YYYY-MM-DD, system-local (same convention as flow_1d / agg_1d)
+    sourcePath: text("source_path").notNull(),
+    loadPath: text("load_path").notNull(),
+
+    // Energy leg — identical to point_readings_flow_1d.energy_kwh (same allocation).
+    energyKwh: doublePrecision("energy_kwh").notNull(), // always >= 0
+
+    // Metric legs — null when the source's intensity was unknown for that edge/day.
+    emissionsG: doublePrecision("emissions_g"), // attributed gCO2
+    renewableKwh: doublePrecision("renewable_kwh"), // attributed renewable energy (kWh)
+    costC: doublePrecision("cost_c"), // attributed cost (cents, signed)
+
+    // Confidence: energy whose attribution used an estimated/unknown source intensity.
+    estimatedKwh: doublePrecision("estimated_kwh").notNull().default(0),
+
+    sampleCount: integer("sample_count").notNull(), // # of 5m intervals that contributed
+    version: integer("version").notNull().default(1), // algorithm version → backfill can detect stale rows
+    finalizedAt: timestamp("finalized_at"), // set once the day is past the estimated→final cutoff
+
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.areaId, table.day, table.sourcePath, table.loadPath],
+    }),
+    dayIdx: index("prfa1d_day_idx").on(table.day),
+    areaDayIdx: index("prfa1d_area_day_idx").on(table.areaId, table.day),
+  }),
+);
+
+// ============================================================================
 // Share tokens - view-only access links scoped to systems owned by the token's owner
 // (mirrors the legacy `share_tokens`). Epoch-ms columns use bigint(mode:"number") so
 // share-tokens.ts's `Date.now()` comparisons work unchanged against Postgres.
@@ -900,6 +948,10 @@ export type PointReadingAgg1d = typeof pointReadingsAgg1d.$inferSelect;
 export type NewPointReadingAgg1d = typeof pointReadingsAgg1d.$inferInsert;
 export type PointReadingFlow1d = typeof pointReadingsFlow1d.$inferSelect;
 export type NewPointReadingFlow1d = typeof pointReadingsFlow1d.$inferInsert;
+export type PointReadingFlowAttr1d =
+  typeof pointReadingsFlowAttr1d.$inferSelect;
+export type NewPointReadingFlowAttr1d =
+  typeof pointReadingsFlowAttr1d.$inferInsert;
 export type ShareToken = typeof shareTokens.$inferSelect;
 export type NewShareToken = typeof shareTokens.$inferInsert;
 export type ObservationsOutbox = typeof observationsOutbox.$inferSelect;

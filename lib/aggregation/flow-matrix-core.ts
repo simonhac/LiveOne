@@ -94,8 +94,14 @@ export function computeFlowAccounting(input: {
   loads: FlowSeries[];
   /** Index-aligned to `sources`; omit for the energy-only path. A null entry = a source with no intensity. */
   sourceIntensities?: (SourceIntensity | null)[];
+  /**
+   * Optional attribution window (epoch-ms): accumulate ONLY intervals whose END (timestamps[i+1]) is in
+   * (startMs, endMs]. Used to slice a single local DAY out of a longer loaded/folded window for the
+   * per-day rollup, while the caller's fold ran over the whole window for anchoring. Omit = all intervals.
+   */
+  window?: { startMs: number; endMs: number };
 }): FlowAccountingResult {
-  const { timestamps, sources, loads, sourceIntensities } = input;
+  const { timestamps, sources, loads, sourceIntensities, window } = input;
   const S = sources.length;
   const L = loads.length;
   const withMetrics = sourceIntensities !== undefined;
@@ -111,6 +117,13 @@ export function computeFlowAccounting(input: {
   let intervalsUsed = 0;
 
   for (let i = 0; i < timestamps.length - 1; i++) {
+    // Attribution window: interval i is "in" the window if its END lands in (startMs, endMs].
+    if (
+      window &&
+      (timestamps[i + 1] <= window.startMs || timestamps[i + 1] > window.endMs)
+    ) {
+      continue;
+    }
     const deltaHours = (timestamps[i + 1] - timestamps[i]) / (1000 * 60 * 60);
 
     let totalGenPower = 0;

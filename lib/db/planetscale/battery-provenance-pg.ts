@@ -6,12 +6,21 @@
  *
  * The blend fold is STATEFUL, so the load window is extended back by WARMUP_MS to reach a reset (a
  * bottom-out) before the target window — only the target window's rows are written. This mirrors HWS's
- * warm-up lead-in; the exact segment-anchor is a refinement (see the Phase-2 plan). The rollup table
- * write is deferred until its migration lands.
+ * warm-up lead-in; the exact segment-anchor is a refinement (see the Phase-2 plan). With `writeRollup`
+ * (the daily/range pass) it ALSO materialises the per-day attribution rollup (point_readings_flow_attr_1d)
+ * from the SAME accounting, sliced per local day — the source of the "cost/carbon/renewable over a period"
+ * questions.
  */
 import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
+import { CalendarDate } from "@internationalized/date";
 import { planetscaleDb } from "./index";
-import { pointReadingsAgg5m } from "./schema";
+import { pointReadingsAgg5m, pointReadingsFlowAttr1d } from "./schema";
+import { computeFlowAccounting } from "@/lib/aggregation/flow-matrix-core";
+import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates";
+import type {
+  ProvenanceInputs,
+  ProvenanceResult,
+} from "@/lib/battery-provenance/types";
 import {
   buildSubscriptionRegistry,
   updateLatestPointValue,
@@ -50,11 +59,107 @@ function blendValue(step: FoldStep, metricType: string): number | null {
   }
 }
 
+const FLOW_ATTR_VERSION = 1;
+const MIN_ATTR_KWH = 0.001;
+
+/** Local calendar days (Area tz) whose interval-ends fall in [startMs, endMs]. */
+function localDaysInRange(
+  startMs: number,
+  endMs: number,
+  tzOffsetMin: number,
+): CalendarDate[] {
+  const toDay = (ms: number) => {
+    const d = new Date(ms + tzOffsetMin * 60000);
+    return new CalendarDate(
+      d.getUTCFullYear(),
+      d.getUTCMonth() + 1,
+      d.getUTCDate(),
+    );
+  };
+  let day = toDay(startMs);
+  const last = toDay(endMs);
+  const days: CalendarDate[] = [];
+  while (day.compare(last) <= 0) {
+    days.push(day);
+    day = day.add({ days: 1 });
+  }
+  return days;
+}
+
+/**
+ * Materialise the per-day attribution rollup (`point_readings_flow_attr_1d`) for every local day the
+ * window covers — energy + attributed emissions/renewable/cost per source→load edge, keyed exactly like
+ * `flow_1d`. Runs the SAME `computeFlowAccounting` the window used, sliced to each local day (the fold ran
+ * over the whole window for anchoring). Delete-then-insert per (area, day), idempotent like flow_1d.
+ */
+async function writeAttrRollup(
+  db: PgDb,
+  inputs: ProvenanceInputs,
+  result: ProvenanceResult,
+  winStartMs: number,
+  winEndMs: number,
+): Promise<number> {
+  let total = 0;
+  for (const day of localDaysInRange(
+    winStartMs,
+    winEndMs,
+    inputs.timezoneOffsetMin,
+  )) {
+    const [startUnix, endUnix] = dayToUnixRangeForAggregation(
+      day,
+      inputs.timezoneOffsetMin,
+    );
+    const acc = computeFlowAccounting({
+      timestamps: inputs.timeline,
+      sources: inputs.sources,
+      loads: inputs.loads,
+      sourceIntensities: result.sourceIntensities,
+      window: { startMs: startUnix * 1000, endMs: endUnix * 1000 },
+    });
+    const rows: (typeof pointReadingsFlowAttr1d.$inferInsert)[] = [];
+    for (let s = 0; s < acc.sources.length; s++) {
+      for (let l = 0; l < acc.loads.length; l++) {
+        const e = acc.energyKwh[s][l];
+        if (e <= MIN_ATTR_KWH) continue;
+        rows.push({
+          areaId: inputs.areaId,
+          day: day.toString(),
+          sourcePath: acc.sources[s],
+          loadPath: acc.loads[l],
+          energyKwh: e,
+          // null = the source's intensity was unknown for this edge/day.
+          emissionsG:
+            acc.emissionsKnownKwh[s][l] > 0 ? acc.emissionsG[s][l] : null,
+          renewableKwh:
+            acc.renewableKnownKwh[s][l] > 0 ? acc.renewableKwh[s][l] : null,
+          costC: acc.priceKnownKwh[s][l] > 0 ? acc.costC[s][l] : null,
+          estimatedKwh: acc.estimatedKwh[s][l],
+          sampleCount: acc.intervalsUsed,
+          version: FLOW_ATTR_VERSION,
+        });
+      }
+    }
+    const dayFilter = and(
+      eq(pointReadingsFlowAttr1d.areaId, inputs.areaId),
+      eq(pointReadingsFlowAttr1d.day, day.toString()),
+    );
+    await db.transaction(async (tx) => {
+      await tx.delete(pointReadingsFlowAttr1d).where(dayFilter);
+      if (rows.length > 0)
+        await tx.insert(pointReadingsFlowAttr1d).values(rows);
+    });
+    total += rows.length;
+  }
+  return total;
+}
+
 export interface RecomputeResult {
   rowsWritten: number;
   /** The Area's helper device the blend was written to (null if the Area has no battery). */
   helperSystemId: number | null;
   pointIds: Record<string, number>;
+  /** Rollup rows written to point_readings_flow_attr_1d (0 unless opts.writeRollup). */
+  attrRowsWritten: number;
 }
 
 /**
@@ -66,14 +171,23 @@ export async function recomputeBatteryProvenanceForWindow(
   handle: number,
   winStartMs: number,
   winEndMs: number,
-  opts: { updateLatest?: boolean; config?: ProvenanceConfig } = {},
+  opts: {
+    updateLatest?: boolean;
+    writeRollup?: boolean;
+    config?: ProvenanceConfig;
+  } = {},
 ): Promise<RecomputeResult> {
   const inputs = await loadProvenanceInputs(handle, {
     startMs: winStartMs - WARMUP_MS,
     endMs: winEndMs,
   });
   if (!inputs || inputs.batterySystemId == null) {
-    return { rowsWritten: 0, helperSystemId: null, pointIds: {} };
+    return {
+      rowsWritten: 0,
+      helperSystemId: null,
+      pointIds: {},
+      attrRowsWritten: 0,
+    };
   }
 
   const result = computeBatteryProvenance(inputs, opts.config);
@@ -176,10 +290,28 @@ export async function recomputeBatteryProvenanceForWindow(
     }
   }
 
+  // Per-day attribution rollup (daily heal / backfill only — not every minute). Best-effort so a rollup
+  // hiccup never loses the blend write above.
+  let attrRowsWritten = 0;
+  if (opts.writeRollup) {
+    try {
+      attrRowsWritten = await writeAttrRollup(
+        db,
+        inputs,
+        result,
+        winStartMs,
+        winEndMs,
+      );
+    } catch (e) {
+      console.warn("[BatProv] attr rollup write failed:", e);
+    }
+  }
+
   return {
     rowsWritten: rows.length,
     helperSystemId,
     pointIds: ensure.pointIds,
+    attrRowsWritten,
   };
 }
 
@@ -191,7 +323,11 @@ export async function recomputeBatteryProvenanceForWindowBestEffort(
   handle: number,
   winStartMs: number,
   winEndMs: number,
-  opts: { updateLatest?: boolean; config?: ProvenanceConfig } = {},
+  opts: {
+    updateLatest?: boolean;
+    writeRollup?: boolean;
+    config?: ProvenanceConfig;
+  } = {},
 ): Promise<void> {
   if (!planetscaleDb) return;
   try {

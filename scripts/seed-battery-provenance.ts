@@ -79,6 +79,7 @@ async function main() {
     winEndMs,
     {
       updateLatest: true,
+      writeRollup: true,
     },
   );
   console.log(

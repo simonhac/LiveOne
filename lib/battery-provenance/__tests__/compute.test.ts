@@ -29,6 +29,7 @@ function scenario(): ProvenanceInputs {
     areaId: "test",
     region: "VIC1",
     batterySystemId: 6,
+    timezoneOffsetMin: 600,
     timeline,
     sources,
     loads,

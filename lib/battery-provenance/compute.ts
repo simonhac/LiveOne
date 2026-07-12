@@ -147,6 +147,7 @@ export function computeBatteryProvenance(
     steps,
     finalState,
     accounting,
+    sourceIntensities,
     etaUsed,
     reserveUsed,
     chargeKwh,

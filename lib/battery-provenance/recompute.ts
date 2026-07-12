@@ -71,6 +71,7 @@ export async function recomputeRange(
       const ce = Math.min(cs + CHUNK_MS, endMs);
       await recomputeBatteryProvenanceForWindowBestEffort(handle, cs, ce, {
         updateLatest: ce >= endMs, // refresh KV latest only on the final chunk
+        writeRollup: true, // the per-day attribution rollup is materialised by the range/daily pass
         config,
       });
       onChunk?.({ handle, chunkStartMs: cs, chunkEndMs: ce });

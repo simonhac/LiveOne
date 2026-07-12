@@ -9,6 +9,7 @@
 import type {
   FlowSeries,
   FlowAccountingResult,
+  SourceIntensity,
 } from "@/lib/aggregation/flow-matrix-core";
 import type { FoldStep, FoldState } from "./fold";
 
@@ -25,8 +26,10 @@ export interface ProvenanceInputs {
   handle: number;
   areaId: string;
   region: string | null; // NEM region (OE) or null when off-NEM
-  /** The system that owns the battery (bound battery power point) — where the derived blend points live. */
+  /** The system that owns the battery (bound battery power point). */
   batterySystemId: number | null;
+  /** The Area's fixed standard offset (minutes) — for local-day boundaries in the per-day rollup. */
+  timezoneOffsetMin: number;
   timeline: number[]; // ascending epoch-ms, one per 5-min interval end
 
   // Flow-series inputs for the allocation (POWER, kW, curated via bindings + buildFlowSeries).
@@ -74,6 +77,8 @@ export interface ProvenanceResult {
   finalState: FoldState;
   /** The full flow accounting: energy (Sankey leg) + attributed emissions/renewable/cost per edge. */
   accounting: FlowAccountingResult;
+  /** The per-source intensity series (index-aligned to inputs.sources) — for re-running per-day accounting. */
+  sourceIntensities: (SourceIntensity | null)[];
   /** The η actually used (learned or configured). */
   etaUsed: number;
   /** The reserve floor % actually used. */

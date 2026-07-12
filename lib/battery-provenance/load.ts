@@ -177,7 +177,11 @@ export async function loadProvenanceInputs(
   const { startMs, endMs } = window;
 
   const [area] = await db
-    .select({ id: areas.id, location: areas.location })
+    .select({
+      id: areas.id,
+      location: areas.location,
+      tz: areas.timezoneOffsetMin,
+    })
     .from(areas)
     .where(eq(areas.legacySystemId, handle))
     .limit(1);
@@ -345,6 +349,7 @@ export async function loadProvenanceInputs(
     areaId: area.id,
     region,
     batterySystemId,
+    timezoneOffsetMin: area.tz,
     timeline,
     sources,
     loads,
