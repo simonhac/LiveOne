@@ -181,8 +181,15 @@ export function toDailyFlowMatrices(
     sourcePath: string;
     loadPath: string;
     energyKwh: unknown;
+    // Present only for `source=modern` (point_readings_flow_attr_1d).
+    emissionsG?: unknown;
+    renewableKwh?: unknown;
+    costC?: unknown;
+    estimatedKwh?: unknown;
   }[],
   displayNameByStem: Map<string, string>,
+  /** Also build the metric legs (emissions/renewable/cost/estimated) from the rows — `source=modern`. */
+  includeMetrics = false,
 ): DailyFlowMatrices {
   const sourcePaths = [...new Set(rows.map((r) => r.sourcePath))].sort(
     compareSourcePaths,
@@ -193,17 +200,43 @@ export function toDailyFlowMatrices(
   const sourceIdx = new Map(sourcePaths.map((p, i) => [p, i]));
   const loadIdx = new Map(loadPaths.map((p, i) => [p, i]));
 
-  const byDay = new Map<string, number[][]>();
+  const S = sourcePaths.length;
+  const L = loadPaths.length;
+  const numGrid = () => sourcePaths.map(() => new Array<number>(L).fill(0));
+  const nullGrid = () =>
+    sourcePaths.map(() => new Array<number | null>(L).fill(null));
+
+  interface DayGrids {
+    matrix: number[][];
+    emissionsG?: (number | null)[][];
+    renewableKwh?: (number | null)[][];
+    costC?: (number | null)[][];
+    estimatedKwh?: number[][];
+  }
+  const num = (v: unknown): number | null => (v == null ? null : Number(v));
+
+  const byDay = new Map<string, DayGrids>();
   for (const r of rows) {
-    let matrix = byDay.get(r.day);
-    if (!matrix) {
-      matrix = sourcePaths.map(() =>
-        new Array<number>(loadPaths.length).fill(0),
-      );
-      byDay.set(r.day, matrix);
+    let d = byDay.get(r.day);
+    if (!d) {
+      d = { matrix: numGrid() };
+      if (includeMetrics) {
+        d.emissionsG = nullGrid();
+        d.renewableKwh = nullGrid();
+        d.costC = nullGrid();
+        d.estimatedKwh = numGrid();
+      }
+      byDay.set(r.day, d);
     }
-    matrix[sourceIdx.get(r.sourcePath)!][loadIdx.get(r.loadPath)!] =
-      Number(r.energyKwh) || 0;
+    const si = sourceIdx.get(r.sourcePath)!;
+    const li = loadIdx.get(r.loadPath)!;
+    d.matrix[si][li] = Number(r.energyKwh) || 0;
+    if (includeMetrics) {
+      d.emissionsG![si][li] = num(r.emissionsG);
+      d.renewableKwh![si][li] = num(r.renewableKwh);
+      d.costC![si][li] = num(r.costC);
+      d.estimatedKwh![si][li] = Number(r.estimatedKwh) || 0;
+    }
   }
 
   const node = (path: string): EnergyFlowNode => ({
@@ -215,7 +248,7 @@ export function toDailyFlowMatrices(
   // `day` is stored as text and sorts chronologically.
   const days = [...byDay.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([day, matrix]) => ({ day, matrix }));
+    .map(([day, g]) => ({ day, ...g }));
 
   return { sources: sourcePaths.map(node), loads: loadPaths.map(node), days };
 }

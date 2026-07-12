@@ -1,18 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { and, eq, gte, lte } from "drizzle-orm";
 import { requireDashboardAccess } from "@/lib/api-auth";
 import { parseDateRange } from "@/lib/date-utils";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { pointReadingsFlow1d } from "@/lib/db/planetscale/schema";
+import {
+  pointReadingsFlow1d,
+  pointReadingsFlowAttr1d,
+} from "@/lib/db/planetscale/schema";
 import { toDailyFlowMatrices } from "@/lib/aggregation/flow-node-meta";
 import { resolveLogicalSystem } from "@/lib/aggregation/logical-system";
 
 /**
- * GET /api/energy-flow-matrix?systemId=&start=&end=
+ * GET /api/energy-flow-matrix?systemId=&start=&end=&source=legacy|modern
  *
- * Serves the dashboard's long-range (30-day / month / arbitrary) energy-flow Sankey from the
- * materialized `point_readings_flow_1d`, as RAW per-day matrices for the completed local days in
- * [start, end] (`YYYY-MM-DD`, inclusive) — it does NOT sum here. The client sums the days for the
+ * Serves the dashboard's long-range (30-day / month / arbitrary) energy-flow Sankey as RAW per-day
+ * matrices for the completed local days in [start, end] (`YYYY-MM-DD`, inclusive) — it does NOT sum here.
+ * `source=legacy` (default) reads `point_readings_flow_1d` (energy only); `source=modern` reads the
+ * superset `point_readings_flow_attr_1d` and ALSO carries the attributed metric legs (emissions /
+ * renewable / cost / estimated) per edge — the client draws the Sankey from energy and derives the
+ * provenance summary (cost / %renewable / emissions per load) from the same rows. The client sums the days for the
  * window view and indexes a single day for the hovered view, so the hovered Sankey shows that day's
  * real energy (not a power snapshot). `day` is stored as text and sorts chronologically.
  *
@@ -73,28 +79,64 @@ export async function GET(request: NextRequest) {
     // logicalSystem (no Area resolved) falls through to the empty-result branch below.
     const logicalSystem = await resolveLogicalSystem(systemId);
 
-    const viewFilter = logicalSystem
-      ? eq(pointReadingsFlow1d.areaId, logicalSystem.areaId)
-      : sql`false`;
+    // `source=modern` reads the SUPERSET table point_readings_flow_attr_1d (energy + attributed
+    // emissions/renewable/cost/estimated per edge); `legacy` (default) reads flow_1d (energy only —
+    // today's Sankey, untouched). Both return the SAME raw per-day per-edge shape (the client sums for
+    // the window, indexes one day for hover); modern just carries a few more columns. The PK
+    // (area_id, day, source_path, load_path) means each (day, source, load) appears at most once.
+    const source =
+      searchParams.get("source") === "modern" ? "modern" : "legacy";
 
-    // Raw per-day (source, load) flows over the completed days in range — NOT summed (the client
-    // sums for the window view, indexes one day for the hovered view). The PK is
-    // (area_id, day, source_path, load_path), so each (day, source, load) appears at most once.
-    const rows = await planetscaleDb
-      .select({
-        day: pointReadingsFlow1d.day,
-        sourcePath: pointReadingsFlow1d.sourcePath,
-        loadPath: pointReadingsFlow1d.loadPath,
-        energyKwh: pointReadingsFlow1d.energyKwh,
-      })
-      .from(pointReadingsFlow1d)
-      .where(
-        and(
-          viewFilter,
-          gte(pointReadingsFlow1d.day, startDate.toString()),
-          lte(pointReadingsFlow1d.day, endDate.toString()),
-        ),
-      );
+    type FlowRow = {
+      day: string;
+      sourcePath: string;
+      loadPath: string;
+      energyKwh: unknown;
+      emissionsG?: unknown;
+      renewableKwh?: unknown;
+      costC?: unknown;
+      estimatedKwh?: unknown;
+    };
+    let rows: FlowRow[] = [];
+    if (logicalSystem) {
+      if (source === "modern") {
+        rows = await planetscaleDb
+          .select({
+            day: pointReadingsFlowAttr1d.day,
+            sourcePath: pointReadingsFlowAttr1d.sourcePath,
+            loadPath: pointReadingsFlowAttr1d.loadPath,
+            energyKwh: pointReadingsFlowAttr1d.energyKwh,
+            emissionsG: pointReadingsFlowAttr1d.emissionsG,
+            renewableKwh: pointReadingsFlowAttr1d.renewableKwh,
+            costC: pointReadingsFlowAttr1d.costC,
+            estimatedKwh: pointReadingsFlowAttr1d.estimatedKwh,
+          })
+          .from(pointReadingsFlowAttr1d)
+          .where(
+            and(
+              eq(pointReadingsFlowAttr1d.areaId, logicalSystem.areaId),
+              gte(pointReadingsFlowAttr1d.day, startDate.toString()),
+              lte(pointReadingsFlowAttr1d.day, endDate.toString()),
+            ),
+          );
+      } else {
+        rows = await planetscaleDb
+          .select({
+            day: pointReadingsFlow1d.day,
+            sourcePath: pointReadingsFlow1d.sourcePath,
+            loadPath: pointReadingsFlow1d.loadPath,
+            energyKwh: pointReadingsFlow1d.energyKwh,
+          })
+          .from(pointReadingsFlow1d)
+          .where(
+            and(
+              eq(pointReadingsFlow1d.areaId, logicalSystem.areaId),
+              gte(pointReadingsFlow1d.day, startDate.toString()),
+              lte(pointReadingsFlow1d.day, endDate.toString()),
+            ),
+          );
+      }
+    }
 
     const displayNameByStem = new Map<string, string>();
     for (const p of logicalSystem?.points ?? []) {
@@ -112,9 +154,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ sources: [], loads: [], days: [], reason });
     }
 
-    // Reshape into raw per-day matrices over the window's canonical-sorted union of nodes; the
-    // shared helper resolves node labels/colors, same as the sub-daily path.
-    return NextResponse.json(toDailyFlowMatrices(rows, displayNameByStem));
+    // Reshape into raw per-day matrices over the window's canonical-sorted union of nodes; the shared
+    // helper resolves node labels/colors and (for modern) builds the metric-leg matrices alongside energy.
+    return NextResponse.json(
+      toDailyFlowMatrices(rows, displayNameByStem, source === "modern"),
+    );
   } catch (error) {
     console.error("[energy-flow-matrix] error:", error);
     return NextResponse.json(
