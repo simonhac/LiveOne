@@ -25,6 +25,8 @@ export interface ProvenanceInputs {
   handle: number;
   areaId: string;
   region: string | null; // NEM region (OE) or null when off-NEM
+  /** The system that owns the battery (bound battery power point) — where the derived blend points live. */
+  batterySystemId: number | null;
   timeline: number[]; // ascending epoch-ms, one per 5-min interval end
 
   // Flow-series inputs for the allocation (POWER, kW, curated via bindings + buildFlowSeries).

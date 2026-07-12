@@ -28,6 +28,7 @@ function scenario(): ProvenanceInputs {
     handle: 1,
     areaId: "test",
     region: "VIC1",
+    batterySystemId: 6,
     timeline,
     sources,
     loads,

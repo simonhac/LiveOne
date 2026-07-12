@@ -92,14 +92,17 @@ export async function ensureAreaOfOne(
   }
 }
 
-/** An area-of-one's single member is its source system. Idempotent (PK conflict → no-op). */
-async function ensureMember(
+/** Add a system as an Area member. Idempotent (PK conflict → no-op). `ordinal` is display ordering only
+ * (an area-of-one's single source system is 0; a derived helper sorts last). Exported so the helper-device
+ * machinery (`lib/areas/helper.ts`) writes membership through the same primitive. */
+export async function ensureMember(
   db: Db,
   areaId: string,
   systemId: number,
+  ordinal = 0,
 ): Promise<void> {
   await db
     .insert(areaDevices)
-    .values({ areaId, systemId, ordinal: 0 })
+    .values({ areaId, systemId, ordinal })
     .onConflictDoNothing();
 }

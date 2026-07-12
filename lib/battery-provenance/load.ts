@@ -185,6 +185,9 @@ export async function loadProvenanceInputs(
 
   const bound = await boundPoints(db, area.id);
   const powerPoints = bound.filter((b) => b.metric === "power" && b.stem);
+  const batterySystemId =
+    bound.find((b) => b.role === "battery" && b.metric === "power")?.systemId ??
+    null;
 
   const perPoint = await Promise.all(
     powerPoints.map(async (p) => ({
@@ -341,6 +344,7 @@ export async function loadProvenanceInputs(
     handle,
     areaId: area.id,
     region,
+    batterySystemId,
     timeline,
     sources,
     loads,

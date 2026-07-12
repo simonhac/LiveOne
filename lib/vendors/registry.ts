@@ -8,6 +8,7 @@ import { TeslaAdapter } from "./tesla/adapter";
 import { OpenElectricityAdapter } from "./openelectricity/adapter";
 import { SigenergyAdapter } from "./sigenergy/adapter";
 import { DeepSeaAdapter } from "./deepsea/adapter";
+import { HelperAdapter } from "./helper/adapter";
 import { SystemsManager } from "@/lib/systems-manager";
 
 /**
@@ -37,6 +38,9 @@ export class VendorRegistry {
     this.adapters.set("openelectricity", new OpenElectricityAdapter());
     this.adapters.set("sigenergy", new SigenergyAdapter());
     this.adapters.set("deepsea", new DeepSeaAdapter());
+    // 'helper' = a derived, non-physical device that lives in an Area and owns computed points
+    // (battery-provenance blend). No-op push adapter so the poll loop skips it (never polled).
+    this.adapters.set("helper", new HelperAdapter());
 
     this.initialized = true;
 

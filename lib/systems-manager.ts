@@ -351,6 +351,36 @@ export class SystemsManager {
   }
 
   /**
+   * Create a HELPER device — a derived, non-physical, never-polled `systems` row (vendor_type='helper')
+   * that lives in an Area and owns the Area's COMPUTED points (battery-provenance blend, …). Unlike
+   * {@link createSystem} it does NOT mint an area-of-one: a helper is a MEMBER of an existing Area
+   * (wired by `lib/areas/helper.ts::ensureHelperDevice`), never its own area. Owned by the Area's owner
+   * for access control (NOT ownerless — the blend is private household-derived data).
+   */
+  async createHelperDevice(params: {
+    ownerClerkUserId: string | null;
+    vendorSiteId: string;
+    displayName: string;
+    timezoneOffsetMin: number;
+    displayTimezone: string;
+  }): Promise<System> {
+    const sys = await this.insertSystemToPg({
+      ownerClerkUserId: params.ownerClerkUserId,
+      vendorType: "helper",
+      vendorSiteId: params.vendorSiteId,
+      status: "active",
+      displayName: params.displayName,
+      alias: null,
+      timezoneOffsetMin: params.timezoneOffsetMin,
+      displayTimezone: params.displayTimezone,
+    } as CreateSystemData);
+    console.log(
+      `[SystemsManager] Created helper device ${sys.id} (${params.vendorSiteId})`,
+    );
+    return sys;
+  }
+
+  /**
    * Update an existing system.
    *
    * Updates Postgres only (config writes are Postgres-only). The patch maps 1:1 —
