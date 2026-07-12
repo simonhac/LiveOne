@@ -24,6 +24,7 @@ import {
   SIGENERGY_ENERGY_POINTS,
   type SigenergyEnergyCounterField,
 } from "./point-metadata";
+import type { SigenergyEnergyInterval, SigenergyEnergyTotals } from "./types";
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -50,7 +51,7 @@ function dayStartUtcMs(date: string, tzOffsetMin: number): number | null {
   return localDataTimeToUtcMs(`${date} 00:00`, tzOffsetMin);
 }
 
-type Agg5mReading = {
+export type Agg5mReading = {
   pointMetadata: (typeof SIGENERGY_ENERGY_POINTS)[number]["metadata"];
   rawValue: number; // Wh
   intervalEndMs: number;
@@ -63,6 +64,71 @@ export interface PullEnergyDayResult {
   readingsWritten: number;
   reconciled: boolean; // true for a completed day (tail residual applied)
   empty: boolean; // no itemList rows (e.g. a pre-go-live day)
+}
+
+/**
+ * Difference the `itemList` cumulative counters into per-5-min energy readings (Wh) for all six
+ * metrics. PURE (no I/O) so the differencing + tail-reconciliation is unit-testable. `rows` must be
+ * the valid, time-ASCENDING intervals for a single local day; `isComplete` enables the residual tail.
+ */
+export function computeDayEnergyReadings(
+  rows: SigenergyEnergyInterval[],
+  totals: SigenergyEnergyTotals,
+  tzOffsetMin: number,
+  isComplete: boolean,
+  date = "",
+): Agg5mReading[] {
+  const readings: Agg5mReading[] = [];
+  if (rows.length === 0) return readings;
+
+  for (const { counterField, metadata } of SIGENERGY_ENERGY_POINTS) {
+    const field: SigenergyEnergyCounterField = counterField;
+    let sumWh = 0;
+
+    // Consecutive-sample differences → interval energy, labelled at the later sample's instant.
+    for (let i = 0; i < rows.length - 1; i++) {
+      const c0 = rows[i][field];
+      const c1 = rows[i + 1][field];
+      const endMs = localDataTimeToUtcMs(rows[i + 1].dataTime, tzOffsetMin);
+      if (c0 == null || c1 == null || endMs == null) continue;
+      // Monotonic directional counters ⇒ diff ≥ 0; clamp any glitch/reset to 0 (defensive).
+      const wh = Math.max(0, Math.round((c1 - c0) * 1000));
+      sumWh += wh;
+      readings.push({
+        pointMetadata: metadata,
+        rawValue: wh,
+        intervalEndMs: endMs,
+        dataQuality: "good",
+      });
+    }
+
+    // Completed day: put the residual (dayTotal − Σdeltas) in the final [last, last+5) interval so the
+    // day reconstructs to the vendor headline exactly. Skip for today (no authoritative total yet).
+    if (isComplete) {
+      const last = rows[rows.length - 1];
+      const lastEndMs = localDataTimeToUtcMs(last.dataTime, tzOffsetMin);
+      const total = totals[field];
+      if (lastEndMs != null && total != null) {
+        const tailWh = Math.round(total * 1000) - sumWh;
+        const reconstructed = sumWh + Math.max(0, tailWh);
+        if (
+          Math.abs(reconstructed - Math.round(total * 1000)) >
+          RECONCILE_TOLERANCE_WH
+        ) {
+          console.warn(
+            `[Sigenergy] ${date} ${field}: reconstructed ${reconstructed}Wh vs total ${Math.round(total * 1000)}Wh (tail ${tailWh}Wh)`,
+          );
+        }
+        readings.push({
+          pointMetadata: metadata,
+          rawValue: Math.max(0, tailWh),
+          intervalEndMs: lastEndMs + FIVE_MIN_MS,
+          dataQuality: "good",
+        });
+      }
+    }
+  }
+  return readings;
 }
 
 /**
@@ -104,54 +170,13 @@ export async function pullEnergyDay(params: {
   const start = dayStartUtcMs(date, tzOffsetMin);
   const isComplete = start != null && start + DAY_MS <= now;
 
-  const readings: Agg5mReading[] = [];
-  for (const { counterField, metadata } of SIGENERGY_ENERGY_POINTS) {
-    const field: SigenergyEnergyCounterField = counterField;
-    let sumWh = 0;
-
-    // Consecutive-sample differences → interval energy, labelled at the later sample's instant.
-    for (let i = 0; i < rows.length - 1; i++) {
-      const c0 = rows[i][field];
-      const c1 = rows[i + 1][field];
-      const endMs = localDataTimeToUtcMs(rows[i + 1].dataTime, tzOffsetMin);
-      if (c0 == null || c1 == null || endMs == null) continue;
-      // Monotonic directional counters ⇒ diff ≥ 0; clamp any glitch/reset to 0 (defensive).
-      const wh = Math.max(0, Math.round((c1 - c0) * 1000));
-      sumWh += wh;
-      readings.push({
-        pointMetadata: metadata,
-        rawValue: wh,
-        intervalEndMs: endMs,
-        dataQuality: "good",
-      });
-    }
-
-    // Completed day: put the residual (dayTotal − Σdeltas) in the final [last, last+5) interval so the
-    // day reconstructs to the vendor headline exactly. Skip for today (no authoritative total yet).
-    if (isComplete) {
-      const last = rows[rows.length - 1];
-      const lastEndMs = localDataTimeToUtcMs(last.dataTime, tzOffsetMin);
-      const total = day.totals[field];
-      if (lastEndMs != null && total != null) {
-        const tailWh = Math.round(total * 1000) - sumWh;
-        const reconstructed = sumWh + Math.max(0, tailWh);
-        if (
-          Math.abs(reconstructed - Math.round(total * 1000)) >
-          RECONCILE_TOLERANCE_WH
-        ) {
-          console.warn(
-            `[Sigenergy] ${date} ${field}: reconstructed ${reconstructed}Wh vs total ${Math.round(total * 1000)}Wh (tail ${tailWh}Wh)`,
-          );
-        }
-        readings.push({
-          pointMetadata: metadata,
-          rawValue: Math.max(0, tailWh),
-          intervalEndMs: lastEndMs + FIVE_MIN_MS,
-          dataQuality: "good",
-        });
-      }
-    }
-  }
+  const readings = computeDayEnergyReadings(
+    rows,
+    day.totals,
+    tzOffsetMin,
+    isComplete,
+    date,
+  );
 
   await PointManager.getInstance().insertPointReadingsAgg5m(
     systemId,
