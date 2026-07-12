@@ -7,10 +7,12 @@
  *
  * The scope is the **union of the dashboard's section Areas**: each v3 section's `areaId` maps to its
  * addressable systemId (`legacy_system_id`), and `PointManager.getActivePointsForSystem` resolves each
- * — returning a composite's CHILD points or a single system's own points — so the exposed set matches
- * what the dashboard renders by construction. (P6 dropped the legacy `dashboards.system_id`/`area_id`
- * seed: scope is now purely descriptor-derived.) Point-level narrowing within an Area is a future
- * tightening — `points[]` already carries the exact refs.
+ * to a composite's CHILD points or a single system's own points. The authorized set is BOTH the area
+ * handles (whole-area cards address `/api/data?systemId=<handle>`) AND those child/member systems
+ * (member-scoped cards — generator-runs, device-metrics — address them directly), so the exposed set
+ * matches what the dashboard renders by construction. (P6 dropped the legacy `dashboards.system_id`/
+ * `area_id` seed: scope is now purely descriptor-derived.) Point-level narrowing within an Area is a
+ * future tightening — `points[]` already carries the exact refs.
  */
 import { PointManager } from "@/lib/point/point-manager";
 import { getLegacySystemIdForArea } from "@/lib/areas/resolve";
@@ -42,41 +44,54 @@ export function toReadAccess(
 }
 
 /**
- * The distinct addressable system handles a dashboard may read: every distinct Area uuid its v3
- * descriptor references (its sections), each mapped uuid → `legacy_system_id`. Unresolvable Area uuids
- * are **dropped** (no escalation, no throw). Purely descriptor-derived — a shared dashboard exposes
- * exactly the systems its sections render. An empty/unresolvable descriptor → empty scope.
+ * Resolve a descriptor's Areas to (a) the area HANDLES — how whole-area cards address the data
+ * (`/api/data?systemId=<handle>`) — and (b) the CHILD/MEMBER point refs those areas expose. Shared by
+ * the scope + point resolvers. Unresolvable Area uuids are dropped (no escalation); a handle whose
+ * points can't resolve (deleted/dangling) keeps the handle but contributes no points.
+ */
+async function resolveAreas(input: DashboardScopeInput): Promise<{
+  handles: number[];
+  refs: { systemId: number; pointId: number }[];
+}> {
+  const pm = PointManager.getInstance();
+  const handles: number[] = [];
+  const refs: { systemId: number; pointId: number }[] = [];
+  for (const areaId of descriptorAreaIds(input.descriptor)) {
+    const handle = await getLegacySystemIdForArea(areaId);
+    if (handle == null) continue; // dangling/deleted Area uuid → dropped.
+    handles.push(handle);
+    try {
+      const pts = await pm.getActivePointsForSystem(handle, false);
+      refs.push(...pts.map((p) => p.getReference()));
+    } catch {
+      // unresolvable handle → keep the handle, no member points.
+    }
+  }
+  return { handles, refs };
+}
+
+/**
+ * The distinct systemIds a shared dashboard authorizes: for each Area its v3 descriptor references,
+ * BOTH the area HANDLE (whole-area cards fetch `/api/data?systemId=<handle>`) AND the child/member
+ * systems whose points the area actually shows. The member expansion is essential: member-scoped cards
+ * (generator-runs → `/api/system/<member>/run-periods`, device-metrics → `/api/data?systemId=<member>`)
+ * would otherwise 401 for an anonymous share viewer even though the dashboard renders their data.
+ * Unresolvable Area uuids are dropped (no escalation). Empty/unresolvable descriptor → empty scope.
  */
 export async function allowedSystemIds(
   input: DashboardScopeInput,
 ): Promise<number[]> {
-  const out = new Set<number>();
-  for (const areaId of descriptorAreaIds(input.descriptor)) {
-    const sid = await getLegacySystemIdForArea(areaId);
-    if (sid != null) out.add(sid); // sid == null → dangling/deleted Area uuid → dropped.
-  }
-  return [...out];
+  const { handles, refs } = await resolveAreas(input);
+  return [...new Set([...handles, ...refs.map((r) => r.systemId)])];
 }
 
 /**
- * The read-access set for a dashboard — the union of points across its allowed Area set. Each allowed
- * systemId is resolved area-aware via the point layer; an unresolvable handle (deleted/dangling) is
- * defensively skipped (`getActivePointsForSystem` throws "System not found") rather than 500-ing the
- * caller.
+ * The read-access set for a dashboard — the exact points across its Areas (a composite spans its
+ * children). An unresolvable handle is defensively skipped rather than 500-ing the caller.
  */
 export async function resolveDashboardReadPoints(
   input: DashboardScopeInput,
 ): Promise<DashboardReadAccess> {
-  const systemIds = await allowedSystemIds(input);
-  const pm = PointManager.getInstance();
-  const refs: { systemId: number; pointId: number }[] = [];
-  for (const sid of systemIds) {
-    try {
-      const pts = await pm.getActivePointsForSystem(sid, false);
-      refs.push(...pts.map((p) => p.getReference()));
-    } catch {
-      continue;
-    }
-  }
+  const { refs } = await resolveAreas(input);
   return toReadAccess(refs);
 }
