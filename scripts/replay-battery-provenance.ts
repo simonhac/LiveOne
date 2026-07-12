@@ -597,9 +597,12 @@ async function runReplay(handle: number) {
   const socEnd = [...soc].reverse().find((v) => v !== null) ?? null;
   const fs = finalState;
   console.log("\n=== Battery model internals ===");
+  // Physical round-trip efficiency = RAW Σout/Σin (what η is learned from). The fold's own
+  // totalDischargeKwh is the CLAMPED delivered energy (min(discharge, E)) and under-counts during
+  // warm-up, so it is not the RTE headline.
   console.log(
-    `  round-trip efficiency:  Σout ${fs.totalDischargeKwh.toFixed(0)} / Σin ${fs.totalChargeKwh.toFixed(0)} = ` +
-      `${((100 * fs.totalDischargeKwh) / Math.max(fs.totalChargeKwh, 1e-9)).toFixed(1)}%` +
+    `  round-trip efficiency:  Σout ${sumOut.toFixed(0)} / Σin ${sumIn.toFixed(0)} = ` +
+      `${((100 * sumOut) / Math.max(sumIn, 1e-9)).toFixed(1)}%` +
       (socStart != null && socEnd != null
         ? `  (SoC ${socStart.toFixed(0)}→${socEnd.toFixed(0)}%, Δ${(socEnd - socStart).toFixed(0)}pp bias)`
         : "  (no SoC — trust over a long window)"),

@@ -38,6 +38,150 @@ export interface FlowMatrixResult {
 }
 
 /**
+ * Per-source, per-interval intensity series (index-aligned to `sources` and `timestamps`; null = unknown).
+ * Solar carries {0, 1, solarCost}; grid the OE/Amber series; the battery the provenance fold's blend.
+ */
+export interface SourceIntensity {
+  emissions: (number | null)[]; // gCO2 per kWh
+  renewable: (number | null)[]; // renewable fraction 0..1
+  price: (number | null)[]; // cents per kWh (may be negative)
+  estimated: boolean[]; // true where this source's intensity is provisional/estimated
+}
+
+/** The full flow accounting: energy per edge (the Sankey), plus the attributed metric legs. */
+export interface FlowAccountingResult {
+  sources: string[];
+  loads: string[];
+  /** [s][l] energy (kWh) — the flow matrix / Sankey energy leg. */
+  energyKwh: number[][];
+  /** [s][l] attributed emissions (gCO2), over intervals with a known emissions intensity. */
+  emissionsG: number[][];
+  /** [s][l] attributed renewable energy (kWh), over intervals with a known renewable fraction. */
+  renewableKwh: number[][];
+  /** [s][l] attributed cost (cents), over intervals with a known price. */
+  costC: number[][];
+  /** [s][l] energy (kWh) whose source intensity was estimated OR unknown (confidence denominator). */
+  estimatedKwh: number[][];
+  /** [s][l] energy (kWh) with a known emissions intensity — the unbiased-average denominator. */
+  emissionsKnownKwh: number[][];
+  /** [s][l] energy (kWh) with a known renewable fraction. */
+  renewableKnownKwh: number[][];
+  /** [s][l] energy (kWh) with a known price. */
+  priceKnownKwh: number[][];
+  /** # of intervals that contributed energy (coverage signal). */
+  intervalsUsed: number;
+}
+
+function zeros(rows: number, cols: number): number[][] {
+  return Array.from({ length: rows }, () => new Array<number>(cols).fill(0));
+}
+
+/**
+ * The unified flow-accounting integrator — the single allocation loop this module is built around. It
+ * integrates each load's trapezoidal energy and allocates it across sources by each source's share of
+ * generation (left-endpoint), accumulating ENERGY per edge. When `sourceIntensities` is supplied it ALSO
+ * decorates every contribution with that source's per-interval emissions / renewable / cost, so the
+ * "metric legs" fall out of the SAME allocation as the energy leg — no second loop to drift.
+ *
+ * `computeFlowMatrix` is the ENERGY PROJECTION of this (Sankey = the energy leg). A null intensity for an
+ * interval leaves that contribution out of the attributed sum but counts its energy in `estimatedKwh`; the
+ * `*KnownKwh` denominators give an unbiased average intensity (`emissionsG / emissionsKnownKwh`).
+ * Intensities are read at the interval's LEFT endpoint (index i), matching the proportion endpoint.
+ */
+export function computeFlowAccounting(input: {
+  timestamps: number[];
+  sources: FlowSeries[];
+  loads: FlowSeries[];
+  /** Index-aligned to `sources`; omit for the energy-only path. A null entry = a source with no intensity. */
+  sourceIntensities?: (SourceIntensity | null)[];
+}): FlowAccountingResult {
+  const { timestamps, sources, loads, sourceIntensities } = input;
+  const S = sources.length;
+  const L = loads.length;
+  const withMetrics = sourceIntensities !== undefined;
+
+  const energyKwh = zeros(S, L);
+  const emissionsG = zeros(S, L);
+  const renewableKwh = zeros(S, L);
+  const costC = zeros(S, L);
+  const estimatedKwh = zeros(S, L);
+  const emissionsKnownKwh = zeros(S, L);
+  const renewableKnownKwh = zeros(S, L);
+  const priceKnownKwh = zeros(S, L);
+  let intervalsUsed = 0;
+
+  for (let i = 0; i < timestamps.length - 1; i++) {
+    const deltaHours = (timestamps[i + 1] - timestamps[i]) / (1000 * 60 * 60);
+
+    let totalGenPower = 0;
+    for (const source of sources) {
+      const power = source.power[i];
+      if (power !== null) totalGenPower += power;
+    }
+    if (totalGenPower <= 0) continue;
+
+    let contributed = false;
+    for (let s = 0; s < S; s++) {
+      const power1 = sources[s].power[i];
+      const power2 = sources[s].power[i + 1];
+      if (power1 === null || power2 === null) continue;
+
+      const sourceProportion = power1 / totalGenPower;
+      const si = withMetrics ? (sourceIntensities![s] ?? null) : null;
+      const ei = si ? si.emissions[i] : null;
+      const rf = si ? si.renewable[i] : null;
+      const pr = si ? si.price[i] : null;
+      const est = si ? si.estimated[i] === true : true;
+
+      for (let l = 0; l < L; l++) {
+        const loadPower1 = loads[l].power[i];
+        const loadPower2 = loads[l].power[i + 1];
+        if (loadPower1 === null || loadPower2 === null) continue;
+
+        const loadIntervalEnergy = ((loadPower1 + loadPower2) / 2) * deltaHours;
+        const contribution = loadIntervalEnergy * sourceProportion;
+        energyKwh[s][l] += contribution;
+        if (contribution === 0) continue;
+        contributed = true;
+
+        if (withMetrics) {
+          if (ei !== null) {
+            emissionsG[s][l] += contribution * ei;
+            emissionsKnownKwh[s][l] += contribution;
+          }
+          if (rf !== null) {
+            renewableKwh[s][l] += contribution * rf;
+            renewableKnownKwh[s][l] += contribution;
+          }
+          if (pr !== null) {
+            costC[s][l] += contribution * pr;
+            priceKnownKwh[s][l] += contribution;
+          }
+          if (est || ei === null || rf === null || pr === null) {
+            estimatedKwh[s][l] += contribution;
+          }
+        }
+      }
+    }
+    if (contributed) intervalsUsed++;
+  }
+
+  return {
+    sources: sources.map((s) => s.path),
+    loads: loads.map((l) => l.path),
+    energyKwh,
+    emissionsG,
+    renewableKwh,
+    costC,
+    estimatedKwh,
+    emissionsKnownKwh,
+    renewableKnownKwh,
+    priceKnownKwh,
+    intervalsUsed,
+  };
+}
+
+/**
  * Integrate a source→load energy-flow matrix from instantaneous power series.
  *
  * Requires at least one source and one load. With fewer than two timestamps the integration
@@ -53,65 +197,26 @@ export function computeFlowMatrix(input: {
   sources: FlowSeries[];
   loads: FlowSeries[];
 }): FlowMatrixResult {
-  const { timestamps, sources, loads } = input;
-
-  const matrix: number[][] = Array.from({ length: sources.length }, () =>
-    new Array<number>(loads.length).fill(0),
-  );
-  let intervalsUsed = 0;
-
-  for (let i = 0; i < timestamps.length - 1; i++) {
-    const deltaHours = (timestamps[i + 1] - timestamps[i]) / (1000 * 60 * 60);
-
-    // Total instantaneous generation at the interval's left endpoint (non-null sources only).
-    let totalGenPower = 0;
-    for (const source of sources) {
-      const power = source.power[i];
-      if (power !== null) totalGenPower += power;
-    }
-
-    // No generation in this interval → nothing to allocate.
-    if (totalGenPower <= 0) continue;
-
-    let contributed = false;
-    for (let s = 0; s < sources.length; s++) {
-      const power1 = sources[s].power[i];
-      const power2 = sources[s].power[i + 1];
-      if (power1 === null || power2 === null) continue;
-
-      const sourceProportion = power1 / totalGenPower;
-
-      for (let l = 0; l < loads.length; l++) {
-        const loadPower1 = loads[l].power[i];
-        const loadPower2 = loads[l].power[i + 1];
-        if (loadPower1 === null || loadPower2 === null) continue;
-
-        const loadIntervalEnergy = ((loadPower1 + loadPower2) / 2) * deltaHours;
-        const contribution = loadIntervalEnergy * sourceProportion;
-        matrix[s][l] += contribution;
-        if (contribution !== 0) contributed = true;
-      }
-    }
-    if (contributed) intervalsUsed++;
-  }
-
+  // The Sankey is the ENERGY projection of the unified flow accounting (no intensities → energy only).
+  const r = computeFlowAccounting(input);
+  const matrix = r.energyKwh;
   const sourceTotals = matrix.map((row) => row.reduce((sum, v) => sum + v, 0));
-  const loadTotals = new Array<number>(loads.length).fill(0);
-  for (let l = 0; l < loads.length; l++) {
-    for (let s = 0; s < sources.length; s++) {
+  const loadTotals = new Array<number>(r.loads.length).fill(0);
+  for (let l = 0; l < r.loads.length; l++) {
+    for (let s = 0; s < r.sources.length; s++) {
       loadTotals[l] += matrix[s][l];
     }
   }
   const totalEnergy = sourceTotals.reduce((sum, v) => sum + v, 0);
 
   return {
-    sources: sources.map((s) => s.path),
-    loads: loads.map((l) => l.path),
+    sources: r.sources,
+    loads: r.loads,
     matrix,
     sourceTotals,
     loadTotals,
     totalEnergy,
-    intervalsUsed,
+    intervalsUsed: r.intervalsUsed,
   };
 }
 
