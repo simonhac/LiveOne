@@ -42,7 +42,7 @@ describe("AmberReadingsBatch", () => {
             rawValue: 0.25 + i * 0.01,
             dataQuality: "Actual",
             pointMetadata: {
-              physicalPathTail: `amber/${pointKey.replace(".", "/")}`,
+              physicalPathTail: pointKey.replace(".", "/"),
               logicalPathStem: `bidi.${pointKey.split(".")[0]}`,
               defaultName: "Price data",
               subsystem: "grid",
@@ -68,7 +68,7 @@ describe("AmberReadingsBatch", () => {
             rawValue: 0.25 + i * 0.01,
             dataQuality: "Actual",
             pointMetadata: {
-              physicalPathTail: `amber/${pointKey.replace(".", "/")}`,
+              physicalPathTail: pointKey.replace(".", "/"),
               logicalPathStem: `bidi.${pointKey.split(".")[0]}`,
               defaultName: "Grid data",
               subsystem: "grid",
@@ -88,7 +88,7 @@ describe("AmberReadingsBatch", () => {
             rawValue: 0.25 + i * 0.01,
             dataQuality: "Billable",
             pointMetadata: {
-              physicalPathTail: `amber/${pointKey.replace(".", "/")}`,
+              physicalPathTail: pointKey.replace(".", "/"),
               logicalPathStem: `bidi.${pointKey.split(".")[0]}`,
               defaultName: "Price data",
               subsystem: "grid",
@@ -198,7 +198,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25 + i * 0.01,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPathTail: "amber/grid/spotPerKwh",
+            physicalPathTail: "grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -227,7 +227,7 @@ describe("AmberReadingsBatch", () => {
             rawValue: 0.25 + i * 0.01,
             dataQuality: "Actual",
             pointMetadata: {
-              physicalPathTail: `amber/${pointKey.replace(".", "/")}`,
+              physicalPathTail: pointKey.replace(".", "/"),
               logicalPathStem: `bidi.${pointKey.split(".")[0]}`,
               defaultName: "Price data",
               subsystem: "grid",
@@ -251,7 +251,7 @@ describe("AmberReadingsBatch", () => {
             rawValue: 0.25 + i * 0.01,
             dataQuality: "Forecast",
             pointMetadata: {
-              physicalPathTail: `amber/${pointKey.replace(".", "/")}`,
+              physicalPathTail: pointKey.replace(".", "/"),
               logicalPathStem: `bidi.${pointKey.split(".")[0]}`,
               defaultName: "Price data",
               subsystem: "grid",
@@ -354,7 +354,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPathTail: "amber/grid/spotPerKwh",
+            physicalPathTail: "grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -375,7 +375,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPathTail: "amber/grid/spotPerKwh",
+            physicalPathTail: "grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -396,7 +396,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPathTail: "amber/grid/spotPerKwh",
+            physicalPathTail: "grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -430,7 +430,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25 + i * 0.01,
           dataQuality: "Billable",
           pointMetadata: {
-            physicalPathTail: "amber/grid/spotPerKwh",
+            physicalPathTail: "grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -471,7 +471,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPathTail: "amber/grid/spotPerKwh",
+            physicalPathTail: "grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -492,7 +492,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPathTail: "amber/grid/spotPerKwh",
+            physicalPathTail: "grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -513,7 +513,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPathTail: "amber/grid/spotPerKwh",
+            physicalPathTail: "grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -543,7 +543,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.25,
           dataQuality: "Actual",
           pointMetadata: {
-            physicalPathTail: "amber/grid/spotPerKwh",
+            physicalPathTail: "grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -565,7 +565,7 @@ describe("AmberReadingsBatch", () => {
           rawValue: 0.3,
           dataQuality: "Forecast",
           pointMetadata: {
-            physicalPathTail: "amber/grid/spotPerKwh",
+            physicalPathTail: "grid/spotPerKwh",
             logicalPathStem: "bidi.grid",
             defaultName: "Grid spot price",
             subsystem: "grid",
@@ -614,7 +614,7 @@ describe("AmberReadingsBatch", () => {
       rawValue: 0.25,
       dataQuality: quality,
       pointMetadata: {
-        physicalPathTail: `amber/${pointKey.replace(".", "/")}`,
+        physicalPathTail: pointKey.replace(".", "/"),
         logicalPathStem: `bidi.${pointKey.split(".")[0]}`,
         defaultName: "Test point",
         subsystem: "grid",
@@ -721,6 +721,65 @@ describe("AmberReadingsBatch", () => {
       // Add one actual reading - should break uniformity
       batch.add(createReading(20, "E1.perKwh", "Actual"));
       expect(batch.getUniformQuality()).toBe(undefined);
+    });
+  });
+
+  describe("E1/B1 channel-key collision regression", () => {
+    // Regression for the derivePointKey collision: production physicalPathTail carries
+    // no vendor prefix ("E1/perKwh", not "amber/E1/perKwh"), so stripping the first
+    // segment collapsed import (E1) and export (B1) onto one key and silently
+    // overwrote import with export every interval (system 9, points 2/7/8).
+    const dayStartMs = 1763474400000; // 2025-11-19 00:00:00 UTC
+    const day = new CalendarDate(2025, 11, 19);
+    const t = (dayStartMs + 30 * 60 * 1000) as Milliseconds; // interval 0
+
+    const reading = (tail: string, rawValue: number) => ({
+      measurementTimeMs: t,
+      rawValue,
+      dataQuality: "Billable",
+      pointMetadata: {
+        physicalPathTail: tail,
+        logicalPathStem: "bidi.grid",
+        defaultName: "Price data",
+        subsystem: "grid",
+        metricType: "rate" as const,
+        metricUnit: "cents_kWh",
+        transform: null,
+      },
+      receivedTimeMs: Date.now() as Milliseconds,
+      sessionId: 0,
+    });
+
+    it("keeps import (E1) and export (B1) as distinct keys within one interval", () => {
+      const batch = new AmberReadingsBatch(day, 1);
+
+      batch.add(reading("E1/perKwh", 30)); // import price
+      batch.add(reading("B1/perKwh", 5)); // export price (pre-fix this overwrote import)
+
+      // Pre-fix, both collapsed to "perKwh" and getCount() was 1.
+      expect(batch.getCount()).toBe(2);
+      expect(batch.getKeys()).toEqual(["B1.perKwh", "E1.perKwh"]);
+      expect(batch.get(t, "E1.perKwh")?.rawValue).toBe(30);
+      expect(batch.get(t, "B1.perKwh")?.rawValue).toBe(5);
+    });
+
+    it("keeps E1 and B1 distinct for cost and energy too", () => {
+      const batch = new AmberReadingsBatch(day, 1);
+
+      batch.add(reading("E1/cost", 12));
+      batch.add(reading("B1/cost", 3));
+      batch.add(reading("E1/kwh", 1000));
+      batch.add(reading("B1/kwh", 200));
+
+      expect(batch.getCount()).toBe(4);
+      expect(batch.getKeys()).toEqual([
+        "B1.cost",
+        "B1.kwh",
+        "E1.cost",
+        "E1.kwh",
+      ]);
+      expect(batch.get(t, "E1.cost")?.rawValue).toBe(12);
+      expect(batch.get(t, "E1.kwh")?.rawValue).toBe(1000);
     });
   });
 });

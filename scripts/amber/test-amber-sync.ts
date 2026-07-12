@@ -6,21 +6,24 @@
  * ⚠️  SAMPLE RECORDS HIDDEN BY DEFAULT - Add --sample=true to show sample records
  *
  * Usage:
- *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=forecasts
- *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=usage
- *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=both
- *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --days=3 --action=both
- *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=both --dry=false  # Actually write to DB
- *   npx tsx scripts/test-amber-sync.ts --date=2025-11-19 --action=both --sample=true  # Show sample records
+ *   npx tsx scripts/amber/test-amber-sync.ts --date=2025-11-19 --action=forecasts
+ *   npx tsx scripts/amber/test-amber-sync.ts --date=2025-11-19 --action=usage
+ *   npx tsx scripts/amber/test-amber-sync.ts --date=2025-11-19 --action=both
+ *   npx tsx scripts/amber/test-amber-sync.ts --date=2025-11-19 --days=3 --action=both
+ *   npx tsx scripts/amber/test-amber-sync.ts --date=2025-11-19 --action=both --dry=false  # Actually write to DB
+ *   npx tsx scripts/amber/test-amber-sync.ts --date=2025-11-19 --action=both --sample=true  # Show sample records
  */
 
-import { updateUsage, updateForecasts } from "../lib/vendors/amber/client.js";
-import { parseDateISO } from "../lib/date-utils.js";
-import type { AmberSyncResult } from "../lib/vendors/amber/types.js";
+import {
+  updateUsage,
+  updateForecasts,
+} from "../../lib/vendors/amber/client.js";
+import { parseDateISO } from "../../lib/date-utils.js";
+import type { AmberSyncResult } from "../../lib/vendors/amber/types.js";
 import {
   getOverviewKeys,
   getSampleRecordKeys,
-} from "../lib/vendors/amber/types.js";
+} from "../../lib/vendors/amber/types.js";
 import { toZoned, fromDate } from "@internationalized/date";
 
 /**
@@ -72,7 +75,7 @@ async function testSync() {
   if (!dateArg) {
     console.error("Error: --date argument is required");
     console.error(
-      "Usage: npx tsx scripts/test-amber-sync.ts --date=YYYY-MM-DD [--days=N] [--dry=true|false] [--sample=true|false] --action=usage|forecasts|both",
+      "Usage: npx tsx scripts/amber/test-amber-sync.ts --date=YYYY-MM-DD [--days=N] [--dry=true|false] [--sample=true|false] --action=usage|forecasts|both",
     );
     console.error(
       "\n⚠️  DRY RUN BY DEFAULT - Add --dry=false to actually persist to the database",

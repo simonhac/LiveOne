@@ -579,7 +579,7 @@ function createComparisonStage(
  * @param firstDay - Starting day of the range
  * @param numberOfDays - Number of days to fetch (default: 1)
  */
-async function fetchAmberUsage(
+export async function fetchAmberUsage(
   credentials: AmberCredentials,
   firstDay: CalendarDate,
   numberOfDays: number = 1,
@@ -614,7 +614,7 @@ async function fetchAmberUsage(
 /**
  * Group usage records by timestamp
  */
-function groupRecordsByTime(
+export function groupRecordsByTime(
   records: AmberUsageRecord[],
 ): Map<Milliseconds, AmberUsageRecord[]> {
   const grouped = new Map<Milliseconds, AmberUsageRecord[]>();
@@ -632,7 +632,7 @@ function groupRecordsByTime(
 /**
  * Build AmberReadingsBatch from Amber usage data
  */
-function buildRecordsMapFromAmber(
+export function buildRecordsMapFromAmber(
   recordsByTime: Map<Milliseconds, AmberUsageRecord[]>,
   firstDay: CalendarDate,
   numberOfDays: number,
@@ -834,7 +834,7 @@ async function loadRemotePrices(
 /**
  * Store superior records to local database (point_readings_agg_5m)
  */
-async function storeRecordsLocally(
+export async function storeRecordsLocally(
   systemId: number,
   session: SessionInfo,
   batch: AmberReadingsBatch,

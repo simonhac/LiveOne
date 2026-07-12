@@ -47,16 +47,16 @@ export function abbreviateQuality(quality: string | null | undefined): string {
 }
 
 /**
- * Derives a point key from physicalPath for internal grouping
- * e.g., "amber/E1/perKwh" -> "E1.perKwh"
- * e.g., "amber/grid/spotPerKwh" -> "grid.spotPerKwh"
+ * Derives a point key from physicalPathTail for internal grouping
+ * e.g., "E1/perKwh" -> "E1.perKwh"
+ * e.g., "grid/spotPerKwh" -> "grid.spotPerKwh"
+ *
+ * physicalPathTail carries NO vendor prefix (it's "channel/subId", e.g. "E1/perKwh"),
+ * so every segment must be kept. Dropping the first segment would collapse import (E1)
+ * and export (B1) onto the same key and silently overwrite one channel with the other.
  */
 function derivePointKey(physicalPath: string): string {
-  // physicalPath format: "vendor/segments..." -> we want everything after vendor joined with "."
-  const segments = physicalPath.split("/");
-  if (segments.length <= 1) return physicalPath;
-  // Skip the first segment (vendor) and join rest with "."
-  return segments.slice(1).join(".");
+  return physicalPath.split("/").join(".");
 }
 
 export class AmberReadingsBatch {
