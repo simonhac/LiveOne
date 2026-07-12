@@ -72,9 +72,31 @@ describe("computeDayEnergyReadings", () => {
     expect(solar[2].rawValue).toBe(0); // PV flat 0.30→0.30
   });
 
-  it("clamps a flat/zero interval to 0 and never emits a negative", () => {
-    const rd = computeDayEnergyReadings(rows, totals, TZ, false);
-    expect(rd.every((r) => r.rawValue >= 0)).toBe(true);
+  it("flickering near-zero counter (grid import) reconstructs to the small vendor total exactly — no clamp inflation", () => {
+    // A self-sufficient day: powerFromGrid is ~0 and its 0.01-kWh-rounded counter FLICKERS.
+    const gi = (hhmm: string, v: number): SigenergyEnergyInterval => ({
+      dataTime: `20260711 ${hhmm}`,
+      powerGeneration: 0,
+      powerUse: 0,
+      powerToGrid: 0,
+      powerFromGrid: v,
+      esCharging: 0,
+      esDischarging: 0,
+    });
+    const flick = [
+      gi("00:00", 0),
+      gi("00:05", 0.01),
+      gi("00:10", 0),
+      gi("00:15", 0.01),
+      gi("00:20", 0.01),
+    ];
+    const t: SigenergyEnergyTotals = { ...totals, powerFromGrid: 0.01 };
+    const rd = computeDayEnergyReadings(flick, t, TZ, true);
+    const imp = byStem(rd, "bidi.grid.import");
+    // Signed diffs telescope + tail reconciles → exactly 10 Wh (NOT the clamped-inflated 20 Wh).
+    expect(sumWh(imp)).toBe(10);
+    // signed diffs are genuinely used (a −0.01 flicker interval is emitted, not clamped to 0).
+    expect(imp.some((r) => r.rawValue < 0)).toBe(true);
   });
 
   it("an INCOMPLETE day gets no tail; sum equals the last counter (not the daily total)", () => {

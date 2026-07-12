@@ -91,8 +91,13 @@ export function computeDayEnergyReadings(
       const c1 = rows[i + 1][field];
       const endMs = localDataTimeToUtcMs(rows[i + 1].dataTime, tzOffsetMin);
       if (c0 == null || c1 == null || endMs == null) continue;
-      // Monotonic directional counters ⇒ diff ≥ 0; clamp any glitch/reset to 0 (defensive).
-      const wh = Math.max(0, Math.round((c1 - c0) * 1000));
+      // SIGNED diff — do NOT clamp to ≥0. On low-volume metrics (e.g. a self-sufficient day's tiny
+      // grid import) the 0.01-kWh-rounded counter FLICKERS (…0 → 0.01 → 0 → 0.01…); clamping the −0.01
+      // ticks to 0 while keeping the +0.01 ticks systematically inflates the total (grid import came
+      // out 37× high). Signed diffs telescope to counter[last]−counter[0] exactly, so flickers cancel
+      // and the completed-day tail then reconciles to the vendor total. (No mid-day reset to guard:
+      // we fetch one day at a time, so the counter starts at 0 and only grows across the day.)
+      const wh = Math.round((c1 - c0) * 1000);
       sumWh += wh;
       readings.push({
         pointMetadata: metadata,
