@@ -118,7 +118,6 @@ export default function DeviceRail({
     public: [],
   };
   for (const d of devices) {
-    if (d.vendorType === "composite") continue; // dashboard/area construct, not a physical device
     present[groupOf(d, currentUserId)].push(d);
   }
   for (const key of FILTER_ORDER) {

@@ -30,6 +30,7 @@ import type {
 } from "@/lib/dashboard/v3";
 import type { ReadableArea } from "@/lib/areas/list";
 import type { LatestPointValues } from "@/lib/types/api";
+import type { DeviceConfig } from "@/lib/capabilities/config";
 
 /**
  * The nested dashboard renderer. Consumes the v3 definition (Dashboard -> AreaSection -> Card -> Tile,
@@ -52,12 +53,21 @@ interface AreaDatum {
     vendorSiteId: string | null;
     timezoneOffsetMin: number;
     displayTimezone: string | null;
+    config?: DeviceConfig | null;
   };
   latest?: LatestPointValues;
 }
 
-function staleThreshold(vendorType: string): number {
-  return vendorType === "enphase" ? 2100 : 300;
+/**
+ * Seconds a tile can go without an update before it dims. Prefers the device's configured
+ * `updateCadenceSeconds` (from `systems.config`); falls back to the vendor default (Enphase's slow
+ * cloud cadence, else 5 min) when unconfigured.
+ */
+function staleThreshold(
+  vendorType: string,
+  updateCadenceSeconds?: number,
+): number {
+  return updateCadenceSeconds ?? (vendorType === "enphase" ? 2100 : 300);
 }
 
 function cardKeyV3(card: CardV3, i: number): string {
@@ -337,7 +347,8 @@ function TileCell({
   const { cardNodes, available } = useTileNodes({
     latest,
     vendorType: datum?.system?.vendorType ?? "",
-    getStaleThreshold: staleThreshold,
+    getStaleThreshold: (vt) =>
+      staleThreshold(vt, datum?.system?.config?.updateCadenceSeconds),
     showGrid: !!latest["bidi.grid/power"],
     systemId,
     canControl: false,
@@ -442,19 +453,24 @@ function AreaLinesChart({ systemId }: { systemId: number }) {
   const { data } = useQuery(
     dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
   );
-  const tz = ((data ?? null) as AreaDatum | null)?.system?.timezoneOffsetMin;
+  const datum = (data ?? null) as AreaDatum | null;
+  const tz = datum?.system?.timezoneOffsetMin;
   if (tz == null) {
     return <ChartSkeleton />;
   }
   const systemInfo = (
     data as { systemInfo?: { solarSize?: string; ratings?: string } } | null
   )?.systemInfo;
+  // Configured nameplate wins; fall back to scraping the free-text solarSize/ratings.
+  const maxPowerHint =
+    datum?.system?.config?.nameplateKw ??
+    maxPowerHintFromSystemInfo(systemInfo);
   return (
     <LinesChartCard
       systemId={systemId}
       className="h-full min-h-[360px]"
       timezoneOffsetMin={tz}
-      maxPowerHint={maxPowerHintFromSystemInfo(systemInfo)}
+      maxPowerHint={maxPowerHint}
     />
   );
 }
@@ -491,12 +507,14 @@ function AreaDeviceMetrics({
   const { data } = useQuery(
     dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
   );
-  const vendorType =
-    ((data ?? null) as AreaDatum | null)?.system?.vendorType ?? "";
+  const system = ((data ?? null) as AreaDatum | null)?.system;
   return (
     <DeviceMetricsCard
       systemId={systemId}
-      staleThresholdSeconds={staleThreshold(vendorType)}
+      staleThresholdSeconds={staleThreshold(
+        system?.vendorType ?? "",
+        system?.config?.updateCadenceSeconds,
+      )}
       variant={variant}
     />
   );

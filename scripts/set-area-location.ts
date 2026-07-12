@@ -89,13 +89,6 @@ async function main() {
     console.error(`❌ system ${systemId} not found.`);
     process.exit(1);
   }
-  if (system.vendorType === "composite") {
-    console.error(
-      `❌ system ${systemId} is a composite shim; an area-of-one is for physical systems only.`,
-    );
-    process.exit(1);
-  }
-
   const areaId = await ensureAreaOfOne(system);
 
   // Merge over the existing location so unspecified fields are preserved across re-runs.
