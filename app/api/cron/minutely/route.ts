@@ -12,6 +12,7 @@ import { formatTimeAEST } from "@/lib/date-utils";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
 import { jsonResponse, transformForStorage } from "@/lib/json";
 import { reconcileTrailingWindow as reconcileHwsTemperature } from "@/lib/hws/recompute";
+import { reconcileTrailingWindow as reconcileBatteryProvenance } from "@/lib/battery-provenance/recompute";
 
 /**
  * Helper function to poll all systems with optional progress callbacks.
@@ -516,6 +517,15 @@ export async function GET(request: NextRequest) {
       await reconcileHwsTemperature(Date.now());
     } catch (error) {
       console.error("[Cron] HWS temperature reconcile failed:", error);
+    }
+
+    // Derived battery-provenance blend: reconcile the trailing window so the battery's blended
+    // emissions/renewable/price stay fresh (KV latest for the live card). Best-effort; a no-op for
+    // Areas without a bound battery.
+    try {
+      await reconcileBatteryProvenance(Date.now());
+    } catch (error) {
+      console.error("[Cron] battery-provenance reconcile failed:", error);
     }
 
     const successCount = results.filter((r) => r.action === "POLLED").length;

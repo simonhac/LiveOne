@@ -21,6 +21,7 @@ import { recomputeFlowMatrixForDayBestEffort } from "@/lib/db/planetscale/flow-m
 import { listCompleteLogicalSystems } from "@/lib/aggregation/logical-system";
 import { recomputeRange as recomputeRunPeriodsRange } from "@/lib/run-tracking/recompute";
 import { recomputeRange as recomputeHwsTemperatureRange } from "@/lib/hws/recompute";
+import { recomputeRange as recomputeBatteryProvenanceRange } from "@/lib/battery-provenance/recompute";
 
 // Earliest date for point data aggregation (when point data collection began)
 const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
@@ -279,6 +280,15 @@ export async function aggregateRange(
     await recomputeHwsTemperatureRange(rangeStartMs, Date.now());
   } catch (error) {
     console.error("[Daily Points] HWS temperature heal pass failed:", error);
+  }
+
+  // Daily heal of the derived battery-provenance blend over the aggregated range (best-effort). Runs
+  // LAST — it reads agg_5m (battery + grid + solar) which the passes above have materialised. No-op for
+  // Areas without a bound battery.
+  try {
+    await recomputeBatteryProvenanceRange(rangeStartMs, Date.now());
+  } catch (error) {
+    console.error("[Daily Points] battery-provenance heal pass failed:", error);
   }
 
   console.log(
