@@ -44,6 +44,14 @@ export interface EnergyFlowMatrix {
 export interface DailyFlowMatrix {
   day: string; // system-local YYYY-MM-DD
   matrix: number[][]; // [sourceIdx][loadIdx] = that day's energy (kWh)
+  // ── Metric legs — present ONLY for `source=modern` (from point_readings_flow_attr_1d). Same
+  //    [sourceIdx][loadIdx] axes as `matrix`, and ADDITIVE over days like energy. `null` cell = the
+  //    edge's intensity was unknown (or no flow) → excluded from that metric's average. `estimatedKwh`
+  //    is the confidence denominator (energy attributed with an estimated/unknown intensity).
+  emissionsG?: (number | null)[][]; // attributed gCO2
+  renewableKwh?: (number | null)[][]; // attributed renewable energy (kWh)
+  costC?: (number | null)[][]; // attributed cost (cents, signed)
+  estimatedKwh?: number[][];
 }
 
 /**
