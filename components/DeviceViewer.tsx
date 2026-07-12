@@ -6,14 +6,9 @@ import Link from "next/link";
 import { AlertTriangle, Home } from "lucide-react";
 import { useModalContext } from "@/contexts/ModalContext";
 import { dashboardDataQuery } from "@/lib/queries";
-import type { GridContext } from "@/lib/grid/types";
 import Dashboard from "@/components/Dashboard";
-import { buildAreaStrategy } from "@/lib/capabilities/strategy";
-import {
-  capabilitiesFromLatest,
-  isAggregateFromLatest,
-} from "@/lib/capabilities/derive";
 import type { ReadableArea } from "@/lib/areas/list";
+import type { DashboardV3 } from "@/lib/dashboard/v3";
 import type { LatestPointValues } from "@/lib/types/api";
 
 interface DashboardData {
@@ -39,35 +34,35 @@ interface DeviceViewerProps {
   isAdmin: boolean;
   userId?: string;
   /**
-   * The "Local Grid (NEM)" card's cross-system context (the public OpenElectricity region serving
-   * this device's location), resolved server-side. Null when off-grid / no region / flags off — the
-   * card then defaults off and is not rendered.
+   * The device's default v3 view, built SERVER-SIDE from its area-of-one's capabilities
+   * (`buildAreaStrategyForHandle` — the single server/config capability path, grid + generator +
+   * config overrides folded in). Null when the system is inaccessible/absent (Access-Denied render).
    */
-  gridContext?: GridContext | null;
-  /** Whether this device has an enabled generator run-tracker (gates the generator-runs card). */
-  hasGenerator?: boolean;
+  descriptor: DashboardV3 | null;
+  /** The device's area-of-one as the section's render key (null when inaccessible/absent). */
+  area: ReadableArea | null;
 }
 
 /**
- * Read-only per-system viewer ("Device"), served at /device/{id}. Renders the system's DEFAULT layout
- * via the SAME v3 renderer the composition dashboards use (`<Dashboard>`): a single AreaSection over the
- * device's own handle, built by `buildAreaStrategy` from its capabilities. No Customise / Share / Location controls
- * (those live on Dashboards). This component owns only the device-level chrome (loading / error /
- * removed banners); every card self-fetches inside `<Dashboard>`.
+ * Read-only per-system viewer ("Device"), served at /device/{id}. Renders the SERVER-built default
+ * descriptor via the SAME v3 renderer the composition dashboards use (`<Dashboard>`): a single
+ * AreaSection over the device's own area-of-one. No Customise / Share / Location controls (those live
+ * on Dashboards). This component owns only the device-level chrome (loading / error / removed banners);
+ * every card self-fetches inside `<Dashboard>`.
  */
 export default function DeviceViewer({
   systemId,
   system,
   hasAccess,
   systemExists,
-  gridContext = null,
-  hasGenerator = false,
+  descriptor,
+  area,
 }: DeviceViewerProps) {
   const { isAnyModalOpen } = useModalContext();
 
-  // Main device payload via React Query (latest values + system). Polls every 30s and on focus;
-  // paused while a modal is open. Used here only for the available-tile set + the device-level
-  // loading/error/removed chrome — the cards inside <Dashboard> self-fetch the same (deduped) query.
+  // Device-level chrome payload via React Query (latest values + system). Polls every 30s and on
+  // focus; paused while a modal is open. Used here only for the loading/error/removed banners — the
+  // cards inside <Dashboard> self-fetch the same (deduped) query. The descriptor comes from the server.
   const {
     data: queryData,
     isPending,
@@ -76,35 +71,11 @@ export default function DeviceViewer({
   } = useQuery(dashboardDataQuery(systemId ?? "", { paused: isAnyModalOpen }));
   const data = (queryData ?? null) as DashboardData | null;
 
-  // The device's default v3 dashboard: ONE section over the device's own handle. The section's
-  // `areaId` is just a render key (the v3 renderer addresses data by `area.legacySystemId` = the
-  // handle), so we synthesize a single-area map inline — no readable-areas round-trip.
-  const { descriptor, areaById } = useMemo(() => {
-    const handle = parseInt(systemId);
-    if (!data?.system || isNaN(handle)) {
-      return { descriptor: null, areaById: new Map<string, ReadableArea>() };
-    }
-    const area: ReadableArea = {
-      id: `device-${handle}`,
-      displayName: data.system.displayName,
-      legacySystemId: handle,
-    };
-    const latest = data.latest ?? {};
-    // Capability-driven default view — no vendorType branch. `generator-running` is a compound
-    // capability (from device_trackers, server-resolved as `hasGenerator`), so it isn't in the
-    // latest-derived set and is injected here.
-    const caps = capabilitiesFromLatest(latest);
-    if (hasGenerator) caps.add("generator-running");
-    const d = buildAreaStrategy({
-      areaId: area.id,
-      capabilities: caps,
-      aggregate: isAggregateFromLatest(latest),
-      gridDeviceSystemId: gridContext?.regionSystemId,
-      // Lead the device view with the generic all-values table (works for every device).
-      leadWithDeviceMetrics: true,
-    });
-    return { descriptor: d, areaById: new Map([[area.id, area]]) };
-  }, [data?.system, data?.latest, systemId, gridContext, hasGenerator]);
+  // The section's Area is just a render key (the v3 renderer addresses data by `area.legacySystemId`).
+  const areaById = useMemo(
+    () => (area ? new Map([[area.id, area]]) : new Map<string, ReadableArea>()),
+    [area],
+  );
 
   // Derive the display error: connection failure, an explicit `error` body, or the "system exists but
   // no charts" marker (a system with no readings yet).
@@ -185,7 +156,9 @@ export default function DeviceViewer({
           </div>
         ))}
 
-      {descriptor && <Dashboard descriptor={descriptor} areaById={areaById} />}
+      {data?.system && descriptor && (
+        <Dashboard descriptor={descriptor} areaById={areaById} />
+      )}
     </main>
   );
 }

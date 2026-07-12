@@ -4,7 +4,6 @@ import { fetchJson } from "./fetcher";
 /** The subset of user preferences the client reads (`GET /api/user/preferences`). */
 export interface UserPreferencesDTO {
   clerkUserId: string;
-  defaultSystemId: number | null;
   defaultDashboardId: number | null;
 }
 

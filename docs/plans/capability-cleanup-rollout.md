@@ -64,27 +64,34 @@ from dev; the scripts' pre-flight guards will refuse if reality doesn't match, s
 
 ## Phase 3 — P6 demolition (retire the legacy per-system dashboard path)
 
-Full sub-phase design (SP-2…SP-8) lives in the P6 design (workflow output). Each ships independently,
-low-risk-first; the three drop migrations are gated on the code that stops touching the column being
-LIVE first. Order:
+Shipped as **one code PR** (all sub-phases together — verified byte-safe on dev before merge) followed by
+**one prod rollout** (a Phase-2-style session: data migration → the single drop migration). Consolidating
+to one deploy means the deploy-before-drop gate is satisfied for all three columns at once.
 
-| Step     | What                                                                                                                                                                                              | Migration                                                 | Gate (must be live first)                                                                    |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| **SP-2** | Delete the `DeviceViewer` synthesis shim → server-render the real area-of-one (`buildAreaStrategyForHandle` in `app/device/[...slug]/page.tsx`)                                                   | —                                                         | Phase 2 (every device has an area-of-one)                                                    |
-| **SP-3** | Repoint share/grant scope off `store.getDashboardById` → `getDashboard` (descriptor-only `allowedSystemIds`)                                                                                      | —                                                         | Phase 2 (all descriptors v3 with **real area uuids** — the correctness hinge)                |
-| **SP-4** | Retire `lib/dashboard/store.ts`; unify default landing on `users.default_dashboard_id`; migrate legacy dashboard rows → composition **IN PLACE** (never delete+reinsert — token/grant FK cascade) | —                                                         | SP-3                                                                                         |
-| **SP-5** | Drop `dashboards.system_id` + `dashboards.area_id` (+ index/FK/unique)                                                                                                                            | **0022** (guard: `RAISE EXCEPTION IF system_id NOT NULL`) | SP-4 live + fields removed from `schema.ts`/`get-dashboards-data.ts`/`AdminDashboardsClient` |
-| **SP-6** | Drop `users.default_system_id` (+ index)                                                                                                                                                          | **0023**                                                  | SP-4 stops writing it + UI star repointed to `default_dashboard_id`                          |
-| **SP-7** | Drop `areas.source_system_id` (+ index/FK)                                                                                                                                                        | **0024**                                                  | code stops reading/writing it (`sync.ts`/`create.ts`/`/api/areas`)                           |
-| **SP-8** | Consolidate the two switcher menus (`SystemsMenu`/`DashboardsMenu`); star on `default_dashboard_id`                                                                                               | —                                                         | SP-6                                                                                         |
+**PR-A (code, merged + deployed first)** — no code reads the dropped columns after this:
 
-**Hardest to verify** (the design's top 5): (1) every dashboard descriptor section `areaId` is a real area
-uuid (not `system-N`) before SP-3 — else share scope silently collapses to `∅`; (2) legacy→composition is
-**in-place** (guard 0022 fires if any `system_id` survives); (3) 100% area-of-one coverage post-Phase-2;
-(4) owner default lands on `/dashboard/id/{id}`; (5) `schema.ts` field-removal is deployed before each drop
-(two `.select()`-all readers: `get-dashboards-data.ts`, `getOrCreateUserPreferences`).
+| Sub-phase  | What                                                                                                                                                           |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **SP-2**   | `/device/[...slug]/page.tsx` server-builds the real area-of-one via `buildAreaStrategyForHandle`; `DeviceViewer` takes `descriptor`+`area` props (shim gone).  |
+| **SP-3**   | `allowedSystemIds` is purely descriptor-derived; `api-auth.ts`/`grants.ts` use `getDashboard` (descriptor-only), not `store.getDashboardById`.                 |
+| **SP-4**   | `lib/dashboard/store.ts` **deleted**; `user-preferences.ts` rewritten to `default_dashboard_id`-only (Path B / per-system default / `default_system_id` gone). |
+| **SP-8**   | `SystemsMenu` star removed; `SystemSettingsDialog` "default system" checkbox removed; `defaultSystemId` prop pipeline + `/api/user/preferences` branch gone.   |
+| **schema** | Removed `dashboards.system_id`/`area_id`, `users.default_system_id`, `areas.source_system_id` (+ indexes/FKs) from `schema.ts` + every reader (admin/areas).   |
 
-**Take `pscale backup create` before each of 0022/0023/0024. Apply as the persistent `postgres` role.**
+**Prod rollout (after PR-A is LIVE on prod):**
+
+1. `pscale backup create liveone sydney`.
+2. **`scripts/cleanup/p6-legacy-dashboards.ts`** (dry-run → `--apply`, backup-first): DELETE the vestigial
+   legacy rows (`system_id NOT NULL` + `display_name IS NULL` + 0 tokens/grants — prod #1, #3), CONVERT
+   any others in place, then null every `users.default_system_id`. Addresses the columns via **raw SQL**
+   (they're already gone from `schema.ts`). Must leave every `dashboards.system_id` NULL.
+3. **Apply migration `0022`** (`pscale backup` first; persistent `postgres` role). It drops all four
+   columns; its head `DO` block `RAISE EXCEPTION`s if any `dashboards.system_id` survived step 2. Also
+   apply `0022` to `liveone-dev` (schema drops aren't carried by the 2h data sync).
+
+**Correctness hinges** (all satisfied by Phase 2 + verified pre-merge): every descriptor section `areaId`
+is a real area uuid (else share scope → `∅`); legacy rows deleted/converted IN PLACE (0022 guard);
+100% area-of-one coverage; owner default lands on `/dashboard/id/{id}`.
 
 ---
 

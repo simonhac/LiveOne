@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Star, LayoutDashboard, Layers } from "lucide-react";
+import { LayoutDashboard, Layers } from "lucide-react";
 import { myDashboardsQuery, userPreferencesQuery } from "@/lib/queries";
 
 interface AvailableSystem {
@@ -20,7 +20,6 @@ interface SystemsMenuProps {
   currentSystemId?: string;
   userId?: string;
   isAdmin?: boolean;
-  defaultSystemId?: number | null;
   onSystemSelect?: (systemId: number) => void;
   /** Close the parent dropdown after picking the "Go to Dashboards" cross-nav row. */
   onNavigate?: () => void;
@@ -38,7 +37,6 @@ export default function SystemsMenu({
   currentSystemId,
   userId,
   isAdmin = false,
-  defaultSystemId,
   onSystemSelect,
   onNavigate,
   enabled = true,
@@ -85,7 +83,6 @@ export default function SystemsMenu({
 
   const renderSystemItem = (system: AvailableSystem) => {
     const isActive = currentSystemId && system.id === parseInt(currentSystemId);
-    const isDefault = defaultSystemId === system.id;
     const displayText = system.displayName || `System ${system.vendorSiteId}`;
 
     if (isMobile) {
@@ -100,9 +97,6 @@ export default function SystemsMenu({
           } flex items-center gap-2`}
         >
           <span>{displayText}</span>
-          {isDefault && (
-            <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400 flex-shrink-0" />
-          )}
         </button>
       );
     }
@@ -153,9 +147,6 @@ export default function SystemsMenu({
         onClick={() => handleClick(system.id)}
       >
         <span>{displayText}</span>
-        {isDefault && (
-          <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400 flex-shrink-0" />
-        )}
       </Link>
     );
   };

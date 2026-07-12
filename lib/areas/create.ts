@@ -122,7 +122,6 @@ export async function createArea(
         await tx.insert(areas).values({
           id,
           ownerClerkUserId: input.ownerClerkUserId,
-          sourceSystemId: null,
           legacySystemId: handle,
           displayName: input.displayName,
           alias: input.alias ?? null,
@@ -132,15 +131,13 @@ export async function createArea(
           status: "active",
         });
         if (members.length > 0) {
-          await tx
-            .insert(areaDevices)
-            .values(
-              members.map((systemId, i) => ({
-                areaId: id,
-                systemId,
-                ordinal: i,
-              })),
-            );
+          await tx.insert(areaDevices).values(
+            members.map((systemId, i) => ({
+              areaId: id,
+              systemId,
+              ordinal: i,
+            })),
+          );
         }
       });
       return { id, legacySystemId: handle };

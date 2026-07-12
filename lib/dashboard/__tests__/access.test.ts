@@ -69,36 +69,30 @@ describe("toReadAccess — dashboard read-scope shaping", () => {
   });
 });
 
-describe("allowedSystemIds — the share-scope system set", () => {
+describe("allowedSystemIds — the share-scope system set (purely descriptor-derived)", () => {
   beforeEach(() => {
     mockGetLegacy.mockReset();
   });
 
-  it("is the singleton {systemId} for today's single-area dashboard (areaId-less cards, no default area) — INERT", async () => {
-    const out = await allowedSystemIds({
-      defaultAreaId: null,
-      systemId: 42,
-      descriptor: descriptor([{ type: "tiles" }, { type: "sankey" }]),
-    });
-    expect(out).toEqual([42]);
-    // Early return: no Area resolution happens at all.
+  it("is empty for a descriptor with no sections", async () => {
+    const out = await allowedSystemIds({ descriptor: descriptor([]) });
+    expect(out).toEqual([]);
+    // No Area uuids → no resolution happens at all.
     expect(mockGetLegacy).not.toHaveBeenCalled();
   });
 
-  it("stays the singleton when the default area maps back to the dashboard's own system", async () => {
-    mockGetLegacy.mockResolvedValue(7); // the system's area-of-one → 7
+  it("maps a single section's area uuid → its legacy_system_id", async () => {
+    mockGetLegacy.mockResolvedValue(7); // the section's area → sys 7
     const out = await allowedSystemIds({
-      defaultAreaId: "area-self",
-      systemId: 7,
-      descriptor: descriptor([{ type: "tiles" }]),
+      descriptor: descriptor([{ type: "tiles", areaId: "area-self" }]),
     });
     expect(out).toEqual([7]);
   });
 
-  it("unions distinct card areas (default ∪ per-card), deduped", async () => {
+  it("unions distinct section areas, deduped", async () => {
     mockGetLegacy.mockImplementation(async (areaId: string) => {
       const map: Record<string, number> = {
-        A: 5, // default area → sys 5 (== systemId)
+        A: 5,
         B: 9,
         C: 11,
         D: 9, // duplicate target
@@ -106,9 +100,8 @@ describe("allowedSystemIds — the share-scope system set", () => {
       return map[areaId] ?? null;
     });
     const out = await allowedSystemIds({
-      defaultAreaId: "A",
-      systemId: 5,
       descriptor: descriptor([
+        { type: "tiles", areaId: "A" },
         { type: "chart", id: "c1", areaId: "B" },
         { type: "chart", id: "c2", areaId: "C" },
         { type: "chart", id: "c3", areaId: "D" },
@@ -117,14 +110,12 @@ describe("allowedSystemIds — the share-scope system set", () => {
     expect([...out].sort((a, b) => a - b)).toEqual([5, 9, 11]);
   });
 
-  it("drops a dangling/deleted area uuid (no escalation, no throw) but keeps the own system", async () => {
+  it("drops a dangling/deleted area uuid (no escalation, no throw)", async () => {
     mockGetLegacy.mockResolvedValue(null); // uuid unknown
     const out = await allowedSystemIds({
-      defaultAreaId: null,
-      systemId: 5,
       descriptor: descriptor([{ type: "chart", id: "c1", areaId: "ghost" }]),
     });
-    expect(out).toEqual([5]);
+    expect(out).toEqual([]);
   });
 });
 
@@ -143,9 +134,7 @@ describe("resolveDashboardReadPoints — union of points across allowed areas", 
     } as unknown as ReturnType<typeof PointManager.getInstance>);
 
     const out = await resolveDashboardReadPoints({
-      defaultAreaId: "composite",
-      systemId: 10001,
-      descriptor: descriptor([{ type: "tiles" }]),
+      descriptor: descriptor([{ type: "tiles", areaId: "composite" }]),
     });
     expect(out.systemIds).toEqual([5, 6]);
     expect(out.points).toHaveLength(3);
@@ -164,9 +153,10 @@ describe("resolveDashboardReadPoints — union of points across allowed areas", 
     } as unknown as ReturnType<typeof PointManager.getInstance>);
 
     const out = await resolveDashboardReadPoints({
-      defaultAreaId: "good",
-      systemId: 5,
-      descriptor: descriptor([{ type: "chart", id: "c1", areaId: "gone" }]),
+      descriptor: descriptor([
+        { type: "tiles", areaId: "good" },
+        { type: "chart", id: "c1", areaId: "gone" },
+      ]),
     });
     // sys 999 threw and was skipped; sys 5's points survive.
     expect(out.systemIds).toEqual([5]);

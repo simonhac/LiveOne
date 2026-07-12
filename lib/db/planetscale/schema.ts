@@ -156,15 +156,9 @@ export const users = pgTable(
   "users",
   {
     clerkUserId: text("clerk_user_id").primaryKey(),
-    // LEGACY default landing handle (plain int, no FK to systems): a user may default to a multi-device
-    // area, whose areas-backed virtual system has no `systems` row after migration 0014. Superseded by
-    // default_dashboard_id (Phase 2); kept as a fallback that getValidDefaultDashboardId lazily
-    // migrates + keeps in sync. Not dropped this phase.
-    defaultSystemId: integer("default_system_id"),
-    // Forward-correct default landing DASHBOARD (Phase 2). FK to dashboards.id is safe — a dashboard
-    // row always physically exists, whatever its handle (unlike default_system_id, which may name a
-    // multi-device area's virtual system with no `systems` row). ON DELETE SET NULL so deleting the dashboard
-    // silently clears the default. (forward ref: `dashboards` is declared later in this module.)
+    // The default landing DASHBOARD (P6: the legacy per-system `default_system_id` was dropped). FK to
+    // dashboards.id, ON DELETE SET NULL so deleting the dashboard silently clears the default. (forward
+    // ref: `dashboards` is declared later in this module.)
     defaultDashboardId: integer("default_dashboard_id").references(
       () => dashboards.id,
       { onDelete: "set null" },
@@ -173,9 +167,6 @@ export const users = pgTable(
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => ({
-    defaultSystemIdx: index("users_default_system_idx").on(
-      table.defaultSystemId,
-    ),
     defaultDashboardIdx: index("users_default_dashboard_idx").on(
       table.defaultDashboardId,
     ),
@@ -550,34 +541,22 @@ export const dashboards = pgTable(
   {
     id: serial("id").primaryKey(),
     clerkUserId: text("clerk_user_id").notNull(), // the owner
-    // Composition dashboards (Phase 2b-2): name + owner-unique shortname. Nullable through the
-    // transition (legacy per-system rows have neither). Become the identity once the old path retires.
+    // A dashboard's name + owner-unique shortname (the /dashboard/{user}/{alias} path). Nullable for
+    // an unnamed dashboard. The legacy per-system `system_id`/`area_id` handles were dropped in P6 —
+    // a dashboard is a v3 composition whose sections each carry their own Area uuid.
     displayName: text("display_name"),
     alias: text("alias"), // owner-unique shortname for /dashboard/{user}/{alias}; null = unnamed
-    // LEGACY home handles — nullable now; a composition dashboard sets neither (its cards each carry
-    // their own areaId). Dropped in 0018 when the old per-system path retires.
-    systemId: integer("system_id"),
-    areaId: uuid("area_id").references(() => areas.id, {
-      onDelete: "set null",
-    }),
     descriptor: jsonb("descriptor").notNull(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => ({
-    // Legacy per-(user,system) uniqueness — retained through the transition. A composition dashboard
-    // has null system_id, and NULLs are distinct in Postgres, so any number of them coexist.
-    userSystemUnique: uniqueIndex("dashboards_user_system_unique").on(
-      table.clerkUserId,
-      table.systemId,
-    ),
     // (clerk_user_id, alias) unique — owner-scoped shortname (NULL aliases distinct).
     ownerAliasUnique: uniqueIndex("dashboards_owner_alias_unique").on(
       table.clerkUserId,
       table.alias,
     ),
     userIdx: index("dashboards_user_idx").on(table.clerkUserId),
-    areaIdx: index("dashboards_area_idx").on(table.areaId),
   }),
 );
 
@@ -660,13 +639,13 @@ export const roles = pgTable("roles", {
 // into a coherent energy site. Replaced vendor_type='composite' fake systems rows.
 //
 // An Area is a grouping of 1..N member devices (`area_devices`):
-//   area-of-one   → 1:1 wrapper over a single physical system (`source_system_id`).
+//   area-of-one   → 1:1 wrapper over a single physical system (its sole `area_devices` member).
 //   multi-device  → points drawn from across ≥2 member systems (via `area_bindings`).
 // The single-vs-multi distinction is STRUCTURAL (membership), not a stored `kind` — the
-// `kind` column was dropped in migration 0019.
+// `kind` column was dropped in migration 0019, and the `source_system_id` seam in P6.
 //
 // `id` is a GUID (decoupled from systems.id). `legacy_system_id` is the integer ADDRESSING
-// HANDLE: an area-of-one's == its `source_system_id`; a multi-device area's == the old
+// HANDLE: an area-of-one's == its member's systems.id; a multi-device area's == the old
 // composite shim's systems.id. It drives the point_readings_flow_1d.area_id keying.
 // Areas are organizational, NOT the access boundary (access stays system-granular until P4).
 // ============================================================================
@@ -675,7 +654,6 @@ export const areas = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(), // app supplies uuidv7(); default is a safety net
     ownerClerkUserId: text("owner_clerk_user_id"),
-    sourceSystemId: integer("source_system_id").references(() => systems.id), // an area-of-one's single member/source
     // The 1:1 migration seam + the stable integer ADDRESSING HANDLE. For a multi-device area it is
     // the old composite shim's systems.id; no FK to systems, since that area outlives its `systems`
     // row (deleted in migration 0014), and `getSystem(legacy_system_id)` then resolves to the
@@ -703,7 +681,6 @@ export const areas = pgTable(
     legacySystemUnique: uniqueIndex("areas_legacy_system_unique").on(
       table.legacySystemId,
     ),
-    sourceSystemIdx: index("areas_source_system_idx").on(table.sourceSystemId),
   }),
 );
 

@@ -9,11 +9,13 @@ import DeviceLayout from "@/components/DeviceLayout";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { VendorRegistry } from "@/lib/vendors/registry";
-import { resolveGridContextForSystem } from "@/lib/grid/context";
-import { hasEnabledTracker } from "@/lib/run-tracking/resolve";
+import { getAreaForSystem } from "@/lib/areas/resolve";
+import { buildAreaStrategyForHandle } from "@/lib/capabilities/server";
 import { getUserIdByUsername } from "@/lib/user-cache";
 import { resolveDefaultDashboardRoute } from "@/lib/user-preferences";
 import { getViewerDevices } from "@/lib/devices/viewer-devices";
+import type { DashboardV3 } from "@/lib/dashboard/v3";
+import type { ReadableArea } from "@/lib/areas/list";
 
 interface PageProps {
   params: Promise<{
@@ -237,16 +239,24 @@ export default async function DevicePage({ params }: PageProps) {
     }
   }
 
-  // Resolve the "Local Grid (NEM)" card's cross-system context (the public OE region serving this
-  // device's location). Returns null when flags are off / off-grid / no derivable region. Only
-  // resolved for an accessible system — an Access-Denied render never uses it, so skip the DB work.
-  const gridContext =
-    system && hasAccess ? await resolveGridContextForSystem(system.id) : null;
-
-  // Whether to offer the generator-runs card (system has an enabled generator tracker).
-  const hasGenerator = system
-    ? await hasEnabledTracker(system.id, "generator")
-    : false;
+  // Server-build the device's default view from its REAL area-of-one (Phase 2/P6 guarantees every
+  // device has one). This is the single server/config capability path — `buildAreaStrategyForHandle`
+  // folds in grid context + generator tracking + config overrides — replacing the old client-side
+  // synthesis in DeviceViewer. Only for an accessible system; an Access-Denied render never uses it.
+  let descriptor: DashboardV3 | null = null;
+  let area: ReadableArea | null = null;
+  if (system && hasAccess) {
+    const areaId =
+      (await getAreaForSystem(system.id))?.id ?? `device-${system.id}`;
+    descriptor = await buildAreaStrategyForHandle(areaId, system.id, {
+      leadWithDeviceMetrics: true,
+    });
+    area = {
+      id: areaId,
+      displayName: system.displayName,
+      legacySystemId: system.id,
+    };
+  }
 
   // Render the device viewer. When the system doesn't exist, render without the chrome (the viewer
   // shows the Access-Denied state).
@@ -259,8 +269,8 @@ export default async function DevicePage({ params }: PageProps) {
         systemExists={systemExists}
         isAdmin={isAdmin}
         userId={userId}
-        gridContext={gridContext}
-        hasGenerator={hasGenerator}
+        descriptor={descriptor}
+        area={area}
       />
     );
   }
@@ -282,8 +292,8 @@ export default async function DevicePage({ params }: PageProps) {
         systemExists={systemExists}
         isAdmin={isAdmin}
         userId={userId}
-        gridContext={gridContext}
-        hasGenerator={hasGenerator}
+        descriptor={descriptor}
+        area={area}
       />
     </DeviceLayout>
   );

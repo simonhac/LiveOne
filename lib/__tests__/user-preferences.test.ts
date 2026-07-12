@@ -1,22 +1,23 @@
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 
-// user-preferences talks to Postgres directly (users/systems/user_systems) and to two collaborators
-// (the dashboard store + the systems cache). Mock the db with a tiny table-aware chainable fake and the
-// collaborators as modules, so we can drive the default_dashboard_id branching — especially the lazy
-// migration from the legacy default_system_id — without a real database.
+// user-preferences reads/writes the `users` table and delegates dashboard existence/ownership to
+// getDashboard. Mock the db with a tiny table-aware chainable fake + getDashboard as a module, so the
+// default_dashboard_id branching is driven without a real database.
 
 let usersRow: Record<string, unknown> | null;
-let systemRow: Record<string, unknown> | null;
 const updates: Array<Record<string, unknown>> = [];
 
 jest.mock("@/lib/db/planetscale", () => ({
   requirePlanetscaleDb: () => {
     let table: unknown = null;
-    let mode: "select" | "update" | null = null;
+    let mode: "select" | "update" | "insert" | null = null;
     const builder: Record<string, unknown> = {};
     builder.select = () => ((mode = "select"), builder);
     builder.from = (t: unknown) => ((table = t), builder);
     builder.update = (t: unknown) => ((mode = "update"), (table = t), builder);
+    builder.insert = (t: unknown) => ((mode = "insert"), (table = t), builder);
+    builder.values = () => builder;
+    builder.onConflictDoNothing = () => Promise.resolve(undefined);
     builder.set = (payload: Record<string, unknown>) => {
       updates.push(payload);
       return builder;
@@ -24,24 +25,14 @@ jest.mock("@/lib/db/planetscale", () => ({
     builder.where = () =>
       mode === "update" ? Promise.resolve(undefined) : builder;
     builder.limit = () => {
-      const { users, systems, userSystems } = jest.requireActual<
+      const { users } = jest.requireActual<
         typeof import("@/lib/db/planetscale/schema")
       >("@/lib/db/planetscale/schema");
       if (table === users) return Promise.resolve(usersRow ? [usersRow] : []);
-      if (table === systems)
-        return Promise.resolve(systemRow ? [systemRow] : []);
-      if (table === userSystems) return Promise.resolve([]); // owner match covers access
       return Promise.resolve([]);
     };
     return builder;
   },
-}));
-
-const mockGetDashboardById = jest.fn<(...a: unknown[]) => Promise<unknown>>();
-const mockGetOrCreate = jest.fn<(...a: unknown[]) => Promise<number>>();
-jest.mock("@/lib/dashboard/store", () => ({
-  getDashboardById: (...a: unknown[]) => mockGetDashboardById(...a),
-  getOrCreateDefaultDashboardId: (...a: unknown[]) => mockGetOrCreate(...a),
 }));
 
 const mockGetDashboard = jest.fn<(...a: unknown[]) => Promise<unknown>>();
@@ -49,16 +40,10 @@ jest.mock("@/lib/dashboard/dashboards", () => ({
   getDashboard: (...a: unknown[]) => mockGetDashboard(...a),
 }));
 
-const mockGetSystem = jest.fn<(...a: unknown[]) => Promise<unknown>>();
-jest.mock("@/lib/systems-manager", () => ({
-  SystemsManager: { getInstance: () => ({ getSystem: mockGetSystem }) },
-}));
-
 import {
-  getValidDefaultDashboardId,
-  getValidDefaultSystemId,
   resolveDefaultDashboardRoute,
   setDefaultDashboardById,
+  clearDefaultDashboard,
 } from "@/lib/user-preferences";
 
 const USER = "u1";
@@ -66,108 +51,43 @@ const USER = "u1";
 beforeEach(() => {
   updates.length = 0;
   jest.clearAllMocks();
-  // Default: an active system owned by USER (so isSystemValidForDefault passes via owner match).
-  systemRow = { id: 5, status: "active", ownerClerkUserId: USER };
   usersRow = {
     clerkUserId: USER,
-    defaultSystemId: null,
     defaultDashboardId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
-  mockGetSystem.mockResolvedValue({ id: 5, vendorType: "selectronic" });
-});
-
-describe("getValidDefaultDashboardId", () => {
-  it("Path A: resolves an already-set default_dashboard_id (no write)", async () => {
-    usersRow!.defaultDashboardId = 77;
-    mockGetDashboardById.mockResolvedValue({
-      id: 77,
-      systemId: 5,
-      areaId: null,
-    });
-    const out = await getValidDefaultDashboardId(USER);
-    expect(out).toEqual({ dashboardId: 77, systemId: 5 });
-    expect(updates).toHaveLength(0); // valid → no clear, no re-write
-  });
-
-  it("Path B: lazily migrates a legacy default_system_id → materializes + adopts a dashboard", async () => {
-    usersRow!.defaultSystemId = 5;
-    mockGetOrCreate.mockResolvedValue(77);
-    const out = await getValidDefaultDashboardId(USER);
-    expect(out).toEqual({ dashboardId: 77, systemId: 5 });
-    expect(mockGetOrCreate).toHaveBeenCalledWith(USER, 5);
-    // Adopted: both columns written (forward id + legacy kept in sync).
-    expect(updates).toContainEqual(
-      expect.objectContaining({ defaultDashboardId: 77, defaultSystemId: 5 }),
-    );
-  });
-
-  it("auto-clears BOTH columns when the default's system is no longer valid", async () => {
-    usersRow!.defaultDashboardId = 77;
-    mockGetDashboardById.mockResolvedValue({
-      id: 77,
-      systemId: 5,
-      areaId: null,
-    });
-    systemRow = { id: 5, status: "removed", ownerClerkUserId: USER }; // invalid
-    const out = await getValidDefaultDashboardId(USER);
-    expect(out).toBeNull();
-    expect(updates).toContainEqual(
-      expect.objectContaining({
-        defaultDashboardId: null,
-        defaultSystemId: null,
-      }),
-    );
-  });
-
-  it("returns null when no default is set at all", async () => {
-    const out = await getValidDefaultDashboardId(USER);
-    expect(out).toBeNull();
-    expect(updates).toHaveLength(0);
-  });
-});
-
-describe("getValidDefaultSystemId (back-compat wrapper)", () => {
-  it("returns just the systemId from the resolved default dashboard", async () => {
-    usersRow!.defaultDashboardId = 77;
-    mockGetDashboardById.mockResolvedValue({
-      id: 77,
-      systemId: 5,
-      areaId: null,
-    });
-    expect(await getValidDefaultSystemId(USER)).toBe(5);
-  });
 });
 
 describe("resolveDefaultDashboardRoute (landing redirect target)", () => {
-  it("a composition default (null system_id) → /dashboard/id/{id}", async () => {
+  it("a set default → /dashboard/id/{id} (no write)", async () => {
     usersRow!.defaultDashboardId = 88;
-    mockGetDashboardById.mockResolvedValue({
+    mockGetDashboard.mockResolvedValue({
       id: 88,
-      systemId: null,
-      areaId: null,
+      ownerClerkUserId: USER,
+      displayName: "Home",
     });
     expect(await resolveDefaultDashboardRoute(USER)).toBe("/dashboard/id/88");
+    expect(updates).toHaveLength(0);
   });
 
-  it("a per-system default → the device view /device/{systemId}", async () => {
-    usersRow!.defaultDashboardId = 77;
-    mockGetDashboardById.mockResolvedValue({
-      id: 77,
-      systemId: 5,
-      areaId: null,
-    });
-    expect(await resolveDefaultDashboardRoute(USER)).toBe("/device/5");
-  });
-
-  it("no default → null", async () => {
+  it("no default → null (no write)", async () => {
     expect(await resolveDefaultDashboardRoute(USER)).toBeNull();
+    expect(updates).toHaveLength(0);
+  });
+
+  it("auto-clears a stale pointer whose dashboard has vanished", async () => {
+    usersRow!.defaultDashboardId = 77;
+    mockGetDashboard.mockResolvedValue(null);
+    expect(await resolveDefaultDashboardRoute(USER)).toBeNull();
+    expect(updates).toContainEqual(
+      expect.objectContaining({ defaultDashboardId: null }),
+    );
   });
 });
 
-describe("setDefaultDashboardById (composition default, owner-only)", () => {
-  it("owner + composition dashboard → writes default_dashboard_id with null system_id", async () => {
+describe("setDefaultDashboardById (owner-only)", () => {
+  it("owner's dashboard → writes default_dashboard_id", async () => {
     mockGetDashboard.mockResolvedValue({
       id: 90,
       ownerClerkUserId: USER,
@@ -176,10 +96,7 @@ describe("setDefaultDashboardById (composition default, owner-only)", () => {
     const res = await setDefaultDashboardById(USER, 90);
     expect(res.success).toBe(true);
     expect(updates).toContainEqual(
-      expect.objectContaining({
-        defaultDashboardId: 90,
-        defaultSystemId: null,
-      }),
+      expect.objectContaining({ defaultDashboardId: 90 }),
     );
   });
 
@@ -199,15 +116,15 @@ describe("setDefaultDashboardById (composition default, owner-only)", () => {
     const res = await setDefaultDashboardById(USER, 91);
     expect(res).toEqual({ success: false, error: "not_found" });
   });
+});
 
-  it("refuses a legacy (system-bound, no display_name) dashboard — avoids default-column drift", async () => {
-    mockGetDashboard.mockResolvedValue({
-      id: 92,
-      ownerClerkUserId: USER,
-      displayName: null,
-    });
-    const res = await setDefaultDashboardById(USER, 92);
-    expect(res.success).toBe(false);
-    expect(updates).toHaveLength(0);
+describe("clearDefaultDashboard", () => {
+  it("nulls default_dashboard_id", async () => {
+    usersRow!.defaultDashboardId = 90;
+    const res = await clearDefaultDashboard(USER);
+    expect(res.success).toBe(true);
+    expect(updates).toContainEqual(
+      expect.objectContaining({ defaultDashboardId: null }),
+    );
   });
 });

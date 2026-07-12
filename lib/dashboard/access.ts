@@ -5,14 +5,12 @@
  * nothing more (areas-and-dashboards.md §2). A share-token / grant holder gets read access
  * transitively: Dashboard → its Area(s) → `area_bindings` → `(system_id, point_id)`.
  *
- * Phase 2 generalises the scope from a single system to the **union of the dashboard's card Areas**:
- * the dashboard's default Area (`dashboards.area_id`) ∪ each card's `areaId`. Each Area uuid maps to
- * its addressable systemId (`legacy_system_id`), and `PointManager.getActivePointsForSystem` resolves
- * each — returning a composite's CHILD points or a single system's own points — so the exposed set
- * matches what the dashboard renders by construction. Today every card is areaId-less and the default
- * Area maps back to the dashboard's own system, so the union is the singleton `{systemId}` and this is
- * inert (identical to the pre-Phase-2 single-system behaviour). Point-level narrowing within an Area
- * is a future tightening — `points[]` already carries the exact refs.
+ * The scope is the **union of the dashboard's section Areas**: each v3 section's `areaId` maps to its
+ * addressable systemId (`legacy_system_id`), and `PointManager.getActivePointsForSystem` resolves each
+ * — returning a composite's CHILD points or a single system's own points — so the exposed set matches
+ * what the dashboard renders by construction. (P6 dropped the legacy `dashboards.system_id`/`area_id`
+ * seed: scope is now purely descriptor-derived.) Point-level narrowing within an Area is a future
+ * tightening — `points[]` already carries the exact refs.
  */
 import { PointManager } from "@/lib/point/point-manager";
 import { getLegacySystemIdForArea } from "@/lib/areas/resolve";
@@ -25,16 +23,9 @@ export interface DashboardReadAccess {
   points: { systemId: number; pointId: number }[];
 }
 
-/** A dashboard's scope inputs: its default Area, its addressable systemId, and its card descriptor. */
+/** A dashboard's scope inputs: just its descriptor. Scope = the union of its sections' Areas. */
 export interface DashboardScopeInput {
-  /** The dashboard's default Area (`dashboards.area_id`), or null when unset (back-compat). */
-  defaultAreaId: string | null;
-  /**
-   * The dashboard's legacy integer system handle, or null for a composition-first dashboard (Phase
-   * 2b-2) which has no home system — its scope is purely the union of its cards' Areas.
-   */
-  systemId: number | null;
-  /** The dashboard descriptor (v3 composition, or a legacy v2 per-system descriptor). */
+  /** The dashboard descriptor (v3 composition; sections carry real Area uuids). */
   descriptor: unknown;
 }
 
@@ -51,26 +42,16 @@ export function toReadAccess(
 }
 
 /**
- * The distinct addressable system handles a dashboard may read: its default Area plus every distinct
- * per-card `areaId`, each mapped uuid → `legacy_system_id`. Unresolvable Area uuids are **dropped**
- * (no escalation, no throw). The dashboard's own `systemId` is always included (it's how the default
- * Area is addressed today). For today's single-area dashboards this returns the singleton `{systemId}`.
+ * The distinct addressable system handles a dashboard may read: every distinct Area uuid its v3
+ * descriptor references (its sections), each mapped uuid → `legacy_system_id`. Unresolvable Area uuids
+ * are **dropped** (no escalation, no throw). Purely descriptor-derived — a shared dashboard exposes
+ * exactly the systems its sections render. An empty/unresolvable descriptor → empty scope.
  */
 export async function allowedSystemIds(
   input: DashboardScopeInput,
 ): Promise<number[]> {
-  const areaIds = new Set<string>();
-  if (input.defaultAreaId) areaIds.add(input.defaultAreaId);
-  for (const aid of descriptorAreaIds(input.descriptor)) areaIds.add(aid);
-
-  // No resolvable Areas → a legacy single-system dashboard (address by its systemId), or an empty
-  // composition dashboard (no systemId, no cards) → empty scope.
-  if (areaIds.size === 0) return input.systemId != null ? [input.systemId] : [];
-
-  // Seed with the legacy home systemId when present (composition dashboards have none).
   const out = new Set<number>();
-  if (input.systemId != null) out.add(input.systemId);
-  for (const areaId of areaIds) {
+  for (const areaId of descriptorAreaIds(input.descriptor)) {
     const sid = await getLegacySystemIdForArea(areaId);
     if (sid != null) out.add(sid); // sid == null → dangling/deleted Area uuid → dropped.
   }
