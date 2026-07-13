@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { parseDate, CalendarDate } from "@internationalized/date";
-import { requireAuth } from "@/lib/api-auth";
+import { getAuthContext } from "@/lib/api-auth";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
 import { resolveLogicalSystem } from "@/lib/aggregation/logical-system";
@@ -22,7 +22,8 @@ const MAX_LIMIT = 31;
 /**
  * POST /api/areas/[areaId]/recompute-flow — recompute ONE area's energy-flow matrix
  * (`point_readings_flow_1d`, the Sankey) over a date range, in BOUNDED BATCHES so a long range can't
- * blow the function timeout. Authorized for the area's **owner** or an **admin**.
+ * blow the function timeout. Authorized for the area's **owner**, an **admin**, or a **`CRON_SECRET`
+ * bearer** (headless ops).
  *
  * Body (all optional): { start?, end?: "YYYY-MM-DD", last?: "Nd", cursor?: "YYYY-MM-DD", limit?: number }
  *   - range defaults to the system's FIRST data point → yesterday (full history); `last` or
@@ -36,8 +37,10 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ areaId: string }> },
 ) {
-  const auth = await requireAuth(request);
-  if (auth instanceof NextResponse) return auth;
+  const auth = await getAuthContext(request);
+  // Owner/admin via a Clerk session, or a headless CRON_SECRET bearer. Reject pure anon early.
+  if (!auth.userId && !auth.isCron)
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!planetscaleDb)
     return NextResponse.json({ error: "DB not configured" }, { status: 503 });
 
@@ -54,9 +57,9 @@ export async function POST(
     return NextResponse.json({ error: "Area not found" }, { status: 404 });
 
   const isOwner = !!auth.userId && area.ownerClerkUserId === auth.userId;
-  if (!isOwner && !auth.isAdmin)
+  if (!auth.isCron && !auth.isAdmin && !isOwner)
     return NextResponse.json(
-      { error: "Forbidden — area owner or admin only" },
+      { error: "Forbidden — area owner, admin, or cron only" },
       { status: 403 },
     );
   if (area.legacySystemId == null)
