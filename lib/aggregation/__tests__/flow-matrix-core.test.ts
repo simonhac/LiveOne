@@ -2,6 +2,7 @@ import { describe, it, expect } from "@jest/globals";
 import {
   computeFlowMatrix,
   computeFlowAccounting,
+  computeInstantFlowMatrix,
   FlowSeries,
   FlowMatrixResult,
 } from "../flow-matrix-core";
@@ -148,6 +149,84 @@ describe("computeFlowMatrix", () => {
     });
     // Interval 0 has a null right endpoint; interval 1 has a null left endpoint → both skip.
     expect(result.totalEnergy).toBeCloseTo(0, 6);
+  });
+
+  it("never allocates a source to its own linked load — mid-interval discharge→charge flip, redistributed to another source", () => {
+    // Battery discharges 3 kW at t0, flips to charging 2 kW by t1 — impossible for a single raw
+    // sample (splitSignedSeries is mutually exclusive per-sample) but routine ACROSS a 5-min
+    // interval boundary. Solar is also generating throughout, so the flip interval's load.battery
+    // energy must land on solar, never on source.battery (a battery can't charge itself).
+    const result = computeFlowMatrix({
+      timestamps: hours(2),
+      sources: [
+        { path: "source.solar", power: [4, 4] },
+        { path: "source.battery", power: [3, 0] }, // discharging at t0, stopped by t1
+      ],
+      loads: [
+        { path: "load", power: [7, 7] },
+        { path: "load.battery", power: [0, 2] }, // starts charging by t1
+      ],
+    });
+    expect(cell(result, "source.battery", "load.battery")).toBe(0);
+    expect(cell(result, "source.solar", "load.battery")).toBeCloseTo(1, 6);
+    // Conservation: load.battery's own trapezoidal energy (1 kWh) is fully attributed, just to
+    // solar instead of split with (or given to) the battery itself.
+    expect(result.loadTotals[idx(result, "load.battery", "loads")]).toBeCloseTo(
+      1,
+      6,
+    );
+  });
+
+  it("drops (does not misattribute) a flip interval's load energy when no other source is active", () => {
+    // Battery is the ONLY source at the flip; nothing else to attribute load.battery's energy to.
+    const result = computeFlowMatrix({
+      timestamps: hours(2),
+      sources: [{ path: "source.battery", power: [3, 0] }],
+      loads: [
+        { path: "load", power: [0, 0] },
+        { path: "load.battery", power: [0, 2] },
+      ],
+    });
+    expect(cell(result, "source.battery", "load.battery")).toBe(0);
+    // Dropped, not misattributed — the interval is excluded from intervalsUsed too (no source
+    // could validly claim it, distinct from "no generation at all" which totalGenPower already
+    // handles).
+    expect(result.totalEnergy).toBeCloseTo(0, 6);
+  });
+
+  it("applies the same self-supply exclusion to grid import/export", () => {
+    const result = computeFlowMatrix({
+      timestamps: hours(2),
+      sources: [
+        { path: "source.solar", power: [5, 5] },
+        { path: "source.grid", power: [2, 0] }, // importing at t0, flips to export by t1
+      ],
+      loads: [
+        { path: "load", power: [7, 7] },
+        { path: "load.grid", power: [0, 1] }, // exporting by t1
+      ],
+    });
+    expect(cell(result, "source.grid", "load.grid")).toBe(0);
+    expect(cell(result, "source.solar", "load.grid")).toBeCloseTo(0.5, 6);
+  });
+});
+
+describe("computeInstantFlowMatrix", () => {
+  it("never allocates a source to its own linked load at a single sample", () => {
+    // Structurally already impossible from a real signed-series split (proven in flow-matrix-core.ts's
+    // channelId exclusion), but assert it directly for the defense-in-depth path too.
+    const result = computeInstantFlowMatrix({
+      sources: [
+        { path: "source.solar", power: [4] },
+        { path: "source.battery", power: [3] },
+      ],
+      loads: [
+        { path: "load", power: [7] },
+        { path: "load.battery", power: [0] },
+      ],
+      index: 0,
+    });
+    expect(cell(result, "source.battery", "load.battery")).toBe(0);
   });
 });
 

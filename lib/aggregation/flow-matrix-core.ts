@@ -77,6 +77,32 @@ function zeros(rows: number, cols: number): number[][] {
 }
 
 /**
+ * The channel identity of a source/load path — everything after the leading "source."/"load."
+ * segment. Two nodes with the same channel id are the split halves of one signed bidirectional
+ * series (`splitSignedSeries`, e.g. "source.battery"/"load.battery", "source.grid"/"load.grid") —
+ * physically the same meter, so energy can never flow from one to the other (a battery can't charge
+ * itself). Pure string convention, no lookup table — works for any current or future bidi role.
+ */
+function channelId(path: string): string {
+  const dot = path.indexOf(".");
+  return dot === -1 ? path : path.slice(dot + 1);
+}
+
+/**
+ * For each load, the index of its linked source (same channel id, e.g. load.battery ↔
+ * source.battery) — or -1 if the load has none (a plain load like `load` or `load.hws`).
+ */
+function linkedSourceIndices(
+  sources: FlowSeries[],
+  loads: FlowSeries[],
+): number[] {
+  return loads.map((load) => {
+    const channel = channelId(load.path);
+    return sources.findIndex((s) => channelId(s.path) === channel);
+  });
+}
+
+/**
  * The unified flow-accounting integrator — the single allocation loop this module is built around. It
  * integrates each load's trapezoidal energy and allocates it across sources by each source's share of
  * generation (left-endpoint), accumulating ENERGY per edge. When `sourceIntensities` is supplied it ALSO
@@ -120,6 +146,11 @@ export function computeFlowAccounting(input: {
   const priceKnownKwh = zeros(S, L);
   let intervalsUsed = 0;
 
+  // A load never draws from its own linked source (see `channelId`) — a battery can't charge
+  // itself, a grid connection can't export to its own import. Precomputed once; index-aligned to
+  // `loads`, -1 = this load has no linked source (the common case).
+  const linkedSource = linkedSourceIndices(sources, loads);
+
   for (let i = 0; i < timestamps.length - 1; i++) {
     // Attribution window: integrate interval i only if it lies ENTIRELY inside the window — its start
     // >= startMs AND its end <= endMs. A cross-boundary interval (start before the window, e.g. spanning
@@ -141,30 +172,45 @@ export function computeFlowAccounting(input: {
     if (totalGenPower <= 0) continue;
 
     let contributed = false;
-    for (let s = 0; s < S; s++) {
-      const power1 = sources[s].power[i];
-      const power2 = sources[s].power[i + 1];
-      if (power1 === null || power2 === null) continue;
+    for (let l = 0; l < L; l++) {
+      const loadPower1 = loads[l].power[i];
+      const loadPower2 = loads[l].power[i + 1];
+      if (loadPower1 === null || loadPower2 === null) continue;
 
-      const sourceProportion = power1 / totalGenPower;
-      const si = withMetrics ? (sourceIntensities![s] ?? null) : null;
-      const ei = si ? si.emissions[i] : null;
-      const rf = si ? si.renewable[i] : null;
-      const pr = si ? si.price[i] : null;
-      const est = si ? si.estimated[i] === true : true;
+      const loadIntervalEnergy = ((loadPower1 + loadPower2) / 2) * deltaHours;
+      if (loadIntervalEnergy === 0) continue;
 
-      for (let l = 0; l < L; l++) {
-        const loadPower1 = loads[l].power[i];
-        const loadPower2 = loads[l].power[i + 1];
-        if (loadPower1 === null || loadPower2 === null) continue;
+      // Exclude this load's own linked source from the pool it draws from (see `linkedSource`
+      // above), so a mid-interval charge/discharge (or import/export) polarity flip can never
+      // allocate energy from a source to its own paired load — the trapezoidal load integral and
+      // the left-endpoint source proportion would otherwise disagree exactly at the flip sample.
+      const excludeIdx = linkedSource[l];
+      let genPowerForLoad = totalGenPower;
+      if (excludeIdx >= 0) {
+        const excludedPower = sources[excludeIdx].power[i];
+        if (excludedPower !== null) genPowerForLoad -= excludedPower;
+      }
+      if (genPowerForLoad <= 0) continue; // nothing valid left to attribute this load's energy to
 
-        const loadIntervalEnergy = ((loadPower1 + loadPower2) / 2) * deltaHours;
+      for (let s = 0; s < S; s++) {
+        if (s === excludeIdx) continue;
+        const power1 = sources[s].power[i];
+        const power2 = sources[s].power[i + 1];
+        if (power1 === null || power2 === null) continue;
+
+        const sourceProportion = power1 / genPowerForLoad;
         const contribution = loadIntervalEnergy * sourceProportion;
         energyKwh[s][l] += contribution;
         if (contribution === 0) continue;
         contributed = true;
 
         if (withMetrics) {
+          const si = sourceIntensities![s] ?? null;
+          const ei = si ? si.emissions[i] : null;
+          const rf = si ? si.renewable[i] : null;
+          const pr = si ? si.price[i] : null;
+          const est = si ? si.estimated[i] === true : true;
+
           if (ei !== null) {
             emissionsG[s][l] += contribution * ei;
             emissionsKnownKwh[s][l] += contribution;
@@ -269,16 +315,32 @@ export function computeInstantFlowMatrix(input: {
     if (power !== null && power !== undefined) totalGenPower += power;
   }
 
+  // Same "a load never draws from its own linked source" rule as `computeFlowAccounting` (see
+  // `channelId`) — at a single sample this is structurally already impossible (a signed series'
+  // split halves can't both be nonzero at once), but enforced here too for defense-in-depth and to
+  // keep the invariant visible in both functions.
+  const linkedSource = linkedSourceIndices(sources, loads);
+
   if (totalGenPower > 0) {
     let contributed = false;
-    for (let s = 0; s < sources.length; s++) {
-      const sourcePower = sources[s].power[index];
-      if (sourcePower === null || sourcePower === undefined) continue;
-      const sourceProportion = sourcePower / totalGenPower;
+    for (let l = 0; l < loads.length; l++) {
+      const loadPower = loads[l].power[index];
+      if (loadPower === null || loadPower === undefined) continue;
 
-      for (let l = 0; l < loads.length; l++) {
-        const loadPower = loads[l].power[index];
-        if (loadPower === null || loadPower === undefined) continue;
+      const excludeIdx = linkedSource[l];
+      let genPowerForLoad = totalGenPower;
+      if (excludeIdx >= 0) {
+        const excludedPower = sources[excludeIdx].power[index];
+        if (excludedPower !== null && excludedPower !== undefined)
+          genPowerForLoad -= excludedPower;
+      }
+      if (genPowerForLoad <= 0) continue;
+
+      for (let s = 0; s < sources.length; s++) {
+        if (s === excludeIdx) continue;
+        const sourcePower = sources[s].power[index];
+        if (sourcePower === null || sourcePower === undefined) continue;
+        const sourceProportion = sourcePower / genPowerForLoad;
         const contribution = loadPower * sourceProportion;
         matrix[s][l] += contribution;
         if (contribution !== 0) contributed = true;
