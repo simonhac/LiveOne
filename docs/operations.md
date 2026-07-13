@@ -32,16 +32,19 @@ that runs **every 15 minutes** (`vercel.json`, `*/15 * * * *`; `maxDuration = 30
 
 ### Signals
 
-| alert code                                | what it means when it fires                                                                               | default                   | env override                    |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------- | ------------------------------- |
-| `raw_landing_stale`                       | Nothing has landed in `point_readings` for N min — the pipeline is stalled. **(This is the common one.)** | > 15 min                  | `MONITOR_RAW_STALE_MINUTES`     |
-| `no_raw_despite_sessions`                 | Poll sessions succeeded but **0** readings landed in the last hour — the queue is dropping readings.      | ≥ 5 sessions, 0 raw       | `MONITOR_MIN_SESSIONS`          |
-| `response_presence_low`                   | < 80% of recent successful CRON sessions carry a `response` — the mirror pipeline is degraded.            | 0.8                       | `MONITOR_RESPONSE_PRESENCE_MIN` |
-| `queue_lag_high`                          | QStash queue lag too high — the receiver isn't keeping up.                                                | > 1000                    | `MONITOR_QUEUE_LAG_MAX`         |
-| `dlq_high` (alert) / `dlq_present` (warn) | Messages stuck in the dead-letter queue — failed deliveries piling up.                                    | ≥ 50 alert; any > 0 warns | `MONITOR_DLQ_ALERT`             |
-| `queue_paused` (warn)                     | The observations queue is paused — ingestion halted.                                                      | —                         | —                               |
-| `outbox_backlog_high`                     | Phase-4 relay stalled — too many unpublished `observations_outbox` rows.                                  | > 500 rows                | `MONITOR_OUTBOX_BACKLOG_MAX`    |
-| `outbox_stale`                            | Phase-4 relay isn't draining — oldest unpublished row too old.                                            | > 10 min                  | `MONITOR_OUTBOX_STALE_MINUTES`  |
+| alert code                                                     | what it means when it fires                                                                               | default                   | env override                          |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------- | ------------------------------------- |
+| `raw_landing_stale`                                            | Nothing has landed in `point_readings` for N min — the pipeline is stalled. **(This is the common one.)** | > 15 min                  | `MONITOR_RAW_STALE_MINUTES`           |
+| `no_raw_despite_sessions`                                      | Poll sessions succeeded but **0** readings landed in the last hour — the queue is dropping readings.      | ≥ 5 sessions, 0 raw       | `MONITOR_MIN_SESSIONS`                |
+| `response_presence_low`                                        | < 80% of recent successful CRON sessions carry a `response` — the mirror pipeline is degraded.            | 0.8                       | `MONITOR_RESPONSE_PRESENCE_MIN`       |
+| `queue_lag_high`                                               | QStash queue lag too high — the receiver isn't keeping up.                                                | > 1000                    | `MONITOR_QUEUE_LAG_MAX`               |
+| `dlq_high` (alert) / `dlq_present` (warn)                      | Messages stuck in the dead-letter queue — failed deliveries piling up.                                    | ≥ 50 alert; any > 0 warns | `MONITOR_DLQ_ALERT`                   |
+| `queue_paused` (warn)                                          | The observations queue is paused — ingestion halted.                                                      | —                         | —                                     |
+| `outbox_backlog_high`                                          | Phase-4 relay stalled — too many unpublished `observations_outbox` rows.                                  | > 500 rows                | `MONITOR_OUTBOX_BACKLOG_MAX`          |
+| `outbox_stale`                                                 | Phase-4 relay isn't draining — oldest unpublished row too old.                                            | > 10 min                  | `MONITOR_OUTBOX_STALE_MINUTES`        |
+| `batprov_blend_stale` (alert) / `batprov_blend_missing` (warn) | Battery-provenance live blend hasn't advanced — the minutely provenance reconcile may be failing.         | > 15 min                  | `MONITOR_BATPROV_BLEND_STALE_MINUTES` |
+| `batprov_rollup_stale` (warn)                                  | `flow_attr_1d` rollup not advancing — the daily provenance heal may be failing.                           | > 30 h                    | `MONITOR_BATPROV_ROLLUP_STALE_HOURS`  |
+| `batprov_estimated_fraction_high` (warn)                       | Too much recent attributed energy used an estimated/missing input (e.g. an upstream price/grid gap).      | > 0.6 over 3 days         | `MONITOR_BATPROV_ESTIMATED_FRAC_MAX`  |
 
 ### Reading the alert
 

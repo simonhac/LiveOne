@@ -14,13 +14,20 @@
  *   2. Raw-landing — most recent `point_readings.created_at`, and whether raw landed in the last hour
  *      despite successful CRON sessions existing (sessions but ~no raw ⇒ the queue is dropping readings).
  *   3. Queue health — QStash queue lag + DLQ depth (+ paused state).
+ *   4. Outbox relay — unpublished backlog + oldest-unpublished age.
+ *   5. Battery-provenance — live-blend freshness (minutely), rollup freshness (daily heal), and the
+ *      recent estimated fraction (attribution leaning on estimated/missing inputs). Skipped where no
+ *      helper devices exist. A faithful "runaway segment" alert needs the fold's segment age persisted
+ *      (see docs/architecture/battery-provenance.md, follow-ups) — deferred.
  *
  * Alerting: if any ALERT-severity issue fires, POST a Slack-compatible payload to
  * OBSERVATIONS_ALERT_WEBHOOK_URL (graceful no-op if unset) and always emit a structured console.error.
  * Returns a JSON status (configured:false when PG isn't wired) for manual checks + dashboards.
  *
  * Tuning via env (all optional): MONITOR_RESPONSE_PRESENCE_MIN, MONITOR_MIN_SESSIONS,
- * MONITOR_RAW_STALE_MINUTES, MONITOR_QUEUE_LAG_MAX, MONITOR_DLQ_ALERT.
+ * MONITOR_RAW_STALE_MINUTES, MONITOR_QUEUE_LAG_MAX, MONITOR_DLQ_ALERT, MONITOR_OUTBOX_BACKLOG_MAX,
+ * MONITOR_OUTBOX_STALE_MINUTES, MONITOR_BATPROV_BLEND_STALE_MINUTES, MONITOR_BATPROV_ROLLUP_STALE_HOURS,
+ * MONITOR_BATPROV_ESTIMATED_FRAC_MAX.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -59,6 +66,22 @@ const DLQ_ALERT = num(process.env.MONITOR_DLQ_ALERT, 50); // DLQ ≥ this ⇒ al
 // stalled.
 const OUTBOX_BACKLOG_MAX = num(process.env.MONITOR_OUTBOX_BACKLOG_MAX, 500);
 const OUTBOX_STALE_MINUTES = num(process.env.MONITOR_OUTBOX_STALE_MINUTES, 10);
+// Battery-provenance (see docs/architecture/battery-provenance.md): the live blend advances every
+// minute on the Area's helper device; the daily heal advances the flow_attr_1d rollup ~daily. A stale
+// blend ⇒ the minutely provenance reconcile is failing; a stale rollup ⇒ the daily heal is failing; a
+// high estimated fraction ⇒ too much attribution is leaning on estimated/missing inputs.
+const BATPROV_BLEND_STALE_MINUTES = num(
+  process.env.MONITOR_BATPROV_BLEND_STALE_MINUTES,
+  15,
+);
+const BATPROV_ROLLUP_STALE_HOURS = num(
+  process.env.MONITOR_BATPROV_ROLLUP_STALE_HOURS,
+  30,
+);
+const BATPROV_ESTIMATED_FRAC_MAX = num(
+  process.env.MONITOR_BATPROV_ESTIMATED_FRAC_MAX,
+  0.6,
+);
 
 /** Send a Slack-compatible alert if a webhook is configured. Best-effort; never throws. */
 async function sendAlert(text: string): Promise<boolean> {
@@ -218,6 +241,113 @@ export async function GET(request: NextRequest) {
       severity: "warn",
       code: "outbox_check_failed",
       message: `Could not query outbox health: ${String(err)}`,
+    });
+  }
+
+  // ── 5: battery-provenance freshness + confidence ──
+  // Separate try so the not-everywhere flow_attr_1d table / absent helpers never break the checks above.
+  try {
+    const res = await db.execute(sql`
+      WITH blend AS (
+        SELECT a.interval_end, a.data_quality
+        FROM point_readings_agg_5m a
+        JOIN systems s ON s.id = a.system_id
+        WHERE s.vendor_type = 'helper'
+      )
+      SELECT
+        (SELECT count(*)::int FROM systems WHERE vendor_type='helper')          AS helper_count,
+        (SELECT max(interval_end) FROM blend)                                   AS blend_latest,
+        (SELECT max(updated_at) FROM point_readings_flow_attr_1d)               AS rollup_updated,
+        (SELECT max(day) FROM point_readings_flow_attr_1d)                      AS rollup_max_day,
+        (SELECT sum(estimated_kwh) FROM point_readings_flow_attr_1d
+           WHERE day >= to_char((now() AT TIME ZONE 'UTC') - interval '3 days','YYYY-MM-DD')) AS est_kwh_3d,
+        (SELECT sum(energy_kwh) FROM point_readings_flow_attr_1d
+           WHERE day >= to_char((now() AT TIME ZONE 'UTC') - interval '3 days','YYYY-MM-DD')) AS energy_kwh_3d
+    `);
+    const r = ((res.rows ?? [])[0] ?? {}) as {
+      helper_count: number;
+      blend_latest: Date | null;
+      rollup_updated: Date | null;
+      rollup_max_day: string | null;
+      est_kwh_3d: number | null;
+      energy_kwh_3d: number | null;
+    };
+    const helperCount = Number(r.helper_count ?? 0);
+
+    if (helperCount === 0) {
+      checks.batteryProvenance = { configured: false };
+    } else {
+      const blendLatest = r.blend_latest ? new Date(r.blend_latest) : null;
+      const blendAgeMin = blendLatest
+        ? Math.round((Date.now() - blendLatest.getTime()) / 60_000)
+        : null;
+      const rollupUpdated = r.rollup_updated
+        ? new Date(r.rollup_updated)
+        : null;
+      const rollupAgeHrs = rollupUpdated
+        ? (Date.now() - rollupUpdated.getTime()) / 3_600_000
+        : null;
+      const energy3d = Number(r.energy_kwh_3d ?? 0);
+      const est3d = Number(r.est_kwh_3d ?? 0);
+      const estFrac = energy3d > 0 ? est3d / energy3d : null;
+
+      checks.batteryProvenance = {
+        helperCount,
+        blendLatest: blendLatest ? blendLatest.toISOString() : null,
+        blendAgeMinutes: blendAgeMin,
+        blendStaleThresholdMinutes: BATPROV_BLEND_STALE_MINUTES,
+        rollupUpdatedAt: rollupUpdated ? rollupUpdated.toISOString() : null,
+        rollupAgeHours: rollupAgeHrs === null ? null : Math.round(rollupAgeHrs),
+        rollupMaxDay: r.rollup_max_day ?? null,
+        rollupStaleThresholdHours: BATPROV_ROLLUP_STALE_HOURS,
+        estimatedFraction3d: estFrac,
+        estimatedFractionMax: BATPROV_ESTIMATED_FRAC_MAX,
+      };
+
+      // Blend not advancing ⇒ the minutely provenance reconcile is failing (a real regression).
+      if (blendAgeMin === null) {
+        issues.push({
+          severity: "warn",
+          code: "batprov_blend_missing",
+          message: `${helperCount} battery-provenance helper device(s) exist but no blend agg_5m has ever been written.`,
+        });
+      } else if (blendAgeMin > BATPROV_BLEND_STALE_MINUTES) {
+        issues.push({
+          severity: "alert",
+          code: "batprov_blend_stale",
+          message: `Battery-provenance blend hasn't advanced for ${blendAgeMin} min (> ${BATPROV_BLEND_STALE_MINUTES}) — the minutely provenance reconcile may be failing.`,
+        });
+      }
+      // Rollup not advancing ⇒ the daily heal is failing (less urgent — it's a daily job).
+      if (rollupAgeHrs !== null && rollupAgeHrs > BATPROV_ROLLUP_STALE_HOURS) {
+        issues.push({
+          severity: "warn",
+          code: "batprov_rollup_stale",
+          message: `flow_attr_1d rollup last updated ${Math.round(rollupAgeHrs)}h ago (> ${BATPROV_ROLLUP_STALE_HOURS}) — the daily provenance heal may be failing.`,
+        });
+      }
+      // Too much attribution leaning on estimated/missing inputs (data-quality signal, not an outage).
+      if (
+        estFrac !== null &&
+        energy3d > 0 &&
+        estFrac > BATPROV_ESTIMATED_FRAC_MAX
+      ) {
+        issues.push({
+          severity: "warn",
+          code: "batprov_estimated_fraction_high",
+          message: `${(estFrac * 100).toFixed(0)}% of the last 3 days of attributed energy used an estimated/missing input (> ${(BATPROV_ESTIMATED_FRAC_MAX * 100).toFixed(0)}%) — cost/carbon will firm up when the upstream data lands.`,
+        });
+      }
+    }
+  } catch (err) {
+    console.error(
+      "[MonitorObservations] battery-provenance check failed:",
+      err,
+    );
+    issues.push({
+      severity: "warn",
+      code: "batprov_check_failed",
+      message: `Could not query battery-provenance health: ${String(err)}`,
     });
   }
 

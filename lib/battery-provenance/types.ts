@@ -12,6 +12,7 @@ import type {
   SourceIntensity,
 } from "@/lib/aggregation/flow-matrix-core";
 import type { FoldStep, FoldState } from "./fold";
+import type { EtaDayDiag } from "./eta";
 
 export interface ProvenanceWindow {
   startMs: number;
@@ -56,6 +57,15 @@ export interface ProvenanceInputs {
   batteryChargeEnergyKwh?: (number | null)[];
   batteryDischargeEnergyKwh?: (number | null)[];
 
+  /**
+   * Persisted round-trip efficiency η(t) per interval (0<η≤1), aligned to `timeline`, read by the loader
+   * from the derived `bidi.battery/round-trip-efficiency` helper point. The REPRODUCIBLE η seam: η is
+   * learned once in the daily shell over a stable window and read back here, so a bounded re-fold gets the
+   * same η as a full-history run (repair-convergence holds). Undefined (no persisted point yet) → compute
+   * falls back to a config scalar or an in-window learned η (non-canonical bootstrap).
+   */
+  etaSeries?: (number | null)[];
+
   coverage: { soc: number; emissions: number; price: number };
 }
 
@@ -79,8 +89,10 @@ export interface ProvenanceResult {
   accounting: FlowAccountingResult;
   /** The per-source intensity series (index-aligned to inputs.sources) — for re-running per-day accounting. */
   sourceIntensities: (SourceIntensity | null)[];
-  /** The η actually used (learned or configured). */
+  /** The η actually used: a throughput-weighted summary of the learned η(t), or the configured scalar. */
   etaUsed: number;
+  /** Per-local-day learned-η trend (the degradation/hardware-step diagnostic); absent for a scalar η. */
+  etaByDay?: EtaDayDiag[];
   /** The reserve floor % actually used. */
   reserveUsed: number;
   /** Physical totals over the window (raw, before η) for the RTE diagnostic. */

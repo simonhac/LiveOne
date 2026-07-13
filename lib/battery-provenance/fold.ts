@@ -56,6 +56,13 @@ export interface FoldInterval {
   socPct: number | null;
   /** True if any priced grid input feeding this interval was provisional/estimated (Amber `estimated`). */
   gridEstimated: boolean;
+  /**
+   * Round-trip efficiency η in effect at THIS interval (0 < η ≤ 1). When set it overrides
+   * `FoldConfig.efficiency` — this is the seam for a learned, time-varying η(t) (see `eta.ts`): the shell
+   * stamps each interval with the η it learned so a bounded re-fold reproduces the same result. Undefined
+   * → the fold falls back to `FoldConfig.efficiency` (a single scalar), then to 1.
+   */
+  efficiency?: number;
 }
 
 export interface FoldConfig {
@@ -178,7 +185,7 @@ export function foldStep(
   iv: FoldInterval,
   config: FoldConfig,
 ): { next: FoldState; step: FoldStep } {
-  const eta = config.efficiency ?? 1;
+  const eta = iv.efficiency ?? config.efficiency ?? 1;
   const maxSeg = config.maxSegmentIntervals ?? Infinity;
   const eps = config.reanchorEpsKwh ?? 0;
   const s = { ...state };

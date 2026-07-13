@@ -2,6 +2,10 @@
 
 How the dashboard's energy‑flow **Sankey** stays correct over multi‑day ranges (weekly, 30‑day, calendar month).
 
+> **See also** [battery-provenance.md](battery-provenance.md): the Sankey is the ENERGY leg of a unified
+> `computeFlowAccounting`; provenance adds the METRIC legs (emissions/renewable/cost) on the same allocation,
+> materialized to the superset `point_readings_flow_attr_1d` and served via `?source=modern` on the endpoint below.
+
 ## The problem it solves
 
 The Sankey shows source→load energy flows (`lib/energy-flow-matrix.ts`): it integrates each load's energy per interval and allocates it across sources by their instantaneous share of generation. It needs **signed power at fine resolution**. Daily‑averaged power (`point_readings_agg_1d.avg`) cancels bidirectional flows — a battery that charges 20 kWh and discharges 20 kWh averages to ~0 kW → 0 kWh each way — so a Sankey built from `agg_1d` reports zero battery/grid energy.

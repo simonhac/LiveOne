@@ -104,6 +104,109 @@ export function pickDailyFlowMatrix(
   return matrixWithTotals(d.sources, d.loads, day.matrix);
 }
 
+/** One source's contribution to a load over the window (for the solar/battery/grid split). */
+export interface LoadSourceSplit {
+  path: string;
+  label: string;
+  energyKwh: number;
+}
+
+/**
+ * The per-load provenance summary over a `source=modern` window — the reduction behind
+ * "over &lt;period&gt;: $X, Y% renewable, Z g/kWh, N% estimated". Client-side so it needs no second fetch
+ * when the Sankey is already loaded.
+ *
+ * Averages use FILTERED denominators (the "known-intensity" kWh — energy on edges whose metric was
+ * non-null), so estimated/unknown edges don't bias g/kWh or %renewable. `pctEstimated` is the confidence
+ * chip: energy attributed with an estimated/unknown input over total energy.
+ */
+export interface LoadProvenanceSummary {
+  loadPath: string;
+  loadLabel: string;
+  energyKwh: number;
+  costC: number; // signed cents
+  avgCentsPerKwh: number | null;
+  pctRenewable: number | null; // 0..100
+  avgGramsPerKwh: number | null;
+  kgCo2: number;
+  pctEstimated: number; // 0..100
+  sources: LoadSourceSplit[]; // descending by energy, zero-energy sources dropped
+}
+
+/**
+ * Reduce a `source=modern` {@link DailyFlowMatrices} to one load's provenance summary (summing across all
+ * days and all sources). Returns null when the load isn't in the payload or the metric legs are absent
+ * (i.e. a legacy payload). Additive over days by construction — same as the energy reducers.
+ */
+export function reduceLoadProvenance(
+  d: DailyFlowMatrices,
+  loadId: string,
+): LoadProvenanceSummary | null {
+  const loadIdx = d.loads.findIndex((l) => l.id === loadId);
+  if (loadIdx < 0) return null;
+  // Metric legs ride only on modern payloads; bail if the first day lacks them.
+  if (d.days.length > 0 && d.days[0].emissionsG === undefined) return null;
+
+  let energyKwh = 0;
+  let emissionsG = 0;
+  let emissionsKnownKwh = 0;
+  let renewableKwh = 0;
+  let renewableKnownKwh = 0;
+  let costC = 0;
+  let costKnownKwh = 0;
+  let estimatedKwh = 0;
+  const sourceEnergy = d.sources.map(() => 0);
+
+  for (const day of d.days) {
+    for (let s = 0; s < d.sources.length; s++) {
+      const e = day.matrix[s]?.[loadIdx] ?? 0;
+      if (e === 0) continue;
+      energyKwh += e;
+      sourceEnergy[s] += e;
+      const eg = day.emissionsG?.[s]?.[loadIdx];
+      if (eg != null) {
+        emissionsG += eg;
+        emissionsKnownKwh += e;
+      }
+      const rk = day.renewableKwh?.[s]?.[loadIdx];
+      if (rk != null) {
+        renewableKwh += rk;
+        renewableKnownKwh += e;
+      }
+      const cc = day.costC?.[s]?.[loadIdx];
+      if (cc != null) {
+        costC += cc;
+        costKnownKwh += e;
+      }
+      estimatedKwh += day.estimatedKwh?.[s]?.[loadIdx] ?? 0;
+    }
+  }
+
+  const sources: LoadSourceSplit[] = d.sources
+    .map((src, s) => ({
+      path: src.id,
+      label: src.label,
+      energyKwh: sourceEnergy[s],
+    }))
+    .filter((x) => x.energyKwh > 0)
+    .sort((a, b) => b.energyKwh - a.energyKwh);
+
+  return {
+    loadPath: loadId,
+    loadLabel: d.loads[loadIdx].label,
+    energyKwh,
+    costC,
+    avgCentsPerKwh: costKnownKwh > 0 ? costC / costKnownKwh : null,
+    pctRenewable:
+      renewableKnownKwh > 0 ? (100 * renewableKwh) / renewableKnownKwh : null,
+    avgGramsPerKwh:
+      emissionsKnownKwh > 0 ? emissionsG / emissionsKnownKwh : null,
+    kgCo2: emissionsG / 1000,
+    pctEstimated: energyKwh > 0 ? (100 * estimatedKwh) / energyKwh : 0,
+    sources,
+  };
+}
+
 /** A source node is solar iff its id is the bare parent or a `source.solar.<leaf>` (incl. `.residual`). */
 function isSolarSourceId(id: string): boolean {
   return id === "source.solar" || id.startsWith("source.solar.");

@@ -522,10 +522,22 @@ export async function GET(request: NextRequest) {
     // Derived battery-provenance blend: reconcile the trailing window so the battery's blended
     // emissions/renewable/price stay fresh (KV latest for the live card). Best-effort; a no-op for
     // Areas without a bound battery.
-    try {
-      await reconcileBatteryProvenance(Date.now());
-    } catch (error) {
-      console.error("[Cron] battery-provenance reconcile failed:", error);
+    //
+    // Cadence gate: the blend inputs are 5-min-native (agg_5m), so a minutely recompute yields an
+    // identical value 4 ticks in 5 — a ~5× waste dominated by re-reading a ~7.5-day window each tick.
+    // Run at most once per 5-min bucket (2 min past the boundary, so the just-closed interval has
+    // materialised). The recompute's own 12h trailing window self-heals any tick Vercel skips and the
+    // daily heal guarantees correctness regardless, so the gate's only cost is up to ~5 min of
+    // KV-latest staleness on the live card. Manual/admin runs bypass the gate for testing.
+    const batProvNowMs = Date.now();
+    const batProvDue =
+      !authResult.isCron || new Date(batProvNowMs).getUTCMinutes() % 5 === 2;
+    if (batProvDue) {
+      try {
+        await reconcileBatteryProvenance(batProvNowMs);
+      } catch (error) {
+        console.error("[Cron] battery-provenance reconcile failed:", error);
+      }
     }
 
     const successCount = results.filter((r) => r.action === "POLLED").length;

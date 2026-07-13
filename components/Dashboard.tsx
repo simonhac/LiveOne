@@ -16,6 +16,11 @@ import GeneratorRunsCard from "@/components/GeneratorRunsCard";
 import DeviceMetricsCard from "@/components/DeviceMetricsCard";
 import GridSignalsCard from "@/components/GridSignalsCard";
 import { gridLatestFromData } from "@/lib/grid/latest";
+import BatteryBlendCard from "@/components/BatteryBlendCard";
+import { batteryBlendFromData } from "@/lib/battery/blend-latest";
+import LoadProvenanceCard from "@/components/LoadProvenanceCard";
+import { flowMatrixQuery } from "@/lib/queries/flowMatrix";
+import { reduceLoadProvenance } from "@/lib/energy-flow-matrix";
 import { nemRegionShortLabel } from "@/lib/vendors/openelectricity/region";
 import { isNemRegion } from "@/lib/vendors/openelectricity/types";
 import { capabilitiesFromLatest } from "@/lib/capabilities/derive";
@@ -240,6 +245,19 @@ function AreaSectionView({
             systemId={card.deviceSystemId ?? handle}
             variant={card.variant}
           />
+        ) : (
+          <ChartSkeleton key={cardKeyV3(card, i)} />
+        );
+      case "battery-blend":
+        // The blend points are bound INTO the Area, so read the section handle (not a member device).
+        return handle != null ? (
+          <AreaBatteryBlend key={cardKeyV3(card, i)} systemId={handle} />
+        ) : (
+          <ChartSkeleton key={cardKeyV3(card, i)} />
+        );
+      case "ev-provenance":
+        return handle != null ? (
+          <AreaLoadProvenance key={cardKeyV3(card, i)} systemId={handle} />
         ) : (
           <ChartSkeleton key={cardKeyV3(card, i)} />
         );
@@ -533,6 +551,62 @@ function AreaAmberNow({ systemId }: { systemId: number }) {
       </div>
       <AmberNow latest={latest} />
     </>
+  );
+}
+
+/**
+ * The live "Battery Blend" mini-card for a section — the emissions/renewable/price of the energy
+ * currently in the battery. The three blend points are bound into the Area, so they surface in the
+ * section handle's `dashboardDataQuery` `latest` map (read the handle, NOT the helper's systemId).
+ */
+function AreaBatteryBlend({ systemId }: { systemId: number }) {
+  const { isAnyModalOpen } = useModalContext();
+  const { data } = useQuery(
+    dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
+  );
+  return <BatteryBlendCard values={batteryBlendFromData(data ?? null)} />;
+}
+
+/**
+ * The per-load provenance report for a section (the EV by default) over a trailing window of completed
+ * days. Reads the section handle's timezone, fetches the `source=modern` flow matrix, and reduces the
+ * metric legs client-side into "$X, Y% renewable, Z g/kWh, N% estimated" + the source split.
+ */
+function AreaLoadProvenance({ systemId }: { systemId: number }) {
+  const { isAnyModalOpen } = useModalContext();
+  const { data } = useQuery(
+    dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
+  );
+  const tz = ((data ?? null) as AreaDatum | null)?.system?.timezoneOffsetMin;
+
+  // Trailing 30 COMPLETED local days (the attr rollup excludes today-so-far).
+  const offsetMs = (tz ?? 600) * 60_000;
+  const todayLocal = new Date(Date.now() + offsetMs);
+  const end = new Date(todayLocal);
+  end.setUTCDate(end.getUTCDate() - 1);
+  const start = new Date(todayLocal);
+  start.setUTCDate(start.getUTCDate() - 30);
+  const startYMD = start.toISOString().slice(0, 10);
+  const endYMD = end.toISOString().slice(0, 10);
+
+  const { data: fm, isLoading } = useQuery(
+    flowMatrixQuery({
+      systemId,
+      startYMD,
+      endYMD,
+      timezoneOffsetMin: tz ?? 600,
+      source: "modern",
+      enabled: tz != null && !isAnyModalOpen,
+    }),
+  );
+  const summary = fm ? reduceLoadProvenance(fm, "load.ev") : null;
+  return (
+    <LoadProvenanceCard
+      summary={summary}
+      periodLabel="last 30 days"
+      title="EV Charging"
+      loading={tz == null || isLoading}
+    />
   );
 }
 
