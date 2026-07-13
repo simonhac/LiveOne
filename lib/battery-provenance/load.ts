@@ -337,15 +337,15 @@ export async function loadProvenanceInputs(
       .from(systems)
       .where(eq(systems.id, batterySystemId))
       .limit(1);
-    const gen = (batSys?.config as any)?.batteryProvenance?.generatorSource;
-    if (gen && typeof gen.emissionsIntensity === "number") {
-      gridEmissions = timeline.map(() => gen.emissionsIntensity as number);
+    const gen = batSys?.config?.batteryProvenance?.generatorSource;
+    if (gen && Number.isFinite(gen.emissionsIntensity)) {
+      gridEmissions = timeline.map(() => gen.emissionsIntensity);
       gridEmissionsEstimated = timeline.map(() => false);
       gridRenewable = timeline.map(() =>
-        typeof gen.renewableFraction === "number" ? gen.renewableFraction : 0,
+        Number.isFinite(gen.renewableFraction) ? gen.renewableFraction : 0,
       );
-      if (typeof gen.pricePerKwh === "number") {
-        gridPrice = timeline.map(() => gen.pricePerKwh as number);
+      if (Number.isFinite(gen.pricePerKwh)) {
+        gridPrice = timeline.map(() => gen.pricePerKwh);
         gridPriceEstimated = timeline.map(() => false);
       }
     }

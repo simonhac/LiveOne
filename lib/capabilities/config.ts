@@ -15,6 +15,28 @@
  */
 import type { CapabilityId } from "@/lib/capabilities/registry";
 
+/**
+ * Off-grid GENERATOR source intensity. For a site whose inverter AC-input (measured as `bidi.grid`) is a
+ * generator rather than a mains grid, these constants price that "grid" energy in the battery-provenance
+ * model — there is no OpenElectricity/Amber signal off-grid. Read by `loadProvenanceInputs` when the Area
+ * has no NEM region. See `docs/architecture/battery-provenance.md` § Off-grid sites + generator. (This is a
+ * VALUE knob, not the forbidden role remap — the "bidi.grid is the generator" mapping is a binding-level
+ * fact; this only supplies its intensity.)
+ */
+export interface GeneratorSourceConfig {
+  /** Emissions intensity of the generator's electrical output (gCO₂/kWh). */
+  emissionsIntensity: number;
+  /** Cost of the generator's electrical output (c/kWh). */
+  pricePerKwh: number;
+  /** Renewable fraction of the output (0..1) — 0 for diesel, > 0 for bio-fuel blends. */
+  renewableFraction: number;
+}
+
+/** Per-device battery-provenance knobs (currently just the off-grid generator source). */
+export interface BatteryProvenanceConfig {
+  generatorSource?: GeneratorSourceConfig;
+}
+
 export interface DeviceConfig {
   /** Force a derived capability ON (true) or OFF (false); absent ⇒ derive from points as normal. */
   capabilities?: Partial<Record<CapabilityId, boolean>>;
@@ -22,6 +44,8 @@ export interface DeviceConfig {
   nameplateKw?: number;
   /** Expected update cadence (seconds) — forward seam to retire the hardcoded vendor stale threshold. */
   updateCadenceSeconds?: number;
+  /** Battery-provenance per-device config (currently the off-grid generator source intensity). */
+  batteryProvenance?: BatteryProvenanceConfig;
 }
 
 /**

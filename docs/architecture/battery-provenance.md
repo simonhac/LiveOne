@@ -207,12 +207,20 @@ off-grid `generatorSource` triple lives on the battery system's `config.batteryP
 
 ## Operations
 
-- **Backfill** — `scripts/backfill-battery-provenance.ts` (dry-run default) runs `recomputeRange` over full
-  history; idempotent. Re-run when recovered upstream data (e.g. an Amber gap) lands.
-- **Prod cutover** (pending): apply migration `0023` to `sydney` **as the `postgres` role** (table-ownership
-  trap) **BEFORE** the dependent code deploys; then the crons auto-create the helper devices + blend +
-  rollup, or run the backfill against `sydney` to populate history immediately. See PR #160's runbook and
-  [migrations.md](migrations.md).
+- **Activate an Area via API** (the recommended path — no direct DB access) — three owner/admin calls:
+  1. `PUT /api/areas/{areaId}/bindings` — the role→point bindings (battery power/soc/charge+discharge
+     energy, solar, load; for an off-grid site also `bidi.grid` = the generator, `transform:null` to inherit
+     its `i` sign flip).
+  2. `PATCH /api/admin/systems/{batterySystemId}/config` — set `batteryProvenance.generatorSource`
+     `{emissionsIntensity, pricePerKwh, renewableFraction}` (send the WHOLE config; PATCH **replaces** the blob).
+  3. `POST /api/areas/{areaId}/recompute-provenance` — bounded-batch materialise: learns η on the first batch,
+     then recomputes blend + rollup, ensuring the helper device + points on demand. Loop on the returned
+     `nextCursor` until `done` (body `{start?,end?,last?,cursor?,limit?}`, same semantics as `recompute-flow`).
+- **Backfill (bulk / DBA)** — `scripts/backfill-battery-provenance.ts` (dry-run default) runs `recomputeRange`
+  over full history (learns η first); idempotent. For a one-off bulk backfill, or when the API isn't reachable.
+  Re-run when recovered upstream data (e.g. an Amber gap) lands.
+- **Prod cutover** — migration `0023` applied to `sydney`; the crons auto-create helpers + blend + rollup, and
+  the backfill (or the recompute-provenance API) materialises full history. See [migrations.md](migrations.md).
 
 ## Not yet (follow-ups)
 
