@@ -97,8 +97,10 @@ allocation (the point's `i` transform flips the inverter's raw sign so generator
 import). Its intensity is **config, not telemetry** — most off-grid sites have no queryable engine
 controller, and the generator's _power_ isn't separately metered. So the battery system carries
 `config.batteryProvenance.generatorSource = { emissionsIntensity, pricePerKwh, renewableFraction }`, and the
-loader — for an area with **no NEM region** — feeds those constants into the grid intensity series. The fold
-then prices generator charge and direct use exactly like grid; **no fold change**. Opt-in: absent config →
+loader, whenever this config is present, feeds those constants into the grid intensity series — **overriding
+any resolved NEM region** (setting `generatorSource` is the explicit statement that the AC-input is a
+generator; an off-grid site can still be geolocated in VIC without being on the VIC1 grid). The fold then
+prices generator charge and direct use exactly like grid; **no fold change**. Opt-in: absent config →
 generator energy stays `estimated` (no regression).
 
 ## Inputs, tolerance & confidence (`estimatedKwh`)
