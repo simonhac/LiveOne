@@ -140,8 +140,14 @@ pattern; see [home-assistant-comparison.md](home-assistant-comparison.md)):
 
 ## Storage
 
-- **Live blend** — the 3 derived points on the helper (`agg_5m` + KV latest). Serve on the Area dashboard
-  via the generic point stack.
+- **Live blend** — the 5 derived points on the helper (`agg_5m` + KV latest), all written per interval by
+  the same blend loop from one `FoldStep`: `carbon-intensity`, `renewable-fraction`, `price` (ACTUAL,
+  out-of-pocket), `price-opportunity` (solar @ forgone feed-in), and `stored-energy` (usable kWh E). Serve on
+  the Area dashboard via the generic point stack. The **Battery Contents card** (`components/BatteryContentsCard.tsx`,
+  selector `lib/battery/contents-latest.ts`) reads these: the absolute totals are DERIVED client-side —
+  `intensity × stored-energy` reconstructs each total exactly (total carbon, actual/opportunity cost, export
+  value), nothing extra is stored. (`round-trip-efficiency` is a 6th point but written by the η shell, not
+  the blend loop.)
 - **Attribution rollup** — `point_readings_flow_attr_1d` (`lib/db/planetscale/schema.ts`; migration
   `0023`). Keyed exactly like `point_readings_flow_1d` `(area_id, day, source_path, load_path)` and carrying
   **energy too**, plus `emissions_g` / `renewable_kwh` / `cost_c` (nullable — null = intensity unknown),
@@ -203,9 +209,29 @@ differ only at the edges: which window, and write-vs-print):
 `ProvenanceConfig` (`lib/battery-provenance/types.ts`): `reserveFloorPct` (default = a long-window ~2nd-
 percentile of SoC, robust to non-cycling — computed once and **KV-cached ~25 h**, so the 90-day SoC read is
 off the hot path and stable within a day), `efficiency` (a number pin; otherwise η is the persisted
-`round-trip-efficiency` series, above), `solarValuation` (`"zero"` out-of-pocket, or `"opportunity"` =
-forgone feed-in floored at `max(0, feed-in)`), `maxSegmentIntervals` (drift backstop), `reanchorEpsKwh`. The
+`round-trip-efficiency` series, above), `maxSegmentIntervals` (drift backstop), `reanchorEpsKwh`. The
 off-grid `generatorSource` triple lives on the battery system's `config.batteryProvenance` (above).
+
+## Opportunity cost & the export tariff
+
+Solar charged into the battery is **free out-of-pocket** but **forgoes the feed-in revenue** you'd have
+earned exporting it. The fold tracks BOTH bases every run as a **parallel accumulator** (`costC` actual @
+solar-0, `costOppC` opportunity @ solar-feed-in) → `price` and `price-opportunity` points; the actual/
+opportunity split is first-class, not a toggle. The fold consumes only a per-interval `exportPrice[]`
+series — it never sees modes/schedules — so the source is pluggable. `resolveExportPriceSeries`
+(`lib/battery-provenance/tariff.ts`) resolves it from `config.batteryProvenance.exportTariff`:
+
+- **`{ mode: "none" }`** (default) — no opportunity cost (`price-opportunity` == `price`).
+- **`{ mode: "amber" }`** — the measured `bidi.grid.export/rate` feed-in series.
+- **`{ mode: "schedule", plans }`** — a retailer schedule synthesised per interval. Plans are **effective-
+  dated** (`effectiveFrom`; newest ≤ the interval's local date wins) so a historical re-fold prices each
+  interval with the plan in force then. Flat rates today; the `tou` band shape is schema-reserved
+  (`ScheduleTariffProvider` throws until the evaluator lands). Set via the config route.
+
+Designed so a future **persisted tariff device** drops in with no fold change — it would materialise the
+same schedule (reusing `ScheduleTariffProvider`) into a `bidi.grid.export/rate` point the loader reads
+exactly like Amber. The per-day attribution rollup stays ACTUAL cost; opportunity lives only in the battery
+fold / the Contents card.
 
 ## Operations
 

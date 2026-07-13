@@ -446,3 +446,69 @@ describe("foldBatteryProvenance", () => {
     });
   });
 });
+
+describe("opportunity cost (parallel accumulator)", () => {
+  const CONFIG: FoldConfig = { reserveFloorPct: 10 };
+
+  it("solar charge: opportunity basis reflects forgone feed-in", () => {
+    // 10 kWh solar in, actual solar cost 0, opportunity (forgone feed-in) 8 c/kWh.
+    const { steps, finalState } = foldBatteryProvenance(
+      [iv({ solarChargeKwh: 10, solarCost: 0, solarCostOpp: 8, socPct: 80 })],
+      CONFIG,
+    );
+    // Intensities are null on the first charging interval (store empty at its start)...
+    expect(steps[0].batteryPriceOpportunity).toBeNull();
+    // ...but the accumulated bases: actual = 0, opportunity = 8 c/kWh × 10 kWh.
+    expect(finalState.costC).toBeCloseTo(0, 6);
+    expect(finalState.costOppC).toBeCloseTo(80, 6);
+    expect(finalState.costOppC / finalState.storedKwh).toBeCloseTo(8, 6);
+  });
+
+  it("undefined solarCostOpp defaults to solarCost (opportunity == actual)", () => {
+    const { finalState } = foldBatteryProvenance(
+      [iv({ solarChargeKwh: 5, solarCost: 3, socPct: 80 })],
+      CONFIG,
+    );
+    expect(finalState.costOppC).toBeCloseTo(finalState.costC, 6);
+  });
+
+  it("grid charge only: opportunity == actual (only the solar term differs)", () => {
+    const { finalState } = foldBatteryProvenance(
+      [
+        iv({
+          gridChargeKwh: 6,
+          gridPrice: 25,
+          gridEmissionsIntensity: 700,
+          gridRenewableFraction: 0.1,
+          solarCostOpp: 8,
+          socPct: 80,
+        }),
+      ],
+      CONFIG,
+    );
+    expect(finalState.costOppC).toBeCloseTo(finalState.costC, 6);
+    expect(finalState.costOppC).toBeCloseTo(150, 6);
+  });
+
+  it("discharge draws both cost bases down proportionally (intensities unchanged)", () => {
+    const intervals = [
+      iv({ solarChargeKwh: 10, solarCost: 0, solarCostOpp: 8, socPct: 80 }),
+      iv({ dischargeKwh: 4, socPct: 60 }),
+    ];
+    const { steps } = foldBatteryProvenance(intervals, CONFIG);
+    // After a partial discharge the per-kWh opportunity price is unchanged (weighted-average draw-down).
+    expect(steps[1].batteryPriceOpportunity).toBeCloseTo(8, 6);
+    expect(steps[1].batteryPrice).toBe(0);
+  });
+
+  it("reset discards the opportunity basis to its unattributed-loss bucket", () => {
+    const cfg: FoldConfig = { reserveFloorPct: 10, reanchorEpsKwh: 0.3 };
+    const intervals = [
+      iv({ solarChargeKwh: 5, solarCost: 0, solarCostOpp: 10, socPct: 80 }),
+      iv({ dischargeKwh: 5, socPct: 12 }), // drains to empty → reset
+    ];
+    const { finalState } = foldBatteryProvenance(intervals, cfg);
+    expect(finalState.costOppC).toBe(0);
+    expect(finalState.storedKwh).toBe(0);
+  });
+});

@@ -68,6 +68,12 @@ function blendValue(step: FoldStep, metricType: string): number | null {
         : step.batteryRenewableFraction * 100;
     case "price":
       return step.batteryPrice;
+    case "price-opportunity":
+      return step.batteryPriceOpportunity;
+    case "stored-energy":
+      // Usable stored energy E. Unlike the intensities this is 0 (not null) when the store is empty —
+      // but 0 kWh is written so the Contents card reads "empty" rather than a stale value.
+      return step.storedKwh;
     default:
       return null;
   }

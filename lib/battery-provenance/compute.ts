@@ -12,6 +12,7 @@ import {
 import { extractBatteryFlows } from "./battery-flows";
 import { learnEwmaEta, type EtaDayDiag } from "./eta";
 import { foldBatteryProvenance, FoldConfig, FoldInterval } from "./fold";
+import { resolveExportPriceSeries } from "./tariff";
 import type {
   ProvenanceConfig,
   ProvenanceInputs,
@@ -26,7 +27,6 @@ export function computeBatteryProvenance(
   config: ProvenanceConfig = {},
 ): ProvenanceResult {
   const { timeline, sources, loads } = inputs;
-  const solarValuation = config.solarValuation ?? "zero";
 
   // Per-interval battery charge split + discharge from the flow allocation (power-integrated), then
   // PREFER exact energy registers where the Area binds them (config: attach to power OR energy).
@@ -105,10 +105,19 @@ export function computeBatteryProvenance(
   }
   const reserveUsed = config.reserveFloorPct ?? inputs.estReservePct;
 
-  const solarCost = (i: number) =>
-    solarValuation === "opportunity"
-      ? Math.max(0, inputs.gridExportPrice[i] ?? 0)
-      : 0;
+  // Dual solar cost basis (both computed every run — opportunity is first-class, not a toggle):
+  //   • ACTUAL   — solar is out-of-pocket free (0). Feeds `costC` → `batteryPrice`.
+  //   • OPPORTUNITY — solar priced at forgone feed-in from the resolved export tariff. Feeds `costOppC`
+  //                   → `batteryPriceOpportunity`. The tariff SOURCE (none/amber/schedule) is resolved
+  //                   here into a single exportPrice[] series; the fold never sees modes/schedules.
+  const SOLAR_ACTUAL_COST = 0;
+  const exportPrice = resolveExportPriceSeries(
+    inputs.exportTariff,
+    timeline,
+    inputs.timezoneOffsetMin,
+    inputs.gridExportPrice,
+  );
+  const solarCostOpp = (i: number) => Math.max(0, exportPrice[i] ?? 0);
 
   const foldConfig: FoldConfig = {
     reserveFloorPct: reserveUsed,
@@ -125,7 +134,8 @@ export function computeBatteryProvenance(
     gridEmissionsIntensity: inputs.gridEmissions[i],
     gridRenewableFraction: inputs.gridRenewable[i],
     gridPrice: inputs.gridPrice[i],
-    solarCost: solarCost(i),
+    solarCost: SOLAR_ACTUAL_COST,
+    solarCostOpp: solarCostOpp(i),
     socPct: inputs.soc[i],
     gridEstimated:
       inputs.gridEmissionsEstimated[i] || inputs.gridPriceEstimated[i],
@@ -147,7 +157,9 @@ export function computeBatteryProvenance(
       return {
         emissions: timeline.map(() => 0),
         renewable: timeline.map(() => 1),
-        price: timeline.map((_, i) => solarCost(i)),
+        // The per-day attribution rollup stays ACTUAL (out-of-pocket) cost; opportunity cost lives only
+        // in the battery fold's parallel accumulator (→ the `price-opportunity` derived point).
+        price: timeline.map(() => SOLAR_ACTUAL_COST),
         estimated: timeline.map(() => false),
       };
     }

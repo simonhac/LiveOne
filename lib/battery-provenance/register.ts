@@ -1,10 +1,13 @@
 /**
  * Register the derived battery-provenance BLEND points for a system — the HWS/run-tracking derived-point
- * pattern (a normal `point_info` row + its own agg_5m + KV latest; NO new table/API/flag). Three points,
+ * pattern (a normal `point_info` row + its own agg_5m + KV latest; NO new table/API/flag). Five points,
  * all on stem `bidi.battery`, describe "the energy currently in the battery":
- *   bidi.battery/carbon-intensity  (gCO2/kWh)
+ *   bidi.battery/carbon-intensity   (gCO2/kWh)
  *   bidi.battery/renewable-fraction (%)
- *   bidi.battery/price             (c/kWh)
+ *   bidi.battery/price              (c/kWh)  — ACTUAL (out-of-pocket) cost basis
+ *   bidi.battery/price-opportunity  (c/kWh)  — OPPORTUNITY cost basis (solar @ forgone feed-in)
+ *   bidi.battery/stored-energy      (kWh)    — usable stored energy (E); the totals the Contents card
+ *                                              shows are `intensity × stored-energy`, reconstructed exactly.
  * Their existence is what enables the recompute (lib/db/planetscale/battery-provenance-pg.ts). The system
  * must have a `bidi.battery` power point (the battery signal) to be eligible.
  */
@@ -20,7 +23,8 @@ export interface BlendPointSpec {
   displayName: string;
 }
 
-/** The three derived blend points (keyed by metricType within the `bidi.battery` stem). */
+/** The derived blend points (keyed by metricType within the `bidi.battery` stem). All written per
+ *  interval by the blend loop from the same `FoldStep` (unlike EFFICIENCY_POINT, written by the η shell). */
 export const BLEND_POINTS: BlendPointSpec[] = [
   {
     metricType: "carbon-intensity",
@@ -36,6 +40,16 @@ export const BLEND_POINTS: BlendPointSpec[] = [
     metricType: "price",
     metricUnit: "cents_kWh",
     displayName: "Battery Energy Price",
+  },
+  {
+    metricType: "price-opportunity",
+    metricUnit: "cents_kWh",
+    displayName: "Battery Opportunity Price",
+  },
+  {
+    metricType: "stored-energy",
+    metricUnit: "kWh",
+    displayName: "Battery Usable Energy",
   },
 ];
 
