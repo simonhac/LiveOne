@@ -43,6 +43,8 @@
 
 ## Plans (proposed — not yet started)
 
+- [plans/info-producers-consumers.md](plans/info-producers-consumers.md) — typed-shape **info producers & consumers**: devices advertise what info (status _and_ config) they can supply; consumers seek the best source per input; **auto-connect on shape-agreement** (HA discovery) + **explicit Area wiring** (with priority). Battery energy provenance is the first consumer; generalizes the capability/binding/KV-fan-out seams
+- [plans/battery-provenance-ops-hardening.md](plans/battery-provenance-ops-hardening.md) — **battery energy provenance** correctness bugs (modern `flow_attr_1d` energy leg diverging from the legacy `flow_1d` Sankey; the `recompute-provenance` API dropping a boundary day per batch) + ops-ergonomics fixes (a legacy↔modern consistency invariant, an activate/verify operation, handle→areaId lookup) — surfaced during the 2026-07-13 Daylesford reprice
 - [plans/timestamptz-migration.md](plans/timestamptz-migration.md) — migrate time-series time columns to `timestamptz` (needs schema-change approval)
 - [plans/identity-address-split-and-labels.md](plans/identity-address-split-and-labels.md) — two HA-borrowings: split point identity from address (`point_uid`) + a Label orthogonal tag dimension (needs schema-change approval)
 

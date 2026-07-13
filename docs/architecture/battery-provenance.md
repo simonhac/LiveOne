@@ -1,4 +1,4 @@
-# Battery provenance — metric-attributed energy flows
+# Battery energy provenance — metric-attributed energy flows
 
 > **Status:** engine + data core LIVE on `main` (PR #160), validated on `liveone-dev`. A second wave —
 > reproducible learned η (a persisted `round-trip-efficiency` point), off-grid **generator** support, and the

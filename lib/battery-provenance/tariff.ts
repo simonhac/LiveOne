@@ -35,12 +35,6 @@ function localFields(ms: number, tzOffsetMin: number) {
   };
 }
 
-/** "HH:MM" → minutes since local midnight. */
-function hhmmToMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(":");
-  return Number(h) * 60 + Number(m);
-}
-
 /**
  * A retailer-schedule provider: selects the effective plan for the interval's local date (newest
  * `effectiveFrom` ≤ date wins; before the earliest plan ⇒ null) then evaluates its rate. Pure & reusable —

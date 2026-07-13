@@ -95,9 +95,13 @@ export function computeFlowAccounting(input: {
   /** Index-aligned to `sources`; omit for the energy-only path. A null entry = a source with no intensity. */
   sourceIntensities?: (SourceIntensity | null)[];
   /**
-   * Optional attribution window (epoch-ms): accumulate ONLY intervals whose END (timestamps[i+1]) is in
-   * (startMs, endMs]. Used to slice a single local DAY out of a longer loaded/folded window for the
-   * per-day rollup, while the caller's fold ran over the whole window for anchoring. Omit = all intervals.
+   * Optional attribution window (epoch-ms): accumulate ONLY intervals that lie ENTIRELY within the
+   * window — start `timestamps[i] >= startMs` AND end `timestamps[i+1] <= endMs`. Used to slice a single
+   * local DAY out of a longer loaded/folded window for the per-day rollup, while the caller's fold ran
+   * over the whole window for anchoring. Requiring the WHOLE interval (not just its end) to fall inside
+   * makes the per-day slice byte-identical to integrating that day's samples in isolation (the legacy
+   * `flow_1d` recompute), so a gap-/midnight-spanning interval is NOT attributed wholly to the later day.
+   * Omit = all intervals.
    */
   window?: { startMs: number; endMs: number };
 }): FlowAccountingResult {
@@ -117,10 +121,13 @@ export function computeFlowAccounting(input: {
   let intervalsUsed = 0;
 
   for (let i = 0; i < timestamps.length - 1; i++) {
-    // Attribution window: interval i is "in" the window if its END lands in (startMs, endMs].
+    // Attribution window: integrate interval i only if it lies ENTIRELY inside the window — its start
+    // >= startMs AND its end <= endMs. A cross-boundary interval (start before the window, e.g. spanning
+    // a data gap or midnight) belongs to the prior day and is dropped here, matching the isolated
+    // per-day integration of the legacy `flow_1d` recompute.
     if (
       window &&
-      (timestamps[i + 1] <= window.startMs || timestamps[i + 1] > window.endMs)
+      (timestamps[i] < window.startMs || timestamps[i + 1] > window.endMs)
     ) {
       continue;
     }
