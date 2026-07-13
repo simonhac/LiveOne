@@ -4,7 +4,10 @@ import { requireSystemAccess } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
 import { derivedCapabilitiesForSystem } from "@/lib/capabilities/server";
 import { CAPABILITIES, type CapabilityId } from "@/lib/capabilities/registry";
-import type { DeviceConfig } from "@/lib/capabilities/config";
+import type {
+  DeviceConfig,
+  BatteryProvenanceConfig,
+} from "@/lib/capabilities/config";
 
 // Per-device CONFIG endpoint — reads/writes the typed `systems.config` (DeviceConfig) jsonb blob that
 // data-drives capability on/off overrides + nameplateKw + updateCadenceSeconds (see
@@ -48,6 +51,50 @@ function parseDeviceConfig(
     if (typeof v !== "number" || !Number.isFinite(v) || v <= 0)
       return { error: `\`${field}\` must be a positive number` };
     out[field] = v;
+  }
+
+  // Battery-provenance config — currently the off-grid generator source intensity.
+  if (body.batteryProvenance !== undefined && body.batteryProvenance !== null) {
+    if (!isPlainObject(body.batteryProvenance))
+      return { error: "`batteryProvenance` must be an object" };
+    const bp: BatteryProvenanceConfig = {};
+    const gs = body.batteryProvenance.generatorSource;
+    if (gs !== undefined && gs !== null) {
+      if (!isPlainObject(gs))
+        return {
+          error: "`batteryProvenance.generatorSource` must be an object",
+        };
+      const nonNeg = (v: unknown): v is number =>
+        typeof v === "number" && Number.isFinite(v) && v >= 0;
+      const frac =
+        gs.renewableFraction === undefined || gs.renewableFraction === null
+          ? 0
+          : gs.renewableFraction;
+      if (!nonNeg(gs.emissionsIntensity))
+        return {
+          error:
+            "`generatorSource.emissionsIntensity` must be a number ≥ 0 (gCO2/kWh)",
+        };
+      if (!nonNeg(gs.pricePerKwh))
+        return {
+          error: "`generatorSource.pricePerKwh` must be a number ≥ 0 (c/kWh)",
+        };
+      if (
+        typeof frac !== "number" ||
+        !Number.isFinite(frac) ||
+        frac < 0 ||
+        frac > 1
+      )
+        return {
+          error: "`generatorSource.renewableFraction` must be between 0 and 1",
+        };
+      bp.generatorSource = {
+        emissionsIntensity: gs.emissionsIntensity,
+        pricePerKwh: gs.pricePerKwh,
+        renewableFraction: frac,
+      };
+    }
+    if (Object.keys(bp).length > 0) out.batteryProvenance = bp;
   }
 
   return { config: Object.keys(out).length > 0 ? out : null };
