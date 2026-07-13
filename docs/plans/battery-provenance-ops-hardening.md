@@ -115,6 +115,36 @@ on the fixed code** to materialise it (Kinkora, effectively gap-free, is unaffec
    the response type. (And note: the browser automation tool's safety filter blocks echoing query strings,
    so verification scripts must return only sanitized/structural values.)
 
+## Scope decision (2026-07-13 review)
+
+Assessed against Simon's filter — **only implement code that will be run again and makes systems ops
+simpler**. The recompute path is not one-off tooling (it re-runs on every area activation, tariff/
+intensity change, and re-backfill), so most of the list passes; two items are trimmed.
+
+**Do (in order):**
+
+1. **#1 remainder — the per-area `Σ modern == Σ legacy` live `monitor-observations` alert.** The math
+   is now guarded by the `flow-matrix-core.test.ts` regression tests; the alert is what catches a live
+   divergence unattended. Highest-leverage item; would have caught both Part-1 bugs.
+2. **#2, endpoint only — `GET /api/areas/[areaId]/provenance-summary`** (per-source intensities +
+   legacy↔modern delta + day coverage). Turns activate-then-verify into two calls; used on every
+   future reprice/activation.
+3. **#3 — handle→areaId lookup.** Tiny; needed at the start of every ops session against an area.
+4. **#6 — accept `CRON_SECRET` Bearer on the recompute/provenance endpoints** (same pattern as
+   `/api/cron/daily`). Removes the browser-extension/JWT dance for headless ops.
+5. **#5 — the reprice runbook + fix the stale CLAUDE.md `build-registry` reference**; fold #7's
+   response-type note into the runbook.
+6. **#4 — unify the API/script recompute paths.** Both Part-1 bugs are already fixed with regression
+   tests, so this is no longer a prerequisite — do it the next time the recompute is touched, so the
+   two paths can't silently diverge again.
+
+**Trim (fails the filter):**
+
+- **The `reprice-area <handle>` admin CLI wrapper** (second half of #2): with the summary endpoint +
+  `CRON_SECRET` auth a reprice is 2–3 curl calls; a CLI is a third code path to keep in sync with the
+  engine. Revisit only if reprices become frequent.
+- **#7 as standalone work:** nothing to build — one paragraph in the runbook.
+
 ## Verification / repro
 
 - **Bug A repro:** on any battery area, run the `recompute-provenance` API loop over full history, then
@@ -129,6 +159,8 @@ on the fixed code** to materialise it (Kinkora, effectively gap-free, is unaffec
 
 ## Sequencing note
 
-These belong to the battery-provenance engine (currently being consolidated with the `san-diego-v4`
-work). Schedule after that consolidation lands and deploys, then **re-backfill Daylesford once** on the
-fixed, consolidated code — do not re-backfill on the current (buggy-coverage) path.
+The Part-1 fixes ship **on this branch** (`simonhac/battery-energy-provenance`, with the Battery
+Contents / opportunity-cost / export-tariff work). After it merges and deploys: **re-backfill
+Daylesford once** on the fixed code (never on the pre-fix path), verify the acceptance numbers above,
+then schedule the Part-2 "Do" list — the monitor alert first. Full merge choreography:
+[`battery-provenance-merge-handoff.md`](battery-provenance-merge-handoff.md).

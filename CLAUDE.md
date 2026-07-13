@@ -95,12 +95,10 @@ The application uses Vercel KV to cache the latest point values for fast retriev
    - Go to project settings → Environment Variables
    - Add both `KV_REST_API_URL` and `KV_REST_API_TOKEN`
 
-5. **Build subscription registry** (one-time setup):
-   ```bash
-   # After first deployment, call this to build the composite system subscription registry:
-   curl -X POST https://your-app.vercel.app/api/admin/kv/build-registry \
-     -H "Authorization: Bearer <your-token>"
-   ```
+5. **Build subscription registry** (one-time setup): there is no standalone admin route for this —
+   `buildSubscriptionRegistry()` (`lib/kv-cache-manager.ts`) runs automatically via
+   `refreshAreaServing` on every area/binding mutation. To rebuild it directly, run
+   `npx tsx scripts/build-subscription-registry.ts`.
 
 **Note**: The KV cache will gracefully degrade if not configured (warnings in logs but no errors).
 

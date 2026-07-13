@@ -15,7 +15,7 @@ grid emissions/renewable/price, from **several different devices** (Kinkora alre
 _power_ [Mondo `6.9`] from _SoC_ [Fronius `5.7`]), across **three battery vendors** (Selectronic,
 Sigenergy, Fronius[=`fusher`]), where the metrics are **separable** (emissions from OpenElectricity,
 price from Amber). Today each consumer re-invents "find my inputs," and the fold in particular selects
-a source by **nondeterministic first-wins**.
+sources **nondeterministically** (DB return order — first-wins or last-wins depending on the slot).
 
 The goal is a single, HA-faithful model — **info producers and consumers that agree on the _shape_ of
 the info exchanged** — that:
@@ -91,10 +91,15 @@ This is HA's `device_class ⊥ state_class ⊥ unit ⊥ energy-role`, which Live
 
 ## The three gaps to close
 
-1. **No per-slot source _selection_.** The fold picks a single source by **first-wins** —
-   `Array.find` over an **unordered** query, **ignoring `area_bindings.ordinal`**
-   (`lib/battery-provenance/load.ts:193-397`). No priority, no fallback chain, no determinism when two
-   devices satisfy one `(role,metric)`. _(Power is a genuine sum-union, `flow-series.ts`; that stays.)_
+1. **No per-slot source _selection_.** The fold's binding reads **ignore `area_bindings.ordinal`**
+   entirely — `boundPoints` has no `orderBy` (`lib/battery-provenance/load.ts:130-149`), so selection
+   rides on DB return order. The per-slot mechanics differ (each wrong in its own way): battery
+   power/SoC/charge/discharge/η are first-wins `Array.find` (`load.ts:195,220,362-367,399`); grid
+   **price** is a filter + assignment loop, i.e. **last**-wins (`load.ts:~311-328`); grid
+   **emissions/renewable are not selected from bindings at all** — an OE region lookup from
+   `area.location` (`load.ts:267-307`), which the resolver must formalize as an auto/region _producer_
+   rather than swap in place. No priority, no fallback chain, no determinism when two devices satisfy
+   one `(role,metric)`. _(Power is a genuine sum-union, `flow-series.ts`; that stays.)_
 2. **No shape _validation_ at bind time.** Binding a point to a role does **not** check the point's
    `metric_type`/stem is compatible with the role (`create.ts:277-290`). The only compatibility signal
    is a cosmetic UI dot (`BindingsTab.tsx:206-216`, `stemMatchesRole`); `roles.validatesCompositePath`
@@ -125,11 +130,13 @@ fan-out, and a parallel layer would duplicate addressing and collide with in-fli
 4. **Availability → confidence.** The resolver's `available:false`/stale outcome feeds the existing
    `estimatedKwh` confidence channel (the fold already surfaces "% estimated"), so a missing source
    degrades to best-effort and heals on recompute when it returns.
-5. **Config as a producer.** Model `generatorSource` (and — after it merges — `exportTariff`, see
-   Coordination) as **config-kind producers** of the `grid/emissions-intensity` / `grid/price` /
-   `grid/export-price` shapes, resolved by the same `resolveInfoSources` step. This unifies status +
-   config and generalizes the in-flight `TariffProvider` seam (loader resolves a config-backed provider
-   → a per-interval series) into the general resolver.
+5. **Config as a producer.** Model `generatorSource` and `exportTariff` (both live on the
+   battery-energy-provenance branch, see Coordination) as **config-kind producers** of the
+   `grid/emissions-intensity` / `grid/price` / `grid/export-price` shapes, resolved by the same
+   `resolveInfoSources` step. The `TariffProvider` seam is implemented
+   (`lib/battery-provenance/tariff.ts` — `resolveExportPriceSeries :97` turns `{none|amber|schedule}`
+   into the one per-interval series the fold consumes); it is exactly a narrow instance of this
+   resolver, so generalize it rather than wrapping it.
 6. **(Optional, later) shared helper.** Once proven on the fold, lift a generic
    `resolveInfoPort(area, shape)` that cards and derived points can also call, so "find my typed input"
    is one function repo-wide.
@@ -138,16 +145,17 @@ fan-out, and a parallel layer would duplicate addressing and collide with in-fli
 
 The fold's declared input slots and how the resolver fills them on the two live sites:
 
-| Input slot (shape)          | Kinkora (area 8)                   | Daylesford (area 1000002)                 | Multi-source?                             |
-| --------------------------- | ---------------------------------- | ----------------------------------------- | ----------------------------------------- |
-| `battery/power`             | Mondo `6.9`                        | Selectronic `1`                           | yes (Selectronic/Sigenergy/Fronius/Mondo) |
-| `battery/soc`               | Fronius `5.7`                      | Selectronic `1`                           | yes (Selectronic/Sigenergy/Fronius)       |
-| `battery/charge-energy`     | Fronius (`bidi.battery.charge`)    | Selectronic                               | per battery vendor                        |
-| `battery/discharge-energy`  | Fronius (`bidi.battery.discharge`) | Selectronic                               | per battery vendor                        |
-| `grid/emissions-intensity`  | OE VIC1 (by `area.location`)       | **config** `generatorSource` (1000 g/kWh) | single-sourced (OE) unless config         |
-| `grid/renewable-fraction`   | OE VIC1                            | **config** `generatorSource` (0)          | OE today; Amber capable                   |
-| `grid/price`                | Amber `9` (`bidi.grid.import`)     | **config** `generatorSource` (70 c/kWh)   | Amber today                               |
-| `solar/power`, `load/power` | Mondo leaves                       | Selectronic leaves                        | yes (summed union — unchanged)            |
+| Input slot (shape)          | Kinkora (area 8)                                               | Daylesford (area 1000002)                     | Multi-source?                             |
+| --------------------------- | -------------------------------------------------------------- | --------------------------------------------- | ----------------------------------------- |
+| `battery/power`             | Mondo `6.9`                                                    | Selectronic `1`                               | yes (Selectronic/Sigenergy/Fronius/Mondo) |
+| `battery/soc`               | Fronius `5.7`                                                  | Selectronic `1`                               | yes (Selectronic/Sigenergy/Fronius)       |
+| `battery/charge-energy`     | Fronius (`bidi.battery.charge`)                                | Selectronic                                   | per battery vendor                        |
+| `battery/discharge-energy`  | Fronius (`bidi.battery.discharge`)                             | Selectronic                                   | per battery vendor                        |
+| `grid/emissions-intensity`  | OE VIC1 (by `area.location`)                                   | **config** `generatorSource` (1000 g/kWh)     | single-sourced (OE) unless config         |
+| `grid/renewable-fraction`   | OE VIC1                                                        | **config** `generatorSource` (0)              | OE today; Amber capable                   |
+| `grid/price`                | Amber `9` (`bidi.grid.import`)                                 | **config** `generatorSource` (70 c/kWh)       | Amber today                               |
+| `grid/export-price`         | Amber `9` (`bidi.grid.export`) via `exportTariff` mode `amber` | **config** `exportTariff` (`none`/`schedule`) | Amber / schedule config                   |
+| `solar/power`, `load/power` | Mondo leaves                                                   | Selectronic leaves                            | yes (summed union — unchanged)            |
 
 Vendor-agnostic: Selectronic/Sigenergy/Fronius all advertise `battery/soc`; the resolver picks by
 explicit binding / priority / availability, **never by vendor name**. The generator case is exactly a
@@ -157,32 +165,51 @@ loader becomes a first-class resolution step.
 ## Auto vs. explicit — the UX
 
 - **Explicit wiring** — the Area builder Bindings tab (`components/area-builder/BindingsTab.tsx` +
-  `PUT /api/areas/[areaId]/bindings`) gains: reorderable **priority** (surface `ordinal`), a real
-  **shape-match** hint/validation (promote the dot), and an **availability** indicator per bound source.
+  `PUT /api/areas/[areaId]/bindings`) **already has** reorderable priority (Up/Down arrows persisted
+  as `ordinal` = position, `BindingsTab.tsx:92-102` + `create.ts:296-302`); what it gains is a real
+  **shape-match** validation (promote the dot), an **availability** indicator per bound source, and a
+  **needs-attention** state for the ambiguous case (next bullet).
 - **Auto-connect** — the common single-candidate case wires with zero config (capability derivation).
+  When **≥2 candidates** match a slot and no explicit binding exists, do NOT silently fall through:
+  surface "needs your choice" in the UI (HA's suggested-entities / repairs analog).
+- **Resolution report** — per consumer, a read-only view of which producer filled each slot, by which
+  mode (`explicit | auto | config | absent`), and its availability. This is the discoverability piece
+  that makes complex multi-device areas feel effortless — users see what auto-connected without digging.
 - **Config producers** — the device-config editor (`SystemSettingsDialog` → `DeviceConfigTab`, PATCH
   `/api/admin/systems/[id]/config` which **replaces** the whole `DeviceConfig`) holds `generatorSource`
   as **three raw number fields** (emissions g/kWh · price c/kWh · renewable %) — per the product
-  decision, no fuel calculator — plus, later, `exportTariff` / η / reserve overrides.
+  decision, no fuel calculator — and `exportTariff` (mode `none | amber | schedule`; flat plans now,
+  TOU schema-reserved; validated in the config route) — plus, later, η / reserve overrides. One
+  scoping wrinkle to make explicit in the resolver: config producers live on a **device**
+  (`systems.config.batteryProvenance`) while consumers are **area**-scoped; today the rule is "the
+  Area's battery device's config wins".
 - **Recompute action** — reuse the `lib/areas/recompute-flow.ts` client-loop + the
   `DashboardSettingsDialog` spinner + `sonner`-toast idiom, wired to the existing (currently un-called)
   `POST /api/areas/[areaId]/recompute-provenance`, so a config/binding change re-materialises provenance.
 
 ## Implementation phasing & coordination
 
-**Coordination — critical.** The `san-diego-v4` workspace **has primacy** and owns
-`lib/battery-provenance/*` (incl. `load.ts`), `register.ts`, `battery-provenance-pg.ts`,
-`lib/capabilities/config.ts`, the config route, and the FE cards; it is adding `exportTariff` + a
-`TariffProvider` loader seam (a narrow instance of this resolver). The implementing workspace must
-**rebase onto their merge** and generalize `TariffProvider` into the resolver rather than racing it.
+**Coordination — critical.** The **battery-energy-provenance branch this doc ships on**
+(`simonhac/battery-energy-provenance`, memphis-v3 — the successor to the merged san-diego-v4 PRs
+#160–163) **has primacy** and owns `lib/battery-provenance/*` (incl. `load.ts`), `register.ts`,
+`battery-provenance-pg.ts`, `lib/capabilities/config.ts`, the config route, and the FE cards. It
+**already contains** `exportTariff` + the `TariffProvider` seam (`lib/battery-provenance/tariff.ts` —
+a narrow instance of this resolver) plus the rollup day-boundary/gap fixes
+([`battery-provenance-ops-hardening.md`](battery-provenance-ops-hardening.md)). The implementing
+workspace must **branch from (or rebase onto) its merge** and generalize `TariffProvider` into the
+resolver rather than racing it.
 
 - **P1 — this doc** (done): the model + seam map + first-consumer application.
-- **P2 — engine (after `san-diego-v4` merges):** capability extensions (advertise) + `resolveInfoSources`
-  replacing first-wins (seek, honoring `ordinal`) + bind-time shape validation (agree) + availability→
-  estimated. Tests: deterministic resolution; ordinal priority; single-candidate auto-connect;
-  availability→estimated; **byte-identical** output on the single-source sites (Kinkora/Daylesford) so
-  nothing regresses; a synthetic two-SoC-source fixture proving `ordinal` decides.
-- **P3 — UX:** Bindings-tab priority/shape/availability + the `generatorSource` config form + the
+- **P2 — engine (after the battery-energy-provenance branch merges):** capability extensions
+  (advertise) + `resolveInfoSources` replacing the nondeterministic reads (seek, honoring `ordinal`) +
+  bind-time shape validation (agree — ship **warn-first behind an audit of existing prod bindings**,
+  then enforce) + availability→estimated (define the staleness threshold that flips `available:false`
+  — an explicit P2 decision). Tests: deterministic resolution; ordinal priority; single-candidate
+  auto-connect; availability→estimated; **byte-identical** output on the single-source sites
+  (Kinkora/Daylesford) so nothing regresses; a synthetic two-SoC-source fixture proving `ordinal`
+  decides.
+- **P3 — UX:** Bindings-tab shape-validation/availability/needs-attention (priority reorder already
+  exists) + the resolution report + the `generatorSource`/`exportTariff` config forms + the
   "Recompute provenance" action.
 - **P4 — generalize:** lift `resolveInfoPort(area, shape)` for cards/derived points repo-wide.
 
@@ -196,6 +223,11 @@ approval-gated migration.
   never DB-return order. This is what the current first-wins violates.
 - **No feedback loops.** Derived/helper producers (blend, η, running) are inert to the consumers that
   compute them (the fold reads only power/soc/rate/energy), so advertising them creates no cycle.
+- **Programmatic vs user bindings.** `replaceBindings` is delete-ALL-then-reinsert with `ordinal` =
+  array index (`create.ts:271-308`), while the engine inserts the helper's blend/η bindings at
+  `ordinal` 100+i (`register.ts` `ensureHelperBindings`). The Bindings-tab save path must preserve the
+  helper rows (not wipe or renumber them ahead of user rows), and helpers-sort-last is the intended
+  default once the resolver honors `ordinal` — state both explicitly in the implementation.
 - **Best-effort, healing.** A missing/late producer degrades to `estimated`, never a wrong fact, and
   heals on the next idempotent recompute.
 - **Not** a new addressing scheme, not a rename of the `battery-provenance` code paths, not an HA MQTT
@@ -219,9 +251,12 @@ approval-gated migration.
 - **Explicit wiring + fan-out:** `lib/areas/bindings.ts:25-73`, `create.ts:277-328`
   (`replaceBindings`, `refreshAreaServing`), `lib/kv-cache-manager.ts:21-280`,
   `components/area-builder/BindingsTab.tsx`.
-- **The "seek" gap (to replace):** `lib/battery-provenance/load.ts:193-397`.
-- **Config producer + reprice:** `lib/capabilities/config.ts:26-38`,
-  `app/api/admin/systems/[systemId]/config/route.ts:28-101`,
+- **The "seek" gap (to replace):** `lib/battery-provenance/load.ts:192-400` (`boundPoints :130`,
+  finds `:195,220,362-367,399`, price loop `:~311`, OE region lookup `:267`).
+- **Config producer + tariff seam + reprice:** `lib/capabilities/config.ts:26-90`
+  (`GeneratorSourceConfig`, `ExportTariffConfig`), `lib/battery-provenance/tariff.ts`
+  (`TariffProvider :19`, `ScheduleTariffProvider :43`, `resolveExportPriceSeries :97`),
+  `app/api/admin/systems/[systemId]/config/route.ts`,
   `app/api/areas/[areaId]/recompute-provenance/route.ts`, `lib/areas/recompute-flow.ts`.
 - **Vendors (3 battery + sources):** `lib/vendors/{selectronic,sigenergy,fusher}/point-metadata.ts`,
   `lib/vendors/{openelectricity,amber}/point-metadata.ts`, `lib/vendors/mondo/adapter.ts`,
