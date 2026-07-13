@@ -326,12 +326,13 @@ export async function loadProvenanceInputs(
     }
   }
 
-  // Off-grid GENERATOR source: for an off-grid area (no NEM region), if the battery system carries a
-  // batteryProvenance.generatorSource config, the Selectronic's AC-input ("bidi.grid") is the GENERATOR,
-  // not a grid — price that "grid" energy with the configured constants (there's no OE/Amber off-grid).
-  // (bidi.grid's own `i` transform already flips the Selectronic's raw sign so generator supply reads as
-  // positive import → source.grid.)
-  if (!region && batterySystemId != null) {
+  // GENERATOR source: if the battery system declares a batteryProvenance.generatorSource, the inverter's
+  // AC-input ("bidi.grid") is a GENERATOR, not a mains grid — price that "grid" energy with the configured
+  // constants, OVERRIDING any OE/Amber region signal above. Setting generatorSource IS the explicit
+  // statement that this site's grid port is a generator, so it wins even when the area is geolocated in a
+  // NEM region (an off-grid site can still be in VIC without being on the VIC1 grid). (bidi.grid's own `i`
+  // transform flips the Selectronic's raw sign so generator supply reads as positive import → source.grid.)
+  if (batterySystemId != null) {
     const [batSys] = await db
       .select({ config: systems.config })
       .from(systems)
