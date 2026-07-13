@@ -19,6 +19,15 @@ const publicRoutes = [
   "/api/observations(.*)", // QStash receiver — authenticates via QStash signature, not Clerk
   "/api/auth(.*)", // Vendor OAuth (Tesla/Enphase) connect/callback/disconnect — the vendor redirect carries no Clerk session; handlers enforce userId themselves
   "/api/enphase-proxy", // Debug endpoint - WARNING: No access controls
+  // Battery-provenance ops endpoints: authorize owner/admin OR a CRON_SECRET bearer IN-HANDLER
+  // (getAuthContext → early 401 for anon). Public-listed so a headless CRON_SECRET call reaches the
+  // handler instead of being 404'd at the edge by auth.protect() (same rationale as /api/cron). These
+  // are SURGICAL (specific suffixes) so the sibling mutation/CRUD routes — /api/areas,
+  // /api/areas/[id], /api/areas/[id]/bindings — stay Clerk-gated.
+  "/api/areas/(.*)/recompute-provenance",
+  "/api/areas/(.*)/recompute-flow",
+  "/api/areas/(.*)/provenance-summary",
+  "/api/areas/by-handle/(.*)",
   // All other routes (pages + APIs) require Clerk auth, except share links (?access=, below)
 ];
 

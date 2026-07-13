@@ -235,15 +235,38 @@ fold / the Contents card.
 
 ## Operations
 
-- **Activate an Area via API** (the recommended path — no direct DB access) — three owner/admin calls:
+- **0. Handle → areaId** — `GET /api/areas/by-handle/{handle}` → `{ areaId, systemId, displayName }`. The
+  recompute / provenance-summary endpoints are keyed on the Area **UUID**, but a human/runbook starts from
+  the integer handle (e.g. `8` = Kinkora, `1000002` = Daylesford). Every ops session begins here.
+- **Activate / reprice an Area via API** (the recommended path — no direct DB access) — owner/admin (or a
+  `CRON_SECRET` bearer, see below), keyed on the `{areaId}` from step 0:
   1. `PUT /api/areas/{areaId}/bindings` — the role→point bindings (battery power/soc/charge+discharge
      energy, solar, load; for an off-grid site also `bidi.grid` = the generator, `transform:null` to inherit
      its `i` sign flip).
   2. `PATCH /api/admin/systems/{batterySystemId}/config` — set `batteryProvenance.generatorSource`
-     `{emissionsIntensity, pricePerKwh, renewableFraction}` (send the WHOLE config; PATCH **replaces** the blob).
+     `{emissionsIntensity, pricePerKwh, renewableFraction}` (send the WHOLE config; PATCH **replaces** the
+     blob). For an on-grid site with feed-in, set `batteryProvenance.exportTariff` here too (e.g. `{mode:"amber"}`).
   3. `POST /api/areas/{areaId}/recompute-provenance` — bounded-batch materialise: learns η on the first batch,
      then recomputes blend + rollup, ensuring the helper device + points on demand. Loop on the returned
      `nextCursor` until `done` (body `{start?,end?,last?,cursor?,limit?}`, same semantics as `recompute-flow`).
+- **4. Verify** — `GET /api/areas/{areaId}/provenance-summary?start=&end=` (or `last=Nd`; defaults to full
+  history) returns, over the window:
+  - `sources[]` — per-source intensities `{sourcePath, label, energyKwh, kgCo2, avgGramsPerKwh,
+avgCentsPerKwh, pctRenewable, pctEstimated}`. Confirms a reprice landed (e.g. an off-grid `source.grid`
+    ≈ the configured generator intensity) without hand-computing from the raw matrix.
+  - `consistency` — the legacy↔modern reconciliation `{legacyKwh, modernKwh, deltaKwh, legacyDays,
+modernDays, divergentDays[]}`. **`deltaKwh` ≈ 0 with an empty `divergentDays` is the pass** — the modern
+    rollup is a faithful energy projection of the legacy Sankey. A listed divergent day ⇒ re-backfill that day.
+    A reprice changes only metrics, never the energy leg, so `deltaKwh` must stay 0 across a reprice. (The
+    `monitor-observations` `batprov_modern_legacy_divergence` alert watches this same invariant live.)
+- **Headless ops (`CRON_SECRET`)** — `recompute-flow`, `recompute-provenance`, `provenance-summary`, and
+  `by-handle` all accept `Authorization: Bearer $CRON_SECRET` in place of a Clerk session, so a reprice/verify
+  is a plain `curl` loop. (A dev-minted Clerk JWT does **not** authenticate against prod; this removes the
+  browser-extension dance.) Everything else stays owner/admin.
+- **Cross-check against the Sankey** — `GET /api/energy-flow-matrix?systemId={handle}&start=&end=&source=legacy|modern`
+  serves raw per-day matrices; its `sources`/`loads` are `{id,label,color}` objects (not strings) and
+  `days[].matrix[srcIdx][loadIdx]` is that day's kWh. Summing `source.grid` across days for `legacy` vs `modern`
+  is the manual form of the `consistency` check above.
 - **Backfill (bulk / DBA)** — `scripts/backfill-battery-provenance.ts` (dry-run default) runs `recomputeRange`
   over full history (learns η first); idempotent. For a one-off bulk backfill, or when the API isn't reachable.
   Re-run when recovered upstream data (e.g. an Amber gap) lands.
@@ -254,7 +277,9 @@ fold / the Contents card.
 
 - Bespoke FE **blend mini-card** + **EV-period card** (the live blend already renders via the generic
   device-metrics card; the period report is a client-side reduction of the `source=modern` payload).
-- `monitor-observations` alerts (high estimated-fraction / stalled watermark / runaway segment).
+- `monitor-observations` **runaway-segment** alert — the last deferred monitor signal; needs the fold's
+  segment age persisted. (Blend/rollup staleness, high estimated-fraction, and the modern↔legacy
+  consistency alert are live.)
 - The `flow_1d → flow_attr_1d` **cutover** (flip the `source` default to `modern`, drop `flow_1d`).
 - Sankey **relabel** `source.grid` → "Generator" for off-grid areas (the attribution is already correct).
 

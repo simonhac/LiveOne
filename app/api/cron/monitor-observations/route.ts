@@ -19,6 +19,9 @@
  *      recent estimated fraction (attribution leaning on estimated/missing inputs). Skipped where no
  *      helper devices exist. A faithful "runaway segment" alert needs the fold's segment age persisted
  *      (see docs/architecture/battery-provenance.md, follow-ups) — deferred.
+ *   5b. Battery-provenance CONSISTENCY — per area, the modern rollup (flow_attr_1d) energy must equal
+ *      the legacy Sankey (flow_1d) per (area, day). A divergence = a materialisation bug or a missed
+ *      re-backfill (e.g. a silent single-day hole); it alerts instead of waiting for a human hand-diff.
  *
  * Alerting: if any ALERT-severity issue fires, POST a Slack-compatible payload to
  * OBSERVATIONS_ALERT_WEBHOOK_URL (graceful no-op if unset) and always emit a structured console.error.
@@ -27,7 +30,7 @@
  * Tuning via env (all optional): MONITOR_RESPONSE_PRESENCE_MIN, MONITOR_MIN_SESSIONS,
  * MONITOR_RAW_STALE_MINUTES, MONITOR_QUEUE_LAG_MAX, MONITOR_DLQ_ALERT, MONITOR_OUTBOX_BACKLOG_MAX,
  * MONITOR_OUTBOX_STALE_MINUTES, MONITOR_BATPROV_BLEND_STALE_MINUTES, MONITOR_BATPROV_ROLLUP_STALE_HOURS,
- * MONITOR_BATPROV_ESTIMATED_FRAC_MAX.
+ * MONITOR_BATPROV_ESTIMATED_FRAC_MAX, MONITOR_BATPROV_CONSISTENCY_TOL_KWH.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -35,6 +38,7 @@ import { sql } from "drizzle-orm";
 import { requireCronOrAdmin } from "@/lib/api-auth";
 import { cronSkipReason } from "@/lib/cron/guard";
 import { planetscaleDb } from "@/lib/db/planetscale";
+import { getFlowConsistency } from "@/lib/db/planetscale/flow-consistency";
 import { qstash, OBSERVATIONS_QUEUE_NAME } from "@/lib/qstash";
 
 export const maxDuration = 30;
@@ -81,6 +85,13 @@ const BATPROV_ROLLUP_STALE_HOURS = num(
 const BATPROV_ESTIMATED_FRAC_MAX = num(
   process.env.MONITOR_BATPROV_ESTIMATED_FRAC_MAX,
   0.6,
+);
+// Consistency: the modern rollup (flow_attr_1d) energy leg must equal the legacy Sankey (flow_1d) per
+// (area, day) — any per-day gap above this (kWh) is a real divergence (materialisation bug / missed
+// re-backfill), not float noise.
+const BATPROV_CONSISTENCY_TOL_KWH = num(
+  process.env.MONITOR_BATPROV_CONSISTENCY_TOL_KWH,
+  0.05,
 );
 
 /** Send a Slack-compatible alert if a webhook is configured. Best-effort; never throws. */
@@ -348,6 +359,65 @@ export async function GET(request: NextRequest) {
       severity: "warn",
       code: "batprov_check_failed",
       message: `Could not query battery-provenance health: ${String(err)}`,
+    });
+  }
+
+  // ── 5b: battery-provenance consistency (modern rollup == legacy Sankey) ──
+  // The modern energy leg (point_readings_flow_attr_1d) is, by construction, the energy projection of
+  // the SAME accounting as the legacy Sankey (point_readings_flow_1d) — byte-identical per (area, day).
+  // A divergence means a materialisation bug or a missed re-backfill (e.g. a single un-healed day that
+  // otherwise sits silently wrong on the provenance card). Bounded to days ≤ 2d ago so a day mid-heal
+  // in one table can't flap the alert. One cheap grouped query across every provenance area. Would have
+  // caught the 2026-06-30 Daylesford hole.
+  try {
+    const endDay = new Date(Date.now() - 2 * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    const consistency = await getFlowConsistency(db, {
+      endDay,
+      tolKwh: BATPROV_CONSISTENCY_TOL_KWH,
+    });
+    const diverged = consistency.filter(
+      (c) => c.divergentDays.length > 0 || c.legacyDays !== c.modernDays,
+    );
+    checks.batteryProvenanceConsistency = {
+      areasChecked: consistency.length,
+      tolKwh: BATPROV_CONSISTENCY_TOL_KWH,
+      divergentAreas: diverged.map((c) => ({
+        areaId: c.areaId,
+        deltaKwh: Math.round(c.deltaKwh * 1000) / 1000,
+        legacyDays: c.legacyDays,
+        modernDays: c.modernDays,
+        divergentDays: c.divergentDays.length,
+        sample: c.divergentDays.slice(0, 3).map((d) => d.day),
+      })),
+    };
+    if (diverged.length > 0) {
+      const detail = diverged
+        .map((c) => {
+          const days =
+            c.divergentDays
+              .slice(0, 3)
+              .map((d) => d.day)
+              .join(", ") || "coverage mismatch";
+          return `area ${c.areaId}: Δ${c.deltaKwh.toFixed(1)} kWh over ${c.divergentDays.length} day(s) (${c.legacyDays}↔${c.modernDays} days covered; e.g. ${days})`;
+        })
+        .join("; ");
+      issues.push({
+        severity: "alert",
+        code: "batprov_modern_legacy_divergence",
+        message: `Battery-provenance rollup diverges from the legacy Sankey — ${detail}. Re-backfill the affected area(s): POST /api/areas/{id}/recompute-provenance.`,
+      });
+    }
+  } catch (err) {
+    console.error(
+      "[MonitorObservations] battery-provenance consistency check failed:",
+      err,
+    );
+    issues.push({
+      severity: "warn",
+      code: "batprov_consistency_check_failed",
+      message: `Could not run the battery-provenance consistency check: ${String(err)}`,
     });
   }
 

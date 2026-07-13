@@ -31,6 +31,11 @@ describe("isPublicRoute — middleware allow-list", () => {
     "/api/auth/enphase/connect",
     "/api/auth/tesla/disconnect",
     "/api/enphase-proxy",
+    // Battery-provenance ops endpoints — self-authenticate in-handler (owner/admin or CRON_SECRET).
+    "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/recompute-provenance",
+    "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/recompute-flow",
+    "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/provenance-summary",
+    "/api/areas/by-handle/1000002",
   ];
   it.each(publicPaths)("treats %s as public", (p) => {
     expect(isPublicRoute(req(p))).toBe(true);
@@ -48,6 +53,10 @@ describe("isPublicRoute — middleware allow-list", () => {
     "/api/share-tokens",
     "/api/systems",
     "/api/system/1/point/0",
+    // The battery-provenance ops allow-list is surgical — sibling area routes stay Clerk-gated.
+    "/api/areas",
+    "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6",
+    "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/bindings",
   ];
   it.each(protectedPaths)("treats %s as protected", (p) => {
     expect(isPublicRoute(req(p))).toBe(false);

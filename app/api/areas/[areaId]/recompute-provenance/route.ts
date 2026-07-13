@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { parseDate, CalendarDate } from "@internationalized/date";
-import { requireAuth } from "@/lib/api-auth";
+import { getAuthContext } from "@/lib/api-auth";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { areas, areaBindings } from "@/lib/db/planetscale/schema";
 import { planFlowRecomputeBatch } from "@/lib/aggregation/flow-recompute-batch";
@@ -32,13 +32,18 @@ const MAX_LIMIT = 31;
  *   { start?, end?: "YYYY-MM-DD", last?: "Nd", cursor?: "YYYY-MM-DD", limit?: number }
  *   - range defaults to the LiveOne birthdate → yesterday (full history); `last` / `start`+`end` override.
  * Loop: POST, then re-POST with the returned `nextCursor` until `done`.
+ *
+ * Authorized for the area's **owner**, an **admin**, or a **`CRON_SECRET` bearer** (headless ops —
+ * e.g. re-materialising a single day from a script/curl without the browser/JWT dance).
  */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ areaId: string }> },
 ) {
-  const auth = await requireAuth(request);
-  if (auth instanceof NextResponse) return auth;
+  const auth = await getAuthContext(request);
+  // Owner/admin via a Clerk session, or a headless CRON_SECRET bearer. Reject pure anon early.
+  if (!auth.userId && !auth.isCron)
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!planetscaleDb)
     return NextResponse.json({ error: "DB not configured" }, { status: 503 });
 
@@ -56,9 +61,9 @@ export async function POST(
     return NextResponse.json({ error: "Area not found" }, { status: 404 });
 
   const isOwner = !!auth.userId && area.ownerClerkUserId === auth.userId;
-  if (!isOwner && !auth.isAdmin)
+  if (!auth.isCron && !auth.isAdmin && !isOwner)
     return NextResponse.json(
-      { error: "Forbidden — area owner or admin only" },
+      { error: "Forbidden — area owner, admin, or cron only" },
       { status: 403 },
     );
   if (area.legacySystemId == null)
