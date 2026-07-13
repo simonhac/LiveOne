@@ -32,9 +32,57 @@ export interface GeneratorSourceConfig {
   renewableFraction: number;
 }
 
-/** Per-device battery-provenance knobs (currently just the off-grid generator source). */
+/**
+ * Export (feed-in) tariff — the source of SOLAR OPPORTUNITY COST in the battery-provenance model: charging
+ * solar into the battery FORGOES the feed-in revenue you'd have earned exporting it, so opportunity cost =
+ * solar charge × feed-in price. The fold consumes only a per-interval export-price series (c/kWh); this
+ * config selects where that series comes from. Designed so a future PERSISTED "tariff device" (Option B)
+ * drops in with NO fold change — it would merely materialise the same schedule into a `bidi.grid.export/rate`
+ * point the loader reads exactly like Amber. See docs/architecture/battery-provenance.md § Opportunity cost.
+ */
+export type ExportTariffConfig =
+  | { mode: "none" } // no opportunity cost (solar valued at 0)
+  | { mode: "amber" } // measured Amber feed-in (the bound bidi.grid.export/rate series)
+  | { mode: "schedule"; plans: ExportTariffPlan[] }; // retailer schedule, synthesised per interval
+
+/**
+ * One retailer tariff VERSION, effective from a local date until the next plan supersedes it. Retailers
+ * update feed-in rates periodically; append a new plan (higher `effectiveFrom`) on each change so a
+ * historical re-fold prices each interval with the plan that was actually in force. Selection:
+ * newest `effectiveFrom` ≤ the interval's local date wins; before the earliest plan → no tariff (null).
+ */
+export interface ExportTariffPlan {
+  /** Local date "YYYY-MM-DD" this plan takes effect; omit for a single always-on plan. */
+  effectiveFrom?: string;
+  rate: ExportTariffRate;
+}
+
+/** Flat (built now) or time-of-use bands (schema reserved; the band evaluator lands with the TOU work). */
+export type ExportTariffRate =
+  | { kind: "flat"; cPerKwh: number }
+  | { kind: "tou"; bands: TouBand[]; defaultCPerKwh: number };
+
+/**
+ * A time-of-use band: `cPerKwh` applies within the local clock window [start, end) on the given
+ * days/months. RESERVED for the TOU extension (not evaluated yet) — documents the target shape so it drops
+ * in without touching the fold. e.g. weekday 17:00–20:00 peak, weekends off-peak, seasonal via `months`.
+ */
+export interface TouBand {
+  cPerKwh: number;
+  /** "HH:MM" local (24h). Window is [start, end); wraps past midnight when end ≤ start. */
+  start: string;
+  end: string;
+  /** Days of week the band applies (0=Sun … 6=Sat); omit = all days. */
+  days?: number[];
+  /** Months the band applies (1 … 12); omit = all months. */
+  months?: number[];
+}
+
+/** Per-device battery-provenance knobs (off-grid generator source + export tariff for opportunity cost). */
 export interface BatteryProvenanceConfig {
   generatorSource?: GeneratorSourceConfig;
+  /** Export (feed-in) tariff → solar opportunity cost. Absent ⇒ `{ mode: "none" }` (no opportunity cost). */
+  exportTariff?: ExportTariffConfig;
 }
 
 export interface DeviceConfig {

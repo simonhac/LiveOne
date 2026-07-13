@@ -13,6 +13,7 @@ import type {
 } from "@/lib/aggregation/flow-matrix-core";
 import type { FoldStep, FoldState } from "./fold";
 import type { EtaDayDiag } from "./eta";
+import type { ExportTariffConfig } from "@/lib/capabilities/config";
 
 export interface ProvenanceWindow {
   startMs: number;
@@ -43,7 +44,16 @@ export interface ProvenanceInputs {
   gridRenewable: (number | null)[]; // fraction 0..1
   gridPrice: (number | null)[]; // c/kWh (Amber import), may be < 0
   gridPriceEstimated: boolean[];
-  gridExportPrice: (number | null)[]; // c/kWh feed-in (for opportunity solar cost)
+  gridExportPrice: (number | null)[]; // c/kWh MEASURED Amber feed-in (source for the "amber" tariff mode)
+
+  /**
+   * Export (feed-in) tariff selecting the SOLAR OPPORTUNITY-COST source: `none` (default), `amber` (the
+   * measured `gridExportPrice` above), or a `schedule` synthesised per interval. `compute` resolves this to
+   * a single exportPrice[] series (see `lib/battery-provenance/tariff.ts`); the fold consumes only that.
+   * Undefined ⇒ no opportunity cost (`price-opportunity` == `price`). The loader reads it from the battery
+   * device's `config.batteryProvenance.exportTariff`.
+   */
+  exportTariff?: ExportTariffConfig;
 
   // Battery SoC (optional; may be all-null = SoC-blind) + the derived reserve floor.
   soc: (number | null)[];
@@ -74,8 +84,6 @@ export interface ProvenanceConfig {
   reserveFloorPct?: number;
   /** η: a number, or "measured" (default) to learn Σout/Σin from the window's raw energies. */
   efficiency?: number | "measured";
-  /** Solar cost basis; default "zero" (out-of-pocket). */
-  solarValuation?: "zero" | "opportunity";
   /** Drift backstop (intervals); default 6 days = 6*288. */
   maxSegmentIntervals?: number;
   /** E-minimum re-anchor threshold (kWh); default 0.3. */

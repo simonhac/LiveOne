@@ -127,7 +127,7 @@ export type CardId =
   | "generator-runs"
   | "device-metrics"
   | "oe-grid"
-  | "battery-blend"
+  | "battery-contents"
   | "ev-provenance";
 
 export interface CardCatalogEntry {
@@ -207,11 +207,11 @@ export const CARD_CATALOG: Record<CardId, CardCatalogEntry> = {
     requires: { all: ["grid-signals"] },
     bindsCapability: "grid-signals",
   },
-  // Area-derived provenance cards — gated on a battery being present (the blend needs one). Both read
-  // engine OUTPUTS (the KV-latest blend keys / the ?source=modern flow matrix), not engine internals.
-  "battery-blend": {
-    id: "battery-blend",
-    label: "Battery Blend",
+  // Area-derived provenance cards — gated on a battery being present. Both read engine OUTPUTS (the
+  // KV-latest battery points / the ?source=modern flow matrix), not engine internals.
+  "battery-contents": {
+    id: "battery-contents",
+    label: "Battery",
     scope: "area",
     requires: { all: ["battery/power"] },
   },

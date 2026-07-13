@@ -15,7 +15,7 @@ export type DashboardCardType =
   | "sankey"
   | "generator-runs"
   | "device-metrics"
-  | "battery-blend"
+  | "battery-contents"
   | "ev-provenance";
 
 /** Layout hint (derived, never stored) — retained for the optional AreaSectionV3.layout override seam. */

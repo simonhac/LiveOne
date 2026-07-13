@@ -16,8 +16,8 @@ import GeneratorRunsCard from "@/components/GeneratorRunsCard";
 import DeviceMetricsCard from "@/components/DeviceMetricsCard";
 import GridSignalsCard from "@/components/GridSignalsCard";
 import { gridLatestFromData } from "@/lib/grid/latest";
-import BatteryBlendCard from "@/components/BatteryBlendCard";
-import { batteryBlendFromData } from "@/lib/battery/blend-latest";
+import BatteryContentsCard from "@/components/BatteryContentsCard";
+import { batteryContentsFromData } from "@/lib/battery/contents-latest";
 import LoadProvenanceCard from "@/components/LoadProvenanceCard";
 import { flowMatrixQuery } from "@/lib/queries/flowMatrix";
 import { reduceLoadProvenance } from "@/lib/energy-flow-matrix";
@@ -248,10 +248,10 @@ function AreaSectionView({
         ) : (
           <ChartSkeleton key={cardKeyV3(card, i)} />
         );
-      case "battery-blend":
-        // The blend points are bound INTO the Area, so read the section handle (not a member device).
+      case "battery-contents":
+        // The battery points are bound INTO the Area, so read the section handle (not a member device).
         return handle != null ? (
-          <AreaBatteryBlend key={cardKeyV3(card, i)} systemId={handle} />
+          <AreaBatteryContents key={cardKeyV3(card, i)} systemId={handle} />
         ) : (
           <ChartSkeleton key={cardKeyV3(card, i)} />
         );
@@ -555,16 +555,17 @@ function AreaAmberNow({ systemId }: { systemId: number }) {
 }
 
 /**
- * The live "Battery Blend" mini-card for a section — the emissions/renewable/price of the energy
- * currently in the battery. The three blend points are bound into the Area, so they surface in the
- * section handle's `dashboardDataQuery` `latest` map (read the handle, NOT the helper's systemId).
+ * The live "Battery Contents" card for a section — the inventory valuation of the energy currently in the
+ * battery (usable kWh, total carbon + intensity, actual + opportunity cost, renewable %, export value). The
+ * battery points are bound into the Area, so they surface in the section handle's `dashboardDataQuery`
+ * `latest` map (read the handle, NOT the helper's systemId).
  */
-function AreaBatteryBlend({ systemId }: { systemId: number }) {
+function AreaBatteryContents({ systemId }: { systemId: number }) {
   const { isAnyModalOpen } = useModalContext();
   const { data } = useQuery(
     dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
   );
-  return <BatteryBlendCard values={batteryBlendFromData(data ?? null)} />;
+  return <BatteryContentsCard values={batteryContentsFromData(data ?? null)} />;
 }
 
 /**

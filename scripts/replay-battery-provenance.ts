@@ -52,7 +52,9 @@ const START = argOf("start");
 const END = argOf("end");
 const FLOOR = argOf("floor");
 const ETA = argOf("eta");
-const SOLAR_VALUATION = (argOf("solar") ?? "zero") as "zero" | "opportunity";
+// Opportunity-cost source override (else the DB config's exportTariff applies):
+//   --solar none | amber | flat:<c/kWh>   e.g. --solar flat:5
+const SOLAR = argOf("solar");
 const NO_SOC = process.argv.includes("--no-soc");
 
 function db() {
@@ -124,7 +126,7 @@ function report(
     etaUsed,
     reserveUsed,
   } = result;
-  const solar = config.solarValuation ?? "zero";
+  const solar = inputs.exportTariff?.mode ?? "none";
   const etaLearned =
     config.efficiency === undefined || config.efficiency === "measured";
 
@@ -145,7 +147,7 @@ function report(
 
   console.log("Battery blend (sampled every ~2h):");
   console.log(
-    "  time (UTC)        SoC%   E(kWh)   g/kWh   %renew   c/kWh   est%",
+    "  time (UTC)        SoC%   E(kWh)   g/kWh   %renew   c/kWh   c/kWh(opp)   est%",
   );
   for (let i = 0; i < steps.length; i += 24) {
     const s = steps[i];
@@ -160,6 +162,7 @@ function report(
             ? "   -- "
             : (s.batteryRenewableFraction * 100).toFixed(0).padStart(6),
           (s.batteryPrice ?? NaN).toFixed(1).padStart(6),
+          (s.batteryPriceOpportunity ?? NaN).toFixed(1).padStart(10),
           (s.estimatedFraction * 100).toFixed(0).padStart(5),
         ].join(" "),
     );
@@ -298,10 +301,18 @@ async function runReplay(handle: number) {
     return;
   }
 
+  // Optional CLI override of the export-tariff (opportunity-cost source); else use the DB config.
+  if (SOLAR === "none") inputs.exportTariff = { mode: "none" };
+  else if (SOLAR === "amber") inputs.exportTariff = { mode: "amber" };
+  else if (SOLAR?.startsWith("flat:"))
+    inputs.exportTariff = {
+      mode: "schedule",
+      plans: [{ rate: { kind: "flat", cPerKwh: Number(SOLAR.slice(5)) } }],
+    };
+
   const config: ProvenanceConfig = {
     reserveFloorPct: FLOOR ? Number(FLOOR) : undefined,
     efficiency: ETA ? Number(ETA) : "measured",
-    solarValuation: SOLAR_VALUATION,
   };
   const result = computeBatteryProvenance(inputs, config);
   report(inputs, result, config);

@@ -11,6 +11,7 @@ import AmberSmallCard from "@/components/AmberSmallCard";
 import TeslaSmallCard from "@/components/TeslaSmallCard";
 import AmberNow from "@/components/AmberNow";
 import GridSignalsCard from "@/components/GridSignalsCard";
+import BatteryContentsCard from "@/components/BatteryContentsCard";
 import { useTileNodes } from "@/app/components/cards/useTileNodes";
 import type { TileId } from "@/lib/dashboard/cards";
 import type { LatestPointValues } from "@/lib/types/api";
@@ -22,6 +23,7 @@ import {
   AMBER_SCENARIOS,
   TESLA_SCENARIOS,
   GRID_SIGNALS_SCENARIOS,
+  BATTERY_CONTENTS_SCENARIOS,
 } from "./fixtures";
 
 // ---------------------------------------------------------------------------
@@ -328,6 +330,18 @@ export default function CardGallery() {
           presetWidths={AMBERNOW_WIDTHS}
           playground={{ w: 320, h: 360 }}
           render={(s) => <AmberNow latest={AMBER_SCENARIOS[s]} />}
+        />
+
+        <CardSection
+          title="Battery Contents"
+          note="BatteryContentsCard. Labelled stat grid (2→3→4 cols). 'warm-up' shows em-dash totals; 'no tariff' hides the export/opportunity split; 'empty battery' reads 0.0 kWh; 'stale' dims."
+          scenarios={Object.keys(BATTERY_CONTENTS_SCENARIOS)}
+          defaultScenario="typical"
+          presetWidths={CQ_WIDTHS}
+          playground={{ w: 380, h: 150 }}
+          render={(s) => (
+            <BatteryContentsCard values={BATTERY_CONTENTS_SCENARIOS[s]} />
+          )}
         />
       </div>
     </div>

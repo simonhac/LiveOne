@@ -50,8 +50,14 @@ export interface FoldInterval {
   gridRenewableFraction: number | null;
   /** Grid-import price (c/kWh); null = unknown. May be < 0 (Amber can pay you to import). */
   gridPrice: number | null;
-  /** Cost assigned to SOLAR charge (c/kWh): 0 for out-of-pocket, or max(0, feed-in) for opportunity cost. */
+  /** ACTUAL cost assigned to SOLAR charge (c/kWh): 0 = out-of-pocket. Feeds the `costC` accumulator. */
   solarCost: number;
+  /**
+   * OPPORTUNITY cost assigned to SOLAR charge (c/kWh): typically max(0, feed-in) — the export revenue
+   * forgone by charging from solar instead of exporting. Feeds a PARALLEL `costOppC` accumulator so the
+   * store carries BOTH bases at once. Undefined → falls back to `solarCost` (opportunity == actual).
+   */
+  solarCostOpp?: number;
   /** Battery SoC (%) — used only to detect the reserve floor. null = unknown (SoC-blind interval). */
   socPct: number | null;
   /** True if any priced grid input feeding this interval was provisional/estimated (Amber `estimated`). */
@@ -95,8 +101,10 @@ export interface FoldState {
   carbonG: number;
   /** Qr — renewable-energy content of the store (kWh). */
   renewableKwh: number;
-  /** Qm — cost basis of the store (cents, signed). */
+  /** Qm — ACTUAL (out-of-pocket) cost basis of the store (cents, signed). */
   costC: number;
+  /** Qm(opp) — OPPORTUNITY cost basis of the store (cents, signed); solar priced at forgone feed-in. */
+  costOppC: number;
   /** E_est — portion of the stored energy whose provenance was estimated/provisional (kWh). */
   estimatedKwh: number;
   /** Floor/backstop was hit; the accumulators reset at the next charge. */
@@ -119,11 +127,13 @@ export interface FoldState {
   roundtripLossKwh: number;
   roundtripLossG: number;
   roundtripLossC: number;
+  roundtripLossOppC: number;
   roundtripLossRenewKwh: number;
   /** UNATTRIBUTED loss — residual Q discarded at a forced (non-empty) reset (drift / η error). */
   unattribLossKwh: number;
   unattribLossG: number;
   unattribLossC: number;
+  unattribLossOppC: number;
   unattribLossRenewKwh: number;
   /** Count of resets by trigger (diagnostics). */
   resetsEmpty: number;
@@ -137,8 +147,10 @@ export interface FoldStep {
   batteryEmissionsIntensity: number | null;
   /** Vended blend: Qr/E (0..1). */
   batteryRenewableFraction: number | null;
-  /** Vended blend: Qm/E (c/kWh). */
+  /** Vended blend: Qm/E (c/kWh) — ACTUAL (out-of-pocket) cost basis. */
   batteryPrice: number | null;
+  /** Vended blend: Qm(opp)/E (c/kWh) — OPPORTUNITY cost basis (solar @ forgone feed-in). */
+  batteryPriceOpportunity: number | null;
   /** E after this interval (kWh). */
   storedKwh: number;
   /** Energy actually vended this interval (min(discharge, E), kWh). */
@@ -158,6 +170,7 @@ export const INITIAL_FOLD_STATE: FoldState = Object.freeze({
   carbonG: 0,
   renewableKwh: 0,
   costC: 0,
+  costOppC: 0,
   estimatedKwh: 0,
   pendingReset: false,
   pendingTrigger: null,
@@ -169,10 +182,12 @@ export const INITIAL_FOLD_STATE: FoldState = Object.freeze({
   roundtripLossKwh: 0,
   roundtripLossG: 0,
   roundtripLossC: 0,
+  roundtripLossOppC: 0,
   roundtripLossRenewKwh: 0,
   unattribLossKwh: 0,
   unattribLossG: 0,
   unattribLossC: 0,
+  unattribLossOppC: 0,
   unattribLossRenewKwh: 0,
   resetsEmpty: 0,
   resetsSocFloor: 0,
@@ -204,6 +219,7 @@ export function foldStep(
   const iC = s.storedKwh > 0 ? s.carbonG / s.storedKwh : null;
   const iR = s.storedKwh > 0 ? s.renewableKwh / s.storedKwh : null;
   const iM = s.storedKwh > 0 ? s.costC / s.storedKwh : null;
+  const iMOpp = s.storedKwh > 0 ? s.costOppC / s.storedKwh : null;
   const estFrac = s.storedKwh > 0 ? s.estimatedKwh / s.storedKwh : 0;
   const dEff = Math.max(0, Math.min(iv.dischargeKwh, s.storedKwh));
   if (s.storedKwh > 0 && dEff > 0) {
@@ -212,6 +228,7 @@ export function foldStep(
     s.carbonG -= s.carbonG * frac;
     s.renewableKwh -= s.renewableKwh * frac;
     s.costC -= s.costC * frac;
+    s.costOppC -= s.costOppC * frac;
     s.estimatedKwh -= s.estimatedKwh * frac;
   }
   s.totalDischargeKwh += dEff;
@@ -220,6 +237,7 @@ export function foldStep(
     batteryEmissionsIntensity: iC,
     batteryRenewableFraction: iR,
     batteryPrice: iM,
+    batteryPriceOpportunity: iMOpp,
     storedKwh: s.storedKwh,
     dischargedKwh: dEff,
     resetHere: false,
@@ -233,11 +251,13 @@ export function foldStep(
     s.unattribLossKwh += s.storedKwh;
     s.unattribLossG += s.carbonG;
     s.unattribLossC += s.costC;
+    s.unattribLossOppC += s.costOppC;
     s.unattribLossRenewKwh += s.renewableKwh;
     s.storedKwh = 0;
     s.carbonG = 0;
     s.renewableKwh = 0;
     s.costC = 0;
+    s.costOppC = 0;
     s.estimatedKwh = 0;
     s.segmentIntervals = 0;
     s.segmentPeakKwh = 0;
@@ -284,11 +304,14 @@ export function foldStep(
       (iv.gridChargeKwh > 0 && iv.gridRenewableFraction !== null
         ? iv.gridChargeKwh * iv.gridRenewableFraction
         : 0);
-    const addM =
-      iv.solarChargeKwh * iv.solarCost +
-      (iv.gridChargeKwh > 0 && iv.gridPrice !== null
+    // Grid cost is shared by both bases; solar differs (actual @ solarCost, opportunity @ solarCostOpp).
+    const gridM =
+      iv.gridChargeKwh > 0 && iv.gridPrice !== null
         ? iv.gridChargeKwh * iv.gridPrice
-        : 0);
+        : 0;
+    const solarCostOpp = iv.solarCostOpp ?? iv.solarCost;
+    const addM = iv.solarChargeKwh * iv.solarCost + gridM;
+    const addMOpp = iv.solarChargeKwh * solarCostOpp + gridM;
 
     // Emissions & cost are INTENSITIES (per kWh): the "loss priced into delivered" scheme adds the
     // FULL footprint so delivered kWh carry the round-trip loss (Qc/E, Qm/E inflate by 1/η). Renewable
@@ -297,10 +320,12 @@ export function foldStep(
     s.carbonG += addC;
     s.renewableKwh += eta * addR;
     s.costC += addM;
+    s.costOppC += addMOpp;
 
     s.roundtripLossKwh += (1 - eta) * charge;
     s.roundtripLossG += (1 - eta) * addC;
     s.roundtripLossC += (1 - eta) * addM;
+    s.roundtripLossOppC += (1 - eta) * addMOpp;
     s.roundtripLossRenewKwh += (1 - eta) * addR;
 
     const gridUnknown =

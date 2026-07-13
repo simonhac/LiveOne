@@ -68,6 +68,12 @@ function blendValue(step: FoldStep, metricType: string): number | null {
         : step.batteryRenewableFraction * 100;
     case "price":
       return step.batteryPrice;
+    case "price-opportunity":
+      return step.batteryPriceOpportunity;
+    case "stored-energy":
+      // Usable stored energy E. Unlike the intensities this is 0 (not null) when the store is empty —
+      // but 0 kWh is written so the Contents card reads "empty" rather than a stale value.
+      return step.storedKwh;
     default:
       return null;
   }
@@ -76,8 +82,16 @@ function blendValue(step: FoldStep, metricType: string): number | null {
 const FLOW_ATTR_VERSION = 1;
 const MIN_ATTR_KWH = 0.001;
 
-/** Local calendar days (Area tz) whose interval-ends fall in [startMs, endMs]. */
-function localDaysInRange(
+/**
+ * Local calendar days (Area tz) that a `[startMs, endMs]` window covers, where `endMs` is the INCLUSIVE
+ * last interval-end of the final day. For `dayToUnixRangeForAggregation` that boundary is 00:00 of the
+ * NEXT calendar day, so mapping it with `toDay(endMs)` would roll to `newest+1` — making the rollup
+ * write an extra trailing day BEYOND the loaded/folded window. In the backward batch loop of
+ * `recompute-provenance` that extra day is the previous batch's OLDEST; recomputing it with no timeline
+ * coverage yields an empty matrix whose delete-then-insert WIPES the correct rows (one lost day per
+ * batch seam). Stepping back 1 ms keeps the range on the day that owns the boundary interval.
+ */
+export function localDaysInRange(
   startMs: number,
   endMs: number,
   tzOffsetMin: number,
@@ -91,7 +105,7 @@ function localDaysInRange(
     );
   };
   let day = toDay(startMs);
-  const last = toDay(endMs);
+  const last = toDay(endMs - 1);
   const days: CalendarDate[] = [];
   while (day.compare(last) <= 0) {
     days.push(day);

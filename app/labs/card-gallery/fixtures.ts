@@ -12,6 +12,11 @@
 import type { LatestPointValue, LatestPointValues } from "@/lib/types/api";
 import type { LatestValue } from "@/lib/amber-utils";
 import type { GridLiveValues } from "@/lib/grid/latest";
+import {
+  batteryContentsFromData,
+  CONTENTS_LATEST_PATHS as CP,
+  type BatteryContentsValues,
+} from "@/lib/battery/contents-latest";
 
 const FRESH = 30; // seconds old — comfortably fresh
 const STALE = 1200; // seconds old — past every threshold here
@@ -277,4 +282,81 @@ export const GRID_SIGNALS_SCENARIOS: Record<
       demand: gm(6850, STALE),
     },
   },
+};
+
+// ---------------------------------------------------------------------------
+// BatteryContentsCard (BatteryContentsValues — usable kWh + valued inventory)
+// ---------------------------------------------------------------------------
+// Built by feeding a raw `latest` map through the real selector, so the derived totals
+// (total carbon/cost/export value, opportunity split) are computed exactly as in prod.
+function bc(
+  entries: Partial<Record<string, number>>,
+  ageSeconds: number = FRESH,
+): BatteryContentsValues | null {
+  const latest: Record<string, { value: number; measurementTime: Date }> = {};
+  for (const [k, v] of Object.entries(entries)) {
+    if (v != null)
+      latest[k] = {
+        value: v,
+        measurementTime: new Date(Date.now() - ageSeconds * 1000),
+      };
+  }
+  return batteryContentsFromData({ latest });
+}
+
+export const BATTERY_CONTENTS_SCENARIOS: Record<
+  string,
+  BatteryContentsValues | null
+> = {
+  typical: bc({
+    [CP.storedEnergy]: 9.2,
+    [CP.carbonIntensity]: 210,
+    [CP.renewableFraction]: 62,
+    [CP.priceActual]: 8.4,
+    [CP.priceOpportunity]: 14.1,
+    [CP.exportRate]: 5.5,
+  }),
+  "very green": bc({
+    [CP.storedEnergy]: 11.8,
+    [CP.carbonIntensity]: 18,
+    [CP.renewableFraction]: 96,
+    [CP.priceActual]: 1.2,
+    [CP.priceOpportunity]: 9.0,
+    [CP.exportRate]: 6.0,
+  }),
+  "negative actual price": bc({
+    [CP.storedEnergy]: 6.0,
+    [CP.carbonIntensity]: 320,
+    [CP.renewableFraction]: 30,
+    [CP.priceActual]: -3.0,
+    [CP.priceOpportunity]: 4.0,
+    [CP.exportRate]: 3.0,
+  }),
+  // No export tariff → opportunity == actual (no split) and no export-value stat.
+  "no tariff": bc({
+    [CP.storedEnergy]: 8.0,
+    [CP.carbonIntensity]: 180,
+    [CP.renewableFraction]: 70,
+    [CP.priceActual]: 6.0,
+    [CP.priceOpportunity]: 6.0,
+  }),
+  // Engine not backfilled yet: intensities present, no stored-energy → totals em-dash.
+  "warm-up (intensities only)": bc({
+    [CP.carbonIntensity]: 150,
+    [CP.renewableFraction]: 55,
+    [CP.priceActual]: 7.0,
+    [CP.priceOpportunity]: 7.0,
+  }),
+  "empty battery": bc({ [CP.storedEnergy]: 0 }),
+  stale: bc(
+    {
+      [CP.storedEnergy]: 9.2,
+      [CP.carbonIntensity]: 210,
+      [CP.renewableFraction]: 62,
+      [CP.priceActual]: 8.4,
+      [CP.priceOpportunity]: 14.1,
+      [CP.exportRate]: 5.5,
+    },
+    STALE,
+  ),
 };
