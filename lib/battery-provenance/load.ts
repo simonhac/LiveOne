@@ -24,6 +24,7 @@ import {
   ClassifiedPoint,
 } from "@/lib/aggregation/flow-series";
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
+import { kv, kvKey } from "@/lib/kv";
 import type { AreaLocation } from "@/lib/areas/types";
 import type { ProvenanceInputs, ProvenanceWindow } from "./types";
 
@@ -224,21 +225,41 @@ export async function loadProvenanceInputs(
     ? new Array<number | null>(timeline.length).fill(null)
     : forwardFill(timeline, socSeries, 30 * 60 * 1000).value;
 
-  // Reserve floor = ~2nd percentile of SoC over a LONG (90d) window (robust to non-cycling).
+  // Reserve floor = ~2nd percentile of SoC over a LONG (90d) window (robust to non-cycling). CACHED in KV
+  // with a ~25h TTL: the 90d read is ~1.5s, so we recompute it at most ~once/day and every other reconcile
+  // reads the cached scalar — off the hot path, and STABLE within a day (consistent reconcile-vs-heal).
+  // KV-unconfigured (dev) → get/set no-op to null → falls back to recomputing every call (current behaviour).
   let estReservePct = DEFAULT_RESERVE_PCT;
   if (socBind && !opts.noSoc) {
-    const longSoc = await readAgg5m(
-      db,
-      socBind.systemId,
-      socBind.pointId,
-      endMs - 90 * 24 * 3600 * 1000,
-      endMs,
-    );
-    const vals = longSoc
-      .map((s) => s.v)
-      .filter((v): v is number => v !== null)
-      .sort((a, b) => a - b);
-    if (vals.length > 20) estReservePct = vals[Math.floor(0.02 * vals.length)];
+    const floorKey = kvKey(`batprov:reserve-floor:area:${area.id}`);
+    let cached: number | null = null;
+    try {
+      cached = await kv.get<number>(floorKey);
+    } catch {
+      cached = null;
+    }
+    if (cached != null) {
+      estReservePct = cached;
+    } else {
+      const longSoc = await readAgg5m(
+        db,
+        socBind.systemId,
+        socBind.pointId,
+        endMs - 90 * 24 * 3600 * 1000,
+        endMs,
+      );
+      const vals = longSoc
+        .map((s) => s.v)
+        .filter((v): v is number => v !== null)
+        .sort((a, b) => a - b);
+      if (vals.length > 20)
+        estReservePct = vals[Math.floor(0.02 * vals.length)];
+      try {
+        await kv.set(floorKey, estReservePct, { ex: 90_000 }); // ~25h
+      } catch {
+        /* KV not configured (dev) — recompute next call */
+      }
+    }
   }
 
   // OE region emissions + renewables (from the Area's location).
@@ -305,6 +326,31 @@ export async function loadProvenanceInputs(
     }
   }
 
+  // Off-grid GENERATOR source: for an off-grid area (no NEM region), if the battery system carries a
+  // batteryProvenance.generatorSource config, the Selectronic's AC-input ("bidi.grid") is the GENERATOR,
+  // not a grid — price that "grid" energy with the configured constants (there's no OE/Amber off-grid).
+  // (bidi.grid's own `i` transform already flips the Selectronic's raw sign so generator supply reads as
+  // positive import → source.grid.)
+  if (!region && batterySystemId != null) {
+    const [batSys] = await db
+      .select({ config: systems.config })
+      .from(systems)
+      .where(eq(systems.id, batterySystemId))
+      .limit(1);
+    const gen = (batSys?.config as any)?.batteryProvenance?.generatorSource;
+    if (gen && typeof gen.emissionsIntensity === "number") {
+      gridEmissions = timeline.map(() => gen.emissionsIntensity as number);
+      gridEmissionsEstimated = timeline.map(() => false);
+      gridRenewable = timeline.map(() =>
+        typeof gen.renewableFraction === "number" ? gen.renewableFraction : 0,
+      );
+      if (typeof gen.pricePerKwh === "number") {
+        gridPrice = timeline.map(() => gen.pricePerKwh as number);
+        gridPriceEstimated = timeline.map(() => false);
+      }
+    }
+  }
+
   // ENERGY-register seam: prefer exact battery charge/discharge energy when the Area binds them.
   let batteryChargeEnergyKwh: (number | null)[] | undefined;
   let batteryDischargeEnergyKwh: (number | null)[] | undefined;
@@ -341,6 +387,26 @@ export async function loadProvenanceInputs(
     );
   }
 
+  // Persisted round-trip efficiency η(t) from the helper's round-trip-efficiency point (learn-in-shell /
+  // read-in-fold): stored as % (η×100), forward-filled onto the timeline (a daily step), ÷100 → the ratio
+  // the fold consumes. Absent (not yet learned) → undefined → compute falls back to an in-window learned η.
+  let etaSeries: (number | null)[] | undefined;
+  const etaBind = bound.find(
+    (b) => b.role === "battery" && b.metric === "round-trip-efficiency",
+  );
+  if (etaBind) {
+    const s = await readAgg5m(
+      db,
+      etaBind.systemId,
+      etaBind.pointId,
+      startMs,
+      endMs,
+    );
+    etaSeries = forwardFill(timeline, s, 48 * 60 * 60 * 1000).value.map((v) =>
+      v === null ? null : v / 100,
+    );
+  }
+
   const frac = (a: (number | null)[]) =>
     a.filter((v) => v !== null).length / Math.max(a.length, 1);
 
@@ -363,10 +429,119 @@ export async function loadProvenanceInputs(
     estReservePct,
     batteryChargeEnergyKwh,
     batteryDischargeEnergyKwh,
+    etaSeries,
     coverage: {
       soc: frac(soc),
       emissions: frac(gridEmissions),
       price: frac(gridPrice),
     },
+  };
+}
+
+export interface BatteryThroughput {
+  areaId: string;
+  timezoneOffsetMin: number;
+  timeline: number[];
+  /** Total charge INTO the battery per interval (kWh ≥ 0). */
+  chargeKwh: number[];
+  /** Total discharge OUT of the battery per interval (kWh ≥ 0). */
+  dischargeKwh: number[];
+}
+
+/**
+ * Lean loader for the η-learn pass — just the battery's per-interval charge/discharge energy over the
+ * window. Prefers exact energy registers (bidi.battery.charge/discharge deltas); else integrates the signed
+ * battery power (negative = charge, positive = discharge). Fold-INDEPENDENT (η is a function of raw
+ * throughput, so there is no circularity: raw energies → η(t) → fold). Returns null if no battery signal.
+ */
+export async function loadBatteryThroughput(
+  handle: number,
+  window: ProvenanceWindow,
+): Promise<BatteryThroughput | null> {
+  const db = planetscaleDb;
+  if (!db) throw new Error("No Postgres connection.");
+  const { startMs, endMs } = window;
+
+  const [area] = await db
+    .select({ id: areas.id, tz: areas.timezoneOffsetMin })
+    .from(areas)
+    .where(eq(areas.legacySystemId, handle))
+    .limit(1);
+  if (!area) return null;
+
+  const bound = await boundPoints(db, area.id);
+  const powerBind = bound.find(
+    (b) => b.role === "battery" && b.metric === "power",
+  );
+  if (!powerBind) return null;
+
+  const powerSeries = await readAgg5m(
+    db,
+    powerBind.systemId,
+    powerBind.pointId,
+    startMs,
+    endMs,
+  );
+  if (powerSeries.length < 2) return null;
+  const timeline = powerSeries.map((s) => s.t);
+  const tIndex = new Map(timeline.map((t, i) => [t, i]));
+
+  const chargeKwh = new Array<number>(timeline.length).fill(0);
+  const dischargeKwh = new Array<number>(timeline.length).fill(0);
+
+  const chargeBind = bound.find(
+    (b) => b.metric === "energy" && b.stem === "bidi.battery.charge",
+  );
+  const dischargeBind = bound.find(
+    (b) => b.metric === "energy" && b.stem === "bidi.battery.discharge",
+  );
+  if (chargeBind && dischargeBind) {
+    // Exact energy registers (per-interval delta), scattered onto the timeline.
+    const cs = await readAgg5m(
+      db,
+      chargeBind.systemId,
+      chargeBind.pointId,
+      startMs,
+      endMs,
+      "delta",
+    );
+    const ds = await readAgg5m(
+      db,
+      dischargeBind.systemId,
+      dischargeBind.pointId,
+      startMs,
+      endMs,
+      "delta",
+    );
+    for (const s of cs) {
+      const i = tIndex.get(s.t);
+      if (i !== undefined)
+        chargeKwh[i] = Math.max(0, toKwh(s.v, chargeBind.unit) ?? 0);
+    }
+    for (const s of ds) {
+      const i = tIndex.get(s.t);
+      if (i !== undefined)
+        dischargeKwh[i] = Math.max(0, toKwh(s.v, dischargeBind.unit) ?? 0);
+    }
+  } else {
+    // Integrate signed battery power over each 5-min interval (negative = charge, positive = discharge).
+    const hours = FIVE_MIN_MS / 3_600_000;
+    for (let i = 0; i < powerSeries.length; i++) {
+      const kw = applyPowerTransform(
+        toKw(powerSeries[i].v, powerBind.unit),
+        powerBind.transform,
+      );
+      if (kw == null) continue;
+      if (kw < 0) chargeKwh[i] = -kw * hours;
+      else dischargeKwh[i] = kw * hours;
+    }
+  }
+
+  return {
+    areaId: area.id,
+    timezoneOffsetMin: area.tz,
+    timeline,
+    chargeKwh,
+    dischargeKwh,
   };
 }

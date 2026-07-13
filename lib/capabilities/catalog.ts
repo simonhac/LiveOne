@@ -126,7 +126,9 @@ export type CardId =
   | "amber-timeline"
   | "generator-runs"
   | "device-metrics"
-  | "oe-grid";
+  | "oe-grid"
+  | "battery-blend"
+  | "ev-provenance";
 
 export interface CardCatalogEntry {
   id: CardId;
@@ -204,6 +206,20 @@ export const CARD_CATALOG: Record<CardId, CardCatalogEntry> = {
     scope: "device",
     requires: { all: ["grid-signals"] },
     bindsCapability: "grid-signals",
+  },
+  // Area-derived provenance cards — gated on a battery being present (the blend needs one). Both read
+  // engine OUTPUTS (the KV-latest blend keys / the ?source=modern flow matrix), not engine internals.
+  "battery-blend": {
+    id: "battery-blend",
+    label: "Battery Blend",
+    scope: "area",
+    requires: { all: ["battery/power"] },
+  },
+  "ev-provenance": {
+    id: "ev-provenance",
+    label: "EV Provenance",
+    scope: "area",
+    requires: { all: ["battery/power"] },
   },
 };
 

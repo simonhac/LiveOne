@@ -39,6 +39,18 @@ export const BLEND_POINTS: BlendPointSpec[] = [
   },
 ];
 
+/**
+ * The round-trip-efficiency point (η) — a battery DEVICE PARAMETER, not a vended blend. It lives on the
+ * SAME `bidi.battery` stem + helper as the blend points, but is WRITTEN by the shell's η-learn pass
+ * (learn-in-shell / read-in-fold), never by the blend-write loop. Stored as a percentage (η×100) for
+ * readability; the loader divides by 100 to get the ratio the fold consumes.
+ */
+export const EFFICIENCY_POINT: BlendPointSpec = {
+  metricType: "round-trip-efficiency",
+  metricUnit: "%",
+  displayName: "Battery Round-trip Efficiency",
+};
+
 export interface EnsureBlendResult {
   status: "created" | "exists" | "no-battery-point" | "mixed";
   systemId: number;
@@ -164,6 +176,84 @@ export async function ensureHelperBindings(
   const inserted = await db
     .insert(areaBindings)
     .values(values)
+    .onConflictDoNothing()
+    .returning({ id: areaBindings.id });
+  return { created: inserted.length };
+}
+
+/**
+ * Ensure the single round-trip-efficiency point (η) exists on `systemId` (the helper). Idempotent (keyed by
+ * stem+metricType); allocates the next free 1-based index over ALL of the system's points. Returns its point
+ * id (null on a dry run when it doesn't yet exist). Mirrors the blend-point registration but is separate so
+ * the blend-write loop never touches η (η is written by the shell's learn pass).
+ */
+export async function ensureEfficiencyPoint(
+  systemId: number,
+  apply: boolean,
+): Promise<number | null> {
+  const db = requirePlanetscaleDb();
+  const [existing] = await db
+    .select({ index: pointInfo.index })
+    .from(pointInfo)
+    .where(
+      and(
+        eq(pointInfo.systemId, systemId),
+        eq(pointInfo.logicalPathStem, BATTERY_STEM),
+        eq(pointInfo.metricType, EFFICIENCY_POINT.metricType),
+      ),
+    )
+    .limit(1);
+  if (existing) return existing.index;
+  if (!apply) return null;
+
+  const allIdx = await db
+    .select({ index: pointInfo.index })
+    .from(pointInfo)
+    .where(eq(pointInfo.systemId, systemId));
+  const nextIndex = Math.max(...allIdx.map((p) => p.index), 0) + 1;
+  const [row] = await db
+    .insert(pointInfo)
+    .values({
+      systemId,
+      index: nextIndex,
+      physicalPathTail: `derived/${BATTERY_STEM}/${EFFICIENCY_POINT.metricType}`,
+      logicalPathStem: BATTERY_STEM,
+      metricType: EFFICIENCY_POINT.metricType,
+      metricUnit: EFFICIENCY_POINT.metricUnit,
+      defaultName: EFFICIENCY_POINT.displayName,
+      displayName: EFFICIENCY_POINT.displayName,
+      subsystem: "battery",
+      transform: null,
+      active: true,
+      createdAt: new Date(),
+    })
+    .returning({ index: pointInfo.index });
+  return row.index;
+}
+
+/**
+ * Bind the helper's η point into the Area so it fans out to KV latest, appears in the Area's point set, and
+ * is discoverable by the loader (role='battery' metricType='round-trip-efficiency'). INERT to the compute/
+ * Sankey paths — the loader reads it explicitly; the flow resolver is power-only, so there is no feedback
+ * loop (η is derived from raw charge/discharge, independent of the blend fold). Idempotent.
+ */
+export async function ensureEfficiencyBinding(
+  areaId: string,
+  helperSystemId: number,
+  pointId: number,
+): Promise<{ created: number }> {
+  const db = requirePlanetscaleDb();
+  const inserted = await db
+    .insert(areaBindings)
+    .values({
+      areaId,
+      role: "battery",
+      metricType: EFFICIENCY_POINT.metricType,
+      pointSystemId: helperSystemId,
+      pointId,
+      ordinal: 110,
+      transform: null,
+    })
     .onConflictDoNothing()
     .returning({ id: areaBindings.id });
   return { created: inserted.length };

@@ -21,7 +21,10 @@ import { recomputeFlowMatrixForDayBestEffort } from "@/lib/db/planetscale/flow-m
 import { listCompleteLogicalSystems } from "@/lib/aggregation/logical-system";
 import { recomputeRange as recomputeRunPeriodsRange } from "@/lib/run-tracking/recompute";
 import { recomputeRange as recomputeHwsTemperatureRange } from "@/lib/hws/recompute";
-import { recomputeRange as recomputeBatteryProvenanceRange } from "@/lib/battery-provenance/recompute";
+import {
+  recomputeRange as recomputeBatteryProvenanceRange,
+  learnEtaForAllHandles,
+} from "@/lib/battery-provenance/recompute";
 
 // Earliest date for point data aggregation (when point data collection began)
 const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
@@ -284,8 +287,11 @@ export async function aggregateRange(
 
   // Daily heal of the derived battery-provenance blend over the aggregated range (best-effort). Runs
   // LAST — it reads agg_5m (battery + grid + solar) which the passes above have materialised. No-op for
-  // Areas without a bound battery.
+  // Areas without a bound battery. First (re)learn η(t) from the fixed anchor + persist each helper's
+  // round-trip-efficiency point, so the blend/rollup recompute below READS a reproducible η (via
+  // inputs.etaSeries) instead of re-learning it per window.
   try {
+    await learnEtaForAllHandles(Date.now());
     await recomputeBatteryProvenanceRange(rangeStartMs, Date.now());
   } catch (error) {
     console.error("[Daily Points] battery-provenance heal pass failed:", error);

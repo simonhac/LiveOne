@@ -10,6 +10,7 @@ import {
   SourceIntensity,
 } from "@/lib/aggregation/flow-matrix-core";
 import { extractBatteryFlows } from "./battery-flows";
+import { learnEwmaEta, type EtaDayDiag } from "./eta";
 import { foldBatteryProvenance, FoldConfig, FoldInterval } from "./fold";
 import type {
   ProvenanceConfig,
@@ -60,8 +61,48 @@ export function computeBatteryProvenance(
   }
   const measuredEta =
     chargeKwh > 0 ? Math.min(1, Math.max(0.7, dischargeKwh / chargeKwh)) : 1;
-  const etaUsed =
-    typeof config.efficiency === "number" ? config.efficiency : measuredEta;
+
+  // η resolution, in priority order:
+  //   1. a numeric config.efficiency pins one scalar for the window (tests / manual override);
+  //   2. inputs.etaSeries — the PERSISTED η(t) the loader read from the round-trip-efficiency helper
+  //      point. Canonical & REPRODUCIBLE: η is learned ONCE in the daily shell over a stable window, so a
+  //      bounded re-fold reads the same η as a full-history run (repair-convergence holds);
+  //   3. fallback — learn a per-day EWMA η(t) in-window from the raw charge/discharge energies. This is
+  //      NON-canonical (window-dependent) and only for bootstrap (before the shell has run) + the offline
+  //      harness. `etaByDay` (the degradation-trend diagnostic) is produced only on this path.
+  let etaSeries: (number | null)[] | null = null;
+  let etaByDay: EtaDayDiag[] | undefined;
+  let etaUsed: number;
+  if (typeof config.efficiency === "number") {
+    etaUsed = config.efficiency;
+  } else if (inputs.etaSeries) {
+    etaSeries = inputs.etaSeries;
+    // Throughput-weighted summary of the persisted η(t), for the RTE diagnostic.
+    let wsum = 0;
+    let w = 0;
+    for (let i = 0; i < flows.length; i++) {
+      const e = etaSeries[i];
+      if (e == null) continue;
+      const c =
+        flows[i].solarChargeKwh +
+        flows[i].gridChargeKwh +
+        flows[i].otherChargeKwh;
+      wsum += e * c;
+      w += c;
+    }
+    etaUsed = w > 0 ? wsum / w : measuredEta;
+  } else {
+    const learned = learnEwmaEta(
+      flows.map((f) => f.solarChargeKwh + f.gridChargeKwh + f.otherChargeKwh),
+      flows.map((f) => f.dischargeKwh),
+      timeline,
+      inputs.timezoneOffsetMin,
+      { prior: chargeKwh > 0 ? measuredEta : 0.9 },
+    );
+    etaSeries = learned.etaSeries;
+    etaByDay = learned.byDay;
+    etaUsed = learned.summary;
+  }
   const reserveUsed = config.reserveFloorPct ?? inputs.estReservePct;
 
   const solarCost = (i: number) =>
@@ -88,6 +129,7 @@ export function computeBatteryProvenance(
     socPct: inputs.soc[i],
     gridEstimated:
       inputs.gridEmissionsEstimated[i] || inputs.gridPriceEstimated[i],
+    efficiency: etaSeries?.[i] ?? undefined,
   }));
   const { steps, finalState } = foldBatteryProvenance(intervals, foldConfig);
 
@@ -149,6 +191,7 @@ export function computeBatteryProvenance(
     accounting,
     sourceIntensities,
     etaUsed,
+    etaByDay,
     reserveUsed,
     chargeKwh,
     dischargeKwh,

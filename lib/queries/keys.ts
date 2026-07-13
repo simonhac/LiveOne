@@ -43,8 +43,12 @@ export const queryKeys = {
   siteData: (systemId: SystemIdLike, period: string, rangeKey: string) =>
     ["siteData", sid(systemId), period, rangeKey] as const,
 
-  flowMatrix: (systemId: SystemIdLike, startYMD: string, endYMD: string) =>
-    ["flowMatrix", sid(systemId), startYMD, endYMD] as const,
+  flowMatrix: (
+    systemId: SystemIdLike,
+    startYMD: string,
+    endYMD: string,
+    source: "legacy" | "modern" = "legacy",
+  ) => ["flowMatrix", sid(systemId), startYMD, endYMD, source] as const,
 
   amber: (systemId: SystemIdLike, rangeKey: string) =>
     ["amber", sid(systemId), rangeKey] as const,

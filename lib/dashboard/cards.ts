@@ -14,7 +14,9 @@ export type DashboardCardType =
   | "chart"
   | "sankey"
   | "generator-runs"
-  | "device-metrics";
+  | "device-metrics"
+  | "battery-blend"
+  | "ev-provenance";
 
 /** Layout hint (derived, never stored) — retained for the optional AreaSectionV3.layout override seam. */
 export type DashboardLayout = "amber" | "site" | "sidebar";

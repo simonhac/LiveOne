@@ -25,12 +25,18 @@ import {
   buildSubscriptionRegistry,
   updateLatestPointValue,
 } from "@/lib/kv-cache-manager";
-import { loadProvenanceInputs } from "@/lib/battery-provenance/load";
+import {
+  loadProvenanceInputs,
+  loadBatteryThroughput,
+} from "@/lib/battery-provenance/load";
 import { computeBatteryProvenance } from "@/lib/battery-provenance/compute";
+import { learnEwmaEta } from "@/lib/battery-provenance/eta";
 import {
   BLEND_POINTS,
   ensureBatteryProvenancePoints,
   ensureHelperBindings,
+  ensureEfficiencyPoint,
+  ensureEfficiencyBinding,
 } from "@/lib/battery-provenance/register";
 import { ensureHelperDevice } from "@/lib/areas/helper";
 import type { ProvenanceConfig } from "@/lib/battery-provenance/types";
@@ -42,6 +48,14 @@ type PgDb = NonNullable<typeof planetscaleDb>;
 export const WARMUP_MS = 7 * 24 * 3600 * 1000;
 
 const BATTERY_STEM = "bidi.battery";
+
+/** Fixed datasheet seed for the η EWMA — a CONSTANT (not window-measured) so η(day) is reproducible. */
+const ETA_SEED = 0.9;
+/** Learn η causally from this stable anchor every run, so η(day D) never depends on the recompute window. */
+const ETA_ANCHOR_MS = Date.parse("2025-08-16T00:00:00Z");
+const ETA_METRIC = "round-trip-efficiency";
+const ETA_UNIT = "%";
+const ETA_DISPLAY = "Battery Round-trip Efficiency";
 
 /** The blend value for a metricType from a fold step (null when the store is empty → not written). */
 function blendValue(step: FoldStep, metricType: string): number | null {
@@ -344,4 +358,117 @@ export async function recomputeBatteryProvenanceForWindowBestEffort(
   } catch (err) {
     console.error(`[BatProv] recompute failed for handle=${handle}:`, err);
   }
+}
+
+/**
+ * Learn η(t) for an Area's battery from its RAW charge/discharge over a STABLE window (fixed anchor → now)
+ * and persist it as the helper's round-trip-efficiency point (per local-day step: agg_5m + KV). Learning
+ * from a fixed anchor + fixed seed makes η(day) reproducible — any later bounded re-fold READS the same
+ * η(t) (via inputs.etaSeries) instead of re-learning it, so repair-convergence holds. Fold-independent (η
+ * is a function of raw throughput, not the blend). The best-effort caller (recompute.ts) wraps this.
+ */
+export async function learnAndPersistEta(
+  db: PgDb,
+  handle: number,
+  nowMs: number,
+): Promise<{ pointId: number | null; daysWritten: number }> {
+  const tp = await loadBatteryThroughput(handle, {
+    startMs: ETA_ANCHOR_MS,
+    endMs: nowMs,
+  });
+  if (!tp || tp.timeline.length < 2) return { pointId: null, daysWritten: 0 };
+
+  const learned = learnEwmaEta(
+    tp.chargeKwh,
+    tp.dischargeKwh,
+    tp.timeline,
+    tp.timezoneOffsetMin,
+    { prior: ETA_SEED },
+  );
+
+  const helperSystemId = await ensureHelperDevice(tp.areaId);
+  const pointId = await ensureEfficiencyPoint(helperSystemId, true);
+  if (pointId == null) return { pointId: null, daysWritten: 0 };
+  const bind = await ensureEfficiencyBinding(
+    tp.areaId,
+    helperSystemId,
+    pointId,
+  );
+  if (bind.created > 0) {
+    try {
+      await buildSubscriptionRegistry();
+    } catch (e) {
+      console.warn("[BatProv:eta] subscription registry rebuild skipped:", e);
+    }
+  }
+
+  // Persist η as a per-local-day STEP: write each day's η at the FIRST interval_end of that day so a
+  // forward-fill on read (load.ts) carries it across the day.
+  const offMs = tp.timezoneOffsetMin * 60_000;
+  const dayOf = (t: number) => Math.floor((t + offMs - 1) / 86_400_000);
+  const firstTsByDay = new Map<number, number>();
+  for (const t of tp.timeline) {
+    const d = dayOf(t);
+    if (!firstTsByDay.has(d)) firstTsByDay.set(d, t);
+  }
+
+  const rows: (typeof pointReadingsAgg5m.$inferInsert)[] = [];
+  let latest: { value: number; tsMs: number } | null = null;
+  for (const day of learned.byDay) {
+    const ts = firstTsByDay.get(day.dayIndex);
+    if (ts === undefined) continue;
+    const pct = day.eta * 100; // stored as % (η×100); the loader ÷100 → the ratio the fold consumes
+    rows.push({
+      systemId: helperSystemId,
+      pointId,
+      intervalEnd: new Date(ts),
+      avg: pct,
+      min: pct,
+      max: pct,
+      last: pct,
+      delta: null,
+      sampleCount: 1,
+      errorCount: 0,
+      dataQuality: "good",
+    });
+    if (!latest || ts >= latest.tsMs) latest = { value: pct, tsMs: ts };
+  }
+
+  const CHUNK = 1000;
+  for (let off = 0; off < rows.length; off += CHUNK) {
+    await db
+      .insert(pointReadingsAgg5m)
+      .values(rows.slice(off, off + CHUNK))
+      .onConflictDoUpdate({
+        target: [
+          pointReadingsAgg5m.systemId,
+          pointReadingsAgg5m.pointId,
+          pointReadingsAgg5m.intervalEnd,
+        ],
+        set: {
+          avg: sql`excluded.avg`,
+          min: sql`excluded.min`,
+          max: sql`excluded.max`,
+          last: sql`excluded.last`,
+          sampleCount: sql`excluded.sample_count`,
+          dataQuality: sql`excluded.data_quality`,
+          updatedAt: sql`now()`,
+        },
+      });
+  }
+
+  if (latest) {
+    await updateLatestPointValue(
+      helperSystemId,
+      pointId,
+      `${BATTERY_STEM}/${ETA_METRIC}`,
+      latest.value,
+      latest.tsMs,
+      Date.now(),
+      ETA_UNIT,
+      ETA_DISPLAY,
+    );
+  }
+
+  return { pointId, daysWritten: rows.length };
 }
