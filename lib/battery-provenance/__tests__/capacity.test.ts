@@ -121,3 +121,27 @@ describe("learnEwmaCapacity", () => {
     expect(res.capacitySeries.every((c) => c === 22)).toBe(true);
   });
 });
+
+describe("excludeDays (BMS-recal exclusion)", () => {
+  it("an excluded day's raw C never updates the EWMA", () => {
+    const d0 = cyclingDay(Date.parse("2026-01-01T00:00:00Z"));
+    const d1 = cyclingDay(Date.parse("2026-01-02T00:00:00Z"), 2); // raw C = 40 (outlier for the test)
+    const d2 = cyclingDay(Date.parse("2026-01-03T00:00:00Z"));
+    const discharge = [...d0.discharge, ...d1.discharge, ...d2.discharge];
+    const soc = [...d0.soc, ...d1.soc, ...d2.soc];
+    const timeline = [...d0.timeline, ...d1.timeline, ...d2.timeline];
+    const base = learnEwmaCapacity(discharge, soc, timeline, 0, {
+      prior: 15,
+      alpha: 0.1,
+    });
+    const r = learnEwmaCapacity(discharge, soc, timeline, 0, {
+      prior: 15,
+      alpha: 0.1,
+      excludeDays: new Set([base.byDay[1].dayIndex]),
+    });
+    expect(r.byDay[1].rawC).toBeNull();
+    // Day 2 applies the EWMA as if day 1 never happened: one 20-fold from day 0.
+    expect(r.byDay[2].capacityKwh).toBeCloseTo(0.1 * 20 + 0.9 * 15, 10);
+    expect(base.byDay[2].capacityKwh).toBeGreaterThan(r.byDay[2].capacityKwh);
+  });
+});

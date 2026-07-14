@@ -251,8 +251,16 @@ function report(
     `  inferred usable capacity: ${fs.maxObservedCapacityKwh.toFixed(1)} kWh (max E between bottom-outs)`,
   );
   console.log(
+    `  three-term losses: ` +
+      (result.etaCUsed != null
+        ? `η_c ${(100 * result.etaCUsed).toFixed(1)}%  idle ${(result.idleKwhPerDayUsed ?? 0).toFixed(2)} kWh/day ` +
+          `(≈${(((result.idleKwhPerDayUsed ?? 0) * 1000) / 24).toFixed(0)} W)`
+        : `unarmed (SoC-blind or fit warm-up → single-η model)`),
+  );
+  console.log(
     `  resets: ${fs.resetsEmpty} empty + ${fs.resetsSocFloor} soc-floor + ${fs.resetsBackstop} backstop` +
-      ` = ${fs.resetsEmpty + fs.resetsSocFloor + fs.resetsBackstop} total`,
+      ` = ${fs.resetsEmpty + fs.resetsSocFloor + fs.resetsBackstop} total` +
+      `  (+ ${fs.recalEvents} BMS-recal snaps)`,
   );
   console.log(
     `  round-trip LOSS (priced into delivered): ${fs.roundtripLossKwh.toFixed(1)} kWh, ` +
@@ -264,21 +272,28 @@ function report(
       ` (${((100 * Math.abs(fs.unattribLossKwh)) / Math.max(result.chargeKwh, 1e-9)).toFixed(1)}% of charge)`,
   );
   console.log(
+    `  IDLE loss (standby drain): ${fs.idleLossKwh.toFixed(1)} kWh, ` +
+      `$${(fs.idleLossC / 100).toFixed(2)}, ${(fs.idleLossG / 1000).toFixed(1)} kg CO2`,
+  );
+  console.log(
     `  SoC-SYNC correction (E pinned to physical): ${fs.syncKwh.toFixed(1)} kWh net, ` +
       `${(fs.syncG / 1000).toFixed(1)} kg CO2, over ${fs.syncEvents} intervals`,
   );
 
-  // Conservation self-audit: charged + sync == vended + unattributed + stored (the sync buckets are a
-  // DISTINCT, signed, auditable category — a down-sync is provenance-neutral, not destroyed provenance).
+  // Conservation self-audit: charged + sync == vended + unattributed + idle + stored (the sync buckets
+  // are a DISTINCT, signed, auditable category — a down-sync is provenance-neutral, not destroyed
+  // provenance; idle is a REAL physical loss removed at the store's own blend).
   let foldVendedG = 0;
   for (const s of steps)
     foldVendedG += s.dischargedKwh * (s.batteryEmissionsIntensity ?? 0);
   const auditG =
-    result.chargedG + fs.syncG - (foldVendedG + fs.unattribLossG + fs.carbonG);
+    result.chargedG +
+    fs.syncG -
+    (foldVendedG + fs.unattribLossG + fs.idleLossG + fs.carbonG);
   const auditPct = (100 * Math.abs(auditG)) / Math.max(result.chargedG, 1e-9);
   console.log(
     `  conservation (carbon): charged ${(result.chargedG / 1000).toFixed(1)} + sync ${(fs.syncG / 1000).toFixed(1)} = ` +
-      `vended ${(foldVendedG / 1000).toFixed(1)} + unattrib ${(fs.unattribLossG / 1000).toFixed(1)} + stored ${(fs.carbonG / 1000).toFixed(1)} kg ` +
+      `vended ${(foldVendedG / 1000).toFixed(1)} + unattrib ${(fs.unattribLossG / 1000).toFixed(1)} + idle ${(fs.idleLossG / 1000).toFixed(1)} + stored ${(fs.carbonG / 1000).toFixed(1)} kg ` +
       `→ residual ${auditPct.toFixed(2)}% ${auditPct < 0.5 ? "✓" : "⚠"}`,
   );
 

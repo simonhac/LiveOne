@@ -34,6 +34,26 @@
  * so it isn't double-counted). Feed η from the measured Σout/Σin (see the replay); it can be learned
  * and updated over time.
  *
+ * ── Three-term loss model (η_c + idle; engages per-interval when the losses learner has values) ──
+ * The single round-trip η conflates three physically distinct terms (measured on real registers vs
+ * SoC, see `losses.ts`): a CHARGE-side efficiency η_c (~0.94: SoC rises by η_c·charge), a ~1:1
+ * discharge, and a small constant IDLE/standby drain (~20 W: BMS + balancing + self-discharge,
+ * proportional to TIME not throughput). When `iv.chargeEfficiency` is present it replaces η at the
+ * charge seam (same "loss priced into delivered" booking, just the right coefficient), and
+ * `iv.idleLossKwh` drains the store pro-rata into the `idleLoss*` buckets each interval — so parked
+ * energy pays the standby tax over time instead of charging sources paying it up front. Absent
+ * (SoC-blind history, learner not yet run) both are inert and the fold is byte-identical to the
+ * single-η model. Conservation extends to
+ * `Σcharged + Σsync == Σvended + Σunattributed + ΣidleLoss + Σstored`.
+ *
+ * ── BMS recalibration snaps ────────────────────────────────────────────────────────────────────
+ * A coulomb-counting BMS periodically re-syncs SoC at full charge — SoC steps several pp in one
+ * interval with no matching metered energy. The fold tracks the metered deliverable net since the
+ * last SoC observation; when the SoC-implied energy diverges from it by more than `recalSnapKwh`,
+ * the interval is flagged `recal` and the SoC sync SNAPS `E` to target in ONE step (bypassing the
+ * `socSyncGamma` smoothing) — a re-anchor event, not energy. The same detection (in `losses.ts`)
+ * excludes that local day from the η/C/losses learners so the phantom energy can't bias the fits.
+ *
  * ── Resets & the drift backstop ────────────────────────────────────────────────────────────────
  *  - `empty`     — `E` drains to ≤ `reanchorEpsKwh` (the reserve bottom-out, SoC-free). Primary.
  *  - `soc-floor` — SoC ≤ `reserveFloorPct` (drift correction when SoC is present; lazy: applied at
@@ -97,6 +117,18 @@ export interface FoldInterval {
   otherRenewableFraction?: number | null; // 0..1
   otherPrice?: number | null; // c/kWh (actual)
   otherPriceOpp?: number | null; // c/kWh (opportunity; defaults to otherPrice)
+  /**
+   * CHARGE-side efficiency η_c (0 < η_c ≤ 1) in effect this interval — the three-term loss model's
+   * replacement for the round-trip `efficiency` at the charge seam (see module header + `losses.ts`).
+   * Stamped per-interval like `efficiency` for reproducibility. null/undefined → the single-η model.
+   */
+  chargeEfficiency?: number | null;
+  /**
+   * Idle/standby energy to drain from the store THIS interval (kWh ≥ 0). Precomputed by the caller as
+   * `idleKwhPerDay · Δt/24h` (the fold is clock-free and doesn't know interval durations). Booked to the
+   * `idleLoss*` buckets pro-rata at the store's own blend. undefined/0 → no idle term (today's model).
+   */
+  idleLossKwh?: number;
 }
 
 export interface FoldConfig {
@@ -119,6 +151,12 @@ export interface FoldConfig {
   socSyncGamma?: number;
   /** SoC-sync: ignore gaps below this (SoC quantisation noise), kWh. Default 0.2. */
   socSyncDeadbandKwh?: number;
+  /**
+   * BMS-recalibration detector: when the SoC-implied energy change since the last SoC observation
+   * diverges from the metered deliverable net by more than this (kWh), the interval is a `recal` —
+   * the sync snaps E to target in ONE step instead of the γ nudge. Default 2.
+   */
+  recalSnapKwh?: number;
 }
 
 /** Why a reset fired at an interval. */
@@ -172,6 +210,16 @@ export interface FoldState {
   unattribLossOppC: number;
   unattribLossRenewKwh: number;
   /**
+   * IDLE/standby loss — the constant self-discharge drain (three-term model), removed from the store
+   * pro-rata at its own blend each interval. A REAL physical loss (unlike `sync*`, a correction):
+   * conservation reads `Σcharged + Σsync == Σvended + Σunattributed + ΣidleLoss + Σstored`.
+   */
+  idleLossKwh: number;
+  idleLossG: number;
+  idleLossC: number;
+  idleLossOppC: number;
+  idleLossRenewKwh: number;
+  /**
    * SoC-SYNC correction — signed energy/carbon/etc. the SoC overlay injected(+)/removed(−) to pin `E`
    * to physical. A DISTINCT, auditable category from `unattribLoss*`: a down-sync is provenance-neutral
    * (vended ratios unchanged) and replaces the backstop dump; the conservation identity becomes
@@ -184,10 +232,19 @@ export interface FoldState {
   syncOppC: number;
   /** Count of intervals a sync correction was applied (diagnostic). */
   syncEvents: number;
+  /** Count of BMS-recalibration snap events (one-step re-anchors; see `recalSnapKwh`). */
+  recalEvents: number;
   /** Count of resets by trigger (diagnostics). */
   resetsEmpty: number;
   resetsSocFloor: number;
   resetsBackstop: number;
+  /**
+   * Recal-detector carry: the last OBSERVED SoC (%) and the metered deliverable net (kWh, signed)
+   * accumulated since that observation. PHYSICAL state — survives segment resets (unlike the
+   * segment-relative fields above). null / 0 until the first SoC observation.
+   */
+  prevSocPct: number | null;
+  netSinceSocKwh: number;
 }
 
 /** Per-interval output. Intensities are null when the store is empty (E == 0 → nothing to vend). */
@@ -214,6 +271,8 @@ export interface FoldStep {
   segmentIntervals: number;
   /** Signed energy the SoC sync moved THIS interval (+injected / −removed; for the replay panel). */
   syncKwh: number;
+  /** A BMS-recalibration snap fired at this interval (one-step SoC re-anchor). */
+  recalHere: boolean;
 }
 
 export const INITIAL_FOLD_STATE: FoldState = Object.freeze({
@@ -242,15 +301,23 @@ export const INITIAL_FOLD_STATE: FoldState = Object.freeze({
   unattribLossC: 0,
   unattribLossOppC: 0,
   unattribLossRenewKwh: 0,
+  idleLossKwh: 0,
+  idleLossG: 0,
+  idleLossC: 0,
+  idleLossOppC: 0,
+  idleLossRenewKwh: 0,
   syncKwh: 0,
   syncG: 0,
   syncRenewKwh: 0,
   syncC: 0,
   syncOppC: 0,
   syncEvents: 0,
+  recalEvents: 0,
   resetsEmpty: 0,
   resetsSocFloor: 0,
   resetsBackstop: 0,
+  prevSocPct: null,
+  netSinceSocKwh: 0,
 });
 
 /** Advance the fold by one interval. See the module header for the ordering rationale. */
@@ -259,11 +326,14 @@ export function foldStep(
   iv: FoldInterval,
   config: FoldConfig,
 ): { next: FoldState; step: FoldStep } {
-  const eta = iv.efficiency ?? config.efficiency ?? 1;
+  // Charge-seam efficiency: the learned CHARGE-side η_c (three-term model) when present, else the
+  // single round-trip η — same booking scheme either way, just the right coefficient.
+  const eta = iv.chargeEfficiency ?? iv.efficiency ?? config.efficiency ?? 1;
   const maxSeg = config.maxSegmentIntervals ?? Infinity;
   const eps = config.reanchorEpsKwh ?? 0;
   const gamma = config.socSyncGamma ?? 0.2;
   const deadband = config.socSyncDeadbandKwh ?? 0.2;
+  const recalSnap = config.recalSnapKwh ?? 2;
   const C = iv.capacityKwh ?? null;
   const socKnown = iv.socPct !== null && C !== null && C > 0;
   const s = { ...state };
@@ -309,6 +379,7 @@ export function foldStep(
     estimatedFraction: estFrac,
     segmentIntervals: s.segmentIntervals,
     syncKwh: 0,
+    recalHere: false,
   };
 
   // helper: discard the current store to the unattributed-loss buckets and zero the segment.
@@ -474,22 +545,58 @@ export function foldStep(
     if (otherCharge > 0) s.estimatedKwh += eta * otherCharge;
   }
 
+  // 5.4. Idle/standby drain (three-term model): a small constant self-discharge removed from the store
+  //      pro-rata at its OWN blend — a real physical loss booked to the `idleLoss*` buckets (parked
+  //      energy pays the standby tax over time). Inert when the losses learner hasn't run (undefined/0).
+  const idle = Math.min(Math.max(iv.idleLossKwh ?? 0, 0), s.storedKwh);
+  if (idle > 0) {
+    const frac = idle / s.storedKwh;
+    s.idleLossKwh += idle;
+    s.idleLossG += s.carbonG * frac;
+    s.idleLossRenewKwh += s.renewableKwh * frac;
+    s.idleLossC += s.costC * frac;
+    s.idleLossOppC += s.costOppC * frac;
+    s.storedKwh -= idle;
+    s.carbonG *= 1 - frac;
+    s.renewableKwh *= 1 - frac;
+    s.costC *= 1 - frac;
+    s.costOppC *= 1 - frac;
+    s.estimatedKwh *= 1 - frac;
+  }
+
+  // Recal-detector carry: metered deliverable net since the last SoC OBSERVATION (full metered
+  // discharge, not dEff — physical SoC falls even when the model store is empty).
+  s.netSinceSocKwh += eta * charge - iv.dischargeKwh - idle;
+
   // 5.5. SoC anchor/sync (overlay; only when socPct + a learned capacity are present). Pin E to the
   //      physical usable energy above the reserve; the first interval of a segment SNAPS (one-time
   //      baseline anchor), later intervals nudge by `gamma` outside a deadband. Corrections book to the
   //      auditable `sync*` buckets — this is what replaces the backstop dump for a never-emptying battery.
+  //      A BMS RECALIBRATION (SoC-implied energy since the last observation diverging from the metered
+  //      net by > recalSnapKwh — e.g. the snap-to-100 at full charge) also does a ONE-STEP snap: it is a
+  //      re-anchor event, not energy, and smearing it over 1/γ intervals would misprice the blend.
   if (socKnown) {
+    const recal =
+      s.prevSocPct !== null &&
+      Math.abs(((iv.socPct! - s.prevSocPct) / 100) * C! - s.netSinceSocKwh) >
+        recalSnap;
+    if (recal) {
+      s.recalEvents++;
+      step.recalHere = true;
+    }
     const floorE = (config.reserveFloorPct / 100) * C!;
     const targetE = Math.max(0, (iv.socPct! / 100) * C! - floorE);
     const gap = targetE - s.storedKwh;
-    const g = s.socAnchored ? gamma : 1; // first interval of a segment: full snap
-    if (!s.socAnchored || Math.abs(gap) > deadband) {
+    const g = s.socAnchored && !recal ? gamma : 1; // segment start OR a recal: full snap
+    if (!s.socAnchored || recal || Math.abs(gap) > deadband) {
       let delta = g * gap;
       if (s.storedKwh + delta < 0) delta = -s.storedKwh;
       applySync(delta);
     }
     s.socAnchored = true;
     s.intervalsSinceSync = 0;
+    s.prevSocPct = iv.socPct!;
+    s.netSinceSocKwh = 0;
   }
 
   // 6. Advance segment age + capacity probe.

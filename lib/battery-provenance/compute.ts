@@ -12,6 +12,11 @@ import {
 import { extractBatteryFlows } from "./battery-flows";
 import { learnEwmaEta, type EtaDayDiag } from "./eta";
 import { learnEwmaCapacity, measureWindowCapacity } from "./capacity";
+import {
+  detectRecalDayIndexes,
+  learnLosses,
+  type LossesDayDiag,
+} from "./losses";
 import { foldBatteryProvenance, FoldConfig, FoldInterval } from "./fold";
 import { resolveExportPriceSeries } from "./tariff";
 import type {
@@ -54,6 +59,10 @@ export function computeBatteryProvenance(
   });
 
   // Physical round-trip totals (raw, before η) for the RTE diagnostic + the "measured" η.
+  const chargePerIv = flows.map(
+    (f) => f.solarChargeKwh + f.gridChargeKwh + f.otherChargeKwh,
+  );
+  const dischargePerIv = flows.map((f) => f.dischargeKwh);
   let chargeKwh = 0;
   let dischargeKwh = 0;
   for (const f of flows) {
@@ -62,6 +71,18 @@ export function computeBatteryProvenance(
   }
   const measuredEta =
     chargeKwh > 0 ? Math.min(1, Math.max(0.7, dischargeKwh / chargeKwh)) : 1;
+
+  // BMS-recalibration days (phantom SoC energy) — excluded from every in-window learner below, matching
+  // the shell's persisted learn passes. Empty when SoC-blind (detection needs SoC), so nothing changes.
+  const seedCapacity = measureWindowCapacity(dischargePerIv, inputs.soc);
+  const recalDays = detectRecalDayIndexes(
+    chargePerIv,
+    dischargePerIv,
+    inputs.soc,
+    seedCapacity ?? 15,
+    timeline,
+    inputs.timezoneOffsetMin,
+  );
 
   // η resolution, in priority order:
   //   1. a numeric config.efficiency pins one scalar for the window (tests / manual override);
@@ -94,11 +115,11 @@ export function computeBatteryProvenance(
     etaUsed = w > 0 ? wsum / w : measuredEta;
   } else {
     const learned = learnEwmaEta(
-      flows.map((f) => f.solarChargeKwh + f.gridChargeKwh + f.otherChargeKwh),
-      flows.map((f) => f.dischargeKwh),
+      chargePerIv,
+      dischargePerIv,
       timeline,
       inputs.timezoneOffsetMin,
-      { prior: chargeKwh > 0 ? measuredEta : 0.9 },
+      { prior: chargeKwh > 0 ? measuredEta : 0.9, excludeDays: recalDays },
     );
     etaSeries = learned.etaSeries;
     etaByDay = learned.byDay;
@@ -115,16 +136,44 @@ export function computeBatteryProvenance(
   // SoC is absent the overlay is inert regardless, so this cost is only paid where it matters.
   let capacitySeries: (number | null)[] | null = inputs.capacitySeries ?? null;
   if (!capacitySeries) {
-    const dischargePerIv = flows.map((f) => f.dischargeKwh);
-    const seed = measureWindowCapacity(dischargePerIv, inputs.soc);
     capacitySeries = learnEwmaCapacity(
       dischargePerIv,
       inputs.soc,
       timeline,
       inputs.timezoneOffsetMin,
-      { prior: seed ?? undefined },
+      { prior: seedCapacity ?? undefined, excludeDays: recalDays },
     ).capacitySeries;
   }
+
+  // Three-term loss model (η_c + idle) resolution — mirrors η/C (learn-in-shell / read-in-fold):
+  //   1. inputs.chargeEfficiencySeries / idleLossKwhPerDaySeries — the PERSISTED daily steps the loader
+  //      read from the charge-efficiency + idle-loss helper points. Canonical & REPRODUCIBLE;
+  //   2. fallback — learn in-window from raw charge/discharge + SoC + C (bootstrap + offline harness).
+  // Both paths need SoC + a capacity: SoC-blind history yields all-null series and the fold stays on the
+  // single-η model for those intervals, byte-identical.
+  let etaCSeries: (number | null)[] | null =
+    inputs.chargeEfficiencySeries ?? null;
+  let idleSeries: (number | null)[] | null =
+    inputs.idleLossKwhPerDaySeries ?? null;
+  let lossesByDay: LossesDayDiag[] | undefined;
+  if (!etaCSeries || !idleSeries) {
+    const learned = learnLosses(
+      chargePerIv,
+      dischargePerIv,
+      inputs.soc,
+      capacitySeries,
+      timeline,
+      inputs.timezoneOffsetMin,
+    );
+    etaCSeries = etaCSeries ?? learned.etaCSeries;
+    idleSeries = idleSeries ?? learned.idleKwhPerDaySeries;
+    lossesByDay = learned.byDay;
+  }
+  const lastNonNull = (a: (number | null)[] | null): number | null => {
+    if (!a) return null;
+    for (let i = a.length - 1; i >= 0; i--) if (a[i] != null) return a[i];
+    return null;
+  };
 
   // Dual solar cost basis (both computed every run — opportunity is first-class, not a toggle):
   //   • ACTUAL   — solar is out-of-pocket free (0). Feeds `costC` → `batteryPrice`.
@@ -148,7 +197,9 @@ export function computeBatteryProvenance(
     reanchorEpsKwh: config.reanchorEpsKwh ?? DEFAULT_REANCHOR_EPS_KWH,
     socSyncGamma: config.socSyncGamma,
     socSyncDeadbandKwh: config.socSyncDeadbandKwh,
+    recalSnapKwh: config.recalSnapKwh,
   };
+  const DAY_MS = 86_400_000;
   const intervals: FoldInterval[] = flows.map((f, i) => ({
     solarChargeKwh: f.solarChargeKwh,
     gridChargeKwh: f.gridChargeKwh,
@@ -164,6 +215,16 @@ export function computeBatteryProvenance(
       inputs.gridEmissionsEstimated[i] || inputs.gridPriceEstimated[i],
     efficiency: etaSeries?.[i] ?? undefined,
     capacityKwh: capacitySeries?.[i] ?? undefined,
+    // Three-term loss model: η_c at the charge seam; the idle drain pre-scaled to THIS interval's
+    // duration (flows[i] spans timeline[i]→timeline[i+1]) — the fold stays clock-free. Gated on the
+    // interval actually HAVING SoC: the pair was learned from SoC-covered days, and a SoC-dark stretch
+    // must keep today's single-η path byte-identical (no anchor there to correct a mis-fit drift).
+    chargeEfficiency:
+      inputs.soc[i] != null ? (etaCSeries?.[i] ?? undefined) : undefined,
+    idleLossKwh:
+      inputs.soc[i] != null && idleSeries?.[i] != null
+        ? (idleSeries[i]! * (timeline[i + 1] - timeline[i])) / DAY_MS
+        : undefined,
     // Fallback provenance for unattributed `otherCharge` AND SoC up-injection: the site grid/generator
     // signal for this interval (for Daylesford this is the generatorSource constant → carbon reconciles).
     otherEmissionsIntensity: inputs.gridEmissions[i],
@@ -242,5 +303,8 @@ export function computeBatteryProvenance(
     chargeKwh,
     dischargeKwh,
     chargedG,
+    etaCUsed: lastNonNull(etaCSeries),
+    idleKwhPerDayUsed: lastNonNull(idleSeries),
+    lossesByDay,
   };
 }

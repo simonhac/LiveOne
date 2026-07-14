@@ -25,6 +25,7 @@ import {
   recomputeRange as recomputeBatteryProvenanceRange,
   learnEtaForAllHandles,
   learnCapacityForAllHandles,
+  learnLossesForAllHandles,
 } from "@/lib/battery-provenance/recompute";
 
 // Earliest date for point data aggregation (when point data collection began)
@@ -288,13 +289,15 @@ export async function aggregateRange(
 
   // Daily heal of the derived battery-provenance blend over the aggregated range (best-effort). Runs
   // LAST — it reads agg_5m (battery + grid + solar) which the passes above have materialised. No-op for
-  // Areas without a bound battery. First (re)learn η(t) then usable capacity C(t) from the fixed anchor +
-  // persist each helper's round-trip-efficiency / usable-capacity point, so the blend/rollup recompute below
-  // READS a reproducible η + C (via inputs.etaSeries / inputs.capacitySeries) instead of re-learning them per
-  // window. Capacity MUST follow η (its deliverable-slope convention reads the learned η).
+  // Areas without a bound battery. First (re)learn η(t), then usable capacity C(t), then the three-term
+  // loss model (η_c + idle) from the fixed anchor + persist each helper's parameter points, so the
+  // blend/rollup recompute below READS reproducible values (via inputs.etaSeries / capacitySeries /
+  // chargeEfficiencySeries / idleLossKwhPerDaySeries) instead of re-learning them per window. Order
+  // matters: capacity follows η (its deliverable slope reads η); losses follow capacity (ΔSoC→kWh uses C).
   try {
     await learnEtaForAllHandles(Date.now());
     await learnCapacityForAllHandles(Date.now());
+    await learnLossesForAllHandles(Date.now());
     await recomputeBatteryProvenanceRange(rangeStartMs, Date.now());
   } catch (error) {
     console.error("[Daily Points] battery-provenance heal pass failed:", error);

@@ -22,6 +22,10 @@
  *   5b. Battery-provenance CONSISTENCY — per area, the modern rollup (flow_attr_1d) energy must equal
  *      the legacy Sankey (flow_1d) per (area, day). A divergence = a materialisation bug or a missed
  *      re-backfill (e.g. a silent single-day hole); it alerts instead of waiting for a human hand-diff.
+ *   5c. Battery SoC ↔ METER reconciliation — per area and complete day, ΔSoC·C must match the metered
+ *      registers through the three-term loss model (η_c·chg − dis − idle). A residual above tolerance =
+ *      a REAL meter/SoC feed failure (or a flagged, benign BMS recal snap) — the thing the loss model
+ *      silences by construction on a healthy feed. See lib/battery-provenance/soc-meter-check.ts.
  *
  * Alerting: if any ALERT-severity issue fires, POST a Slack-compatible payload to
  * OBSERVATIONS_ALERT_WEBHOOK_URL (graceful no-op if unset) and always emit a structured console.error.
@@ -30,7 +34,8 @@
  * Tuning via env (all optional): MONITOR_RESPONSE_PRESENCE_MIN, MONITOR_MIN_SESSIONS,
  * MONITOR_RAW_STALE_MINUTES, MONITOR_QUEUE_LAG_MAX, MONITOR_DLQ_ALERT, MONITOR_OUTBOX_BACKLOG_MAX,
  * MONITOR_OUTBOX_STALE_MINUTES, MONITOR_BATPROV_BLEND_STALE_MINUTES, MONITOR_BATPROV_ROLLUP_STALE_HOURS,
- * MONITOR_BATPROV_ESTIMATED_FRAC_MAX, MONITOR_BATPROV_CONSISTENCY_TOL_KWH.
+ * MONITOR_BATPROV_ESTIMATED_FRAC_MAX, MONITOR_BATPROV_CONSISTENCY_TOL_KWH,
+ * MONITOR_BATPROV_SOC_METER_TOL_KWH.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -39,6 +44,7 @@ import { requireCronOrAdmin } from "@/lib/api-auth";
 import { cronSkipReason } from "@/lib/cron/guard";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { getFlowConsistency } from "@/lib/db/planetscale/flow-consistency";
+import { checkSocMeterDivergence } from "@/lib/battery-provenance/soc-meter-check";
 import { qstash, OBSERVATIONS_QUEUE_NAME } from "@/lib/qstash";
 
 export const maxDuration = 30;
@@ -92,6 +98,12 @@ const BATPROV_ESTIMATED_FRAC_MAX = num(
 const BATPROV_CONSISTENCY_TOL_KWH = num(
   process.env.MONITOR_BATPROV_CONSISTENCY_TOL_KWH,
   0.05,
+);
+// SoC↔meter reconciliation: per complete day, |ΔSoC·C − (η_c·chg − dis − idle)| above this (kWh) means
+// a meter or SoC feed is lying (healthy Daylesford days reconcile to ~±1 kWh; a recal snap ~+5).
+const BATPROV_SOC_METER_TOL_KWH = num(
+  process.env.MONITOR_BATPROV_SOC_METER_TOL_KWH,
+  3,
 );
 
 /** Send a Slack-compatible alert if a webhook is configured. Best-effort; never throws. */
@@ -418,6 +430,56 @@ export async function GET(request: NextRequest) {
       severity: "warn",
       code: "batprov_consistency_check_failed",
       message: `Could not run the battery-provenance consistency check: ${String(err)}`,
+    });
+  }
+
+  // ── 5c: battery SoC ↔ meter reconciliation (three-term loss model) ──
+  // On a healthy feed the loss model closes each complete day to ~±1 kWh by construction, so a residual
+  // above tolerance is a REAL meter/SoC fault (stale register, re-scaled feed, lying SoC) — or a benign
+  // BMS recal snap, which arrives flagged. Skips SoC-blind and not-yet-learned ("unarmed") areas.
+  try {
+    const socMeter = await checkSocMeterDivergence(
+      Date.now(),
+      BATPROV_SOC_METER_TOL_KWH,
+    );
+    const diverged = socMeter.filter((r) => r.status === "divergent");
+    checks.batteryProvenanceSocMeter = {
+      areasChecked: socMeter.length,
+      tolKwh: BATPROV_SOC_METER_TOL_KWH,
+      byArea: socMeter.map((r) => ({
+        handle: r.handle,
+        status: r.status,
+        daysJudged: r.daysJudged,
+        divergentDays: r.divergentDays,
+      })),
+    };
+    if (diverged.length > 0) {
+      const detail = diverged
+        .map((r) => {
+          const days = r.divergentDays
+            .map(
+              (d) =>
+                `${d.day}: SoC ${d.socKwh} vs model ${d.modelKwh} kWh${d.recal ? " (recal)" : ""}`,
+            )
+            .join("; ");
+          return `handle ${r.handle}: ${days}`;
+        })
+        .join(" | ");
+      issues.push({
+        severity: "warn",
+        code: "batprov_soc_meter_divergence",
+        message: `Battery SoC disagrees with the metered registers beyond ±${BATPROV_SOC_METER_TOL_KWH} kWh/day — ${detail}. Unflagged days mean a meter/SoC feed fault; "(recal)" days are benign BMS re-syncs.`,
+      });
+    }
+  } catch (err) {
+    console.error(
+      "[MonitorObservations] SoC↔meter reconciliation check failed:",
+      err,
+    );
+    issues.push({
+      severity: "warn",
+      code: "batprov_soc_meter_check_failed",
+      message: `Could not run the SoC↔meter reconciliation check: ${String(err)}`,
     });
   }
 

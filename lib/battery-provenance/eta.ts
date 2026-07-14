@@ -32,6 +32,12 @@ export interface EtaLearnOptions {
   /** Physical clamp band for a day's raw η. Defaults 0.70 .. 1.0. */
   clampMin?: number;
   clampMax?: number;
+  /**
+   * Local-day indexes whose raw η must NOT update the EWMA (BMS-recalibration days, where phantom SoC
+   * energy skews the registers' meaning — see `losses.ts#detectRecalDayIndexes`). The applied η still
+   * covers them (carried from prior days). Default: none (behaviour unchanged).
+   */
+  excludeDays?: ReadonlySet<number>;
 }
 
 /** Per-day η diagnostic (the "degradation trend" — a slow decline is ageing, a step is a hardware change). */
@@ -105,7 +111,11 @@ export function learnEwmaEta(
     const applied = ewma;
     appliedByDay.set(d.dayIndex, applied);
     let rawEta: number | null = null;
-    if (d.chargeKwh >= minDayCharge && d.chargeKwh > 0) {
+    if (
+      d.chargeKwh >= minDayCharge &&
+      d.chargeKwh > 0 &&
+      !opts.excludeDays?.has(d.dayIndex)
+    ) {
       rawEta = clamp(d.dischargeKwh / d.chargeKwh, clampMin, clampMax);
       ewma = alpha * rawEta + (1 - alpha) * ewma;
     }
