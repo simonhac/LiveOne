@@ -30,6 +30,15 @@ primary_region = "syd"
   SHEEPHOUSE_PEER_WG_IP = "10.9.0.2/32"
   SHEEPHOUSE_DEVICE_CIDRS = "10.0.1.244/32"
   KINKORA_PEER_WG_IP = "10.9.0.3/32"
+  # On-disk store (blackbox journal + outage spool) on the persistent volume (see [mounts]).
+  USHER_DATA_DIR = "/data/usher"
+
+# Persistent volume for the usher store — survives deploys/restarts, so an outage backlog is never
+# lost to a redeploy. CREATE THE VOLUME BEFORE THE FIRST DEPLOY WITH THIS BLOCK (the deploy fails
+# without it):  fly volumes create usher_data --size 1 --region syd -a liveone-flyhub
+[mounts]
+  source = "usher_data"
+  destination = "/data"
 
 # WireGuard inbound on the dedicated IPv4. Always-on hub (no autostop) so the UDMs stay handshook.
 # No HTTP service is published — the inspector is reached only via the Cloudflare tunnel.

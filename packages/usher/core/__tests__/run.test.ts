@@ -36,6 +36,7 @@ function makeEntry(read: () => Promise<Values>): {
     ) {
       captured.readings = readings;
       captured.meta = meta;
+      return "ok" as const;
     },
   };
   return { entry: { source, pusher } as unknown as Entry, captured };
@@ -108,5 +109,86 @@ describe("tickOnce", () => {
     expect(stampedMs).toBeLessThanOrEqual(after);
     // sessionLabel carries the same real instant, not a rounded boundary
     expect(captured.meta!.sessionLabel).toMatch(/^test\/\d+$/);
+  });
+});
+
+describe("tickOnce store wiring (blackbox + spool)", () => {
+  function makeStore() {
+    const journalled: unknown[] = [];
+    const spooled: unknown[] = [];
+    return {
+      journalled,
+      spooled,
+      blackbox: {
+        append: async (r: unknown) => {
+          journalled.push(r);
+        },
+      },
+      spool: {
+        enqueue: async (b: unknown) => {
+          spooled.push(b);
+          return true;
+        },
+      },
+    };
+  }
+
+  it("journals the batch to the blackbox BEFORE a successful push", async () => {
+    const { entry } = makeEntry(async () => ({ x: 5 }));
+    const store = makeStore();
+    Object.assign(entry, { blackbox: store.blackbox, spool: store.spool });
+    const r = await tickOnce(entry, () => {});
+    expect(r).toMatchObject({ count: 1, pushOk: true });
+    expect(store.journalled).toHaveLength(1);
+    expect(store.journalled[0]).toMatchObject({ siteId: "s", count: 1 });
+    expect(store.spooled).toHaveLength(0); // push succeeded → nothing spooled
+  });
+
+  it("spools the batch when the push fails transiently", async () => {
+    const { entry } = makeEntry(async () => ({ x: 5 }));
+    const store = makeStore();
+    Object.assign(entry, {
+      blackbox: store.blackbox,
+      spool: store.spool,
+      pusher: { store: async () => "transient" as const },
+    });
+    const r = await tickOnce(entry, () => {});
+    expect(r).toMatchObject({ count: 1, pushOk: false, spooled: true });
+    expect(r.error).toMatch(/spooled/);
+    expect(store.journalled).toHaveLength(1); // journalled regardless
+    expect(store.spooled).toHaveLength(1);
+    expect(store.spooled[0]).toMatchObject({ siteId: "s" });
+  });
+
+  it("does NOT spool a permanently rejected (4xx) batch", async () => {
+    const { entry } = makeEntry(async () => ({ x: 5 }));
+    const store = makeStore();
+    Object.assign(entry, {
+      blackbox: store.blackbox,
+      spool: store.spool,
+      pusher: { store: async () => "rejected" as const },
+    });
+    const r = await tickOnce(entry, () => {});
+    expect(r).toMatchObject({ count: 1, pushOk: false });
+    expect(r.spooled).toBeUndefined();
+    expect(r.error).toMatch(/rejected/);
+    expect(store.journalled).toHaveLength(1); // the blackbox still has it
+    expect(store.spooled).toHaveLength(0);
+  });
+
+  it("journals nothing when there are no readings (all n/a)", async () => {
+    const { entry } = makeEntry(async () => ({ x: null }));
+    const store = makeStore();
+    Object.assign(entry, { blackbox: store.blackbox, spool: store.spool });
+    const r = await tickOnce(entry, () => {});
+    expect(r).toMatchObject({ count: 0 });
+    expect(store.journalled).toHaveLength(0);
+  });
+
+  it("runs without a store at all (degraded mode = old behavior)", async () => {
+    const { entry, captured } = makeEntry(async () => ({ x: 5 }));
+    const r = await tickOnce(entry, () => {});
+    expect(r).toMatchObject({ count: 1, pushOk: true });
+    expect(captured.readings).toHaveLength(1);
   });
 });
