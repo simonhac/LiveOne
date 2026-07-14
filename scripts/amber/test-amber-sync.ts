@@ -103,10 +103,16 @@ async function testSync() {
 
   const firstDay = parseDateISO(dateArg);
 
-  // Credentials from environment or hardcoded for testing
+  // Credentials from environment — no fallbacks. In the app proper these live
+  // in the system's device config in Clerk; this dev script takes them from
+  // env so it can run standalone.
+  if (!process.env.AMBER_API_KEY) {
+    console.error("Error: AMBER_API_KEY must be set in the environment");
+    process.exit(1);
+  }
   const credentials = {
-    apiKey: process.env.AMBER_API_KEY || "psk_a5b4b523ec85b30a203212597a58c3af",
-    siteId: process.env.AMBER_SITE_ID || "01E8RD8Q0GABW66Z0WP8RDT6X1",
+    apiKey: process.env.AMBER_API_KEY,
+    siteId: process.env.AMBER_SITE_ID,
   };
 
   console.log("=".repeat(60));

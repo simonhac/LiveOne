@@ -2,8 +2,11 @@
 
 import { useState, useEffect, ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/queries";
 import DashboardHeader from "@/components/DashboardHeader";
 import TestConnectionModal from "@/components/TestConnectionModal";
+import UpdateCredentialsModal from "@/components/UpdateCredentialsModal";
 import PollNowModal from "@/components/PollNowModal";
 import ServerErrorModal from "@/components/ServerErrorModal";
 import SessionTimeoutModal from "@/components/SessionTimeoutModal";
@@ -95,7 +98,29 @@ export default function DeviceLayout({
   }>({ type: null });
   const [showSessionTimeout, setShowSessionTimeout] = useState(false);
   const [showViewDataModal, setShowViewDataModal] = useState(false);
+  const [showUpdateCredentials, setShowUpdateCredentials] = useState(false);
   const [shiftKeyDown, setShiftKeyDown] = useState(false);
+
+  // Credential rotation only applies to vendors with editable credential fields — not OAuth
+  // vendors (Tesla, which re-auths via its own flow) or push/app-key vendors. Gate the menu
+  // item on the vendor catalogue so it self-hides where it doesn't apply.
+  const { data: vendorsData } = useQuery({
+    queryKey: ["addSystem", "options"],
+    queryFn: () =>
+      fetchJson<{
+        vendors: {
+          vendorType: string;
+          addSystemFlow?: string;
+          credentialFields: unknown[];
+        }[];
+      }>("/api/vendors"),
+  });
+  const canUpdateCredentials = !!vendorsData?.vendors.some(
+    (v) =>
+      v.vendorType === system.vendorType &&
+      v.addSystemFlow !== "oauth-redirect" &&
+      (v.credentialFields?.length ?? 0) > 0,
+  );
 
   // Shift key detection for dry run mode
   useEffect(() => {
@@ -161,6 +186,11 @@ export default function DeviceLayout({
         }
         onAddSystem={() => setShowAddSystemDialog(true)}
         onSystemSettings={() => setShowSystemSettingsDialog(true)}
+        onUpdateCredentials={
+          canUpdateCredentials
+            ? () => setShowUpdateCredentials(true)
+            : undefined
+        }
         shiftKeyDown={shiftKeyDown}
       />
 
@@ -174,6 +204,17 @@ export default function DeviceLayout({
           displayName={system.displayName}
           vendorType={system.vendorType}
           onClose={() => setShowTestConnection(false)}
+        />
+      )}
+
+      {/* Update Credentials Modal */}
+      {showUpdateCredentials && (
+        <UpdateCredentialsModal
+          systemId={system.id}
+          displayName={system.displayName}
+          vendorType={system.vendorType}
+          onClose={() => setShowUpdateCredentials(false)}
+          onUpdated={() => router.refresh()}
         />
       )}
 
