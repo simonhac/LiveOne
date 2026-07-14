@@ -17,7 +17,7 @@
  *
  * Connection defaults come from .env.local (DEEPSEA_HOST / DEEPSEA_PORT / DEEPSEA_UNIT_ID)
  * and can be overridden by flags. The DSE IP is DHCP-assigned — reserve .244 to its MAC
- * (e8:a4:c1:06:47:03) in UniFi, or pass --host.
+ * in UniFi, or pass --host.
  *
  * READ-ONLY: only issues FC3 (read holding registers). Writes nothing to the controller.
  *

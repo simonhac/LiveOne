@@ -244,15 +244,6 @@ export class SelectronicFetchClient {
       const pageTitle = $("title").text();
       console.log(`[SystemInfo] Page title: ${pageTitle}`);
 
-      // Debug: Save HTML for system 648 to inspect
-      if (this.credentials.systemNumber === "648") {
-        const fs = await import("fs");
-        fs.writeFileSync("/tmp/dashboard-648.html", html);
-        console.log(
-          "[SystemInfo] Saved HTML to /tmp/dashboard-648.html for inspection",
-        );
-      }
-
       // Look for divs with table-cell display that contain system info
       // The structure is: <div class="table-row"><div>Label:</div><div>Value</div></div>
       $('div[style*="table-cell"]').each((_, element) => {
