@@ -96,8 +96,9 @@ function recalDaysFor(tp: BatteryThroughput): Set<number> {
   );
 }
 
-/** The blend value for a metricType from a fold step (null when the store is empty → not written). */
-function blendValue(step: FoldStep, metricType: string): number | null {
+/** The blend value for a metricType from a fold step (null when the store is empty → not written).
+ *  Exported for tests. */
+export function blendValue(step: FoldStep, metricType: string): number | null {
   switch (metricType) {
     case "carbon-intensity":
       return step.batteryEmissionsIntensity;
@@ -108,7 +109,12 @@ function blendValue(step: FoldStep, metricType: string): number | null {
     case "price":
       return step.batteryPrice;
     case "price-opportunity":
-      return step.batteryPriceOpportunity;
+      // Vended as the ADDITIONAL opportunity component (forgone feed-in only), not the fold's full
+      // opportunity basis — the fold keeps dual full bases internally (costC/costOppC); the delta is
+      // what the Contents card and the device page present as "Battery Opportunity Cost" (≥ 0).
+      return step.batteryPriceOpportunity !== null && step.batteryPrice !== null
+        ? step.batteryPriceOpportunity - step.batteryPrice
+        : null;
     case "stored-energy":
       // Usable stored energy E. Unlike the intensities this is 0 (not null) when the store is empty —
       // but 0 kWh is written so the Contents card reads "empty" rather than a stale value.

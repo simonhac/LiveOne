@@ -9,13 +9,13 @@
  *   - bidi.battery/carbon-intensity   (gCO2/kWh)
  *   - bidi.battery/renewable-fraction (%)
  *   - bidi.battery/price              (c/kWh)    ACTUAL (out-of-pocket) cost basis
- *   - bidi.battery/price-opportunity  (c/kWh)    OPPORTUNITY cost basis (solar @ forgone feed-in)
+ *   - bidi.battery/price-opportunity  (c/kWh)    ADDITIONAL opportunity component (forgone feed-in, ≥ 0)
  * plus the grid feed-in rate, when an export tariff exists:
  *   - bidi.grid.export/rate           (c/kWh)
  *
  * The absolute totals are DERIVED here, not stored: each intensity is `total ÷ E`, so `intensity × E`
  * reconstructs the total EXACTLY. total carbon = carbonIntensity × E; actual cost = price × E; opportunity
- * component = (price-opportunity − price) × E; renewable kWh = renewable% × E; export value = feed-in × E.
+ * component = price-opportunity × E; renewable kWh = renewable% × E; export value = feed-in × E.
  */
 
 export const CONTENTS_LATEST_PATHS = {
@@ -37,7 +37,7 @@ export interface BatteryContentsValues {
   renewableFraction: number | null;
   /** Actual (out-of-pocket) cost basis of the stored energy (c/kWh). */
   priceActual: number | null;
-  /** Opportunity cost basis (solar @ forgone feed-in) (c/kWh); ≥ priceActual. */
+  /** ADDITIONAL opportunity component (forgone feed-in on top of priceActual) (c/kWh); ≥ 0. */
   priceOpportunity: number | null;
   /** Current feed-in rate (c/kWh); null ⇒ no export tariff on this area. */
   exportRate: number | null;
@@ -47,7 +47,7 @@ export interface BatteryContentsValues {
   totalCarbonG: number | null;
   /** Total ACTUAL (out-of-pocket) cost of the store (cents, signed) = priceActual × E. */
   totalCostActualC: number | null;
-  /** OPPORTUNITY component (forgone export, cents ≥ 0) = (priceOpportunity − priceActual) × E. */
+  /** OPPORTUNITY component (forgone export, cents ≥ 0) = priceOpportunity × E. */
   totalCostOpportunityC: number | null;
   /** Renewable energy content (kWh) = renewableFraction% × E. */
   renewableKwh: number | null;
@@ -128,10 +128,7 @@ export function batteryContentsFromData(
     exportRate,
     totalCarbonG: scale(carbonIntensity),
     totalCostActualC: scale(priceActual),
-    totalCostOpportunityC:
-      E != null && priceOpportunity != null && priceActual != null
-        ? (priceOpportunity - priceActual) * E
-        : null,
+    totalCostOpportunityC: scale(priceOpportunity),
     renewableKwh:
       E != null && renewableFraction != null
         ? (renewableFraction / 100) * E
