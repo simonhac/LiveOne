@@ -18,6 +18,17 @@ export interface PusherOptions {
   log?: (msg: string) => void;
 }
 
+/**
+ * Final outcome of a store() attempt:
+ *  - "ok"        — acked; the receiver durably persisted the batch
+ *  - "transient" — network/5xx/429 even after retries; worth re-sending later → the caller spools
+ *  - "rejected"  — permanent 4xx (bad key/site/body); retrying can't help → dropped (blackbox keeps it)
+ */
+export type PushOutcome = "ok" | "transient" | "rejected";
+
+/** Per-attempt HTTP cap so a hung receiver can't stall a spool drain (the retry loop adds backoff). */
+const ATTEMPT_TIMEOUT_MS = 15_000;
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export class Pusher {
@@ -44,7 +55,7 @@ export class Pusher {
   async store(
     readings: PushReading[],
     meta: { sessionLabel: string; measurementTime: string },
-  ): Promise<boolean> {
+  ): Promise<PushOutcome> {
     const body: GushRequestBody = {
       vendorSiteId: this.opts.siteId,
       apiKey: this.opts.apiKey,
@@ -57,18 +68,18 @@ export class Pusher {
       const res = await this.post(body);
       if (res.ok) {
         this.log(`stored ${readings.length} readings (${res.status})`);
-        return true;
+        return "ok";
       }
       // permanent client errors (bad key/site/body) — don't retry
       if (res.status >= 400 && res.status < 500 && res.status !== 429) {
         this.log(`push rejected ${res.status}: ${res.text}`);
-        return false;
+        return "rejected";
       }
       if (attempt >= this.maxRetries) {
         this.log(
           `push failed after ${attempt} retries (${res.status}): ${res.text}`,
         );
-        return false;
+        return "transient";
       }
       const backoff = Math.min(2000 * 2 ** attempt, 15000);
       this.log(`push ${res.status || "network error"}, retry in ${backoff}ms`);
@@ -84,6 +95,7 @@ export class Pusher {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
       });
       const text = await res.text().catch(() => "");
       return { ok: res.ok, status: res.status, text: text.slice(0, 300) };

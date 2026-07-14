@@ -8,6 +8,7 @@
  */
 
 import type { ScheduledEntry } from "../core/run";
+import type { UsherStore } from "../core/factory";
 
 export interface SourceTickState {
   siteId: string;
@@ -29,6 +30,8 @@ interface UsherRegistry {
   entries: ScheduledEntry[];
   started: boolean;
   tickStates: Map<string, SourceTickState>;
+  /** the shared on-disk store (blackbox + spool), set by startUsher */
+  store?: UsherStore;
 }
 
 const g = globalThis as unknown as { __usherRegistry?: UsherRegistry };

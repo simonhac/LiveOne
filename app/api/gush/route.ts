@@ -194,6 +194,22 @@ export async function POST(request: NextRequest) {
     // Raw Comms: the exact body received over the wire, with only the apiKey masked.
     const redactedBody = { ...data, apiKey: maskSecret(data.apiKey) };
 
+    // Readings were sent but NONE are storable (missing metric metadata / unparseable times /
+    // all-null values) — a malformed batch, not an outage. 422 = permanent: the pusher drops it
+    // (it stays in the sender's blackbox journal) instead of silently acking a total loss.
+    if ((data.readings?.length ?? 0) > 0 && readingsToInsert.length === 0) {
+      const error =
+        "No storable readings: every reading is missing metricType/metricUnit, has an invalid measurementTime, or a null value";
+      await recordFailedSession(
+        sessionStart,
+        system.id,
+        "422",
+        error,
+        redactedBody,
+      );
+      return NextResponse.json({ error }, { status: 422 });
+    }
+
     let session: SessionInfo;
     try {
       session = await sessionManager.createSession({
@@ -203,10 +219,11 @@ export async function POST(request: NextRequest) {
         started: sessionStart,
       });
     } catch (sessionError) {
+      // Can't persist → hard, RETRYABLE failure. 503 tells the pusher to retry + spool.
       console.error("[gush] Failed to create session:", sessionError);
       return NextResponse.json(
-        { error: "Failed to create session" },
-        { status: 500 },
+        { error: "Failed to create session (datastore unavailable)" },
+        { status: 503 },
       );
     }
 
@@ -246,26 +263,40 @@ export async function POST(request: NextRequest) {
         pointsStored: readingsToInsert.length,
       });
     } catch (dbError) {
+      // Persistence failed after the batch was accepted — the readings are NOT durably stored.
+      // Error out hard with a RETRYABLE 503 (never a 2xx): the pusher retries, then spools the
+      // batch locally until we can persist again. Status/session updates below are best-effort —
+      // in a full DB outage they'll fail too, and must not mask the 503.
       console.error(`[gush] DB error for system ${system.id}:`, dbError);
-      await updatePollingStatusError(
-        system.id,
-        dbError instanceof Error ? dbError : "Database error",
-      );
       const errorMessage =
         dbError instanceof Error ? dbError.message : String(dbError);
-      await sessionManager.updateSessionResult(
-        session.id,
-        {
-          duration: Date.now() - sessionStart.getTime(),
-          successful: false,
-          errorCode: null,
-          error: errorMessage,
-          response: redactedBody,
-          numRows: 0,
-        },
-        collector.observations,
+      try {
+        await updatePollingStatusError(
+          system.id,
+          dbError instanceof Error ? dbError : "Database error",
+        );
+        await sessionManager.updateSessionResult(
+          session.id,
+          {
+            duration: Date.now() - sessionStart.getTime(),
+            successful: false,
+            errorCode: null,
+            error: errorMessage,
+            response: redactedBody,
+            numRows: 0,
+          },
+          collector.observations,
+        );
+      } catch (recordError) {
+        console.error(
+          `[gush] failed to record the failure itself (DB down?):`,
+          recordError,
+        );
+      }
+      return NextResponse.json(
+        { error: `Failed to persist readings: ${errorMessage}` },
+        { status: 503 },
       );
-      throw dbError;
     }
   } catch (error) {
     console.error("[gush] Error:", error);

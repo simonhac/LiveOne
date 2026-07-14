@@ -12,10 +12,16 @@
 import { buildReadings } from "./build";
 import type { Source } from "./source";
 import type { Pusher } from "./pusher";
+import type { Blackbox } from "./blackbox";
+import type { Spool } from "./spool";
 
 export interface Entry {
   source: Source;
   pusher: Pusher;
+  /** flight recorder — every collected batch is journalled before the push (null = disabled) */
+  blackbox?: Blackbox | null;
+  /** durable buffer for batches whose push transiently failed (null = disabled) */
+  spool?: Spool | null;
 }
 
 /**
@@ -58,6 +64,8 @@ export interface TickResult {
   at: string;
   /** whether the push succeeded (undefined when there was nothing to push) */
   pushOk?: boolean;
+  /** whether a failed push's batch was durably spooled for later re-send */
+  spooled?: boolean;
   /** error message if the tick failed (read/build/push threw or timed out) */
   error?: string;
 }
@@ -92,45 +100,39 @@ export function msUntilNextBoundary(periodMs: number, now: number): number {
   return rem === 0 ? periodMs : periodMs - rem;
 }
 
-/** Run one tick for a single entry: read → build → push, under a hard timeout. */
+/**
+ * Run one tick for a single entry: read → journal → push (→ spool on transient failure).
+ *
+ * The hard timeout covers the DEVICE read (a Modbus read on a silently-dead socket can hang
+ * forever); the push is self-bounded (per-attempt fetch timeout + capped retries in Pusher), and
+ * must stay OUTSIDE the tick timeout so a slow receiver can't abort the tick between "journalled"
+ * and "spooled" — that window is exactly where an outage would silently drop the batch.
+ */
 export async function tickOnce(
-  { source, pusher }: Entry,
+  entry: Entry,
   log: (m: string) => void,
   timeoutMs: number = DEFAULT_TICK_TIMEOUT_MS,
 ): Promise<TickResult> {
+  const { source, pusher, blackbox, spool } = entry;
   const tickStart = Date.now();
   const measurementTime = new Date(tickStart).toISOString();
+  const sessionLabel = `${source.name}/${tickStart}`;
   const base = {
     name: source.name,
     siteId: source.siteId,
     at: measurementTime,
   };
+
+  let readings: ReturnType<typeof buildReadings>;
+  let active: boolean;
   try {
-    const doTick = (async (): Promise<TickResult> => {
-      const values = await source.read();
-      const active = source.isRunning?.(values) ?? false;
-      const readings = buildReadings(source.manifest, values);
-      if (readings.length === 0) {
-        log(`[${source.name}] no readings this tick (all n/a)`);
-        return { ...base, count: 0, active };
-      }
-      const pushOk = await pusher.store(readings, {
-        sessionLabel: `${source.name}/${tickStart}`,
-        measurementTime,
-      });
-      return {
-        ...base,
-        count: readings.length,
-        active,
-        pushOk,
-        error: pushOk ? undefined : "push failed",
-      };
-    })();
-    return await withTimeout(
-      doTick,
+    const values = await withTimeout(
+      source.read(),
       timeoutMs,
-      `tick exceeded ${timeoutMs}ms (hung read/push)`,
+      `tick exceeded ${timeoutMs}ms (hung read)`,
     );
+    active = source.isRunning?.(values) ?? false;
+    readings = buildReadings(source.manifest, values);
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     log(`[${source.name}] tick error: ${error}`);
@@ -142,6 +144,53 @@ export async function tickOnce(
     }
     return { ...base, count: null, active: false, error };
   }
+
+  if (readings.length === 0) {
+    log(`[${source.name}] no readings this tick (all n/a)`);
+    return { ...base, count: 0, active };
+  }
+
+  // Journal BEFORE pushing — the blackbox records what was collected, not what was delivered.
+  await blackbox?.append({
+    at: new Date().toISOString(),
+    siteId: source.siteId,
+    sessionLabel,
+    measurementTime,
+    count: readings.length,
+    readings,
+  });
+
+  const outcome = await pusher.store(readings, {
+    sessionLabel,
+    measurementTime,
+  });
+  let spooled: boolean | undefined;
+  if (outcome === "transient") {
+    spooled =
+      (await spool?.enqueue({
+        siteId: source.siteId,
+        sessionLabel,
+        measurementTime,
+        readings,
+        spooledAt: new Date().toISOString(),
+      })) ?? false;
+  }
+
+  return {
+    ...base,
+    count: readings.length,
+    active,
+    pushOk: outcome === "ok",
+    spooled,
+    error:
+      outcome === "ok"
+        ? undefined
+        : outcome === "transient"
+          ? spooled
+            ? "push failed (batch spooled for re-send)"
+            : "push failed (spool unavailable — batch dropped)"
+          : "push rejected by receiver (4xx) — batch dropped",
+  };
 }
 
 /** Run one scheduled entry's independent loop forever: tick → wait its own period → repeat. */
@@ -161,6 +210,20 @@ async function runEntryLoop(
       onTick?.(entry, result);
     } catch {
       /* an inspector hook must never break the loop */
+    }
+    // The receiver just acked → it's healthy: re-send any spooled backlog (budget-bounded so a
+    // big outage backlog flushes over a few ticks without stalling the cadence).
+    if (result.pushOk && entry.spool) {
+      try {
+        await entry.spool.drain(entry.source.siteId, (b) =>
+          entry.pusher.store(b.readings, {
+            sessionLabel: b.sessionLabel,
+            measurementTime: b.measurementTime,
+          }),
+        );
+      } catch {
+        /* drain must never break the loop */
+      }
     }
     const periodMs = result.active ? activeMs : idleMs;
     const waitMs = align

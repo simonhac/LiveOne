@@ -7,9 +7,18 @@
 import type { Source } from "./source";
 import type { ScheduledEntry } from "./run";
 import { Pusher } from "./pusher";
+import type { Blackbox } from "./blackbox";
+import type { Spool } from "./spool";
 import { createMusher } from "../sources/musher";
 import { createFusher } from "../sources/fusher";
 import type { SourceConfig, UsherConfig } from "./config";
+
+/** The shared on-disk store (built once in startUsher; null members = degraded/disabled). */
+export interface UsherStore {
+  dataDir: string;
+  blackbox: Blackbox | null;
+  spool: Spool | null;
+}
 
 /** Build the live Source for one config entry (no pusher — used by --dry and by buildEntries). */
 export function createSource(
@@ -58,10 +67,11 @@ export function resolveApiKey(apiKeyEnv: string): string {
   return key;
 }
 
-/** Build the full set of scheduled entries (source + pusher + cadence) for the run-loop. */
+/** Build the full set of scheduled entries (source + pusher + cadence + shared store) for the run-loop. */
 export function buildEntries(
   config: UsherConfig,
   log: (m: string) => void,
+  store?: UsherStore,
 ): ScheduledEntry[] {
   return config.sources.map((sc) => {
     const source = createSource(sc, log);
@@ -75,6 +85,8 @@ export function buildEntries(
     return {
       source,
       pusher,
+      blackbox: store?.blackbox ?? null,
+      spool: store?.spool ?? null,
       intervalMs,
       activeIntervalMs,
       alignToBoundary: true,

@@ -3,8 +3,10 @@
  * (state/usher-state) and each source's live snapshot(). Serialized by the SSE + JSON routes.
  */
 
-import { getEntries } from "../core/usher";
+import { getEntries, getStore } from "../core/usher";
 import { getTickState, type SourceTickState } from "./usher-state";
+import type { BlackboxStats } from "../core/blackbox";
+import type { SpoolStats } from "../core/spool";
 
 export interface SourceView {
   siteId: string;
@@ -19,10 +21,20 @@ export interface SourceView {
   snapshot?: unknown;
 }
 
+/** On-disk store health for the inspector: journal + outage buffer + disk headroom. */
+export interface StoreView {
+  dataDir: string;
+  /** free fraction of the store's filesystem (0..1), from the last maintenance pass */
+  diskFreeFrac?: number;
+  blackbox?: BlackboxStats;
+  spool?: SpoolStats;
+}
+
 export interface UsherView {
   at: string;
   started: boolean;
   sources: SourceView[];
+  store?: StoreView;
 }
 
 export function getUsherView(): UsherView {
@@ -45,9 +57,22 @@ export function getUsherView(): UsherView {
       snapshot,
     };
   });
+  const s = getStore();
+  const store: StoreView | undefined = s
+    ? {
+        dataDir: s.dataDir,
+        diskFreeFrac:
+          s.blackbox?.statsSync().diskFreeFrac ??
+          s.spool?.statsSync().diskFreeFrac,
+        blackbox: s.blackbox?.statsSync(),
+        spool: s.spool?.statsSync(),
+      }
+    : undefined;
+
   return {
     at: new Date().toISOString(),
     started: entries.length > 0,
     sources,
+    store,
   };
 }

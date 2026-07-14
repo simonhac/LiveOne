@@ -49,6 +49,12 @@ export const SourceSchema = z.discriminatedUnion("type", [
 export const UsherConfigSchema = z.object({
   /** the gusher receiver URL */
   gushEndpoint: z.string().default("http://localhost:3000/api/gush"),
+  /**
+   * Root of the on-disk store (blackbox/ journal + spool/ outage buffer). Default:
+   * $USHER_DATA_DIR, else ./.usher-data. On Fly this points at the mounted volume (/data/usher);
+   * without a writable dir the usher still runs — journaling/buffering just degrade with a warning.
+   */
+  dataDir: z.string().optional(),
   sources: z.array(SourceSchema).min(1),
 });
 

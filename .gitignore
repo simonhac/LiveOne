@@ -99,3 +99,4 @@ daylesford_grid_readings_*.csv
 
 # collector hub build artifact (esbuild bundle; produced by `npm run build:collector`)
 scripts/collector/fly/collector.cjs
+.usher-data/

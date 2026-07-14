@@ -13,6 +13,22 @@ Access** (cloudflared) at `usher.liveone.energy` — the Fly IP exposes **only**
 > This replaces the old esbuild `collector.cjs` image (`scripts/collector/fly/`). It also folds in the
 > Kinkora Fronius feed, so the Kinkora FroniusPusher Pi is retired after cutover.
 
+## Persistent store volume (create BEFORE deploying)
+
+The usher journals every collected batch to a **blackbox** (daily JSONL, gzipped on roll) and
+buffers undelivered batches in a **spool** (drained when the receiver recovers), both under
+`USHER_DATA_DIR=/data/usher` on a persistent volume (`fly.toml [mounts]`). One-time setup — the
+deploy **fails** if the mount's volume doesn't exist:
+
+```bash
+fly volumes create usher_data --size 1 --region syd -a liveone-flyhub   # ~$0.15/GB/mo
+```
+
+Sizing: ~1 MB/day compressed journal → 1 GB holds years; the spool may grow to 75% of the disk
+during a liveone outage (weeks of buffer). Blackbox archives are GC'd oldest-first below 10% free.
+Without a volume/writable dir the usher still runs — journaling+buffering degrade with a warning
+(readings then only survive within a single push attempt, as before).
+
 ## Build & deploy (from the repo root — monorepo build context)
 
 ```bash
