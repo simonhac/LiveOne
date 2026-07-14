@@ -30,11 +30,11 @@ mkdir -p /etc/wireguard
   echo "Address = $WG_ADDR"
   echo "MTU = 1280"
 
-  # Peer A — sheephouse UDM (Daylesford): routes the DeepSea DSE over the tunnel.
+  # Peer A — sheephouse UDM (primary site): routes the DeepSea DSE over the tunnel.
   if [ -n "${SHEEPHOUSE_PEER_PUBKEY:-}" ]; then
     echo ""
     echo "[Peer]"
-    echo "# sheephouse UDM (Daylesford) → DeepSea generator"
+    echo "# sheephouse UDM (primary site) → DeepSea generator"
     echo "PublicKey = $SHEEPHOUSE_PEER_PUBKEY"
     echo "AllowedIPs = ${SHEEPHOUSE_PEER_WG_IP:-10.9.0.2/32}, ${SHEEPHOUSE_DEVICE_CIDRS:-10.0.1.244/32}"
     echo "PersistentKeepalive = 25"

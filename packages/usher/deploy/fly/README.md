@@ -2,7 +2,7 @@
 
 Permanent Fly WireGuard hub that runs **one usher** managing both sites over WireGuard:
 
-- **sheephouse UDM** (Daylesford, behind Starlink CGNAT) dials in as a WG client → the **DeepSea**
+- **sheephouse UDM** (the primary site, behind Starlink CGNAT) dials in as a WG client → the **DeepSea**
   generator (`musher`).
 - **kinkora UDM** (standard DSL) dials in as a WG client → the two **Fronius** inverters (`fusher`).
 
@@ -59,7 +59,7 @@ Non-secret WG addressing is in `fly.toml` `[env]`.
 
 Each UDM is a WG **client** dialing `flyhub.liveone.energy:51820` (UniFi → Settings → VPN → VPN
 Client). Routes: sheephouse → the DSE `/32`; kinkora → the two inverter `/32`s. **Check the Kinkora
-inverter subnet does not overlap Daylesford's `10.0.1.0/24`** before wiring the second peer.
+inverter subnet does not overlap the primary site's `10.0.1.0/24`** before wiring the second peer.
 
 ## Verify
 
