@@ -501,6 +501,30 @@ describe("opportunity cost (parallel accumulator)", () => {
     expect(steps[1].batteryPrice).toBe(0);
   });
 
+  it("grid charge at a NEGATIVE import price books negative cost into BOTH bases (no clamp)", () => {
+    // Amber import prices go negative; charging then must REDUCE both cost pools — being paid to
+    // charge is real money, and clamping it would overstate the store's cost basis.
+    const { steps, finalState } = foldBatteryProvenance(
+      [
+        iv({
+          gridChargeKwh: 4,
+          gridPrice: -5,
+          gridEmissionsIntensity: 700,
+          gridRenewableFraction: 0.1,
+          socPct: 80,
+        }),
+        iv({ dischargeKwh: 1, socPct: 70 }),
+      ],
+      CONFIG,
+    );
+    // Charged −20c over 4 kWh; the 1 kWh discharge draws the pool down proportionally → −15c remains.
+    expect(finalState.costC).toBeCloseTo(-15, 6);
+    expect(finalState.costOppC).toBeCloseTo(finalState.costC, 6);
+    // The vended price is negative too (grid-only content charged at a negative rate).
+    expect(steps[1].batteryPrice).toBeCloseTo(-5, 6);
+    expect(steps[1].batteryPriceOpportunity).toBeCloseTo(-5, 6);
+  });
+
   it("reset discards the opportunity basis to its unattributed-loss bucket", () => {
     const cfg: FoldConfig = { reserveFloorPct: 10, reanchorEpsKwh: 0.3 };
     const intervals = [

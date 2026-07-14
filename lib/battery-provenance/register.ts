@@ -5,7 +5,7 @@
  *   bidi.battery/carbon-intensity   (gCO2/kWh)
  *   bidi.battery/renewable-fraction (%)
  *   bidi.battery/price              (c/kWh)  — ACTUAL (out-of-pocket) cost basis
- *   bidi.battery/price-opportunity  (c/kWh)  — OPPORTUNITY cost basis (solar @ forgone feed-in)
+ *   bidi.battery/price-opportunity  (c/kWh)  — ADDITIONAL opportunity component (forgone feed-in, ≥ 0)
  *   bidi.battery/stored-energy      (kWh)    — usable stored energy (E); the totals the Contents card
  *                                              shows are `intensity × stored-energy`, reconstructed exactly.
  * Their existence is what enables the recompute (lib/db/planetscale/battery-provenance-pg.ts). The system
@@ -39,12 +39,12 @@ export const BLEND_POINTS: BlendPointSpec[] = [
   {
     metricType: "price",
     metricUnit: "cents_kWh",
-    displayName: "Battery Energy Price",
+    displayName: "Battery Energy Cost",
   },
   {
     metricType: "price-opportunity",
     metricUnit: "cents_kWh",
-    displayName: "Battery Opportunity Price",
+    displayName: "Battery Opportunity Cost",
   },
   {
     metricType: "stored-energy",
@@ -131,7 +131,12 @@ export async function ensureBatteryProvenancePoints(
   }
 
   const existing = await db
-    .select({ index: pointInfo.index, metricType: pointInfo.metricType })
+    .select({
+      index: pointInfo.index,
+      metricType: pointInfo.metricType,
+      displayName: pointInfo.displayName,
+      defaultName: pointInfo.defaultName,
+    })
     .from(pointInfo)
     .where(
       and(
@@ -146,6 +151,30 @@ export async function ensureBatteryProvenancePoints(
   for (const p of BLEND_POINTS) {
     const idx = byMetric.get(p.metricType);
     if (idx !== undefined) pointIds[p.metricType] = idx;
+  }
+
+  // Reconcile display names on EXISTING rows when the spec's name changed — but only rows the user never
+  // customised (displayName still === defaultName). Runs on every recompute, so a spec rename propagates
+  // everywhere without manual SQL.
+  if (apply) {
+    for (const p of BLEND_POINTS) {
+      const row = existing.find((e) => e.metricType === p.metricType);
+      if (
+        row &&
+        row.displayName === row.defaultName &&
+        row.defaultName !== p.displayName
+      ) {
+        await db
+          .update(pointInfo)
+          .set({ displayName: p.displayName, defaultName: p.displayName })
+          .where(
+            and(
+              eq(pointInfo.systemId, systemId),
+              eq(pointInfo.index, row.index),
+            ),
+          );
+      }
+    }
   }
 
   if (missing.length === 0) return { status: "exists", systemId, pointIds };

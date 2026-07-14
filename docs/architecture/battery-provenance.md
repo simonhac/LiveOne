@@ -142,7 +142,8 @@ pattern; see [home-assistant-comparison.md](home-assistant-comparison.md)):
 
 - **Live blend** — the 5 derived points on the helper (`agg_5m` + KV latest), all written per interval by
   the same blend loop from one `FoldStep`: `carbon-intensity`, `renewable-fraction`, `price` (ACTUAL,
-  out-of-pocket), `price-opportunity` (solar @ forgone feed-in), and `stored-energy` (usable kWh E). Serve on
+  out-of-pocket — "Battery Energy Cost"), `price-opportunity` (the ADDITIONAL forgone feed-in component,
+  ≥ 0 — "Battery Opportunity Cost"), and `stored-energy` (usable kWh E). Serve on
   the Area dashboard via the generic point stack. The **Battery Contents card** (`components/BatteryContentsCard.tsx`,
   selector `lib/battery/contents-latest.ts`) reads these: the absolute totals are DERIVED client-side —
   `intensity × stored-energy` reconstructs each total exactly (total carbon, actual/opportunity cost, export
@@ -215,13 +216,23 @@ off-grid `generatorSource` triple lives on the battery system's `config.batteryP
 ## Opportunity cost & the export tariff
 
 Solar charged into the battery is **free out-of-pocket** but **forgoes the feed-in revenue** you'd have
-earned exporting it. The fold tracks BOTH bases every run as a **parallel accumulator** (`costC` actual @
-solar-0, `costOppC` opportunity @ solar-feed-in) → `price` and `price-opportunity` points; the actual/
-opportunity split is first-class, not a toggle. The fold consumes only a per-interval `exportPrice[]`
+earned exporting it. The fold tracks BOTH full bases every run as a **parallel accumulator** (`costC`
+actual @ solar-0, `costOppC` opportunity @ solar-feed-in); the actual/opportunity split is first-class,
+not a toggle. The WRITTEN points split the intuitive way: `price` = the actual basis ("Battery Energy
+Cost") and `price-opportunity` = the **delta** `costOppC/E − costC/E` — the ADDITIONAL forgone feed-in
+component only ("Battery Opportunity Cost", ≥ 0; see `blendValue` in
+`lib/db/planetscale/battery-provenance-pg.ts`). Full economic cost = the sum of the two points.
+
+Price-sign semantics: negative **import** prices flow through unclamped (grid charge at a negative Amber
+rate books negative cost into BOTH bases — `price` can legitimately go negative). The **feed-in** price is
+floored at 0 per interval (`compute.ts` `solarCostOpp`): under a negative export price the counterfactual
+to storing solar is curtailment, not paying to export, so nothing was forgone.
+
+The fold consumes only a per-interval `exportPrice[]`
 series — it never sees modes/schedules — so the source is pluggable. `resolveExportPriceSeries`
 (`lib/battery-provenance/tariff.ts`) resolves it from `config.batteryProvenance.exportTariff`:
 
-- **`{ mode: "none" }`** (default) — no opportunity cost (`price-opportunity` == `price`).
+- **`{ mode: "none" }`** (default) — no opportunity cost (`price-opportunity` reads 0).
 - **`{ mode: "amber" }`** — the measured `bidi.grid.export/rate` feed-in series.
 - **`{ mode: "schedule", plans }`** — a retailer schedule synthesised per interval. Plans are **effective-
   dated** (`effectiveFrom`; newest ≤ the interval's local date wins) so a historical re-fold prices each
@@ -282,8 +293,8 @@ modernDays, divergentDays[]}`. **`deltaKwh` ≈ 0 with an empty `divergentDays` 
   consistency alert, and the SoC↔meter reconciliation alert are live.)
 - The `flow_1d → flow_attr_1d` **cutover** (flip the `source` default to `modern`, drop `flow_1d`).
 - Sankey **relabel** `source.grid` → "Generator" for off-grid areas (the attribution is already correct).
-- **Reserve floor is the one non-reproducible input** — every other learned input (η, C, η_c, idle) is
-  fixed-anchor + persisted, but the reserve floor is a _sliding_ 90-day 0.5th-percentile cached in KV
+- **Reserve floor is the one non-reproducible input** — every other learned input (η, C, η*c, idle) is
+  fixed-anchor + persisted, but the reserve floor is a \_sliding* 90-day 0.5th-percentile cached in KV
   (~25h TTL; `load.ts`), so a backfill and a live reconcile can land on different floors across the
   TTL/window boundary. Bounded ≤ ~2.6 kWh by the `[5,10]` clamp. Candidate for the same
   persisted-point treatment as η/C.

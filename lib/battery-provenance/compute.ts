@@ -178,8 +178,9 @@ export function computeBatteryProvenance(
   // Dual solar cost basis (both computed every run — opportunity is first-class, not a toggle):
   //   • ACTUAL   — solar is out-of-pocket free (0). Feeds `costC` → `batteryPrice`.
   //   • OPPORTUNITY — solar priced at forgone feed-in from the resolved export tariff. Feeds `costOppC`
-  //                   → `batteryPriceOpportunity`. The tariff SOURCE (none/amber/schedule) is resolved
-  //                   here into a single exportPrice[] series; the fold never sees modes/schedules.
+  //                   → `batteryPriceOpportunity` (a full basis; the WRITTEN `price-opportunity` point is
+  //                   the delta vs actual — see blendValue). The tariff SOURCE (none/amber/schedule) is
+  //                   resolved here into a single exportPrice[] series; the fold never sees modes/schedules.
   const SOLAR_ACTUAL_COST = 0;
   const exportPrice = resolveExportPriceSeries(
     inputs.exportTariff,
@@ -187,6 +188,10 @@ export function computeBatteryProvenance(
     inputs.timezoneOffsetMin,
     inputs.gridExportPrice,
   );
+  // Floor the forgone feed-in at 0 (deliberate, per-interval): under a NEGATIVE export price the
+  // counterfactual to storing solar is curtailment, not paying to export — so nothing was forgone.
+  // Negative IMPORT prices are a different matter and are NOT clamped anywhere: grid charge at a
+  // negative rate books negative cost into BOTH bases (see the fold's gridM term).
   const solarCostOpp = (i: number) => Math.max(0, exportPrice[i] ?? 0);
 
   const foldConfig: FoldConfig = {

@@ -51,8 +51,8 @@ export interface ProvenanceInputs {
    * Export (feed-in) tariff selecting the SOLAR OPPORTUNITY-COST source: `none` (default), `amber` (the
    * measured `gridExportPrice` above), or a `schedule` synthesised per interval. `compute` resolves this to
    * a single exportPrice[] series (see `lib/battery-provenance/tariff.ts`); the fold consumes only that.
-   * Undefined ⇒ no opportunity cost (`price-opportunity` == `price`). The loader reads it from the battery
-   * device's `config.batteryProvenance.exportTariff`.
+   * Undefined ⇒ no opportunity cost (the written `price-opportunity` point reads 0). The loader reads it
+   * from the battery device's `config.batteryProvenance.exportTariff`.
    */
   exportTariff?: ExportTariffConfig;
 

@@ -21,7 +21,7 @@ describe("batteryContentsFromData", () => {
         [P.carbonIntensity]: e(200),
         [P.renewableFraction]: e(80),
         [P.priceActual]: e(5),
-        [P.priceOpportunity]: e(13),
+        [P.priceOpportunity]: e(8), // the point IS the additional (delta) component
         [P.exportRate]: e(7),
       }),
     );
@@ -29,7 +29,7 @@ describe("batteryContentsFromData", () => {
     expect(v!.storedEnergyKwh).toBe(10);
     expect(v!.totalCarbonG).toBeCloseTo(2000, 6); // 200 × 10
     expect(v!.totalCostActualC).toBeCloseTo(50, 6); // 5 × 10
-    expect(v!.totalCostOpportunityC).toBeCloseTo(80, 6); // (13 − 5) × 10
+    expect(v!.totalCostOpportunityC).toBeCloseTo(80, 6); // 8 × 10
     expect(v!.renewableKwh).toBeCloseTo(8, 6); // 80% × 10
     expect(v!.exportValueC).toBeCloseTo(70, 6); // 7 × 10
     expect(v!.measurementTime).toBe(iso);
@@ -74,7 +74,7 @@ describe("batteryContentsFromData", () => {
   });
 
   it("handles a signed (negative) actual price", () => {
-    // Amber paid you to charge: actual price −2 c/kWh, opportunity still 6.
+    // Amber paid you to charge: actual price −2 c/kWh; the opportunity component is independent (≥ 0).
     const v = batteryContentsFromData(
       data({
         [P.storedEnergy]: e(4),
@@ -83,6 +83,6 @@ describe("batteryContentsFromData", () => {
       }),
     );
     expect(v!.totalCostActualC).toBeCloseTo(-8, 6); // −2 × 4
-    expect(v!.totalCostOpportunityC).toBeCloseTo(32, 6); // (6 − −2) × 4
+    expect(v!.totalCostOpportunityC).toBeCloseTo(24, 6); // 6 × 4
   });
 });
