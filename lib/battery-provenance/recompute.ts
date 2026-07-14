@@ -16,6 +16,7 @@ import {
   recomputeBatteryProvenanceForWindowBestEffort,
   learnAndPersistEta,
   learnAndPersistCapacity,
+  learnAndPersistLosses,
 } from "@/lib/db/planetscale/battery-provenance-pg";
 import type { ProvenanceConfig } from "./types";
 
@@ -84,6 +85,31 @@ export async function learnCapacityForAllHandles(
       );
     } catch (e) {
       console.error(`[BatProv:capacity] learn failed for handle=${handle}:`, e);
+    }
+  }
+  return { handles: handles.length };
+}
+
+/**
+ * Daily: (re)learn the three-term loss model (η_c + idle; see `losses.ts`) for every battery Area and
+ * persist each helper's charge-efficiency + idle-loss points. MUST run AFTER
+ * {@link learnCapacityForAllHandles} (the fit converts ΔSoC→kWh with the same learned C) and BEFORE the
+ * blend/rollup recompute, so that reads reproducible values via inputs.chargeEfficiencySeries /
+ * idleLossKwhPerDaySeries. Best-effort per handle; a no-op for SoC-blind batteries and during warm-up.
+ */
+export async function learnLossesForAllHandles(
+  nowMs: number,
+): Promise<{ handles: number }> {
+  const db = requirePlanetscaleDb();
+  const handles = await listBatteryProvenanceHandles();
+  for (const handle of handles) {
+    try {
+      const r = await learnAndPersistLosses(db, handle, nowMs);
+      console.log(
+        `[BatProv:losses] handle=${handle} etaC=${r.etaCPointId} idle=${r.idlePointId} days=${r.daysWritten}`,
+      );
+    } catch (e) {
+      console.error(`[BatProv:losses] learn failed for handle=${handle}:`, e);
     }
   }
   return { handles: handles.length };

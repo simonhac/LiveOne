@@ -13,6 +13,7 @@ import type {
 } from "@/lib/aggregation/flow-matrix-core";
 import type { FoldStep, FoldState } from "./fold";
 import type { EtaDayDiag } from "./eta";
+import type { LossesDayDiag } from "./losses";
 import type { ExportTariffConfig } from "@/lib/capabilities/config";
 
 export interface ProvenanceWindow {
@@ -86,6 +87,17 @@ export interface ProvenanceInputs {
    */
   etaSeries?: (number | null)[];
 
+  /**
+   * Persisted three-term loss model (see `losses.ts`): CHARGE-side efficiency η_c(t) (0<η_c≤1) and the
+   * constant idle drain (kWh/day), per interval, aligned to `timeline` — read by the loader from the
+   * derived `bidi.battery/charge-efficiency` + `bidi.battery/idle-loss` helper points (daily steps,
+   * forward-filled). Same reproducibility contract as η/C (learn-in-shell / read-in-fold). Undefined →
+   * compute learns them in-window (bootstrap); null entries (warm-up / SoC-blind) → the fold falls back
+   * to the single-η model for those intervals, byte-identical.
+   */
+  chargeEfficiencySeries?: (number | null)[];
+  idleLossKwhPerDaySeries?: (number | null)[];
+
   coverage: { soc: number; emissions: number; price: number };
 }
 
@@ -102,6 +114,8 @@ export interface ProvenanceConfig {
   socSyncGamma?: number;
   /** SoC-sync: ignore gaps below this (SoC quantisation noise), kWh. Default 0.2. */
   socSyncDeadbandKwh?: number;
+  /** BMS-recalibration snap threshold (kWh); default 2. See `FoldConfig.recalSnapKwh`. */
+  recalSnapKwh?: number;
 }
 
 export interface ProvenanceResult {
@@ -122,4 +136,10 @@ export interface ProvenanceResult {
   dischargeKwh: number;
   /** Total carbon charged INTO the battery (gCO2) — the independent side of the conservation audit. */
   chargedG: number;
+  /** Three-term loss model actually in effect (latest applied pair), or null when unarmed (SoC-blind /
+   *  warm-up) — the fold used the single-η model for those intervals. */
+  etaCUsed: number | null;
+  idleKwhPerDayUsed: number | null;
+  /** Per-local-day losses-fit trend (diagnostic; produced only on the in-window bootstrap path). */
+  lossesByDay?: LossesDayDiag[];
 }

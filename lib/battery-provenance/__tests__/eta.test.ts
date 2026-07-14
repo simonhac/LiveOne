@@ -92,3 +92,27 @@ describe("learnEwmaEta", () => {
     expect(r.byDay).toHaveLength(2);
   });
 });
+
+describe("excludeDays (BMS-recal exclusion)", () => {
+  it("an excluded day's raw η never updates the EWMA (applied values carry past it)", () => {
+    const alpha = 0.1;
+    const prior = 0.95;
+    // Day 1 is an absurd outlier (raw η would clamp to 0.7) — excluded, so day 2 applies the
+    // same EWMA it would have seen if day 1 had never happened (one 0.9 fold from day 0).
+    const base = learnEwmaEta([10, 10, 10], [9, 1, 9], days(3), 0, {
+      alpha,
+      prior,
+    });
+    const dayIndexes = base.byDay.map((d) => d.dayIndex);
+    const r = learnEwmaEta([10, 10, 10], [9, 1, 9], days(3), 0, {
+      alpha,
+      prior,
+      excludeDays: new Set([dayIndexes[1]]),
+    });
+    expect(r.byDay[1].rawEta).toBeNull(); // excluded → no raw, no EWMA update
+    const afterDay0 = alpha * 0.9 + (1 - alpha) * prior;
+    expect(r.byDay[2].eta).toBeCloseTo(afterDay0, 10);
+    // Without the exclusion the outlier drags the EWMA down.
+    expect(base.byDay[2].eta).toBeLessThan(afterDay0);
+  });
+});

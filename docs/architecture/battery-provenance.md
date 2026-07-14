@@ -278,10 +278,27 @@ modernDays, divergentDays[]}`. **`deltaKwh` ≈ 0 with an empty `divergentDays` 
 - Bespoke FE **blend mini-card** + **EV-period card** (the live blend already renders via the generic
   device-metrics card; the period report is a client-side reduction of the `source=modern` payload).
 - `monitor-observations` **runaway-segment** alert — the last deferred monitor signal; needs the fold's
-  segment age persisted. (Blend/rollup staleness, high estimated-fraction, and the modern↔legacy
-  consistency alert are live.)
+  segment age persisted. (Blend/rollup staleness, high estimated-fraction, the modern↔legacy
+  consistency alert, and the SoC↔meter reconciliation alert are live.)
 - The `flow_1d → flow_attr_1d` **cutover** (flip the `source` default to `modern`, drop `flow_1d`).
 - Sankey **relabel** `source.grid` → "Generator" for off-grid areas (the attribution is already correct).
+- **Reserve floor is the one non-reproducible input** — every other learned input (η, C, η_c, idle) is
+  fixed-anchor + persisted, but the reserve floor is a _sliding_ 90-day 0.5th-percentile cached in KV
+  (~25h TTL; `load.ts`), so a backfill and a live reconcile can land on different floors across the
+  TTL/window boundary. Bounded ≤ ~2.6 kWh by the `[5,10]` clamp. Candidate for the same
+  persisted-point treatment as η/C.
+
+### Closed: the "SoC vs registers disagree" caveat (2026-07-15)
+
+The PR-#168 caveat ("Daylesford's SoC rises ~39pp over 40 days while metered net ≈ 0") did **not**
+reproduce against prod registers — full-history reconciliation closes under a three-term loss model
+(charge-side η_c ≈ 0.94, discharge ≈ 1:1, constant idle drain ≈ 0.47 kWh/day ≈ 20 W) plus rare,
+benign **BMS full-charge recalibration snaps** (SoC re-syncs several pp in one interval with no
+metered energy). The fold now implements exactly this: `losses.ts` learns (η_c, idle) as persisted
+helper points (`charge-efficiency`, `idle-loss`), the fold books an `idleLoss*` bucket and snaps E in
+one step on a recal (learner days excluded), and `monitor-observations` check 5c
+(`batprov_soc_meter_divergence`) turns the reconciliation into a standing per-day feed-fault detector.
+Findings + plan: `docs/plans/battery-soc-meter-reconciliation.md`.
 
 ## Key code
 

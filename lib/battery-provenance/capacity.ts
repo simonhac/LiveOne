@@ -27,6 +27,12 @@ export interface CapacityLearnOptions {
   /** Physical clamp band for a day's raw C (kWh). Defaults 2 .. 100. */
   clampMin?: number;
   clampMax?: number;
+  /**
+   * Local-day indexes whose raw C must NOT update the EWMA (BMS-recalibration days — the phantom SoC
+   * step corrupts the day's discharge÷down-swing slope; see `losses.ts#detectRecalDayIndexes`). The
+   * applied C still covers them (carried from prior days). Default: none (behaviour unchanged).
+   */
+  excludeDays?: ReadonlySet<number>;
 }
 
 /** Per-day capacity diagnostic (the "usable-capacity trend"; a step is a hardware/capacity change). */
@@ -107,7 +113,11 @@ export function learnEwmaCapacity(
     const applied = ewma;
     appliedByDay.set(d.dayIndex, applied);
     let rawC: number | null = null;
-    if (d.swing >= minDaySwing && d.swing > 0) {
+    if (
+      d.swing >= minDaySwing &&
+      d.swing > 0 &&
+      !opts.excludeDays?.has(d.dayIndex)
+    ) {
       rawC = clamp((100 * d.num) / d.swing, clampMin, clampMax);
       ewma = alpha * rawC + (1 - alpha) * ewma;
     }

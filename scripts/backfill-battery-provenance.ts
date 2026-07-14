@@ -25,6 +25,7 @@ import {
   listBatteryProvenanceHandles,
   learnEtaForAllHandles,
   learnCapacityForAllHandles,
+  learnLossesForAllHandles,
   recomputeRange,
 } from "../lib/battery-provenance/recompute";
 
@@ -70,6 +71,9 @@ async function main() {
   // canonical, reproducible C via inputs.capacitySeries.
   const cap = await learnCapacityForAllHandles(nowMs);
   console.log(`learned capacity for ${cap.handles} handles`);
+  // Then the three-term loss model (η_c + idle; after C — the fit's ΔSoC→kWh uses the learned C).
+  const losses = await learnLossesForAllHandles(nowMs);
+  console.log(`learned losses for ${losses.handles} handles`);
   await recomputeRange(startMs, nowMs, undefined, (info) => {
     console.log(
       `  handle ${info.handle} ${new Date(info.chunkStartMs).toISOString().slice(0, 10)}..${new Date(info.chunkEndMs).toISOString().slice(0, 10)}`,

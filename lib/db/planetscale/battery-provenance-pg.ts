@@ -36,6 +36,10 @@ import {
   measureWindowCapacity,
 } from "@/lib/battery-provenance/capacity";
 import {
+  detectRecalDayIndexes,
+  learnLosses,
+} from "@/lib/battery-provenance/losses";
+import {
   BLEND_POINTS,
   ensureBatteryProvenancePoints,
   ensureHelperBindings,
@@ -43,7 +47,12 @@ import {
   ensureEfficiencyBinding,
   ensureCapacityPoint,
   ensureCapacityBinding,
+  ensureParamPoint,
+  ensureParamBinding,
+  CHARGE_EFFICIENCY_POINT,
+  IDLE_LOSS_POINT,
 } from "@/lib/battery-provenance/register";
+import type { BatteryThroughput } from "@/lib/battery-provenance/load";
 import { ensureHelperDevice } from "@/lib/areas/helper";
 import type { ProvenanceConfig } from "@/lib/battery-provenance/types";
 import type { FoldStep } from "@/lib/battery-provenance/fold";
@@ -71,6 +80,21 @@ const CAPACITY_ANCHOR_MS = ETA_ANCHOR_MS;
 const CAPACITY_METRIC = "usable-capacity";
 const CAPACITY_UNIT = "kWh";
 const CAPACITY_DISPLAY = "Battery Usable Capacity";
+
+const LOSSES_ANCHOR_MS = ETA_ANCHOR_MS;
+
+/** BMS-recalibration local days for a throughput window (phantom SoC energy — excluded from every
+ *  learner, matching the fold's `recal` snap events). Empty for a SoC-blind battery. */
+function recalDaysFor(tp: BatteryThroughput): Set<number> {
+  return detectRecalDayIndexes(
+    tp.chargeKwh,
+    tp.dischargeKwh,
+    tp.soc,
+    measureWindowCapacity(tp.dischargeKwh, tp.soc) ?? CAPACITY_SEED,
+    tp.timeline,
+    tp.timezoneOffsetMin,
+  );
+}
 
 /** The blend value for a metricType from a fold step (null when the store is empty → not written). */
 function blendValue(step: FoldStep, metricType: string): number | null {
@@ -412,7 +436,7 @@ export async function learnAndPersistEta(
     tp.dischargeKwh,
     tp.timeline,
     tp.timezoneOffsetMin,
-    { prior: ETA_SEED },
+    { prior: ETA_SEED, excludeDays: recalDaysFor(tp) },
   );
 
   const helperSystemId = await ensureHelperDevice(tp.areaId);
@@ -531,7 +555,7 @@ export async function learnAndPersistCapacity(
     tp.soc,
     tp.timeline,
     tp.timezoneOffsetMin,
-    { prior: seed },
+    { prior: seed, excludeDays: recalDaysFor(tp) },
   );
 
   const helperSystemId = await ensureHelperDevice(tp.areaId);
@@ -618,4 +642,181 @@ export async function learnAndPersistCapacity(
   }
 
   return { pointId, daysWritten: rows.length };
+}
+
+/**
+ * Learn the three-term loss model (charge-side η_c + constant idle drain; see `losses.ts`) for an Area's
+ * battery over the STABLE window (fixed anchor → now) and persist it as the helper's charge-efficiency
+ * (η_c×100, %) + idle-loss (kWh/day) points — per local-day steps, exactly like η/C. Runs AFTER the η and
+ * C passes in the shell (it reads the same learned C convention). No-op for a SoC-blind battery or while
+ * the fit is still in warm-up (nothing to persist → the fold stays on the single-η model).
+ */
+export async function learnAndPersistLosses(
+  db: PgDb,
+  handle: number,
+  nowMs: number,
+): Promise<{
+  etaCPointId: number | null;
+  idlePointId: number | null;
+  daysWritten: number;
+}> {
+  const none = { etaCPointId: null, idlePointId: null, daysWritten: 0 };
+  const tp = await loadBatteryThroughput(handle, {
+    startMs: LOSSES_ANCHOR_MS,
+    endMs: nowMs,
+  });
+  if (!tp || tp.timeline.length < 2) return none;
+  if (tp.soc.every((v) => v === null)) return none;
+
+  // The SAME deterministic C(t) the capacity pass persisted (same inputs, seed, and exclusions) — the
+  // losses fit needs C to convert ΔSoC to kWh.
+  const recalDays = recalDaysFor(tp);
+  const seed = measureWindowCapacity(tp.dischargeKwh, tp.soc) ?? CAPACITY_SEED;
+  const capacitySeries = learnEwmaCapacity(
+    tp.dischargeKwh,
+    tp.soc,
+    tp.timeline,
+    tp.timezoneOffsetMin,
+    { prior: seed, excludeDays: recalDays },
+  ).capacitySeries;
+
+  const learned = learnLosses(
+    tp.chargeKwh,
+    tp.dischargeKwh,
+    tp.soc,
+    capacitySeries,
+    tp.timeline,
+    tp.timezoneOffsetMin,
+  );
+  if (learned.summaryEtaC === null) return none; // fit still in warm-up — nothing to persist
+
+  const helperSystemId = await ensureHelperDevice(tp.areaId);
+  const etaCPointId = await ensureParamPoint(
+    helperSystemId,
+    CHARGE_EFFICIENCY_POINT,
+    true,
+  );
+  const idlePointId = await ensureParamPoint(
+    helperSystemId,
+    IDLE_LOSS_POINT,
+    true,
+  );
+  if (etaCPointId == null || idlePointId == null) return none;
+  const bindA = await ensureParamBinding(
+    tp.areaId,
+    helperSystemId,
+    etaCPointId,
+    CHARGE_EFFICIENCY_POINT,
+    112,
+  );
+  const bindB = await ensureParamBinding(
+    tp.areaId,
+    helperSystemId,
+    idlePointId,
+    IDLE_LOSS_POINT,
+    113,
+  );
+  if (bindA.created + bindB.created > 0) {
+    try {
+      await buildSubscriptionRegistry();
+    } catch (e) {
+      console.warn(
+        "[BatProv:losses] subscription registry rebuild skipped:",
+        e,
+      );
+    }
+  }
+
+  // Persist both as per-local-day STEPS at the first interval_end of each day (the η/C convention), only
+  // for days the fit had values (warm-up days stay unwritten → the loader yields null → single-η there).
+  const offMs = tp.timezoneOffsetMin * 60_000;
+  const dayOf = (t: number) => Math.floor((t + offMs - 1) / 86_400_000);
+  const firstTsByDay = new Map<number, number>();
+  for (const t of tp.timeline) {
+    const d = dayOf(t);
+    if (!firstTsByDay.has(d)) firstTsByDay.set(d, t);
+  }
+
+  const rows: (typeof pointReadingsAgg5m.$inferInsert)[] = [];
+  let latestEtaC: { value: number; tsMs: number } | null = null;
+  let latestIdle: { value: number; tsMs: number } | null = null;
+  for (const day of learned.byDay) {
+    const ts = firstTsByDay.get(day.dayIndex);
+    if (ts === undefined || day.etaC === null || day.idleKwhPerDay === null)
+      continue;
+    const pct = day.etaC * 100; // stored as % (η_c×100); the loader ÷100
+    const idle = day.idleKwhPerDay;
+    for (const [pointId, value] of [
+      [etaCPointId, pct],
+      [idlePointId, idle],
+    ] as const) {
+      rows.push({
+        systemId: helperSystemId,
+        pointId,
+        intervalEnd: new Date(ts),
+        avg: value,
+        min: value,
+        max: value,
+        last: value,
+        delta: null,
+        sampleCount: 1,
+        errorCount: 0,
+        dataQuality: "good",
+      });
+    }
+    if (!latestEtaC || ts >= latestEtaC.tsMs)
+      latestEtaC = { value: pct, tsMs: ts };
+    if (!latestIdle || ts >= latestIdle.tsMs)
+      latestIdle = { value: idle, tsMs: ts };
+  }
+
+  const CHUNK = 1000;
+  for (let off = 0; off < rows.length; off += CHUNK) {
+    await db
+      .insert(pointReadingsAgg5m)
+      .values(rows.slice(off, off + CHUNK))
+      .onConflictDoUpdate({
+        target: [
+          pointReadingsAgg5m.systemId,
+          pointReadingsAgg5m.pointId,
+          pointReadingsAgg5m.intervalEnd,
+        ],
+        set: {
+          avg: sql`excluded.avg`,
+          min: sql`excluded.min`,
+          max: sql`excluded.max`,
+          last: sql`excluded.last`,
+          sampleCount: sql`excluded.sample_count`,
+          dataQuality: sql`excluded.data_quality`,
+          updatedAt: sql`now()`,
+        },
+      });
+  }
+
+  if (latestEtaC) {
+    await updateLatestPointValue(
+      helperSystemId,
+      etaCPointId,
+      `${BATTERY_STEM}/${CHARGE_EFFICIENCY_POINT.metricType}`,
+      latestEtaC.value,
+      latestEtaC.tsMs,
+      Date.now(),
+      CHARGE_EFFICIENCY_POINT.metricUnit,
+      CHARGE_EFFICIENCY_POINT.displayName,
+    );
+  }
+  if (latestIdle) {
+    await updateLatestPointValue(
+      helperSystemId,
+      idlePointId,
+      `${BATTERY_STEM}/${IDLE_LOSS_POINT.metricType}`,
+      latestIdle.value,
+      latestIdle.tsMs,
+      Date.now(),
+      IDLE_LOSS_POINT.metricUnit,
+      IDLE_LOSS_POINT.displayName,
+    );
+  }
+
+  return { etaCPointId, idlePointId, daysWritten: rows.length / 2 };
 }

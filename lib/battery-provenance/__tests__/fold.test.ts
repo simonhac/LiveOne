@@ -714,3 +714,123 @@ describe("SoC anchor overlay (hybrid; armed only by socPct + capacityKwh)", () =
     }
   });
 });
+
+describe("three-term loss model (chargeEfficiency + idleLossKwh) & BMS recal snaps", () => {
+  const CFG: FoldConfig = {
+    reserveFloorPct: 10,
+    socSyncGamma: 0.2,
+    socSyncDeadbandKwh: 0.2,
+  };
+
+  it("chargeEfficiency replaces η at the charge seam (same booking scheme)", () => {
+    const { finalState } = foldBatteryProvenance(
+      [
+        iv({
+          solarChargeKwh: 10,
+          efficiency: 0.86,
+          chargeEfficiency: 0.94,
+          socPct: null,
+        }),
+      ],
+      CFG,
+    );
+    expect(finalState.storedKwh).toBeCloseTo(9.4, 9); // η_c wins over the round-trip η
+    expect(finalState.roundtripLossKwh).toBeCloseTo(0.6, 9);
+  });
+
+  it("idle drain removes energy pro-rata: blend invariant, idleLoss* booked, conservation closes", () => {
+    const { steps, finalState } = foldBatteryProvenance(
+      [
+        iv({
+          gridChargeKwh: 10,
+          gridEmissionsIntensity: 500,
+          gridRenewableFraction: 0.2,
+          gridPrice: 30,
+          socPct: null,
+        }),
+        iv({ idleLossKwh: 0.5, socPct: null }),
+        iv({ dischargeKwh: 2, socPct: null }),
+      ],
+      CFG,
+    );
+    expect(finalState.idleLossKwh).toBeCloseTo(0.5, 9);
+    expect(finalState.idleLossG).toBeCloseTo(0.5 * 500, 6); // drained at the store's own blend
+    expect(steps[2].batteryEmissionsIntensity).toBeCloseTo(500, 6); // vended blend unchanged by idle
+    expect(steps[2].batteryRenewableFraction).toBeCloseTo(0.2, 6);
+    // Conservation: charged == vended + unattrib + idle + stored (no sync here).
+    const chargedG = 10 * 500;
+    const vendedG = vendedCarbon(steps);
+    expect(
+      vendedG +
+        finalState.unattribLossG +
+        finalState.idleLossG +
+        finalState.carbonG,
+    ).toBeCloseTo(chargedG, 6);
+  });
+
+  it("idle drain never overdraws an empty store", () => {
+    const { finalState } = foldBatteryProvenance(
+      [iv({ idleLossKwh: 0.5, socPct: null })],
+      CFG,
+    );
+    expect(finalState.storedKwh).toBe(0);
+    expect(finalState.idleLossKwh).toBe(0);
+  });
+
+  it("a SoC step unexplained by metered energy is a recal: ONE-step snap to target", () => {
+    const { steps, finalState } = foldBatteryProvenance(
+      [
+        iv({ solarChargeKwh: 10, socPct: 50, capacityKwh: 60 }), // baseline snap → E = 24
+        // +10pp ⇒ implied +6 kWh with 0 metered ⇒ |6−0| > recalSnapKwh(2) ⇒ recal, full snap to 30.
+        iv({ socPct: 60, capacityKwh: 60 }),
+      ],
+      CFG,
+    );
+    expect(steps[1].recalHere).toBe(true);
+    expect(finalState.recalEvents).toBe(1);
+    expect(steps[1].storedKwh).toBeCloseTo(((60 - 10) / 100) * 60, 6); // exactly on target, not a γ nudge
+  });
+
+  it("a SoC rise fully explained by metered charge is NOT a recal (γ path intact)", () => {
+    const { steps, finalState } = foldBatteryProvenance(
+      [
+        iv({ solarChargeKwh: 10, socPct: 50, capacityKwh: 60 }),
+        iv({ solarChargeKwh: 6, socPct: 60, capacityKwh: 60 }), // implied +6 == η·6 metered
+      ],
+      CFG,
+    );
+    expect(steps[1].recalHere).toBe(false);
+    expect(finalState.recalEvents).toBe(0);
+  });
+
+  it("recal detection spans a SoC-dark stretch (net accumulates between observations)", () => {
+    const { steps } = foldBatteryProvenance(
+      [
+        iv({ socPct: 50, capacityKwh: 60 }),
+        iv({ solarChargeKwh: 3, socPct: null, capacityKwh: 60 }), // dark: net carries forward
+        iv({ solarChargeKwh: 3, socPct: null, capacityKwh: 60 }),
+        iv({ socPct: 60, capacityKwh: 60 }), // +6 kWh implied ≈ 6 metered since last obs → no recal
+      ],
+      CFG,
+    );
+    expect(steps[3].recalHere).toBe(false);
+  });
+
+  it("absent chargeEfficiency/idleLossKwh the fold is unchanged (single-η path)", () => {
+    const intervals = [
+      iv({ gridChargeKwh: 8, gridEmissionsIntensity: 400, socPct: null }),
+      iv({ dischargeKwh: 3, socPct: null }),
+    ];
+    const a = foldBatteryProvenance(intervals, { ...CFG, efficiency: 0.9 });
+    const b = foldBatteryProvenance(
+      intervals.map((x) => ({
+        ...x,
+        chargeEfficiency: undefined,
+        idleLossKwh: undefined,
+      })),
+      { ...CFG, efficiency: 0.9 },
+    );
+    expect(a.steps).toEqual(b.steps);
+    expect(a.finalState).toEqual(b.finalState);
+  });
+});

@@ -439,6 +439,46 @@ export async function loadProvenanceInputs(
     capacitySeries = forwardFill(timeline, s, 48 * 60 * 60 * 1000).value;
   }
 
+  // Persisted three-term loss model (learn-in-shell / read-in-fold, like η/C): charge-efficiency stored
+  // as % (η_c×100, ÷100 here), idle-loss as kWh/day. Daily steps, forward-filled ≤48h. Absent (not yet
+  // learned / SoC-blind) → undefined → compute learns in-window (bootstrap) or stays single-η.
+  let chargeEfficiencySeries: (number | null)[] | undefined;
+  const etaCBind = bound.find(
+    (b) => b.role === "battery" && b.metric === "charge-efficiency",
+  );
+  if (etaCBind) {
+    const s = await readAgg5m(
+      db,
+      etaCBind.systemId,
+      etaCBind.pointId,
+      startMs,
+      endMs,
+    );
+    chargeEfficiencySeries = forwardFill(
+      timeline,
+      s,
+      48 * 60 * 60 * 1000,
+    ).value.map((v) => (v === null ? null : v / 100));
+  }
+  let idleLossKwhPerDaySeries: (number | null)[] | undefined;
+  const idleBind = bound.find(
+    (b) => b.role === "battery" && b.metric === "idle-loss",
+  );
+  if (idleBind) {
+    const s = await readAgg5m(
+      db,
+      idleBind.systemId,
+      idleBind.pointId,
+      startMs,
+      endMs,
+    );
+    idleLossKwhPerDaySeries = forwardFill(
+      timeline,
+      s,
+      48 * 60 * 60 * 1000,
+    ).value;
+  }
+
   const frac = (a: (number | null)[]) =>
     a.filter((v) => v !== null).length / Math.max(a.length, 1);
 
@@ -464,6 +504,8 @@ export async function loadProvenanceInputs(
     batteryDischargeEnergyKwh,
     etaSeries,
     capacitySeries,
+    chargeEfficiencySeries,
+    idleLossKwhPerDaySeries,
     coverage: {
       soc: frac(soc),
       emissions: frac(gridEmissions),
