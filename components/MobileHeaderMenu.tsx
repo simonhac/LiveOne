@@ -11,6 +11,7 @@ import {
   Plus,
   Database,
   RefreshCw,
+  KeyRound,
 } from "lucide-react";
 
 interface SystemInfo {
@@ -35,6 +36,7 @@ interface MobileHeaderMenuProps {
   onPollNow?: (dryRun?: boolean) => void;
   onAddSystem?: () => void;
   onSystemSettings?: () => void;
+  onUpdateCredentials?: () => void;
   isDryRunMode?: boolean;
 }
 
@@ -52,6 +54,7 @@ export default function MobileHeaderMenu({
   onPollNow,
   onAddSystem,
   onSystemSettings,
+  onUpdateCredentials,
   isDryRunMode = false,
 }: MobileHeaderMenuProps) {
   const { user } = useUser();
@@ -183,6 +186,20 @@ export default function MobileHeaderMenu({
                   >
                     <Settings className="w-4 h-4" />
                     Device Settings…
+                  </button>
+                )}
+
+                {/* Update Credentials - only for credential vendors (see DeviceLayout gating) */}
+                {onUpdateCredentials && (
+                  <button
+                    onClick={() => {
+                      onClose();
+                      onUpdateCredentials();
+                    }}
+                    className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
+                  >
+                    <KeyRound className="w-4 h-4" />
+                    Update Credentials…
                   </button>
                 )}
               </div>

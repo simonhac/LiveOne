@@ -12,6 +12,7 @@ import type { SessionInfo } from "@/lib/point/point-manager";
 import { createPollCollector } from "@/lib/observations/poll-collector";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
 import { requireSystemAccess } from "@/lib/api-auth";
+import { getSystemCredentials } from "@/lib/secure-credentials";
 
 /**
  * Format timestamp as AEST (UTC+10) time string (HH:MM)
@@ -65,11 +66,21 @@ export async function POST(request: NextRequest) {
 
     const firstDay = parseDateISO(startDate);
 
-    // Credentials from environment
+    // Credentials from the system's device config in Clerk — the same source
+    // the minutely poll uses. No env vars, no fallbacks.
+    const { ownerClerkUserId } = authResult.system;
+    const storedCredentials = ownerClerkUserId
+      ? await getSystemCredentials(ownerClerkUserId, systemId)
+      : null;
+    if (!storedCredentials?.apiKey) {
+      return new Response(
+        `No Amber credentials configured for system ${systemId}`,
+        { status: 400 },
+      );
+    }
     const credentials = {
-      apiKey:
-        process.env.AMBER_API_KEY || "psk_a5b4b523ec85b30a203212597a58c3af",
-      siteId: process.env.AMBER_SITE_ID || "01E8RD8Q0GABW66Z0WP8RDT6X1",
+      apiKey: storedCredentials.apiKey,
+      siteId: storedCredentials.siteId,
     };
 
     const encoder = new TextEncoder();

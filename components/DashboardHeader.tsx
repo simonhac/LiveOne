@@ -20,6 +20,7 @@ import {
   Plus,
   Database,
   RefreshCw,
+  KeyRound,
   Menu,
   X,
 } from "lucide-react";
@@ -76,6 +77,7 @@ export interface DashboardHeaderProps {
   onPollNow?: (dryRun?: boolean) => void;
   onAddSystem?: () => void;
   onSystemSettings?: () => void;
+  onUpdateCredentials?: () => void;
 
   // Shift key state (for dry run)
   shiftKeyDown?: boolean;
@@ -99,6 +101,7 @@ export default function DashboardHeader({
   onPollNow,
   onAddSystem,
   onSystemSettings,
+  onUpdateCredentials,
   shiftKeyDown = false,
 }: DashboardHeaderProps) {
   const pathname = usePathname();
@@ -314,6 +317,7 @@ export default function DashboardHeader({
           onPollNow={onPollNow}
           onAddSystem={onAddSystem}
           onSystemSettings={onSystemSettings}
+          onUpdateCredentials={onUpdateCredentials}
           isDryRunMode={isDryRunMode}
         />
 
@@ -461,6 +465,20 @@ export default function DashboardHeader({
                       >
                         <SettingsIcon className="w-4 h-4" />
                         Device Settings…
+                      </button>
+                    )}
+
+                    {/* Update Credentials - only for credential vendors (see DeviceLayout gating) */}
+                    {onUpdateCredentials && (
+                      <button
+                        onClick={() => {
+                          setShowSettingsDropdown(false);
+                          onUpdateCredentials();
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
+                      >
+                        <KeyRound className="w-4 h-4" />
+                        Update Credentials…
                       </button>
                     )}
                   </div>
