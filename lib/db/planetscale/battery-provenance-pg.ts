@@ -32,11 +32,17 @@ import {
 import { computeBatteryProvenance } from "@/lib/battery-provenance/compute";
 import { learnEwmaEta } from "@/lib/battery-provenance/eta";
 import {
+  learnEwmaCapacity,
+  measureWindowCapacity,
+} from "@/lib/battery-provenance/capacity";
+import {
   BLEND_POINTS,
   ensureBatteryProvenancePoints,
   ensureHelperBindings,
   ensureEfficiencyPoint,
   ensureEfficiencyBinding,
+  ensureCapacityPoint,
+  ensureCapacityBinding,
 } from "@/lib/battery-provenance/register";
 import { ensureHelperDevice } from "@/lib/areas/helper";
 import type { ProvenanceConfig } from "@/lib/battery-provenance/types";
@@ -56,6 +62,15 @@ const ETA_ANCHOR_MS = Date.parse("2025-08-16T00:00:00Z");
 const ETA_METRIC = "round-trip-efficiency";
 const ETA_UNIT = "%";
 const ETA_DISPLAY = "Battery Round-trip Efficiency";
+
+/** Fallback seed (kWh) for the capacity EWMA when the window's SoC swing is too thin to measure a slope.
+ *  On a cycling battery the daily EWMA fully overrides it; on a barely-cycling one the measured window seed
+ *  (clamped) anchors it to a plausible C instead of this constant. */
+const CAPACITY_SEED = 15;
+const CAPACITY_ANCHOR_MS = ETA_ANCHOR_MS;
+const CAPACITY_METRIC = "usable-capacity";
+const CAPACITY_UNIT = "kWh";
+const CAPACITY_DISPLAY = "Battery Usable Capacity";
 
 /** The blend value for a metricType from a fold step (null when the store is empty → not written). */
 function blendValue(step: FoldStep, metricType: string): number | null {
@@ -481,6 +496,124 @@ export async function learnAndPersistEta(
       Date.now(),
       ETA_UNIT,
       ETA_DISPLAY,
+    );
+  }
+
+  return { pointId, daysWritten: rows.length };
+}
+
+/**
+ * Learn usable capacity C(t) for an Area's battery from its discharge vs SoC over a STABLE window (fixed
+ * anchor → now) and persist it as the helper's usable-capacity point (per local-day step: agg_5m + KV). Twin
+ * of {@link learnAndPersistEta}: the fixed anchor + fixed seed make C(day) reproducible, so any later bounded
+ * re-fold READS the same C(t) (via inputs.capacitySeries) instead of re-learning it — repair-convergence
+ * holds and the minutely reconcile agrees with the daily heal. Fold-independent (C is measured from raw
+ * discharge + SoC). Best-effort caller in recompute.ts. No-op (pointId null) for a SoC-blind battery.
+ */
+export async function learnAndPersistCapacity(
+  db: PgDb,
+  handle: number,
+  nowMs: number,
+): Promise<{ pointId: number | null; daysWritten: number }> {
+  const tp = await loadBatteryThroughput(handle, {
+    startMs: CAPACITY_ANCHOR_MS,
+    endMs: nowMs,
+  });
+  if (!tp || tp.timeline.length < 2) return { pointId: null, daysWritten: 0 };
+  // SoC-blind battery → no capacity to learn; the fold falls back to the pure power model.
+  if (tp.soc.every((v) => v === null)) return { pointId: null, daysWritten: 0 };
+
+  // Seed the EWMA from the window-global measured C (clamped), so a low-cycling battery whose days never
+  // reach the per-day swing floor is still anchored to a plausible capacity rather than the constant.
+  const seed = measureWindowCapacity(tp.dischargeKwh, tp.soc) ?? CAPACITY_SEED;
+  const learned = learnEwmaCapacity(
+    tp.dischargeKwh,
+    tp.soc,
+    tp.timeline,
+    tp.timezoneOffsetMin,
+    { prior: seed },
+  );
+
+  const helperSystemId = await ensureHelperDevice(tp.areaId);
+  const pointId = await ensureCapacityPoint(helperSystemId, true);
+  if (pointId == null) return { pointId: null, daysWritten: 0 };
+  const bind = await ensureCapacityBinding(tp.areaId, helperSystemId, pointId);
+  if (bind.created > 0) {
+    try {
+      await buildSubscriptionRegistry();
+    } catch (e) {
+      console.warn(
+        "[BatProv:capacity] subscription registry rebuild skipped:",
+        e,
+      );
+    }
+  }
+
+  // Persist C as a per-local-day STEP: write each day's C at the FIRST interval_end of that day so a
+  // forward-fill on read (load.ts) carries it across the day.
+  const offMs = tp.timezoneOffsetMin * 60_000;
+  const dayOf = (t: number) => Math.floor((t + offMs - 1) / 86_400_000);
+  const firstTsByDay = new Map<number, number>();
+  for (const t of tp.timeline) {
+    const d = dayOf(t);
+    if (!firstTsByDay.has(d)) firstTsByDay.set(d, t);
+  }
+
+  const rows: (typeof pointReadingsAgg5m.$inferInsert)[] = [];
+  let latest: { value: number; tsMs: number } | null = null;
+  for (const day of learned.byDay) {
+    const ts = firstTsByDay.get(day.dayIndex);
+    if (ts === undefined) continue;
+    const c = day.capacityKwh; // stored as kWh directly (no scaling, unlike η)
+    rows.push({
+      systemId: helperSystemId,
+      pointId,
+      intervalEnd: new Date(ts),
+      avg: c,
+      min: c,
+      max: c,
+      last: c,
+      delta: null,
+      sampleCount: 1,
+      errorCount: 0,
+      dataQuality: "good",
+    });
+    if (!latest || ts >= latest.tsMs) latest = { value: c, tsMs: ts };
+  }
+
+  const CHUNK = 1000;
+  for (let off = 0; off < rows.length; off += CHUNK) {
+    await db
+      .insert(pointReadingsAgg5m)
+      .values(rows.slice(off, off + CHUNK))
+      .onConflictDoUpdate({
+        target: [
+          pointReadingsAgg5m.systemId,
+          pointReadingsAgg5m.pointId,
+          pointReadingsAgg5m.intervalEnd,
+        ],
+        set: {
+          avg: sql`excluded.avg`,
+          min: sql`excluded.min`,
+          max: sql`excluded.max`,
+          last: sql`excluded.last`,
+          sampleCount: sql`excluded.sample_count`,
+          dataQuality: sql`excluded.data_quality`,
+          updatedAt: sql`now()`,
+        },
+      });
+  }
+
+  if (latest) {
+    await updateLatestPointValue(
+      helperSystemId,
+      pointId,
+      `${BATTERY_STEM}/${CAPACITY_METRIC}`,
+      latest.value,
+      latest.tsMs,
+      Date.now(),
+      CAPACITY_UNIT,
+      CAPACITY_DISPLAY,
     );
   }
 

@@ -24,6 +24,7 @@ import { recomputeRange as recomputeHwsTemperatureRange } from "@/lib/hws/recomp
 import {
   recomputeRange as recomputeBatteryProvenanceRange,
   learnEtaForAllHandles,
+  learnCapacityForAllHandles,
 } from "@/lib/battery-provenance/recompute";
 
 // Earliest date for point data aggregation (when point data collection began)
@@ -287,11 +288,13 @@ export async function aggregateRange(
 
   // Daily heal of the derived battery-provenance blend over the aggregated range (best-effort). Runs
   // LAST — it reads agg_5m (battery + grid + solar) which the passes above have materialised. No-op for
-  // Areas without a bound battery. First (re)learn η(t) from the fixed anchor + persist each helper's
-  // round-trip-efficiency point, so the blend/rollup recompute below READS a reproducible η (via
-  // inputs.etaSeries) instead of re-learning it per window.
+  // Areas without a bound battery. First (re)learn η(t) then usable capacity C(t) from the fixed anchor +
+  // persist each helper's round-trip-efficiency / usable-capacity point, so the blend/rollup recompute below
+  // READS a reproducible η + C (via inputs.etaSeries / inputs.capacitySeries) instead of re-learning them per
+  // window. Capacity MUST follow η (its deliverable-slope convention reads the learned η).
   try {
     await learnEtaForAllHandles(Date.now());
+    await learnCapacityForAllHandles(Date.now());
     await recomputeBatteryProvenanceRange(rangeStartMs, Date.now());
   } catch (error) {
     console.error("[Daily Points] battery-provenance heal pass failed:", error);

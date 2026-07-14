@@ -512,3 +512,205 @@ describe("opportunity cost (parallel accumulator)", () => {
     expect(finalState.storedKwh).toBe(0);
   });
 });
+
+describe("SoC anchor overlay (hybrid; armed only by socPct + capacityKwh)", () => {
+  const CFG: FoldConfig = {
+    reserveFloorPct: 10,
+    socSyncGamma: 0.2,
+    socSyncDeadbandKwh: 0.2,
+  };
+
+  it("anchors E to (soc − floor)/100 · C on the first interval of a segment", () => {
+    // no flows; target = (60−10)/100·40 = 20 → a full snap on the first socKnown interval.
+    const { steps } = foldBatteryProvenance(
+      [iv({ socPct: 60, capacityKwh: 40 })],
+      CFG,
+    );
+    expect(steps[0].storedKwh).toBeCloseTo(20, 6);
+    expect(steps[0].syncKwh).toBeCloseTo(20, 6);
+  });
+
+  it("down-correction is provenance-neutral: blend intensities unchanged, E reduced, syncG<0", () => {
+    // charge 30 @ 500 g/kWh, 20% renew; SoC says only (50−10)/100·40 = 16 kWh → down-correct.
+    const { steps, finalState } = foldBatteryProvenance(
+      [
+        iv({
+          gridChargeKwh: 30,
+          gridEmissionsIntensity: 500,
+          gridRenewableFraction: 0.2,
+          gridPrice: 30,
+          socPct: 50,
+          capacityKwh: 40,
+        }),
+        iv({ dischargeKwh: 1, socPct: 49, capacityKwh: 40 }),
+      ],
+      CFG,
+    );
+    expect(steps[1].batteryEmissionsIntensity).toBeCloseTo(500, 6);
+    expect(steps[1].batteryRenewableFraction).toBeCloseTo(0.2, 6);
+    expect(finalState.syncG).toBeLessThan(0);
+    expect(finalState.storedKwh).toBeLessThan(30);
+  });
+
+  it("up-correction on a NON-empty store inherits the store's own (clean) blend, not the dirty fallback", () => {
+    const { steps } = foldBatteryProvenance(
+      [
+        iv({ solarChargeKwh: 10, socPct: 30, capacityKwh: 40 }), // clean store (0 g), snapped to 8 kWh
+        // SoC jumps to 80 → target 28 → up-correct; a dirty fallback is available but must be IGNORED.
+        iv({
+          socPct: 80,
+          capacityKwh: 40,
+          otherEmissionsIntensity: 1000,
+          otherRenewableFraction: 0,
+        }),
+        iv({ dischargeKwh: 2, socPct: 78, capacityKwh: 40 }),
+      ],
+      CFG,
+    );
+    expect(steps[2].batteryEmissionsIntensity).toBeCloseTo(0, 6);
+    expect(steps[2].batteryRenewableFraction).toBeCloseTo(1, 6);
+  });
+
+  it("up-correction on an EMPTY store seeds the baseline from the site fallback provenance", () => {
+    const { steps } = foldBatteryProvenance(
+      [
+        // empty store, SoC 60 → inject (60−10)/100·40 = 20 kWh at the fallback (1000 g/kWh, 0% renew).
+        iv({
+          socPct: 60,
+          capacityKwh: 40,
+          otherEmissionsIntensity: 1000,
+          otherRenewableFraction: 0,
+        }),
+        iv({ dischargeKwh: 2, socPct: 58, capacityKwh: 40 }),
+      ],
+      CFG,
+    );
+    expect(steps[1].batteryEmissionsIntensity).toBeCloseTo(1000, 6);
+    expect(steps[1].batteryRenewableFraction).toBeCloseTo(0, 6);
+  });
+
+  it("the drift backstop is GATED OFF when SoC + capacity are present (no dump; E pinned instead)", () => {
+    const cfg: FoldConfig = { reserveFloorPct: 10, maxSegmentIntervals: 3 };
+    // A never-resetting trickle that WOULD trip a SoC-blind backstop; here SoC+C hold E steady, no reset.
+    const intervals = Array.from({ length: 8 }, () =>
+      iv({
+        gridChargeKwh: 0.2,
+        gridEmissionsIntensity: 300,
+        gridRenewableFraction: 0.4,
+        gridPrice: 10,
+        socPct: 55,
+        capacityKwh: 30,
+      }),
+    );
+    const { steps, finalState } = foldBatteryProvenance(intervals, cfg);
+    expect(finalState.resetsBackstop).toBe(0);
+    expect(steps.every((s) => s.resetTrigger !== "backstop")).toBe(true);
+  });
+
+  it("DEFECT 1: otherCharge with a fallback intensity makes carbon & renewable RECONCILE", () => {
+    // 5 kWh solar (0 g, 100% renew) + 5 kWh other @ 1000 g / 0% renew → 500 g/kWh, 50% renew.
+    const { steps } = foldBatteryProvenance(
+      [
+        iv({
+          solarChargeKwh: 5,
+          otherChargeKwh: 5,
+          otherEmissionsIntensity: 1000,
+          otherRenewableFraction: 0,
+          otherPrice: 70,
+          socPct: 50,
+        }),
+        iv({ dischargeKwh: 2, socPct: 45 }),
+      ],
+      CFG,
+    );
+    const c = steps[1].batteryEmissionsIntensity!;
+    const r = steps[1].batteryRenewableFraction!;
+    expect(c).toBeCloseTo(500, 6);
+    expect(r).toBeCloseTo(0.5, 6);
+    // reconciles for a single 1000 g/kWh non-renewable source (the impossible "97% renew / 2 g/kWh" bug).
+    expect(c).toBeCloseTo((1 - r) * 1000, 6);
+  });
+
+  it("no capacity ⇒ overlay inert: syncKwh/syncEvents 0 on every step (pure power model)", () => {
+    const intervals = [
+      iv({
+        gridChargeKwh: 6,
+        gridEmissionsIntensity: 450,
+        gridRenewableFraction: 0.3,
+        gridPrice: 25,
+        socPct: 60,
+      }),
+      iv({ dischargeKwh: 2, socPct: 50 }),
+      iv({ dischargeKwh: 2, socPct: 40 }),
+    ];
+    const { steps, finalState } = foldBatteryProvenance(intervals, CFG);
+    expect(finalState.syncKwh).toBe(0);
+    expect(finalState.syncEvents).toBe(0);
+    expect(steps.every((s) => s.syncKwh === 0)).toBe(true);
+  });
+
+  it("energy conservation with the sync bucket (η=1): charge + sync == discharge + unattrib + stored", () => {
+    const intervals = [
+      iv({
+        gridChargeKwh: 20,
+        gridEmissionsIntensity: 500,
+        gridRenewableFraction: 0.2,
+        gridPrice: 30,
+        socPct: 50,
+        capacityKwh: 40,
+      }),
+      iv({ dischargeKwh: 3, socPct: 45, capacityKwh: 40 }),
+      iv({ solarChargeKwh: 5, socPct: 70, capacityKwh: 40 }),
+      iv({ dischargeKwh: 4, socPct: 40, capacityKwh: 40 }),
+    ];
+    const { finalState: fs } = foldBatteryProvenance(intervals, CFG);
+    const lhs = fs.totalChargeKwh + fs.syncKwh; // η=1 ⇒ η·charge == totalChargeKwh
+    const rhs = fs.totalDischargeKwh + fs.unattribLossKwh + fs.storedKwh;
+    expect(lhs).toBeCloseTo(rhs, 6);
+  });
+
+  it("renewable stays in [0,1] under a fractional up-injection", () => {
+    const { steps } = foldBatteryProvenance(
+      [
+        iv({
+          socPct: 70,
+          capacityKwh: 40,
+          otherEmissionsIntensity: 400,
+          otherRenewableFraction: 0.5,
+        }),
+        iv({ dischargeKwh: 2, socPct: 68, capacityKwh: 40 }),
+      ],
+      CFG,
+    );
+    const r = steps[1].batteryRenewableFraction!;
+    expect(r).toBeGreaterThanOrEqual(0);
+    expect(r).toBeLessThanOrEqual(1);
+  });
+
+  it("composes across a bounded re-fold with the overlay armed (sync/anchor ride in state)", () => {
+    const intervals = [
+      iv({
+        gridChargeKwh: 8,
+        gridEmissionsIntensity: 400,
+        gridRenewableFraction: 0.3,
+        gridPrice: 20,
+        socPct: 55,
+        capacityKwh: 35,
+      }),
+      iv({ dischargeKwh: 2, socPct: 62, capacityKwh: 35 }),
+      iv({ solarChargeKwh: 4, socPct: 78, capacityKwh: 35 }),
+      iv({ dischargeKwh: 5, socPct: 40, capacityKwh: 35 }),
+    ];
+    const all = foldBatteryProvenance(intervals, CFG);
+    for (let k = 1; k < intervals.length; k++) {
+      const first = foldBatteryProvenance(intervals.slice(0, k), CFG);
+      const second = foldBatteryProvenance(
+        intervals.slice(k),
+        CFG,
+        first.finalState,
+      );
+      expect([...first.steps, ...second.steps]).toEqual(all.steps);
+      expect(second.finalState).toEqual(all.finalState);
+    }
+  });
+});

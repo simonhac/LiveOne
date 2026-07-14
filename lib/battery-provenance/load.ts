@@ -162,6 +162,8 @@ async function boundPoints(db: PgDb, areaId: string): Promise<BoundPoint[]> {
 export interface LoadOptions {
   /** Ablation: pretend SoC is unavailable (harness `--no-soc`). */
   noSoc?: boolean;
+  /** Ablation: ignore the persisted capacity point, forcing the in-window fallback (harness `--no-capacity`). */
+  noCapacity?: boolean;
 }
 
 /**
@@ -253,8 +255,15 @@ export async function loadProvenanceInputs(
         .map((s) => s.v)
         .filter((v): v is number => v !== null)
         .sort((a, b) => a - b);
-      if (vals.length > 20)
-        estReservePct = vals[Math.floor(0.02 * vals.length)];
+      // ~0.5th percentile − 2, clamped to the PHYSICAL band [5, DEFAULT_RESERVE_PCT]. The 2nd-percentile
+      // used previously tracked the GENERATOR'S comfort setpoint (~20% for a genset-backed off-grid site),
+      // not the battery's real floor; the operational min (0.5th pctile) is much lower and the physical
+      // reserve is ~5–10%. Anchoring "usable energy" here (not at the genset setpoint) stops the 13–20% band
+      // being wrongly treated as unusable reserve.
+      if (vals.length > 200) {
+        const p = vals[Math.floor(0.005 * vals.length)];
+        estReservePct = Math.min(DEFAULT_RESERVE_PCT, Math.max(5, p - 2));
+      }
       try {
         await kv.set(floorKey, estReservePct, { ex: 90_000 }); // ~25h
       } catch {
@@ -412,6 +421,24 @@ export async function loadProvenanceInputs(
     );
   }
 
+  // Persisted usable capacity C(t) from the helper's usable-capacity point (learn-in-shell / read-in-fold):
+  // kWh, forward-filled onto the timeline (a daily step). Absent (not yet learned, SoC-blind, or ablated) →
+  // undefined → compute falls back to an in-window learned C. Combined with SoC it arms the anchor overlay.
+  let capacitySeries: (number | null)[] | undefined;
+  const capBind = bound.find(
+    (b) => b.role === "battery" && b.metric === "usable-capacity",
+  );
+  if (capBind && !opts.noCapacity) {
+    const s = await readAgg5m(
+      db,
+      capBind.systemId,
+      capBind.pointId,
+      startMs,
+      endMs,
+    );
+    capacitySeries = forwardFill(timeline, s, 48 * 60 * 60 * 1000).value;
+  }
+
   const frac = (a: (number | null)[]) =>
     a.filter((v) => v !== null).length / Math.max(a.length, 1);
 
@@ -436,6 +463,7 @@ export async function loadProvenanceInputs(
     batteryChargeEnergyKwh,
     batteryDischargeEnergyKwh,
     etaSeries,
+    capacitySeries,
     coverage: {
       soc: frac(soc),
       emissions: frac(gridEmissions),
@@ -452,13 +480,16 @@ export interface BatteryThroughput {
   chargeKwh: number[];
   /** Total discharge OUT of the battery per interval (kWh ≥ 0). */
   dischargeKwh: number[];
+  /** Battery SoC (%) forward-filled onto the timeline (null where unavailable) — for the capacity-learn pass. */
+  soc: (number | null)[];
 }
 
 /**
- * Lean loader for the η-learn pass — just the battery's per-interval charge/discharge energy over the
- * window. Prefers exact energy registers (bidi.battery.charge/discharge deltas); else integrates the signed
- * battery power (negative = charge, positive = discharge). Fold-INDEPENDENT (η is a function of raw
- * throughput, so there is no circularity: raw energies → η(t) → fold). Returns null if no battery signal.
+ * Lean loader for the η- and capacity-learn passes — the battery's per-interval charge/discharge energy (and
+ * SoC) over the window. Prefers exact energy registers (bidi.battery.charge/discharge deltas); else integrates
+ * the signed battery power (negative = charge, positive = discharge). Fold-INDEPENDENT (η/C are functions of
+ * raw throughput + SoC, so there is no circularity: raw signals → η(t)/C(t) → fold). Returns null if no
+ * battery signal.
  */
 export async function loadBatteryThroughput(
   handle: number,
@@ -543,11 +574,19 @@ export async function loadBatteryThroughput(
     }
   }
 
+  // SoC (forward-filled ≤30 min) for the capacity-learn pass — null everywhere when no SoC point is bound.
+  const socBind = bound.find((b) => b.role === "battery" && b.metric === "soc");
+  const socSeries = socBind
+    ? await readAgg5m(db, socBind.systemId, socBind.pointId, startMs, endMs)
+    : [];
+  const soc = forwardFill(timeline, socSeries, 30 * 60 * 1000).value;
+
   return {
     areaId: area.id,
     timezoneOffsetMin: area.tz,
     timeline,
     chargeKwh,
     dischargeKwh,
+    soc,
   };
 }

@@ -56,6 +56,7 @@ const ETA = argOf("eta");
 //   --solar none | amber | flat:<c/kWh>   e.g. --solar flat:5
 const SOLAR = argOf("solar");
 const NO_SOC = process.argv.includes("--no-soc");
+const NO_CAPACITY = process.argv.includes("--no-capacity");
 
 function db() {
   if (!planetscaleDb) {
@@ -259,19 +260,25 @@ function report(
   );
   console.log(
     `  UNATTRIBUTED loss (drift/forced-reset residual): ${fs.unattribLossKwh.toFixed(1)} kWh, ` +
-      `$${(fs.unattribLossC / 100).toFixed(2)}, ${(fs.unattribLossG / 1000).toFixed(1)} kg CO2`,
+      `$${(fs.unattribLossC / 100).toFixed(2)}, ${(fs.unattribLossG / 1000).toFixed(1)} kg CO2` +
+      ` (${((100 * Math.abs(fs.unattribLossKwh)) / Math.max(result.chargeKwh, 1e-9)).toFixed(1)}% of charge)`,
+  );
+  console.log(
+    `  SoC-SYNC correction (E pinned to physical): ${fs.syncKwh.toFixed(1)} kWh net, ` +
+      `${(fs.syncG / 1000).toFixed(1)} kg CO2, over ${fs.syncEvents} intervals`,
   );
 
-  // Conservation self-audit: every gram charged is vended, discarded as unattributed, or still stored.
+  // Conservation self-audit: charged + sync == vended + unattributed + stored (the sync buckets are a
+  // DISTINCT, signed, auditable category — a down-sync is provenance-neutral, not destroyed provenance).
   let foldVendedG = 0;
   for (const s of steps)
     foldVendedG += s.dischargedKwh * (s.batteryEmissionsIntensity ?? 0);
   const auditG =
-    result.chargedG - (foldVendedG + fs.unattribLossG + fs.carbonG);
+    result.chargedG + fs.syncG - (foldVendedG + fs.unattribLossG + fs.carbonG);
   const auditPct = (100 * Math.abs(auditG)) / Math.max(result.chargedG, 1e-9);
   console.log(
-    `  conservation (carbon): charged ${(result.chargedG / 1000).toFixed(1)} = vended ${(foldVendedG / 1000).toFixed(1)} ` +
-      `+ unattrib ${(fs.unattribLossG / 1000).toFixed(1)} + stored ${(fs.carbonG / 1000).toFixed(1)} kg ` +
+    `  conservation (carbon): charged ${(result.chargedG / 1000).toFixed(1)} + sync ${(fs.syncG / 1000).toFixed(1)} = ` +
+      `vended ${(foldVendedG / 1000).toFixed(1)} + unattrib ${(fs.unattribLossG / 1000).toFixed(1)} + stored ${(fs.carbonG / 1000).toFixed(1)} kg ` +
       `→ residual ${auditPct.toFixed(2)}% ${auditPct < 0.5 ? "✓" : "⚠"}`,
   );
 
@@ -292,7 +299,7 @@ async function runReplay(handle: number) {
   const inputs = await loadProvenanceInputs(
     handle,
     { startMs, endMs },
-    { noSoc: NO_SOC },
+    { noSoc: NO_SOC, noCapacity: NO_CAPACITY },
   );
   if (!inputs) {
     console.log(

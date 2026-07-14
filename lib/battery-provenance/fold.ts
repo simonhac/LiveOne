@@ -12,6 +12,19 @@
  * used ONLY to detect the reserve floor, never to size `E`. This is why a mid-life capacity change
  * needs no reconfiguration.
  *
+ * ── SoC-anchor overlay (hybrid; engages per-interval ONLY when SoC + a learned capacity are present) ──
+ * The reset-relative model has no valid anchor for a battery that never physically empties (it sits
+ * high, a generator holds the floor). Such a battery hits neither the `empty` nor `soc-floor` reset, so
+ * the crude `backstop` time-cap is the only reset — and it DUMPS the whole live inventory to
+ * unattributed loss mid-SoC. To fix this WITHOUT abandoning the power model, an optional overlay pins
+ * `E` to the physical usable energy `targetE = (SoC − reserveFloor)/100 · C` each interval (`C` a
+ * LEARNED capacity, stamped per-interval like η). A small per-interval nudge (`socSyncGamma`) bleeds the
+ * integration drift into the auditable `sync*` buckets instead of the 6-day backstop bonfire; a
+ * down-correction scales all accumulators by one factor (provenance-NEUTRAL — vended ratios unchanged);
+ * an up-correction injects at the site fallback provenance (`iv.other*`). When SoC or C is absent
+ * (`socKnown` false — e.g. a SoC-dark window) the overlay is inert and the fold is byte-identical to the
+ * pure power model, and the backstop keeps its only real job (SoC-blind staleness cap).
+ *
  * ── Round-trip efficiency (η) ──────────────────────────────────────────────────────────────────
  * A battery returns LESS than you put in. With η < 1, charge adds `η·charge` to `E` (the deliverable
  * part) but the FULL charge footprint to `Q` — so the delivered energy carries the whole footprint
@@ -26,7 +39,8 @@
  *  - `soc-floor` — SoC ≤ `reserveFloorPct` (drift correction when SoC is present; lazy: applied at
  *                  the next charge so reserve discharge still vends the real blend).
  *  - `backstop`  — a segment ran `maxSegmentIntervals` without a reset (bounds staleness when the
- *                  battery neither empties nor reports SoC for a long time).
+ *                  battery neither empties nor reports SoC for a long time). Gated to the SoC-BLIND
+ *                  path only — with the SoC overlay active, continuous sync already pins `E`.
  * Any residual `Q` discarded at a non-empty (forced) reset is captured in the `unattribLoss*` buckets
  * so the conservation identity `Σcharged = Σvended + Σunattributed` holds and stays auditable.
  *
@@ -58,7 +72,7 @@ export interface FoldInterval {
    * store carries BOTH bases at once. Undefined → falls back to `solarCost` (opportunity == actual).
    */
   solarCostOpp?: number;
-  /** Battery SoC (%) — used only to detect the reserve floor. null = unknown (SoC-blind interval). */
+  /** Battery SoC (%) — used to detect the reserve floor AND (with `capacityKwh`) to anchor `E`. null = unknown. */
   socPct: number | null;
   /** True if any priced grid input feeding this interval was provisional/estimated (Amber `estimated`). */
   gridEstimated: boolean;
@@ -69,6 +83,20 @@ export interface FoldInterval {
    * → the fold falls back to `FoldConfig.efficiency` (a single scalar), then to 1.
    */
   efficiency?: number;
+  /**
+   * Learned usable capacity `C` (kWh across the full 0→100 % SoC span) in effect this interval, stamped
+   * per-interval for reproducibility (like `efficiency`; see `capacity.ts`). null/undefined → NO SoC
+   * anchoring (the pure reset-relative power model). Combined with `socPct` it arms the SoC overlay.
+   */
+  capacityKwh?: number | null;
+  /**
+   * Fallback provenance for `otherChargeKwh` AND for a SoC-sync up-injection — the site's grid/generator
+   * signal for this interval. null ⇒ unknown → books 0 (today's behavior: dilutes without adding carbon).
+   */
+  otherEmissionsIntensity?: number | null; // gCO2/kWh
+  otherRenewableFraction?: number | null; // 0..1
+  otherPrice?: number | null; // c/kWh (actual)
+  otherPriceOpp?: number | null; // c/kWh (opportunity; defaults to otherPrice)
 }
 
 export interface FoldConfig {
@@ -78,7 +106,7 @@ export interface FoldConfig {
   efficiency?: number;
   /**
    * Drift backstop: force a reset once a segment has run this many intervals without one. Default
-   * Infinity (off). At 5-min intervals, 3 days ≈ 864, 6 days ≈ 1728.
+   * Infinity (off). At 5-min intervals, 3 days ≈ 864, 6 days ≈ 1728. Gated to the SoC-blind path.
    */
   maxSegmentIntervals?: number;
   /**
@@ -87,6 +115,10 @@ export interface FoldConfig {
    * (e.g. 0.2) cleans tiny residual "zombie" inventory left by η mis-estimates.
    */
   reanchorEpsKwh?: number;
+  /** SoC-sync: per-interval fraction of the E↔SoC gap corrected (after the first-of-segment snap). Default 0.2. */
+  socSyncGamma?: number;
+  /** SoC-sync: ignore gaps below this (SoC quantisation noise), kWh. Default 0.2. */
+  socSyncDeadbandKwh?: number;
 }
 
 /** Why a reset fired at an interval. */
@@ -115,6 +147,10 @@ export interface FoldState {
   segmentIntervals: number;
   /** Max `E` reached in the current segment (kWh) — a usable-capacity probe. */
   segmentPeakKwh: number;
+  /** Intervals since `E` was last validated against SoC; drives the (SoC-blind) backstop cap. */
+  intervalsSinceSync: number;
+  /** Has this segment done its first full SoC snap yet (the one-time baseline anchor). */
+  socAnchored: boolean;
 
   // ── cumulative diagnostics (whole fold; for RTE, loss accounting, self-audit) ──
   /** Σ charge into the battery (kWh) — before η. */
@@ -135,6 +171,19 @@ export interface FoldState {
   unattribLossC: number;
   unattribLossOppC: number;
   unattribLossRenewKwh: number;
+  /**
+   * SoC-SYNC correction — signed energy/carbon/etc. the SoC overlay injected(+)/removed(−) to pin `E`
+   * to physical. A DISTINCT, auditable category from `unattribLoss*`: a down-sync is provenance-neutral
+   * (vended ratios unchanged) and replaces the backstop dump; the conservation identity becomes
+   * `Σcharged + Σsync == Σvended + Σunattributed + Σstored`.
+   */
+  syncKwh: number;
+  syncG: number;
+  syncRenewKwh: number;
+  syncC: number;
+  syncOppC: number;
+  /** Count of intervals a sync correction was applied (diagnostic). */
+  syncEvents: number;
   /** Count of resets by trigger (diagnostics). */
   resetsEmpty: number;
   resetsSocFloor: number;
@@ -163,6 +212,8 @@ export interface FoldStep {
   estimatedFraction: number;
   /** Intervals since the last reset, as of this interval. */
   segmentIntervals: number;
+  /** Signed energy the SoC sync moved THIS interval (+injected / −removed; for the replay panel). */
+  syncKwh: number;
 }
 
 export const INITIAL_FOLD_STATE: FoldState = Object.freeze({
@@ -176,6 +227,8 @@ export const INITIAL_FOLD_STATE: FoldState = Object.freeze({
   pendingTrigger: null,
   segmentIntervals: 0,
   segmentPeakKwh: 0,
+  intervalsSinceSync: 0,
+  socAnchored: false,
   totalChargeKwh: 0,
   totalDischargeKwh: 0,
   maxObservedCapacityKwh: 0,
@@ -189,6 +242,12 @@ export const INITIAL_FOLD_STATE: FoldState = Object.freeze({
   unattribLossC: 0,
   unattribLossOppC: 0,
   unattribLossRenewKwh: 0,
+  syncKwh: 0,
+  syncG: 0,
+  syncRenewKwh: 0,
+  syncC: 0,
+  syncOppC: 0,
+  syncEvents: 0,
   resetsEmpty: 0,
   resetsSocFloor: 0,
   resetsBackstop: 0,
@@ -203,14 +262,19 @@ export function foldStep(
   const eta = iv.efficiency ?? config.efficiency ?? 1;
   const maxSeg = config.maxSegmentIntervals ?? Infinity;
   const eps = config.reanchorEpsKwh ?? 0;
+  const gamma = config.socSyncGamma ?? 0.2;
+  const deadband = config.socSyncDeadbandKwh ?? 0.2;
+  const C = iv.capacityKwh ?? null;
+  const socKnown = iv.socPct !== null && C !== null && C > 0;
   const s = { ...state };
 
-  // 1. Latch a reset: SoC floor (drift correction), or the drift backstop (staleness cap).
+  // 1. Latch a reset: SoC floor (drift correction), or the drift backstop (staleness cap; SoC-blind only —
+  //    with the SoC overlay active, continuous sync already pins E, so the periodic dump is redundant).
   if (iv.socPct !== null && iv.socPct <= config.reserveFloorPct) {
     s.pendingReset = true;
     s.pendingTrigger = "soc-floor";
   }
-  if (s.segmentIntervals >= maxSeg && !s.pendingReset) {
+  if (!socKnown && s.intervalsSinceSync >= maxSeg && !s.pendingReset) {
     s.pendingReset = true;
     s.pendingTrigger = "backstop";
   }
@@ -244,6 +308,7 @@ export function foldStep(
     resetTrigger: null,
     estimatedFraction: estFrac,
     segmentIntervals: s.segmentIntervals,
+    syncKwh: 0,
   };
 
   // helper: discard the current store to the unattributed-loss buckets and zero the segment.
@@ -261,6 +326,8 @@ export function foldStep(
     s.estimatedKwh = 0;
     s.segmentIntervals = 0;
     s.segmentPeakKwh = 0;
+    s.intervalsSinceSync = 0;
+    s.socAnchored = false;
     s.pendingReset = false;
     s.pendingTrigger = null;
     step.resetHere = true;
@@ -268,6 +335,63 @@ export function foldStep(
     if (trigger === "empty") s.resetsEmpty++;
     else if (trigger === "soc-floor") s.resetsSocFloor++;
     else s.resetsBackstop++;
+  };
+
+  // helper: pin E toward the SoC-derived physical target. Both directions are PROVENANCE-NEUTRAL when the
+  // store holds energy — they scale every accumulator by one factor, so every vended ratio (carbon/renewable
+  // /price intensity) is invariant and only the MAGNITUDE is corrected. The signed correction books to the
+  // `sync*` buckets, NOT `unattribLoss` (a labelled drift correction, not destroyed provenance). Untracked
+  // energy therefore inherits the store's OWN mix — the best estimate of what charged this battery (a
+  // solar-charged store stays clean; the fold does not fabricate generator carbon). ONLY when the store is
+  // empty (no blend to inherit — the one-time segment-start baseline) does an up-correction seed from the
+  // site fallback provenance (`iv.other*`); that baseline washes out over the warmup as the battery cycles.
+  const applySync = (delta: number) => {
+    if (delta === 0) return;
+    if (delta < 0 || s.storedKwh > 1e-9) {
+      // Scale the store (up or down) at its current blend — provenance-neutral.
+      const scale = Math.max(
+        0,
+        (s.storedKwh + delta) / Math.max(s.storedKwh, 1e-9),
+      );
+      s.syncG += s.carbonG * (scale - 1);
+      s.syncRenewKwh += s.renewableKwh * (scale - 1);
+      s.syncC += s.costC * (scale - 1);
+      s.syncOppC += s.costOppC * (scale - 1);
+      s.carbonG *= scale;
+      s.renewableKwh *= scale;
+      s.costC *= scale;
+      s.costOppC *= scale;
+      if (delta < 0) s.estimatedKwh *= scale;
+      else s.estimatedKwh += delta; // injected (up) energy is estimated provenance
+      s.storedKwh += delta;
+    } else {
+      // Empty store, up-correction: seed the baseline from the site fallback provenance (the only signal).
+      const fbEI = iv.otherEmissionsIntensity ?? null;
+      const fbR = iv.otherRenewableFraction ?? null;
+      const fbM = iv.otherPrice ?? null;
+      const fbMo = iv.otherPriceOpp ?? fbM;
+      s.storedKwh += delta;
+      if (fbEI !== null) {
+        s.carbonG += delta * fbEI;
+        s.syncG += delta * fbEI;
+      }
+      if (fbR !== null) {
+        s.renewableKwh += delta * fbR;
+        s.syncRenewKwh += delta * fbR;
+      }
+      if (fbM !== null) {
+        s.costC += delta * fbM;
+        s.syncC += delta * fbM;
+      }
+      if (fbMo !== null) {
+        s.costOppC += delta * fbMo;
+        s.syncOppC += delta * fbMo;
+      }
+      s.estimatedKwh += delta;
+    }
+    s.syncKwh += delta;
+    step.syncKwh += delta;
+    s.syncEvents++;
   };
 
   // 3. Empty re-anchor (SoC-free bottom-out): E drained to ≤ eps → reset now. Residual ≈ 0 when η
@@ -290,28 +414,40 @@ export function foldStep(
   }
 
   // 5. Charge mixing (scheme "loss priced into delivered"): E grows by the deliverable η·charge, Q by
-  //    the FULL footprint; the (1−η) overhead is tallied as a diagnostic decomposition.
+  //    the FULL footprint; the (1−η) overhead is tallied as a diagnostic decomposition. `otherCharge`
+  //    (unattributed) is booked at the site fallback provenance (`iv.other*`) so its carbon and renewable
+  //    RECONCILE — a null fallback keeps today's "clean-but-non-renewable" behavior (documented, off-gate).
   if (charge > 0) {
     s.totalChargeKwh += charge;
     s.storedKwh += eta * charge;
 
+    const oEI = iv.otherEmissionsIntensity ?? null;
+    const oR = iv.otherRenewableFraction ?? null;
+    const oP = iv.otherPrice ?? null;
+    const oPo = iv.otherPriceOpp ?? oP;
+    const otherC = otherCharge > 0 && oEI !== null ? otherCharge * oEI : 0;
+    const otherRn = otherCharge > 0 && oR !== null ? otherCharge * oR : 0;
+    const otherM = otherCharge > 0 && oP !== null ? otherCharge * oP : 0;
+    const otherMo = otherCharge > 0 && oPo !== null ? otherCharge * oPo : 0;
+
     const addC =
-      iv.gridChargeKwh > 0 && iv.gridEmissionsIntensity !== null
+      (iv.gridChargeKwh > 0 && iv.gridEmissionsIntensity !== null
         ? iv.gridChargeKwh * iv.gridEmissionsIntensity
-        : 0;
+        : 0) + otherC;
     const addR =
       iv.solarChargeKwh * 1 +
       (iv.gridChargeKwh > 0 && iv.gridRenewableFraction !== null
         ? iv.gridChargeKwh * iv.gridRenewableFraction
-        : 0);
+        : 0) +
+      otherRn;
     // Grid cost is shared by both bases; solar differs (actual @ solarCost, opportunity @ solarCostOpp).
     const gridM =
       iv.gridChargeKwh > 0 && iv.gridPrice !== null
         ? iv.gridChargeKwh * iv.gridPrice
         : 0;
     const solarCostOpp = iv.solarCostOpp ?? iv.solarCost;
-    const addM = iv.solarChargeKwh * iv.solarCost + gridM;
-    const addMOpp = iv.solarChargeKwh * solarCostOpp + gridM;
+    const addM = iv.solarChargeKwh * iv.solarCost + gridM + otherM;
+    const addMOpp = iv.solarChargeKwh * solarCostOpp + gridM + otherMo;
 
     // Emissions & cost are INTENSITIES (per kWh): the "loss priced into delivered" scheme adds the
     // FULL footprint so delivered kWh carry the round-trip loss (Qc/E, Qm/E inflate by 1/η). Renewable
@@ -338,8 +474,27 @@ export function foldStep(
     if (otherCharge > 0) s.estimatedKwh += eta * otherCharge;
   }
 
+  // 5.5. SoC anchor/sync (overlay; only when socPct + a learned capacity are present). Pin E to the
+  //      physical usable energy above the reserve; the first interval of a segment SNAPS (one-time
+  //      baseline anchor), later intervals nudge by `gamma` outside a deadband. Corrections book to the
+  //      auditable `sync*` buckets — this is what replaces the backstop dump for a never-emptying battery.
+  if (socKnown) {
+    const floorE = (config.reserveFloorPct / 100) * C!;
+    const targetE = Math.max(0, (iv.socPct! / 100) * C! - floorE);
+    const gap = targetE - s.storedKwh;
+    const g = s.socAnchored ? gamma : 1; // first interval of a segment: full snap
+    if (!s.socAnchored || Math.abs(gap) > deadband) {
+      let delta = g * gap;
+      if (s.storedKwh + delta < 0) delta = -s.storedKwh;
+      applySync(delta);
+    }
+    s.socAnchored = true;
+    s.intervalsSinceSync = 0;
+  }
+
   // 6. Advance segment age + capacity probe.
   s.segmentIntervals += 1;
+  s.intervalsSinceSync += 1;
   if (s.storedKwh > s.segmentPeakKwh) s.segmentPeakKwh = s.storedKwh;
   if (s.segmentPeakKwh > s.maxObservedCapacityKwh)
     s.maxObservedCapacityKwh = s.segmentPeakKwh;

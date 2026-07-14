@@ -65,6 +65,18 @@ export const EFFICIENCY_POINT: BlendPointSpec = {
   displayName: "Battery Round-trip Efficiency",
 };
 
+/**
+ * The usable-capacity point (C) — a battery DEVICE PARAMETER (kWh across the full 0→100 % SoC span), like
+ * η: learned by the shell's capacity pass (learn-in-shell / read-in-fold), never by the blend-write loop.
+ * Read back by the loader to arm the SoC-anchor overlay reproducibly (a bounded re-fold reads the same C
+ * as a full-history run). Absent ⇒ the overlay falls back to an in-window learned C (non-canonical bootstrap).
+ */
+export const CAPACITY_POINT: BlendPointSpec = {
+  metricType: "usable-capacity",
+  metricUnit: "kWh",
+  displayName: "Battery Usable Capacity",
+};
+
 export interface EnsureBlendResult {
   status: "created" | "exists" | "no-battery-point" | "mixed";
   systemId: number;
@@ -266,6 +278,78 @@ export async function ensureEfficiencyBinding(
       pointSystemId: helperSystemId,
       pointId,
       ordinal: 110,
+      transform: null,
+    })
+    .onConflictDoNothing()
+    .returning({ id: areaBindings.id });
+  return { created: inserted.length };
+}
+
+/**
+ * Ensure the single usable-capacity point (C) exists on `systemId` (the helper). Idempotent (keyed by
+ * stem+metricType). Twin of {@link ensureEfficiencyPoint} — written only by the shell's capacity-learn pass.
+ */
+export async function ensureCapacityPoint(
+  systemId: number,
+  apply: boolean,
+): Promise<number | null> {
+  const db = requirePlanetscaleDb();
+  const [existing] = await db
+    .select({ index: pointInfo.index })
+    .from(pointInfo)
+    .where(
+      and(
+        eq(pointInfo.systemId, systemId),
+        eq(pointInfo.logicalPathStem, BATTERY_STEM),
+        eq(pointInfo.metricType, CAPACITY_POINT.metricType),
+      ),
+    )
+    .limit(1);
+  if (existing) return existing.index;
+  if (!apply) return null;
+
+  const allIdx = await db
+    .select({ index: pointInfo.index })
+    .from(pointInfo)
+    .where(eq(pointInfo.systemId, systemId));
+  const nextIndex = Math.max(...allIdx.map((p) => p.index), 0) + 1;
+  const [row] = await db
+    .insert(pointInfo)
+    .values({
+      systemId,
+      index: nextIndex,
+      physicalPathTail: `derived/${BATTERY_STEM}/${CAPACITY_POINT.metricType}`,
+      logicalPathStem: BATTERY_STEM,
+      metricType: CAPACITY_POINT.metricType,
+      metricUnit: CAPACITY_POINT.metricUnit,
+      defaultName: CAPACITY_POINT.displayName,
+      displayName: CAPACITY_POINT.displayName,
+      subsystem: "battery",
+      transform: null,
+      active: true,
+      createdAt: new Date(),
+    })
+    .returning({ index: pointInfo.index });
+  return row.index;
+}
+
+/** Bind the helper's C point into the Area (role='battery' metricType='usable-capacity'). Twin of
+ *  {@link ensureEfficiencyBinding}; INERT to compute/Sankey (the loader reads it explicitly). Idempotent. */
+export async function ensureCapacityBinding(
+  areaId: string,
+  helperSystemId: number,
+  pointId: number,
+): Promise<{ created: number }> {
+  const db = requirePlanetscaleDb();
+  const inserted = await db
+    .insert(areaBindings)
+    .values({
+      areaId,
+      role: "battery",
+      metricType: CAPACITY_POINT.metricType,
+      pointSystemId: helperSystemId,
+      pointId,
+      ordinal: 111,
       transform: null,
     })
     .onConflictDoNothing()

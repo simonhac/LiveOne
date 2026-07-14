@@ -15,6 +15,7 @@ import {
 import {
   recomputeBatteryProvenanceForWindowBestEffort,
   learnAndPersistEta,
+  learnAndPersistCapacity,
 } from "@/lib/db/planetscale/battery-provenance-pg";
 import type { ProvenanceConfig } from "./types";
 
@@ -59,6 +60,30 @@ export async function learnEtaForAllHandles(
       );
     } catch (e) {
       console.error(`[BatProv:eta] learn failed for handle=${handle}:`, e);
+    }
+  }
+  return { handles: handles.length };
+}
+
+/**
+ * Daily: (re)learn usable capacity C(t) for every battery Area and persist each helper's usable-capacity
+ * point. MUST run in the daily shell AFTER {@link learnEtaForAllHandles} (C's deliverable convention reads η)
+ * and BEFORE the blend/rollup recompute, so that reads a fresh, reproducible C via inputs.capacitySeries
+ * instead of an in-window bootstrap. Best-effort per handle; a no-op for SoC-blind batteries.
+ */
+export async function learnCapacityForAllHandles(
+  nowMs: number,
+): Promise<{ handles: number }> {
+  const db = requirePlanetscaleDb();
+  const handles = await listBatteryProvenanceHandles();
+  for (const handle of handles) {
+    try {
+      const r = await learnAndPersistCapacity(db, handle, nowMs);
+      console.log(
+        `[BatProv:capacity] handle=${handle} pointId=${r.pointId} days=${r.daysWritten}`,
+      );
+    } catch (e) {
+      console.error(`[BatProv:capacity] learn failed for handle=${handle}:`, e);
     }
   }
   return { handles: handles.length };
