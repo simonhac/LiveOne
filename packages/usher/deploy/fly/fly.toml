@@ -1,7 +1,7 @@
 # usher hub — permanent Fly.io WireGuard hub (app "liveone-flyhub").
 #
 # One usher manages both sites over WireGuard:
-#   • sheephouse UDM (Daylesford, Starlink CGNAT) → DeepSea generator (musher)
+#   • sheephouse UDM (primary site, Starlink CGNAT) → DeepSea generator (musher)
 #   • kinkora UDM (standard DSL) → two Fronius inverters (fusher)
 # The inspector is fronted by Cloudflare Access (cloudflared) at usher.liveone.energy — the Fly IP
 # exposes ONLY the WireGuard UDP port. The sources are configured in the baked usher.yaml (USHER_CONFIG).

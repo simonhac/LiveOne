@@ -12,7 +12,7 @@ do **not** touch. Read the CLI live output with `npm run deepsea:poll` (Teleport
 | -------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Controller     | DeepSea **DSE7410 MkII** (DSE7400 MkII Auto-Mains-Failure / auto-start family)                                       |
 | Protocol       | **DSE GenComm** over **Modbus TCP**                                                                                  |
-| Transport      | host `10.0.1.244` (DHCP-reserved to MAC `e8:a4:c1:06:47:03`), port **502**, **unit id 10** (DSE default, _not_ 1)    |
+| Transport      | host `10.0.1.244` (DHCP-reserved to its MAC), port **502**, **unit id 10** (DSE default, _not_ 1)                    |
 | Function codes | GenComm uses **only FC3** (read holding registers) and **FC16** (write multiple). We issue **FC3 only** — read-only. |
 | Reachability   | LAN-only; reachable from us only over the **Teleport VPN**                                                           |
 
