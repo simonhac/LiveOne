@@ -72,13 +72,16 @@ describe("computeBatteryProvenance", () => {
     }
   });
 
-  it("carbon conservation identity holds (charged = vended + unattributed + stored)", () => {
+  it("carbon conservation identity holds (charged + sync = vended + unattributed + stored)", () => {
     const result = computeBatteryProvenance(scenario(), { efficiency: 0.9 });
     let foldVendedG = 0;
     for (const s of result.steps)
       foldVendedG += s.dischargedKwh * (s.batteryEmissionsIntensity ?? 0);
+    // The SoC-anchor sync is a distinct, signed, auditable category (see fold.ts): the identity is
+    // `chargedG + syncG == vendedG + unattribLossG + carbonG`.
     const residual =
-      result.chargedG -
+      result.chargedG +
+      result.finalState.syncG -
       (foldVendedG +
         result.finalState.unattribLossG +
         result.finalState.carbonG);

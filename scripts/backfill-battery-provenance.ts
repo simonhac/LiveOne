@@ -24,6 +24,7 @@ import { planetscaleDb } from "../lib/db/planetscale";
 import {
   listBatteryProvenanceHandles,
   learnEtaForAllHandles,
+  learnCapacityForAllHandles,
   recomputeRange,
 } from "../lib/battery-provenance/recompute";
 
@@ -65,6 +66,10 @@ async function main() {
   // via inputs.etaSeries instead of an in-window fallback — otherwise the backfill isn't reproducible.
   const eta = await learnEtaForAllHandles(nowMs);
   console.log(`learned η for ${eta.handles} handles`);
+  // Then usable capacity C (after η — its deliverable slope reads η) so the SoC-anchor overlay reads a
+  // canonical, reproducible C via inputs.capacitySeries.
+  const cap = await learnCapacityForAllHandles(nowMs);
+  console.log(`learned capacity for ${cap.handles} handles`);
   await recomputeRange(startMs, nowMs, undefined, (info) => {
     console.log(
       `  handle ${info.handle} ${new Date(info.chunkStartMs).toISOString().slice(0, 10)}..${new Date(info.chunkEndMs).toISOString().slice(0, 10)}`,

@@ -11,6 +11,7 @@ import {
 } from "@/lib/aggregation/flow-matrix-core";
 import { extractBatteryFlows } from "./battery-flows";
 import { learnEwmaEta, type EtaDayDiag } from "./eta";
+import { learnEwmaCapacity, measureWindowCapacity } from "./capacity";
 import { foldBatteryProvenance, FoldConfig, FoldInterval } from "./fold";
 import { resolveExportPriceSeries } from "./tariff";
 import type {
@@ -105,6 +106,26 @@ export function computeBatteryProvenance(
   }
   const reserveUsed = config.reserveFloorPct ?? inputs.estReservePct;
 
+  // Usable capacity C(t) resolution — mirrors η (same reproducibility contract):
+  //   1. inputs.capacitySeries — the PERSISTED C(t) the loader read from the usable-capacity helper point.
+  //      Canonical & REPRODUCIBLE (learned once in the daily shell over a fixed window);
+  //   2. fallback — learn a per-day EWMA C(t) in-window from raw charge/discharge + η + SoC. NON-canonical
+  //      (window-dependent) bootstrap, and the offline harness. Fold-independent (raw energies, no circularity).
+  // C stamps `FoldInterval.capacityKwh`; combined with a non-null SoC it arms the SoC-anchor overlay. When
+  // SoC is absent the overlay is inert regardless, so this cost is only paid where it matters.
+  let capacitySeries: (number | null)[] | null = inputs.capacitySeries ?? null;
+  if (!capacitySeries) {
+    const dischargePerIv = flows.map((f) => f.dischargeKwh);
+    const seed = measureWindowCapacity(dischargePerIv, inputs.soc);
+    capacitySeries = learnEwmaCapacity(
+      dischargePerIv,
+      inputs.soc,
+      timeline,
+      inputs.timezoneOffsetMin,
+      { prior: seed ?? undefined },
+    ).capacitySeries;
+  }
+
   // Dual solar cost basis (both computed every run — opportunity is first-class, not a toggle):
   //   • ACTUAL   — solar is out-of-pocket free (0). Feeds `costC` → `batteryPrice`.
   //   • OPPORTUNITY — solar priced at forgone feed-in from the resolved export tariff. Feeds `costOppC`
@@ -125,6 +146,8 @@ export function computeBatteryProvenance(
     maxSegmentIntervals:
       config.maxSegmentIntervals ?? DEFAULT_MAX_SEGMENT_INTERVALS,
     reanchorEpsKwh: config.reanchorEpsKwh ?? DEFAULT_REANCHOR_EPS_KWH,
+    socSyncGamma: config.socSyncGamma,
+    socSyncDeadbandKwh: config.socSyncDeadbandKwh,
   };
   const intervals: FoldInterval[] = flows.map((f, i) => ({
     solarChargeKwh: f.solarChargeKwh,
@@ -140,15 +163,26 @@ export function computeBatteryProvenance(
     gridEstimated:
       inputs.gridEmissionsEstimated[i] || inputs.gridPriceEstimated[i],
     efficiency: etaSeries?.[i] ?? undefined,
+    capacityKwh: capacitySeries?.[i] ?? undefined,
+    // Fallback provenance for unattributed `otherCharge` AND SoC up-injection: the site grid/generator
+    // signal for this interval (for Daylesford this is the generatorSource constant → carbon reconciles).
+    otherEmissionsIntensity: inputs.gridEmissions[i],
+    otherRenewableFraction: inputs.gridRenewable[i],
+    otherPrice: inputs.gridPrice[i],
+    otherPriceOpp: inputs.gridPrice[i] ?? undefined,
   }));
   const { steps, finalState } = foldBatteryProvenance(intervals, foldConfig);
 
-  // Independent charged-carbon total (for the conservation self-audit): Σ grid-charge · grid EI.
+  // Independent charged-carbon total (for the conservation self-audit): Σ (grid + otherFallback) charge · EI.
+  // The self-audit closes as chargedG + syncG == vendedG + unattribLossG + carbonG (see fold.ts sync buckets).
   let chargedG = 0;
   for (let i = 0; i < intervals.length; i++) {
     const ei = intervals[i].gridEmissionsIntensity;
     if (intervals[i].gridChargeKwh > 0 && ei !== null)
       chargedG += intervals[i].gridChargeKwh * ei;
+    const oei = intervals[i].otherEmissionsIntensity ?? null;
+    const oc = intervals[i].otherChargeKwh ?? 0;
+    if (oc > 0 && oei !== null) chargedG += oc * oei;
   }
 
   // Per-source intensity for the attribution: solar const, grid from OE/Amber, battery from the fold.

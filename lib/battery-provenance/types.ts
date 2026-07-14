@@ -60,6 +60,16 @@ export interface ProvenanceInputs {
   estReservePct: number;
 
   /**
+   * Persisted usable-capacity C(t) per interval (kWh, full 0→100 % SoC span), aligned to `timeline`, read
+   * by the loader from the derived `bidi.battery/usable-capacity` helper point (forward-filled daily step,
+   * mirrors `etaSeries`). The REPRODUCIBLE capacity seam: C is learned once in the daily shell and read back
+   * here so a bounded re-fold gets the same C as a full-history run. Undefined (no persisted point yet) →
+   * compute learns an in-window C (non-canonical bootstrap). Combined with a non-null `soc` it arms the
+   * SoC-anchor overlay in the fold; absent SoC ⇒ overlay inert (pure power model).
+   */
+  capacitySeries?: (number | null)[];
+
+  /**
    * ENERGY-REGISTER seam (config: attach an input to a power OR an energy register). When the Area binds
    * battery charge/discharge ENERGY points these carry the exact interval energy (kWh) and are preferred
    * over trapezoidal power integration; undefined → the fold uses the power-integrated split.
@@ -88,6 +98,10 @@ export interface ProvenanceConfig {
   maxSegmentIntervals?: number;
   /** E-minimum re-anchor threshold (kWh); default 0.3. */
   reanchorEpsKwh?: number;
+  /** SoC-sync: per-interval fraction of the E↔SoC gap corrected (after the first-of-segment snap). Default 0.2. */
+  socSyncGamma?: number;
+  /** SoC-sync: ignore gaps below this (SoC quantisation noise), kWh. Default 0.2. */
+  socSyncDeadbandKwh?: number;
 }
 
 export interface ProvenanceResult {

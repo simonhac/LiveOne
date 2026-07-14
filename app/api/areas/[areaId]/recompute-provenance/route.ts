@@ -9,6 +9,7 @@ import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates
 import { getYesterdayInTimezone } from "@/lib/date-utils";
 import {
   learnAndPersistEta,
+  learnAndPersistCapacity,
   recomputeBatteryProvenanceForWindow,
 } from "@/lib/db/planetscale/battery-provenance-pg";
 
@@ -145,11 +146,15 @@ export async function POST(
   }
   const isFirstBatch = typeof body.cursor !== "string";
 
-  // First batch: (re)learn η(t) from the fixed anchor so the recompute below reads a reproducible η.
+  // First batch: (re)learn η(t) THEN usable capacity C(t) from the fixed anchor so the recompute below reads
+  // a reproducible η + C (via inputs.etaSeries / inputs.capacitySeries) instead of a per-batch, window-
+  // dependent bootstrap that would make stored-energy/blend discontinuous at batch seams. C follows η (its
+  // deliverable slope reads the learned η) — mirrors the daily shell + backfill ordering.
   let learnedEtaDays: number | null = null;
   if (isFirstBatch) {
     const r = await learnAndPersistEta(planetscaleDb, handle, Date.now());
     learnedEtaDays = r.daysWritten;
+    await learnAndPersistCapacity(planetscaleDb, handle, Date.now());
   }
 
   const { days, nextCursor, done } = planFlowRecomputeBatch({
