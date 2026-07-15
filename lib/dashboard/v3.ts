@@ -119,27 +119,42 @@ export function emptyDashboardV3(): DashboardV3 {
 }
 
 /**
- * Guarantee every sankey card carries a stable `id` — the `sankeyId` slot of the per-sankey display-
- * options key (`sankeyId:areaId:dashboardId`). One sankey per area, so a lone card is given the
- * deterministic id `"sankey"` (matching the render-side fallback in Dashboard.tsx); a hypothetical 2nd+
- * sankey in one section gets `"sankey:1"`, `"sankey:2"`, … Idempotent — existing ids are preserved.
- * Run on every descriptor WRITE (create + update) so persisted descriptors are never missing the id.
+ * A card type's write-time normalizer. `ordinal` is the card's index among same-type cards in its
+ * section (counting cards that already carry ids). Must be idempotent — descriptors are
+ * re-normalized on every write.
  */
-export function ensureSankeyCardIds(descriptor: DashboardV3): DashboardV3 {
+type CardNormalizer = (card: CardV3, ctx: { ordinal: number }) => CardV3;
+
+/**
+ * Per-card-type descriptor normalizers, applied on every descriptor WRITE (create + update) so
+ * persisted descriptors are always in canonical form. A new card type that needs write-time
+ * normalization registers an entry here (server-safe — this module stays React-free).
+ *
+ * sankey: guarantee a stable `id` — the `sankeyId` slot of the per-sankey display-options key
+ * (`sankeyId:areaId:dashboardId`). One sankey per area, so a lone card is given the deterministic
+ * id `"sankey"` (matching the render-side fallback in Dashboard.tsx); a hypothetical 2nd+ sankey
+ * in one section gets `"sankey:1"`, `"sankey:2"`, … Existing ids are preserved.
+ */
+const CARD_NORMALIZERS: Partial<Record<DashboardCardType, CardNormalizer>> = {
+  sankey: (card, { ordinal }) =>
+    card.id
+      ? card
+      : { ...card, id: ordinal === 0 ? "sankey" : `sankey:${ordinal}` },
+};
+
+/** Apply every registered card normalizer across the descriptor. Idempotent. */
+export function normalizeDescriptor(descriptor: DashboardV3): DashboardV3 {
   return {
     ...descriptor,
     sections: descriptor.sections.map((section) => {
-      let sankeyOrdinal = 0;
+      const ordinals = new Map<DashboardCardType, number>();
       return {
         ...section,
         cards: section.cards.map((card) => {
-          if (card.type !== "sankey") return card;
-          const ordinal = sankeyOrdinal++;
-          if (card.id) return card;
-          return {
-            ...card,
-            id: ordinal === 0 ? "sankey" : `sankey:${ordinal}`,
-          };
+          const ordinal = ordinals.get(card.type) ?? 0;
+          ordinals.set(card.type, ordinal + 1);
+          const normalize = CARD_NORMALIZERS[card.type];
+          return normalize ? normalize(card, { ordinal }) : card;
         }),
       };
     }),

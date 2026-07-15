@@ -12,7 +12,7 @@ import TeslaSmallCard from "@/components/TeslaSmallCard";
 import AmberNow from "@/components/AmberNow";
 import GridSignalsCard from "@/components/GridSignalsCard";
 import BatteryContentsCard from "@/components/BatteryContentsCard";
-import { useTileNodes } from "@/app/components/cards/useTileNodes";
+import { TILE_RENDERERS } from "@/components/dashboard/tiles/registry";
 import type { TileId } from "@/lib/dashboard/cards";
 import type { LatestPointValues } from "@/lib/types/api";
 import {
@@ -30,15 +30,18 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Renders a single tile node faithfully via the real builder hook. */
+/** Renders a single tile faithfully via the real tile plugin (no systemId → no live fetches). */
 function TileCell({ latest, id }: { latest: LatestPointValues; id: TileId }) {
-  const { cardNodes } = useTileNodes({
-    latest,
-    vendorType: "gallery",
-    getStaleThreshold: () => 300,
-    showGrid: true,
-  });
-  return <>{cardNodes[id]}</>;
+  const { Render } = TILE_RENDERERS[id];
+  return (
+    <Render
+      latest={latest}
+      data={null}
+      staleThresholdSeconds={300}
+      showGrid={true}
+      canControl={false}
+    />
+  );
 }
 
 /** Segmented state picker. */

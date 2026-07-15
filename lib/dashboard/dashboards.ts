@@ -10,7 +10,7 @@ import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { dashboards } from "@/lib/db/planetscale/schema";
 import {
   allCardsV3,
-  ensureSankeyCardIds,
+  normalizeDescriptor,
   isDashboardV3,
   type DashboardV3,
 } from "./v3";
@@ -62,7 +62,7 @@ export async function createDashboard(args: {
         clerkUserId: args.ownerClerkUserId,
         displayName: args.displayName,
         alias: args.alias ?? null,
-        descriptor: ensureSankeyCardIds(args.descriptor),
+        descriptor: normalizeDescriptor(args.descriptor),
       })
       .returning({ id: dashboards.id });
     return row.id;
@@ -212,7 +212,7 @@ export async function updateDashboard(
   if (patch.displayName !== undefined) set.displayName = patch.displayName;
   if (patch.alias !== undefined) set.alias = patch.alias;
   if (patch.descriptor !== undefined)
-    set.descriptor = ensureSankeyCardIds(patch.descriptor);
+    set.descriptor = normalizeDescriptor(patch.descriptor);
   try {
     await requirePlanetscaleDb()
       .update(dashboards)

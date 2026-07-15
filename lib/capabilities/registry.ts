@@ -13,8 +13,8 @@
  *    UNION of its members' `(role, metric)` atoms over the merged point set — NEVER an OR of
  *    per-device role-completeness.
  *  - **This is the ONE place point stems/metrics are string-matched.** It replaces the duplicated
- *    literals in lib/dashboard/cards.ts (`availableTiles`/`chartHasData`) and
- *    app/components/cards/useTileNodes.tsx (`available`).
+ *    literals in lib/dashboard/cards.ts (`availableTiles`/`chartHasData`) and the old
+ *    `useTileNodes.available` (now the tile plugins' `isAvailable`, components/dashboard/tiles/).
  *
  * Two tiers of capability:
  *  - **Atomic** — point-derived `(role, metric)`; unions cleanly across members. Derived from either
