@@ -101,6 +101,13 @@ export const FIELD_META = {
     description:
       "Discharge summed only over consecutive-slot pairs where both SoCs are known and below the 98% rail. Numerator of the capacity slope C ≈ 100·Σcap_discharge/Σdown_swing; additive across days so windowed fits sum cleanly.",
   },
+  chargeRunKwh: {
+    label: "Charge run",
+    unit: "kWh",
+    decimals: 2,
+    description:
+      "Largest continuous net-charging run in the day — a SoC-independent physical lower bound on usable capacity (a single unbroken run cannot exceed what the battery can absorb). ×0.85 it floors the capacity EWMA, snapping C up when hardware grows during a SoC-blind stretch.",
+  },
   probeChargeKwh: {
     label: "Probe charge",
     unit: "kWh",
@@ -432,6 +439,11 @@ export const PROVENANCE_CHARTS: ProvenanceChartDef[] = [
         axis: "y",
         color: SERIES_PALETTE.green,
         stepped: true,
+      }),
+      fieldSeries("chargeRunKwh", {
+        axis: "y",
+        color: SERIES_PALETTE.greenLight,
+        hiddenByDefault: true,
       }),
       fieldSeries("idleLossKwhDay", {
         axis: "y1",

@@ -1,5 +1,10 @@
 import { describe, it, expect } from "@jest/globals";
-import { learnEwmaCapacity, measureWindowCapacity } from "../capacity";
+import {
+  learnEwmaCapacity,
+  learnCapacityFromDays,
+  measureWindowCapacity,
+  chargeRunKwhByDay,
+} from "../capacity";
 
 const MIN5 = 5 * 60 * 1000;
 const DAY = 24 * 60 * 60 * 1000;
@@ -143,5 +148,175 @@ describe("excludeDays (BMS-recal exclusion)", () => {
     // Day 2 applies the EWMA as if day 1 never happened: one 20-fold from day 0.
     expect(r.byDay[2].capacityKwh).toBeCloseTo(0.1 * 20 + 0.9 * 15, 10);
     expect(base.byDay[2].capacityKwh).toBeGreaterThan(r.byDay[2].capacityKwh);
+  });
+});
+
+describe("chargeRunKwhByDay (coulomb floor input)", () => {
+  it("sums a single contiguous charging run", () => {
+    const base = Date.parse("2026-01-01T00:00:00Z");
+    // 4 slots × 1 kWh charge each, contiguous 5-min cadence.
+    const timeline = [1, 2, 3, 4].map((i) => base + i * MIN5);
+    const charge = [1, 1, 1, 1];
+    const discharge = [0, 0, 0, 0];
+    const byDay = chargeRunKwhByDay(charge, discharge, timeline, 0);
+    const dayIndex = Math.floor(base / DAY);
+    expect(byDay.get(dayIndex)).toBeCloseTo(4, 6);
+  });
+
+  it("breaks the run on a data gap and keeps the larger of two runs", () => {
+    const base = Date.parse("2026-01-01T00:00:00Z");
+    const dayIndex = Math.floor(base / DAY);
+    // Run A: 2 slots × 1 kWh = 2 kWh, then a big gap, then run B: 3 slots × 1 kWh = 3 kWh.
+    const timeline = [
+      base + 1 * MIN5,
+      base + 2 * MIN5,
+      base + 8 * MIN5, // gap > 10 min tolerance from the previous slot
+      base + 9 * MIN5,
+      base + 10 * MIN5,
+    ];
+    const charge = [1, 1, 1, 1, 1];
+    const discharge = [0, 0, 0, 0, 0];
+    const byDay = chargeRunKwhByDay(charge, discharge, timeline, 0);
+    expect(byDay.get(dayIndex)).toBeCloseTo(3, 6);
+  });
+
+  it("nets simultaneous discharge against charge and ignores sub-threshold jitter", () => {
+    const base = Date.parse("2026-01-01T00:00:00Z");
+    const dayIndex = Math.floor(base / DAY);
+    const timeline = [1, 2, 3].map((i) => base + i * MIN5);
+    // Slot 1: net charge 2kWh. Slot 2: charge==discharge → net 0, breaks the run. Slot 3: tiny net (noise).
+    const charge = [2, 1, 0.0001];
+    const discharge = [0, 1, 0];
+    const byDay = chargeRunKwhByDay(charge, discharge, timeline, 0);
+    expect(byDay.get(dayIndex)).toBeCloseTo(2, 6);
+  });
+
+  it("does not carry a run across the local-day boundary", () => {
+    // Two slots just before local midnight, two just after (00:00 itself buckets to the PREVIOUS day
+    // under the shared end-exclusive convention — skipped here to keep the split unambiguous).
+    const timeline = [
+      Date.parse("2026-01-01T23:50:00Z"),
+      Date.parse("2026-01-01T23:55:00Z"),
+      Date.parse("2026-01-02T00:05:00Z"),
+      Date.parse("2026-01-02T00:10:00Z"),
+    ];
+    const day0 = Math.floor(timeline[0] / DAY);
+    const charge = [1, 1, 1, 1];
+    const discharge = [0, 0, 0, 0];
+    const byDay = chargeRunKwhByDay(charge, discharge, timeline, 0);
+    // A single uninterrupted 4 kWh run in wall-clock time is split 2/2 across the day boundary.
+    expect(byDay.get(day0)).toBeCloseTo(2, 6);
+    expect(byDay.get(day0 + 1)).toBeCloseTo(2, 6);
+  });
+});
+
+describe("learnCapacityFromDays — coulomb floor", () => {
+  it("snaps the EWMA up when a day's charge run exceeds it, causally (next day, not the run's own day)", () => {
+    const days = [
+      { dayIndex: 0, capDischargeKwh: 0, downSwingPct: 0, chargeRunKwh: 0 },
+      // SoC-blind day (downSwingPct 0 ⇒ rawC never fires) with a huge continuous charge run.
+      { dayIndex: 1, capDischargeKwh: 0, downSwingPct: 0, chargeRunKwh: 40 },
+      { dayIndex: 2, capDischargeKwh: 0, downSwingPct: 0, chargeRunKwh: 0 },
+    ];
+    const { byDay } = learnCapacityFromDays(days, {
+      prior: 21,
+      floorChargeEff: 0.85,
+    });
+    expect(byDay[0].capacityKwh).toBeCloseTo(21, 6); // prior
+    expect(byDay[1].capacityKwh).toBeCloseTo(21, 6); // day 1 still applies the OLD value (causal)
+    expect(byDay[2].capacityKwh).toBeCloseTo(40 * 0.85, 6); // day 2 sees the snapped-up floor
+  });
+
+  it("never lowers the EWMA — a small day's charge run is simply ignored", () => {
+    const days = [
+      { dayIndex: 0, capDischargeKwh: 0, downSwingPct: 0, chargeRunKwh: 40 },
+      { dayIndex: 1, capDischargeKwh: 0, downSwingPct: 0, chargeRunKwh: 1 },
+    ];
+    const { byDay } = learnCapacityFromDays(days, {
+      prior: 21,
+      floorChargeEff: 0.85,
+    });
+    expect(byDay[1].capacityKwh).toBeCloseTo(40 * 0.85, 6);
+  });
+
+  it("clamps the floor to the physical band (clampMax)", () => {
+    const days = [
+      { dayIndex: 0, capDischargeKwh: 0, downSwingPct: 0, chargeRunKwh: 500 },
+      { dayIndex: 1, capDischargeKwh: 0, downSwingPct: 0, chargeRunKwh: 0 },
+    ];
+    const { byDay } = learnCapacityFromDays(days, {
+      prior: 15,
+      clampMax: 100,
+      floorChargeEff: 1,
+    });
+    expect(byDay[1].capacityKwh).toBe(100);
+  });
+
+  it("real-world shape: a capacity upgrade mid-SoC-blind-stretch is caught within days, unlike the pre-fix EWMA crawl", () => {
+    // Mirrors Kinkora: ~20 kWh battery, SoC-blind throughout, then a capacity upgrade with recurring
+    // ~35-40 kWh charge runs on roughly half the days (solar-driven — not every day is sunny).
+    const days: {
+      dayIndex: number;
+      capDischargeKwh: number;
+      downSwingPct: number;
+      chargeRunKwh: number;
+    }[] = [];
+    for (let i = 0; i < 5; i++)
+      days.push({
+        dayIndex: i,
+        capDischargeKwh: 0,
+        downSwingPct: 0,
+        chargeRunKwh: 0,
+      });
+    for (let i = 5; i < 20; i++)
+      days.push({
+        dayIndex: i,
+        capDischargeKwh: 0,
+        downSwingPct: 0,
+        chargeRunKwh: i % 2 === 0 ? 38 : 5, // big run every other day
+      });
+    const { byDay } = learnCapacityFromDays(days, {
+      prior: 21,
+      floorChargeEff: 0.85,
+    });
+    // Pre-fix (no floor): the EWMA would sit frozen at 21 for the whole SoC-blind stretch.
+    // With the floor: within a handful of days of the first big run, C should be well above 21.
+    expect(byDay[10].capacityKwh).toBeGreaterThan(30);
+    expect(byDay[19].capacityKwh).toBeCloseTo(38 * 0.85, 6);
+  });
+});
+
+describe("learnEwmaCapacity — coulomb floor via opts.chargeKwh", () => {
+  it("is inert when chargeKwh is omitted (backward compatible)", () => {
+    const base = Date.parse("2026-01-01T00:00:00Z");
+    const res = learnEwmaCapacity(
+      [0, 2, 2],
+      [null, null, null],
+      [base + MIN5, base + 2 * MIN5, base + 3 * MIN5],
+      0,
+      { prior: 22 },
+    );
+    expect(res.capacitySeries.every((c) => c === 22)).toBe(true);
+  });
+
+  it("snaps C up from a SoC-blind day's charge run when chargeKwh is supplied", () => {
+    const base = Date.parse("2026-01-01T00:00:00Z");
+    // Day 0: SoC-blind, a 40 kWh continuous charge run (40 slots × 1 kWh). Day 1: also SoC-blind.
+    const n = 40;
+    const timeline = Array.from({ length: n }, (_, i) => base + (i + 1) * MIN5);
+    const charge = Array.from({ length: n }, () => 1);
+    const discharge = Array.from({ length: n }, () => 0);
+    const soc = Array.from({ length: n }, () => null as number | null);
+    const day1Timeline = timeline.map((t) => t + DAY);
+    const res = learnEwmaCapacity(
+      [...discharge, ...discharge],
+      [...soc, ...soc],
+      [...timeline, ...day1Timeline],
+      0,
+      { prior: 21, floorChargeEff: 0.85, chargeKwh: [...charge, ...charge] },
+    );
+    expect(res.byDay).toHaveLength(2);
+    expect(res.byDay[0].capacityKwh).toBeCloseTo(21, 6); // causal: day 0 still applies the prior
+    expect(res.byDay[1].capacityKwh).toBeCloseTo(40 * 0.85, 6); // day 1 sees the snap-up
   });
 });

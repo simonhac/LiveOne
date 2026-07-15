@@ -33,6 +33,20 @@ export interface CapacityLearnOptions {
    * applied C still covers them (carried from prior days). Default: none (behaviour unchanged).
    */
   excludeDays?: ReadonlySet<number>;
+  /**
+   * Charge energy into the battery per interval (kWh ≥ 0), index-aligned to `timelineMs` — feeds the
+   * SoC-INDEPENDENT coulomb-floor signal (see {@link chargeRunKwhByDay}). Optional: omitted ⇒ no floor
+   * (unchanged behaviour).
+   */
+  chargeKwh?: number[];
+  /**
+   * Deliberately conservative charge efficiency used ONLY to convert a raw charge-run energy into a
+   * capacity floor — kept independent of the learned η_c to avoid circularity (the floor must stand on
+   * its own even before η_c is learnable). Default 0.85.
+   */
+  floorChargeEff?: number;
+  /** Trailing window (days) over which the coulomb floor is tracked. Default 30. */
+  floorWindowDays?: number;
 }
 
 /** Per-day capacity diagnostic (the "usable-capacity trend"; a step is a hardware/capacity change). */
@@ -45,6 +59,53 @@ export interface CapacityDayDiag {
   rawC: number | null;
   /** The smoothed C actually APPLIED to this day's intervals (causal: learned from prior days), kWh. */
   capacityKwh: number;
+}
+
+/** Min per-slot NET charge power counted toward a continuous charge run — below this is idle jitter,
+ *  not a meaningful charge event. ~100 W over a 5-minute slot. */
+const RUN_MIN_CHARGE_KWH_PER_SLOT = (100 / 1000) * (5 / 60);
+/** Max gap between charging slots before a run is considered broken (tolerates one missed 5-min sample). */
+const RUN_MAX_GAP_MS = 10 * 60 * 1000;
+
+/**
+ * Largest continuous net-charging run per local day (kWh) — a SoC-INDEPENDENT physical lower bound on
+ * usable capacity: a single unbroken charge run cannot deliver more energy than the battery can absorb.
+ * {@link learnCapacityFromDays} folds this in as a floor so a mid-life capacity INCREASE is detected even
+ * through a SoC-blind stretch, where the SoC-swing slope (`rawC` above) never fires.
+ *
+ * Runs are NOT carried across the local-day boundary (a run spanning midnight is split into two smaller
+ * ones) — a deliberate simplification: large charge sessions recur often enough that the trailing floor
+ * window (see `floorWindowDays`) still catches them within a few days. Shared by the online per-interval
+ * fallback ({@link learnEwmaCapacity}) and the cached daily-reduce shell (`daily.ts#reduceThroughputToDays`).
+ */
+export function chargeRunKwhByDay(
+  chargeKwh: number[],
+  dischargeKwh: number[],
+  timelineMs: number[],
+  tzOffsetMin: number,
+): Map<number, number> {
+  const offMs = tzOffsetMin * 60_000;
+  const out = new Map<number, number>();
+  let curDay: number | null = null;
+  let runKwh = 0;
+  let runPrevT: number | null = null;
+  for (let i = 0; i < timelineMs.length; i++) {
+    const t = timelineMs[i];
+    const d = Math.floor((t + offMs - 1) / DAY_MS);
+    if (d !== curDay) {
+      curDay = d;
+      runKwh = 0;
+      runPrevT = null;
+      if (!out.has(d)) out.set(d, 0);
+    }
+    const net = (chargeKwh[i] ?? 0) - (dischargeKwh[i] ?? 0);
+    const charging = net > RUN_MIN_CHARGE_KWH_PER_SLOT;
+    const contiguous = runPrevT !== null && t - runPrevT <= RUN_MAX_GAP_MS;
+    runKwh = charging ? (contiguous ? runKwh + net : net) : 0;
+    runPrevT = charging ? t : null;
+    if (runKwh > (out.get(d) ?? 0)) out.set(d, runKwh);
+  }
+  return out;
 }
 
 export interface CapacityLearnResult {
@@ -68,6 +129,9 @@ export interface CapacityDayInput {
   downSwingPct: number;
   /** Day must not update the EWMA (BMS-recal day) — the applied C still covers it. */
   excluded?: boolean;
+  /** This day's largest continuous net-charging run (kWh) — see {@link chargeRunKwhByDay}. Optional:
+   *  omitted/0 ⇒ no floor contribution from this day (unchanged behaviour). */
+  chargeRunKwh?: number;
 }
 
 /**
@@ -77,16 +141,20 @@ export interface CapacityDayInput {
  */
 export function learnCapacityFromDays(
   days: CapacityDayInput[],
-  opts: Omit<CapacityLearnOptions, "excludeDays"> = {},
+  opts: Omit<CapacityLearnOptions, "excludeDays" | "chargeKwh"> = {},
 ): { byDay: CapacityDayDiag[] } {
   const alpha = opts.alpha ?? 0.1;
   const prior = opts.prior ?? 15;
   const minDaySwing = opts.minDaySocSwingPct ?? 20;
   const clampMin = opts.clampMin ?? 2;
   const clampMax = opts.clampMax ?? 100;
+  const floorEff = opts.floorChargeEff ?? 0.85;
+  const floorWindowDays = opts.floorWindowDays ?? 30;
 
-  // Causal daily EWMA: apply the C learned from PRIOR days to the current day, then fold today's raw C in.
+  // Causal daily EWMA: apply the C learned from PRIOR days to the current day, then fold today's raw C
+  // (and today's coulomb floor) in.
   let ewma = prior;
+  const floorHistory: number[] = [];
   const byDay: CapacityDayDiag[] = [];
   for (const d of days) {
     const applied = ewma;
@@ -99,6 +167,18 @@ export function learnCapacityFromDays(
       );
       ewma = alpha * rawC + (1 - alpha) * ewma;
     }
+
+    // Coulomb floor: a day's largest unbroken charge run is a SoC-independent physical lower bound on
+    // usable capacity. Trailing max over `floorWindowDays` so a single transient spike (bad data) decays
+    // out, but a real capacity increase — which recurs on subsequent charge cycles — stays evidenced.
+    // When it exceeds the believed C (e.g. after a hardware upgrade during a SoC-blind stretch, where
+    // rawC above never fires), SNAP the EWMA up rather than letting it crawl: physical evidence beats a
+    // stale prior.
+    floorHistory.push((d.chargeRunKwh ?? 0) * floorEff);
+    if (floorHistory.length > floorWindowDays) floorHistory.shift();
+    const floor = clamp(Math.max(0, ...floorHistory), clampMin, clampMax);
+    if (floor > ewma) ewma = floor;
+
     byDay.push({
       dayIndex: d.dayIndex,
       swingPct: d.downSwingPct,
@@ -112,7 +192,9 @@ export function learnCapacityFromDays(
 /**
  * Learn a per-interval usable capacity C(t) from the battery's discharge energy + SoC. `dischargeKwh[i]`
  * is the deliverable energy leaving the battery at interval `i`; `socPct[i]` the SoC (%). Fold-independent
- * (SoC + discharge only — the charge side is deliberately unused; see the accumulation note). Deterministic.
+ * (SoC + discharge drive the SoC-swing slope; see the accumulation note). Deterministic. `opts.chargeKwh`
+ * is optional and used ONLY for the SoC-independent coulomb floor (see {@link chargeRunKwhByDay}) — the
+ * SoC-swing slope itself remains discharge-only.
  */
 export function learnEwmaCapacity(
   dischargeKwh: number[],
@@ -155,6 +237,11 @@ export function learnEwmaCapacity(
     if (s0 > s1) cur.swing += s0 - s1; // pair discharge with the DOWN-swing only
   }
 
+  // SoC-independent coulomb floor (optional — only when the caller supplies charge energy).
+  const chargeRunByDay = opts.chargeKwh
+    ? chargeRunKwhByDay(opts.chargeKwh, dischargeKwh, timelineMs, tzOffsetMin)
+    : null;
+
   // Delegate the causal daily-EWMA fold to the single day-level implementation.
   const { byDay } = learnCapacityFromDays(
     days.map((d) => ({
@@ -162,8 +249,17 @@ export function learnEwmaCapacity(
       capDischargeKwh: d.num,
       downSwingPct: d.swing,
       excluded: opts.excludeDays?.has(d.dayIndex) ?? false,
+      chargeRunKwh: chargeRunByDay?.get(d.dayIndex) ?? 0,
     })),
-    { alpha, prior, minDaySocSwingPct: minDaySwing, clampMin, clampMax },
+    {
+      alpha,
+      prior,
+      minDaySocSwingPct: minDaySwing,
+      clampMin,
+      clampMax,
+      floorChargeEff: opts.floorChargeEff,
+      floorWindowDays: opts.floorWindowDays,
+    },
   );
   const appliedByDay = new Map<number, number>();
   for (const d of byDay) appliedByDay.set(d.dayIndex, d.capacityKwh);
