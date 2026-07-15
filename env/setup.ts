@@ -36,6 +36,11 @@ import {
 const TOTAL_PHASES = 5;
 const VERCEL_PROJECT = "liveone";
 
+// macOS Keychain item holding the 1Password service-account token scoped to the
+// liveone-dev vault (read-only). Created once with:
+//   security add-generic-password -U -a "$USER" -s op-sa-liveone-dev -w
+const KEYCHAIN_OP_SA = "op-sa-liveone-dev";
+
 const force = process.argv.includes("--force");
 
 function isSymlink(p: string): boolean {
@@ -138,13 +143,44 @@ function phaseOnePasswordEnv(errors: string[]): void {
     return;
   }
 
-  // op inject needs an authenticated session — a personal `op signin`, or an
-  // OP_SERVICE_ACCOUNT_TOKEN scoped to the liveone-dev vault, both work.
-  const { code: authCode } = run(["op", "whoami"]);
+  // op inject needs auth. Preference order:
+  //   1. OP_SERVICE_ACCOUNT_TOKEN already in the environment
+  //   2. the dev service-account token from the macOS Keychain (KEYCHAIN_OP_SA)
+  //   3. an ambient personal `op` session
+  // Conductor runs setup in a non-interactive shell, so (2) is what makes fresh
+  // worktrees self-bootstrap without `op signin`. The token is passed only into
+  // the op child processes' env — never printed, never written to disk.
+  // SA tokens are account-bound; the personal-session fallback needs OP_ACCOUNT
+  // pinned because two 1Password accounts exist on this machine.
+  let opEnv: Record<string, string> | undefined = {
+    OP_ACCOUNT: "my.1password.com",
+  };
+  let authSource = "personal op session";
+  if (process.env.OP_SERVICE_ACCOUNT_TOKEN) {
+    authSource = "service account (env)";
+    opEnv = undefined;
+  } else {
+    const { code: kcCode, stdout: kcToken } = run([
+      "security",
+      "find-generic-password",
+      "-s",
+      KEYCHAIN_OP_SA,
+      "-w",
+    ]);
+    if (kcCode === 0 && kcToken) {
+      opEnv = { OP_SERVICE_ACCOUNT_TOKEN: kcToken };
+      authSource = "service account (Keychain)";
+    }
+  }
+
+  const { code: authCode } = run(["op", "whoami"], undefined, opEnv);
   if (authCode !== 0) {
     error(
-      "1Password CLI not signed in — run `op signin` (or set " +
-        "OP_SERVICE_ACCOUNT_TOKEN scoped to liveone-dev), then re-run setup.",
+      "1Password auth unavailable — no OP_SERVICE_ACCOUNT_TOKEN in env, no " +
+        `Keychain item '${KEYCHAIN_OP_SA}', and no personal op session. ` +
+        "One-time fix: store the liveone-dev service-account token with\n" +
+        `        security add-generic-password -U -a "$USER" -s ${KEYCHAIN_OP_SA} -w\n` +
+        "      (paste the token at the prompt), then re-run setup.",
     );
     errors.push("op not authenticated");
     return;
@@ -165,22 +201,20 @@ function phaseOnePasswordEnv(errors: string[]): void {
   // Resolve the op:// references in .env.tpl against the vault into a concrete
   // .env.local. --force overwrites any existing file (execSync is non-interactive,
   // so we can't answer an overwrite prompt).
-  const { code, stdout, stderr } = run([
-    "op",
-    "inject",
-    "-i",
-    tpl,
-    "-o",
-    target,
-    "--force",
-  ]);
+  const { code, stdout, stderr } = run(
+    ["op", "inject", "-i", tpl, "-o", target, "--force"],
+    undefined,
+    opEnv,
+  );
   if (code !== 0) {
     error(`op inject failed: ${stderr || stdout}`);
     errors.push("op inject failed");
     return;
   }
 
-  success("Wrote .env.local from .env.tpl (1Password, liveone-dev vault)");
+  success(
+    `Wrote .env.local from .env.tpl (1Password, liveone-dev vault, via ${authSource})`,
+  );
   info(
     "Tooling vars absent from 1Password (e.g. SIGENERGY_*, PROD_CLERK_SECRET_KEY) " +
       "must be added to .env.local by hand if you run sigen:poll or the prod-Clerk " +

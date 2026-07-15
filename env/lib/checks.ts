@@ -40,12 +40,17 @@ export interface RunResult {
   stderr: string;
 }
 
-export function run(cmd: string[], cwd?: string): RunResult {
+export function run(
+  cmd: string[],
+  cwd?: string,
+  env?: Record<string, string>,
+): RunResult {
   try {
     const stdout = execSync(cmd.join(" "), {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
       encoding: "utf-8",
+      env: env ? { ...process.env, ...env } : undefined,
     });
     return { code: 0, stdout: stdout.trim(), stderr: "" };
   } catch (err: unknown) {
