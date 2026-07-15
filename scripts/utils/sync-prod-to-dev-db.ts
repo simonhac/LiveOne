@@ -34,6 +34,28 @@ import { join } from "node:path";
 
 // ── Manifest ────────────────────────────────────────────────────────────────
 
+// An FK child of an idDrift parent: `cols` are the child's FK columns, mapped POSITIONALLY onto the
+// parent's PK columns (e.g. parent point_info PK = (system_id, id); area_bindings' (point_system_id,
+// point_id) references it). Children don't all ON DELETE CASCADE, so id-drift clears them by hand.
+type FkChild = { table: string; cols: string[] };
+
+// Resolve a divergent-surrogate collision that the natural-key trick (excludeCols) CAN'T fix because
+// the surrogate PK is itself the FK-join key children carry — so dev must ADOPT prod's PK, not keep its
+// own. When dev already holds the same logical row under a DIFFERENT PK, the by-PK upsert trips a
+// SECONDARY unique index and aborts the whole sync. Before the upsert we delete the mismatched dev rows
+// (matched on any of `uniqueKeys`, different PK) and their `children`, so prod's rows land; later
+// manifest steps (full-refresh parents + incremental readings) re-populate the children under the new
+// PKs. Works for composite (point_info) and single-uuid (areas) PKs alike.
+//
+// Caveat: a drifted parent's children in tables NOT in the manifest (e.g. point_readings_flow_attr_1d,
+// battery_provenance_daily for areas) are cleared but not re-synced, so dev loses them for that ONE
+// realigned row until a full R2 restore / dev recompute. Fine for a disposable mirror; the realigning
+// rows are few (an occasional independently-created area / renumbered helper point).
+type IdDrift = {
+  uniqueKeys: string[][]; // secondary unique indexes (each a full column list) a divergent-PK row collides on
+  children: FkChild[];
+};
+
 type FullTable = {
   name: string;
   mode: "full";
@@ -45,6 +67,7 @@ type FullTable = {
   // total non-null key (dashboards has TWO partial unique indexes, neither total). Wrapped in a txn;
   // realigns the serial after; FK children cascade on the orphan delete. Ignores conflictCols/excludeCols.
   mirror?: boolean;
+  idDrift?: IdDrift; // clear divergent-id collisions before the by-PK upsert (see IdDrift)
 };
 type IncrementalTable = {
   name: string;
@@ -62,14 +85,72 @@ type Table = FullTable | IncrementalTable;
 const FULL: FullTable[] = [
   ...[
     "systems",
-    "point_info",
     "users",
     "user_systems",
     "polling_status",
     "share_tokens",
     "roles",
-    "areas",
   ].map((name): FullTable => ({ name, mode: "full", onConflict: "update" })),
+  // areas' uuid PK is generated independently on dev, so dev can hold the same logical Area (same
+  // legacy_system_id / owner+alias) under a different uuid. The by-PK upsert then trips a secondary
+  // unique index (areas_legacy_system_unique / areas_owner_alias_unique). `idDrift` clears the mismatched
+  // dev Area (+ its FK children) so prod's uuid lands. FK-first: areas here, then area_devices /
+  // area_bindings / the incremental flow legs re-populate under the correct uuid.
+  {
+    name: "areas",
+    mode: "full",
+    onConflict: "update",
+    idDrift: {
+      uniqueKeys: [
+        ["legacy_system_id"], // areas_legacy_system_unique
+        ["owner_clerk_user_id", "alias"], // areas_owner_alias_unique
+      ],
+      children: [
+        { table: "area_devices", cols: ["area_id"] },
+        { table: "area_bindings", cols: ["area_id"] },
+        { table: "point_readings_flow_1d", cols: ["area_id"] },
+        { table: "point_readings_flow_attr_1d", cols: ["area_id"] },
+        { table: "battery_provenance_daily", cols: ["area_id"] },
+        { table: "device_trackers", cols: ["area_id"] },
+        { table: "device_run_periods", cols: ["area_id"] },
+      ],
+    },
+  },
+  // point_info's serial `id` is BOTH assigned independently on dev AND the FK-join key every readings
+  // row carries — so, unlike area_bindings, dev must ADOPT prod's id (can't exclude it). When dev holds
+  // the same logical point under a different id (e.g. derived helper points numbered in a different
+  // order), the by-PK upsert trips one of point_info's THREE secondary unique indexes and aborts the
+  // whole sync. `idDrift` clears those blockers (and their FK children) first. FK-first: point_info
+  // here, then area_bindings, then the incremental readings legs re-sync the children.
+  {
+    name: "point_info",
+    mode: "full",
+    onConflict: "update",
+    idDrift: {
+      uniqueKeys: [
+        ["system_id", "physical_path_tail"], // pi_system_physical_path_unique
+        ["system_id", "logical_path_stem", "metric_type"], // pi_system_stem_metric_unique
+        ["point_uid"], // pi_point_uid_unique (system-independent)
+      ],
+      children: [
+        { table: "point_readings_agg_5m", cols: ["system_id", "point_id"] },
+        { table: "point_readings_agg_1d", cols: ["system_id", "point_id"] },
+        { table: "point_readings", cols: ["system_id", "point_id"] },
+        { table: "area_bindings", cols: ["point_system_id", "point_id"] },
+        {
+          table: "device_trackers",
+          cols: ["signal_system_id", "signal_point_id"],
+        },
+        {
+          table: "device_run_periods",
+          cols: ["signal_system_id", "signal_point_id"],
+        },
+      ],
+    },
+  },
+  // area→device membership. Natural composite PK (area_id, system_id) — no surrogate — so a plain by-PK
+  // full upsert. After areas (FK parent) so a realigned Area re-gets its prod membership.
+  { name: "area_devices", mode: "full", onConflict: "update" },
   // Surrogate-key tables: the PK (uuid/serial `id`) is assigned independently on
   // dev, so dev and prod hold the same row under different ids. Upsert on the
   // NATURAL unique key and exclude `id` (like point_readings) — otherwise the
@@ -297,6 +378,8 @@ function syncTable(
        SELECT ${colList} FROM sync_staging.${t.name} ${filter}
        ON CONFLICT (${conflictCols.join(", ")}) ${action};`;
 
+  const idDrift = t.mode === "full" ? t.idDrift : undefined;
+
   if (mirror) {
     const idCol = conflictCols[0];
     // ONE transaction so a crash can't leave dev half-synced: delete orphans FIRST (frees the
@@ -310,6 +393,38 @@ function syncTable(
        ${upsert}
        SELECT setval(pg_get_serial_sequence('public.${t.name}', '${idCol}'),
                      GREATEST((SELECT max(${idCol}) FROM public.${t.name}), 1), true);
+       COMMIT;
+       DROP TABLE sync_staging.${t.name};`,
+    );
+  } else if (idDrift) {
+    // Same-logical-row-different-PK: dev rows sharing ANY secondary unique key with a staged prod row
+    // but sitting under a different PK. Whichever key collides would abort the by-PK upsert, so clear
+    // them (and their FK children — not all ON DELETE CASCADE) inside the upsert's transaction. `_drift`
+    // carries the parent's PK columns; children map their FK columns positionally onto that PK.
+    const match = idDrift.uniqueKeys
+      .map((key) => "(" + key.map((c) => `d.${c} = s.${c}`).join(" AND ") + ")")
+      .join(" OR ");
+    const samePk = pk.map((c) => `d.${c} = s.${c}`).join(" AND ");
+    const childDeletes = idDrift.children
+      .map((c) => {
+        const on = c.cols
+          .map((col, i) => `x.${col} = b.${pk[i]}`)
+          .join(" AND ");
+        return `DELETE FROM public.${c.table} x USING _drift b WHERE ${on};`;
+      })
+      .join("\n       ");
+    exec(
+      devUrl,
+      `BEGIN;
+       CREATE TEMP TABLE _drift ON COMMIT DROP AS
+         SELECT DISTINCT ${pk.map((c) => `d.${c}`).join(", ")}
+           FROM public.${t.name} d
+           JOIN sync_staging.${t.name} s ON (${match})
+          WHERE NOT (${samePk});
+       ${childDeletes}
+       DELETE FROM public.${t.name} d USING _drift b
+         WHERE ${pk.map((c) => `d.${c} = b.${c}`).join(" AND ")};
+       ${upsert}
        COMMIT;
        DROP TABLE sync_staging.${t.name};`,
     );
