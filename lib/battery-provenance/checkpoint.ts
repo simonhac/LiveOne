@@ -26,7 +26,7 @@ import { FoldState, ResetTrigger } from "./fold";
  * (FoldState / foldStep / constants), compute.ts input construction (flows, η/C/losses resolution,
  * tariff, fold-config defaults), load.ts series semantics, or the learners (a PR-#169-style change).
  */
-export const BATPROV_MODEL_VERSION = 2;
+export const BATPROV_MODEL_VERSION = 3;
 
 export interface FoldCheckpointEnvelope {
   /** == BATPROV_MODEL_VERSION at write time. */
@@ -54,7 +54,7 @@ const FOLD_STATE_SPEC = {
   carbonG: "num",
   renewableKwh: "num",
   costC: "num",
-  costOppC: "num",
+  forgoneC: "num",
   estimatedKwh: "num",
   pendingReset: "bool",
   pendingTrigger: "trigger",
@@ -68,23 +68,23 @@ const FOLD_STATE_SPEC = {
   roundtripLossKwh: "num",
   roundtripLossG: "num",
   roundtripLossC: "num",
-  roundtripLossOppC: "num",
+  roundtripLossForgoneC: "num",
   roundtripLossRenewKwh: "num",
   unattribLossKwh: "num",
   unattribLossG: "num",
   unattribLossC: "num",
-  unattribLossOppC: "num",
+  unattribLossForgoneC: "num",
   unattribLossRenewKwh: "num",
   idleLossKwh: "num",
   idleLossG: "num",
   idleLossC: "num",
-  idleLossOppC: "num",
+  idleLossForgoneC: "num",
   idleLossRenewKwh: "num",
   syncKwh: "num",
   syncG: "num",
   syncRenewKwh: "num",
   syncC: "num",
-  syncOppC: "num",
+  syncForgoneC: "num",
   syncEvents: "num",
   recalEvents: "num",
   resetsEmpty: "num",

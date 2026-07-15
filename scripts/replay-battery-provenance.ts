@@ -148,7 +148,7 @@ function report(
 
   console.log("Battery blend (sampled every ~2h):");
   console.log(
-    "  time (UTC)        SoC%   E(kWh)   g/kWh   %renew   c/kWh   c/kWh(opp)   est%",
+    "  time (UTC)        SoC%   E(kWh)   g/kWh   %renew   c/kWh   c/kWh(fgn)   est%",
   );
   for (let i = 0; i < steps.length; i += 24) {
     const s = steps[i];
@@ -163,7 +163,7 @@ function report(
             ? "   -- "
             : (s.batteryRenewableFraction * 100).toFixed(0).padStart(6),
           (s.batteryPrice ?? NaN).toFixed(1).padStart(6),
-          (s.batteryPriceOpportunity ?? NaN).toFixed(1).padStart(10),
+          (s.batteryPriceForgone ?? NaN).toFixed(1).padStart(10),
           (s.estimatedFraction * 100).toFixed(0).padStart(5),
         ].join(" "),
     );

@@ -203,7 +203,7 @@ A single η conflates three physically distinct losses, measured on real registe
 and a small constant **idle/standby drain** (~20 W ≈ 0.47 kWh/day: BMS + cell balancing +
 self-discharge — proportional to \_time*, not throughput). When the learner has values, η*c replaces η
 at the charge seam (same "loss priced into delivered" booking, just the right coefficient) and the
-idle drain bleeds the store pro-rata into `idleLoss*` buckets each interval — so \_parked* energy pays
+idle drain bleeds the store pro-rata into `idleLoss*` buckets each interval — so \_parked\* energy pays
 the standby tax over time instead of charging sources paying it up front. Absent (SoC-blind history,
 learner not yet run) both are inert and the fold is byte-identical to the single-η model.
 
@@ -248,15 +248,17 @@ since the last SoC observation; when the SoC-implied energy diverges from it by 
 #### Actual vs opportunity cost
 
 Solar charged into the battery is **free out-of-pocket** but **forgoes the feed-in revenue** you'd have
-earned exporting it. The fold tracks both bases every run as a parallel accumulator (`costC` actual @
-solar-cost-0, `costOppC` opportunity @ solar-feed-in) — the split is first-class, not a toggle. The
-**written** points split the intuitive way: `price` = the actual basis ("Battery Energy Cost") and
-`price-opportunity` = the **delta** `costOppC/E − costC/E` — only the _additional_ forgone feed-in
-component, ≥ 0 ("Battery Opportunity Cost"; see `blendValue` in
+earned exporting it. The fold tracks the actual basis (`costC`, solar booked at 0) plus an **independent
+delta accumulator** `forgoneC` (Qf) — the forgone feed-in revenue held in the store; only solar charge
+contributes, everything else scales it in lockstep with `costC`, so ≥ 0 is structural. The split is
+first-class, not a toggle. The **written** points split the intuitive way: `price` = the actual basis
+("Battery Energy Cost") and `price-opportunity` = `forgoneC/E` — only the _additional_ forgone feed-in
+component, ≥ 0 ("Battery Opportunity Cost"; a passthrough in `blendValue`,
 `lib/db/planetscale/battery-provenance-pg.ts`). Full economic cost = the sum of the two points.
 
 Price-sign semantics: negative **import** prices flow through unclamped (grid charge at a negative
-Amber rate books negative cost into both bases — `price` can legitimately go negative). The **feed-in**
+Amber rate books negative actual cost — `price` can legitimately go negative; `forgoneC` is untouched,
+grid charge forgoes nothing). The **feed-in**
 price is floored at 0 per interval (`compute.ts` `solarCostOpp`): under a negative export price the
 counterfactual to storing solar is curtailment, not paying to export, so nothing was forgone. Where the
 feed-in series comes from (Amber, a retailer schedule, nothing) is config — see

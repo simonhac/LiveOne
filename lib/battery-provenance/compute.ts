@@ -203,12 +203,13 @@ export function computeBatteryProvenance(
     return null;
   };
 
-  // Dual solar cost basis (both computed every run — opportunity is first-class, not a toggle):
-  //   • ACTUAL   — solar is out-of-pocket free (0). Feeds `costC` → `batteryPrice`.
-  //   • OPPORTUNITY — solar priced at forgone feed-in from the resolved export tariff. Feeds `costOppC`
-  //                   → `batteryPriceOpportunity` (a full basis; the WRITTEN `price-opportunity` point is
-  //                   the delta vs actual — see blendValue). The tariff SOURCE (none/amber/schedule) is
-  //                   resolved here into a single exportPrice[] series; the fold never sees modes/schedules.
+  // Solar cost basis (both signals computed every run — forgone revenue is first-class, not a toggle):
+  //   • ACTUAL  — solar is out-of-pocket free (0). Feeds `costC` → `batteryPrice`.
+  //   • FORGONE — the feed-in revenue given up by storing solar, from the resolved export tariff. Feeds
+  //               the independent delta accumulator `forgoneC` → `batteryPriceForgone`, which the WRITTEN
+  //               `price-opportunity` point carries directly (see blendValue). The tariff SOURCE
+  //               (none/amber/schedule) is resolved here into a single exportPrice[] series; the fold
+  //               never sees modes/schedules.
   const SOLAR_ACTUAL_COST = 0;
   const exportPrice = resolveExportPriceSeries(
     inputs.exportTariff,
@@ -218,8 +219,9 @@ export function computeBatteryProvenance(
   );
   // Floor the forgone feed-in at 0 (deliberate, per-interval): under a NEGATIVE export price the
   // counterfactual to storing solar is curtailment, not paying to export — so nothing was forgone.
-  // Negative IMPORT prices are a different matter and are NOT clamped anywhere: grid charge at a
-  // negative rate books negative cost into BOTH bases (see the fold's gridM term).
+  // (This floor + solarCost≡0 is what keeps `forgoneC` ≥ 0.) Negative IMPORT prices are a different
+  // matter and are NOT clamped anywhere: grid charge at a negative rate books negative ACTUAL cost
+  // (the fold's gridM → costC); `forgoneC` is untouched — grid charge forgoes no export revenue.
   const solarCostOpp = (i: number) => Math.max(0, exportPrice[i] ?? 0);
 
   const foldConfig: FoldConfig = {
@@ -266,7 +268,6 @@ export function computeBatteryProvenance(
     otherEmissionsIntensity: inputs.gridEmissions[i],
     otherRenewableFraction: inputs.gridRenewable[i],
     otherPrice: inputs.gridPrice[i],
-    otherPriceOpp: inputs.gridPrice[i] ?? undefined,
   }));
   // Run the fold — optionally seeded (checkpoint resume) and/or capturing state snapshots at requested
   // instants via slice-and-chain (interval i ENDS at timeline[i+1]; a snapshot at t is the state after
@@ -331,8 +332,8 @@ export function computeBatteryProvenance(
       return {
         emissions: timeline.map(() => 0),
         renewable: timeline.map(() => 1),
-        // The per-day attribution rollup stays ACTUAL (out-of-pocket) cost; opportunity cost lives only
-        // in the battery fold's parallel accumulator (→ the `price-opportunity` derived point).
+        // The per-day attribution rollup stays ACTUAL (out-of-pocket) cost; forgone revenue lives only
+        // in the battery fold's delta accumulator (→ the `price-opportunity` derived point).
         price: timeline.map(() => SOLAR_ACTUAL_COST),
         estimated: timeline.map(() => false),
       };
