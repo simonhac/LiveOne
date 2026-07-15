@@ -38,7 +38,8 @@ drill:
   min-row-ratio: 0.95
 
 staleness:
-  max-age-hours: 5              # alert if the newest 2hourly object is older than this
+  slot-minutes: 480            # 8-hourly cadence (00/08/16 UTC) — MUST match the scheduler
+  max-age-hours: 10             # backstop: page if the newest 2hourly object is older than this (> 8h cadence + margin)
   heal-workflow: pg-backup.yml  # self-heal re-triggers this caller workflow on a missed tick
 
 dashboard:
