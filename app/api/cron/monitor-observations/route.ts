@@ -44,6 +44,7 @@ import { requireCronOrAdmin } from "@/lib/api-auth";
 import { cronSkipReason } from "@/lib/cron/guard";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { getFlowConsistency } from "@/lib/db/planetscale/flow-consistency";
+import { listBatteryProvenanceAreaIds } from "@/lib/battery-provenance/recompute";
 import { checkSocMeterDivergence } from "@/lib/battery-provenance/soc-meter-check";
 import { qstash, OBSERVATIONS_QUEUE_NAME } from "@/lib/qstash";
 
@@ -385,7 +386,12 @@ export async function GET(request: NextRequest) {
     const endDay = new Date(Date.now() - 2 * 86_400_000)
       .toISOString()
       .slice(0, 10);
+    // Scope to battery-provenance Areas only: they are the ONLY Areas that get a modern
+    // `flow_attr_1d` leg, so a non-battery Area (legacy `flow_1d` only) would always read as a
+    // full divergence. A battery Area that has lost its modern leg still shows here (modernDays=0).
+    const batteryAreaIds = await listBatteryProvenanceAreaIds();
     const consistency = await getFlowConsistency(db, {
+      areaIds: batteryAreaIds,
       endDay,
       tolKwh: BATPROV_CONSISTENCY_TOL_KWH,
     });
