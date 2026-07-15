@@ -22,7 +22,7 @@ import {
 } from "chart.js";
 import annotationPlugin from "chartjs-plugin-annotation";
 
-export type ChartTimeRange = "1D" | "7D" | "30D";
+export type ChartTimeRange = "1D" | "7D" | "30D" | "1Y";
 
 let registered = false;
 
@@ -51,8 +51,9 @@ export function registerChartScaffold(): void {
 
 /**
  * The background shading boxes shared by both charts: weekday (Mon–Fri) columns for the 30D view,
- * daytime (07:00–22:00) columns for 1D/7D. Returns chartjs-plugin-annotation `box` specs, clipped
- * to the [windowStart, now] window. Callers may append their own annotations (e.g. a hover line).
+ * daytime (07:00–22:00) columns for 1D/7D, none for 1Y (weekday columns are noise at year scale).
+ * Returns chartjs-plugin-annotation `box` specs, clipped to the [windowStart, now] window. Callers
+ * may append their own annotations (e.g. a hover line).
  */
 export function buildShadingAnnotations(
   timeRange: ChartTimeRange,
@@ -60,6 +61,11 @@ export function buildShadingAnnotations(
   windowStart: Date,
 ): any[] {
   const annotations: any[] = [];
+
+  if (timeRange === "1Y") {
+    // No shading at year scale.
+    return annotations;
+  }
 
   if (timeRange === "30D") {
     // For 30D view: shade weekdays (Mon-Fri)
@@ -119,8 +125,8 @@ export function buildShadingAnnotations(
 /**
  * The shared time x-axis scale config: a `time` axis spanning [windowStart, now] with the period-
  * dependent tick formatting both charts use (multi-line weekday labels for 7D/30D, HH:mm for 1D,
- * with the same auto-skip/collision rules). Returned as a plain Chart.js scale object so each
- * component can drop it straight into `scales.x`.
+ * month labels for 1Y, with the same auto-skip/collision rules). Returned as a plain Chart.js scale
+ * object so each component can drop it straight into `scales.x`.
  */
 export function buildTimeScale(
   timeRange: ChartTimeRange,
@@ -132,10 +138,11 @@ export function buildTimeScale(
     min: windowStart.getTime(), // Show from selected time range
     max: now.getTime(), // To current time
     time: {
-      unit: timeRange === "1D" ? "hour" : "day",
+      unit: timeRange === "1D" ? "hour" : timeRange === "1Y" ? "month" : "day",
       displayFormats: {
         hour: "HH:mm",
         day: "MMM d", // Show month and day
+        month: "MMM", // Show month name (1Y)
       },
     },
     grid: {
@@ -155,7 +162,7 @@ export function buildTimeScale(
       minRotation: 0, // Keep labels horizontal
       align: timeRange !== "1D" ? "start" : "center", // Align labels to the right of the grid line in 7D/30D mode
       padding: timeRange === "30D" ? 6 : 4, // More padding for 30D to prevent collision
-      autoSkip: timeRange === "1D", // Only auto-skip for 1D view
+      autoSkip: timeRange === "1D" || timeRange === "1Y", // Auto-skip for 1D and 1Y views
       source: "auto", // Let Chart.js generate ticks automatically
       callback: function (value: any, index: any, ticks: any) {
         const date = new Date(value);
@@ -192,6 +199,12 @@ export function buildTimeScale(
             return "​"; // Return zero-width space to keep gridline but hide label
           }
           return format(date, "HH:mm");
+        } else if (timeRange === "1Y") {
+          // For 1Y mode, month labels; add the year on January (or the first tick) to orient.
+          return format(
+            date,
+            date.getMonth() === 0 || index === 0 ? "MMM yy" : "MMM",
+          );
         }
       },
     },
@@ -199,7 +212,7 @@ export function buildTimeScale(
 }
 
 /**
- * Format a hovered timestamp for the chart header, shared by both charts: date-only for 30D,
+ * Format a hovered timestamp for the chart header, shared by both charts: date-only for 30D/1Y,
  * date+time for 7D, time-only for 1D; `isMobile` drops the year. Returns "" for a null date.
  */
 export function formatHoverTimestamp(
@@ -209,7 +222,7 @@ export function formatHoverTimestamp(
 ): string {
   if (!date) return "";
 
-  if (timeRange === "30D") {
+  if (timeRange === "30D" || timeRange === "1Y") {
     // Mobile: "Fri, 22 Aug" / Desktop: "Fri, 22 Aug 2024"
     return format(date, isMobile ? "EEE, d MMM" : "EEE, d MMM yyyy");
   } else if (timeRange === "7D") {

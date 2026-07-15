@@ -55,6 +55,10 @@ export const queryKeys = {
 
   runPeriods: (systemId: SystemIdLike, role: string, modeKey: string) =>
     ["runPeriods", sid(systemId), role, modeKey] as const,
+
+  /** Keyed by AREA uuid (not systemId) — battery-provenance daily history for the panel. */
+  provenanceDaily: (areaId: string, rangeKey: string) =>
+    ["provenanceDaily", areaId, rangeKey] as const,
 } as const;
 
 /**

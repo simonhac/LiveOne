@@ -90,6 +90,7 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     "/api/energy-flow-matrix",
     "/api/system/1/latest",
     "/api/system/1/run-periods",
+    "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/provenance-daily",
   ];
   it.each(shareable)("allows %s via a share token", (p) => {
     expect(isShareableRoute(req(p))).toBe(true);
@@ -105,6 +106,8 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     "/api/dashboards/5",
     "/api/share-tokens",
     "/api/user/preferences",
+    // The surgical provenance-daily suffix must not open its CRUD siblings.
+    "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/bindings",
   ];
   it.each(notShareable)("does NOT make %s shareable", (p) => {
     expect(isShareableRoute(req(p))).toBe(false);

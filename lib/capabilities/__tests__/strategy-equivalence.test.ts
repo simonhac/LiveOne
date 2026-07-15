@@ -85,6 +85,29 @@ const CASES: { name: string; ctx: AreaStrategyContext; want: DashboardV3 }[] = [
     ),
   },
   {
+    name: "instrumentation-only helper WITH battery/provenance — history card appended",
+    ctx: {
+      areaId: A,
+      capabilities: caps("instrumentation", "battery/provenance"),
+      aggregate: false,
+      leadWithDeviceMetrics: true,
+    },
+    want: golden(
+      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics","variant":"table"},{"type":"battery-provenance-history"}]}]}',
+    ),
+  },
+  {
+    name: "instrumentation-only device WITHOUT battery/provenance — no history card (no lead)",
+    ctx: {
+      areaId: A,
+      capabilities: caps("instrumentation", "generator-running"),
+      aggregate: false,
+    },
+    want: golden(
+      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics"},{"type":"generator-runs"}]}]}',
+    ),
+  },
+  {
     name: "seed, full caps (all tiles, lines, no lead)",
     ctx: {
       areaId: A,

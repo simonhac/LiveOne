@@ -63,6 +63,8 @@ export interface BatteryDayReduction {
   socFirst: number | null;
   socLast: number | null;
   socSamples: number;
+  /** Min non-null FF SoC in the day (reserve-floor learn input; see reserve-floor.ts). */
+  socMin: number | null;
   /** Capacity-fit pair sums, RAIL-GATED (both pair SoCs non-null & < 98; incl. the boundary pair). */
   capDischargeKwh: number;
   downSwingPct: number;
@@ -169,6 +171,7 @@ export function reduceThroughputToDays(
         socFirst: null,
         socLast: null,
         socSamples: 0,
+        socMin: null,
         capDischargeKwh: 0,
         downSwingPct: 0,
         recal: false,
@@ -187,6 +190,7 @@ export function reduceThroughputToDays(
     if (soc !== null) {
       if (cur.socFirst === null) cur.socFirst = soc;
       cur.socLast = soc;
+      if (cur.socMin === null || soc < cur.socMin) cur.socMin = soc;
       cur.socSamples++;
     }
 

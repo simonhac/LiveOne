@@ -79,8 +79,16 @@ export function buildAreaStrategy(ctx: AreaStrategyContext): DashboardV3 {
       ? [...lead]
       : [{ type: "device-metrics" }];
     if (caps.has("generator-running")) cards.push({ type: "generator-runs" });
+    if (caps.has("battery/provenance"))
+      cards.push({ type: "battery-provenance-history" });
     return { version: 3, sections: [{ areaId, cards }] };
   }
+
+  // NOTE: `battery-provenance-history` is deliberately NOT seeded below on the main tiles/pricing
+  // paths, even though a populated battery area legitimately carries `battery/provenance` too (the
+  // blend point is bound into the parent Area, not just the helper). v1 scope: catalog-only there —
+  // mirrors `battery-contents`/`ev-provenance`, which an area opts into via the card gallery rather
+  // than getting by default. Revisit if/when this card graduates to the default composition.
 
   const tiles: TileV3[] = supported.map((view) => ({ view }));
   if (ctx.gridDeviceSystemId != null) {

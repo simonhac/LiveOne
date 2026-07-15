@@ -4,6 +4,7 @@ import {
   buildTimeScale,
   formatHoverTimestamp,
 } from "../scaffold";
+import { getPeriodDuration, getPeriodIntervalMinutes } from "../temporal";
 
 // A fixed local-time window so the day/weekday maths is deterministic regardless of the runner TZ.
 const now = new Date(2024, 7, 22, 12, 0, 0); // Thu 22 Aug 2024, local noon
@@ -42,6 +43,11 @@ describe("buildShadingAnnotations", () => {
       }
     }
   });
+
+  it("returns no shading for 1Y", () => {
+    const windowStart = new Date(now.getTime() - 365 * dayMs);
+    expect(buildShadingAnnotations("1Y", now, windowStart)).toEqual([]);
+  });
 });
 
 describe("buildTimeScale", () => {
@@ -77,6 +83,19 @@ describe("buildTimeScale", () => {
     expect(Array.isArray(cb(now.getTime(), 0, ticks))).toBe(true);
     expect(cb(now.getTime(), 1, ticks)).toBe("     ");
   });
+
+  it("1Y uses a month unit with auto-skipped month labels (year on Jan/first tick)", () => {
+    const yearStart = new Date(now.getTime() - 365 * dayMs);
+    const scale = buildTimeScale("1Y", now, yearStart);
+    expect(scale.time.unit).toBe("month");
+    expect(scale.ticks.autoSkip).toBe(true);
+    const cb = scale.ticks.callback;
+    const ticks = new Array(12).fill({});
+    // First tick and January carry the year; other months are the bare month name.
+    expect(cb(now.getTime(), 0, ticks)).toBe("Aug 24");
+    expect(cb(now.getTime(), 3, ticks)).toBe("Aug");
+    expect(cb(new Date(2024, 0, 1).getTime(), 5, ticks)).toBe("Jan 24");
+  });
 });
 
 describe("formatHoverTimestamp", () => {
@@ -96,4 +115,28 @@ describe("formatHoverTimestamp", () => {
     expect(formatHoverTimestamp(d, "30D", false)).toMatch(/2024/);
     expect(formatHoverTimestamp(d, "30D", true)).not.toMatch(/2024/);
   });
+
+  it("1Y formats date-only, same as 30D", () => {
+    expect(formatHoverTimestamp(d, "1Y", false)).toBe(
+      formatHoverTimestamp(d, "30D", false),
+    );
+    expect(formatHoverTimestamp(d, "1Y", true)).toBe(
+      formatHoverTimestamp(d, "30D", true),
+    );
+  });
+});
+
+describe("temporal period algebra (1Y)", () => {
+  const dayDuration = 24 * 60 * 60 * 1000;
+
+  it("1Y duration is 365 days and its interval is daily", () => {
+    expect(getPeriodDuration("1Y")).toBe(365 * dayDuration);
+    expect(getPeriodIntervalMinutes("1Y")).toBe(24 * 60);
+  });
+
+  // 1Y is deliberately NOT wired into the URL-persisted navigator (decodeRangeFromParams/
+  // isDateOnlyPeriod/useTemporalRange stay 1D/7D/30D-only) — see BatteryProvenancePanel's local,
+  // non-URL temporal state and the doc comment on useTemporalRange explaining why. getPeriodDuration
+  // (and buildTimeScale/buildShadingAnnotations/formatHoverTimestamp in scaffold.ts, tested above)
+  // are the only shared pieces "1Y" as a `ChartTimeRange` actually needs.
 });

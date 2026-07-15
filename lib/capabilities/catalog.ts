@@ -128,7 +128,8 @@ export type CardId =
   | "device-metrics"
   | "oe-grid"
   | "battery-contents"
-  | "ev-provenance";
+  | "ev-provenance"
+  | "battery-provenance-history";
 
 export interface CardCatalogEntry {
   id: CardId;
@@ -220,6 +221,12 @@ export const CARD_CATALOG: Record<CardId, CardCatalogEntry> = {
     label: "EV Provenance",
     scope: "area",
     requires: { all: ["battery/power"] },
+  },
+  "battery-provenance-history": {
+    id: "battery-provenance-history",
+    label: "Battery History",
+    scope: "area",
+    requires: { all: ["battery/provenance"] },
   },
 };
 

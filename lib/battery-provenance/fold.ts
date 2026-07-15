@@ -129,6 +129,12 @@ export interface FoldInterval {
    * `idleLoss*` buckets pro-rata at the store's own blend. undefined/0 → no idle term (today's model).
    */
   idleLossKwh?: number;
+  /**
+   * Reserve-floor SoC % in effect this interval — the persisted per-day learned floor (see
+   * reserve-floor.ts), stamped per interval like `capacityKwh`. undefined → fall back to the window
+   * scalar `FoldConfig.reserveFloorPct`.
+   */
+  reserveFloorPct?: number;
 }
 
 export interface FoldConfig {
@@ -335,12 +341,13 @@ export function foldStep(
   const deadband = config.socSyncDeadbandKwh ?? 0.2;
   const recalSnap = config.recalSnapKwh ?? 2;
   const C = iv.capacityKwh ?? null;
+  const reserveFloorPct = iv.reserveFloorPct ?? config.reserveFloorPct;
   const socKnown = iv.socPct !== null && C !== null && C > 0;
   const s = { ...state };
 
   // 1. Latch a reset: SoC floor (drift correction), or the drift backstop (staleness cap; SoC-blind only —
   //    with the SoC overlay active, continuous sync already pins E, so the periodic dump is redundant).
-  if (iv.socPct !== null && iv.socPct <= config.reserveFloorPct) {
+  if (iv.socPct !== null && iv.socPct <= reserveFloorPct) {
     s.pendingReset = true;
     s.pendingTrigger = "soc-floor";
   }
@@ -584,7 +591,7 @@ export function foldStep(
       s.recalEvents++;
       step.recalHere = true;
     }
-    const floorE = (config.reserveFloorPct / 100) * C!;
+    const floorE = (reserveFloorPct / 100) * C!;
     const targetE = Math.max(0, (iv.socPct! / 100) * C! - floorE);
     const gap = targetE - s.storedKwh;
     const g = s.socAnchored && !recal ? gamma : 1; // segment start OR a recal: full snap

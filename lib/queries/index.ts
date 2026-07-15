@@ -18,6 +18,10 @@ export {
 } from "./runPeriods";
 export { readableAreasQuery, type ReadableAreasResponse } from "./areas";
 export {
+  provenanceDailyQuery,
+  type ProvenanceDailyQueryParams,
+} from "./provenanceDaily";
+export {
   myDashboardsQuery,
   MY_DASHBOARDS_KEY,
   type MyDashboardsResponse,

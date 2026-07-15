@@ -16,8 +16,13 @@ import {
   decodeUrlOffset,
 } from "@/lib/url-date";
 
+/** The URL-persisted navigator only ever decodes to this trio — see `decodeRangeFromParams`. A
+ *  wider period (e.g. "1Y") is a DELIBERATELY separate, non-URL-shared concern — see the warning on
+ *  {@link "./useTemporalRange".useTemporalRange}. */
+export type NavigatorPeriod = "1D" | "7D" | "30D";
+
 export interface TemporalRange {
-  period: ChartTimeRange;
+  period: NavigatorPeriod;
   /** ISO start of the requested historical window; absent ⇒ live trailing window. */
   start?: string;
   /** ISO end of the requested historical window; absent ⇒ live trailing window. */
@@ -35,6 +40,7 @@ type StringableParams = { toString(): string };
 export function getPeriodDuration(period: ChartTimeRange): number {
   if (period === "1D") return 24 * 60 * 60 * 1000;
   if (period === "7D") return 7 * 24 * 60 * 60 * 1000;
+  if (period === "1Y") return 365 * 24 * 60 * 60 * 1000;
   return 30 * 24 * 60 * 60 * 1000;
 }
 
@@ -59,7 +65,7 @@ export function decodeRangeFromParams(
   params: ReadonlyParamsLike,
 ): TemporalRange {
   const periodParam = params.get("period");
-  const period: ChartTimeRange =
+  const period: NavigatorPeriod =
     periodParam === "1D" || periodParam === "7D" || periodParam === "30D"
       ? periodParam
       : "1D";
@@ -164,8 +170,8 @@ export function computeNewer(
 
 /**
  * Re-encode a target window (or "live") into URL params, preserving any unrelated params. Always sets
- * `period`. A window sets `start` (date-only for 30D, else with `offset`) and drops `end` (redundant
- * with start + period). "live" drops `start`/`end`/`offset`.
+ * `period`. A window sets `start` (date-only for 30D, else with `offset`) and drops `end`
+ * (redundant with start + period). "live" drops `start`/`end`/`offset`.
  */
 export function encodeRangeToParams(
   current: StringableParams,

@@ -19,6 +19,8 @@ import { gridLatestFromData } from "@/lib/grid/latest";
 import BatteryContentsCard from "@/components/BatteryContentsCard";
 import { batteryContentsFromData } from "@/lib/battery/contents-latest";
 import LoadProvenanceCard from "@/components/LoadProvenanceCard";
+import BatteryProvenancePanel from "@/components/battery-provenance/BatteryProvenancePanel";
+import { parentAreaIdFromHelperSiteId } from "@/lib/areas/helper-site-id";
 import { flowMatrixQuery } from "@/lib/queries/flowMatrix";
 import { reduceLoadProvenance } from "@/lib/energy-flow-matrix";
 import { nemRegionShortLabel } from "@/lib/vendors/openelectricity/region";
@@ -258,6 +260,19 @@ function AreaSectionView({
       case "ev-provenance":
         return handle != null ? (
           <AreaLoadProvenance key={cardKeyV3(card, i)} systemId={handle} />
+        ) : (
+          <ChartSkeleton key={cardKeyV3(card, i)} />
+        );
+      case "battery-provenance-history":
+        // battery_provenance_daily is keyed by the BATTERY AREA's id. On the helper's /device view
+        // the section areaId is the `device-` sentinel, so the wrapper resolves the parent area from
+        // the helper's vendorSiteId; on a real area dashboard the section areaId is used directly.
+        return handle != null ? (
+          <AreaBatteryProvenanceHistory
+            key={cardKeyV3(card, i)}
+            systemId={handle}
+            sectionAreaId={section.areaId}
+          />
         ) : (
           <ChartSkeleton key={cardKeyV3(card, i)} />
         );
@@ -566,6 +581,45 @@ function AreaBatteryContents({ systemId }: { systemId: number }) {
     dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
   );
   return <BatteryContentsCard values={batteryContentsFromData(data ?? null)} />;
+}
+
+/**
+ * The battery-provenance history panel for a section: 365 days of the learn/fold daily state
+ * (`battery_provenance_daily`). The rows are keyed by the BATTERY AREA's uuid, which is resolved
+ * two ways: on the helper device's /device view (no area-of-one — the section areaId is the
+ * `device-` sentinel) the parent area is parsed from the helper's `helper:area:<uuid>` vendorSiteId;
+ * on a real area dashboard the section's areaId is used as-is.
+ */
+function AreaBatteryProvenanceHistory({
+  systemId,
+  sectionAreaId,
+}: {
+  systemId: number;
+  sectionAreaId: string;
+}) {
+  const { isAnyModalOpen } = useModalContext();
+  const { data } = useQuery(
+    dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
+  );
+  const system = ((data ?? null) as AreaDatum | null)?.system;
+  if (!system) return <ChartSkeleton />;
+
+  let areaId: string | null;
+  if (system.vendorType === "helper") {
+    areaId = parentAreaIdFromHelperSiteId(system.vendorSiteId ?? "");
+  } else if (!sectionAreaId.startsWith("device-")) {
+    areaId = sectionAreaId;
+  } else {
+    areaId = null;
+  }
+  if (!areaId) return null;
+
+  return (
+    <BatteryProvenancePanel
+      areaId={areaId}
+      timezoneOffsetMin={system.timezoneOffsetMin}
+    />
+  );
 }
 
 /**

@@ -59,6 +59,7 @@ const shareableRoutes = [
   "/api/history", // time series — requireDashboardAccess
   "/api/energy-flow-matrix", // sankey — requireDashboardAccess
   "/api/system/(.*)", // per-system read endpoints the cards use (latest, run-periods)
+  "/api/areas/(.*)/provenance-daily", // battery-provenance history panel — requireDashboardAccess
 ];
 
 export const isShareableRoute = createRouteMatcher(shareableRoutes);
