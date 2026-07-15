@@ -104,15 +104,16 @@ async function testSync() {
   const firstDay = parseDateISO(dateArg);
 
   // Credentials from environment — no fallbacks. In the app proper these live
-  // in the system's device config in Clerk; this dev script takes them from
-  // env so it can run standalone.
-  if (!process.env.AMBER_API_KEY) {
-    console.error("Error: AMBER_API_KEY must be set in the environment");
+  // in the system's device config in Clerk; this dev-only script takes them from
+  // env so it can run standalone. Test/tool-only secrets carry the TEST_ prefix
+  // and live only in the dev 1Password vault (never prod).
+  if (!process.env.TEST_AMBER_API_KEY) {
+    console.error("Error: TEST_AMBER_API_KEY must be set in the environment");
     process.exit(1);
   }
   const credentials = {
-    apiKey: process.env.AMBER_API_KEY,
-    siteId: process.env.AMBER_SITE_ID,
+    apiKey: process.env.TEST_AMBER_API_KEY,
+    siteId: process.env.TEST_AMBER_SITE_ID,
   };
 
   console.log("=".repeat(60));
