@@ -5,17 +5,14 @@
  *
  * Phases:
  * 1. Vercel project link    - ensures .vercel/project.json exists
- * 2. Shared dev resources   - symlinks .env.local and dev.db from $LIVEONE_SHARED_HOME
- *                             (default: ~/dev/liveone). Skipped if dir doesn't exist.
- * 3. Dependencies           - npm install
- * 4. Vercel environment     - pulls .env.development.local. Skipped when shared
- *                             .env.local is in use (would be shadowed by it anyway).
- * 5. Environment validation - checks required/optional env vars
- * 6. Verification           - confirms node_modules, vercel link, dev.db
+ * 2. Dependencies           - npm install
+ * 3. Vercel environment     - pulls .env.local from Vercel (development). Vercel is
+ *                             the single source of truth for env vars.
+ * 4. Environment validation - checks required/optional env vars
+ * 5. Verification           - confirms node_modules, vercel link
  */
 
 import fs from "fs";
-import os from "os";
 import path from "path";
 import {
   setupHeader,
@@ -32,14 +29,10 @@ import {
   checkEnv,
   checkNodeModules,
   checkVercelLink,
-  checkDevDb,
 } from "./lib/checks";
 
-const TOTAL_PHASES = 6;
+const TOTAL_PHASES = 5;
 const VERCEL_PROJECT = "liveone";
-const SHARED_HOME =
-  process.env.LIVEONE_SHARED_HOME ?? path.join(os.homedir(), "dev", "liveone");
-const SHARED_FILES = [".env.local", "dev.db"];
 
 const force = process.argv.includes("--force");
 
@@ -98,69 +91,11 @@ function phaseVercelLink(errors: string[]): void {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2: Shared dev resources
-// ---------------------------------------------------------------------------
-
-function phaseSharedResources(errors: string[]): void {
-  phaseHeader(2, TOTAL_PHASES, "Shared dev resources");
-
-  if (!fs.existsSync(SHARED_HOME)) {
-    info(`No shared home at ${SHARED_HOME} (skipping)`);
-    return;
-  }
-
-  info(`Shared home: ${SHARED_HOME}`);
-
-  for (const name of SHARED_FILES) {
-    const source = path.join(SHARED_HOME, name);
-    const target = path.join(ROOT, name);
-
-    if (!fs.existsSync(source)) {
-      info(`${name} not in shared home (skipping)`);
-      continue;
-    }
-
-    const targetExists = fs.existsSync(target) || isSymlink(target);
-    const targetIsSymlink = isSymlink(target);
-
-    if (targetExists && !force) {
-      if (targetIsSymlink) {
-        const real = fs.realpathSync(target);
-        success(`${name} already linked: ${real}`);
-      } else {
-        warn(
-          `${name} exists as a real file (keeping it; use --force to replace)`,
-        );
-      }
-      continue;
-    }
-
-    if (targetExists && force) {
-      if (targetIsSymlink) {
-        info(`Force mode: removing existing ${name} symlink`);
-        fs.unlinkSync(target);
-      } else {
-        warn(`Force mode: ${name} is a real file, not a symlink (keeping it)`);
-        continue;
-      }
-    }
-
-    try {
-      fs.symlinkSync(source, target);
-      success(`Linked ${name} -> ${source}`);
-    } catch (e) {
-      error(`Failed to symlink ${name}: ${e}`);
-      errors.push(`Failed to symlink ${name}`);
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Phase 3: Dependencies
+// Phase 2: Dependencies
 // ---------------------------------------------------------------------------
 
 function phaseDependencies(errors: string[]): void {
-  phaseHeader(3, TOTAL_PHASES, "Dependencies");
+  phaseHeader(2, TOTAL_PHASES, "Dependencies");
 
   const { code: npmCheck } = run(["npm", "--version"]);
   if (npmCheck !== 0) {
@@ -179,18 +114,11 @@ function phaseDependencies(errors: string[]): void {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4: Vercel environment
+// Phase 3: Vercel environment
 // ---------------------------------------------------------------------------
 
 function phaseVercelEnv(errors: string[]): void {
-  phaseHeader(4, TOTAL_PHASES, "Vercel environment");
-
-  if (isSymlink(path.join(ROOT, ".env.local"))) {
-    info(
-      "Skipped — shared .env.local in use (would shadow .env.development.local)",
-    );
-    return;
-  }
+  phaseHeader(3, TOTAL_PHASES, "Vercel environment");
 
   const { code: vercelCode } = run(["vercel", "--version"]);
   if (vercelCode !== 0) {
@@ -204,7 +132,18 @@ function phaseVercelEnv(errors: string[]): void {
     return;
   }
 
-  const target = path.join(ROOT, ".env.development.local");
+  const target = path.join(ROOT, ".env.local");
+
+  // Legacy worktrees symlink .env.local to a shared home. Remove the symlink
+  // before pulling — otherwise `vercel env pull` writes THROUGH it and clobbers
+  // the shared file, breaking other worktrees and destroying local-only vars
+  // kept there. Unlinking only drops this worktree's pointer; the shared file
+  // is left intact.
+  if (isSymlink(target)) {
+    fs.unlinkSync(target);
+    info("Removed legacy .env.local symlink (pulling a real file instead)");
+  }
+
   const { code, stdout, stderr } = run([
     "vercel",
     "env",
@@ -218,17 +157,23 @@ function phaseVercelEnv(errors: string[]): void {
   if (code !== 0) {
     error(`vercel env pull failed: ${stderr || stdout}`);
     errors.push("vercel env pull failed");
-  } else {
-    success("Pulled .env.development.local from Vercel");
+    return;
   }
+
+  success("Pulled .env.local from Vercel (development)");
+  info(
+    "Local-only tooling vars (TEST_USER_ID, SIGENERGY_*, PROD_CLERK_SECRET_KEY) " +
+      "are not in Vercel — add them to .env.local by hand if you run integration " +
+      "tests, sigen:poll, or the gusher-key mint script.",
+  );
 }
 
 // ---------------------------------------------------------------------------
-// Phase 5: Environment validation
+// Phase 4: Environment validation
 // ---------------------------------------------------------------------------
 
 function phaseEnvValidation(errors: string[]): void {
-  phaseHeader(5, TOTAL_PHASES, "Environment validation");
+  phaseHeader(4, TOTAL_PHASES, "Environment validation");
 
   const { results } = checkEnv(ROOT);
 
@@ -244,11 +189,11 @@ function phaseEnvValidation(errors: string[]): void {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 6: Verification
+// Phase 5: Verification
 // ---------------------------------------------------------------------------
 
 function phaseVerification(errors: string[]): void {
-  phaseHeader(6, TOTAL_PHASES, "Verification");
+  phaseHeader(5, TOTAL_PHASES, "Verification");
 
   const nodeModulesResult = checkNodeModules();
   if (nodeModulesResult.status === "ok") success(nodeModulesResult.message);
@@ -260,13 +205,6 @@ function phaseVerification(errors: string[]): void {
   const vercelResult = checkVercelLink();
   if (vercelResult.status === "ok") success(vercelResult.message);
   else warn(vercelResult.message);
-
-  const devDbResult = checkDevDb();
-  if (devDbResult.status === "ok") success(devDbResult.message);
-  else {
-    error(devDbResult.message);
-    errors.push(devDbResult.message);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -280,9 +218,6 @@ function main(): number {
   setupHeader();
 
   phaseVercelLink(errors);
-  console.log();
-
-  phaseSharedResources(errors);
   console.log();
 
   phaseDependencies(errors);
