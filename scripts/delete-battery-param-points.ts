@@ -26,6 +26,7 @@ import {
   areaDevices,
   areas,
   pointInfo,
+  pointReadingsAgg1d,
   pointReadingsAgg5m,
   systems,
 } from "../lib/db/planetscale/schema";
@@ -68,6 +69,7 @@ async function main() {
   let bindingsDeleted = 0;
   let pointsDeleted = 0;
   let rowsDeleted = 0;
+  let dayRowsDeleted = 0;
   for (const handle of handles) {
     const [area] = await db
       .select({ id: areas.id, name: areas.displayName })
@@ -123,45 +125,62 @@ async function main() {
     );
     if (!APPLY || pointIds.length === 0) continue;
 
-    const delBind = await db
-      .delete(areaBindings)
-      .where(
-        and(
-          eq(areaBindings.areaId, area.id),
-          eq(areaBindings.role, "battery"),
-          inArray(areaBindings.metricType, PARAM_METRICS),
-        ),
-      )
-      .returning({ id: areaBindings.id });
-    const delRows = await db
-      .delete(pointReadingsAgg5m)
-      .where(
-        and(
-          eq(pointReadingsAgg5m.systemId, helper.id),
-          inArray(pointReadingsAgg5m.pointId, pointIds),
-        ),
-      )
-      .returning({ t: pointReadingsAgg5m.intervalEnd });
-    const delPoints = await db
-      .delete(pointInfo)
-      .where(
-        and(
-          eq(pointInfo.systemId, helper.id),
-          inArray(pointInfo.index, pointIds),
-        ),
-      )
-      .returning({ index: pointInfo.index });
+    // Atomic per Area: bindings → agg_5m → agg_1d → point_info. The param points are also
+    // FK-referenced by point_readings_agg_1d, so those daily rows must go before the point.
+    const { delBind, delRows, delDayRows, delPoints } = await db.transaction(
+      async (tx) => {
+        const delBind = await tx
+          .delete(areaBindings)
+          .where(
+            and(
+              eq(areaBindings.areaId, area.id),
+              eq(areaBindings.role, "battery"),
+              inArray(areaBindings.metricType, PARAM_METRICS),
+            ),
+          )
+          .returning({ id: areaBindings.id });
+        const delRows = await tx
+          .delete(pointReadingsAgg5m)
+          .where(
+            and(
+              eq(pointReadingsAgg5m.systemId, helper.id),
+              inArray(pointReadingsAgg5m.pointId, pointIds),
+            ),
+          )
+          .returning({ t: pointReadingsAgg5m.intervalEnd });
+        const delDayRows = await tx
+          .delete(pointReadingsAgg1d)
+          .where(
+            and(
+              eq(pointReadingsAgg1d.systemId, helper.id),
+              inArray(pointReadingsAgg1d.pointId, pointIds),
+            ),
+          )
+          .returning({ day: pointReadingsAgg1d.day });
+        const delPoints = await tx
+          .delete(pointInfo)
+          .where(
+            and(
+              eq(pointInfo.systemId, helper.id),
+              inArray(pointInfo.index, pointIds),
+            ),
+          )
+          .returning({ index: pointInfo.index });
+        return { delBind, delRows, delDayRows, delPoints };
+      },
+    );
     bindingsDeleted += delBind.length;
     rowsDeleted += delRows.length;
+    dayRowsDeleted += delDayRows.length;
     pointsDeleted += delPoints.length;
     console.log(
-      `  deleted: bindings=${delBind.length} agg5mRows=${delRows.length} points=${delPoints.length}`,
+      `  deleted: bindings=${delBind.length} agg5mRows=${delRows.length} agg1dRows=${delDayRows.length} points=${delPoints.length}`,
     );
   }
 
   if (APPLY) {
     console.log(
-      `TOTAL deleted: bindings=${bindingsDeleted} agg5mRows=${rowsDeleted} points=${pointsDeleted}`,
+      `TOTAL deleted: bindings=${bindingsDeleted} agg5mRows=${rowsDeleted} agg1dRows=${dayRowsDeleted} points=${pointsDeleted}`,
     );
     try {
       await buildSubscriptionRegistry();

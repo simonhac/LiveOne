@@ -37,6 +37,7 @@ export interface FlowConsistencyRow {
 
 export interface FlowConsistencyOptions {
   areaId?: string; // restrict to one Area (else every Area with flow rows)
+  areaIds?: string[]; // restrict to a set of Areas (e.g. the battery-provenance areas); empty → no rows
   startDay?: string; // YYYY-MM-DD inclusive
   endDay?: string; // YYYY-MM-DD inclusive
   tolKwh?: number; // per-day divergence tolerance (default FLOW_CONSISTENCY_TOL_KWH)
@@ -104,6 +105,17 @@ export async function getFlowConsistency(
 ): Promise<FlowConsistency[]> {
   const conds = [];
   if (opts.areaId) conds.push(sql`area_id = ${opts.areaId}`);
+  if (opts.areaIds) {
+    // Empty set → match nothing (rather than silently reconciling every Area).
+    conds.push(
+      opts.areaIds.length
+        ? sql`area_id IN (${sql.join(
+            opts.areaIds.map((id) => sql`${id}`),
+            sql`, `,
+          )})`
+        : sql`false`,
+    );
+  }
   if (opts.startDay) conds.push(sql`day >= ${opts.startDay}`);
   if (opts.endDay) conds.push(sql`day <= ${opts.endDay}`);
   const where = conds.length

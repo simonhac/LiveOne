@@ -43,6 +43,27 @@ export async function listBatteryProvenanceHandles(): Promise<number[]> {
 }
 
 /**
+ * All Area UUIDs that have a bound battery (role='battery', metric='power') — i.e. the only Areas that
+ * ever get a modern `point_readings_flow_attr_1d` leg. The legacy↔modern consistency check must be scoped
+ * to these: a non-battery Area has legacy `flow_1d` but by construction NO `flow_attr_1d`, so including it
+ * is a guaranteed false-positive divergence.
+ */
+export async function listBatteryProvenanceAreaIds(): Promise<string[]> {
+  const db = requirePlanetscaleDb();
+  const rows = await db
+    .selectDistinct({ id: areas.id })
+    .from(areaBindings)
+    .innerJoin(areas, eq(areaBindings.areaId, areas.id))
+    .where(
+      and(
+        eq(areaBindings.role, "battery"),
+        eq(areaBindings.metricType, "power"),
+      ),
+    );
+  return rows.map((r) => r.id);
+}
+
+/**
  * Daily: run THE learn (η → C → losses, ordering enforced inside `learnAllForHandle`) for every battery
  * Area — maintain the per-day input cache in `battery_provenance_daily` incrementally and persist the
  * applied per-day params. MUST run BEFORE the blend/rollup recompute (recomputeRange) so that reads
