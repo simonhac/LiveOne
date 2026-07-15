@@ -7,15 +7,13 @@ import { areas, areaBindings } from "@/lib/db/planetscale/schema";
 import { planFlowRecomputeBatch } from "@/lib/aggregation/flow-recompute-batch";
 import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates";
 import { getYesterdayInTimezone } from "@/lib/date-utils";
-import {
-  learnAndPersistEta,
-  learnAndPersistCapacity,
-  learnAndPersistLosses,
-  recomputeBatteryProvenanceForWindow,
-} from "@/lib/db/planetscale/battery-provenance-pg";
+import { recomputeBatteryProvenanceForWindow } from "@/lib/db/planetscale/battery-provenance-pg";
+import { learnAllForHandle } from "@/lib/db/planetscale/battery-provenance-daily-pg";
 
 // A batch of up to MAX_LIMIT days runs comfortably inside this; the caller loops for longer ranges.
-export const maxDuration = 60;
+// 300 (not 60): the first batch's learn REDUCES full history from agg_5m on a rebuild (one bounded
+// read, ~380k rows) — incremental runs are far faster, this is headroom for the activation path.
+export const maxDuration = 300;
 
 const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
 const DEFAULT_LIMIT = 14;
@@ -147,18 +145,24 @@ export async function POST(
   }
   const isFirstBatch = typeof body.cursor !== "string";
 
-  // First batch: (re)learn η(t), THEN usable capacity C(t), THEN the three-term loss model (η_c + idle)
-  // from the fixed anchor so the recompute below reads reproducible values (via inputs.etaSeries /
-  // capacitySeries / chargeEfficiencySeries / idleLossKwhPerDaySeries) instead of a per-batch, window-
-  // dependent bootstrap that would make stored-energy/blend discontinuous at batch seams. Order matters:
-  // C follows η (its deliverable slope reads η); losses follow C (ΔSoC→kWh uses the learned C) — mirrors
-  // the daily shell + backfill ordering.
+  // First batch: run THE learn (η → C → losses over the battery_provenance_daily cache) so every batch
+  // below reads the same reproducible params (via inputs.etaSeries / capacitySeries /
+  // chargeEfficiencySeries / idleLossKwhPerDaySeries) instead of a per-batch, window-dependent
+  // bootstrap that would make stored-energy/blend discontinuous at batch seams. A FULL-HISTORY request
+  // (no start/last — the activation path) forces a from-scratch rebuild of the input cache; bounded
+  // reruns maintain it incrementally.
   let learnedEtaDays: number | null = null;
+  let learnMode: string | null = null;
+  let reducedDays: number | null = null;
   if (isFirstBatch) {
-    const r = await learnAndPersistEta(planetscaleDb, handle, Date.now());
-    learnedEtaDays = r.daysWritten;
-    await learnAndPersistCapacity(planetscaleDb, handle, Date.now());
-    await learnAndPersistLosses(planetscaleDb, handle, Date.now());
+    const isFullHistory =
+      typeof body.start !== "string" && typeof body.last !== "string";
+    const r = await learnAllForHandle(planetscaleDb, handle, Date.now(), {
+      rebuild: isFullHistory,
+    });
+    learnedEtaDays = r.etaDays;
+    learnMode = r.mode;
+    reducedDays = r.daysReduced;
   }
 
   const { days, nextCursor, done } = planFlowRecomputeBatch({
@@ -180,7 +184,9 @@ export async function POST(
       handle,
       winStartSec * 1000,
       winEndSec * 1000,
-      { writeRollup: true, updateLatest: isFirstBatch },
+      // This route is a TRUSTED checkpoint writer (7d warm-up per batch, canonical params from the
+      // first-batch learn above).
+      { writeRollup: true, updateLatest: isFirstBatch, writeCheckpoints: true },
     );
     rowsWritten = res.rowsWritten;
     attrRows = res.attrRowsWritten;
@@ -191,6 +197,8 @@ export async function POST(
     areaId,
     systemId: handle,
     learnedEtaDays,
+    learnMode,
+    reducedDays,
     recomputed: days.length,
     rowsWritten,
     attrRows,

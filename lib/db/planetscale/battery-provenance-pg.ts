@@ -11,10 +11,27 @@
  * from the SAME accounting, sliced per local day — the source of the "cost/carbon/renewable over a period"
  * questions.
  */
-import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  gte,
+  isNotNull,
+  lte,
+  max,
+  sql,
+} from "drizzle-orm";
 import { CalendarDate } from "@internationalized/date";
 import { planetscaleDb } from "./index";
-import { pointReadingsAgg5m, pointReadingsFlowAttr1d } from "./schema";
+import {
+  areaBindings,
+  areas,
+  batteryProvenanceDaily,
+  pointReadingsAgg5m,
+  pointReadingsFlowAttr1d,
+} from "./schema";
 import { computeFlowAccounting } from "@/lib/aggregation/flow-matrix-core";
 import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates";
 import type {
@@ -25,34 +42,24 @@ import {
   buildSubscriptionRegistry,
   updateLatestPointValue,
 } from "@/lib/kv-cache-manager";
-import {
-  loadProvenanceInputs,
-  loadBatteryThroughput,
-} from "@/lib/battery-provenance/load";
+import { loadProvenanceInputs } from "@/lib/battery-provenance/load";
 import { computeBatteryProvenance } from "@/lib/battery-provenance/compute";
-import { learnEwmaEta } from "@/lib/battery-provenance/eta";
 import {
-  learnEwmaCapacity,
-  measureWindowCapacity,
-} from "@/lib/battery-provenance/capacity";
+  BATPROV_MODEL_VERSION,
+  isPersistableFoldCheckpoint,
+  localMidnightsInWindow,
+  validateFoldCheckpointEnvelope,
+  type FoldCheckpointEnvelope,
+} from "@/lib/battery-provenance/checkpoint";
 import {
-  detectRecalDayIndexes,
-  learnLosses,
-} from "@/lib/battery-provenance/losses";
+  dayIndexOf,
+  dayIndexToDayString,
+} from "@/lib/battery-provenance/daily";
 import {
   BLEND_POINTS,
   ensureBatteryProvenancePoints,
   ensureHelperBindings,
-  ensureEfficiencyPoint,
-  ensureEfficiencyBinding,
-  ensureCapacityPoint,
-  ensureCapacityBinding,
-  ensureParamPoint,
-  ensureParamBinding,
-  CHARGE_EFFICIENCY_POINT,
-  IDLE_LOSS_POINT,
 } from "@/lib/battery-provenance/register";
-import type { BatteryThroughput } from "@/lib/battery-provenance/load";
 import { ensureHelperDevice } from "@/lib/areas/helper";
 import type { ProvenanceConfig } from "@/lib/battery-provenance/types";
 import type { FoldStep } from "@/lib/battery-provenance/fold";
@@ -63,39 +70,6 @@ type PgDb = NonNullable<typeof planetscaleDb>;
 export const WARMUP_MS = 7 * 24 * 3600 * 1000;
 
 const BATTERY_STEM = "bidi.battery";
-
-/** Fixed datasheet seed for the η EWMA — a CONSTANT (not window-measured) so η(day) is reproducible. */
-const ETA_SEED = 0.9;
-/** Learn η causally from this stable anchor every run, so η(day D) never depends on the recompute window. */
-const ETA_ANCHOR_MS = Date.parse("2025-08-16T00:00:00Z");
-const ETA_METRIC = "round-trip-efficiency";
-const ETA_UNIT = "%";
-const ETA_DISPLAY = "Battery Round-trip Efficiency";
-
-/** Fallback seed (kWh) for the capacity EWMA when the window's SoC swing is too thin to measure a slope.
- *  On a cycling battery the daily EWMA fully overrides it; on a barely-cycling one the measured window seed
- *  (clamped) anchors it to a plausible C instead of this constant. */
-const CAPACITY_SEED = 15;
-const CAPACITY_ANCHOR_MS = ETA_ANCHOR_MS;
-const CAPACITY_METRIC = "usable-capacity";
-const CAPACITY_UNIT = "kWh";
-const CAPACITY_DISPLAY = "Battery Usable Capacity";
-
-const LOSSES_ANCHOR_MS = ETA_ANCHOR_MS;
-
-/** BMS-recalibration local days for a throughput window (phantom SoC energy — excluded from every
- *  learner, matching the fold's `recal` snap events). Empty for a SoC-blind battery. */
-function recalDaysFor(tp: BatteryThroughput): Set<number> {
-  return detectRecalDayIndexes(
-    tp.chargeKwh,
-    tp.dischargeKwh,
-    tp.soc,
-    measureWindowCapacity(tp.dischargeKwh, tp.soc) ?? CAPACITY_SEED,
-    tp.timeline,
-    tp.timezoneOffsetMin,
-  );
-}
-
 /** The blend value for a metricType from a fold step (null when the store is empty → not written).
  *  Exported for tests. */
 export function blendValue(step: FoldStep, metricType: string): number | null {
@@ -233,11 +207,33 @@ export interface RecomputeResult {
   pointIds: Record<string, number>;
   /** Rollup rows written to point_readings_flow_attr_1d (0 unless opts.writeRollup). */
   attrRowsWritten: number;
+  /** Fold checkpoints upserted into battery_provenance_daily (0 unless opts.writeCheckpoints). */
+  checkpointsWritten: number;
+}
+
+/** True when every fold input came from PERSISTED (canonical, window-independent) series — a fold on
+ *  any in-window learner is window-dependent and must never seed a checkpoint. SoC-dark areas need
+ *  only η (the overlay/losses are inert there). */
+function inputsAreCanonical(inputs: ProvenanceInputs): boolean {
+  const socDark = inputs.soc.every((v) => v === null);
+  return (
+    inputs.etaSeries !== undefined &&
+    (socDark ||
+      (inputs.capacitySeries !== undefined &&
+        inputs.chargeEfficiencySeries !== undefined &&
+        inputs.idleLossKwhPerDaySeries !== undefined))
+  );
 }
 
 /**
  * Recompute an Area's battery blend over [winStartMs, winEndMs] and UPSERT the three derived points'
  * agg_5m (+ KV latest when `updateLatest`). Registers the derived points if missing.
+ *
+ * With `writeCheckpoints` (the TRUSTED long-window paths only: the daily heal's recomputeRange and the
+ * recompute-provenance API — never the minutely reconcile) it also persists the fold state at each
+ * local midnight inside the write window into `battery_provenance_daily.fold_state`, enabling the
+ * O(today) checkpoint-seeded reconcile. Checkpoints are skipped (best-effort, never aborts the blend)
+ * when the inputs weren't canonical or a custom config was supplied.
  */
 export async function recomputeBatteryProvenanceForWindow(
   db: PgDb,
@@ -247,6 +243,7 @@ export async function recomputeBatteryProvenanceForWindow(
   opts: {
     updateLatest?: boolean;
     writeRollup?: boolean;
+    writeCheckpoints?: boolean;
     config?: ProvenanceConfig;
   } = {},
 ): Promise<RecomputeResult> {
@@ -260,14 +257,110 @@ export async function recomputeBatteryProvenanceForWindow(
       helperSystemId: null,
       pointIds: {},
       attrRowsWritten: 0,
+      checkpointsWritten: 0,
     };
   }
 
-  const result = computeBatteryProvenance(inputs, opts.config);
-  // The blend belongs to the AREA, not a physical child device — it lives on the Area's HELPER device.
-  // Ensure the helper exists, register the 3 blend points on it, and bind them into the Area (so they
-  // fan out to the Area's KV latest and appear in its resolved point set). Rebuild the KV subscription
-  // registry only when bindings were newly created.
+  // Midnights to checkpoint: strictly inside the WRITE window (a midnight at/before winStartMs falls in
+  // the warm-up region — checkpoint quality == blend-row quality by construction). Gated on canonical
+  // inputs + a pristine config (custom-config runs must not poison checkpoints).
+  const midnights =
+    opts.writeCheckpoints && !opts.config && inputsAreCanonical(inputs)
+      ? localMidnightsInWindow(winStartMs, winEndMs, inputs.timezoneOffsetMin)
+      : [];
+
+  const result = computeBatteryProvenance(inputs, opts.config, {
+    snapshotAtMs: midnights.map((m) => m.midnightMs),
+  });
+
+  const blend = await writeBlendOutputs(
+    db,
+    inputs,
+    result,
+    winStartMs,
+    winEndMs,
+    {
+      updateLatest: !!opts.updateLatest,
+    },
+  );
+
+  // Per-day attribution rollup (daily heal / backfill only — not every minute). Best-effort so a rollup
+  // hiccup never loses the blend write above.
+  let attrRowsWritten = 0;
+  if (opts.writeRollup) {
+    try {
+      attrRowsWritten = await writeAttrRollup(
+        db,
+        inputs,
+        result,
+        winStartMs,
+        winEndMs,
+      );
+    } catch (e) {
+      console.warn("[BatProv] attr rollup write failed:", e);
+    }
+  }
+
+  // Fold checkpoints (best-effort — never aborts the blend write above).
+  let checkpointsWritten = 0;
+  if (midnights.length > 0 && result.stateSnapshots?.length) {
+    try {
+      const dayByMidnight = new Map(
+        midnights.map((m) => [m.midnightMs, m.day]),
+      );
+      const envs: { day: string; env: FoldCheckpointEnvelope }[] = [];
+      for (const snap of result.stateSnapshots) {
+        const day = dayByMidnight.get(snap.requestedMs);
+        if (day === undefined) continue;
+        envs.push({
+          day,
+          env: {
+            v: BATPROV_MODEL_VERSION,
+            midnightMs: snap.requestedMs,
+            anchorMs: snap.anchorMs,
+            reserveFloorPct: result.reserveUsed,
+            etaFallback: result.etaUsed,
+            state: snap.state,
+          },
+        });
+      }
+      checkpointsWritten = await upsertFoldCheckpoints(db, inputs.areaId, envs);
+    } catch (e) {
+      console.warn("[BatProv] checkpoint write failed:", e);
+    }
+  }
+
+  return {
+    rowsWritten: blend.rowsWritten,
+    helperSystemId: blend.helperSystemId,
+    pointIds: blend.pointIds,
+    attrRowsWritten,
+    checkpointsWritten,
+  };
+}
+
+/**
+ * The SHARED blend writer — the only code that materialises fold output into the serving store, used by
+ * both the warm-up recompute above and the checkpoint-seeded reconcile (so the two paths can never
+ * drift in write semantics: dq flag, stored-energy 0-vs-null, chunking, KV latest shape).
+ *
+ * The blend belongs to the AREA, not a physical child device — it lives on the Area's HELPER device.
+ * Ensures the helper exists, registers the blend points on it, and binds them into the Area (so they
+ * fan out to the Area's KV latest and appear in its resolved point set); rebuilds the KV subscription
+ * registry only when bindings were newly created.
+ */
+async function writeBlendOutputs(
+  db: PgDb,
+  inputs: ProvenanceInputs,
+  result: ProvenanceResult,
+  winStartMs: number,
+  winEndMs: number,
+  opts: { updateLatest: boolean },
+): Promise<{
+  rowsWritten: number;
+  helperSystemId: number;
+  pointIds: Record<string, number>;
+}> {
   const helperSystemId = await ensureHelperDevice(inputs.areaId);
   const ensure = await ensureBatteryProvenancePoints(helperSystemId, true, {
     requireBatteryPoint: false,
@@ -363,28 +456,10 @@ export async function recomputeBatteryProvenanceForWindow(
     }
   }
 
-  // Per-day attribution rollup (daily heal / backfill only — not every minute). Best-effort so a rollup
-  // hiccup never loses the blend write above.
-  let attrRowsWritten = 0;
-  if (opts.writeRollup) {
-    try {
-      attrRowsWritten = await writeAttrRollup(
-        db,
-        inputs,
-        result,
-        winStartMs,
-        winEndMs,
-      );
-    } catch (e) {
-      console.warn("[BatProv] attr rollup write failed:", e);
-    }
-  }
-
   return {
     rowsWritten: rows.length,
     helperSystemId,
     pointIds: ensure.pointIds,
-    attrRowsWritten,
   };
 }
 
@@ -399,6 +474,7 @@ export async function recomputeBatteryProvenanceForWindowBestEffort(
   opts: {
     updateLatest?: boolean;
     writeRollup?: boolean;
+    writeCheckpoints?: boolean;
     config?: ProvenanceConfig;
   } = {},
 ): Promise<void> {
@@ -412,417 +488,213 @@ export async function recomputeBatteryProvenanceForWindowBestEffort(
       opts,
     );
     console.log(
-      `[BatProv] handle=${handle} helper=${r.helperSystemId} rows=${r.rowsWritten}`,
+      `[BatProv] handle=${handle} helper=${r.helperSystemId} rows=${r.rowsWritten}` +
+        (opts.writeCheckpoints ? ` checkpoints=${r.checkpointsWritten}` : ""),
     );
   } catch (err) {
     console.error(`[BatProv] recompute failed for handle=${handle}:`, err);
   }
 }
 
-/**
- * Learn η(t) for an Area's battery from its RAW charge/discharge over a STABLE window (fixed anchor → now)
- * and persist it as the helper's round-trip-efficiency point (per local-day step: agg_5m + KV). Learning
- * from a fixed anchor + fixed seed makes η(day) reproducible — any later bounded re-fold READS the same
- * η(t) (via inputs.etaSeries) instead of re-learning it, so repair-convergence holds. Fold-independent (η
- * is a function of raw throughput, not the blend). The best-effort caller (recompute.ts) wraps this.
- */
-export async function learnAndPersistEta(
+// ── Fold checkpoints + the O(today) seeded reconcile (see lib/battery-provenance/checkpoint.ts) ──
+
+/** How far back the seeded reconcile will chain from (the heal writes TODAY's checkpoint just after
+ *  local midnight; between midnight and heal completion — or on a failed heal night — yesterday's, or
+ *  the day before's, still gives an O(≤2-day) fold). */
+const SEED_LOOKBACK_DAYS = 2;
+/** Hard cap on the seeded span; beyond it the warm-up fallback is the safer path. */
+const MAX_SEED_SPAN_MS = 3.5 * 24 * 3600 * 1000;
+/** The staleness probe looks this far back before the anchor for post-checkpoint agg_5m rewrites. */
+const PROBE_LOOKBACK_MS = 12 * 3600 * 1000;
+
+/** Upsert checkpoint envelopes into battery_provenance_daily, setting ONLY {fold_state, updated_at} on
+ *  conflict — the learn owns every other column (a checkpoint-only insert leaves them at defaults with
+ *  first_interval_end NULL, which the learn treats as absent). Refuses non-finite envelopes. */
+async function upsertFoldCheckpoints(
   db: PgDb,
-  handle: number,
-  nowMs: number,
-): Promise<{ pointId: number | null; daysWritten: number }> {
-  const tp = await loadBatteryThroughput(handle, {
-    startMs: ETA_ANCHOR_MS,
-    endMs: nowMs,
-  });
-  if (!tp || tp.timeline.length < 2) return { pointId: null, daysWritten: 0 };
-
-  const learned = learnEwmaEta(
-    tp.chargeKwh,
-    tp.dischargeKwh,
-    tp.timeline,
-    tp.timezoneOffsetMin,
-    { prior: ETA_SEED, excludeDays: recalDaysFor(tp) },
-  );
-
-  const helperSystemId = await ensureHelperDevice(tp.areaId);
-  const pointId = await ensureEfficiencyPoint(helperSystemId, true);
-  if (pointId == null) return { pointId: null, daysWritten: 0 };
-  const bind = await ensureEfficiencyBinding(
-    tp.areaId,
-    helperSystemId,
-    pointId,
-  );
-  if (bind.created > 0) {
-    try {
-      await buildSubscriptionRegistry();
-    } catch (e) {
-      console.warn("[BatProv:eta] subscription registry rebuild skipped:", e);
-    }
-  }
-
-  // Persist η as a per-local-day STEP: write each day's η at the FIRST interval_end of that day so a
-  // forward-fill on read (load.ts) carries it across the day.
-  const offMs = tp.timezoneOffsetMin * 60_000;
-  const dayOf = (t: number) => Math.floor((t + offMs - 1) / 86_400_000);
-  const firstTsByDay = new Map<number, number>();
-  for (const t of tp.timeline) {
-    const d = dayOf(t);
-    if (!firstTsByDay.has(d)) firstTsByDay.set(d, t);
-  }
-
-  const rows: (typeof pointReadingsAgg5m.$inferInsert)[] = [];
-  let latest: { value: number; tsMs: number } | null = null;
-  for (const day of learned.byDay) {
-    const ts = firstTsByDay.get(day.dayIndex);
-    if (ts === undefined) continue;
-    const pct = day.eta * 100; // stored as % (η×100); the loader ÷100 → the ratio the fold consumes
-    rows.push({
-      systemId: helperSystemId,
-      pointId,
-      intervalEnd: new Date(ts),
-      avg: pct,
-      min: pct,
-      max: pct,
-      last: pct,
-      delta: null,
-      sampleCount: 1,
-      errorCount: 0,
-      dataQuality: "good",
-    });
-    if (!latest || ts >= latest.tsMs) latest = { value: pct, tsMs: ts };
-  }
-
-  const CHUNK = 1000;
-  for (let off = 0; off < rows.length; off += CHUNK) {
-    await db
-      .insert(pointReadingsAgg5m)
-      .values(rows.slice(off, off + CHUNK))
-      .onConflictDoUpdate({
-        target: [
-          pointReadingsAgg5m.systemId,
-          pointReadingsAgg5m.pointId,
-          pointReadingsAgg5m.intervalEnd,
-        ],
-        set: {
-          avg: sql`excluded.avg`,
-          min: sql`excluded.min`,
-          max: sql`excluded.max`,
-          last: sql`excluded.last`,
-          sampleCount: sql`excluded.sample_count`,
-          dataQuality: sql`excluded.data_quality`,
-          updatedAt: sql`now()`,
-        },
-      });
-  }
-
-  if (latest) {
-    await updateLatestPointValue(
-      helperSystemId,
-      pointId,
-      `${BATTERY_STEM}/${ETA_METRIC}`,
-      latest.value,
-      latest.tsMs,
-      Date.now(),
-      ETA_UNIT,
-      ETA_DISPLAY,
-    );
-  }
-
-  return { pointId, daysWritten: rows.length };
-}
-
-/**
- * Learn usable capacity C(t) for an Area's battery from its discharge vs SoC over a STABLE window (fixed
- * anchor → now) and persist it as the helper's usable-capacity point (per local-day step: agg_5m + KV). Twin
- * of {@link learnAndPersistEta}: the fixed anchor + fixed seed make C(day) reproducible, so any later bounded
- * re-fold READS the same C(t) (via inputs.capacitySeries) instead of re-learning it — repair-convergence
- * holds and the minutely reconcile agrees with the daily heal. Fold-independent (C is measured from raw
- * discharge + SoC). Best-effort caller in recompute.ts. No-op (pointId null) for a SoC-blind battery.
- */
-export async function learnAndPersistCapacity(
-  db: PgDb,
-  handle: number,
-  nowMs: number,
-): Promise<{ pointId: number | null; daysWritten: number }> {
-  const tp = await loadBatteryThroughput(handle, {
-    startMs: CAPACITY_ANCHOR_MS,
-    endMs: nowMs,
-  });
-  if (!tp || tp.timeline.length < 2) return { pointId: null, daysWritten: 0 };
-  // SoC-blind battery → no capacity to learn; the fold falls back to the pure power model.
-  if (tp.soc.every((v) => v === null)) return { pointId: null, daysWritten: 0 };
-
-  // Seed the EWMA from the window-global measured C (clamped), so a low-cycling battery whose days never
-  // reach the per-day swing floor is still anchored to a plausible capacity rather than the constant.
-  const seed = measureWindowCapacity(tp.dischargeKwh, tp.soc) ?? CAPACITY_SEED;
-  const learned = learnEwmaCapacity(
-    tp.dischargeKwh,
-    tp.soc,
-    tp.timeline,
-    tp.timezoneOffsetMin,
-    { prior: seed, excludeDays: recalDaysFor(tp) },
-  );
-
-  const helperSystemId = await ensureHelperDevice(tp.areaId);
-  const pointId = await ensureCapacityPoint(helperSystemId, true);
-  if (pointId == null) return { pointId: null, daysWritten: 0 };
-  const bind = await ensureCapacityBinding(tp.areaId, helperSystemId, pointId);
-  if (bind.created > 0) {
-    try {
-      await buildSubscriptionRegistry();
-    } catch (e) {
+  areaId: string,
+  envs: { day: string; env: FoldCheckpointEnvelope }[],
+): Promise<number> {
+  let written = 0;
+  for (const { day, env } of envs) {
+    if (!isPersistableFoldCheckpoint(env)) {
       console.warn(
-        "[BatProv:capacity] subscription registry rebuild skipped:",
-        e,
+        `[BatProv] non-persistable checkpoint (non-finite state) skipped: area=${areaId} day=${day}`,
       );
-    }
-  }
-
-  // Persist C as a per-local-day STEP: write each day's C at the FIRST interval_end of that day so a
-  // forward-fill on read (load.ts) carries it across the day.
-  const offMs = tp.timezoneOffsetMin * 60_000;
-  const dayOf = (t: number) => Math.floor((t + offMs - 1) / 86_400_000);
-  const firstTsByDay = new Map<number, number>();
-  for (const t of tp.timeline) {
-    const d = dayOf(t);
-    if (!firstTsByDay.has(d)) firstTsByDay.set(d, t);
-  }
-
-  const rows: (typeof pointReadingsAgg5m.$inferInsert)[] = [];
-  let latest: { value: number; tsMs: number } | null = null;
-  for (const day of learned.byDay) {
-    const ts = firstTsByDay.get(day.dayIndex);
-    if (ts === undefined) continue;
-    const c = day.capacityKwh; // stored as kWh directly (no scaling, unlike η)
-    rows.push({
-      systemId: helperSystemId,
-      pointId,
-      intervalEnd: new Date(ts),
-      avg: c,
-      min: c,
-      max: c,
-      last: c,
-      delta: null,
-      sampleCount: 1,
-      errorCount: 0,
-      dataQuality: "good",
-    });
-    if (!latest || ts >= latest.tsMs) latest = { value: c, tsMs: ts };
-  }
-
-  const CHUNK = 1000;
-  for (let off = 0; off < rows.length; off += CHUNK) {
-    await db
-      .insert(pointReadingsAgg5m)
-      .values(rows.slice(off, off + CHUNK))
-      .onConflictDoUpdate({
-        target: [
-          pointReadingsAgg5m.systemId,
-          pointReadingsAgg5m.pointId,
-          pointReadingsAgg5m.intervalEnd,
-        ],
-        set: {
-          avg: sql`excluded.avg`,
-          min: sql`excluded.min`,
-          max: sql`excluded.max`,
-          last: sql`excluded.last`,
-          sampleCount: sql`excluded.sample_count`,
-          dataQuality: sql`excluded.data_quality`,
-          updatedAt: sql`now()`,
-        },
-      });
-  }
-
-  if (latest) {
-    await updateLatestPointValue(
-      helperSystemId,
-      pointId,
-      `${BATTERY_STEM}/${CAPACITY_METRIC}`,
-      latest.value,
-      latest.tsMs,
-      Date.now(),
-      CAPACITY_UNIT,
-      CAPACITY_DISPLAY,
-    );
-  }
-
-  return { pointId, daysWritten: rows.length };
-}
-
-/**
- * Learn the three-term loss model (charge-side η_c + constant idle drain; see `losses.ts`) for an Area's
- * battery over the STABLE window (fixed anchor → now) and persist it as the helper's charge-efficiency
- * (η_c×100, %) + idle-loss (kWh/day) points — per local-day steps, exactly like η/C. Runs AFTER the η and
- * C passes in the shell (it reads the same learned C convention). No-op for a SoC-blind battery or while
- * the fit is still in warm-up (nothing to persist → the fold stays on the single-η model).
- */
-export async function learnAndPersistLosses(
-  db: PgDb,
-  handle: number,
-  nowMs: number,
-): Promise<{
-  etaCPointId: number | null;
-  idlePointId: number | null;
-  daysWritten: number;
-}> {
-  const none = { etaCPointId: null, idlePointId: null, daysWritten: 0 };
-  const tp = await loadBatteryThroughput(handle, {
-    startMs: LOSSES_ANCHOR_MS,
-    endMs: nowMs,
-  });
-  if (!tp || tp.timeline.length < 2) return none;
-  if (tp.soc.every((v) => v === null)) return none;
-
-  // The SAME deterministic C(t) the capacity pass persisted (same inputs, seed, and exclusions) — the
-  // losses fit needs C to convert ΔSoC to kWh.
-  const recalDays = recalDaysFor(tp);
-  const seed = measureWindowCapacity(tp.dischargeKwh, tp.soc) ?? CAPACITY_SEED;
-  const capacitySeries = learnEwmaCapacity(
-    tp.dischargeKwh,
-    tp.soc,
-    tp.timeline,
-    tp.timezoneOffsetMin,
-    { prior: seed, excludeDays: recalDays },
-  ).capacitySeries;
-
-  const learned = learnLosses(
-    tp.chargeKwh,
-    tp.dischargeKwh,
-    tp.soc,
-    capacitySeries,
-    tp.timeline,
-    tp.timezoneOffsetMin,
-  );
-  if (learned.summaryEtaC === null) return none; // fit still in warm-up — nothing to persist
-
-  const helperSystemId = await ensureHelperDevice(tp.areaId);
-  const etaCPointId = await ensureParamPoint(
-    helperSystemId,
-    CHARGE_EFFICIENCY_POINT,
-    true,
-  );
-  const idlePointId = await ensureParamPoint(
-    helperSystemId,
-    IDLE_LOSS_POINT,
-    true,
-  );
-  if (etaCPointId == null || idlePointId == null) return none;
-  const bindA = await ensureParamBinding(
-    tp.areaId,
-    helperSystemId,
-    etaCPointId,
-    CHARGE_EFFICIENCY_POINT,
-    112,
-  );
-  const bindB = await ensureParamBinding(
-    tp.areaId,
-    helperSystemId,
-    idlePointId,
-    IDLE_LOSS_POINT,
-    113,
-  );
-  if (bindA.created + bindB.created > 0) {
-    try {
-      await buildSubscriptionRegistry();
-    } catch (e) {
-      console.warn(
-        "[BatProv:losses] subscription registry rebuild skipped:",
-        e,
-      );
-    }
-  }
-
-  // Persist both as per-local-day STEPS at the first interval_end of each day (the η/C convention), only
-  // for days the fit had values (warm-up days stay unwritten → the loader yields null → single-η there).
-  const offMs = tp.timezoneOffsetMin * 60_000;
-  const dayOf = (t: number) => Math.floor((t + offMs - 1) / 86_400_000);
-  const firstTsByDay = new Map<number, number>();
-  for (const t of tp.timeline) {
-    const d = dayOf(t);
-    if (!firstTsByDay.has(d)) firstTsByDay.set(d, t);
-  }
-
-  const rows: (typeof pointReadingsAgg5m.$inferInsert)[] = [];
-  let latestEtaC: { value: number; tsMs: number } | null = null;
-  let latestIdle: { value: number; tsMs: number } | null = null;
-  for (const day of learned.byDay) {
-    const ts = firstTsByDay.get(day.dayIndex);
-    if (ts === undefined || day.etaC === null || day.idleKwhPerDay === null)
       continue;
-    const pct = day.etaC * 100; // stored as % (η_c×100); the loader ÷100
-    const idle = day.idleKwhPerDay;
-    for (const [pointId, value] of [
-      [etaCPointId, pct],
-      [idlePointId, idle],
-    ] as const) {
-      rows.push({
-        systemId: helperSystemId,
-        pointId,
-        intervalEnd: new Date(ts),
-        avg: value,
-        min: value,
-        max: value,
-        last: value,
-        delta: null,
-        sampleCount: 1,
-        errorCount: 0,
-        dataQuality: "good",
-      });
     }
-    if (!latestEtaC || ts >= latestEtaC.tsMs)
-      latestEtaC = { value: pct, tsMs: ts };
-    if (!latestIdle || ts >= latestIdle.tsMs)
-      latestIdle = { value: idle, tsMs: ts };
-  }
-
-  const CHUNK = 1000;
-  for (let off = 0; off < rows.length; off += CHUNK) {
     await db
-      .insert(pointReadingsAgg5m)
-      .values(rows.slice(off, off + CHUNK))
+      .insert(batteryProvenanceDaily)
+      .values({ areaId, day, foldState: env })
       .onConflictDoUpdate({
-        target: [
-          pointReadingsAgg5m.systemId,
-          pointReadingsAgg5m.pointId,
-          pointReadingsAgg5m.intervalEnd,
-        ],
-        set: {
-          avg: sql`excluded.avg`,
-          min: sql`excluded.min`,
-          max: sql`excluded.max`,
-          last: sql`excluded.last`,
-          sampleCount: sql`excluded.sample_count`,
-          dataQuality: sql`excluded.data_quality`,
-          updatedAt: sql`now()`,
-        },
+        target: [batteryProvenanceDaily.areaId, batteryProvenanceDaily.day],
+        set: { foldState: env, updatedAt: sql`now()` },
       });
+    written++;
   }
+  return written;
+}
 
-  if (latestEtaC) {
-    await updateLatestPointValue(
-      helperSystemId,
-      etaCPointId,
-      `${BATTERY_STEM}/${CHARGE_EFFICIENCY_POINT.metricType}`,
-      latestEtaC.value,
-      latestEtaC.tsMs,
-      Date.now(),
-      CHARGE_EFFICIENCY_POINT.metricUnit,
-      CHARGE_EFFICIENCY_POINT.displayName,
-    );
+/** The freshest trusted checkpoint ≤ `todayDay`, within the lookback: validated envelope with
+ *  `v === BATPROV_MODEL_VERSION` (a model bump silently distrusts every stored checkpoint). */
+async function loadLatestFoldCheckpoint(
+  db: PgDb,
+  areaId: string,
+  todayDayIndex: number,
+): Promise<{ env: FoldCheckpointEnvelope; writtenAt: Date } | null> {
+  const rows = await db
+    .select({
+      foldState: batteryProvenanceDaily.foldState,
+      updatedAt: batteryProvenanceDaily.updatedAt,
+    })
+    .from(batteryProvenanceDaily)
+    .where(
+      and(
+        eq(batteryProvenanceDaily.areaId, areaId),
+        gte(
+          batteryProvenanceDaily.day,
+          dayIndexToDayString(todayDayIndex - SEED_LOOKBACK_DAYS),
+        ),
+        lte(batteryProvenanceDaily.day, dayIndexToDayString(todayDayIndex)),
+        isNotNull(batteryProvenanceDaily.foldState),
+      ),
+    )
+    .orderBy(desc(batteryProvenanceDaily.day))
+    .limit(SEED_LOOKBACK_DAYS + 1);
+  for (const r of rows) {
+    const env = validateFoldCheckpointEnvelope(r.foldState);
+    if (env && env.v === BATPROV_MODEL_VERSION)
+      return { env, writtenAt: r.updatedAt };
   }
-  if (latestIdle) {
-    await updateLatestPointValue(
-      helperSystemId,
-      idlePointId,
-      `${BATTERY_STEM}/${IDLE_LOSS_POINT.metricType}`,
-      latestIdle.value,
-      latestIdle.tsMs,
-      Date.now(),
-      IDLE_LOSS_POINT.metricUnit,
-      IDLE_LOSS_POINT.displayName,
-    );
-  }
+  return null;
+}
 
-  return { etaCPointId, idlePointId, daysWritten: rows.length / 2 };
+export type SeededReconcileOutcome =
+  | { seeded: true; rowsWritten: number; anchorMs: number }
+  | { seeded: false; reason: string };
+
+/**
+ * The O(today) blend reconcile: seed the fold with the freshest checkpoint and read only
+ * (anchor → now] — ~1.5-5k agg_5m rows instead of the warm-up path's ~25k, bounded forever.
+ * Re-folding from the ANCHOR each tick (not from the last tick) self-heals late intra-day data with
+ * zero invalidation bookkeeping. Every guard failure returns `{seeded:false}` so the caller can run
+ * the unchanged 12h+7d warm-up fallback — this path must NEVER be less safe than the old one.
+ * Writes blend agg_5m + KV latest only (no rollup, no checkpoints).
+ */
+export async function reconcileBatteryProvenanceFromCheckpoint(
+  db: PgDb,
+  handle: number,
+  nowMs: number,
+  opts: { config?: ProvenanceConfig } = {},
+): Promise<SeededReconcileOutcome> {
+  // A custom config invalidates the checkpoint's assumptions (it was written config-pristine).
+  if (opts.config && Object.keys(opts.config).length > 0)
+    return { seeded: false, reason: "custom-config" };
+
+  const [area] = await db
+    .select({ id: areas.id, tz: areas.timezoneOffsetMin })
+    .from(areas)
+    .where(eq(areas.legacySystemId, handle))
+    .limit(1);
+  if (!area) return { seeded: false, reason: "no-area" };
+
+  const cp = await loadLatestFoldCheckpoint(
+    db,
+    area.id,
+    dayIndexOf(nowMs, area.tz),
+  );
+  if (!cp) return { seeded: false, reason: "no-checkpoint" };
+  const { env } = cp;
+  if (nowMs - env.anchorMs > MAX_SEED_SPAN_MS)
+    return { seeded: false, reason: "span-too-long" };
+
+  // Staleness probe: did anything rewrite the battery input's agg_5m at/just-before the anchor AFTER
+  // the checkpoint was written (a backfill/repair of yesterday)? One bounded PK-range read on the
+  // battery power point — the same input-watermark proxy blendIsCurrent uses. (Deliberately not probed:
+  // pre-anchor rate/OE revisions — those heal at the nightly heal; see the PR notes.)
+  const [powerBind] = await db
+    .select({
+      sys: areaBindings.pointSystemId,
+      pid: areaBindings.pointId,
+    })
+    .from(areaBindings)
+    .where(
+      and(
+        eq(areaBindings.areaId, area.id),
+        eq(areaBindings.role, "battery"),
+        eq(areaBindings.metricType, "power"),
+      ),
+    )
+    .limit(1);
+  if (!powerBind) return { seeded: false, reason: "no-battery-bind" };
+  const [probe] = await db
+    .select({ maxUpdated: max(pointReadingsAgg5m.updatedAt) })
+    .from(pointReadingsAgg5m)
+    .where(
+      and(
+        eq(pointReadingsAgg5m.systemId, powerBind.sys),
+        eq(pointReadingsAgg5m.pointId, powerBind.pid),
+        gt(
+          pointReadingsAgg5m.intervalEnd,
+          new Date(env.anchorMs - PROBE_LOOKBACK_MS),
+        ),
+        lte(pointReadingsAgg5m.intervalEnd, new Date(env.anchorMs)),
+      ),
+    );
+  if (probe?.maxUpdated && probe.maxUpdated > cp.writtenAt)
+    return { seeded: false, reason: "pre-anchor-rewrite" };
+
+  const inputs = await loadProvenanceInputs(
+    handle,
+    { startMs: env.anchorMs, endMs: nowMs },
+    { skipReserveFloor: true },
+  );
+  if (!inputs || inputs.batterySystemId == null)
+    return { seeded: false, reason: "no-inputs" };
+  // The learners' params must still be persisted (canonical) — a fold on in-window learners cannot be
+  // seeded reproducibly.
+  if (!inputsAreCanonical(inputs))
+    return { seeded: false, reason: "non-canonical-inputs" };
+
+  const result = computeBatteryProvenance(
+    inputs,
+    { reserveFloorPct: env.reserveFloorPct },
+    { initialState: env.state, efficiencyFallback: env.etaFallback },
+  );
+  const blend = await writeBlendOutputs(
+    db,
+    inputs,
+    result,
+    env.anchorMs,
+    nowMs,
+    { updateLatest: true },
+  );
+  return {
+    seeded: true,
+    rowsWritten: blend.rowsWritten,
+    anchorMs: env.anchorMs,
+  };
+}
+
+/** Best-effort wrapper: null (→ caller falls back) on any throw. */
+export async function reconcileFromCheckpointBestEffort(
+  handle: number,
+  nowMs: number,
+  opts: { config?: ProvenanceConfig } = {},
+): Promise<SeededReconcileOutcome | null> {
+  if (!planetscaleDb) return null;
+  try {
+    return await reconcileBatteryProvenanceFromCheckpoint(
+      planetscaleDb,
+      handle,
+      nowMs,
+      opts,
+    );
+  } catch (err) {
+    console.error(
+      `[BatProv] seeded reconcile failed for handle=${handle}:`,
+      err,
+    );
+    return null;
+  }
 }

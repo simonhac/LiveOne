@@ -14,6 +14,7 @@ import { planetscaleDb } from "@/lib/db/planetscale";
 import {
   areaBindings,
   areas,
+  batteryProvenanceDaily,
   pointInfo,
   pointReadingsAgg5m,
   systems,
@@ -116,7 +117,7 @@ function scatter(
   return out;
 }
 
-interface BoundPoint {
+export interface BoundPoint {
   systemId: number;
   pointId: number;
   role: string;
@@ -127,7 +128,10 @@ interface BoundPoint {
 }
 
 /** The Area's curated points via `area_bindings` joined to point_info (dedupes overlapping devices). */
-async function boundPoints(db: PgDb, areaId: string): Promise<BoundPoint[]> {
+export async function boundPoints(
+  db: PgDb,
+  areaId: string,
+): Promise<BoundPoint[]> {
   const rows = await db
     .select({
       systemId: areaBindings.pointSystemId,
@@ -164,6 +168,9 @@ export interface LoadOptions {
   noSoc?: boolean;
   /** Ablation: ignore the persisted capacity point, forcing the in-window fallback (harness `--no-capacity`). */
   noCapacity?: boolean;
+  /** Skip the KV/90-day reserve-floor resolution (the checkpoint-seeded reconcile replays the floor
+   *  from its envelope via config.reserveFloorPct, so the ~1.5s cold read is pure waste there). */
+  skipReserveFloor?: boolean;
 }
 
 /**
@@ -218,22 +225,32 @@ export async function loadProvenanceInputs(
   const { sources, loads } = buildFlowSeries(classified);
   if (sources.length === 0 || loads.length === 0) return null;
 
-  // Battery SoC (optional).
+  // Battery SoC (optional). Every forward-filled series reads a LEAD-IN of its own fill limit before
+  // startMs, so the first in-window slots fill from the last pre-window row exactly as a longer window
+  // would — required for the checkpoint-seeded reconcile (its window starts at the checkpoint anchor)
+  // and strictly more correct for every caller.
   const socBind = bound.find((b) => b.role === "battery" && b.metric === "soc");
+  const SOC_FILL_MS = 30 * 60 * 1000;
   const socSeries =
     socBind && !opts.noSoc
-      ? await readAgg5m(db, socBind.systemId, socBind.pointId, startMs, endMs)
+      ? await readAgg5m(
+          db,
+          socBind.systemId,
+          socBind.pointId,
+          startMs - SOC_FILL_MS,
+          endMs,
+        )
       : [];
   const soc = opts.noSoc
     ? new Array<number | null>(timeline.length).fill(null)
-    : forwardFill(timeline, socSeries, 30 * 60 * 1000).value;
+    : forwardFill(timeline, socSeries, SOC_FILL_MS).value;
 
   // Reserve floor = ~2nd percentile of SoC over a LONG (90d) window (robust to non-cycling). CACHED in KV
   // with a ~25h TTL: the 90d read is ~1.5s, so we recompute it at most ~once/day and every other reconcile
   // reads the cached scalar — off the hot path, and STABLE within a day (consistent reconcile-vs-heal).
   // KV-unconfigured (dev) → get/set no-op to null → falls back to recomputing every call (current behaviour).
   let estReservePct = DEFAULT_RESERVE_PCT;
-  if (socBind && !opts.noSoc) {
+  if (socBind && !opts.noSoc && !opts.skipReserveFloor) {
     const floorKey = kvKey(`batprov:reserve-floor:area:${area.id}`);
     let cached: number | null = null;
     try {
@@ -303,9 +320,16 @@ export async function loadProvenanceInputs(
             ),
           ),
         );
+      const OE_FILL_MS = 15 * 60 * 1000;
       for (const op of oePts) {
-        const s = await readAgg5m(db, oeSys.id, op.pointId, startMs, endMs);
-        const ff = forwardFill(timeline, s, 15 * 60 * 1000);
+        const s = await readAgg5m(
+          db,
+          oeSys.id,
+          op.pointId,
+          startMs - OE_FILL_MS,
+          endMs,
+        );
+        const ff = forwardFill(timeline, s, OE_FILL_MS);
         if (op.stem === "grid.emissionsIntensity") {
           gridEmissions = ff.value.map(oeEmissionsToGPerKwh);
           gridEmissionsEstimated = ff.estimated;
@@ -323,11 +347,18 @@ export async function loadProvenanceInputs(
   let gridPrice = new Array<number | null>(timeline.length).fill(null);
   let gridPriceEstimated = new Array<boolean>(timeline.length).fill(true);
   let gridExportPrice = new Array<number | null>(timeline.length).fill(null);
+  const RATE_FILL_MS = 35 * 60 * 1000;
   for (const rp of rateBinds) {
     if (rp.stem !== "bidi.grid.import" && rp.stem !== "bidi.grid.export")
       continue;
-    const s = await readAgg5m(db, rp.systemId, rp.pointId, startMs, endMs);
-    const ff = forwardFill(timeline, s, 35 * 60 * 1000);
+    const s = await readAgg5m(
+      db,
+      rp.systemId,
+      rp.pointId,
+      startMs - RATE_FILL_MS,
+      endMs,
+    );
+    const ff = forwardFill(timeline, s, RATE_FILL_MS);
     if (rp.stem === "bidi.grid.import") {
       gridPrice = ff.value;
       gridPriceEstimated = ff.estimated;
@@ -401,83 +432,52 @@ export async function loadProvenanceInputs(
     );
   }
 
-  // Persisted round-trip efficiency η(t) from the helper's round-trip-efficiency point (learn-in-shell /
-  // read-in-fold): stored as % (η×100), forward-filled onto the timeline (a daily step), ÷100 → the ratio
-  // the fold consumes. Absent (not yet learned) → undefined → compute falls back to an in-window learned η.
-  let etaSeries: (number | null)[] | undefined;
-  const etaBind = bound.find(
-    (b) => b.role === "battery" && b.metric === "round-trip-efficiency",
-  );
-  if (etaBind) {
-    const s = await readAgg5m(
-      db,
-      etaBind.systemId,
-      etaBind.pointId,
-      startMs,
-      endMs,
-    );
-    etaSeries = forwardFill(timeline, s, 48 * 60 * 60 * 1000).value.map((v) =>
-      v === null ? null : v / 100,
-    );
-  }
-
-  // Persisted usable capacity C(t) from the helper's usable-capacity point (learn-in-shell / read-in-fold):
-  // kWh, forward-filled onto the timeline (a daily step). Absent (not yet learned, SoC-blind, or ablated) →
-  // undefined → compute falls back to an in-window learned C. Combined with SoC it arms the anchor overlay.
-  let capacitySeries: (number | null)[] | undefined;
-  const capBind = bound.find(
-    (b) => b.role === "battery" && b.metric === "usable-capacity",
-  );
-  if (capBind && !opts.noCapacity) {
-    const s = await readAgg5m(
-      db,
-      capBind.systemId,
-      capBind.pointId,
-      startMs,
-      endMs,
-    );
-    capacitySeries = forwardFill(timeline, s, 48 * 60 * 60 * 1000).value;
-  }
-
-  // Persisted three-term loss model (learn-in-shell / read-in-fold, like η/C): charge-efficiency stored
-  // as % (η_c×100, ÷100 here), idle-loss as kWh/day. Daily steps, forward-filled ≤48h. Absent (not yet
-  // learned / SoC-blind) → undefined → compute learns in-window (bootstrap) or stays single-η.
-  let chargeEfficiencySeries: (number | null)[] | undefined;
-  const etaCBind = bound.find(
-    (b) => b.role === "battery" && b.metric === "charge-efficiency",
-  );
-  if (etaCBind) {
-    const s = await readAgg5m(
-      db,
-      etaCBind.systemId,
-      etaCBind.pointId,
-      startMs,
-      endMs,
-    );
-    chargeEfficiencySeries = forwardFill(
-      timeline,
-      s,
-      48 * 60 * 60 * 1000,
-    ).value.map((v) => (v === null ? null : v / 100));
-  }
-  let idleLossKwhPerDaySeries: (number | null)[] | undefined;
-  const idleBind = bound.find(
-    (b) => b.role === "battery" && b.metric === "idle-loss",
-  );
-  if (idleBind) {
-    const s = await readAgg5m(
-      db,
-      idleBind.systemId,
-      idleBind.pointId,
-      startMs,
-      endMs,
-    );
-    idleLossKwhPerDaySeries = forwardFill(
-      timeline,
-      s,
-      48 * 60 * 60 * 1000,
-    ).value;
-  }
+  // Persisted per-day learned params (η / C / η_c / idle) from `battery_provenance_daily`
+  // (learn-in-shell / read-in-fold) — natural units (ratios / kWh / kWh-per-day), each day's value
+  // anchored at the day's first interval_end and forward-filled ≤48h onto the timeline. The read has a
+  // 48h LEAD-IN so the last pre-window step carries into the window (a midnight-anchored window still
+  // sees yesterday's params). A series with NO rows (never learned / SoC-blind / pre-activation) stays
+  // undefined → compute falls back to its in-window bootstrap, exactly as when the old param points
+  // were unbound.
+  const PARAM_FILL_MS = 48 * 60 * 60 * 1000;
+  const paramRows = await db
+    .select({
+      t: batteryProvenanceDaily.firstIntervalEnd,
+      eta: batteryProvenanceDaily.eta,
+      capacityKwh: batteryProvenanceDaily.capacityKwh,
+      chargeEff: batteryProvenanceDaily.chargeEff,
+      idleLossKwhDay: batteryProvenanceDaily.idleLossKwhDay,
+    })
+    .from(batteryProvenanceDaily)
+    .where(
+      and(
+        eq(batteryProvenanceDaily.areaId, area.id),
+        gte(
+          batteryProvenanceDaily.firstIntervalEnd,
+          new Date(startMs - PARAM_FILL_MS),
+        ),
+        lte(batteryProvenanceDaily.firstIntervalEnd, new Date(endMs)),
+      ),
+    )
+    .orderBy(asc(batteryProvenanceDaily.firstIntervalEnd));
+  const paramSeries = (
+    pick: (r: (typeof paramRows)[number]) => number | null,
+  ): (number | null)[] | undefined => {
+    const pts: SeriesPoint[] = [];
+    for (const r of paramRows) {
+      const v = pick(r);
+      if (r.t !== null && v !== null)
+        pts.push({ t: r.t.getTime(), v, dq: "good" });
+    }
+    if (pts.length === 0) return undefined;
+    return forwardFill(timeline, pts, PARAM_FILL_MS).value;
+  };
+  const etaSeries = paramSeries((r) => r.eta);
+  const capacitySeries = opts.noCapacity
+    ? undefined
+    : paramSeries((r) => r.capacityKwh);
+  const chargeEfficiencySeries = paramSeries((r) => r.chargeEff);
+  const idleLossKwhPerDaySeries = paramSeries((r) => r.idleLossKwhDay);
 
   const frac = (a: (number | null)[]) =>
     a.filter((v) => v !== null).length / Math.max(a.length, 1);

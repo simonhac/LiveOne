@@ -64,6 +64,51 @@ export interface EtaLearnResult {
 const clamp = (x: number, lo: number, hi: number) =>
   x < lo ? lo : x > hi ? hi : x;
 
+/** One local day's η-fit inputs (a per-day reduction of the raw registers — see `daily.ts`). */
+export interface EtaDayInput {
+  dayIndex: number;
+  chargeKwh: number;
+  dischargeKwh: number;
+  /** Day must not update the EWMA (BMS-recal day) — the applied η still covers it. */
+  excluded?: boolean;
+}
+
+/**
+ * The causal daily-EWMA fit over per-day reductions — THE single implementation of the η fold
+ * ({@link learnEwmaEta} delegates here; the cached-day learn calls it directly). The η applied to a day
+ * is the value learned from PRIOR days only. Deterministic.
+ */
+export function learnEtaFromDays(
+  days: EtaDayInput[],
+  opts: Omit<EtaLearnOptions, "excludeDays"> = {},
+): { byDay: EtaDayDiag[] } {
+  const alpha = opts.alpha ?? 0.1;
+  const prior = opts.prior ?? 0.9;
+  const minDayCharge = opts.minDayChargeKwh ?? 1.0;
+  const clampMin = opts.clampMin ?? 0.7;
+  const clampMax = opts.clampMax ?? 1.0;
+
+  // Causal daily EWMA: apply the η learned from PRIOR days to the current day, then fold today's raw η in.
+  let ewma = prior;
+  const byDay: EtaDayDiag[] = [];
+  for (const d of days) {
+    const applied = ewma;
+    let rawEta: number | null = null;
+    if (d.chargeKwh >= minDayCharge && d.chargeKwh > 0 && !d.excluded) {
+      rawEta = clamp(d.dischargeKwh / d.chargeKwh, clampMin, clampMax);
+      ewma = alpha * rawEta + (1 - alpha) * ewma;
+    }
+    byDay.push({
+      dayIndex: d.dayIndex,
+      chargeKwh: d.chargeKwh,
+      dischargeKwh: d.dischargeKwh,
+      rawEta,
+      eta: applied,
+    });
+  }
+  return { byDay };
+}
+
 /**
  * Learn a per-interval η(t) from raw charge/discharge energies. `chargeKwh[i]` is the TOTAL charge
  * (solar + grid + other) into the battery at interval `i`; `dischargeKwh[i]` the discharge. Both are
@@ -103,30 +148,16 @@ export function learnEwmaEta(
     cur.dischargeKwh += dischargeKwh[i] ?? 0;
   }
 
-  // Causal daily EWMA: apply the η learned from PRIOR days to the current day, then fold today's raw η in.
-  let ewma = prior;
+  // Delegate the causal daily-EWMA fold to the single day-level implementation.
+  const { byDay } = learnEtaFromDays(
+    days.map((d) => ({
+      ...d,
+      excluded: opts.excludeDays?.has(d.dayIndex) ?? false,
+    })),
+    { alpha, prior, minDayChargeKwh: minDayCharge, clampMin, clampMax },
+  );
   const appliedByDay = new Map<number, number>();
-  const byDay: EtaDayDiag[] = [];
-  for (const d of days) {
-    const applied = ewma;
-    appliedByDay.set(d.dayIndex, applied);
-    let rawEta: number | null = null;
-    if (
-      d.chargeKwh >= minDayCharge &&
-      d.chargeKwh > 0 &&
-      !opts.excludeDays?.has(d.dayIndex)
-    ) {
-      rawEta = clamp(d.dischargeKwh / d.chargeKwh, clampMin, clampMax);
-      ewma = alpha * rawEta + (1 - alpha) * ewma;
-    }
-    byDay.push({
-      dayIndex: d.dayIndex,
-      chargeKwh: d.chargeKwh,
-      dischargeKwh: d.dischargeKwh,
-      rawEta,
-      eta: applied,
-    });
-  }
+  for (const d of byDay) appliedByDay.set(d.dayIndex, d.eta);
 
   const etaSeries = dayOf.map((d) => appliedByDay.get(d) ?? prior);
 

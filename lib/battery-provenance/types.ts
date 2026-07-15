@@ -142,4 +142,15 @@ export interface ProvenanceResult {
   idleKwhPerDayUsed: number | null;
   /** Per-local-day losses-fit trend (diagnostic; produced only on the in-window bootstrap path). */
   lossesByDay?: LossesDayDiag[];
+  /**
+   * Fold-state snapshots at the requested `snapshotAtMs` instants (checkpointing): the state after the
+   * last interval whose END ≤ the requested time. `anchorMs` is that interval's end — where a seeded
+   * re-fold must start. Present only when snapshots were requested; requested times before the first
+   * interval end are skipped.
+   */
+  stateSnapshots?: {
+    requestedMs: number;
+    anchorMs: number;
+    state: FoldState;
+  }[];
 }

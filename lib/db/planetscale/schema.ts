@@ -509,6 +509,78 @@ export const pointReadingsFlowAttr1d = pgTable(
 );
 
 // ============================================================================
+// Battery-provenance daily state — ONE row per (battery Area, local day): the single canonical home
+// for all per-day battery-provenance state (see docs/architecture/battery-provenance.md).
+//   • learn INPUTS — per-day reductions of the raw agg_5m registers (charge/discharge/SoC), computed
+//     once at reduce time so the daily learn reads ~330 tiny rows instead of ~380k agg_5m rows;
+//   • learned PARAMS — the per-day APPLIED η / C / η_c / idle the fold reads back (replaces the four
+//     helper param points; natural units — η/η_c are RATIOS, not the points' ×100 percent);
+//   • fold_state — the fold checkpoint at the START of the day (Phase B; enables the O(today) minutely
+//     reconcile). Its model version lives INSIDE the envelope (fold_state.v); the row-level `version`
+//     is the reduce-algorithm version (a mismatch triggers a full input rebuild).
+// Carry columns make each row a resumable seam: re-reducing day D+1 from row D's carry reproduces the
+// full-history scan byte-for-byte (capacity boundary down-swing pair + recal-detector resume state).
+// ============================================================================
+export const batteryProvenanceDaily = pgTable(
+  "battery_provenance_daily",
+  {
+    areaId: uuid("area_id")
+      .notNull()
+      .references(() => areas.id),
+    day: text("day").notNull(), // YYYY-MM-DD, area-local (same convention as agg_1d / flow_1d)
+
+    // Timeline anchor + shape. NULL first_interval_end = row not yet filled by the learn (e.g. a
+    // checkpoint-only insert); the param read-back anchors each day's step at this timestamp.
+    firstIntervalEnd: timestamp("first_interval_end"),
+    intervalCount: integer("interval_count").notNull().default(0),
+
+    // Learn INPUTS (per-day reductions from agg_5m)
+    chargeKwh: doublePrecision("charge_kwh").notNull().default(0), // ungated Σ (η + losses input)
+    dischargeKwh: doublePrecision("discharge_kwh").notNull().default(0), // ungated Σ
+    socFirst: doublePrecision("soc_first"), // first non-null FF SoC in day
+    socLast: doublePrecision("soc_last"), // last non-null FF SoC in day
+    socSamples: integer("soc_samples").notNull().default(0), // non-null 5m intervals
+    // Capacity-fit pair sums, RAIL-GATED (both pair SoCs non-null & <98) — distinct from the ungated
+    // sums above; window seed = 100·Σcap_discharge/Σdown_swing is additive over rows.
+    capDischargeKwh: doublePrecision("cap_discharge_kwh").notNull().default(0),
+    downSwingPct: doublePrecision("down_swing_pct").notNull().default(0), // incl. boundary pair via carry
+    recal: boolean("recal").notNull().default(false), // BMS-recalibration day (excluded from all fits)
+
+    // Carry / seam state (resume-at-day-D+1 inputs)
+    socLastSlotPct: doublePrecision("soc_last_slot_pct"), // FF SoC at day's LAST slot (boundary-pair s0)
+    socCarryPct: doublePrecision("soc_carry_pct"), // last non-null SoC obs ≤ day end (recal prevSoc; may be inherited)
+    netAfterSocKwh: doublePrecision("net_after_soc_kwh").notNull().default(0), // Σ(charge−discharge) after that obs
+
+    // Invalidation-probe baseline: what agg_1d's energy-register deltas said at reduce time
+    // (null = area has no bound energy registers → probe not applicable).
+    probeChargeKwh: doublePrecision("probe_charge_kwh"),
+    probeDischargeKwh: doublePrecision("probe_discharge_kwh"),
+
+    // Learned PARAMS (per-day APPLIED values; null during fit warm-up / SoC-blind history)
+    eta: doublePrecision("eta"), // round-trip η, ratio
+    capacityKwh: doublePrecision("capacity_kwh"), // usable capacity C
+    chargeEff: doublePrecision("charge_eff"), // η_c, ratio
+    idleLossKwhDay: doublePrecision("idle_loss_kwh_day"),
+
+    // Fold checkpoint at the START of this local day (FoldCheckpointEnvelope; Phase B writes it).
+    foldState: jsonb("fold_state"),
+
+    version: integer("version").notNull().default(1), // reduce-algorithm version (BATTERY_DAILY_VERSION)
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.areaId, table.day] }),
+    dayIdx: index("bpd_day_idx").on(table.day),
+  }),
+);
+
+export type BatteryProvenanceDailyRow =
+  typeof batteryProvenanceDaily.$inferSelect;
+export type NewBatteryProvenanceDailyRow =
+  typeof batteryProvenanceDaily.$inferInsert;
+
+// ============================================================================
 // Share tokens - view-only access links scoped to systems owned by the token's owner
 // (mirrors the legacy `share_tokens`). Epoch-ms columns use bigint(mode:"number") so
 // share-tokens.ts's `Date.now()` comparisons work unchanged against Postgres.
