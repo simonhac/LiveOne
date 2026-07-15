@@ -1,7 +1,8 @@
 /**
- * The card / tile CATALOG — the declarative, capability-keyed replacement for the vendor-string logic
- * in lib/dashboard/cards.ts (`getLayout`, `isSiteVendor`, `availableTiles`, the dead `CARD_REGISTRY`/
- * `TILES`) and the `card.type` switch in components/Dashboard.tsx.
+ * The card / tile CATALOG — the declarative, capability-keyed card/tile ELIGIBILITY data (label +
+ * required capabilities + scope). Server-safe and React-free: the render side is the client plugin
+ * registries (components/dashboard/cards/ + /tiles/), which replaced the old `card.type` switch in
+ * components/Dashboard.tsx.
  *
  * Each entry declares the capabilities it REQUIRES. "Which cards/tiles can an area show" =
  * `CATALOG.filter(e => satisfies(scopeCaps(e), e.requires))`. No vendor/device names appear here — a
@@ -18,13 +19,18 @@
  *     of solar+load is not enough); `oe-grid`/`grid-signals` still resolves a NEM region. Do NOT
  *     "simplify" a renderer to trust this filter — it will ship blank/incorrect cards.
  *
- * This module is additive and INERT until the P4 cutover — nothing renders from it yet, exactly as the
- * dead `CARD_REGISTRY` sat inert. The equivalence test pins that `availableTilesFromCaps ∘
- * capabilitiesFromLatest` reproduces today's `availableTiles`, so the cutover is byte-identical.
+
+ * The gallery filters (`availableAreaCards`/`availableDeviceCards`) remain INERT until an Add-Card
+ * UI exists; the renderer reads only `CARD_CATALOG.chart.requires` (the site-charts data gate). The
+ * equivalence test pins that `availableTilesFromCaps ∘ capabilitiesFromLatest` reproduces the legacy
+ * `availableTiles` semantics.
  */
 
 import type { CapabilityId } from "@/lib/capabilities/registry";
 import type { CapabilitySet } from "@/lib/capabilities/derive";
+import type { DashboardCardType, TileId } from "@/lib/dashboard/cards";
+
+export type { TileId };
 
 /** A capability requirement: ALL of a set, or ANY of a set. */
 export type CapReq = { all: CapabilityId[] } | { any: CapabilityId[] };
@@ -41,18 +47,8 @@ export function isSatisfiable(req: CapReq): boolean {
 
 // ============================================================================
 // Tiles — the individually-toggleable cards inside the `tiles` container.
-// Order MUST match lib/dashboard/cards.ts:TILE_IDS (asserted in the equivalence test) until the
-// catalog becomes the sole source at cutover.
+// `TileId` is single-sourced from lib/dashboard/cards.ts (re-exported above).
 // ============================================================================
-
-export type TileId =
-  | "solar"
-  | "load"
-  | "hotWater"
-  | "battery"
-  | "house-to-grid"
-  | "amber"
-  | "ev";
 
 export interface TileCatalogEntry {
   id: TileId;
@@ -118,18 +114,13 @@ export function availableTilesFromCaps(caps: CapabilitySet): TileId[] {
 // Cards — the descriptor-level modules. `scope: "device"` cards read a bound member (deviceSystemId).
 // ============================================================================
 
-export type CardId =
-  | "tiles"
-  | "chart"
-  | "sankey"
-  | "amber-now"
-  | "amber-timeline"
-  | "generator-runs"
-  | "device-metrics"
-  | "oe-grid"
-  | "battery-contents"
-  | "ev-provenance"
-  | "battery-provenance-history";
+/**
+ * The catalog's card vocabulary — the descriptor card types plus `oe-grid`, which is a TILE VIEW in
+ * the v3 descriptor (it rides inside a `tiles` card bound to a member device) but needs its own
+ * catalog entry for device-scoped eligibility. Derived from `DashboardCardType` so the two can
+ * never drift.
+ */
+export type CardId = DashboardCardType | "oe-grid";
 
 export interface CardCatalogEntry {
   id: CardId;

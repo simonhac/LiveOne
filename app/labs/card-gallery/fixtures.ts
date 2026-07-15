@@ -1,7 +1,8 @@
 /**
  * Hand-crafted mock data for the card gallery (app/labs/card-gallery).
  *
- * Each card reads a different shape — Tile nodes are built by useTileNodes from a
+ * Each card reads a different shape — tiles render via the tile plugins
+ * (components/dashboard/tiles/) from a
  * LatestPointValues map, the Amber/Tesla cards take a Record<string, LatestValue|null>, and
  * GridSignalsCard takes a typed GridLiveValues. These fixtures cover the interesting states
  * (charging/discharging, stale, high/low/zero, missing) so the cards can be eyeballed at size.

@@ -43,7 +43,7 @@ import {
   pointReadingsAgg5m,
   pointReadingsAgg1d,
 } from "@/lib/db/planetscale/schema";
-import { ensureSankeyCardIds, isDashboardV3 } from "@/lib/dashboard/v3";
+import { normalizeDescriptor, isDashboardV3 } from "@/lib/dashboard/v3";
 import type { DashboardV3 } from "@/lib/dashboard/v3";
 
 // ---- Fixed targets (area UUIDs verified read-only against liveone-dev) --------------------------
@@ -235,7 +235,7 @@ async function main() {
       if (cur && cur.version === 2) {
         await tx
           .update(dashboards)
-          .set({ descriptor: ensureSankeyCardIds(v3), updatedAt: new Date() })
+          .set({ descriptor: normalizeDescriptor(v3), updatedAt: new Date() })
           .where(eq(dashboards.id, id));
       }
     }
@@ -250,7 +250,7 @@ async function main() {
       }
       await tx
         .update(dashboards)
-        .set({ descriptor: ensureSankeyCardIds(d), updatedAt: new Date() })
+        .set({ descriptor: normalizeDescriptor(d), updatedAt: new Date() })
         .where(eq(dashboards.id, id));
     }
 

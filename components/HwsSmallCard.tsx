@@ -8,8 +8,9 @@ const HWS_COLOR = "rgb(251, 146, 60)"; // CHART_COLORS.hotWater (orange-400)
 /**
  * Compact "Hot Water" mini-card: the current modelled faucet temperature (°C, orange) from the
  * `load.hws/temperature` point in `latest`, plus a 24h sparkline. Purely presentational — both the
- * value/measurement time and the `sparkValues` (the 24h history series) are passed in from
- * useTileNodes, which orchestrates the generic /api/history fetch. No data fetching here.
+ * value/measurement time and the `sparkValues` (the 24h history series) are passed in from the
+ * hot-water tile plugin (components/dashboard/tiles/hot-water.tsx), which orchestrates the generic
+ * /api/history fetch. No data fetching here.
  */
 export default function HwsSmallCard({
   faucetC,
