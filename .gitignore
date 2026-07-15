@@ -82,6 +82,8 @@ dev.db-journal
 .env.local
 .env.development
 .env.production.env.local
+# Committed template of op:// references (no secret values) — infra-managed
+!.env.tpl
 liveone_backup.sql
 
 # Migration logs (keep directory structure but ignore actual log files)
