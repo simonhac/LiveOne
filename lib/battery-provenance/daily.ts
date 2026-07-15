@@ -20,6 +20,8 @@
  * an interval ENDING exactly at local midnight belongs to the day that just finished.
  */
 
+import { chargeRunKwhByDay } from "./capacity";
+
 const DAY_MS = 86_400_000;
 
 /** Structural slice of a battery throughput window (load.ts#BatteryThroughput satisfies it — kept
@@ -68,6 +70,9 @@ export interface BatteryDayReduction {
   /** Capacity-fit pair sums, RAIL-GATED (both pair SoCs non-null & < 98; incl. the boundary pair). */
   capDischargeKwh: number;
   downSwingPct: number;
+  /** Largest continuous net-charging run in the day (kWh) — SoC-INDEPENDENT capacity floor input; see
+   *  `capacity.ts#chargeRunKwhByDay`. Not carried across the day boundary (capacity.ts:~20). */
+  chargeRunKwh: number;
   /** Day contains a BMS-recalibration event (kept out of every fit). */
   recal: boolean;
   /** Carry-out for the next day (see {@link DayCarry}). */
@@ -151,6 +156,13 @@ export function reduceThroughputToDays(
   const out: BatteryDayReduction[] = [];
   if (n === 0) return out;
 
+  const chargeRunByDay = chargeRunKwhByDay(
+    tp.chargeKwh,
+    tp.dischargeKwh,
+    tp.timeline,
+    tzOffsetMin,
+  );
+
   // Resumable scan state (see DayCarry).
   let prevSlotSoc = carryIn.socLastSlotPct; // capacity pair `socPct[i-1]`
   let prevSoc = carryIn.socCarryPct; // recal detector `prevSoc`
@@ -174,6 +186,7 @@ export function reduceThroughputToDays(
         socMin: null,
         capDischargeKwh: 0,
         downSwingPct: 0,
+        chargeRunKwh: chargeRunByDay.get(d) ?? 0,
         recal: false,
         socLastSlotPct: null,
         socCarryPct: prevSoc,

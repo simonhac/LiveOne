@@ -545,6 +545,9 @@ export const batteryProvenanceDaily = pgTable(
     // sums above; window seed = 100·Σcap_discharge/Σdown_swing is additive over rows.
     capDischargeKwh: doublePrecision("cap_discharge_kwh").notNull().default(0),
     downSwingPct: doublePrecision("down_swing_pct").notNull().default(0), // incl. boundary pair via carry
+    // Largest continuous net-charging run in the day (kWh) — SoC-INDEPENDENT capacity-floor input
+    // (capacity.ts#chargeRunKwhByDay): catches a capacity upgrade through a SoC-blind stretch.
+    chargeRunKwh: doublePrecision("charge_run_kwh").notNull().default(0),
     recal: boolean("recal").notNull().default(false), // BMS-recalibration day (excluded from all fits)
 
     // Carry / seam state (resume-at-day-D+1 inputs)

@@ -62,8 +62,8 @@ const ETA_SEED = 0.9;
 const CAPACITY_SEED = 15;
 /** Reduce-algorithm version. Bump when the reduction semantics change (daily.ts) — a mismatch on any
  *  cached row triggers a full input rebuild. Distinct from the CHECKPOINT model version, which lives
- *  inside fold_state.v. */
-export const BATTERY_DAILY_VERSION = 2;
+ *  inside fold_state.v. v3: charge_run_kwh (coulomb-floor input) added to the reduction. */
+export const BATTERY_DAILY_VERSION = 3;
 /** Always re-reduce this many trailing local days (absorbs late-arriving data near the tip). */
 const TRAILING_REREDUCE_DAYS = 3;
 /** agg_1d probe: a cached day is dirty when its stored register baseline moved by more than this. */
@@ -94,6 +94,7 @@ function fromDbRow(r: BatteryProvenanceDailyRow): DailyLearnRow {
     intervalCount: r.intervalCount,
     chargeKwh: r.chargeKwh,
     dischargeKwh: r.dischargeKwh,
+    chargeRunKwh: r.chargeRunKwh,
     socFirst: r.socFirst,
     socLast: r.socLast,
     socMin: r.socMin,
@@ -147,6 +148,7 @@ async function upsertDayRows(
     socSamples: r.socSamples,
     capDischargeKwh: r.capDischargeKwh,
     downSwingPct: r.downSwingPct,
+    chargeRunKwh: r.chargeRunKwh,
     recal: r.recal,
     socLastSlotPct: r.socLastSlotPct,
     socCarryPct: r.socCarryPct,
@@ -178,6 +180,7 @@ async function upsertDayRows(
           socSamples: sql`excluded.soc_samples`,
           capDischargeKwh: sql`excluded.cap_discharge_kwh`,
           downSwingPct: sql`excluded.down_swing_pct`,
+          chargeRunKwh: sql`excluded.charge_run_kwh`,
           recal: sql`excluded.recal`,
           socLastSlotPct: sql`excluded.soc_last_slot_pct`,
           socCarryPct: sql`excluded.soc_carry_pct`,
@@ -507,6 +510,7 @@ async function fitAndPersist(
         capDischargeKwh: r.capDischargeKwh,
         downSwingPct: r.downSwingPct,
         excluded: r.recal,
+        chargeRunKwh: r.chargeRunKwh,
       })),
       { prior: seed },
     ).byDay;

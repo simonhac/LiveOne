@@ -1,0 +1,1 @@
+ALTER TABLE "battery_provenance_daily" ADD COLUMN "charge_run_kwh" double precision DEFAULT 0 NOT NULL;

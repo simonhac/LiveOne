@@ -165,7 +165,11 @@ export function computeBatteryProvenance(
       inputs.soc,
       timeline,
       inputs.timezoneOffsetMin,
-      { prior: seedCapacity ?? undefined, excludeDays: recalDays },
+      {
+        prior: seedCapacity ?? undefined,
+        excludeDays: recalDays,
+        chargeKwh: chargePerIv,
+      },
     ).capacitySeries;
   }
 
