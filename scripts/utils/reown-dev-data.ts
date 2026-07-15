@@ -27,10 +27,9 @@ const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
     { table: "systems", col: "owner_clerk_user_id" },
     { table: "user_systems", col: "clerk_user_id" },
     { table: "share_tokens", col: "owner_clerk_user_id" },
-    // Composition dashboards only (system_id IS NULL — the menu/v3 ones). The legacy per-(user,system)
-    // rows carry a UNIQUE (clerk_user_id, system_id); the dev login already has its own, so remapping
-    // the prod ones would collide. Those legacy rows stay put (they don't show in the menu).
-    { table: "dashboards", col: "clerk_user_id", where: "system_id IS NULL" },
+    // Legacy per-system dashboards (and their `system_id` column) were dropped in the P6 demolition
+    // (migration 0022) — every remaining row is a composition/v3 dashboard, so no filter is needed.
+    { table: "dashboards", col: "clerk_user_id" },
     { table: "dashboard_grants", col: "clerk_user_id" },
     { table: "areas", col: "owner_clerk_user_id" },
   ];
@@ -87,17 +86,27 @@ async function main() {
   const pairs = parseRemap(remapRaw);
   const c = devClient(url);
   await c.connect();
+  let hadError = false;
   try {
     for (const [from, to] of pairs) {
       console.log(`remap ${from} -> ${to}`);
       let total = 0;
       for (const { table, col, where } of OWNERSHIP) {
-        const r = await c.query(
-          `UPDATE ${table} SET ${col} = $1 WHERE ${col} = $2${where ? ` AND ${where}` : ""}`,
-          [to, from],
-        );
-        if (r.rowCount) console.log(`  ${table}.${col}: ${r.rowCount}`);
-        total += r.rowCount ?? 0;
+        // Isolated per table: one bad/stale clause (e.g. a column a later migration dropped) must not
+        // silently skip every table after it in the list — log and move on instead of aborting.
+        try {
+          const r = await c.query(
+            `UPDATE ${table} SET ${col} = $1 WHERE ${col} = $2${where ? ` AND ${where}` : ""}`,
+            [to, from],
+          );
+          if (r.rowCount) console.log(`  ${table}.${col}: ${r.rowCount}`);
+          total += r.rowCount ?? 0;
+        } catch (e) {
+          hadError = true;
+          console.error(
+            `  ERR ${table}.${col}: ${e instanceof Error ? e.message : e}`,
+          );
+        }
       }
 
       // users.clerk_user_id is the PK: if the dev user row already exists, copy the prod row's prefs
@@ -128,6 +137,13 @@ async function main() {
   } finally {
     await c.end();
   }
+  // A per-table failure is logged and skipped (see above) so the rest of the list still runs, but
+  // it must still fail the run overall — otherwise a stale clause (like the one this fixed) can
+  // silently stop remapping a table forever with no signal anywhere.
+  if (hadError)
+    throw new Error(
+      "one or more ownership updates failed — see ERR lines above",
+    );
 }
 
 main().catch((e) => {
