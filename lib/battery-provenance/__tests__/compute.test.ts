@@ -88,25 +88,25 @@ describe("computeBatteryProvenance", () => {
     expect(Math.abs(residual)).toBeLessThan(1e-6);
   });
 
-  it("clamps the solar opportunity term at 0 under a NEGATIVE feed-in price, while a negative import price flows through", () => {
+  it("clamps the solar forgone term at 0 under a NEGATIVE feed-in price, while a negative import price flows through", () => {
     // Negative export price ⇒ the counterfactual to storing solar is curtailment (nothing forgone),
-    // so the opportunity basis must stay equal to the actual basis. Negative IMPORT prices are real
-    // money and must NOT clamp — the actual cost basis goes negative from the grid-charge share.
+    // so the forgone pool must stay at 0. Negative IMPORT prices are real money and must NOT clamp —
+    // the actual cost basis goes negative from the grid-charge share.
     const inputs = scenario();
     inputs.exportTariff = { mode: "amber" };
     const n = inputs.timeline.length;
     inputs.gridExportPrice = new Array<number | null>(n).fill(-3);
     inputs.gridPrice = new Array<number | null>(n).fill(-10);
     const result = computeBatteryProvenance(inputs, { efficiency: 1 });
-    expect(result.finalState.costOppC).toBeCloseTo(result.finalState.costC, 9);
+    expect(result.finalState.forgoneC).toBeCloseTo(0, 9);
     expect(result.finalState.costC).toBeLessThan(0);
   });
 
-  it("a POSITIVE feed-in price diverges the opportunity basis above the actual basis", () => {
+  it("a POSITIVE feed-in price accrues forgone export revenue", () => {
     const inputs = scenario(); // gridExportPrice = 5 c/kWh, solar in the charge mix
     inputs.exportTariff = { mode: "amber" };
     const result = computeBatteryProvenance(inputs, { efficiency: 1 });
-    expect(result.finalState.costOppC).toBeGreaterThan(result.finalState.costC);
+    expect(result.finalState.forgoneC).toBeGreaterThan(0);
   });
 
   it("prefers an exact energy register over power integration when provided", () => {

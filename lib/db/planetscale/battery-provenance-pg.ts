@@ -83,12 +83,10 @@ export function blendValue(step: FoldStep, metricType: string): number | null {
     case "price":
       return step.batteryPrice;
     case "price-opportunity":
-      // Vended as the ADDITIONAL opportunity component (forgone feed-in only), not the fold's full
-      // opportunity basis — the fold keeps dual full bases internally (costC/costOppC); the delta is
-      // what the Contents card and the device page present as "Battery Opportunity Cost" (≥ 0).
-      return step.batteryPriceOpportunity !== null && step.batteryPrice !== null
-        ? step.batteryPriceOpportunity - step.batteryPrice
-        : null;
+      // The forgone-revenue component Qf/E, vended directly — the fold accumulates the delta natively
+      // (forgoneC), no subtraction of full bases. The ≥ 0 the Contents card and device page present
+      // comes from the producer pricing solar's forgone rate ≥ its actual cost, not a clamp here.
+      return step.batteryPriceForgone;
     case "stored-energy":
       // Usable stored energy E. Unlike the intensities this is 0 (not null) when the store is empty —
       // but 0 kWh is written so the Contents card reads "empty" rather than a stale value.

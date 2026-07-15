@@ -447,32 +447,33 @@ describe("foldBatteryProvenance", () => {
   });
 });
 
-describe("opportunity cost (parallel accumulator)", () => {
+describe("forgone revenue (delta accumulator)", () => {
   const CONFIG: FoldConfig = { reserveFloorPct: 10 };
 
-  it("solar charge: opportunity basis reflects forgone feed-in", () => {
-    // 10 kWh solar in, actual solar cost 0, opportunity (forgone feed-in) 8 c/kWh.
+  it("solar charge: forgone revenue reflects the feed-in given up", () => {
+    // 10 kWh solar in, actual solar cost 0, forgone feed-in 8 c/kWh.
     const { steps, finalState } = foldBatteryProvenance(
       [iv({ solarChargeKwh: 10, solarCost: 0, solarCostOpp: 8, socPct: 80 })],
       CONFIG,
     );
     // Intensities are null on the first charging interval (store empty at its start)...
-    expect(steps[0].batteryPriceOpportunity).toBeNull();
-    // ...but the accumulated bases: actual = 0, opportunity = 8 c/kWh × 10 kWh.
+    expect(steps[0].batteryPriceForgone).toBeNull();
+    // ...but the accumulators: actual = 0, forgone = 8 c/kWh × 10 kWh.
     expect(finalState.costC).toBeCloseTo(0, 6);
-    expect(finalState.costOppC).toBeCloseTo(80, 6);
-    expect(finalState.costOppC / finalState.storedKwh).toBeCloseTo(8, 6);
+    expect(finalState.forgoneC).toBeCloseTo(80, 6);
+    expect(finalState.forgoneC / finalState.storedKwh).toBeCloseTo(8, 6);
   });
 
-  it("undefined solarCostOpp defaults to solarCost (opportunity == actual)", () => {
+  it("undefined solarCostOpp defaults to solarCost (nothing forgone)", () => {
     const { finalState } = foldBatteryProvenance(
       [iv({ solarChargeKwh: 5, solarCost: 3, socPct: 80 })],
       CONFIG,
     );
-    expect(finalState.costOppC).toBeCloseTo(finalState.costC, 6);
+    expect(finalState.forgoneC).toBe(0);
+    expect(finalState.costC).toBeCloseTo(15, 6);
   });
 
-  it("grid charge only: opportunity == actual (only the solar term differs)", () => {
+  it("grid charge only: nothing forgone (only the solar term contributes)", () => {
     const { finalState } = foldBatteryProvenance(
       [
         iv({
@@ -486,24 +487,25 @@ describe("opportunity cost (parallel accumulator)", () => {
       ],
       CONFIG,
     );
-    expect(finalState.costOppC).toBeCloseTo(finalState.costC, 6);
-    expect(finalState.costOppC).toBeCloseTo(150, 6);
+    expect(finalState.forgoneC).toBe(0);
+    expect(finalState.costC).toBeCloseTo(150, 6);
   });
 
-  it("discharge draws both cost bases down proportionally (intensities unchanged)", () => {
+  it("discharge draws the forgone pool down proportionally (intensity unchanged)", () => {
     const intervals = [
       iv({ solarChargeKwh: 10, solarCost: 0, solarCostOpp: 8, socPct: 80 }),
       iv({ dischargeKwh: 4, socPct: 60 }),
     ];
     const { steps } = foldBatteryProvenance(intervals, CONFIG);
-    // After a partial discharge the per-kWh opportunity price is unchanged (weighted-average draw-down).
-    expect(steps[1].batteryPriceOpportunity).toBeCloseTo(8, 6);
+    // After a partial discharge the per-kWh forgone component is unchanged (weighted-average draw-down).
+    expect(steps[1].batteryPriceForgone).toBeCloseTo(8, 6);
     expect(steps[1].batteryPrice).toBe(0);
   });
 
-  it("grid charge at a NEGATIVE import price books negative cost into BOTH bases (no clamp)", () => {
-    // Amber import prices go negative; charging then must REDUCE both cost pools — being paid to
-    // charge is real money, and clamping it would overstate the store's cost basis.
+  it("grid charge at a NEGATIVE import price books negative ACTUAL cost; nothing forgone", () => {
+    // Amber import prices go negative; charging then must REDUCE the actual pool — being paid to
+    // charge is real money. The forgone pool is untouched: grid charge gives up no export revenue.
+    // (The written point read 0 here before the delta refactor too: both full bases sat at −5.)
     const { steps, finalState } = foldBatteryProvenance(
       [
         iv({
@@ -519,21 +521,147 @@ describe("opportunity cost (parallel accumulator)", () => {
     );
     // Charged −20c over 4 kWh; the 1 kWh discharge draws the pool down proportionally → −15c remains.
     expect(finalState.costC).toBeCloseTo(-15, 6);
-    expect(finalState.costOppC).toBeCloseTo(finalState.costC, 6);
+    expect(finalState.forgoneC).toBe(0);
     // The vended price is negative too (grid-only content charged at a negative rate).
     expect(steps[1].batteryPrice).toBeCloseTo(-5, 6);
-    expect(steps[1].batteryPriceOpportunity).toBeCloseTo(-5, 6);
+    expect(steps[1].batteryPriceForgone).toBeCloseTo(0, 9);
   });
 
-  it("reset discards the opportunity basis to its unattributed-loss bucket", () => {
+  it("drain to empty zeroes the forgone pool with the rest of the store", () => {
     const cfg: FoldConfig = { reserveFloorPct: 10, reanchorEpsKwh: 0.3 };
     const intervals = [
       iv({ solarChargeKwh: 5, solarCost: 0, solarCostOpp: 10, socPct: 80 }),
       iv({ dischargeKwh: 5, socPct: 12 }), // drains to empty → reset
     ];
     const { finalState } = foldBatteryProvenance(intervals, cfg);
-    expect(finalState.costOppC).toBe(0);
+    expect(finalState.forgoneC).toBe(0);
     expect(finalState.storedKwh).toBe(0);
+  });
+
+  it("a forced (non-empty) reset discards the forgone pool to its unattributed-loss bucket", () => {
+    const intervals = [
+      iv({ solarChargeKwh: 5, solarCost: 0, solarCostOpp: 10, socPct: 80 }), // forgone 50c
+      iv({ socPct: 5 }), // below the 10% reserve floor → latches a pending reset
+      iv({ solarChargeKwh: 1, solarCost: 0, solarCostOpp: 6, socPct: 40 }), // reset fires, then charges
+    ];
+    const { finalState } = foldBatteryProvenance(intervals, CONFIG);
+    expect(finalState.resetsSocFloor).toBe(1);
+    expect(finalState.unattribLossForgoneC).toBeCloseTo(50, 6);
+    expect(finalState.forgoneC).toBeCloseTo(6, 6);
+  });
+
+  it("equals the old dual-basis delta on a mixed trajectory (linearity property)", () => {
+    // The old model kept a SECOND full basis (costOppC: solar priced at the forgone feed-in) and the
+    // written point was the subtraction costOppC/E − costC/E. Cost feeds no control flow in the fold,
+    // so that old basis is recoverable from the production code itself: re-run the same sequence with
+    // solar re-priced at the opportunity rate — run B's ACTUAL basis IS the old costOppC. The delta
+    // accumulator must reproduce B − A exactly (in ℝ; 9 dp here), state, steps and buckets alike.
+    const CFG: FoldConfig = {
+      reserveFloorPct: 10,
+      efficiency: 0.9,
+      reanchorEpsKwh: 0.3,
+      socSyncGamma: 0.2,
+      socSyncDeadbandKwh: 0.2,
+    };
+    const site = {
+      otherPrice: 25,
+      otherEmissionsIntensity: 600,
+      otherRenewableFraction: 0.2,
+    };
+    const seq: FoldInterval[] = [
+      // Mixed charge: solar (forgone 8), grid @ 30, other @ site fallback — η < 1 moves roundtrip buckets.
+      iv({
+        solarChargeKwh: 6,
+        gridChargeKwh: 3,
+        otherChargeKwh: 2,
+        gridPrice: 30,
+        gridEmissionsIntensity: 500,
+        gridRenewableFraction: 0.3,
+        solarCost: 0,
+        solarCostOpp: 8,
+        socPct: null,
+        ...site,
+      }),
+      iv({ dischargeKwh: 4, socPct: null }),
+      iv({ idleLossKwh: 0.5, socPct: null }),
+      // SoC overlay: first snap, then a down- and an up-sync on the non-empty store.
+      iv({ socPct: 20, capacityKwh: 20 }),
+      iv({ socPct: 15, capacityKwh: 20 }),
+      iv({ socPct: 60, capacityKwh: 20 }),
+      // Negative import price (actual pool goes negative; nothing forgone).
+      iv({
+        gridChargeKwh: 4,
+        gridPrice: -5,
+        gridEmissionsIntensity: 700,
+        gridRenewableFraction: 0.1,
+        socPct: null,
+      }),
+      // Undefined solarCostOpp: costC moves, the delta doesn't.
+      iv({ solarChargeKwh: 3, solarCost: 2, socPct: null }),
+      // FORCED (soc-floor) reset with forgone content still in the store: the latch fires on the NEXT
+      // charge, and resetSegment dumps the live forgone pool to unattribLossForgoneC (a non-zero leg,
+      // unlike an empty reset which dumps an exactly-zero residual).
+      iv({ socPct: 5 }), // ≤ reserveFloorPct → latch soc-floor (SoC-blind, no capacity)
+      iv({ solarChargeKwh: 1, solarCost: 0, solarCostOpp: 4, socPct: null }), // reset fires, then charges
+      iv({ dischargeKwh: 99, socPct: null }), // drain to empty → empty reset
+      // Empty store + SoC up-correction → the seed branch (site fallback provenance).
+      iv({ socPct: 40, capacityKwh: 20, ...site }),
+      iv({ solarChargeKwh: 2, solarCost: 0, solarCostOpp: 6, socPct: null }),
+      iv({ dischargeKwh: 1, socPct: null }),
+    ];
+    // Guard against a vacuous mapping: B must actually re-price solar somewhere.
+    const toOpp = (x: FoldInterval): FoldInterval => ({
+      ...x,
+      solarCost: x.solarCostOpp ?? x.solarCost,
+    });
+    const A = foldBatteryProvenance(seq, CFG);
+    const B = foldBatteryProvenance(seq.map(toOpp), CFG);
+
+    // The sequence really exercises every op the delta must commute with — each of these leaves a
+    // NON-zero mark (else the matching B−A assertion below would be a vacuous 0 ≈ 0).
+    expect(A.finalState.roundtripLossKwh).toBeGreaterThan(0);
+    expect(A.finalState.idleLossKwh).toBeGreaterThan(0);
+    expect(A.finalState.syncEvents).toBeGreaterThan(0);
+    expect(A.finalState.resetsEmpty).toBeGreaterThanOrEqual(1);
+    expect(A.finalState.resetsSocFloor).toBeGreaterThanOrEqual(1);
+    expect(A.finalState.unattribLossForgoneC).toBeGreaterThan(0);
+    expect(A.finalState.forgoneC).toBeGreaterThan(0); // …and isn't trivially zero.
+
+    // Shared trajectory (cost is a pure passenger): E identical, step by step, exactly.
+    expect(B.finalState.storedKwh).toBe(A.finalState.storedKwh);
+    for (let i = 0; i < seq.length; i++) {
+      const a = A.steps[i];
+      const b = B.steps[i];
+      expect(b.storedKwh).toBe(a.storedKwh);
+      // Old written point = b.batteryPrice − a.batteryPrice; nullability matches (same E-guard).
+      expect(a.batteryPriceForgone === null).toBe(a.batteryPrice === null);
+      if (a.batteryPriceForgone !== null) {
+        expect(a.batteryPriceForgone).toBeCloseTo(
+          b.batteryPrice! - a.batteryPrice!,
+          9,
+        );
+      }
+    }
+    expect(A.finalState.forgoneC).toBeCloseTo(
+      B.finalState.costC - A.finalState.costC,
+      9,
+    );
+    expect(A.finalState.roundtripLossForgoneC).toBeCloseTo(
+      B.finalState.roundtripLossC - A.finalState.roundtripLossC,
+      9,
+    );
+    expect(A.finalState.unattribLossForgoneC).toBeCloseTo(
+      B.finalState.unattribLossC - A.finalState.unattribLossC,
+      9,
+    );
+    expect(A.finalState.idleLossForgoneC).toBeCloseTo(
+      B.finalState.idleLossC - A.finalState.idleLossC,
+      9,
+    );
+    expect(A.finalState.syncForgoneC).toBeCloseTo(
+      B.finalState.syncC - A.finalState.syncC,
+      9,
+    );
   });
 });
 

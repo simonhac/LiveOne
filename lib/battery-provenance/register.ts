@@ -5,7 +5,7 @@
  *   bidi.battery/carbon-intensity   (gCO2/kWh)
  *   bidi.battery/renewable-fraction (%)
  *   bidi.battery/price              (c/kWh)  — ACTUAL (out-of-pocket) cost basis
- *   bidi.battery/price-opportunity  (c/kWh)  — ADDITIONAL opportunity component (forgone feed-in, ≥ 0)
+ *   bidi.battery/price-opportunity  (c/kWh)  — forgone export revenue component (Qf/E, ≥ 0)
  *   bidi.battery/stored-energy      (kWh)    — usable stored energy (E); the totals the Contents card
  *                                              shows are `intensity × stored-energy`, reconstructed exactly.
  * Their existence is what enables the recompute (lib/db/planetscale/battery-provenance-pg.ts). The system

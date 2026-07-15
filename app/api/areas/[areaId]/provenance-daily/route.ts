@@ -175,7 +175,7 @@ export async function GET(
     fields.foldRenewableKwh.push(env ? env.state.renewableKwh : null);
     fields.foldCarbonG.push(env ? env.state.carbonG : null);
     fields.foldCostC.push(env ? env.state.costC : null);
-    fields.foldCostOppC.push(env ? env.state.costOppC : null);
+    fields.foldForgoneC.push(env ? env.state.forgoneC : null);
     firstIntervalEnd.push(row.firstIntervalEnd?.toISOString() ?? null);
     version.push(row.version);
     updatedAt.push(row.updatedAt?.toISOString() ?? null);

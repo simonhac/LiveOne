@@ -37,7 +37,7 @@ export type FoldDerivedKey =
   | "foldRenewableKwh"
   | "foldCarbonG"
   | "foldCostC"
-  | "foldCostOppC";
+  | "foldForgoneC";
 
 /** Every key of the API's `fields` map. */
 export type ProvenanceFieldKey = PlottableRowKey | FoldDerivedKey;
@@ -255,12 +255,12 @@ export const FIELD_META = {
     description:
       "ACTUAL (out-of-pocket) cost basis Qm of the store at day start (cents, signed — solar charge is booked at 0). The vended battery price is Qm/E.",
   },
-  foldCostOppC: {
-    label: "Opp cost Qm",
+  foldForgoneC: {
+    label: "Forgone revenue Qf",
     unit: "c",
     decimals: 1,
     description:
-      "OPPORTUNITY cost basis of the store at day start (cents, signed — solar priced at the forgone feed-in). The vended opportunity price is Qm(opp)/E.",
+      "Forgone export revenue held in the store at day start (cents): what the solar charged into the battery would have earned as feed-in. The vended forgone component is Qf/E.",
   },
 } as const satisfies Record<ProvenanceFieldKey, ProvenanceFieldMeta>;
 
@@ -292,7 +292,7 @@ export interface ProvenanceSeriesDef {
   unit: string;
   axis: "y" | "y1";
   color: string;
-  /** Chart.js borderDash. Probe overlays + opportunity variants are dashed. */
+  /** Chart.js borderDash. Probe overlays (e.g. the forgone-revenue variant of Cost) are dashed. */
   dash?: number[];
   /** Render as a stepped line (applied params that change once per day). */
   stepped?: boolean;
@@ -517,16 +517,16 @@ export const PROVENANCE_CHARTS: ProvenanceChartDef[] = [
         value: foldRatio("foldCostC"),
       },
       {
-        id: "foldCostOppIntensity",
-        label: "Opp. cost",
+        id: "foldForgoneIntensity",
+        label: "Forgone revenue",
         unit: "c/kWh",
         axis: "y1",
         color: SERIES_PALETTE.blue,
         dash: PROBE_DASH,
         decimals: 1,
         description:
-          "Blended OPPORTUNITY price of the store at day start: Qm(opp)/E (c/kWh), with solar priced at the forgone feed-in rather than 0 — the value given up by storing instead of exporting. Null when the store is empty.",
-        value: foldRatio("foldCostOppC"),
+          "Forgone export revenue per stored kWh at day start: Qf/E (c/kWh) — the additional value over the actual price that vending gives up because the stored solar could have been exported. Null when the store is empty.",
+        value: foldRatio("foldForgoneC"),
       },
     ],
   },

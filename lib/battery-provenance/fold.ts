@@ -88,8 +88,8 @@ export interface FoldInterval {
   solarCost: number;
   /**
    * OPPORTUNITY cost assigned to SOLAR charge (c/kWh): typically max(0, feed-in) — the export revenue
-   * forgone by charging from solar instead of exporting. Feeds a PARALLEL `costOppC` accumulator so the
-   * store carries BOTH bases at once. Undefined → falls back to `solarCost` (opportunity == actual).
+   * forgone by charging from solar instead of exporting. The EXCESS over `solarCost` feeds the
+   * `forgoneC` delta accumulator. Undefined → falls back to `solarCost` (no forgone contribution).
    */
   solarCostOpp?: number;
   /** Battery SoC (%) — used to detect the reserve floor AND (with `capacityKwh`) to anchor `E`. null = unknown. */
@@ -116,7 +116,6 @@ export interface FoldInterval {
   otherEmissionsIntensity?: number | null; // gCO2/kWh
   otherRenewableFraction?: number | null; // 0..1
   otherPrice?: number | null; // c/kWh (actual)
-  otherPriceOpp?: number | null; // c/kWh (opportunity; defaults to otherPrice)
   /**
    * CHARGE-side efficiency η_c (0 < η_c ≤ 1) in effect this interval — the three-term loss model's
    * replacement for the round-trip `efficiency` at the charge seam (see module header + `losses.ts`).
@@ -179,8 +178,16 @@ export interface FoldState {
   renewableKwh: number;
   /** Qm — ACTUAL (out-of-pocket) cost basis of the store (cents, signed). */
   costC: number;
-  /** Qm(opp) — OPPORTUNITY cost basis of the store (cents, signed); solar priced at forgone feed-in. */
-  costOppC: number;
+  /**
+   * Qf — forgone export revenue in the store (cents): the ADDITIONAL amount over the actual basis that
+   * charging from solar gave up vs exporting. An independent delta accumulator (not a second full
+   * basis); only solar charge contributes (`solarCostOpp − solarCost`), everything else scales it in
+   * lockstep with `costC`. The full opportunity basis, if ever wanted, is `costC + forgoneC`. It is
+   * ≥ 0 given the producer invariant `solarCostOpp ≥ solarCost` (compute.ts floors the feed-in at 0
+   * with solarCost≡0); the fold itself neither types nor clamps that, so a caller that priced solar's
+   * actual cost above its forgone rate could drive it negative.
+   */
+  forgoneC: number;
   /** E_est — portion of the stored energy whose provenance was estimated/provisional (kWh). */
   estimatedKwh: number;
   /** Floor/backstop was hit; the accumulators reset at the next charge. */
@@ -207,13 +214,13 @@ export interface FoldState {
   roundtripLossKwh: number;
   roundtripLossG: number;
   roundtripLossC: number;
-  roundtripLossOppC: number;
+  roundtripLossForgoneC: number;
   roundtripLossRenewKwh: number;
   /** UNATTRIBUTED loss — residual Q discarded at a forced (non-empty) reset (drift / η error). */
   unattribLossKwh: number;
   unattribLossG: number;
   unattribLossC: number;
-  unattribLossOppC: number;
+  unattribLossForgoneC: number;
   unattribLossRenewKwh: number;
   /**
    * IDLE/standby loss — the constant self-discharge drain (three-term model), removed from the store
@@ -223,7 +230,7 @@ export interface FoldState {
   idleLossKwh: number;
   idleLossG: number;
   idleLossC: number;
-  idleLossOppC: number;
+  idleLossForgoneC: number;
   idleLossRenewKwh: number;
   /**
    * SoC-SYNC correction — signed energy/carbon/etc. the SoC overlay injected(+)/removed(−) to pin `E`
@@ -235,7 +242,7 @@ export interface FoldState {
   syncG: number;
   syncRenewKwh: number;
   syncC: number;
-  syncOppC: number;
+  syncForgoneC: number;
   /** Count of intervals a sync correction was applied (diagnostic). */
   syncEvents: number;
   /** Count of BMS-recalibration snap events (one-step re-anchors; see `recalSnapKwh`). */
@@ -261,8 +268,8 @@ export interface FoldStep {
   batteryRenewableFraction: number | null;
   /** Vended blend: Qm/E (c/kWh) — ACTUAL (out-of-pocket) cost basis. */
   batteryPrice: number | null;
-  /** Vended blend: Qm(opp)/E (c/kWh) — OPPORTUNITY cost basis (solar @ forgone feed-in). */
-  batteryPriceOpportunity: number | null;
+  /** Vended forgone-revenue component: Qf/E (c/kWh) — what the written `price-opportunity` point carries. */
+  batteryPriceForgone: number | null;
   /** E after this interval (kWh). */
   storedKwh: number;
   /** Energy actually vended this interval (min(discharge, E), kWh). */
@@ -286,7 +293,7 @@ export const INITIAL_FOLD_STATE: FoldState = Object.freeze({
   carbonG: 0,
   renewableKwh: 0,
   costC: 0,
-  costOppC: 0,
+  forgoneC: 0,
   estimatedKwh: 0,
   pendingReset: false,
   pendingTrigger: null,
@@ -300,23 +307,23 @@ export const INITIAL_FOLD_STATE: FoldState = Object.freeze({
   roundtripLossKwh: 0,
   roundtripLossG: 0,
   roundtripLossC: 0,
-  roundtripLossOppC: 0,
+  roundtripLossForgoneC: 0,
   roundtripLossRenewKwh: 0,
   unattribLossKwh: 0,
   unattribLossG: 0,
   unattribLossC: 0,
-  unattribLossOppC: 0,
+  unattribLossForgoneC: 0,
   unattribLossRenewKwh: 0,
   idleLossKwh: 0,
   idleLossG: 0,
   idleLossC: 0,
-  idleLossOppC: 0,
+  idleLossForgoneC: 0,
   idleLossRenewKwh: 0,
   syncKwh: 0,
   syncG: 0,
   syncRenewKwh: 0,
   syncC: 0,
-  syncOppC: 0,
+  syncForgoneC: 0,
   syncEvents: 0,
   recalEvents: 0,
   resetsEmpty: 0,
@@ -360,7 +367,7 @@ export function foldStep(
   const iC = s.storedKwh > 0 ? s.carbonG / s.storedKwh : null;
   const iR = s.storedKwh > 0 ? s.renewableKwh / s.storedKwh : null;
   const iM = s.storedKwh > 0 ? s.costC / s.storedKwh : null;
-  const iMOpp = s.storedKwh > 0 ? s.costOppC / s.storedKwh : null;
+  const iF = s.storedKwh > 0 ? s.forgoneC / s.storedKwh : null;
   const estFrac = s.storedKwh > 0 ? s.estimatedKwh / s.storedKwh : 0;
   const dEff = Math.max(0, Math.min(iv.dischargeKwh, s.storedKwh));
   if (s.storedKwh > 0 && dEff > 0) {
@@ -369,7 +376,7 @@ export function foldStep(
     s.carbonG -= s.carbonG * frac;
     s.renewableKwh -= s.renewableKwh * frac;
     s.costC -= s.costC * frac;
-    s.costOppC -= s.costOppC * frac;
+    s.forgoneC -= s.forgoneC * frac;
     s.estimatedKwh -= s.estimatedKwh * frac;
   }
   s.totalDischargeKwh += dEff;
@@ -378,7 +385,7 @@ export function foldStep(
     batteryEmissionsIntensity: iC,
     batteryRenewableFraction: iR,
     batteryPrice: iM,
-    batteryPriceOpportunity: iMOpp,
+    batteryPriceForgone: iF,
     storedKwh: s.storedKwh,
     dischargedKwh: dEff,
     resetHere: false,
@@ -394,13 +401,13 @@ export function foldStep(
     s.unattribLossKwh += s.storedKwh;
     s.unattribLossG += s.carbonG;
     s.unattribLossC += s.costC;
-    s.unattribLossOppC += s.costOppC;
+    s.unattribLossForgoneC += s.forgoneC;
     s.unattribLossRenewKwh += s.renewableKwh;
     s.storedKwh = 0;
     s.carbonG = 0;
     s.renewableKwh = 0;
     s.costC = 0;
-    s.costOppC = 0;
+    s.forgoneC = 0;
     s.estimatedKwh = 0;
     s.segmentIntervals = 0;
     s.segmentPeakKwh = 0;
@@ -434,11 +441,11 @@ export function foldStep(
       s.syncG += s.carbonG * (scale - 1);
       s.syncRenewKwh += s.renewableKwh * (scale - 1);
       s.syncC += s.costC * (scale - 1);
-      s.syncOppC += s.costOppC * (scale - 1);
+      s.syncForgoneC += s.forgoneC * (scale - 1);
       s.carbonG *= scale;
       s.renewableKwh *= scale;
       s.costC *= scale;
-      s.costOppC *= scale;
+      s.forgoneC *= scale;
       if (delta < 0) s.estimatedKwh *= scale;
       else s.estimatedKwh += delta; // injected (up) energy is estimated provenance
       s.storedKwh += delta;
@@ -447,7 +454,6 @@ export function foldStep(
       const fbEI = iv.otherEmissionsIntensity ?? null;
       const fbR = iv.otherRenewableFraction ?? null;
       const fbM = iv.otherPrice ?? null;
-      const fbMo = iv.otherPriceOpp ?? fbM;
       s.storedKwh += delta;
       if (fbEI !== null) {
         s.carbonG += delta * fbEI;
@@ -461,10 +467,7 @@ export function foldStep(
         s.costC += delta * fbM;
         s.syncC += delta * fbM;
       }
-      if (fbMo !== null) {
-        s.costOppC += delta * fbMo;
-        s.syncOppC += delta * fbMo;
-      }
+      // No forgone contribution: seeded energy wasn't stored solar, so nothing was given up.
       s.estimatedKwh += delta;
     }
     s.syncKwh += delta;
@@ -502,11 +505,9 @@ export function foldStep(
     const oEI = iv.otherEmissionsIntensity ?? null;
     const oR = iv.otherRenewableFraction ?? null;
     const oP = iv.otherPrice ?? null;
-    const oPo = iv.otherPriceOpp ?? oP;
     const otherC = otherCharge > 0 && oEI !== null ? otherCharge * oEI : 0;
     const otherRn = otherCharge > 0 && oR !== null ? otherCharge * oR : 0;
     const otherM = otherCharge > 0 && oP !== null ? otherCharge * oP : 0;
-    const otherMo = otherCharge > 0 && oPo !== null ? otherCharge * oPo : 0;
 
     const addC =
       (iv.gridChargeKwh > 0 && iv.gridEmissionsIntensity !== null
@@ -518,14 +519,14 @@ export function foldStep(
         ? iv.gridChargeKwh * iv.gridRenewableFraction
         : 0) +
       otherRn;
-    // Grid cost is shared by both bases; solar differs (actual @ solarCost, opportunity @ solarCostOpp).
+    // Only solar contributes to the forgone delta (grid/other cost the same on either basis).
     const gridM =
       iv.gridChargeKwh > 0 && iv.gridPrice !== null
         ? iv.gridChargeKwh * iv.gridPrice
         : 0;
     const solarCostOpp = iv.solarCostOpp ?? iv.solarCost;
     const addM = iv.solarChargeKwh * iv.solarCost + gridM + otherM;
-    const addMOpp = iv.solarChargeKwh * solarCostOpp + gridM + otherMo;
+    const addF = iv.solarChargeKwh * (solarCostOpp - iv.solarCost);
 
     // Emissions & cost are INTENSITIES (per kWh): the "loss priced into delivered" scheme adds the
     // FULL footprint so delivered kWh carry the round-trip loss (Qc/E, Qm/E inflate by 1/η). Renewable
@@ -534,12 +535,12 @@ export function foldStep(
     s.carbonG += addC;
     s.renewableKwh += eta * addR;
     s.costC += addM;
-    s.costOppC += addMOpp;
+    s.forgoneC += addF;
 
     s.roundtripLossKwh += (1 - eta) * charge;
     s.roundtripLossG += (1 - eta) * addC;
     s.roundtripLossC += (1 - eta) * addM;
-    s.roundtripLossOppC += (1 - eta) * addMOpp;
+    s.roundtripLossForgoneC += (1 - eta) * addF;
     s.roundtripLossRenewKwh += (1 - eta) * addR;
 
     const gridUnknown =
@@ -562,12 +563,12 @@ export function foldStep(
     s.idleLossG += s.carbonG * frac;
     s.idleLossRenewKwh += s.renewableKwh * frac;
     s.idleLossC += s.costC * frac;
-    s.idleLossOppC += s.costOppC * frac;
+    s.idleLossForgoneC += s.forgoneC * frac;
     s.storedKwh -= idle;
     s.carbonG *= 1 - frac;
     s.renewableKwh *= 1 - frac;
     s.costC *= 1 - frac;
-    s.costOppC *= 1 - frac;
+    s.forgoneC *= 1 - frac;
     s.estimatedKwh *= 1 - frac;
   }
 
