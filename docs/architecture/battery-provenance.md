@@ -1,7 +1,7 @@
 # Battery energy provenance — metric-attributed energy flows
 
 > **Status:** engine + data core LIVE on `main` (PR #160), validated on `liveone-dev`. A second wave —
-> reproducible learned η (a persisted `round-trip-efficiency` point), off-grid **generator** support, and the
+> reproducible learned params (persisted per-day in `battery_provenance_daily`), off-grid **generator** support, and the
 > reconcile cadence/watermark + reserve-floor caching — is built + dev-validated, pending deploy. Prod
 > (`sydney`) cutover: see [Operations](#operations). Companion to
 > [energy-flow-matrix.md](energy-flow-matrix.md): provenance is the **metric legs** of that same flow.
@@ -62,32 +62,49 @@ kWh), `Qm` (cost). Intensities are always derived (`Qc/E`, …), never stored.
   the loads it serves) and `E` reaches 0 at the physical bottom-out. The `(1−η)` overhead is tallied in the
   **loss buckets** (kWh / $ / gCO₂) as a decomposition. η is a per-interval **input** to the fold — learned
   once in the shell and read back, never re-learned per window (see
-  [Learned η](#learned-η-learn-in-shell--read-in-fold)). **Renewable is the exception**: it is a bounded
+  [The learn](#the-learn-learn-in-shell--read-in-fold--battery_provenance_daily)). **Renewable is the exception**: it is a bounded
   _proportion_ (loss-invariant), so renewable content scales with `E` by η — keeping `Qr/E ∈ [0,1]`; only the
   unbounded intensities inflate by 1/η.
 - **Conservation invariant** (property-tested): for every metric, `Σ charged = Σ vended to loads +
 Σ unattributed + stored`. Holds to 0.00 % over 81k real intervals.
 
-## Learned η (learn-in-shell / read-in-fold)
+## The learn (learn-in-shell / read-in-fold) + `battery_provenance_daily`
 
-η is learned from raw Σout/Σin **once, over a stable window — never re-learned per recompute window**. That
-is what keeps the blend **reproducible**: if the fold re-learned η from its own (bounded) window, the same
-day would get a different η depending on which cron last touched it, breaking `fold(complete) ==
-fold(partial) + heal` (repair-convergence). So the learning is externalised:
+All four learned params — **η** (round-trip), **C** (usable capacity), **η_c + idle** (the three-term loss
+model) — are learned **once, over a stable window (fixed anchor → now) — never re-learned per recompute
+window**. That is what keeps the blend **reproducible**: if the fold re-learned them from its own
+(bounded) window, the same day would get different params depending on which cron last touched it,
+breaking `fold(complete) == fold(partial) + heal` (repair-convergence).
 
-- `lib/battery-provenance/eta.ts` — a pure **causal daily-EWMA** estimator (`learnEwmaEta`): per local day
-  `η_d = Σdischarge_d / Σcharge_d` (clamped to a physical band, thin days ignored), smoothed with a causal
-  EWMA. Fold-independent (raw throughput → η → fold; no circularity).
-- The **daily heal** learns η from a FIXED anchor with a FIXED datasheet seed (`learnAndPersistEta`) and
-  persists it as a **4th derived helper point** `bidi.battery/round-trip-efficiency` (per-local-day step;
-  stored as %; `agg_5m` + KV). Because the anchor + seed are fixed, η(day D) is byte-identical on every run
-  and only the newest day updates.
-- The **loader** reads that point (forward-filled ≤ 48 h) into `inputs.etaSeries`; `computeBatteryProvenance`
-  stamps it per interval (`FoldInterval.efficiency`) and does NOT re-learn. Precedence: a numeric
-  `config.efficiency` (tests / manual pin) → persisted `etaSeries` (canonical) → an in-window learn (bootstrap
-  only, before the shell has run + the offline harness).
-- The persisted point doubles as the **degradation-trend** diagnostic (slow decline = ageing; a step = a
-  hardware/capacity change). Kinkora learns η ≈ 0.88–0.92.
+The estimators are pure + causal (`eta.ts` / `capacity.ts` — daily EWMAs; `losses.ts` — an
+expanding-window least-squares carrying 5 running sums; the pair applied to day D is learned from days
+< D only), and they consume only **per-local-day reductions** of the raw registers. So the learn is
+**incremental**, built on one table:
+
+- **`battery_provenance_daily`** (migration `0024`) — ONE row per (battery Area, local day), the single
+  canonical home for all daily battery-provenance state: the **learn inputs** (per-day Σcharge/Σdischarge,
+  SoC first/last/samples, the rail-gated capacity pair sums, the recal flag — computed once from `agg_5m`
+  by `daily.ts#reduceThroughputToDays`, with carry columns making each row a byte-exact resumable seam),
+  the **learned params** (η / C / η_c / idle applied-that-day, natural units — ratios, not %), and the
+  **fold checkpoint** (`fold_state`, next section).
+- `learnAllForHandle` (`lib/db/planetscale/battery-provenance-daily-pg.ts`) is THE learn (η → C → losses
+  ordering structurally enforced): incrementally maintain the input rows (append new days + re-reduce a
+  trailing 3 days + re-reduce from the earliest `agg_1d`-probe mismatch — late-data invalidation), run
+  the fits over the ~330 cached rows (microseconds), persist the params. A full-history activation /
+  backfill / reduce-version bump forces a from-scratch rebuild (ONE bounded `loadBatteryThroughput`
+  read — this is what keeps the recompute-provenance route's first batch inside its `maxDuration`).
+- The **loader** reads the param columns (each day's value anchored at the day's first `interval_end`,
+  forward-filled ≤ 48 h, with a 48 h lead-in) into `inputs.etaSeries` / `capacitySeries` /
+  `chargeEfficiencySeries` / `idleLossKwhPerDaySeries`; `computeBatteryProvenance` stamps them per
+  interval and does NOT re-learn. Precedence: a numeric `config.efficiency` (tests / manual pin) →
+  persisted series (canonical) → an in-window learn (bootstrap only + the offline harness).
+- The per-day param columns double as the **degradation-trend** diagnostic (slow decline = ageing; a
+  step = a hardware/capacity change). Kinkora learns η ≈ 0.88–0.92.
+- History: the params were previously four helper POINTS (`bidi.battery/round-trip-efficiency`,
+  `/usable-capacity`, `/charge-efficiency`, `/idle-loss`, ordinals 110-113, η/η_c stored ×100). The
+  legacy points/bindings/step-rows are deleted by `scripts/delete-battery-param-points.ts` — run ONLY
+  after `scripts/verify-daily-learn-equivalence.ts` passes against the same DB (the step rows are the
+  equivalence baseline).
 
 ## Off-grid sites + generator
 
@@ -129,14 +146,14 @@ pattern; see [home-assistant-comparison.md](home-assistant-comparison.md)):
   household data — NOT ownerless), `status = 'active'`, never polled (a no-op push adapter,
   `lib/vendors/helper/adapter.ts`, so the minutely poll loop skips it). Created lazily + idempotently by
   `ensureHelperDevice(areaId)` (`lib/areas/helper.ts`), added as an `area_devices` member.
-- It owns the 3 derived **blend points** (`bidi.battery/carbon-intensity` gCO₂/kWh, `/renewable-fraction` %,
-  `/price` c/kWh) **plus** `bidi.battery/round-trip-efficiency` (η — a device parameter, not a vended blend;
-  see [Learned η](#learned-η-learn-in-shell--read-in-fold)) — ordinary `point_info` rows (the HWS/run-tracking
-  derived-point pattern: written to their own `agg_5m` + KV latest; the 5m aggregator's `hasCurrent` guard
-  skips them). They are **bound into the Area** (`area_bindings`, under `role='battery'`) so they fan out to
-  the Area's KV latest and appear in its resolved point set — INERT to the compute/Sankey paths (the loader
-  reads only power/soc/rate/energy + η explicitly; the flow resolver is power-only), so there is no feedback
-  loop. **No schema change** for the helper.
+- It owns the 5 derived **blend points** (`bidi.battery/carbon-intensity` gCO₂/kWh, `/renewable-fraction` %,
+  `/price` + `/price-opportunity` c/kWh, `/stored-energy` kWh) — ordinary `point_info` rows (the
+  HWS/run-tracking derived-point pattern: written to their own `agg_5m` + KV latest; the 5m aggregator's
+  `hasCurrent` guard skips them). They are **bound into the Area** (`area_bindings`, under
+  `role='battery'`) so they fan out to the Area's KV latest and appear in its resolved point set — INERT
+  to the compute/Sankey paths (the loader reads only power/soc/rate/energy; the flow resolver is
+  power-only), so there is no feedback loop. **No schema change** for the helper. (The learned params
+  live in `battery_provenance_daily`, not on the helper — see the learn section above.)
 
 ## Storage
 
@@ -147,8 +164,9 @@ pattern; see [home-assistant-comparison.md](home-assistant-comparison.md)):
   the Area dashboard via the generic point stack. The **Battery Contents card** (`components/BatteryContentsCard.tsx`,
   selector `lib/battery/contents-latest.ts`) reads these: the absolute totals are DERIVED client-side —
   `intensity × stored-energy` reconstructs each total exactly (total carbon, actual/opportunity cost, export
-  value), nothing extra is stored. (`round-trip-efficiency` is a 6th point but written by the η shell, not
-  the blend loop.)
+  value), nothing extra is stored.
+- **Daily state** — `battery_provenance_daily` (migration `0024`): per (area, local-day) learn inputs +
+  learned params + the fold checkpoint. See the learn + checkpoint sections.
 - **Attribution rollup** — `point_readings_flow_attr_1d` (`lib/db/planetscale/schema.ts`; migration
   `0023`). Keyed exactly like `point_readings_flow_1d` `(area_id, day, source_path, load_path)` and carrying
   **energy too**, plus `emissions_g` / `renewable_kwh` / `cost_c` (nullable — null = intensity unknown),
@@ -168,20 +186,53 @@ differ only at the edges: which window, and write-vs-print):
    per-source intensities → `computeFlowAccounting`.
 
 - **Prod driver** — `lib/db/planetscale/battery-provenance-pg.ts`: load + compute + WRITE the blend
-  `agg_5m` + KV, and (on the daily/range pass, `writeRollup`) the per-day rollup — the same accounting
-  sliced per local day. The load window is extended back by `WARMUP_MS` (7 d) so the fold anchors at a
-  reset before the target window; only the target window's rows are written (HWS-style warm-up).
+  `agg_5m` + KV (via the shared `writeBlendOutputs`), and (on the daily/range pass, `writeRollup`) the
+  per-day rollup — the same accounting sliced per local day. The load window is extended back by
+  `WARMUP_MS` (7 d) so the fold anchors at a reset before the target window; only the target window's
+  rows are written (HWS-style warm-up). The trusted long-window paths also persist **fold checkpoints**
+  (`writeCheckpoints`; next section).
 - **Orchestration** — `lib/battery-provenance/recompute.ts`: `listBatteryProvenanceHandles` (Areas with a
-  bound battery) + `reconcileTrailingWindow` (blend only) + `learnEtaForAllHandles` + `recomputeRange` (daily
-  heal / backfill, writes the rollup). The minutely cron (`app/api/cron/minutely`) runs the reconcile **once
-  per 5-min bucket** (inputs are 5-min-native, so a minutely re-fold is 5× waste) and a **watermark gate**
-  skips a handle whose blend output has caught up to its battery input (idle / dead feed → 2 `MAX` reads, not
-  a ~7.5-day re-fold). The **daily heal** (`lib/aggregation/daily-points.ts`, runs LAST — it reads the
-  `agg_5m` the passes above materialise) learns+persists η FIRST, then recomputes blend + rollup so it reads
-  the fresh η. Best-effort throughout.
+  bound battery) + `reconcileTrailingWindow` (blend only) + `learnForAllHandles` + `recomputeRange` (daily
+  heal / backfill, writes the rollup + checkpoints). The minutely cron (`app/api/cron/minutely`) runs the
+  reconcile **once per 5-min bucket** (inputs are 5-min-native, so a minutely re-fold is 5× waste); a
+  **watermark gate** skips a handle whose blend output has caught up to its battery input (idle / dead
+  feed → 2 `MAX` reads), and a live handle takes the **checkpoint-seeded O(today) path** (next section),
+  falling back to the 12h+7d warm-up re-fold on any guard failure. The **daily heal**
+  (`lib/aggregation/daily-points.ts`, runs LAST — it reads the `agg_5m` the passes above materialise)
+  runs THE learn FIRST, then recomputes blend + rollup so it reads fresh params. Best-effort throughout.
 - **Harness** — `scripts/replay-battery-provenance.ts`: read-only/dry-run over the dev mirror; loads once,
   sweeps configs (`--eta`, `--floor`, `--solar`, `--no-soc`); prints an inspector panel (blend series, per-
   load attribution, RTE, capacity, resets, loss buckets, a conservation self-audit). A pre-prod gate.
+
+## Fold checkpoints + the O(today) minutely reconcile
+
+`foldStep` is a pure function of (state, interval, config) and `foldBatteryProvenance` accepts an initial
+state (slice-and-chain identity is property-tested), so the fold's state can be **checkpointed** instead
+of re-derived from a 7-day warm-up every 5 minutes:
+
+- **Write** (`battery_provenance_daily.fold_state`, a `FoldCheckpointEnvelope` —
+  `lib/battery-provenance/checkpoint.ts`): the TRUSTED long-window paths only (the daily heal's
+  `recomputeRange` and the recompute-provenance API; NEVER the minutely path) snapshot the fold state at
+  each local midnight inside their write window (`snapshotAtMs` on `computeBatteryProvenance`). Gated on
+  **canonical inputs** (persisted param series — a fold on in-window learners is window-dependent) and a
+  pristine config. The envelope carries `anchorMs` (the END of the last folded interval ≤ midnight — a
+  gap straddling midnight anchors BEFORE it), plus the two window-global scalars a seeded re-fold must
+  replay: `reserveFloorPct` (the KV sliding floor at write time) and `etaFallback` (`etaUsed`).
+- **Read** (`reconcileBatteryProvenanceFromCheckpoint`): the minutely reconcile seeds the fold with the
+  freshest checkpoint (≤ 2 days back) and reads only (anchor → now] — **~1.5–5k agg_5m rows instead of
+  ~25k, bounded forever**. Re-folding from the anchor each tick (not from the last tick) self-heals late
+  INTRA-day data with zero invalidation bookkeeping. Guards, each falling back to the unchanged 12h+7d
+  warm-up path: envelope validation (strict finiteness — the jsonb NaN→null hazard), model version,
+  span ≤ 3.5 d, a pre-anchor `updated_at` staleness probe (catches backfills of yesterday), canonical
+  inputs, custom config. Writes blend + KV only (no rollup, no checkpoints).
+- **`BATPROV_MODEL_VERSION`** (`checkpoint.ts`): bump on ANY semantic change to the fold/compute/load/
+  learners → every stored checkpoint is silently distrusted → warm-up fallback (today's exact behaviour)
+  until the next 00:05 heal rewrites them. Never a regression; no operator action. An exhaustive
+  `satisfies`-spec validator makes a `FoldState` shape change a compile error, forcing the bump decision.
+- **Accepted trade-off**: pre-anchor revisions inside the old 12 h window (e.g. Amber finalising
+  yesterday evening) now heal at the nightly heal rather than within minutes; the knob, if it bites, is
+  seeding from day−1's checkpoint. The identity gate is
+  `lib/battery-provenance/__tests__/checkpoint-identity.test.ts`.
 
 ## Serving
 
@@ -210,7 +261,7 @@ differ only at the edges: which window, and write-vs-print):
 `ProvenanceConfig` (`lib/battery-provenance/types.ts`): `reserveFloorPct` (default = a long-window ~2nd-
 percentile of SoC, robust to non-cycling — computed once and **KV-cached ~25 h**, so the 90-day SoC read is
 off the hot path and stable within a day), `efficiency` (a number pin; otherwise η is the persisted
-`round-trip-efficiency` series, above), `maxSegmentIntervals` (drift backstop), `reanchorEpsKwh`. The
+per-day series from `battery_provenance_daily`, above), `maxSegmentIntervals` (drift backstop), `reanchorEpsKwh`. The
 off-grid `generatorSource` triple lives on the battery system's `config.batteryProvenance` (above).
 
 ## Opportunity cost & the export tariff
@@ -305,8 +356,8 @@ The PR-#168 caveat ("Daylesford's SoC rises ~39pp over 40 days while metered net
 reproduce against prod registers — full-history reconciliation closes under a three-term loss model
 (charge-side η_c ≈ 0.94, discharge ≈ 1:1, constant idle drain ≈ 0.47 kWh/day ≈ 20 W) plus rare,
 benign **BMS full-charge recalibration snaps** (SoC re-syncs several pp in one interval with no
-metered energy). The fold now implements exactly this: `losses.ts` learns (η_c, idle) as persisted
-helper points (`charge-efficiency`, `idle-loss`), the fold books an `idleLoss*` bucket and snaps E in
+metered energy). The fold now implements exactly this: `losses.ts` learns (η_c, idle), persisted per-day in
+`battery_provenance_daily` (`charge_eff`, `idle_loss_kwh_day`), the fold books an `idleLoss*` bucket and snaps E in
 one step on a recal (learner days excluded), and `monitor-observations` check 5c
 (`batprov_soc_meter_divergence`) turns the reconciliation into a standing per-day feed-fault detector.
 Findings + plan: `docs/plans/battery-soc-meter-reconciliation.md`.

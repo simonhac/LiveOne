@@ -169,6 +169,13 @@
       "when": 1783890527933,
       "tag": "0023_small_silver_sable",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1784073531128,
+      "tag": "0024_nasty_whistler",
+      "breakpoints": true
     }
   ]
 }

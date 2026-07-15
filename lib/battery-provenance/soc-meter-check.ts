@@ -15,13 +15,8 @@
  * Structure mirrors `lib/db/planetscale/flow-consistency.ts`: a pure reducer over per-day sums + a
  * self-contained loader, called by `monitor-observations`.
  */
-import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import {
-  areaBindings,
-  areas,
-  pointReadingsAgg5m,
-} from "@/lib/db/planetscale/schema";
+import { latestArmedDailyParams } from "@/lib/db/planetscale/battery-provenance-daily-pg";
 import { loadBatteryThroughput } from "./load";
 import { detectRecalDayIndexes } from "./losses";
 import { listBatteryProvenanceHandles } from "./recompute";
@@ -50,45 +45,6 @@ export interface SocMeterAreaResult {
   capacityKwh?: number;
   daysJudged: number;
   divergentDays: SocMeterDay[];
-}
-
-/** Latest persisted value of a battery-role param point (daily step) at or before `endMs`. */
-async function latestParam(
-  db: ReturnType<typeof requirePlanetscaleDb>,
-  areaId: string,
-  metricType: string,
-  endMs: number,
-): Promise<number | null> {
-  const [bind] = await db
-    .select({
-      sys: areaBindings.pointSystemId,
-      pid: areaBindings.pointId,
-    })
-    .from(areaBindings)
-    .where(
-      and(
-        eq(areaBindings.areaId, areaId),
-        eq(areaBindings.role, "battery"),
-        eq(areaBindings.metricType, metricType),
-      ),
-    )
-    .limit(1);
-  if (!bind) return null;
-  const [row] = await db
-    .select({ v: pointReadingsAgg5m.last })
-    .from(pointReadingsAgg5m)
-    .where(
-      and(
-        eq(pointReadingsAgg5m.systemId, bind.sys),
-        eq(pointReadingsAgg5m.pointId, bind.pid),
-        // Fresh within ~7d (the learners write daily): a long-dead param must not arm the check.
-        gte(pointReadingsAgg5m.intervalEnd, new Date(endMs - 7 * DAY_MS)),
-        lte(pointReadingsAgg5m.intervalEnd, new Date(endMs)),
-      ),
-    )
-    .orderBy(desc(pointReadingsAgg5m.intervalEnd))
-    .limit(1);
-  return row?.v ?? null;
 }
 
 /**
@@ -122,19 +78,19 @@ export async function checkSocMeterDivergence(
       continue;
     }
 
-    const etaCPct = await latestParam(
+    // Loss-model params from the daily-state table (fresh within ~7d — the learn writes daily; a
+    // long-dead learn must not arm the check). Values are natural ratios/kWh.
+    const armed = await latestArmedDailyParams(
       db,
       tp.areaId,
-      "charge-efficiency",
       nowMs,
+      tp.timezoneOffsetMin,
     );
-    const idle = await latestParam(db, tp.areaId, "idle-loss", nowMs);
-    const cap = await latestParam(db, tp.areaId, "usable-capacity", nowMs);
-    if (etaCPct == null || idle == null || cap == null || cap <= 0) {
+    if (armed === null || armed.capacityKwh <= 0) {
       out.push({ handle, status: "unarmed", daysJudged: 0, divergentDays: [] });
       continue;
     }
-    const etaC = etaCPct / 100;
+    const { etaC, idleKwhPerDay: idle, capacityKwh: cap } = armed;
 
     const offMs = tp.timezoneOffsetMin * 60_000;
     const dayOf = (t: number) => Math.floor((t + offMs - 1) / DAY_MS);

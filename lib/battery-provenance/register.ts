@@ -54,34 +54,23 @@ export const BLEND_POINTS: BlendPointSpec[] = [
 ];
 
 /**
- * The round-trip-efficiency point (η) — a battery DEVICE PARAMETER, not a vended blend. It lives on the
- * SAME `bidi.battery` stem + helper as the blend points, but is WRITTEN by the shell's η-learn pass
- * (learn-in-shell / read-in-fold), never by the blend-write loop. Stored as a percentage (η×100) for
- * readability; the loader divides by 100 to get the ratio the fold consumes.
+ * LEGACY param-point specs — the four learned battery DEVICE PARAMETERS (η / C / η_c / idle) used to be
+ * persisted as helper points under these metricTypes (ordinals 110-113). The learn now writes them into
+ * `battery_provenance_daily` (natural units — ratios, not the points' ×100 percent) and the loader /
+ * soc-meter monitor read the table, so these points are never created or written anymore. The specs are
+ * kept ONLY as the canonical record of the legacy surface — the cleanup script
+ * (scripts/delete-battery-param-points.ts) keys its deletions on these metricTypes.
  */
 export const EFFICIENCY_POINT: BlendPointSpec = {
   metricType: "round-trip-efficiency",
   metricUnit: "%",
   displayName: "Battery Round-trip Efficiency",
 };
-
-/**
- * The usable-capacity point (C) — a battery DEVICE PARAMETER (kWh across the full 0→100 % SoC span), like
- * η: learned by the shell's capacity pass (learn-in-shell / read-in-fold), never by the blend-write loop.
- * Read back by the loader to arm the SoC-anchor overlay reproducibly (a bounded re-fold reads the same C
- * as a full-history run). Absent ⇒ the overlay falls back to an in-window learned C (non-canonical bootstrap).
- */
 export const CAPACITY_POINT: BlendPointSpec = {
   metricType: "usable-capacity",
   metricUnit: "kWh",
   displayName: "Battery Usable Capacity",
 };
-
-/**
- * The three-term loss-model points (see `losses.ts`) — battery DEVICE PARAMETERS like η/C, learned by
- * the shell's losses pass (learn-in-shell / read-in-fold), never written by the blend loop.
- * charge-efficiency is stored as a percentage (η_c×100, like η); idle-loss as kWh/day.
- */
 export const CHARGE_EFFICIENCY_POINT: BlendPointSpec = {
   metricType: "charge-efficiency",
   metricUnit: "%",
@@ -247,232 +236,6 @@ export async function ensureHelperBindings(
   const inserted = await db
     .insert(areaBindings)
     .values(values)
-    .onConflictDoNothing()
-    .returning({ id: areaBindings.id });
-  return { created: inserted.length };
-}
-
-/**
- * Ensure the single round-trip-efficiency point (η) exists on `systemId` (the helper). Idempotent (keyed by
- * stem+metricType); allocates the next free 1-based index over ALL of the system's points. Returns its point
- * id (null on a dry run when it doesn't yet exist). Mirrors the blend-point registration but is separate so
- * the blend-write loop never touches η (η is written by the shell's learn pass).
- */
-export async function ensureEfficiencyPoint(
-  systemId: number,
-  apply: boolean,
-): Promise<number | null> {
-  const db = requirePlanetscaleDb();
-  const [existing] = await db
-    .select({ index: pointInfo.index })
-    .from(pointInfo)
-    .where(
-      and(
-        eq(pointInfo.systemId, systemId),
-        eq(pointInfo.logicalPathStem, BATTERY_STEM),
-        eq(pointInfo.metricType, EFFICIENCY_POINT.metricType),
-      ),
-    )
-    .limit(1);
-  if (existing) return existing.index;
-  if (!apply) return null;
-
-  const allIdx = await db
-    .select({ index: pointInfo.index })
-    .from(pointInfo)
-    .where(eq(pointInfo.systemId, systemId));
-  const nextIndex = Math.max(...allIdx.map((p) => p.index), 0) + 1;
-  const [row] = await db
-    .insert(pointInfo)
-    .values({
-      systemId,
-      index: nextIndex,
-      physicalPathTail: `derived/${BATTERY_STEM}/${EFFICIENCY_POINT.metricType}`,
-      logicalPathStem: BATTERY_STEM,
-      metricType: EFFICIENCY_POINT.metricType,
-      metricUnit: EFFICIENCY_POINT.metricUnit,
-      defaultName: EFFICIENCY_POINT.displayName,
-      displayName: EFFICIENCY_POINT.displayName,
-      subsystem: "battery",
-      transform: null,
-      active: true,
-      createdAt: new Date(),
-    })
-    .returning({ index: pointInfo.index });
-  return row.index;
-}
-
-/**
- * Bind the helper's η point into the Area so it fans out to KV latest, appears in the Area's point set, and
- * is discoverable by the loader (role='battery' metricType='round-trip-efficiency'). INERT to the compute/
- * Sankey paths — the loader reads it explicitly; the flow resolver is power-only, so there is no feedback
- * loop (η is derived from raw charge/discharge, independent of the blend fold). Idempotent.
- */
-export async function ensureEfficiencyBinding(
-  areaId: string,
-  helperSystemId: number,
-  pointId: number,
-): Promise<{ created: number }> {
-  const db = requirePlanetscaleDb();
-  const inserted = await db
-    .insert(areaBindings)
-    .values({
-      areaId,
-      role: "battery",
-      metricType: EFFICIENCY_POINT.metricType,
-      pointSystemId: helperSystemId,
-      pointId,
-      ordinal: 110,
-      transform: null,
-    })
-    .onConflictDoNothing()
-    .returning({ id: areaBindings.id });
-  return { created: inserted.length };
-}
-
-/**
- * Ensure the single usable-capacity point (C) exists on `systemId` (the helper). Idempotent (keyed by
- * stem+metricType). Twin of {@link ensureEfficiencyPoint} — written only by the shell's capacity-learn pass.
- */
-export async function ensureCapacityPoint(
-  systemId: number,
-  apply: boolean,
-): Promise<number | null> {
-  const db = requirePlanetscaleDb();
-  const [existing] = await db
-    .select({ index: pointInfo.index })
-    .from(pointInfo)
-    .where(
-      and(
-        eq(pointInfo.systemId, systemId),
-        eq(pointInfo.logicalPathStem, BATTERY_STEM),
-        eq(pointInfo.metricType, CAPACITY_POINT.metricType),
-      ),
-    )
-    .limit(1);
-  if (existing) return existing.index;
-  if (!apply) return null;
-
-  const allIdx = await db
-    .select({ index: pointInfo.index })
-    .from(pointInfo)
-    .where(eq(pointInfo.systemId, systemId));
-  const nextIndex = Math.max(...allIdx.map((p) => p.index), 0) + 1;
-  const [row] = await db
-    .insert(pointInfo)
-    .values({
-      systemId,
-      index: nextIndex,
-      physicalPathTail: `derived/${BATTERY_STEM}/${CAPACITY_POINT.metricType}`,
-      logicalPathStem: BATTERY_STEM,
-      metricType: CAPACITY_POINT.metricType,
-      metricUnit: CAPACITY_POINT.metricUnit,
-      defaultName: CAPACITY_POINT.displayName,
-      displayName: CAPACITY_POINT.displayName,
-      subsystem: "battery",
-      transform: null,
-      active: true,
-      createdAt: new Date(),
-    })
-    .returning({ index: pointInfo.index });
-  return row.index;
-}
-
-/** Bind the helper's C point into the Area (role='battery' metricType='usable-capacity'). Twin of
- *  {@link ensureEfficiencyBinding}; INERT to compute/Sankey (the loader reads it explicitly). Idempotent. */
-export async function ensureCapacityBinding(
-  areaId: string,
-  helperSystemId: number,
-  pointId: number,
-): Promise<{ created: number }> {
-  const db = requirePlanetscaleDb();
-  const inserted = await db
-    .insert(areaBindings)
-    .values({
-      areaId,
-      role: "battery",
-      metricType: CAPACITY_POINT.metricType,
-      pointSystemId: helperSystemId,
-      pointId,
-      ordinal: 111,
-      transform: null,
-    })
-    .onConflictDoNothing()
-    .returning({ id: areaBindings.id });
-  return { created: inserted.length };
-}
-
-/**
- * Generic device-parameter point ensure (the η/C pattern, parameterised) — used for the three-term
- * loss-model points. Idempotent (keyed by stem+metricType); allocates the next free 1-based index over
- * ALL of the system's points. Returns the point id (null on a dry run when it doesn't yet exist).
- */
-export async function ensureParamPoint(
-  systemId: number,
-  spec: BlendPointSpec,
-  apply: boolean,
-): Promise<number | null> {
-  const db = requirePlanetscaleDb();
-  const [existing] = await db
-    .select({ index: pointInfo.index })
-    .from(pointInfo)
-    .where(
-      and(
-        eq(pointInfo.systemId, systemId),
-        eq(pointInfo.logicalPathStem, BATTERY_STEM),
-        eq(pointInfo.metricType, spec.metricType),
-      ),
-    )
-    .limit(1);
-  if (existing) return existing.index;
-  if (!apply) return null;
-
-  const allIdx = await db
-    .select({ index: pointInfo.index })
-    .from(pointInfo)
-    .where(eq(pointInfo.systemId, systemId));
-  const nextIndex = Math.max(...allIdx.map((p) => p.index), 0) + 1;
-  const [row] = await db
-    .insert(pointInfo)
-    .values({
-      systemId,
-      index: nextIndex,
-      physicalPathTail: `derived/${BATTERY_STEM}/${spec.metricType}`,
-      logicalPathStem: BATTERY_STEM,
-      metricType: spec.metricType,
-      metricUnit: spec.metricUnit,
-      defaultName: spec.displayName,
-      displayName: spec.displayName,
-      subsystem: "battery",
-      transform: null,
-      active: true,
-      createdAt: new Date(),
-    })
-    .returning({ index: pointInfo.index });
-  return row.index;
-}
-
-/** Bind a device-parameter point into the Area (role='battery'). Twin of {@link ensureCapacityBinding};
- *  INERT to compute/Sankey (the loader reads these explicitly by metricType). Idempotent. */
-export async function ensureParamBinding(
-  areaId: string,
-  helperSystemId: number,
-  pointId: number,
-  spec: BlendPointSpec,
-  ordinal: number,
-): Promise<{ created: number }> {
-  const db = requirePlanetscaleDb();
-  const inserted = await db
-    .insert(areaBindings)
-    .values({
-      areaId,
-      role: "battery",
-      metricType: spec.metricType,
-      pointSystemId: helperSystemId,
-      pointId,
-      ordinal,
-      transform: null,
-    })
     .onConflictDoNothing()
     .returning({ id: areaBindings.id });
   return { created: inserted.length };

@@ -121,6 +121,106 @@ export function detectRecalDayIndexes(
   return out;
 }
 
+/** One local day's losses-fit inputs (a per-day reduction of the raw registers — see `daily.ts` — plus
+ *  the day's APPLIED capacity from the C fit). */
+export interface LossesDayInput {
+  dayIndex: number;
+  chargeKwh: number;
+  dischargeKwh: number;
+  socFirst: number | null;
+  socLast: number | null;
+  /** Count of SoC-covered 5-minute intervals in the day. */
+  socSamples: number;
+  /** The day's APPLIED usable capacity C (kWh) — converts ΔSoC to kWh. Null ⇒ day can't qualify. */
+  capacityKwh: number | null;
+  /** Day contains a BMS-recalibration event — excluded from the fit. */
+  recal: boolean;
+}
+
+/**
+ * The causal expanding-window least-squares over per-day reductions — THE single implementation of the
+ * losses fit ({@link learnLosses} delegates here; the cached-day learn calls it directly). The pair
+ * applied to day d is fitted from qualifying days STRICTLY before d. Deterministic.
+ */
+export function learnLossesFromDays(
+  days: LossesDayInput[],
+  opts: Omit<LossesLearnOptions, "recalThresholdKwh"> = {},
+): {
+  byDay: LossesDayDiag[];
+  summaryEtaC: number | null;
+  summaryIdleKwhPerDay: number | null;
+} {
+  const minDayCharge = opts.minDayChargeKwh ?? 1;
+  const minSocSamples = opts.minDaySocSamples ?? 200;
+  const minDays = opts.minQualifyingDays ?? 14;
+  const clampMin = opts.etaCClampMin ?? 0.8;
+  const clampMax = opts.etaCClampMax ?? 1.0;
+  const idleMax = opts.idleClampMaxKwhPerDay ?? 2;
+
+  // Causal expanding-window fit: the pair APPLIED to day d comes from qualifying days STRICTLY before d.
+  // Regress y′ = socKwh + discharge on charge (normal equations with intercept), clamp the slope to the
+  // physical band FIRST, then read the idle off the intercept (b = mean(y′) − η_c·mean(c); idle = −b) —
+  // so a clamp never leaks charge-proportional loss into a bogus slope, only into the bounded idle term.
+  let fN = 0;
+  let fSc = 0;
+  let fSy = 0;
+  let fScc = 0;
+  let fScy = 0;
+  const byDay: LossesDayDiag[] = [];
+  let lastApplied: { etaC: number; idleKwhPerDay: number } | null = null;
+  for (const d of days) {
+    let applied: { etaC: number; idleKwhPerDay: number } | null = null;
+    if (fN >= minDays) {
+      const varC = fScc - (fSc * fSc) / fN;
+      if (varC > 1e-9) {
+        const slope = (fScy - (fSc * fSy) / fN) / varC;
+        const etaC = clamp(slope, clampMin, clampMax);
+        const b = (fSy - etaC * fSc) / fN;
+        const idleKwhPerDay = clamp(-b, 0, idleMax);
+        applied = { etaC, idleKwhPerDay };
+      }
+    }
+    if (applied) lastApplied = applied;
+
+    const socKwh =
+      d.socFirst !== null &&
+      d.socLast !== null &&
+      d.socSamples >= minSocSamples &&
+      d.capacityKwh !== null &&
+      d.capacityKwh > 0
+        ? ((d.socLast - d.socFirst) / 100) * d.capacityKwh
+        : null;
+    const qualified =
+      socKwh !== null && d.chargeKwh >= minDayCharge && !d.recal;
+    if (qualified) {
+      const c = d.chargeKwh;
+      const y = socKwh! + d.dischargeKwh;
+      fN++;
+      fSc += c;
+      fSy += y;
+      fScc += c * c;
+      fScy += c * y;
+    }
+
+    byDay.push({
+      dayIndex: d.dayIndex,
+      chargeKwh: d.chargeKwh,
+      dischargeKwh: d.dischargeKwh,
+      socKwh,
+      recal: d.recal,
+      qualified,
+      etaC: applied?.etaC ?? null,
+      idleKwhPerDay: applied?.idleKwhPerDay ?? null,
+    });
+  }
+
+  return {
+    byDay,
+    summaryEtaC: lastApplied?.etaC ?? null,
+    summaryIdleKwhPerDay: lastApplied?.idleKwhPerDay ?? null,
+  };
+}
+
 /**
  * Learn (η_c, idleKwhPerDay) from per-interval charge/discharge energies + SoC + capacity. All inputs are
  * fold-independent (raw registers + the separately-learned C), so there is no circularity. Deterministic.
@@ -200,68 +300,37 @@ export function learnLosses(
     if (cur.capacity === null) cur.capacity = capAt(capacityKwh, i);
   }
 
-  // Causal expanding-window fit: the pair APPLIED to day d comes from qualifying days STRICTLY before d.
-  // Regress y′ = socKwh + discharge on charge (normal equations with intercept), clamp the slope to the
-  // physical band FIRST, then read the idle off the intercept (b = mean(y′) − η_c·mean(c); idle = −b) —
-  // so a clamp never leaks charge-proportional loss into a bogus slope, only into the bounded idle term.
-  let fN = 0;
-  let fSc = 0;
-  let fSy = 0;
-  let fScc = 0;
-  let fScy = 0;
+  // Delegate the causal expanding-window fit to the single day-level implementation.
+  const { byDay, summaryEtaC, summaryIdleKwhPerDay } = learnLossesFromDays(
+    days.map((d) => ({
+      dayIndex: d.dayIndex,
+      chargeKwh: d.chargeKwh,
+      dischargeKwh: d.dischargeKwh,
+      socFirst: d.socFirst,
+      socLast: d.socLast,
+      socSamples: d.socSamples,
+      capacityKwh: d.capacity,
+      recal: recalDays.has(d.dayIndex),
+    })),
+    {
+      minDayChargeKwh: minDayCharge,
+      minDaySocSamples: minSocSamples,
+      minQualifyingDays: minDays,
+      etaCClampMin: clampMin,
+      etaCClampMax: clampMax,
+      idleClampMaxKwhPerDay: idleMax,
+    },
+  );
   const appliedByDay = new Map<
     number,
     { etaC: number; idleKwhPerDay: number }
   >();
-  const byDay: LossesDayDiag[] = [];
-  let lastApplied: { etaC: number; idleKwhPerDay: number } | null = null;
-  for (const d of days) {
-    let applied: { etaC: number; idleKwhPerDay: number } | null = null;
-    if (fN >= minDays) {
-      const varC = fScc - (fSc * fSc) / fN;
-      if (varC > 1e-9) {
-        const slope = (fScy - (fSc * fSy) / fN) / varC;
-        const etaC = clamp(slope, clampMin, clampMax);
-        const b = (fSy - etaC * fSc) / fN;
-        const idleKwhPerDay = clamp(-b, 0, idleMax);
-        applied = { etaC, idleKwhPerDay };
-      }
-    }
-    if (applied) {
-      appliedByDay.set(d.dayIndex, applied);
-      lastApplied = applied;
-    }
-
-    const recal = recalDays.has(d.dayIndex);
-    const socKwh =
-      d.socFirst !== null &&
-      d.socLast !== null &&
-      d.socSamples >= minSocSamples &&
-      d.capacity !== null &&
-      d.capacity > 0
-        ? ((d.socLast - d.socFirst) / 100) * d.capacity
-        : null;
-    const qualified = socKwh !== null && d.chargeKwh >= minDayCharge && !recal;
-    if (qualified) {
-      const c = d.chargeKwh;
-      const y = socKwh! + d.dischargeKwh;
-      fN++;
-      fSc += c;
-      fSy += y;
-      fScc += c * c;
-      fScy += c * y;
-    }
-
-    byDay.push({
-      dayIndex: d.dayIndex,
-      chargeKwh: d.chargeKwh,
-      dischargeKwh: d.dischargeKwh,
-      socKwh,
-      recal,
-      qualified,
-      etaC: applied?.etaC ?? null,
-      idleKwhPerDay: applied?.idleKwhPerDay ?? null,
-    });
+  for (const d of byDay) {
+    if (d.etaC !== null && d.idleKwhPerDay !== null)
+      appliedByDay.set(d.dayIndex, {
+        etaC: d.etaC,
+        idleKwhPerDay: d.idleKwhPerDay,
+      });
   }
 
   const etaCSeries = new Array<number | null>(n).fill(null);
@@ -278,8 +347,8 @@ export function learnLosses(
     etaCSeries,
     idleKwhPerDaySeries,
     byDay,
-    summaryEtaC: lastApplied?.etaC ?? null,
-    summaryIdleKwhPerDay: lastApplied?.idleKwhPerDay ?? null,
+    summaryEtaC,
+    summaryIdleKwhPerDay,
     recalDayIndexes: [...recalDays].sort((a, b) => a - b),
   };
 }

@@ -14,10 +14,9 @@ import {
 } from "@/lib/db/planetscale/schema";
 import {
   recomputeBatteryProvenanceForWindowBestEffort,
-  learnAndPersistEta,
-  learnAndPersistCapacity,
-  learnAndPersistLosses,
+  reconcileFromCheckpointBestEffort,
 } from "@/lib/db/planetscale/battery-provenance-pg";
+import { learnAllForHandle } from "@/lib/db/planetscale/battery-provenance-daily-pg";
 import type { ProvenanceConfig } from "./types";
 
 /** Minutely trailing window. 12h (> HWS/run-tracking's 6h) because Amber revises hours later and devices
@@ -44,72 +43,29 @@ export async function listBatteryProvenanceHandles(): Promise<number[]> {
 }
 
 /**
- * Daily: (re)learn η(t) for every battery Area from the fixed anchor and persist each helper's round-trip-
- * efficiency point. MUST run BEFORE the blend/rollup recompute (recomputeRange) so that reads a fresh,
- * reproducible η via inputs.etaSeries instead of re-learning it per window. Best-effort per handle.
+ * Daily: run THE learn (η → C → losses, ordering enforced inside `learnAllForHandle`) for every battery
+ * Area — maintain the per-day input cache in `battery_provenance_daily` incrementally and persist the
+ * applied per-day params. MUST run BEFORE the blend/rollup recompute (recomputeRange) so that reads
+ * fresh, reproducible params via inputs.etaSeries / capacitySeries / chargeEfficiencySeries /
+ * idleLossKwhPerDaySeries instead of an in-window bootstrap. Best-effort per handle. `rebuild` forces a
+ * from-scratch reduce (full-history activation / deep backfill recovery).
  */
-export async function learnEtaForAllHandles(
+export async function learnForAllHandles(
   nowMs: number,
+  opts: { rebuild?: boolean } = {},
 ): Promise<{ handles: number }> {
   const db = requirePlanetscaleDb();
   const handles = await listBatteryProvenanceHandles();
   for (const handle of handles) {
     try {
-      const r = await learnAndPersistEta(db, handle, nowMs);
+      const r = await learnAllForHandle(db, handle, nowMs, opts);
       console.log(
-        `[BatProv:eta] handle=${handle} pointId=${r.pointId} days=${r.daysWritten}`,
+        `[BatProv:learn] handle=${handle} mode=${r.mode} reduced=${r.daysReduced}/${r.daysTotal} ` +
+          `etaC=${r.latest.etaC?.toFixed(3) ?? "-"} idle=${r.latest.idleKwhPerDay?.toFixed(2) ?? "-"} ` +
+          `C=${r.latest.capacityKwh?.toFixed(1) ?? "-"}`,
       );
     } catch (e) {
-      console.error(`[BatProv:eta] learn failed for handle=${handle}:`, e);
-    }
-  }
-  return { handles: handles.length };
-}
-
-/**
- * Daily: (re)learn usable capacity C(t) for every battery Area and persist each helper's usable-capacity
- * point. MUST run in the daily shell AFTER {@link learnEtaForAllHandles} (C's deliverable convention reads η)
- * and BEFORE the blend/rollup recompute, so that reads a fresh, reproducible C via inputs.capacitySeries
- * instead of an in-window bootstrap. Best-effort per handle; a no-op for SoC-blind batteries.
- */
-export async function learnCapacityForAllHandles(
-  nowMs: number,
-): Promise<{ handles: number }> {
-  const db = requirePlanetscaleDb();
-  const handles = await listBatteryProvenanceHandles();
-  for (const handle of handles) {
-    try {
-      const r = await learnAndPersistCapacity(db, handle, nowMs);
-      console.log(
-        `[BatProv:capacity] handle=${handle} pointId=${r.pointId} days=${r.daysWritten}`,
-      );
-    } catch (e) {
-      console.error(`[BatProv:capacity] learn failed for handle=${handle}:`, e);
-    }
-  }
-  return { handles: handles.length };
-}
-
-/**
- * Daily: (re)learn the three-term loss model (η_c + idle; see `losses.ts`) for every battery Area and
- * persist each helper's charge-efficiency + idle-loss points. MUST run AFTER
- * {@link learnCapacityForAllHandles} (the fit converts ΔSoC→kWh with the same learned C) and BEFORE the
- * blend/rollup recompute, so that reads reproducible values via inputs.chargeEfficiencySeries /
- * idleLossKwhPerDaySeries. Best-effort per handle; a no-op for SoC-blind batteries and during warm-up.
- */
-export async function learnLossesForAllHandles(
-  nowMs: number,
-): Promise<{ handles: number }> {
-  const db = requirePlanetscaleDb();
-  const handles = await listBatteryProvenanceHandles();
-  for (const handle of handles) {
-    try {
-      const r = await learnAndPersistLosses(db, handle, nowMs);
-      console.log(
-        `[BatProv:losses] handle=${handle} etaC=${r.etaCPointId} idle=${r.idlePointId} days=${r.daysWritten}`,
-      );
-    } catch (e) {
-      console.error(`[BatProv:losses] learn failed for handle=${handle}:`, e);
+      console.error(`[BatProv:learn] failed for handle=${handle}:`, e);
     }
   }
   return { handles: handles.length };
@@ -178,15 +134,36 @@ export async function reconcileTrailingWindow(
   nowMs: number,
   trailingMs: number = DEFAULT_TRAILING_MS,
   config?: ProvenanceConfig,
-): Promise<{ handles: number; skipped: number }> {
+): Promise<{
+  handles: number;
+  skipped: number;
+  seeded: number;
+  fellBack: number;
+}> {
   const db = requirePlanetscaleDb();
   const handles = await listBatteryProvenanceHandles();
   let skipped = 0;
+  let seeded = 0;
+  let fellBack = 0;
   for (const handle of handles) {
     if (await blendIsCurrent(db, handle)) {
       skipped++;
       continue;
     }
+    // O(today) checkpoint-seeded reconcile first; ANY guard failure falls back to the unchanged
+    // 12h + 7d-warm-up path (this path never writes checkpoints — only the trusted long windows do).
+    const r = await reconcileFromCheckpointBestEffort(handle, nowMs, {
+      config,
+    });
+    if (r?.seeded) {
+      seeded++;
+      continue;
+    }
+    if (r && !r.seeded)
+      console.log(
+        `[BatProv] handle=${handle} seeded-reconcile fallback: ${r.reason}`,
+      );
+    fellBack++;
     await recomputeBatteryProvenanceForWindowBestEffort(
       handle,
       nowMs - trailingMs,
@@ -194,7 +171,7 @@ export async function reconcileTrailingWindow(
       { updateLatest: true, config },
     );
   }
-  return { handles: handles.length, skipped };
+  return { handles: handles.length, skipped, seeded, fellBack };
 }
 
 export interface RangeChunkInfo {
@@ -218,6 +195,7 @@ export async function recomputeRange(
       await recomputeBatteryProvenanceForWindowBestEffort(handle, cs, ce, {
         updateLatest: ce >= endMs, // refresh KV latest only on the final chunk
         writeRollup: true, // the per-day attribution rollup is materialised by the range/daily pass
+        writeCheckpoints: true, // the range pass is a TRUSTED checkpoint writer (7d warm-up per chunk)
         config,
       });
       onChunk?.({ handle, chunkStartMs: cs, chunkEndMs: ce });

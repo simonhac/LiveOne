@@ -23,9 +23,7 @@ import { sql } from "drizzle-orm";
 import { planetscaleDb } from "../lib/db/planetscale";
 import {
   listBatteryProvenanceHandles,
-  learnEtaForAllHandles,
-  learnCapacityForAllHandles,
-  learnLossesForAllHandles,
+  learnForAllHandles,
   recomputeRange,
 } from "../lib/battery-provenance/recompute";
 
@@ -63,17 +61,11 @@ async function main() {
   }
 
   const started = Date.now();
-  // Learn + persist η FIRST (from the fixed anchor) so recomputeRange reads the canonical, reproducible η
-  // via inputs.etaSeries instead of an in-window fallback — otherwise the backfill isn't reproducible.
-  const eta = await learnEtaForAllHandles(nowMs);
-  console.log(`learned η for ${eta.handles} handles`);
-  // Then usable capacity C (after η — its deliverable slope reads η) so the SoC-anchor overlay reads a
-  // canonical, reproducible C via inputs.capacitySeries.
-  const cap = await learnCapacityForAllHandles(nowMs);
-  console.log(`learned capacity for ${cap.handles} handles`);
-  // Then the three-term loss model (η_c + idle; after C — the fit's ΔSoC→kWh uses the learned C).
-  const losses = await learnLossesForAllHandles(nowMs);
-  console.log(`learned losses for ${losses.handles} handles`);
+  // Run THE learn first (η → C → losses over the battery_provenance_daily cache; a backfill forces a
+  // from-scratch rebuild of the input cache) so recomputeRange reads canonical, reproducible params via
+  // inputs.*Series instead of an in-window fallback — otherwise the backfill isn't reproducible.
+  const learned = await learnForAllHandles(nowMs, { rebuild: true });
+  console.log(`learned params for ${learned.handles} handles (rebuild)`);
   await recomputeRange(startMs, nowMs, undefined, (info) => {
     console.log(
       `  handle ${info.handle} ${new Date(info.chunkStartMs).toISOString().slice(0, 10)}..${new Date(info.chunkEndMs).toISOString().slice(0, 10)}`,

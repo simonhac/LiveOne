@@ -17,7 +17,14 @@ import {
   learnLosses,
   type LossesDayDiag,
 } from "./losses";
-import { foldBatteryProvenance, FoldConfig, FoldInterval } from "./fold";
+import {
+  foldBatteryProvenance,
+  FoldConfig,
+  FoldInterval,
+  FoldState,
+  FoldStep,
+  INITIAL_FOLD_STATE,
+} from "./fold";
 import { resolveExportPriceSeries } from "./tariff";
 import type {
   ProvenanceConfig,
@@ -28,9 +35,26 @@ import type {
 const DEFAULT_MAX_SEGMENT_INTERVALS = 6 * 288; // 6-day staleness backstop
 const DEFAULT_REANCHOR_EPS_KWH = 0.3;
 
+/** Checkpoint-resume options (see `checkpoint.ts`). All optional — existing callers are unchanged. */
+export interface ProvenanceComputeOptions {
+  /** Seed the fold with this exact state instead of the empty INITIAL_FOLD_STATE. The CALLER is
+   *  responsible for canonical inputs (persisted param series) — seeding a window whose η/C/losses
+   *  would be learned in-window is not reproducible. */
+  initialState?: FoldState;
+  /** Capture the fold state at these epoch-ms instants: each snapshot is the state after the last
+   *  interval whose END ≤ t (skipped when no interval has ended yet). Implemented as slice-and-chain
+   *  over the fold — identical to the single pass (property-tested). */
+  snapshotAtMs?: number[];
+  /** Replay a checkpointed `etaUsed` as the fold's η fallback (used only where etaSeries[i] is null).
+   *  Unlike config.efficiency this does NOT pin a scalar for the window / disable the per-interval η —
+   *  it only makes the fallback window-independent so a seeded fold matches the long fold. */
+  efficiencyFallback?: number;
+}
+
 export function computeBatteryProvenance(
   inputs: ProvenanceInputs,
   config: ProvenanceConfig = {},
+  options: ProvenanceComputeOptions = {},
 ): ProvenanceResult {
   const { timeline, sources, loads } = inputs;
 
@@ -196,7 +220,7 @@ export function computeBatteryProvenance(
 
   const foldConfig: FoldConfig = {
     reserveFloorPct: reserveUsed,
-    efficiency: etaUsed,
+    efficiency: options.efficiencyFallback ?? etaUsed,
     maxSegmentIntervals:
       config.maxSegmentIntervals ?? DEFAULT_MAX_SEGMENT_INTERVALS,
     reanchorEpsKwh: config.reanchorEpsKwh ?? DEFAULT_REANCHOR_EPS_KWH,
@@ -237,7 +261,50 @@ export function computeBatteryProvenance(
     otherPrice: inputs.gridPrice[i],
     otherPriceOpp: inputs.gridPrice[i] ?? undefined,
   }));
-  const { steps, finalState } = foldBatteryProvenance(intervals, foldConfig);
+  // Run the fold — optionally seeded (checkpoint resume) and/or capturing state snapshots at requested
+  // instants via slice-and-chain (interval i ENDS at timeline[i+1]; a snapshot at t is the state after
+  // the last interval whose end ≤ t, and its anchor is that end). Chaining slices through finalState is
+  // identical to the single pass (fold.test.ts property).
+  const initialState = options.initialState ?? INITIAL_FOLD_STATE;
+  let steps: FoldStep[];
+  let finalState: FoldState;
+  let stateSnapshots: ProvenanceResult["stateSnapshots"];
+  if (options.snapshotAtMs && options.snapshotAtMs.length > 0) {
+    const snapTimes = [...options.snapshotAtMs].sort((a, b) => a - b);
+    stateSnapshots = [];
+    steps = [];
+    let state = initialState;
+    let from = 0; // next interval index to fold
+    for (const t of snapTimes) {
+      let cut = from;
+      while (cut < intervals.length && timeline[cut + 1] <= t) cut++;
+      if (cut > from) {
+        const r = foldBatteryProvenance(
+          intervals.slice(from, cut),
+          foldConfig,
+          state,
+        );
+        steps.push(...r.steps);
+        state = r.finalState;
+        from = cut;
+      }
+      if (cut === 0) continue; // t precedes the first interval end — nothing to snapshot
+      stateSnapshots.push({ requestedMs: t, anchorMs: timeline[cut], state });
+    }
+    const tail = foldBatteryProvenance(
+      intervals.slice(from),
+      foldConfig,
+      state,
+    );
+    steps.push(...tail.steps);
+    finalState = tail.finalState;
+  } else {
+    ({ steps, finalState } = foldBatteryProvenance(
+      intervals,
+      foldConfig,
+      initialState,
+    ));
+  }
 
   // Independent charged-carbon total (for the conservation self-audit): Σ (grid + otherFallback) charge · EI.
   // The self-audit closes as chargedG + syncG == vendedG + unattribLossG + carbonG (see fold.ts sync buckets).
@@ -311,5 +378,6 @@ export function computeBatteryProvenance(
     etaCUsed: lastNonNull(etaCSeries),
     idleKwhPerDayUsed: lastNonNull(idleSeries),
     lossesByDay,
+    stateSnapshots,
   };
 }

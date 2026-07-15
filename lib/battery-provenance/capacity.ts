@@ -59,6 +59,56 @@ export interface CapacityLearnResult {
 const clamp = (x: number, lo: number, hi: number) =>
   x < lo ? lo : x > hi ? hi : x;
 
+/** One local day's capacity-fit inputs: the RAIL-GATED pair sums (a per-day reduction — see `daily.ts`). */
+export interface CapacityDayInput {
+  dayIndex: number;
+  /** Σdischarge over trusted pairs (both SoCs non-null & < 98) — NOT the day's ungated discharge. */
+  capDischargeKwh: number;
+  /** Σ max(0, ΔSoC↓) over the same trusted pairs (pp). */
+  downSwingPct: number;
+  /** Day must not update the EWMA (BMS-recal day) — the applied C still covers it. */
+  excluded?: boolean;
+}
+
+/**
+ * The causal daily-EWMA fit over per-day pair sums — THE single implementation of the C fold
+ * ({@link learnEwmaCapacity} delegates here; the cached-day learn calls it directly). The C applied to
+ * a day is the value learned from PRIOR days only. Deterministic.
+ */
+export function learnCapacityFromDays(
+  days: CapacityDayInput[],
+  opts: Omit<CapacityLearnOptions, "excludeDays"> = {},
+): { byDay: CapacityDayDiag[] } {
+  const alpha = opts.alpha ?? 0.1;
+  const prior = opts.prior ?? 15;
+  const minDaySwing = opts.minDaySocSwingPct ?? 20;
+  const clampMin = opts.clampMin ?? 2;
+  const clampMax = opts.clampMax ?? 100;
+
+  // Causal daily EWMA: apply the C learned from PRIOR days to the current day, then fold today's raw C in.
+  let ewma = prior;
+  const byDay: CapacityDayDiag[] = [];
+  for (const d of days) {
+    const applied = ewma;
+    let rawC: number | null = null;
+    if (d.downSwingPct >= minDaySwing && d.downSwingPct > 0 && !d.excluded) {
+      rawC = clamp(
+        (100 * d.capDischargeKwh) / d.downSwingPct,
+        clampMin,
+        clampMax,
+      );
+      ewma = alpha * rawC + (1 - alpha) * ewma;
+    }
+    byDay.push({
+      dayIndex: d.dayIndex,
+      swingPct: d.downSwingPct,
+      rawC,
+      capacityKwh: applied,
+    });
+  }
+  return { byDay };
+}
+
 /**
  * Learn a per-interval usable capacity C(t) from the battery's discharge energy + SoC. `dischargeKwh[i]`
  * is the deliverable energy leaving the battery at interval `i`; `socPct[i]` the SoC (%). Fold-independent
@@ -105,29 +155,18 @@ export function learnEwmaCapacity(
     if (s0 > s1) cur.swing += s0 - s1; // pair discharge with the DOWN-swing only
   }
 
-  // Causal daily EWMA: apply the C learned from PRIOR days to the current day, then fold today's raw C in.
-  let ewma = prior;
-  const appliedByDay = new Map<number, number>();
-  const byDay: CapacityDayDiag[] = [];
-  for (const d of days) {
-    const applied = ewma;
-    appliedByDay.set(d.dayIndex, applied);
-    let rawC: number | null = null;
-    if (
-      d.swing >= minDaySwing &&
-      d.swing > 0 &&
-      !opts.excludeDays?.has(d.dayIndex)
-    ) {
-      rawC = clamp((100 * d.num) / d.swing, clampMin, clampMax);
-      ewma = alpha * rawC + (1 - alpha) * ewma;
-    }
-    byDay.push({
+  // Delegate the causal daily-EWMA fold to the single day-level implementation.
+  const { byDay } = learnCapacityFromDays(
+    days.map((d) => ({
       dayIndex: d.dayIndex,
-      swingPct: d.swing,
-      rawC,
-      capacityKwh: applied,
-    });
-  }
+      capDischargeKwh: d.num,
+      downSwingPct: d.swing,
+      excluded: opts.excludeDays?.has(d.dayIndex) ?? false,
+    })),
+    { alpha, prior, minDaySocSwingPct: minDaySwing, clampMin, clampMax },
+  );
+  const appliedByDay = new Map<number, number>();
+  for (const d of byDay) appliedByDay.set(d.dayIndex, d.capacityKwh);
 
   const capacitySeries = dayOf.map((d) => appliedByDay.get(d) ?? prior);
 
@@ -152,6 +191,21 @@ export function learnEwmaCapacity(
 const MIN_WINDOW_DOWN_SWING_PCT = 20;
 
 /**
+ * The seed math over ALREADY-SUMMED rail-gated pair totals: C₀ = 100·Σdischarge / Σ(down-swing), gated
+ * and clamped. The gated sums are additive over days, so summing cached per-day reductions
+ * (`daily.ts#BatteryDayReduction`) and calling this reproduces {@link measureWindowCapacity} exactly.
+ */
+export function measureWindowCapacityFromSums(
+  capDischargeKwh: number,
+  downSwingPct: number,
+  clampMin = 2,
+  clampMax = 100,
+): number | null {
+  if (downSwingPct < MIN_WINDOW_DOWN_SWING_PCT) return null;
+  return clamp((100 * capDischargeKwh) / downSwingPct, clampMin, clampMax);
+}
+
+/**
  * Window-global usable-capacity slope C₀ = 100·Σdischarge / Σ(down-swing) — the self-calibrating seed for
  * {@link learnEwmaCapacity} (mirrors how η seeds from the window-global Σout/Σin). CLAMPED to the physical
  * band and gated on a minimum down-swing, so a pathological bootstrap window can never arm the SoC overlay
@@ -172,6 +226,5 @@ export function measureWindowCapacity(
     num += dischargeKwh[i] ?? 0;
     if (s0 > s1) swing += s0 - s1;
   }
-  if (swing < MIN_WINDOW_DOWN_SWING_PCT) return null;
-  return clamp((100 * num) / swing, clampMin, clampMax);
+  return measureWindowCapacityFromSums(num, swing, clampMin, clampMax);
 }
