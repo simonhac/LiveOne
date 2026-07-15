@@ -20,6 +20,7 @@ import {
   areas,
   batteryProvenanceDaily,
   pointReadingsAgg1d,
+  systems,
   type BatteryProvenanceDailyRow,
 } from "@/lib/db/planetscale/schema";
 import {
@@ -45,6 +46,10 @@ import {
   measureWindowCapacityFromSums,
 } from "@/lib/battery-provenance/capacity";
 import { learnLossesFromDays } from "@/lib/battery-provenance/losses";
+import {
+  learnReserveFloorByDay,
+  DEFAULT_RESERVE_PCT,
+} from "@/lib/battery-provenance/reserve-floor";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
 
@@ -58,7 +63,7 @@ const CAPACITY_SEED = 15;
 /** Reduce-algorithm version. Bump when the reduction semantics change (daily.ts) — a mismatch on any
  *  cached row triggers a full input rebuild. Distinct from the CHECKPOINT model version, which lives
  *  inside fold_state.v. */
-export const BATTERY_DAILY_VERSION = 1;
+export const BATTERY_DAILY_VERSION = 2;
 /** Always re-reduce this many trailing local days (absorbs late-arriving data near the tip). */
 const TRAILING_REREDUCE_DAYS = 3;
 /** agg_1d probe: a cached day is dirty when its stored register baseline moved by more than this. */
@@ -77,6 +82,7 @@ interface DailyLearnRow extends BatteryDayReduction {
   capacityKwh: number | null;
   chargeEff: number | null;
   idleLossKwhDay: number | null;
+  reserveFloorPct: number | null;
 }
 
 function fromDbRow(r: BatteryProvenanceDailyRow): DailyLearnRow {
@@ -90,6 +96,7 @@ function fromDbRow(r: BatteryProvenanceDailyRow): DailyLearnRow {
     dischargeKwh: r.dischargeKwh,
     socFirst: r.socFirst,
     socLast: r.socLast,
+    socMin: r.socMin,
     socSamples: r.socSamples,
     capDischargeKwh: r.capDischargeKwh,
     downSwingPct: r.downSwingPct,
@@ -103,6 +110,7 @@ function fromDbRow(r: BatteryProvenanceDailyRow): DailyLearnRow {
     capacityKwh: r.capacityKwh,
     chargeEff: r.chargeEff,
     idleLossKwhDay: r.idleLossKwhDay,
+    reserveFloorPct: r.reserveFloorPct,
   };
 }
 
@@ -135,6 +143,7 @@ async function upsertDayRows(
     dischargeKwh: r.dischargeKwh,
     socFirst: r.socFirst,
     socLast: r.socLast,
+    socMin: r.socMin,
     socSamples: r.socSamples,
     capDischargeKwh: r.capDischargeKwh,
     downSwingPct: r.downSwingPct,
@@ -148,6 +157,7 @@ async function upsertDayRows(
     capacityKwh: r.capacityKwh,
     chargeEff: r.chargeEff,
     idleLossKwhDay: r.idleLossKwhDay,
+    reserveFloorPct: r.reserveFloorPct,
     version: BATTERY_DAILY_VERSION,
   }));
   const CHUNK = 1000;
@@ -164,6 +174,7 @@ async function upsertDayRows(
           dischargeKwh: sql`excluded.discharge_kwh`,
           socFirst: sql`excluded.soc_first`,
           socLast: sql`excluded.soc_last`,
+          socMin: sql`excluded.soc_min`,
           socSamples: sql`excluded.soc_samples`,
           capDischargeKwh: sql`excluded.cap_discharge_kwh`,
           downSwingPct: sql`excluded.down_swing_pct`,
@@ -177,6 +188,7 @@ async function upsertDayRows(
           capacityKwh: sql`excluded.capacity_kwh`,
           chargeEff: sql`excluded.charge_eff`,
           idleLossKwhDay: sql`excluded.idle_loss_kwh_day`,
+          reserveFloorPct: sql`excluded.reserve_floor_pct`,
           version: sql`excluded.version`,
           updatedAt: sql`now()`,
         },
@@ -319,8 +331,20 @@ export async function learnAllForHandle(
   const tz = area.tz;
 
   const bound = await boundPoints(db, area.id);
-  if (!bound.some((b) => b.role === "battery" && b.metric === "power"))
-    return { ...NO_DATA, areaId: area.id };
+  const batteryPowerBind = bound.find(
+    (b) => b.role === "battery" && b.metric === "power",
+  );
+  if (!batteryPowerBind) return { ...NO_DATA, areaId: area.id };
+  // Reserve-floor upper clamp: the battery's ASSUMED physical floor (config knob, default 10) — the
+  // prior for the unidentifiable case (a site that never discharges deep enough to reveal its floor).
+  const [batConfigSys] = await db
+    .select({ config: systems.config })
+    .from(systems)
+    .where(eq(systems.id, batteryPowerBind.systemId))
+    .limit(1);
+  const reserveFloorMaxPct =
+    batConfigSys?.config?.batteryProvenance?.reserveFloorMaxPct ??
+    DEFAULT_RESERVE_PCT;
   const chargeBind = bound.find(
     (b) => b.metric === "energy" && b.stem === "bidi.battery.charge",
   );
@@ -397,6 +421,7 @@ export async function learnAllForHandle(
     return fitAndPersist(db, area.id, prefix, [], sweepFromDay, nowDay, {
       mode: "incremental",
       soCBlind: prefix.every((r) => r.socSamples === 0),
+      reserveFloorMaxPct,
     });
   }
 
@@ -424,6 +449,7 @@ export async function learnAllForHandle(
       capacityKwh: null,
       chargeEff: null,
       idleLossKwhDay: null,
+      reserveFloorPct: null,
     };
   });
 
@@ -434,6 +460,7 @@ export async function learnAllForHandle(
   return fitAndPersist(db, area.id, prefix, reduced, sweepFromDay, nowDay, {
     mode: rebuild ? "rebuild" : "incremental",
     soCBlind: socBlind,
+    reserveFloorMaxPct,
   });
 }
 
@@ -445,7 +472,11 @@ async function fitAndPersist(
   reduced: DailyLearnRow[],
   sweepFromDay: number,
   nowDay: number,
-  info: { mode: "rebuild" | "incremental"; soCBlind: boolean },
+  info: {
+    mode: "rebuild" | "incremental";
+    soCBlind: boolean;
+    reserveFloorMaxPct: number;
+  },
 ): Promise<LearnAllResult> {
   const rows = [...prefix, ...reduced];
   if (rows.length === 0) return { ...NO_DATA, areaId, mode: info.mode };
@@ -495,11 +526,20 @@ async function fitAndPersist(
     lossByDay = losses.summaryEtaC === null ? null : losses.byDay;
   }
 
+  // Reserve floor — a per-day low quantile of the trailing SoC minima, clamped to the assumed physical
+  // band (see reserve-floor.ts). Learned from `socMin` only (not a fit; needs no SoC-blind guard — an
+  // all-null-minima history just returns the maxPct prior).
+  const floorByDay = learnReserveFloorByDay(
+    rows.map((r) => r.socMin),
+    info.reserveFloorMaxPct,
+  );
+
   for (let i = 0; i < rows.length; i++) {
     rows[i].eta = etaByDay[i].eta;
     rows[i].capacityKwh = capByDay ? capByDay[i].capacityKwh : null;
     rows[i].chargeEff = lossByDay ? lossByDay[i].etaC : null;
     rows[i].idleLossKwhDay = lossByDay ? lossByDay[i].idleKwhPerDay : null;
+    rows[i].reserveFloorPct = floorByDay[i];
   }
 
   await upsertDayRows(db, areaId, rows);

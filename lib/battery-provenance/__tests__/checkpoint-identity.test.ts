@@ -130,7 +130,11 @@ function scenario(
     gridPriceEstimated: filt(gridEmissionsEstimated),
     gridExportPrice: arr<number | null>(6),
     soc: filt(soc),
+    // estReservePct (scalar fallback) is deliberately DIFFERENT from the persisted floor series below,
+    // so the identity check also proves the seeded reconcile reads the per-day series (8) rather than
+    // replaying this scalar / the checkpoint envelope's reserveFloorPct (10).
     estReservePct: 10,
+    reserveFloorPctSeries: opts.socBlind ? undefined : arr<number | null>(8),
     // CANONICAL persisted param series (daily steps in prod; constants here — window-independent).
     etaSeries: opts.socBlind
       ? arr<number | null>(0.92)
@@ -173,6 +177,7 @@ function sliceInputsAt(
     capacitySeries: cut(inputs.capacitySeries),
     chargeEfficiencySeries: cut(inputs.chargeEfficiencySeries),
     idleLossKwhPerDaySeries: cut(inputs.idleLossKwhPerDaySeries),
+    reserveFloorPctSeries: cut(inputs.reserveFloorPctSeries),
   };
 }
 
@@ -204,11 +209,13 @@ function runIdentity(inputs: ProvenanceInputs) {
     );
     expect(env).not.toBeNull();
 
-    // Seeded recompute over the tail window.
+    // Seeded recompute over the tail window. Config is EMPTY — modelling the real reconcile, which no
+    // longer replays env.reserveFloorPct: the floor is a persisted per-day param read fresh from
+    // tailInputs.reserveFloorPctSeries (like C).
     const tailInputs = sliceInputsAt(inputs, env!.anchorMs);
     const seeded = computeBatteryProvenance(
       tailInputs,
-      { reserveFloorPct: env!.reserveFloorPct },
+      {},
       { initialState: env!.state, efficiencyFallback: env!.etaFallback },
     );
 
@@ -268,7 +275,7 @@ describe("checkpoint-seeded fold ≡ long fold tail (exact)", () => {
     const fullMutated = computeBatteryProvenance(mutated, {});
     const seeded = computeBatteryProvenance(
       sliceInputsAt(mutated, snap.anchorMs),
-      { reserveFloorPct: long.reserveUsed },
+      {},
       { initialState: snap.state, efficiencyFallback: long.etaUsed },
     );
     const anchorIdx = mutated.timeline.indexOf(snap.anchorMs);

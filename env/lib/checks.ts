@@ -197,33 +197,6 @@ export function checkVercelLink(): CheckResult {
 }
 
 // ---------------------------------------------------------------------------
-// Dev DB check
-// ---------------------------------------------------------------------------
-
-export function checkDevDb(): CheckResult {
-  const devDb = path.join(ROOT, "dev.db");
-  if (fs.existsSync(devDb)) {
-    if (isSymlink(devDb)) {
-      const realPath = fs.realpathSync(devDb);
-      return { status: "ok", message: `dev.db -> ${realPath}` };
-    }
-    return { status: "ok", message: "dev.db exists" };
-  }
-  return {
-    status: "fail",
-    message: "dev.db missing — run npm run db:push or npm run db:sync-prod",
-  };
-}
-
-function isSymlink(p: string): boolean {
-  try {
-    return fs.lstatSync(p).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Run all checks
 // ---------------------------------------------------------------------------
 
@@ -241,7 +214,6 @@ export function runAllChecks(): AllChecksResult {
 
   allResults.push(checkNodeModules());
   allResults.push(checkVercelLink());
-  allResults.push(checkDevDb());
 
   const hasFails = allResults.some((r) => r.status === "fail");
 

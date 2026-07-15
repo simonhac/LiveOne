@@ -539,6 +539,7 @@ export const batteryProvenanceDaily = pgTable(
     dischargeKwh: doublePrecision("discharge_kwh").notNull().default(0), // ungated Σ
     socFirst: doublePrecision("soc_first"), // first non-null FF SoC in day
     socLast: doublePrecision("soc_last"), // last non-null FF SoC in day
+    socMin: doublePrecision("soc_min"), // min non-null FF SoC in day (reserve-floor learn input)
     socSamples: integer("soc_samples").notNull().default(0), // non-null 5m intervals
     // Capacity-fit pair sums, RAIL-GATED (both pair SoCs non-null & <98) — distinct from the ungated
     // sums above; window seed = 100·Σcap_discharge/Σdown_swing is additive over rows.
@@ -561,6 +562,7 @@ export const batteryProvenanceDaily = pgTable(
     capacityKwh: doublePrecision("capacity_kwh"), // usable capacity C
     chargeEff: doublePrecision("charge_eff"), // η_c, ratio
     idleLossKwhDay: doublePrecision("idle_loss_kwh_day"),
+    reserveFloorPct: doublePrecision("reserve_floor_pct"), // APPLIED reserve floor %: learned SoC-minima quantile clamped to [5, config.reserveFloorMaxPct ?? 10] (the assumed physical floor); see reserve-floor.ts
 
     // Fold checkpoint at the START of this local day (FoldCheckpointEnvelope; Phase B writes it).
     foldState: jsonb("fold_state"),

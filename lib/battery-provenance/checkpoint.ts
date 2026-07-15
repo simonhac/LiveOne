@@ -10,9 +10,10 @@
  * `foldStep` is a pure function of (state, interval, config) and `foldBatteryProvenance` already
  * accepts an initial state (slice-and-chain identity is property-tested in fold.test.ts), so a seeded
  * fold reproduces the long fold's tail EXACTLY — provided the inputs are canonical (persisted params,
- * not in-window learners) and the two window-global config scalars are replayed from the envelope:
- *   • `reserveFloorPct` — the KV-cached sliding reserve floor in effect when the checkpoint was written;
- *   • `etaFallback`     — the throughput-weighted `etaUsed` summary (consumed only where etaSeries is null).
+ * not in-window learners). `etaFallback` (the throughput-weighted `etaUsed` summary, consumed only where
+ * etaSeries[i] is null) is replayed from the envelope. `reserveFloorPct` is now itself a persisted per-day
+ * param (reserveFloorPctSeries), read FRESH by the seeded reconcile like C — so the envelope's
+ * `reserveFloorPct` is retained only as the scalar fallback for an interval whose series entry is null.
  * `anchorMs` is the END of the last folded interval ≤ the midnight — the seeded load/write must start
  * THERE (not at the midnight) so a gap straddling midnight reproduces the straddling interval exactly.
  */
@@ -25,7 +26,7 @@ import { FoldState, ResetTrigger } from "./fold";
  * (FoldState / foldStep / constants), compute.ts input construction (flows, η/C/losses resolution,
  * tariff, fold-config defaults), load.ts series semantics, or the learners (a PR-#169-style change).
  */
-export const BATPROV_MODEL_VERSION = 1;
+export const BATPROV_MODEL_VERSION = 2;
 
 export interface FoldCheckpointEnvelope {
   /** == BATPROV_MODEL_VERSION at write time. */
@@ -34,7 +35,8 @@ export interface FoldCheckpointEnvelope {
   midnightMs: number;
   /** END of the last folded interval ≤ midnightMs — where a seeded load/fold/write starts. */
   anchorMs: number;
-  /** FoldConfig.reserveFloorPct in effect (result.reserveUsed — the KV floor at write time). */
+  /** Scalar reserve-floor fallback (result.reserveUsed — the latest persisted floor at write time); the
+   *  seeded reconcile reads the per-day floor series fresh, so this is only used where a series entry is null. */
   reserveFloorPct: number;
   /** result.etaUsed — the foldConfig.efficiency fallback (used only where etaSeries[i] is null). */
   etaFallback: number;

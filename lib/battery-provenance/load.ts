@@ -25,13 +25,12 @@ import {
   ClassifiedPoint,
 } from "@/lib/aggregation/flow-series";
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
-import { kv, kvKey } from "@/lib/kv";
 import type { AreaLocation } from "@/lib/areas/types";
 import type { ExportTariffConfig } from "@/lib/capabilities/config";
+import { DEFAULT_RESERVE_PCT } from "./reserve-floor";
 import type { ProvenanceInputs, ProvenanceWindow } from "./types";
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
-const DEFAULT_RESERVE_PCT = 10;
 
 type PgDb = NonNullable<typeof planetscaleDb>;
 
@@ -168,9 +167,6 @@ export interface LoadOptions {
   noSoc?: boolean;
   /** Ablation: ignore the persisted capacity point, forcing the in-window fallback (harness `--no-capacity`). */
   noCapacity?: boolean;
-  /** Skip the KV/90-day reserve-floor resolution (the checkpoint-seeded reconcile replays the floor
-   *  from its envelope via config.reserveFloorPct, so the ~1.5s cold read is pure waste there). */
-  skipReserveFloor?: boolean;
 }
 
 /**
@@ -244,50 +240,6 @@ export async function loadProvenanceInputs(
   const soc = opts.noSoc
     ? new Array<number | null>(timeline.length).fill(null)
     : forwardFill(timeline, socSeries, SOC_FILL_MS).value;
-
-  // Reserve floor = ~2nd percentile of SoC over a LONG (90d) window (robust to non-cycling). CACHED in KV
-  // with a ~25h TTL: the 90d read is ~1.5s, so we recompute it at most ~once/day and every other reconcile
-  // reads the cached scalar — off the hot path, and STABLE within a day (consistent reconcile-vs-heal).
-  // KV-unconfigured (dev) → get/set no-op to null → falls back to recomputing every call (current behaviour).
-  let estReservePct = DEFAULT_RESERVE_PCT;
-  if (socBind && !opts.noSoc && !opts.skipReserveFloor) {
-    const floorKey = kvKey(`batprov:reserve-floor:area:${area.id}`);
-    let cached: number | null = null;
-    try {
-      cached = await kv.get<number>(floorKey);
-    } catch {
-      cached = null;
-    }
-    if (cached != null) {
-      estReservePct = cached;
-    } else {
-      const longSoc = await readAgg5m(
-        db,
-        socBind.systemId,
-        socBind.pointId,
-        endMs - 90 * 24 * 3600 * 1000,
-        endMs,
-      );
-      const vals = longSoc
-        .map((s) => s.v)
-        .filter((v): v is number => v !== null)
-        .sort((a, b) => a - b);
-      // ~0.5th percentile − 2, clamped to the PHYSICAL band [5, DEFAULT_RESERVE_PCT]. The 2nd-percentile
-      // used previously tracked the GENERATOR'S comfort setpoint (~20% for a genset-backed off-grid site),
-      // not the battery's real floor; the operational min (0.5th pctile) is much lower and the physical
-      // reserve is ~5–10%. Anchoring "usable energy" here (not at the genset setpoint) stops the 13–20% band
-      // being wrongly treated as unusable reserve.
-      if (vals.length > 200) {
-        const p = vals[Math.floor(0.005 * vals.length)];
-        estReservePct = Math.min(DEFAULT_RESERVE_PCT, Math.max(5, p - 2));
-      }
-      try {
-        await kv.set(floorKey, estReservePct, { ex: 90_000 }); // ~25h
-      } catch {
-        /* KV not configured (dev) — recompute next call */
-      }
-    }
-  }
 
   // OE region emissions + renewables (from the Area's location).
   const region = nemRegionForLocation(
@@ -447,6 +399,7 @@ export async function loadProvenanceInputs(
       capacityKwh: batteryProvenanceDaily.capacityKwh,
       chargeEff: batteryProvenanceDaily.chargeEff,
       idleLossKwhDay: batteryProvenanceDaily.idleLossKwhDay,
+      reserveFloorPct: batteryProvenanceDaily.reserveFloorPct,
     })
     .from(batteryProvenanceDaily)
     .where(
@@ -478,6 +431,18 @@ export async function loadProvenanceInputs(
     : paramSeries((r) => r.capacityKwh);
   const chargeEfficiencySeries = paramSeries((r) => r.chargeEff);
   const idleLossKwhPerDaySeries = paramSeries((r) => r.idleLossKwhDay);
+  // Reserve floor: the persisted per-day APPLIED floor (learned in the daily shell; see reserve-floor.ts),
+  // read back as a per-interval series exactly like C. `estReservePct` is the latest value in the window —
+  // the scalar fallback for any interval whose series entry is null (warm-up / pre-activation) and for the
+  // checkpoint envelope. No SoC-blind guard needed: the learn stores the maxPct prior there.
+  const reserveFloorPctSeries = paramSeries((r) => r.reserveFloorPct);
+  const lastNonNull = (a: (number | null)[] | undefined): number | null => {
+    if (!a) return null;
+    for (let i = a.length - 1; i >= 0; i--) if (a[i] !== null) return a[i];
+    return null;
+  };
+  const estReservePct =
+    lastNonNull(reserveFloorPctSeries) ?? DEFAULT_RESERVE_PCT;
 
   const frac = (a: (number | null)[]) =>
     a.filter((v) => v !== null).length / Math.max(a.length, 1);
@@ -500,6 +465,7 @@ export async function loadProvenanceInputs(
     exportTariff,
     soc,
     estReservePct,
+    reserveFloorPctSeries,
     batteryChargeEnergyKwh,
     batteryDischargeEnergyKwh,
     etaSeries,

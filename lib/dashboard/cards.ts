@@ -16,7 +16,8 @@ export type DashboardCardType =
   | "generator-runs"
   | "device-metrics"
   | "battery-contents"
-  | "ev-provenance";
+  | "ev-provenance"
+  | "battery-provenance-history";
 
 /** Layout hint (derived, never stored) — retained for the optional AreaSectionV3.layout override seam. */
 export type DashboardLayout = "amber" | "site" | "sidebar";

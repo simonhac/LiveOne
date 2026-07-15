@@ -258,23 +258,30 @@ describe("reduceThroughputToDays — full-window equivalence", () => {
     },
   );
 
-  it("losses day inputs match learnLosses' internal day view (socFirst/socLast/socSamples)", () => {
+  it("losses day inputs match learnLosses' internal day view (socFirst/socLast/socMin/socSamples)", () => {
     const { tp, tz } = buildTp({ socGaps: [[3, 50, 40]], recalDays: [22] });
     const c = windowC(tp);
     const rows = reduceThroughputToDays(tp, tz, EMPTY_CARRY, c);
-    // Reference: replicate losses.ts's per-day accumulation directly from the arrays.
+    // Reference: replicate the per-day accumulation directly from the arrays (min = reserve-floor input).
     const byDay = new Map<
       number,
-      { first: number | null; last: number | null; n: number }
+      {
+        first: number | null;
+        last: number | null;
+        min: number | null;
+        n: number;
+      }
     >();
     for (let i = 0; i < tp.timeline.length; i++) {
       const d = dayIndexOf(tp.timeline[i], tz);
-      if (!byDay.has(d)) byDay.set(d, { first: null, last: null, n: 0 });
+      if (!byDay.has(d))
+        byDay.set(d, { first: null, last: null, min: null, n: 0 });
       const acc = byDay.get(d)!;
       const s = tp.soc[i];
       if (s !== null) {
         if (acc.first === null) acc.first = s;
         acc.last = s;
+        if (acc.min === null || s < acc.min) acc.min = s;
         acc.n++;
       }
     }
@@ -282,6 +289,7 @@ describe("reduceThroughputToDays — full-window equivalence", () => {
       const ref = byDay.get(r.dayIndex)!;
       expect(r.socFirst).toEqual(ref.first);
       expect(r.socLast).toEqual(ref.last);
+      expect(r.socMin).toEqual(ref.min);
       expect(r.socSamples).toBe(ref.n);
     }
   });

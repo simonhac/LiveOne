@@ -176,6 +176,13 @@
       "when": 1784073531128,
       "tag": "0024_nasty_whistler",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1784120568643,
+      "tag": "0025_panoramic_secret_warriors",
+      "breakpoints": true
     }
   ]
 }

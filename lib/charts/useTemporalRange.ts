@@ -28,6 +28,11 @@ export interface UseTemporalRange extends TemporalRange {
  *
  * `timezoneOffsetMin` is used only to encode the local date/offset when writing prev/next windows;
  * decoding uses the offset stored in the URL, so the absolute window round-trips across timezones.
+ *
+ * Every instance on a page shares the SAME URL params — a component whose period set differs from
+ * the classic 1D/7D/30D trio must NOT use this hook (a foreign `?period=` value collapses to "1D",
+ * silently corrupting any co-located consumer's window). Give it self-contained local state instead
+ * (see `BatteryProvenancePanel`'s doc comment for the incident this note is based on).
  */
 export function useTemporalRange({
   timezoneOffsetMin,

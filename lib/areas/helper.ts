@@ -8,6 +8,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areaDevices, areas, systems } from "@/lib/db/planetscale/schema";
 import { SystemsManager } from "@/lib/systems-manager";
+import { helperSiteId } from "./helper-site-id";
 import { ensureMember } from "./sync";
 
 const HELPER_MEMBER_ORDINAL = 99; // sorts after the real member devices
@@ -46,7 +47,7 @@ export async function ensureHelperDevice(areaId: string): Promise<number> {
 
   const helper = await SystemsManager.getInstance().createHelperDevice({
     ownerClerkUserId: area.owner,
-    vendorSiteId: `helper:area:${areaId}`,
+    vendorSiteId: helperSiteId(areaId),
     displayName: `${area.displayName ?? "Area"} · derived`,
     timezoneOffsetMin: area.tzOff,
     displayTimezone: area.tz,

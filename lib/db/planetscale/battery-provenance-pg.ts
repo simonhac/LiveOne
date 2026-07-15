@@ -221,7 +221,8 @@ function inputsAreCanonical(inputs: ProvenanceInputs): boolean {
     (socDark ||
       (inputs.capacitySeries !== undefined &&
         inputs.chargeEfficiencySeries !== undefined &&
-        inputs.idleLossKwhPerDaySeries !== undefined))
+        inputs.idleLossKwhPerDaySeries !== undefined &&
+        inputs.reserveFloorPctSeries !== undefined))
   );
 }
 
@@ -644,21 +645,21 @@ export async function reconcileBatteryProvenanceFromCheckpoint(
   if (probe?.maxUpdated && probe.maxUpdated > cp.writtenAt)
     return { seeded: false, reason: "pre-anchor-rewrite" };
 
-  const inputs = await loadProvenanceInputs(
-    handle,
-    { startMs: env.anchorMs, endMs: nowMs },
-    { skipReserveFloor: true },
-  );
+  const inputs = await loadProvenanceInputs(handle, {
+    startMs: env.anchorMs,
+    endMs: nowMs,
+  });
   if (!inputs || inputs.batterySystemId == null)
     return { seeded: false, reason: "no-inputs" };
   // The learners' params must still be persisted (canonical) — a fold on in-window learners cannot be
-  // seeded reproducibly.
+  // seeded reproducibly. The reserve floor is now persisted too (reserveFloorPctSeries, checked in
+  // inputsAreCanonical), so the seeded fold reads it FRESH from the daily table — no env replay needed.
   if (!inputsAreCanonical(inputs))
     return { seeded: false, reason: "non-canonical-inputs" };
 
   const result = computeBatteryProvenance(
     inputs,
-    { reserveFloorPct: env.reserveFloorPct },
+    {},
     { initialState: env.state, efficiencyFallback: env.etaFallback },
   );
   const blend = await writeBlendOutputs(

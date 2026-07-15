@@ -83,6 +83,14 @@ export interface BatteryProvenanceConfig {
   generatorSource?: GeneratorSourceConfig;
   /** Export (feed-in) tariff → solar opportunity cost. Absent ⇒ `{ mode: "none" }` (no opportunity cost). */
   exportTariff?: ExportTariffConfig;
+  /**
+   * Upper bound (%) on the learned reserve floor — the ASSUMED physical minimum-usable SoC. Absent ⇒
+   * `DEFAULT_RESERVE_PCT` (10). The floor is learned per-day as `clamp(lowQuantile(SoC minima) − 2, 5,
+   * reserveFloorMaxPct)`; where the battery actually discharges deep this is data-driven, but for a site
+   * that never goes below its genset comfort setpoint the true floor is unidentifiable from SoC, so this
+   * is the prior. Only raise it if a battery's BMS genuinely reserves more than ~10%. See reserve-floor.ts.
+   */
+  reserveFloorMaxPct?: number;
 }
 
 export interface DeviceConfig {

@@ -58,7 +58,18 @@ export interface ProvenanceInputs {
 
   // Battery SoC (optional; may be all-null = SoC-blind) + the derived reserve floor.
   soc: (number | null)[];
+  /** Scalar reserve-floor fallback: the latest persisted `reserveFloorPctSeries` value in the window (or
+   *  DEFAULT_RESERVE_PCT). Used where the per-interval series entry is null, and baked into the checkpoint. */
   estReservePct: number;
+
+  /**
+   * Persisted per-day reserve floor (%) per interval, aligned to `timeline`, read by the loader from
+   * `battery_provenance_daily.reserve_floor_pct` (daily step, forward-filled ≤48h — mirrors
+   * `capacitySeries`). The floor is now a reproducible learned param (was a KV-cached sliding percentile
+   * baked as a checkpoint scalar). Undefined (never learned / pre-activation) → the fold uses
+   * `estReservePct`. See `reserve-floor.ts`.
+   */
+  reserveFloorPctSeries?: (number | null)[];
 
   /**
    * Persisted usable-capacity C(t) per interval (kWh, full 0→100 % SoC span), aligned to `timeline`, read

@@ -39,6 +39,7 @@ export type CapabilityId =
   | "grid/rate"
   | "ev/soc"
   | "load.hws/temperature"
+  | "battery/provenance"
   // Atomic — presence of any numeric signal (the role-free instrumentation fallback):
   | "instrumentation"
   // Compound / derived — satisfaction is a server-side predicate, not a point scan:
@@ -134,6 +135,14 @@ export const CAPABILITIES: Record<CapabilityId, CapabilityDef> = {
     tier: "atomic",
     label: "Hot water",
     match: exact("load.hws", "temperature"),
+  },
+  // The battery-provenance HELPER device's stored-energy blend point (lib/battery-provenance/
+  // register.ts) — its presence means the area has a computed provenance history to show.
+  "battery/provenance": {
+    id: "battery/provenance",
+    tier: "atomic",
+    label: "Battery provenance",
+    match: exact("bidi.battery", "stored-energy"),
   },
   // instrumentation is atomic-ish (presence of ANY numeric point) but role-free — derived specially
   // in derive.ts, so it carries no `match` rule.

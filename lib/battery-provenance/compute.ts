@@ -244,6 +244,9 @@ export function computeBatteryProvenance(
       inputs.gridEmissionsEstimated[i] || inputs.gridPriceEstimated[i],
     efficiency: etaSeries?.[i] ?? undefined,
     capacityKwh: capacitySeries?.[i] ?? undefined,
+    // Persisted per-day reserve floor (reproducible param); falls back to the window scalar where the
+    // series is null (warm-up / pre-activation) so the fold is byte-identical to the pre-persistence path.
+    reserveFloorPct: inputs.reserveFloorPctSeries?.[i] ?? reserveUsed,
     // Three-term loss model: η_c at the charge seam; the idle drain pre-scaled to THIS interval's
     // duration (flows[i] spans timeline[i]→timeline[i+1]) — the fold stays clock-free. Gated on the
     // interval actually HAVING SoC: the pair was learned from SoC-covered days, and a SoC-dark stretch
