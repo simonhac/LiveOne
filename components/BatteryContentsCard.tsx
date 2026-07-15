@@ -146,6 +146,7 @@ export default function BatteryContentsCard({
     carbonIntensity,
     renewableFraction,
     priceActual,
+    priceOpportunity,
     totalCarbonG,
     totalCostActualC,
     totalCostOpportunityC,
@@ -153,23 +154,25 @@ export default function BatteryContentsCard({
     exportValueC,
   } = values;
 
-  // Total economic cost = actual (out-of-pocket) + opportunity (forgone export).
-  const totalCostC =
-    totalCostActualC != null
-      ? totalCostActualC + (totalCostOpportunityC ?? 0)
-      : null;
-  const hasOpportunity =
-    totalCostOpportunityC != null && Math.round(totalCostOpportunityC) !== 0;
+  // Forgone feed-in (opportunity) revenue is ≥ 0; surface it only once it rounds to > $0.
+  const showForgone =
+    totalCostOpportunityC != null && Math.round(totalCostOpportunityC) > 0;
   const hasExport = exportRate != null && exportValueC != null;
   const renewableGreen = renewableFraction != null && renewableFraction > 50;
 
-  // Carbon total in kg above 1 kg, else grams.
-  const carbonStat =
+  // Total emissions for the secondary line: kg above 1 kg, else grams.
+  const carbonTotalText =
     totalCarbonG == null
-      ? { value: "—", unit: undefined as ReactNode }
+      ? null
       : totalCarbonG >= 1000
-        ? { value: (totalCarbonG / 1000).toFixed(1), unit: <Unit>kg</Unit> }
-        : { value: `${Math.round(totalCarbonG)}`, unit: <Unit>g</Unit> };
+        ? `${(totalCarbonG / 1000).toFixed(1)} kg`
+        : `${Math.round(totalCarbonG)} g`;
+
+  const hasSecondary =
+    totalCostActualC != null ||
+    carbonTotalText != null ||
+    hasExport ||
+    showForgone;
 
   return (
     <div
@@ -221,8 +224,8 @@ export default function BatteryContentsCard({
           )}
         </div>
 
-        {/* Headline: usable kWh · total cost · CO₂ · renewable · export value.
-            2 → 3 → 4 columns as the card widens (its OWN width via @container). */}
+        {/* Headline: usable kWh · cost/kWh · emissions/kWh · renewable — the unit
+            economics of the stored energy. 2 → 3 → 4 columns as the card widens. */}
         <div className="grid grid-cols-2 gap-x-4 gap-y-3 @[360px]:grid-cols-3 @[520px]:grid-cols-4">
           <Stat
             value={storedEnergyKwh != null ? storedEnergyKwh.toFixed(1) : "—"}
@@ -230,10 +233,17 @@ export default function BatteryContentsCard({
             caption="usable"
           />
           <Stat
-            value={totalCostC != null ? dollars(totalCostC) : "—"}
-            caption="cost"
+            value={priceActual != null ? cents(priceActual) : "—"}
+            unit={priceActual != null ? <Unit gap={false}>¢</Unit> : undefined}
+            caption="cost / kWh"
           />
-          <Stat value={carbonStat.value} unit={carbonStat.unit} caption="CO₂" />
+          <Stat
+            value={
+              carbonIntensity != null ? `${Math.round(carbonIntensity)}` : "—"
+            }
+            unit={carbonIntensity != null ? <Unit>g</Unit> : undefined}
+            caption="emissions / kWh"
+          />
           <Stat
             value={
               renewableFraction != null
@@ -246,31 +256,26 @@ export default function BatteryContentsCard({
             caption="renewable"
             valueClassName={renewableGreen ? "text-green-400" : "text-gray-100"}
           />
-          {hasExport && (
-            <Stat value={dollars(exportValueC!)} caption="export value" />
-          )}
         </div>
 
-        {/* Secondary: per-kWh detail + the actual/opportunity cost split. */}
-        <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-gray-700/60 pt-2 text-[11px] text-gray-400">
-          {carbonIntensity != null && (
-            <span>{Math.round(carbonIntensity)} g/kWh</span>
-          )}
-          {priceActual != null && <span>{cents(priceActual)}¢/kWh</span>}
-          {totalCostActualC != null && (
-            <span className="ml-auto">
-              {dollars(totalCostActualC)} out-of-pocket
-              {hasOpportunity && (
-                <>
-                  {" + "}
-                  <span className="text-amber-300">
-                    {dollars(totalCostOpportunityC!)} forgone export
-                  </span>
-                </>
-              )}
-            </span>
-          )}
-        </div>
+        {/* Secondary: the absolute totals — financial (out-of-pocket) cost, total
+            emissions, export value, and the forgone feed-in revenue (when > $0). */}
+        {hasSecondary && (
+          <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-gray-700/60 pt-2 text-[11px] text-gray-400">
+            {totalCostActualC != null && (
+              <span>{dollars(totalCostActualC)} financial cost</span>
+            )}
+            {carbonTotalText != null && <span>{carbonTotalText} CO₂</span>}
+            {hasExport && <span>{dollars(exportValueC!)} export value</span>}
+            {showForgone && (
+              <span className="ml-auto text-amber-300">
+                {dollars(totalCostOpportunityC!)} forgone FiT
+                {priceOpportunity != null &&
+                  ` · ${cents(priceOpportunity)}¢/kWh`}
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
