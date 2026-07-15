@@ -4,10 +4,12 @@
  * Workspace setup for Conductor worktrees.
  *
  * Phases:
- * 1. Vercel project link    - ensures .vercel/project.json exists
+ * 1. Vercel project link    - ensures .vercel/project.json exists (for `vercel` deploys)
  * 2. Dependencies           - npm install
- * 3. Vercel environment     - pulls .env.local from Vercel (development). Vercel is
- *                             the single source of truth for env vars.
+ * 3. 1Password environment  - `op inject`s .env.local from the committed .env.tpl
+ *                             (op:// references into the liveone-dev vault). 1Password
+ *                             is the single source of truth for env vars; Vercel/Fly are
+ *                             sync targets, managed by the infra repo (config/liveone.json).
  * 4. Environment validation - checks required/optional env vars
  * 5. Verification           - confirms node_modules, vercel link
  */
@@ -114,57 +116,76 @@ function phaseDependencies(errors: string[]): void {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3: Vercel environment
+// Phase 3: 1Password environment
 // ---------------------------------------------------------------------------
 
-function phaseVercelEnv(errors: string[]): void {
-  phaseHeader(3, TOTAL_PHASES, "Vercel environment");
+function phaseOnePasswordEnv(errors: string[]): void {
+  phaseHeader(3, TOTAL_PHASES, "1Password environment");
 
-  const { code: vercelCode } = run(["vercel", "--version"]);
-  if (vercelCode !== 0) {
-    warn("vercel CLI not found — skipping env pull");
+  const tpl = path.join(ROOT, ".env.tpl");
+  if (!fs.existsSync(tpl)) {
+    warn(".env.tpl not found — skipping env bootstrap");
     return;
   }
 
-  const projectJson = path.join(ROOT, ".vercel", "project.json");
-  if (!fs.existsSync(projectJson)) {
-    warn("Vercel project not linked — skipping env pull");
+  const { code: opCode } = run(["op", "--version"]);
+  if (opCode !== 0) {
+    warn(
+      "1Password CLI (op) not found — skipping env bootstrap. Install it " +
+        "(https://developer.1password.com/docs/cli) then re-run, or create " +
+        ".env.local by hand.",
+    );
+    return;
+  }
+
+  // op inject needs an authenticated session — a personal `op signin`, or an
+  // OP_SERVICE_ACCOUNT_TOKEN scoped to the liveone-dev vault, both work.
+  const { code: authCode } = run(["op", "whoami"]);
+  if (authCode !== 0) {
+    error(
+      "1Password CLI not signed in — run `op signin` (or set " +
+        "OP_SERVICE_ACCOUNT_TOKEN scoped to liveone-dev), then re-run setup.",
+    );
+    errors.push("op not authenticated");
     return;
   }
 
   const target = path.join(ROOT, ".env.local");
 
   // Legacy worktrees symlink .env.local to a shared home. Remove the symlink
-  // before pulling — otherwise `vercel env pull` writes THROUGH it and clobbers
+  // before writing — otherwise `op inject -o` writes THROUGH it and clobbers
   // the shared file, breaking other worktrees and destroying local-only vars
   // kept there. Unlinking only drops this worktree's pointer; the shared file
   // is left intact.
   if (isSymlink(target)) {
     fs.unlinkSync(target);
-    info("Removed legacy .env.local symlink (pulling a real file instead)");
+    info("Removed legacy .env.local symlink (writing a real file instead)");
   }
 
+  // Resolve the op:// references in .env.tpl against the vault into a concrete
+  // .env.local. --force overwrites any existing file (execSync is non-interactive,
+  // so we can't answer an overwrite prompt).
   const { code, stdout, stderr } = run([
-    "vercel",
-    "env",
-    "pull",
-    "--cwd",
-    ROOT,
+    "op",
+    "inject",
+    "-i",
+    tpl,
+    "-o",
     target,
-    "--environment=development",
-    "--yes",
+    "--force",
   ]);
   if (code !== 0) {
-    error(`vercel env pull failed: ${stderr || stdout}`);
-    errors.push("vercel env pull failed");
+    error(`op inject failed: ${stderr || stdout}`);
+    errors.push("op inject failed");
     return;
   }
 
-  success("Pulled .env.local from Vercel (development)");
+  success("Wrote .env.local from .env.tpl (1Password, liveone-dev vault)");
   info(
-    "Local-only tooling vars (TEST_USER_ID, SIGENERGY_*, PROD_CLERK_SECRET_KEY) " +
-      "are not in Vercel — add them to .env.local by hand if you run integration " +
-      "tests, sigen:poll, or the gusher-key mint script.",
+    "Tooling vars absent from 1Password (e.g. SIGENERGY_*, PROD_CLERK_SECRET_KEY) " +
+      "must be added to .env.local by hand if you run sigen:poll or the prod-Clerk " +
+      "test helpers. Uncomment local knobs (CRONS_ENABLED, DB_SSL, ALLOW_PROD_DB_IN_DEV) " +
+      "in .env.tpl as needed.",
   );
 }
 
@@ -223,7 +244,7 @@ function main(): number {
   phaseDependencies(errors);
   console.log();
 
-  phaseVercelEnv(errors);
+  phaseOnePasswordEnv(errors);
   console.log();
 
   phaseEnvValidation(errors);
