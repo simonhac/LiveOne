@@ -30,6 +30,7 @@
 - [architecture/energy-flow-matrix.md](architecture/energy-flow-matrix.md) — energy-flow (Sankey) matrix: logical systems, daily materialization, serving paths
 - [architecture/battery-provenance.md](architecture/battery-provenance.md) — metric-attributed flows: emissions/renewable/cost traced through the battery (weighted-average blend), the "helper" derived-device-in-an-Area, the attribution rollup, and `?source=modern` on the Sankey endpoint
 - [observations-qstash-payloads.md](observations-qstash-payloads.md) — queue message formats, receiver behaviour
+- [architecture/coverage-repair.md](architecture/coverage-repair.md) — **weekly self-heal** for re-fetchable vendors (Amber/OpenElectricity/Sigenergy): two-stage generic gap-find → per-vendor backfill; the provider contract, invariants (scoped recompute, progress-based landing, Amber-unconditional-fetch, OE emissions-intensity excluded), and per-vendor recoverable windows
 - [migrations.md](migrations.md) — migration safety practices and lessons learned
 - [amber-sync-plan.md](amber-sync-plan.md) — Amber sync/audit design
 - [tesla.md](tesla.md) — Tesla vendor adapter spec

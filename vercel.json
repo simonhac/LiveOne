@@ -24,6 +24,10 @@
     {
       "path": "/api/cron/run-periods",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/repair-coverage",
+      "schedule": "30 15 * * 1"
     }
   ],
   "functions": {
@@ -41,6 +45,9 @@
     },
     "app/api/history/route.ts": {
       "maxDuration": 30
+    },
+    "app/api/cron/repair-coverage/route.ts": {
+      "maxDuration": 300
     }
   }
 }
