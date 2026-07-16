@@ -45,7 +45,14 @@ function arg(name: string): string | undefined {
 }
 const SYSTEM_ID = Number(arg("system") ?? 9);
 const IN_DIR = arg("in") ?? ".context/amber-backfill";
-const IMPORT_PREFIX = "E1/"; // import (general) channel — E1/perKwh, E1/cost, E1/kwh
+// Which readings to keep. Default: the import (E1/) channel — E1/perKwh, E1/cost, E1/kwh.
+// Override with --prefix=<p>, or an EXACT set via --tails=B1/kwh,B1/cost (e.g. to fill only the
+// holey export USAGE metrics without rewriting the already-complete B1/perKwh price point).
+const FILTER_PREFIX = arg("prefix") ?? "E1/";
+const TAILS = arg("tails");
+const TAIL_SET = TAILS ? new Set(TAILS.split(",").map((s) => s.trim())) : null;
+const keepReading = (tail: string): boolean =>
+  TAIL_SET ? TAIL_SET.has(tail) : tail.startsWith(FILTER_PREFIX);
 
 interface ChunkFile {
   systemId: number;
@@ -104,12 +111,12 @@ async function main() {
       chunk.numberOfDays,
     );
 
-    // Filter to import (E1) readings only — never re-write export/spot/renewables.
+    // Keep only the selected readings (default import E1/; see keepReading above).
     const importBatch = new AmberReadingsBatch(firstDay, chunk.numberOfDays);
     let chunkImport = 0;
     for (const pointMap of fullBatch.getRecords().values()) {
       for (const reading of pointMap.values()) {
-        if (reading.pointMetadata.physicalPathTail.startsWith(IMPORT_PREFIX)) {
+        if (keepReading(reading.pointMetadata.physicalPathTail)) {
           importBatch.add(reading);
           chunkImport++;
           const key = reading.pointMetadata.physicalPathTail;
