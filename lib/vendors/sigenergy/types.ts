@@ -19,6 +19,10 @@ export interface SigenergyStationInfo {
   stationId: string;
   name?: string;
   timeZoneName?: string; // e.g. "Australia/Sydney"
+  /** Station commissioning / "open" day, local, "YYYY-MM-DD" (from `stationOpenTime`, with fallbacks).
+   *  This is the station's earliest-possible data date — used to floor the coverage-repair window so
+   *  pre-commission days aren't flagged as phantom gaps and genuine pre-onboarding history stays in range. */
+  openDate?: string;
   pvCapacityKw?: number | null;
   batteryCapacityKwh?: number | null;
   latitude?: number | null;

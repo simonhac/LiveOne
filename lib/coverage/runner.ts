@@ -41,6 +41,26 @@ const MAX_DAYS_PER_RUN = num(process.env.REPAIR_MAX_DAYS_PER_RUN, 120); // per v
 const LANDING_WAIT_SECONDS = num(process.env.REPAIR_LANDING_WAIT_SECONDS, 120);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** A UTC timestamp (`created_at`) → its local calendar day "YYYY-MM-DD" at the given bucket offset. */
+function localDay(
+  value: Date | string | null | undefined,
+  offsetMin: number,
+): string | null {
+  if (!value) return null;
+  const ms =
+    value instanceof Date ? value.getTime() : Date.parse(String(value));
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms + offsetMin * 60_000).toISOString().slice(0, 10);
+}
+
+/** Normalize a persisted `commissioned_on` (pg `date` → string, or Date) to a "YYYY-MM-DD" day. */
+function normalizeDay(value: unknown): string | null {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  const s = String(value);
+  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null;
+}
+
 interface SystemReport {
   vendorType: string;
   systemId: number;
@@ -109,12 +129,65 @@ export async function runCoverageRepair(
         const todayLocal = new Date(nowMs + offset * 60_000)
           .toISOString()
           .slice(0, 10);
-        const firstDay = parseDate(todayLocal)
+        const lookbackFirst = parseDate(todayLocal)
           .subtract({ days: provider.lookbackDays })
           .toString();
         const lastDay = parseDate(todayLocal)
           .subtract({ days: provider.graceDays })
           .toString();
+
+        // Floor the window start at the system's "birth" so pre-existence days aren't flagged as
+        // phantom gaps — and, when a vendor exposes an earlier true commission date, so genuine
+        // pre-onboarding history stays in range. Source order: persisted `commissioned_on`; else (for
+        // a freshly-onboarded system only) the vendor's live commission day, lazily persisted; else
+        // the LiveOne onboarding day (`created_at`).
+        let floor = normalizeDay(system.commissionedOn);
+        const createdDay = localDay(system.createdAt, offset);
+        if (!floor) {
+          // Pay for the vendor call only when onboarding itself is inside the lookback window (a
+          // recently-added system); for long-onboarded systems the lookback floor already dominates.
+          if (
+            provider.commissionDay &&
+            createdDay &&
+            createdDay > lookbackFirst
+          ) {
+            try {
+              const commissioned = await provider.commissionDay(system);
+              if (commissioned) {
+                floor = commissioned;
+                if (!dryRun) {
+                  try {
+                    await db.execute(sql`
+                      UPDATE systems SET commissioned_on = ${commissioned}
+                      WHERE id = ${system.id} AND commissioned_on IS NULL
+                    `);
+                  } catch (err) {
+                    console.error(
+                      `[RepairCoverage] persist commissioned_on failed sys=${system.id}:`,
+                      err,
+                    );
+                  }
+                }
+              }
+            } catch {
+              /* best-effort: fall through to created_at */
+            }
+          }
+          if (!floor) floor = createdDay;
+        }
+        const firstDay = floor && floor > lookbackFirst ? floor : lookbackFirst;
+
+        // Window collapses (system younger than the grace period) → nothing to scan.
+        if (firstDay > lastDay) {
+          reports.push({
+            vendorType: provider.vendorType,
+            systemId: system.id,
+            name: system.displayName,
+            gaps: [],
+            repairs: [],
+          });
+          continue;
+        }
 
         let points: CoveragePoint[];
         try {

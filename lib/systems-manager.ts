@@ -52,6 +52,7 @@ function synthesizeAreaView(area: Area): SystemWithPolling | null {
     displayTimezone: area.displayTimezone,
     createdAt: area.createdAt,
     updatedAt: area.updatedAt,
+    commissionedOn: null, // area views own no points and never poll — no vendor commission date
     pollingStatus: null,
   };
 }
