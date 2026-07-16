@@ -32,7 +32,10 @@ Thumbs.db
 .idea/
 
 # Test files
-coverage/
+# NOTE: root-anchored so this matches only the top-level jest coverage output,
+# not source dirs named "coverage" (e.g. lib/coverage/). An unanchored "coverage/"
+# stripped lib/coverage/ from the upload and broke the prod build (#185 deploy).
+/coverage/
 .nyc_output/
 
 # Temporary files
