@@ -4,7 +4,6 @@ import type { InferSelectModel } from "drizzle-orm";
 import { isProduction } from "@/lib/env";
 import { getUserIdByUsername } from "@/lib/user-cache";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { ensureAreaOfOne } from "@/lib/areas/sync";
 import {
   systems as pgSystems,
   pollingStatus as pgPollingStatus,
@@ -241,22 +240,6 @@ export class SystemsManager {
     return rows.map(toSystemWithPolling);
   }
 
-  /** Active area-view handles (multi-device Area handles, no real row) — for the daily flow recompute. */
-  async getActiveAreaHandles(): Promise<number[]> {
-    const rows = await requirePlanetscaleDb()
-      .select({ id: pgAreas.legacySystemId })
-      .from(pgAreas)
-      .leftJoin(pgSystems, eq(pgSystems.id, pgAreas.legacySystemId))
-      .where(
-        and(
-          isNotNull(pgAreas.legacySystemId),
-          isNull(pgSystems.id), // no real row ⇒ it's an area view
-          eq(pgAreas.status, "active"),
-        ),
-      );
-    return rows.map((r) => r.id).filter((id): id is number => id != null);
-  }
-
   /**
    * Systems visible to a user for the switcher: the ones they OWN, are GRANTED (via user_systems), or
    * that are PUBLIC (ownerless, readable by everyone). Bounded indexed queries — no fleet load and no
@@ -333,21 +316,10 @@ export class SystemsManager {
       `[SystemsManager] Created system ${newSystem.id} (${systemData.vendorType}) for user ${systemData.ownerClerkUserId}`,
     );
 
-    // Every device gets a first-class area-of-one EAGERLY at create-time, so the device view, the
-    // membership (`area_devices`), and flow keying resolve against a real Area — no synthesized shim.
-    // Best-effort: an area-mint failure must NEVER orphan the freshly-created system row, so we
-    // log-and-continue; the daily `resolveLogicalSystem` heal and the location route remain backstops.
-    // `ensureAreaOfOne` is idempotent + race-safe on `areas_legacy_system_unique`.
-    try {
-      await ensureAreaOfOne(newSystem);
-    } catch (e) {
-      console.warn(
-        `[SystemsManager] area-of-one mint deferred for system ${newSystem.id}:`,
-        e,
-      );
-    }
-
-    // No cache to invalidate: config is read per-request, so the next request sees the new system.
+    // Areas are EXPLICIT: a device does NOT get an auto-minted area-of-one. A device renders on its own
+    // /device view straight from `point_info` + capabilities (no backing Area), and flow is an
+    // area-only concept — a device gets a flow matrix only once a user groups it into an Area
+    // (createArea). No cache to invalidate: config is read per-request.
     return newSystem;
   }
 

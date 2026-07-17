@@ -13,7 +13,7 @@ import {
 
 /**
  * Member-device membership of an Area (the area builder's Members tab).
- *   POST   { systemId } → add a member (must be readable by the caller; refused on an area-of-one).
+ *   POST   { systemId } → add a member (must be readable by the caller).
  *   DELETE { systemId } → remove a member (+ its orphaned bindings; refused on the last member).
  */
 
@@ -52,8 +52,8 @@ export async function POST(
       { status: 400 },
     );
 
-  // An area-of-one (handle == a real systems.id) can't gain members without re-keying — the UI turns
-  // this into "create a site from this device" (POST /api/areas) instead.
+  // A legacy Area addressed by a real systems.id can't gain members without re-keying — create a new
+  // synthetic-handle Area instead.
   if (
     area.legacySystemId != null &&
     (await SystemsManager.getInstance().getSystem(area.legacySystemId))

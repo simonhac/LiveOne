@@ -17,7 +17,7 @@ import {
 /**
  * Owner/admin edit of a single Area (the area builder's General/Location tab), addressed by uuid.
  *   PATCH  → rename / re-alias / retime / relocate / set status.
- *   DELETE → soft-delete (`status = 'archived'`); refuses a device's own area-of-one.
+ *   DELETE → soft-delete (`status = 'archived'`); refuses legacy real-system-handle Areas.
  * Access is area-ownership (owner or admin) — the caller must own the area to edit it.
  */
 
@@ -133,8 +133,7 @@ export async function DELETE(
   if (authed instanceof NextResponse) return authed;
   const { area } = authed;
 
-  // A device's own area-of-one (handle == a real systems.id) is load-bearing for that device's flow /
-  // grid-region / share seams — never delete it here.
+  // A legacy Area addressed by a real systems.id may still be load-bearing — never delete it here.
   if (
     area.legacySystemId != null &&
     (await SystemsManager.getInstance().getSystem(area.legacySystemId))

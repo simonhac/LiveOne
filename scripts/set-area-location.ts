@@ -1,14 +1,14 @@
 #!/usr/bin/env tsx
 /**
- * Set an area-of-one's physical location (`areas.location` jsonb).
+ * Set an explicit Area's physical location (`areas.location` jsonb).
  *
- * Ensures the area-of-one exists for the given system (via ensureAreaOfOne), then writes the
- * `AreaLocation` object. The location is used to DERIVE downstream facts (e.g. the NEM grid region
- * via lib/vendors/openelectricity/region.ts) — it never stores a derived value.
+ * This never creates an Area. Devices do not own locations; group a device into an explicit Area first,
+ * then set the Area's location. The location is used to DERIVE downstream facts (e.g. the NEM grid
+ * region via lib/vendors/openelectricity/region.ts) — it never stores a derived value.
  *
  * Usage:
- *   npx tsx scripts/set-area-location.ts --system=<id> --country=AU --state=NSW
- *   npx tsx scripts/set-area-location.ts --system=1 --country=AU --state=NSW --postcode=2000 --lat=-33.87 --lng=151.21
+ *   npx tsx scripts/set-area-location.ts --handle=<area-handle> --country=AU --state=NSW
+ *   npx tsx scripts/set-area-location.ts --area=<uuid> --country=AU --state=NSW --postcode=2000 --lat=-33.87 --lng=151.21
  *
  * Targets whatever DB .env.local points at (dev branch by default). To target prod,
  * point PLANETSCALE_DATABASE_URL at the sydney branch and set ALLOW_PROD_DB_IN_DEV=true.
@@ -19,6 +19,7 @@ dotenv.config({ path: ".env.local" });
 
 import { eq } from "drizzle-orm";
 import type { AreaLocation } from "@/lib/areas/types";
+import { mergeAreaLocation } from "@/lib/areas/location";
 
 function getArg(name: string): string | undefined {
   const arg = process.argv.slice(2).find((a) => a.startsWith(`--${name}=`));
@@ -27,8 +28,7 @@ function getArg(name: string): string | undefined {
 
 async function main() {
   const { planetscaleDb } = await import("@/lib/db/planetscale");
-  const { systems, areas } = await import("@/lib/db/planetscale/schema");
-  const { ensureAreaOfOne } = await import("@/lib/areas/sync");
+  const { areas } = await import("@/lib/db/planetscale/schema");
 
   if (!planetscaleDb) {
     console.error(
@@ -37,11 +37,23 @@ async function main() {
     process.exit(1);
   }
 
-  const systemArg = getArg("system");
-  const systemId = Number(systemArg);
-  if (!systemArg || !Number.isInteger(systemId) || systemId <= 0) {
+  if (getArg("system")) {
     console.error(
-      "❌ --system=<id> is required and must be a positive integer.",
+      "❌ devices do not own locations; pass --area=<uuid> or --handle=<area-handle>.",
+    );
+    process.exit(1);
+  }
+
+  const areaArg = getArg("area");
+  const handleArg = getArg("handle");
+  const handle = Number(handleArg);
+  if (
+    (!areaArg && !handleArg) ||
+    (areaArg && handleArg) ||
+    (handleArg && (!Number.isInteger(handle) || handle <= 0))
+  ) {
+    console.error(
+      "❌ pass exactly one of --area=<uuid> or --handle=<positive integer>.",
     );
     process.exit(1);
   }
@@ -80,36 +92,38 @@ async function main() {
     provided.lng = lng;
   }
 
-  const [system] = await planetscaleDb
-    .select()
-    .from(systems)
-    .where(eq(systems.id, systemId))
+  const [area] = await planetscaleDb
+    .select({
+      id: areas.id,
+      legacySystemId: areas.legacySystemId,
+      location: areas.location,
+    })
+    .from(areas)
+    .where(areaArg ? eq(areas.id, areaArg) : eq(areas.legacySystemId, handle))
     .limit(1);
-  if (!system) {
-    console.error(`❌ system ${systemId} not found.`);
+  if (!area) {
+    console.error(
+      `❌ area ${areaArg ? areaArg : `handle ${handle}`} not found. Create the Area first.`,
+    );
     process.exit(1);
   }
-  const areaId = await ensureAreaOfOne(system);
 
   // Merge over the existing location so unspecified fields are preserved across re-runs.
-  const [areaRow] = await planetscaleDb
-    .select({ location: areas.location })
-    .from(areas)
-    .where(eq(areas.id, areaId))
-    .limit(1);
-  const existing = (areaRow?.location ?? null) as AreaLocation | null;
-  const location: AreaLocation = {
-    country: "AU",
-    ...(existing ?? {}),
-    ...provided,
-  };
+  const existing = (area.location ?? null) as AreaLocation | null;
+  const location = mergeAreaLocation(existing, {
+    country: provided.country ?? "AU",
+    state: provided.state,
+    postcode: provided.postcode,
+    lat: provided.lat,
+    lng: provided.lng,
+  });
 
   await planetscaleDb
     .update(areas)
-    .set({ location })
-    .where(eq(areas.id, areaId));
+    .set({ location, updatedAt: new Date() })
+    .where(eq(areas.id, area.id));
 
-  console.log(`✓ system ${systemId} → area ${areaId}`);
+  console.log(`✓ area ${area.id} handle=${area.legacySystemId ?? "null"}`);
   console.log(`  location: ${JSON.stringify(location)}`);
 
   process.exit(0);

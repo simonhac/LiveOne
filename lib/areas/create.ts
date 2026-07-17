@@ -3,10 +3,10 @@
  * area, editing its metadata, adding/removing member devices, and authoring role→point bindings.
  *
  * These are the persistence helpers the `/api/areas` mutation routes call (the routes own auth); they
- * keep the routes thin, mirroring `lib/dashboard/dashboards.ts`. An **area-of-one** is NOT created here
- * — that stays lazy (`ensureAreaOfOne`, via the location editor / daily heal). Everything here mints a
- * SYNTHETIC-handle area (no `systems` row) so a site can grow from one member to many WITHOUT ever
- * re-keying an existing area-of-one (see `lib/areas/handles.ts` and docs/architecture/areas-and-dashboards.md).
+ * keep the routes thin, mirroring `lib/dashboard/dashboards.ts`. Areas are EXPLICIT: a device gets no
+ * auto-minted Area — everything here mints a SYNTHETIC-handle area (no `systems` row) so a site
+ * can grow from one member to many WITHOUT ever re-keying (see `lib/areas/handles.ts` and
+ * docs/architecture/areas-and-dashboards.md).
  */
 import { and, asc, eq, max } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
