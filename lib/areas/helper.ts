@@ -2,14 +2,14 @@
  * Helper devices — derived, non-physical, never-polled `systems` rows (vendor_type='helper') that live
  * in an Area and own the Area's COMPUTED points (the battery-provenance blend is the first tenant). A
  * helper is a MEMBER of exactly one Area; it is owned by the Area's owner (private household-derived data,
- * NOT ownerless). Analogous to `ensureAreaOfOne` (lib/areas/sync.ts) but for a member, not an area-of-one.
+ * NOT ownerless).
  */
 import { and, asc, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areaDevices, areas, systems } from "@/lib/db/planetscale/schema";
 import { SystemsManager } from "@/lib/systems-manager";
 import { helperSiteId } from "./helper-site-id";
-import { ensureMember } from "./sync";
+import { ensureAreaMember } from "./devices";
 
 const HELPER_MEMBER_ORDINAL = 99; // sorts after the real member devices
 
@@ -52,6 +52,6 @@ export async function ensureHelperDevice(areaId: string): Promise<number> {
     timezoneOffsetMin: area.tzOff,
     displayTimezone: area.tz,
   });
-  await ensureMember(db, areaId, helper.id, HELPER_MEMBER_ORDINAL);
+  await ensureAreaMember(db, areaId, helper.id, HELPER_MEMBER_ORDINAL);
   return helper.id;
 }

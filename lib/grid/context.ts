@@ -45,9 +45,9 @@ export async function resolveGridContextForSystem(
   try {
     const db = requirePlanetscaleDb();
 
-    // b. The Area for this system carries the location we derive the region from. Works for both an
-    //    area-of-one (1:1 over a physical system) and a multi-device area ("Kinkora Unified") — the
-    //    multi-device area's location describes the whole site, set on the Area row like any other.
+    // b. The Area for this handle carries the location we derive the region from — a multi-device site
+    //    ("Kinkora Unified") or a genuine single-device Area (e.g. "Kutis"). Location is an Area-only
+    //    property (areas are explicit — no area-of-one), so a bare device with no Area has no grid card.
     const [area] = await db
       .select({ location: areas.location })
       .from(areas)

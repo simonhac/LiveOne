@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { requireSystemAccess } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
-import { ensureAreaOfOne } from "@/lib/areas/sync";
+import { getAreaForSystem } from "@/lib/areas/resolve";
 import {
   mergeAreaLocation,
   type AreaLocationPatch,
@@ -12,19 +12,16 @@ import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
 import type { AreaLocation } from "@/lib/areas/types";
 
 /**
- * Owner-facing editor for a SITE's physical location. Location is a property of the **Area** (the
- * semantic site), not of a dashboard — a dashboard can show cards from multiple Areas (per-card
- * `area_id` override), so it has no single location. Stored on `areas.location`; DERIVES the NEM grid
- * region for the Local Grid card (lib/grid/context.ts), which itself resolves region per-Area.
+ * Owner-facing editor for a SITE's physical location. Location lives on the **Area** when the handle is
+ * a real Area (a multi-device site, or a single-device Area like Kutis). A bare device has no site
+ * location; group it into an Area first. The Area location DERIVES the NEM grid region for the Local
+ * Grid card (lib/grid/context.ts). Never mints an Area — areas are explicit.
  *
- * Keyed on `systemId` (all addressing is still integer-systemId today): resolves the system's
- * area-of-one and, for a physical system that predates the runtime Area seam, heals it (and its
- * single member) via `ensureAreaOfOne`.
- *
+ * Keyed on `systemId` (all addressing is still integer-systemId today).
  * GET: read access. PUT: owner/admin write — merge-patches the location and returns the derived region.
  */
 
-/** The current location for `systemId`'s Area (null if none/un-backfilled). Read-only — never mutates. */
+/** The current location for `systemId`'s Area (null if the handle has no Area). Read-only. */
 async function readLocation(systemId: number): Promise<AreaLocation | null> {
   const [row] = await requirePlanetscaleDb()
     .select({ location: areas.location })
@@ -84,16 +81,23 @@ export async function PUT(
   });
   if (auth instanceof NextResponse) return auth;
 
-  // Resolve the Area to write. Always ensure the system's area-of-one — even when it already exists —
-  // so a prior location edit can't leave a member-less area-of-one behind (ensureAreaOfOne heals the
-  // single area_devices member on the existing-area branch too). Idempotent.
-  const areaId = await ensureAreaOfOne(auth.system);
+  // Location is an Area/site property. Never mint an Area here — areas are explicit: if this handle is
+  // not a real Area, refuse. Group the device into a site (createArea) to give it a location.
+  const area = await getAreaForSystem(systemId);
+  if (!area)
+    return NextResponse.json(
+      {
+        error:
+          "This device isn't part of a site — create a site and add the device to it to set a location.",
+      },
+      { status: 422 },
+    );
 
   const db = requirePlanetscaleDb();
   const [row] = await db
     .select({ location: areas.location })
     .from(areas)
-    .where(eq(areas.id, areaId))
+    .where(eq(areas.id, area.id))
     .limit(1);
   const merged = mergeAreaLocation(
     row?.location ?? null,
@@ -102,10 +106,9 @@ export async function PUT(
   await db
     .update(areas)
     .set({ location: merged, updatedAt: new Date() })
-    .where(eq(areas.id, areaId));
+    .where(eq(areas.id, area.id));
 
-  // A multi-device area's synthesized virtual system copies areas.location; it's loaded fresh per
-  // request, so the edit is reflected on the next read with nothing to invalidate.
+  // Loaded fresh per request, so the edit is reflected on the next read with nothing to invalidate.
   return NextResponse.json({
     location: merged,
     region: nemRegionForLocation(merged),

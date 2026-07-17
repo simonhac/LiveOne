@@ -34,21 +34,21 @@ interface DeviceViewerProps {
   isAdmin: boolean;
   userId?: string;
   /**
-   * The device's default v3 view, built SERVER-SIDE from its area-of-one's capabilities
-   * (`buildAreaStrategyForHandle` — the single server/config capability path, grid + generator +
-   * config overrides folded in). Null when the system is inaccessible/absent (Access-Denied render).
+   * The device's default v3 view, built SERVER-SIDE from `buildAreaStrategyForHandle` — the single
+   * server/config capability path, grid + generator + config overrides folded in. Null when the system
+   * is inaccessible/absent (Access-Denied render).
    */
   descriptor: DashboardV3 | null;
-  /** The device's area-of-one as the section's render key (null when inaccessible/absent). */
+  /** The section's render key (null when inaccessible/absent). */
   area: ReadableArea | null;
 }
 
 /**
  * Read-only per-system viewer ("Device"), served at /device/{id}. Renders the SERVER-built default
  * descriptor via the SAME v3 renderer the composition dashboards use (`<Dashboard>`): a single
- * AreaSection over the device's own area-of-one. No Customise / Share / Location controls (those live
- * on Dashboards). This component owns only the device-level chrome (loading / error / removed banners);
- * every card self-fetches inside `<Dashboard>`.
+ * section over the device handle. No Customise / Share / Location controls (those live on Dashboards).
+ * This component owns only the device-level chrome (loading / error / removed banners); every card
+ * self-fetches inside `<Dashboard>`.
  */
 export default function DeviceViewer({
   systemId,

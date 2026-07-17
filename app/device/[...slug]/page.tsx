@@ -239,8 +239,9 @@ export default async function DevicePage({ params }: PageProps) {
     }
   }
 
-  // Server-build the device's default view from its REAL area-of-one (Phase 2/P6 guarantees every
-  // device has one). This is the single server/config capability path — `buildAreaStrategyForHandle`
+  // Server-build the device's default view from the same server/config capability path dashboards use.
+  // When the device has no Area, use a stable synthetic section id only as a render key.
+  // `buildAreaStrategyForHandle`
   // folds in grid context + generator tracking + config overrides — replacing the old client-side
   // synthesis in DeviceViewer. Only for an accessible system; an Access-Denied render never uses it.
   let descriptor: DashboardV3 | null = null;

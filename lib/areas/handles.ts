@@ -3,15 +3,14 @@
  *
  * A multi-device (site) area has NO real `systems` row — it is addressed purely by its integer
  * `legacy_system_id`, which is the only shape `SystemsManager.isAreaHandle` recognises (and thus the
- * only shape the point resolver serves via membership/bindings). An area-of-one, by contrast, reuses
- * its device's real `systems.id` as the handle. So a freshly-created site needs a handle that collides
- * with NO real system id and NO existing area handle.
+ * only shape the point resolver serves via membership/bindings). So a freshly-created site needs a
+ * handle that collides with NO real system id and NO existing area handle.
  *
  * We pick `max(max(systems.id), max(areas.legacy_system_id), BASE) + 1`. `BASE` is a reserved floor
  * that sits clearly above prod serial system ids and the dev id band (10000+), so a synthetic handle
  * can never later collide with a real serial `systems.id`. This is a `max()+1` allocation (not a DB
  * sequence — that would be a schema change), guarded at the call site by the `areas_legacy_system_unique`
- * index + a retry, exactly like `ensureAreaOfOne`'s handle race handling.
+ * index + a retry.
  */
 import { max } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";

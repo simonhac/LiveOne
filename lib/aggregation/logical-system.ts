@@ -1,10 +1,9 @@
 /**
  * Logical-system resolver — the single authority for "which physical points play which energy-flow
- * roles" for a Sankey view. A *logical system* is a complete source/load role set; it is either a
- * multi-device area (its role→point mappings curated in `area_bindings`) or a single physical system
- * (an area-of-one) whose own points already cover the roles. Both resolve to the same shape here, so
- * every Sankey path — the engine's daily recompute, the sub-daily history compute, and the FE —
- * consumes one definition instead of re-deriving role classification independently.
+ * roles" for an Area Sankey view. A *logical system* is an explicit Area with a complete source/load
+ * role set; its points may come from one member device or many, with `area_bindings` as an override.
+ * Every Sankey path — the engine's daily recompute, the sub-daily history compute, and the FE —
+ * consumes this one definition instead of re-deriving role classification independently.
  *
  * This wraps `PointManager.getActivePointsForSystem`, which already resolves points uniformly for any
  * handle (a multi-device area's points come back keyed by their *child* `systemId`, preserving
@@ -17,7 +16,7 @@ import { PointManager } from "@/lib/point/point-manager";
 import { SystemsManager } from "@/lib/systems-manager";
 import { isCompleteRoleSet } from "@/lib/roles/registry";
 import { getAreaForSystem } from "@/lib/areas/resolve";
-import { ensureAreaOfOne } from "@/lib/areas/sync";
+import { listFlowEligibleAreaHandles } from "@/lib/areas/devices";
 
 // Re-exported for back-compat: the role taxonomy now lives in lib/roles/registry.ts.
 export { isCompleteRoleSet };
@@ -37,7 +36,7 @@ export interface LogicalSystemPoint {
 }
 
 export interface LogicalSystem {
-  /** The logical-system handle == legacy_system_id (an area-of-one's systems.id, or a multi-device area handle). */
+  /** The logical-system handle == the Area's integer `legacy_system_id`. */
   id: number;
   /**
    * The Area this view belongs to (the area whose `legacy_system_id == id`). Always present:
@@ -60,7 +59,7 @@ export interface LogicalSystem {
 export async function resolveLogicalSystem(
   systemId: number,
 ): Promise<LogicalSystem | null> {
-  // Resolve a real system OR an area view (multi-device Area handle) — both have a Sankey view.
+  // Resolve a real system OR an area view. Only handles that map to an explicit Area continue below.
   const system = await SystemsManager.getInstance().getViewableSystem(systemId);
   if (!system) return null;
 
@@ -84,28 +83,11 @@ export async function resolveLogicalSystem(
   const isComplete = isCompleteRoleSet(points.map((p) => p.stem));
 
   // A logical system MUST map to an Area — `area_id` is the primary key of point_readings_flow_1d
-  // (P3-tail-1). If none resolves (areas are LAZY now — not minted at create-time), self-heal it here
-  // rather than write an un-keyed flow row.
-  let area = await getAreaForSystem(systemId);
-  if (!area) {
-    // Lazy-area gate: only mint an area-of-one for a system that actually forms a COMPLETE flow role
-    // set (a real flow view). A monitoring-only / incomplete system gets NO Area and no flow row — it
-    // has no flow to record anyway, and the caller drops incomplete systems regardless.
-    if (!isComplete) return null;
-    try {
-      const areaId = await ensureAreaOfOne(system);
-      area = { id: areaId };
-      console.warn(
-        `[LogicalSystem] Healed missing area-of-one for complete system ${systemId} → ${areaId}`,
-      );
-    } catch (e) {
-      console.error(
-        `[LogicalSystem] No Area for system ${systemId} and heal failed — skipping flow recompute:`,
-        e,
-      );
-      return null;
-    }
-  }
+  // (P3-tail-1). Flow is AREA-only: a system with no Area has no flow to record, so return null (never
+  // mint one here). Areas are EXPLICIT now — a device gets a flow view only once a user groups it into
+  // an Area (createArea); it is NOT auto-minted at create-time or lazily healed here.
+  const area = await getAreaForSystem(systemId);
+  if (!area) return null;
 
   return {
     id: systemId,
@@ -117,15 +99,15 @@ export async function resolveLogicalSystem(
 }
 
 /**
- * All active systems that form a complete logical system (a usable source/load role set). This is
- * the set the daily flow recompute should analyse — it includes multi-device areas, which the legacy
- * `SELECT DISTINCT system_id FROM agg_5m` driver structurally excluded.
+ * The Areas that form a complete logical system (a usable source/load role set) — the set the daily
+ * flow recompute analyses. AREA-only: driven off `listFlowEligibleAreaHandles()` (active explicit
+ * Areas), so a raw device never gets a duplicate Sankey. A grid-signal Area with no complete role set
+ * drops out via the `isComplete` filter.
  */
 export async function listCompleteLogicalSystems(): Promise<LogicalSystem[]> {
-  const sm = SystemsManager.getInstance();
-  const systems = await sm.getActiveSystems();
-  const areaHandles = await sm.getActiveAreaHandles();
-  const ids = [...systems.map((s) => s.id), ...areaHandles];
-  const resolved = await Promise.all(ids.map((id) => resolveLogicalSystem(id)));
+  const handles = await listFlowEligibleAreaHandles();
+  const resolved = await Promise.all(
+    handles.map((id) => resolveLogicalSystem(id)),
+  );
   return resolved.filter((ls): ls is LogicalSystem => !!ls && ls.isComplete);
 }
