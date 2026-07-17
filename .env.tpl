@@ -19,12 +19,12 @@
 PLANETSCALE_DATABASE_URL="op://liveone-dev/env/PLANETSCALE_DATABASE_URL"
 PLANETSCALE_DATABASE_URL_MIGRATIONS="op://liveone-dev/env/PLANETSCALE_DATABASE_URL_MIGRATIONS"
 CLERK_SECRET_KEY="op://liveone-dev/env/CLERK_SECRET_KEY"
+# KV is prod's store, shared BY DESIGN: dev reads it for fresh current values;
+# dev never writes (no cron, no polling, no observation intake locally).
 KV_REST_API_URL="op://liveone-dev/env/KV_REST_API_URL"
 KV_REST_API_TOKEN="op://liveone-dev/env/KV_REST_API_TOKEN"
-OBSERVATIONS_QSTASH_TOKEN="op://liveone-dev/env/OBSERVATIONS_QSTASH_TOKEN"
-OBSERVATIONS_QSTASH_CURRENT_SIGNING_KEY="op://liveone-dev/env/OBSERVATIONS_QSTASH_CURRENT_SIGNING_KEY"
-OBSERVATIONS_QSTASH_NEXT_SIGNING_KEY="op://liveone-dev/env/OBSERVATIONS_QSTASH_NEXT_SIGNING_KEY"
-OBSERVATIONS_QSTASH_RECEIVER_URL="op://liveone-dev/env/OBSERVATIONS_QSTASH_RECEIVER_URL"
+# QStash (publish + signature verification) is PROD-ONLY — dev runs no polling
+# infrastructure. Those fields live solely in the liveone-prod vault.
 OBSERVATIONS_ALERT_WEBHOOK_URL="op://liveone-dev/env/OBSERVATIONS_ALERT_WEBHOOK_URL"
 OPEN_ELECTRICITY_API_KEY="op://liveone-dev/env/OPEN_ELECTRICITY_API_KEY"
 

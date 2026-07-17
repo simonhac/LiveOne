@@ -49,3 +49,17 @@ export function isDevelopment(): boolean {
 export function isTest(): boolean {
   return getEnvironment() === "test";
 }
+
+/**
+ * Environment label for outbound alert/webhook messages.
+ *
+ * POLICY (2026-07-16): the OBSERVATIONS_ALERT_WEBHOOK_URL Slack webhook is shared
+ * between dev and prod, so EVERY message sent to it must self-identify its
+ * environment. Any new webhook sender must prefix its text with `[${envLabel()}]`.
+ *
+ * Finer-grained than getEnvironment(): preserves Vercel's production/preview/
+ * development distinction where available.
+ */
+export function envLabel(): string {
+  return process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "unknown";
+}

@@ -5,9 +5,16 @@
  * (OPEN_ELECTRICITY_API_KEY) — one system per region (vendorSiteId = NSW1/VIC1/…). Backfill re-fetches
  * a day via `backfillRange` (which publishes through the shared collector → receiver → agg_5m path).
  *
- * DETECTION set excludes `nem/emissionsIntensity`: the mapper legitimately skips intervals with
- * emissions<=0 / zero generation, so that point is < 288/day by design and would false-flag almost
- * every day. Backfill still re-fetches and heals all four grid points regardless.
+ * DETECTION covers all four points, incl. `nem/emissionsIntensity` (derived = emissions÷energy). An
+ * earlier version excluded it, assuming the mapper's `emissions<=0` / `power<=0` skips made it sparse
+ * "by design" — but those never fire for a whole NEM region (aggregate power is always thousands of MW,
+ * emissions always hundreds of tCO2). Empirically it is ~288/day (NSW1: short on 6/329 days, comparable
+ * to price/renewables/demand), and its short days are the SAME recoverable data-endpoint publish-lag
+ * holes we want to heal — the `data` leg publishes later than `market`, so a just-closed interval's
+ * emissions can miss the live poll's re-pull window while price/renewables/demand already landed.
+ * Backfill re-fetches + re-derives all four points; the runner's progress-based landing keeps the one
+ * theoretical edge case (a genuinely zero-emissions region interval) harmless — it just stays
+ * `unsettled`, never a false "repaired-forever" loop.
  */
 import { backfillRange } from "@/lib/vendors/openelectricity/backfill";
 import { isNemRegion } from "@/lib/vendors/openelectricity/types";
@@ -23,7 +30,12 @@ export const openelectricityProvider: CoverageRepairProvider<
   cadenceMinutes: 5, // 288/day
   lookbackDays: 90,
   graceDays: 7,
-  expectedPointTails: ["nem/price", "nem/renewableProportion", "nem/demand"],
+  expectedPointTails: [
+    "nem/price",
+    "nem/renewableProportion",
+    "nem/demand",
+    "nem/emissionsIntensity",
+  ],
   needsCredentials: false, // single global OPEN_ELECTRICITY_API_KEY, ownerless
   hasDerivedFlow: false, // region grid data feeds no household area
   bucketOffsetMin: () => 600,

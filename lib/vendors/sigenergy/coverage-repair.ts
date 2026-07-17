@@ -8,11 +8,35 @@
 import { backfillEnergyRange } from "@/lib/vendors/sigenergy/statistics";
 import { SigenergyClient } from "@/lib/vendors/sigenergy/sigenergy-client";
 import { getSystemCredentials } from "@/lib/secure-credentials";
-import type { CoverageRepairProvider, DayRepair } from "@/lib/coverage/types";
+import type {
+  CoverageRepairProvider,
+  DayRepair,
+  PrepareResult,
+} from "@/lib/coverage/types";
+import type { SystemWithPolling } from "@/lib/systems-manager";
 
 interface SigenCtx {
   client: SigenergyClient;
   stationId: string;
+}
+
+/** Validate owner/station/creds and build a mySigen client. Shared by prepare() + commissionDay(). */
+async function buildSigenCtx(
+  system: SystemWithPolling,
+): Promise<PrepareResult<SigenCtx>> {
+  if (!system.ownerClerkUserId)
+    return { ok: false, error: "no owner (Sigenergy credentials required)" };
+  if (!system.vendorSiteId)
+    return { ok: false, error: "no Sigenergy station id (vendorSiteId)" };
+  const base = await getSystemCredentials(system.ownerClerkUserId, system.id);
+  if (!base?.username || !base?.password)
+    return { ok: false, error: "no Sigenergy credentials" };
+  const client = new SigenergyClient({
+    username: base.username,
+    password: base.password,
+    region: base.region ?? "aus",
+  });
+  return { ok: true, ctx: { client, stationId: system.vendorSiteId } };
 }
 
 /** The six 5-min interval-energy points (Wh) written by the statistics backfill. */
@@ -34,20 +58,18 @@ export const sigenergyProvider: CoverageRepairProvider<SigenCtx> = {
   needsCredentials: true,
   hasDerivedFlow: true,
   bucketOffsetMin: (s) => s.timezoneOffsetMin ?? 600, // station-local
-  async prepare(system) {
-    if (!system.ownerClerkUserId)
-      return { ok: false, error: "no owner (Sigenergy credentials required)" };
-    if (!system.vendorSiteId)
-      return { ok: false, error: "no Sigenergy station id (vendorSiteId)" };
-    const base = await getSystemCredentials(system.ownerClerkUserId, system.id);
-    if (!base?.username || !base?.password)
-      return { ok: false, error: "no Sigenergy credentials" };
-    const client = new SigenergyClient({
-      username: base.username,
-      password: base.password,
-      region: base.region ?? "aus",
-    });
-    return { ok: true, ctx: { client, stationId: system.vendorSiteId } };
+  prepare: buildSigenCtx,
+  /** Sigenergy exposes the station's commissioning day as `stationOpenTime` (→ `station.openDate`).
+   *  Best-effort: needs creds; returns null on any failure so the runner falls back to created_at. */
+  async commissionDay(system): Promise<string | null> {
+    try {
+      const prep = await buildSigenCtx(system);
+      if (!prep.ok) return null;
+      const station = await prep.ctx.client.getStation();
+      return station.openDate ?? null;
+    } catch {
+      return null;
+    }
   },
   async backfillDay(system, day, ctx, session, collector): Promise<DayRepair> {
     const ymd = day.replace(/-/g, ""); // 'YYYY-MM-DD' → 'YYYYMMDD'

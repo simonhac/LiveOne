@@ -50,6 +50,7 @@ import {
   primaryKey,
   foreignKey,
   timestamp,
+  date,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type { AreaLocation } from "@/lib/areas/types";
@@ -83,6 +84,12 @@ export const systems = pgTable(
     displayTimezone: text("display_timezone").notNull(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    // Vendor-reported commissioning / "open" day (local calendar date, "YYYY-MM-DD"): the system's
+    // earliest-possible data date. Distinct from `created_at` (LiveOne onboarding). Floors the
+    // coverage-repair window so pre-commission days aren't flagged as phantom gaps AND genuine
+    // pre-onboarding history stays in range. Null when unknown → the runner falls back to created_at.
+    // Populated at onboarding (e.g. Sigenergy `stationOpenTime`) and lazily on first repair.
+    commissionedOn: date("commissioned_on"),
   },
   (table) => ({
     ownerClerkUserIdx: index("owner_clerk_user_idx").on(table.ownerClerkUserId),

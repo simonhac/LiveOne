@@ -10,7 +10,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool, type PoolConfig } from "pg";
 import * as schema from "./schema";
-import { isProduction } from "@/lib/env";
+import { isProduction, envLabel } from "@/lib/env";
 
 // Global singleton to persist across hot reloads
 declare global {
@@ -139,10 +139,11 @@ function assertDbEnvironmentMatches(config: PoolConfig): void {
       console.error(msg);
       const webhook = process.env.OBSERVATIONS_ALERT_WEBHOOK_URL;
       if (webhook) {
+        // Shared-webhook policy: every message carries its environment (lib/env.ts).
         void fetch(webhook, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: `🔴 ${msg}` }),
+          body: JSON.stringify({ text: `🔴 [${envLabel()}] ${msg}` }),
         }).catch(() => {});
       }
     }

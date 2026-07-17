@@ -47,18 +47,23 @@ wait for the async writes to land → recompute the scoped derived tables → po
 `prepare(system)` (load creds / build a client, or an error) + `backfillDay(...)` (fetch + map the
 native result → `repaired | unsettled | error`). Registered in `lib/coverage/providers.ts`.
 
-| vendor          | cadence         | coverage points (detection)                    | creds                                      | day basis     | backfill primitive                      | recoverable window     |
-| --------------- | --------------- | ---------------------------------------------- | ------------------------------------------ | ------------- | --------------------------------------- | ---------------------- |
-| Amber           | 30-min (48/day) | `E1/kwh,E1/cost,B1/kwh,B1/cost`                | per-owner (Clerk)                          | AEST +10      | `fetchAmberUsage`→`storeRecordsLocally` | ~90 days               |
-| OpenElectricity | 5-min (288/day) | `nem/price,nem/renewableProportion,nem/demand` | **ownerless** (`OPEN_ELECTRICITY_API_KEY`) | AEST +10      | `backfillRange` (one day)               | deep (months)          |
-| Sigenergy       | 5-min (288/day) | six `*_interval_wh`                            | per-owner (Clerk)                          | station-local | `backfillEnergyRange(day,day)`          | **unknown** (see note) |
+| vendor          | cadence         | coverage points (detection)                                           | creds                                      | day basis     | backfill primitive                      | recoverable window     |
+| --------------- | --------------- | --------------------------------------------------------------------- | ------------------------------------------ | ------------- | --------------------------------------- | ---------------------- |
+| Amber           | 30-min (48/day) | `E1/kwh,E1/cost,B1/kwh,B1/cost`                                       | per-owner (Clerk)                          | AEST +10      | `fetchAmberUsage`→`storeRecordsLocally` | ~90 days               |
+| OpenElectricity | 5-min (288/day) | `nem/price,nem/renewableProportion,nem/demand,nem/emissionsIntensity` | **ownerless** (`OPEN_ELECTRICITY_API_KEY`) | AEST +10      | `backfillRange` (one day)               | deep (months)          |
+| Sigenergy       | 5-min (288/day) | six `*_interval_wh`                                                   | per-owner (Clerk)                          | station-local | `backfillEnergyRange(day,day)`          | **unknown** (see note) |
 
 ## Invariants & gotchas (the non-obvious decisions)
 
-- **Detection must exclude legitimately-sparse points.** OpenElectricity's `nem/emissionsIntensity`
-  is computed and skips intervals with `emissions ≤ 0` / zero generation, so it is < 288/day _by
-  design_. It is deliberately **not** in OE's coverage set — including it would false-flag almost
-  every day. Backfill still re-fetches and heals it.
+- **Detection excludes only genuinely-sparse points — and OE's `nem/emissionsIntensity` is NOT one.**
+  It is computed and skips `emissions ≤ 0` / `power ≤ 0` intervals, which sounds sparse, but those
+  never fire for a whole NEM region (aggregate power is always thousands of MW, emissions always
+  hundreds of tCO2). Empirically it is ~288/day (NSW1: short on only 6/329 days, comparable to
+  price/renewables/demand), and its short days are the SAME recoverable `data`-endpoint publish-lag
+  holes we want to heal. So it **is** in OE's coverage set. The runner's progress-based landing keeps
+  the one theoretical edge case (a genuinely zero-emissions region interval) harmless — it just stays
+  `unsettled`, never a false "repaired" loop. (An earlier version excluded it on the untested
+  assumption it was "< 288/day by design"; the data refutes that.)
 - **Amber backfill must be UNCONDITIONAL.** Use `fetchAmberUsage → buildRecordsMapFromAmber →
 storeRecordsLocally`, **not** `updateUsage`. `updateUsage` is a quality-based _sync_ that early-exits
   when the local present intervals are already billable (`lib/vendors/amber/client.ts`), so it will

@@ -103,10 +103,11 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
     const network =
       (system.metadata as { network?: string } | null)?.network ?? "NEM";
 
-    // Adaptive lookback: normally re-pull the last ~30 min (so a just-published interval lands
-    // and late revisions heal via the receiver's UPSERT), but if we're behind after an outage,
-    // extend the window back to the last interval we have so the gap auto-fills — capped at
-    // MAX_AUTOHEAL_MS. Gaps larger than the cap need the backfill route / bulk ingestor.
+    // Adaptive lookback: normally re-pull the last DEFAULT_LOOKBACK_MS (45 min) so a just-published
+    // interval lands — including the `data` leg (power/emissions), which trails `market` — and late
+    // revisions heal via the receiver's UPSERT; but if we're behind after an outage, extend the window
+    // back to the last interval we have so the gap auto-fills — capped at MAX_AUTOHEAL_MS. Gaps larger
+    // than the cap need the backfill route / bulk ingestor.
     const baseMs = floor5(context.startedAt.getTime());
     const sched = await loadState(system.id);
     const dateStartMs = adaptiveLookbackStartMs(

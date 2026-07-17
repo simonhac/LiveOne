@@ -140,6 +140,7 @@ export async function POST(request: NextRequest) {
       displayTimezone: "Australia/Melbourne", // Default timezone for test system
       createdAt: new Date(),
       updatedAt: new Date(),
+      commissionedOn: null, // transient test system — no vendor commission date
       pollingStatus: null, // No polling status for test
     };
 

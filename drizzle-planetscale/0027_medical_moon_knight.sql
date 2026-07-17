@@ -1,0 +1,1 @@
+ALTER TABLE "systems" ADD COLUMN IF NOT EXISTS "commissioned_on" date;

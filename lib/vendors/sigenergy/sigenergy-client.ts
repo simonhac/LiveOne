@@ -115,6 +115,35 @@ function extractEnergyTotals(rec: unknown): SigenergyEnergyTotals {
   };
 }
 
+/**
+ * Extract the station's commissioning / "open" DAY (local, "YYYY-MM-DD") from a station-info record.
+ * Prefers the explicit `stationOpenTime` ("YYYY-MM-DD"); falls back to `stationComponentStatsEnabledTime`
+ * ("YYYYMMDD HH:MM:SS") then the SN-embedded date (`10`+`YYYYMMDD`+`NNNNN`). Returns undefined if none parse.
+ */
+function extractStationOpenDate(
+  d: Record<string, unknown>,
+): string | undefined {
+  const iso = (s: string) =>
+    `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  const plausible = (ymd: string) => {
+    const y = +ymd.slice(0, 4),
+      m = +ymd.slice(4, 6),
+      dd = +ymd.slice(6, 8);
+    return y >= 2015 && y <= 2100 && m >= 1 && m <= 12 && dd >= 1 && dd <= 31;
+  };
+  const open = d.stationOpenTime;
+  if (typeof open === "string" && /^\d{4}-\d{2}-\d{2}$/.test(open)) return open;
+  const enabled = d.stationComponentStatsEnabledTime;
+  if (typeof enabled === "string") {
+    const s = enabled.replace(/\D/g, "").slice(0, 8);
+    if (s.length === 8 && plausible(s)) return iso(s);
+  }
+  const sn = String(d.stationSnCode ?? d.stationId ?? "");
+  if (/^\d{15}$/.test(sn) && plausible(sn.slice(2, 10)))
+    return iso(sn.slice(2, 10));
+  return undefined;
+}
+
 export class SigenergyClient {
   private readonly username: string;
   private readonly password: string;
@@ -399,6 +428,7 @@ export class SigenergyClient {
         | string
         | undefined,
       timeZoneName: d.timeZoneName as string | undefined,
+      openDate: extractStationOpenDate(d),
       pvCapacityKw: pickNumber(d, ["pvCapacity"]),
       batteryCapacityKwh: pickNumber(d, ["batteryCapacity"]),
       latitude: pickNumber(d, ["latitude"]),

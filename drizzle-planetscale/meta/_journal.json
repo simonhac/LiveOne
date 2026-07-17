@@ -190,6 +190,13 @@
       "when": 1784144009957,
       "tag": "0026_mature_zaladane",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1784242351552,
+      "tag": "0027_medical_moon_knight",
+      "breakpoints": true
     }
   ]
 }

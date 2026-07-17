@@ -77,4 +77,11 @@ export interface CoverageRepairProvider<Ctx = unknown> {
     session: SessionInfo,
     collector: PollCollector,
   ): Promise<DayRepair>;
+
+  /** Optional: the vendor-reported commissioning / "birth" day (station-local, "YYYY-MM-DD") for this
+   *  system — the earliest date data could exist. Best-effort (may hit the vendor API). The runner uses
+   *  it to floor the repair window (so pre-commission days aren't flagged as phantom gaps, and genuine
+   *  pre-onboarding history stays in range) and to lazily populate `systems.commissioned_on`. Returns
+   *  null if unknown/unavailable. Implement only where the vendor exposes such a date. */
+  commissionDay?(system: SystemWithPolling): Promise<string | null>;
 }
