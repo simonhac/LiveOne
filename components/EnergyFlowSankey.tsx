@@ -38,6 +38,10 @@ interface EnergyFlowSankeyProps {
 interface SankeyNodeData {
   /** Canonical flow path (e.g. "source.solar", "source.battery"); used to identify the battery. */
   id?: string;
+  /** Which column the node was built for; drives side-dependent vertical ordering. Robust across
+   *  render paths (id is mangled on the client/hover path), since it's set from which array the
+   *  node came from (matrix.sources vs matrix.loads). */
+  side?: "source" | "load";
   name: string;
   color: string;
   /** This node's own total energy (kWh) or power (kW) — carried so the draw loop needn't reverse-map
@@ -84,6 +88,7 @@ function buildColumnsGraph(
     srcNode.set(i, nodes.length);
     nodes.push({
       id: s.id,
+      side: "source",
       name: shortenLabel(s.label),
       color: s.color,
       total: matrix.sourceTotals[i],
@@ -96,6 +101,7 @@ function buildColumnsGraph(
     loadNode.set(j, nodes.length);
     nodes.push({
       id: l.id,
+      side: "load",
       name: shortenLabel(l.label),
       color: l.color,
       total: matrix.loadTotals[j],
@@ -134,6 +140,7 @@ function buildBatteryMiddleGraph(
     leftNode.set(i, nodes.length);
     nodes.push({
       id: s.id,
+      side: "source",
       name: shortenLabel(s.label),
       color: s.color,
       total: matrix.sourceTotals[i],
@@ -162,6 +169,7 @@ function buildBatteryMiddleGraph(
     rightNode.set(j, nodes.length);
     nodes.push({
       id: l.id,
+      side: "load",
       name: shortenLabel(l.label),
       color: l.color,
       total: matrix.loadTotals[j],
@@ -288,8 +296,11 @@ export default function EnergyFlowSankey({
       ? { left: 0, right: 0, top: 35, bottom: 20 } // No margins on mobile
       : { left: 60, right: 60, top: 35, bottom: 20 };
 
-    // Custom node sorting to control vertical order
-    // Order from top to bottom: Solar, Other loads, House, Battery, Grid
+    // Custom node sorting to control vertical order.
+    // SOURCES column (top→bottom): Solar, Other, House, Battery, Grid.
+    // LOADS column: Battery is lifted to the TOP (avoids the central ribbon crossover), the rest
+    // keep the same relative order. Side comes from the node's build-time `side` tag, not its id
+    // (id is mangled on the client/hover render path).
     const getNodeOrder = (node: any): number => {
       // Access the name from the node's data
       const name = node.name || "";
@@ -297,7 +308,8 @@ export default function EnergyFlowSankey({
 
       if (lower.includes("solar")) return 0;
       if (lower.includes("house")) return 2;
-      if (lower.includes("battery")) return 3;
+      // Load-side battery sits at the very top; source-side battery stays low.
+      if (lower.includes("battery")) return node.side === "load" ? -1 : 3;
       if (lower.includes("grid")) return 4;
       return 1; // Other loads between solar and house
     };
