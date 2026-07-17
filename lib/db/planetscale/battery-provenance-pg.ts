@@ -250,21 +250,31 @@ export async function recomputeBatteryProvenanceForWindow(
     startMs: winStartMs - WARMUP_MS,
     endMs: winEndMs,
   });
-  if (!inputs || inputs.batterySystemId == null) {
-    return {
-      rowsWritten: 0,
-      helperSystemId: null,
-      pointIds: {},
-      attrRowsWritten: 0,
-      checkpointsWritten: 0,
-    };
-  }
+  const empty = {
+    rowsWritten: 0,
+    helperSystemId: null,
+    pointIds: {},
+    attrRowsWritten: 0,
+    checkpointsWritten: 0,
+  };
+  if (!inputs) return empty;
+  const hasBattery = inputs.batterySystemId != null;
+  // A battery-less Area has no blend/fold to materialise. Legacy behaviour stops here; the unified
+  // rollup still records the (battery-less) energy + grid/solar attribution so flow_attr_1d covers
+  // every logical system, not only battery Areas.
+  const unifiedRollup =
+    process.env.FLOW_ATTR_UNIFIED === "true" && !!opts.writeRollup;
+  if (!hasBattery && !unifiedRollup) return empty;
 
   // Midnights to checkpoint: strictly inside the WRITE window (a midnight at/before winStartMs falls in
   // the warm-up region — checkpoint quality == blend-row quality by construction). Gated on canonical
-  // inputs + a pristine config (custom-config runs must not poison checkpoints).
+  // inputs + a pristine config (custom-config runs must not poison checkpoints). Battery-only: a
+  // battery-less Area has no fold state worth persisting.
   const midnights =
-    opts.writeCheckpoints && !opts.config && inputsAreCanonical(inputs)
+    hasBattery &&
+    opts.writeCheckpoints &&
+    !opts.config &&
+    inputsAreCanonical(inputs)
       ? localMidnightsInWindow(winStartMs, winEndMs, inputs.timezoneOffsetMin)
       : [];
 
@@ -272,16 +282,17 @@ export async function recomputeBatteryProvenanceForWindow(
     snapshotAtMs: midnights.map((m) => m.midnightMs),
   });
 
-  const blend = await writeBlendOutputs(
-    db,
-    inputs,
-    result,
-    winStartMs,
-    winEndMs,
-    {
-      updateLatest: !!opts.updateLatest,
-    },
-  );
+  // Blend outputs (helper agg_5m + KV latest) are battery-only — a battery-less Area has no helper
+  // blend point, so skip them entirely (and never mint a helper device for a solar-only Area).
+  const blend = hasBattery
+    ? await writeBlendOutputs(db, inputs, result, winStartMs, winEndMs, {
+        updateLatest: !!opts.updateLatest,
+      })
+    : {
+        rowsWritten: 0,
+        helperSystemId: null as number | null,
+        pointIds: {} as Record<string, number>,
+      };
 
   // Per-day attribution rollup (daily heal / backfill only — not every minute). Best-effort so a rollup
   // hiccup never loses the blend write above.

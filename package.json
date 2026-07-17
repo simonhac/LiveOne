@@ -132,7 +132,7 @@
       "prettier --write",
       "next lint --fix --file"
     ],
-    "*.{json,md}": [
+    "*.json": [
       "prettier --write"
     ]
   }

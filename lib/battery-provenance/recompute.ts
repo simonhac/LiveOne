@@ -17,6 +17,7 @@ import {
   reconcileFromCheckpointBestEffort,
 } from "@/lib/db/planetscale/battery-provenance-pg";
 import { learnAllForHandle } from "@/lib/db/planetscale/battery-provenance-daily-pg";
+import { listCompleteLogicalSystems } from "@/lib/aggregation/logical-system";
 import type { ProvenanceConfig } from "./types";
 
 /** Minutely trailing window. 12h (> HWS/run-tracking's 6h) because Amber revises hours later and devices
@@ -201,14 +202,22 @@ export interface RangeChunkInfo {
   chunkEndMs: number;
 }
 
-/** Daily heal / backfill: recompute an explicit range for every battery Area, in bounded chunks. */
+/**
+ * Daily heal / backfill: recompute an explicit range in bounded chunks. Under the unified rollup this
+ * covers EVERY complete logical system (so flow_attr_1d supersedes flow_1d fleet-wide — the rollup runs
+ * energy-only + grid/solar attribution for battery-less Areas); otherwise only the battery Areas that
+ * have a blend to materialise.
+ */
 export async function recomputeRange(
   startMs: number,
   endMs: number,
   config?: ProvenanceConfig,
   onChunk?: (info: RangeChunkInfo) => void,
 ): Promise<void> {
-  const handles = await listBatteryProvenanceHandles();
+  const handles =
+    process.env.FLOW_ATTR_UNIFIED === "true"
+      ? (await listCompleteLogicalSystems()).map((ls) => ls.id)
+      : await listBatteryProvenanceHandles();
   const start = Math.max(startMs, LIVEONE_BIRTHDATE_MS);
   for (const handle of handles) {
     for (let cs = start; cs < endMs; cs += CHUNK_MS) {

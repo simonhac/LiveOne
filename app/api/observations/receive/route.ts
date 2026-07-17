@@ -15,11 +15,11 @@
  * because (in a later phase) Postgres becomes the system of record and a silent
  * drop would be unrecoverable.
  *
- * Uses verifySignatureAppRouter wrapper for automatic signature verification.
+ * Verifies QStash signatures via withQstashSignatureVerification (optional — 503s when unconfigured).
  */
 
-import { verifySignatureAppRouter } from "@upstash/qstash/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { withQstashSignatureVerification } from "@/lib/observations/qstash-receiver";
 import { sql } from "drizzle-orm";
 import { eq } from "drizzle-orm";
 import { planetscaleDb } from "@/lib/db/planetscale";
@@ -432,11 +432,9 @@ async function handler(request: NextRequest) {
   }
 }
 
-// Wrap handler with signature verification using our custom env var names
-export const POST = verifySignatureAppRouter(handler, {
-  currentSigningKey: process.env.OBSERVATIONS_QSTASH_CURRENT_SIGNING_KEY,
-  nextSigningKey: process.env.OBSERVATIONS_QSTASH_NEXT_SIGNING_KEY,
-});
+// Verify QStash signatures when configured; a missing signing key (dev/preview) yields a 503 rather
+// than throwing at module load — see withQstashSignatureVerification.
+export const POST = withQstashSignatureVerification(handler);
 
 /**
  * Test-only handle on the internal message processor.
