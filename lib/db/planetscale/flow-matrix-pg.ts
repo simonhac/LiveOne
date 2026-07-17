@@ -24,17 +24,13 @@
  * at the day grain; late/out-of-order 5m corrections heal on the next recompute of the day.
  */
 
-import { and, eq, gte, lte, asc, or, sql } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 import { CalendarDate } from "@internationalized/date";
 import { planetscaleDb } from "./index";
 import { pointReadingsAgg5m, pointReadingsFlow1d } from "./schema";
 import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates";
 import { computeFlowMatrix } from "@/lib/aggregation/flow-matrix-core";
-import {
-  buildFlowSeries,
-  applyPowerTransform,
-  ClassifiedPoint,
-} from "@/lib/aggregation/flow-series";
+import { loadFlowSeriesFromAgg5m } from "@/lib/aggregation/flow-series-pg";
 import type { LogicalSystem } from "@/lib/aggregation/logical-system";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
@@ -44,12 +40,6 @@ export const FLOW_MATRIX_VERSION = 1;
 
 /** Flows below this (kWh) are dropped to keep the table sparse and free of integration noise. */
 const MIN_FLOW_KWH = 0.001;
-
-/** Convert an aggregate value to kW given the point's metric unit (W/Wh → /1000). */
-function toKw(value: number | null, unit: string | null): number | null {
-  if (value === null) return null;
-  return unit === "W" || unit === "Wh" ? value / 1000 : value;
-}
 
 /**
  * Recompute a logical system's energy-flow matrix for one local day from PG `agg_5m` and replace
@@ -85,67 +75,18 @@ export async function recomputeFlowMatrixForDay(
     return { rowsUpserted: 0 };
   }
 
-  // The day's 5m averages for this logical system's point refs (may span child systems).
-  const refConds = logicalSystem.points.map((p) =>
-    and(
-      eq(pointReadingsAgg5m.systemId, p.ref.systemId),
-      eq(pointReadingsAgg5m.pointId, p.ref.pointId),
-    ),
+  // Signed source/load kW series over the day, built from the SHARED PG→FlowSeries builder so
+  // point_readings_flow_1d and its attributed superset (flow_attr_1d) integrate byte-identical edges.
+  const {
+    timeline: timestamps,
+    sources,
+    loads,
+  } = await loadFlowSeriesFromAgg5m(
+    db,
+    logicalSystem.points,
+    dayStartMs,
+    dayEndMs,
   );
-  const rows = await db
-    .select({
-      systemId: pointReadingsAgg5m.systemId,
-      pointId: pointReadingsAgg5m.pointId,
-      intervalEnd: pointReadingsAgg5m.intervalEnd,
-      avg: pointReadingsAgg5m.avg,
-    })
-    .from(pointReadingsAgg5m)
-    .where(
-      and(
-        or(...refConds),
-        gte(pointReadingsAgg5m.intervalEnd, new Date(dayStartMs)),
-        lte(pointReadingsAgg5m.intervalEnd, new Date(dayEndMs)),
-      ),
-    )
-    .orderBy(asc(pointReadingsAgg5m.intervalEnd));
-
-  if (rows.length === 0) {
-    await clearDay();
-    return { rowsUpserted: 0 };
-  }
-
-  // Dense shared timeline, and each point's signed kW series aligned to it (keyed by system.point
-  // since a composite's points span systems).
-  const timestamps = [
-    ...new Set(rows.map((r) => r.intervalEnd.getTime())),
-  ].sort((a, b) => a - b);
-  const tIndex = new Map<number, number>(timestamps.map((t, i) => [t, i]));
-
-  const avgByPoint = new Map<string, Map<number, number | null>>();
-  for (const r of rows) {
-    const key = `${r.systemId}.${r.pointId}`;
-    let series = avgByPoint.get(key);
-    if (!series) {
-      series = new Map();
-      avgByPoint.set(key, series);
-    }
-    series.set(r.intervalEnd.getTime(), r.avg);
-  }
-
-  const classified: ClassifiedPoint[] = [];
-  for (const p of logicalSystem.points) {
-    const series = avgByPoint.get(`${p.ref.systemId}.${p.ref.pointId}`);
-    if (!series) continue;
-    const power = new Array<number | null>(timestamps.length).fill(null);
-    for (const [t, v] of series) {
-      const i = tIndex.get(t);
-      if (i !== undefined)
-        power[i] = applyPowerTransform(toKw(v, p.metricUnit), p.transform);
-    }
-    classified.push({ stem: p.stem, power });
-  }
-
-  const { sources, loads } = buildFlowSeries(classified);
   if (sources.length === 0 || loads.length === 0) {
     await clearDay();
     return { rowsUpserted: 0 };

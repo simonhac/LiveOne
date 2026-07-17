@@ -24,6 +24,9 @@ import {
   buildFlowSeries,
   ClassifiedPoint,
 } from "@/lib/aggregation/flow-series";
+import type { FlowSeries } from "@/lib/aggregation/flow-matrix-core";
+import { loadFlowSeriesFromAgg5m } from "@/lib/aggregation/flow-series-pg";
+import { resolveLogicalSystem } from "@/lib/aggregation/logical-system";
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
 import type { AreaLocation } from "@/lib/areas/types";
 import type { ExportTariffConfig } from "@/lib/capabilities/config";
@@ -195,31 +198,46 @@ export async function loadProvenanceInputs(
   if (!area) return null;
 
   const bound = await boundPoints(db, area.id);
-  const powerPoints = bound.filter((b) => b.metric === "power" && b.stem);
   const batterySystemId =
     bound.find((b) => b.role === "battery" && b.metric === "power")?.systemId ??
     null;
 
-  const perPoint = await Promise.all(
-    powerPoints.map(async (p) => ({
-      p,
-      series: await readAgg5m(db, p.systemId, p.pointId, startMs, endMs),
-    })),
-  );
-  const tset = new Set<number>();
-  for (const { series } of perPoint) for (const s of series) tset.add(s.t);
-  const timeline = [...tset].sort((a, b) => a - b);
-  if (timeline.length < 2) return null;
+  // Flow series (source/load kW). When unifying, build them from the SAME canonical
+  // `resolveLogicalSystem` + shared PG builder that `point_readings_flow_1d` uses, so flow_attr's
+  // edges match flow_1d byte-for-byte (fixes per-inverter solar-leaf granularity) and area-of-ones —
+  // which have no power `area_bindings` — are covered too. Legacy path builds straight off the bound
+  // power points. Gated until flow_1d↔flow_attr parity is confirmed on prod (FLOW_ATTR_UNIFIED).
+  let timeline: number[];
+  let sources: FlowSeries[];
+  let loads: FlowSeries[];
+  if (process.env.FLOW_ATTR_UNIFIED === "true") {
+    const ls = await resolveLogicalSystem(handle);
+    if (!ls) return null;
+    const bundle = await loadFlowSeriesFromAgg5m(db, ls.points, startMs, endMs);
+    ({ timeline, sources, loads } = bundle);
+  } else {
+    const powerPoints = bound.filter((b) => b.metric === "power" && b.stem);
+    const perPoint = await Promise.all(
+      powerPoints.map(async (p) => ({
+        p,
+        series: await readAgg5m(db, p.systemId, p.pointId, startMs, endMs),
+      })),
+    );
+    const tset = new Set<number>();
+    for (const { series } of perPoint) for (const s of series) tset.add(s.t);
+    timeline = [...tset].sort((a, b) => a - b);
+    const tIndexLocal = new Map(timeline.map((t, i) => [t, i]));
+    const classified: ClassifiedPoint[] = perPoint.map(({ p, series }) => ({
+      stem: p.stem!,
+      power: scatter(timeline, tIndexLocal, series, (v) =>
+        applyPowerTransform(toKw(v, p.unit), p.transform),
+      ),
+    }));
+    ({ sources, loads } = buildFlowSeries(classified));
+  }
+  if (timeline.length < 2 || sources.length === 0 || loads.length === 0)
+    return null;
   const tIndex = new Map(timeline.map((t, i) => [t, i]));
-
-  const classified: ClassifiedPoint[] = perPoint.map(({ p, series }) => ({
-    stem: p.stem!,
-    power: scatter(timeline, tIndex, series, (v) =>
-      applyPowerTransform(toKw(v, p.unit), p.transform),
-    ),
-  }));
-  const { sources, loads } = buildFlowSeries(classified);
-  if (sources.length === 0 || loads.length === 0) return null;
 
   // Battery SoC (optional). Every forward-filled series reads a LEAD-IN of its own fill limit before
   // startMs, so the first in-window slots fill from the last pre-window row exactly as a longer window

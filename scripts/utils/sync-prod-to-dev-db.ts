@@ -47,10 +47,11 @@ type FkChild = { table: string; cols: string[] };
 // manifest steps (full-refresh parents + incremental readings) re-populate the children under the new
 // PKs. Works for composite (point_info) and single-uuid (areas) PKs alike.
 //
-// Caveat: a drifted parent's children in tables NOT in the manifest (e.g. point_readings_flow_attr_1d,
-// battery_provenance_daily for areas) are cleared but not re-synced, so dev loses them for that ONE
-// realigned row until a full R2 restore / dev recompute. Fine for a disposable mirror; the realigning
-// rows are few (an occasional independently-created area / renumbered helper point).
+// Caveat: idDrift clears a realigned parent's FK children, which their own later manifest legs then
+// re-populate — but the flow/agg/provenance children re-sync INCREMENTALLY (bounded by the watermark
+// overlap), so a drifted area's rows OLDER than that window aren't restored until a full R2 restore.
+// device_run_periods is recomputed on dev (db:recompute-dev-runs), not synced. Fine for a disposable
+// mirror; the realigning rows are few (an occasional independently-created area / renumbered helper point).
 type IdDrift = {
   uniqueKeys: string[][]; // secondary unique indexes (each a full column list) a divergent-PK row collides on
   children: FkChild[];
@@ -228,6 +229,25 @@ const INCREMENTAL: IncrementalTable[] = [
   },
   {
     name: "point_readings_flow_1d",
+    mode: "incremental",
+    watermark: "updated_at",
+    overlap: "2 days",
+    onConflict: "update",
+  },
+  // Derived per-(area, day) tables, same class as flow_1d: materialised by the engine, NOT recomputed
+  // on dev (crons off), so dev/preview only has them if we copy them. flow_attr_1d is the attributed
+  // superset the modern Sankey + provenance-summary read; battery_provenance_daily powers the
+  // Battery-Contents card + daily provenance panels. Both keyed by updated_at, both idDrift children of
+  // `areas` (cleared + re-populated here on a uuid realign, bounded by the overlap — see areas.idDrift).
+  {
+    name: "point_readings_flow_attr_1d",
+    mode: "incremental",
+    watermark: "updated_at",
+    overlap: "2 days",
+    onConflict: "update",
+  },
+  {
+    name: "battery_provenance_daily",
     mode: "incremental",
     watermark: "updated_at",
     overlap: "2 days",
