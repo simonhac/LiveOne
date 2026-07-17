@@ -42,6 +42,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { requireCronOrAdmin } from "@/lib/api-auth";
 import { cronSkipReason } from "@/lib/cron/guard";
+import { envLabel } from "@/lib/env";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { getFlowConsistency } from "@/lib/db/planetscale/flow-consistency";
 import { listBatteryProvenanceAreaIds } from "@/lib/battery-provenance/recompute";
@@ -107,7 +108,11 @@ const BATPROV_SOC_METER_TOL_KWH = num(
   3,
 );
 
-/** Send a Slack-compatible alert if a webhook is configured. Best-effort; never throws. */
+/**
+ * Send a Slack-compatible alert if a webhook is configured. Best-effort; never throws.
+ * The webhook is shared across environments, so every message is prefixed with the
+ * environment name (see lib/env.ts).
+ */
 async function sendAlert(text: string): Promise<boolean> {
   const url = process.env.OBSERVATIONS_ALERT_WEBHOOK_URL;
   if (!url) return false;
@@ -115,7 +120,7 @@ async function sendAlert(text: string): Promise<boolean> {
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text: `[${envLabel()}] ${text}` }),
     });
     return res.ok;
   } catch (err) {

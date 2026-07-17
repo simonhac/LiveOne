@@ -25,9 +25,13 @@ export const EWMA_ALPHA = 0.3;
 export const MARGIN_SEC = 30; // poll a touch before the expected landing
 export const MAX_POLLS_PER_INTERVAL = 4; // rate-limit guard within one 5-min window
 
-/** Live-poll lookback in steady state: re-pull the last 15 min (≈3 intervals) so the
- *  just-published interval lands and recent revisions heal. A known gap overrides this. */
-export const DEFAULT_LOOKBACK_MS = 15 * 60 * 1000;
+/** Live-poll lookback in steady state: re-pull the last 45 min (≈9 intervals) so the just-published
+ *  interval lands and recent revisions heal. Sized to outlast the `data` endpoint's publish lag: it
+ *  trails `market` (price/renewables/demand), so an interval's power/emissions — and thus the derived
+ *  emissionsIntensity — can land minutes after price already advanced the frontier past it. A narrower
+ *  window let those scroll out before the data leg published, leaving recoverable emissionsIntensity
+ *  holes (healed weekly by coverage-repair as a backstop). A known gap after an outage overrides this. */
+export const DEFAULT_LOOKBACK_MS = 45 * 60 * 1000;
 /** Cap on how far back a single live poll reaches to auto-heal a gap after an outage.
  *  24 h ≈ 288 intervals — well under the API's per-request cap, so it fits in one fetch. */
 export const MAX_AUTOHEAL_MS = 24 * 60 * 60 * 1000;
