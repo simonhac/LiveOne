@@ -19,7 +19,13 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Post-fix the sync runs in a couple of minutes; 15 caps wasted Actions minutes if a leg wedges,
+    # while leaving generous headroom over the ~5-min target. A timeout shows as `cancelled` and fires
+    # the `Alert on timeout` step below (timeouts used to be silent — no `if: failure()`).
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read # gh run list — read the previous run's conclusion for the recovery ping
     steps:
       - uses: actions/checkout@v4
 
@@ -41,6 +47,11 @@ jobs:
           node-version: 20
 
       - run: npm ci
+
+      # Stamp the start of the data-sync work (excludes CI setup: checkout/pg-client/npm ci) so the
+      # reporting step below can measure "how long the sync took" against the 5-min target.
+      - name: Mark sync start
+        run: echo "SYNC_START=$(date +%s)" >> "$GITHUB_ENV"
 
       - name: Sync prod → liveone-dev
         env:
@@ -83,12 +94,53 @@ jobs:
           KV_REST_API_TOKEN: ${{ secrets.KV_REST_API_TOKEN }}
         run: npm run db:rebuild-dev-kv
 
+      # On a clean run: (1) warn to Slack if the sync blew the 5-min target, outputting the elapsed time;
+      # (2) if the previous run was unhealthy (failed or timed out), post a one-shot "recovered" ping.
+      - name: Report duration + recovery
+        if: success()
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.OBSERVATIONS_ALERT_WEBHOOK_URL }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [ -n "${ALERT_WEBHOOK_URL:-}" ] || exit 0
+          ELAPSED=$(( $(date +%s) - SYNC_START ))
+          MIN=$(( ELAPSED / 60 )); SEC=$(( ELAPSED % 60 ))
+          post() {
+            curl -fsS -X POST -H 'Content-Type: application/json' \
+              -d "{\"text\":\"$1\"}" "$ALERT_WEBHOOK_URL" || true
+          }
+          echo "sync took ${MIN}m ${SEC}s (${ELAPSED}s)"
+          # (1) Over the 5-minute (300s) target → warn, with the time.
+          if [ "$ELAPSED" -gt 300 ]; then
+            post "⚠️ sync-prod-to-dev took ${MIN}m ${SEC}s — over the 5-min target. See GitHub Actions."
+          fi
+          # (2) First success after an unhealthy run. This run is still in_progress, so the latest
+          # *completed* run is the previous one; announce recovery if it failed or was cancelled (timeout).
+          PREV=$(gh run list --workflow=sync-prod-to-dev.yml --branch "${GITHUB_REF_NAME}" \
+                   --status completed --limit 1 --json conclusion --jq '.[0].conclusion // ""' || echo "")
+          if [ "$PREV" = "failure" ] || [ "$PREV" = "cancelled" ]; then
+            post "✅ sync-prod-to-dev recovered — liveone-dev is fresh again (latest sync took ${MIN}m ${SEC}s)."
+          fi
+
       - name: Alert on failure
         if: failure()
         env:
           ALERT_WEBHOOK_URL: ${{ secrets.OBSERVATIONS_ALERT_WEBHOOK_URL }}
         run: |
-          [ -n "$ALERT_WEBHOOK_URL" ] || exit 0
+          [ -n "${ALERT_WEBHOOK_URL:-}" ] || exit 0
           curl -fsS -X POST -H 'Content-Type: application/json' \
             -d '{"text":"🔴 sync-prod-to-dev FAILED — liveone-dev may be stale. See GitHub Actions."}' \
+            "$ALERT_WEBHOOK_URL" || true
+
+      # A timeout (timeout-minutes exceeded) surfaces as `cancelled`, which the failure alert misses —
+      # and a timeout is by definition over the 5-min target. Warn so stale dev is never silent.
+      - name: Alert on timeout
+        if: cancelled()
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.OBSERVATIONS_ALERT_WEBHOOK_URL }}
+        run: |
+          [ -n "${ALERT_WEBHOOK_URL:-}" ] || exit 0
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d '{"text":"⚠️ sync-prod-to-dev TIMED OUT (over the 5-min target) — liveone-dev may be stale. See GitHub Actions."}' \
             "$ALERT_WEBHOOK_URL" || true
