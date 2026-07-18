@@ -210,8 +210,13 @@ const INCREMENTAL: IncrementalTable[] = [
     onConflict: "nothing",
     conflictCols: ["system_id", "point_id", "measurement_time"], // pr_point_time_unique, not the serial PK
     excludeCols: ["id"], // dev assigns its own serial
+    // Correlated EXISTS, NOT `IN (SELECT id FROM sessions)`: the top-level `OR session_id IS NULL` blocks a
+    // hash semijoin, so an uncorrelated IN degrades to a per-row scan of a materialised ~1M-row sessions set
+    // (plan cost ~370M → ~20 min for an ~8k-row delta — this was the whole sync's bottleneck). EXISTS keys
+    // each probe off sessions_pkey (cost ~21k, milliseconds). Same FK guard: keep readings whose session is
+    // NULL or present; the rest re-sync next run once `sessions` (copied just before) catches up.
     filter:
-      "(session_id IS NULL OR session_id IN (SELECT id FROM public.sessions))",
+      "(session_id IS NULL OR EXISTS (SELECT 1 FROM public.sessions se WHERE se.id = session_id))",
   },
   {
     name: "point_readings_agg_5m",
@@ -233,6 +238,11 @@ const INCREMENTAL: IncrementalTable[] = [
     watermark: "updated_at",
     overlap: "2 days",
     onConflict: "update",
+    // FK safety vs snapshot skew: `areas` is copied minutes earlier in the run (separate snapshot), so a
+    // transient areas idDrift/ordering gap can stage a flow row referencing an area not yet in dev — which
+    // aborts the WHOLE sync (the 2026-07-17 failure). Skip those rows, like point_readings skips
+    // session-less readings; they re-sync next run within the overlap. `areas` is tiny, so this is trivial.
+    filter: "area_id IN (SELECT id FROM public.areas)",
   },
   // Derived per-(area, day) tables, same class as flow_1d: materialised by the engine, NOT recomputed
   // on dev (crons off), so dev/preview only has them if we copy them. flow_attr_1d is the attributed
@@ -245,6 +255,7 @@ const INCREMENTAL: IncrementalTable[] = [
     watermark: "updated_at",
     overlap: "2 days",
     onConflict: "update",
+    filter: "area_id IN (SELECT id FROM public.areas)", // FK safety — see point_readings_flow_1d
   },
   {
     name: "battery_provenance_daily",
@@ -252,6 +263,7 @@ const INCREMENTAL: IncrementalTable[] = [
     watermark: "updated_at",
     overlap: "2 days",
     onConflict: "update",
+    filter: "area_id IN (SELECT id FROM public.areas)", // FK safety — see point_readings_flow_1d
   },
 ];
 
@@ -494,8 +506,14 @@ function main() {
   const started = Date.now();
   try {
     for (const t of MANIFEST) {
+      const t0 = Date.now();
       const { table, rows } = syncTable(prodUrl, devUrl, scratch, t);
-      console.log(`  ${rows.toString().padStart(8)}  ${table}`);
+      const secs = ((Date.now() - t0) / 1000).toFixed(1);
+      // Per-table timing: makes a slow leg obvious in the Actions log (and pairs with the
+      // workflow's >5-min Slack warning). point_readings used to dominate at ~20 min; see its filter.
+      console.log(
+        `  ${rows.toString().padStart(8)}  ${table.padEnd(30)} ${secs.padStart(7)}s`,
+      );
     }
   } finally {
     rmSync(scratch, { recursive: true, force: true });
