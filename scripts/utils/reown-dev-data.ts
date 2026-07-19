@@ -116,9 +116,11 @@ async function main() {
           .rowCount ?? 0) > 0;
       if (devRowExists) {
         const up = await c.query(
+          // `default_system_id` was dropped in P6 (migration 0022) — the landing default is now
+          // the dashboard. Referencing the dead column here silently failed every sync run (the
+          // step was continue-on-error) until this was fixed + the mask removed in the workflow.
           `UPDATE users u
               SET default_dashboard_id = f.default_dashboard_id,
-                  default_system_id    = f.default_system_id,
                   updated_at           = now()
              FROM users f
             WHERE u.clerk_user_id = $1 AND f.clerk_user_id = $2`,
