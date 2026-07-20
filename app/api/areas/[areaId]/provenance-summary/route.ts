@@ -6,10 +6,6 @@ import { planetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
 import { getYesterdayInTimezone } from "@/lib/date-utils";
 import { labelForFlowPath } from "@/lib/aggregation/flow-node-meta";
-import {
-  getFlowConsistency,
-  FlowConsistency,
-} from "@/lib/db/planetscale/flow-consistency";
 
 export const maxDuration = 30;
 
@@ -25,9 +21,6 @@ const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
  *        pctEstimated }`. Averages use FILTERED (known-intensity) denominators so estimated/unknown
  *     edges don't bias g/kWh, c/kWh, or %renewable — same math as reduceLoadProvenance, per source.
  *     A generator reprice is verified here (e.g. `source.grid` → ~1000 g/kWh).
- *   - `consistency`: the legacy↔modern reconciliation ({@link FlowConsistency}) — `deltaKwh`,
- *     per-side day coverage, and the divergent days. delta 0 + no divergent days == the rollup is a
- *     faithful projection of the Sankey.
  *
  * Range defaults to the LiveOne birthdate → yesterday (full history); `last` ("Nd") or `start`+`end`
  * override. Authorized for the area's **owner**, an **admin**, or a **`CRON_SECRET` bearer** (headless
@@ -157,25 +150,11 @@ export async function GET(
     };
   });
 
-  // legacy↔modern reconciliation over the same window (shared with the monitor consistency alert).
-  const consistency: FlowConsistency = (
-    await getFlowConsistency(db, { areaId, startDay, endDay })
-  )[0] ?? {
-    areaId,
-    legacyKwh: 0,
-    modernKwh: 0,
-    deltaKwh: 0,
-    legacyDays: 0,
-    modernDays: 0,
-    divergentDays: [],
-  };
-
   return NextResponse.json({
     ok: true,
     areaId,
     systemId: area.legacySystemId,
     range: { start: startDay, end: endDay },
     sources,
-    consistency,
   });
 }

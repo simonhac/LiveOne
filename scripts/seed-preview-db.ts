@@ -11,7 +11,7 @@
  *   SOURCE_DATABASE_URL  read-only prod connection (e.g. .env.local PLANETSCALE_DATABASE_URL_MIGRATIONS)
  *   TARGET_DATABASE_URL  the preview branch (e.g. `vercel env pull` PLANETSCALE_DATABASE_URL)
  *   SEED_DAYS            days of raw/5m readings + sessions to copy (default 10 — the heavy tables)
- *   SEED_DAYS_DAILY      days of the tiny DAILY aggregates (agg_1d, flow_1d) to copy (default 45)
+ *   SEED_DAYS_DAILY      days of the tiny DAILY tables (agg_1d, flow_attr_1d, battery_provenance_daily) to copy (default 45)
  *
  * Usage:
  *   SOURCE_DATABASE_URL=... TARGET_DATABASE_URL=... npx tsx scripts/seed-preview-db.ts
@@ -105,7 +105,11 @@ const SLICES: Array<[string, string]> = [
     `day >= to_char(${utcDays(SEED_DAYS_DAILY)},'YYYY-MM-DD')`,
   ],
   [
-    "point_readings_flow_1d",
+    "point_readings_flow_attr_1d",
+    `day >= to_char(${utcDays(SEED_DAYS_DAILY)},'YYYY-MM-DD')`,
+  ],
+  [
+    "battery_provenance_daily",
     `day >= to_char(${utcDays(SEED_DAYS_DAILY)},'YYYY-MM-DD')`,
   ],
 ];

@@ -17,8 +17,6 @@ import {
 import { getYesterdayInTimezone, getTodayInTimezone } from "@/lib/date-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { recomputeAgg1dForDay } from "@/lib/db/planetscale/aggregate-points-pg";
-import { recomputeFlowMatrixForDayBestEffort } from "@/lib/db/planetscale/flow-matrix-pg";
-import { listCompleteLogicalSystems } from "@/lib/aggregation/logical-system";
 import { recomputeRange as recomputeRunPeriodsRange } from "@/lib/run-tracking/recompute";
 import { recomputeRange as recomputeHwsTemperatureRange } from "@/lib/hws/recompute";
 import {
@@ -250,22 +248,10 @@ export async function aggregateRange(
     );
   }
 
-  // Materialise the energy-flow matrix per LOGICAL system (composites + qualifying
-  // single systems), each read from its own (possibly cross-system) 5m. Best-effort
-  // and idempotent per day, so re-running just heals each day.
-  try {
-    const logicalSystems = await listCompleteLogicalSystems();
-    console.log(
-      `[Daily Points] Recomputing energy-flow matrix for ${logicalSystems.length} logical systems × ${allDays.length} days`,
-    );
-    for (const ls of logicalSystems) {
-      for (const day of allDays) {
-        await recomputeFlowMatrixForDayBestEffort(ls, day);
-      }
-    }
-  } catch (error) {
-    console.error("[Daily Points] Energy-flow matrix pass failed:", error);
-  }
+  // NOTE: the per-(area, day) energy-flow matrix (`point_readings_flow_attr_1d`) is materialised by the
+  // battery-provenance heal pass below (it iterates every complete logical system — energy-only +
+  // grid/solar attribution for battery-less Areas, plus the blend for battery Areas). The legacy
+  // `point_readings_flow_1d` writer was retired, so there is no separate flow-matrix pass here.
 
   // Daily heal of device run periods over the aggregated range (best-effort).
   // The minutely cron keeps the trailing window fresh; this catches late data across the range.
@@ -285,9 +271,11 @@ export async function aggregateRange(
     console.error("[Daily Points] HWS temperature heal pass failed:", error);
   }
 
-  // Daily heal of the derived battery-provenance blend over the aggregated range (best-effort). Runs
-  // LAST — it reads agg_5m (battery + grid + solar) which the passes above have materialised. No-op for
-  // Areas without a bound battery. First run THE learn (η → C → losses over the incremental
+  // Daily heal of the flow matrix + battery-provenance blend over the aggregated range (best-effort).
+  // Runs LAST — it reads agg_5m (battery + grid + solar) which the passes above have materialised. It
+  // materialises `point_readings_flow_attr_1d` for EVERY complete logical system (energy-only +
+  // grid/solar attribution for battery-less Areas; the blend too for battery Areas) — this is the sole
+  // flow-matrix pass since flow_1d was retired. First run THE learn (η → C → losses over the incremental
   // battery_provenance_daily cache — ordering enforced inside), so the blend/rollup recompute below
   // READS reproducible values (via inputs.etaSeries / capacitySeries / chargeEfficiencySeries /
   // idleLossKwhPerDaySeries) instead of re-learning them per window.

@@ -416,70 +416,28 @@ export const pointReadingsAgg1d = pgTable(
 );
 
 // ============================================================================
-// Energy-flow matrix — per local-day, per (source, load) directional energy.
+// point_readings_flow_attr_1d — the per local-day, per (source, load) directional flow matrix: energy
+// PLUS the attributed metric legs (emissions/renewable/cost). The SOLE flow/Sankey matrix — the legacy
+// energy-only `point_readings_flow_1d` was retired, so this table's `energy_kwh` is what the Sankey reads.
 //
-// Built by the engine from `point_readings_agg_5m` (NOT from `agg_1d`, whose
-// daily avg cancels bidirectional direction — that cancellation is the whole bug
-// this table fixes). Energy is ALWAYS >= 0; direction is encoded by which slot a
-// flow lands in: battery charge -> load.battery, discharge -> source.battery;
-// grid import -> source.grid, export -> load.grid. Path-keyed (not point-keyed)
-// so aggregated solar (one node for many points) and the synthetic
-// `load.rest-of-house` have a stable identity; labels/colors resolve at read
-// time. A multi-day range is a plain `SUM(energy_kwh) GROUP BY (source_path,
-// load_path)`, because per-interval energy is additive.
+// Built by the engine from `point_readings_agg_5m` (NOT `agg_1d`, whose daily avg cancels bidirectional
+// direction) via the unified `computeFlowAccounting`. Energy is ALWAYS >= 0; direction is encoded by
+// which slot a flow lands in: battery charge → load.battery, discharge → source.battery; grid import →
+// source.grid, export → load.grid. Path-keyed (not point-keyed) so aggregated solar (one node for many
+// points) and the synthetic `load.rest-of-house` have stable identities; labels/colors resolve at read
+// time. A multi-day range is a plain `SUM(energy_kwh) GROUP BY (source_path, load_path)`.
 //
-// `area_id` is the LOGICAL SYSTEM / view the flows belong to (`resolveLogicalSystem`):
-// an area-of-one over a single physical system, OR a multi-device area whose points are drawn
-// from CHILD systems. For a multi-device area the cross-system origin is collapsed into the Area
-// (provenance is not preserved on the row); `source_path`/`load_path` are stems in that view's
-// namespace. All flows in a row therefore belong to one view — cross-system *edges* (a source
-// on one system, a load on another) are not representable in this shape. NOTE: a multi-device area
-// and its members' areas-of-one each get their own rows, so a portfolio rollup must never sum
-// a multi-device area AND its members.
-// ============================================================================
-export const pointReadingsFlow1d = pgTable(
-  "point_readings_flow_1d",
-  {
-    // The Area this view belongs to — the logical-system identity (P3-tail-1). Part of the
-    // composite primary key. An area-of-one is a 1:1 wrapper over a single physical system; a
-    // multi-device area collapses its members' provenance into one namespace. See
-    // areas-and-dashboards.md (P3). (Replaced the legacy `system_id` keying in migration 0013.)
-    areaId: uuid("area_id")
-      .notNull()
-      .references(() => areas.id),
-    day: text("day").notNull(), // YYYY-MM-DD, system-local — same key convention as agg_1d
-    sourcePath: text("source_path").notNull(), // e.g. "source.solar" | "source.battery" | "source.grid"
-    loadPath: text("load_path").notNull(), // "load" | "load.<sub>" | "load.battery" | "load.grid" | "load.rest-of-house"
-
-    // Flow value
-    energyKwh: doublePrecision("energy_kwh").notNull(), // always >= 0
-
-    // Data quality / provenance
-    sampleCount: integer("sample_count").notNull(), // # of 5m intervals that contributed
-    version: integer("version").notNull().default(1), // algorithm version → lets backfill detect stale rows
-
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => ({
-    pk: primaryKey({
-      columns: [table.areaId, table.day, table.sourcePath, table.loadPath],
-    }),
-    dayIdx: index("prf1d_day_idx").on(table.day),
-    areaDayIdx: index("prf1d_area_day_idx").on(table.areaId, table.day),
-  }),
-);
-
-// ============================================================================
-// point_readings_flow_attr_1d — the METRIC LEGS of the flow accounting, a SUPERSET of
-// point_readings_flow_1d. Same edges + keying (area_id, day, source_path, load_path), but it ALSO
-// carries energy, so `flow_1d` is a strict SUBSET. Populated in the same daily pass from the unified
-// `computeFlowAccounting`: `energy_kwh` (from the flow allocation — matches `flow_1d` by construction)
-// plus the attributed emissions/renewable/cost (energy × each source's per-interval intensity: grid from
-// OpenElectricity/Amber, battery from the provenance blend, solar = clean/free). The metric columns are
-// NULLABLE (intensity unknown for that edge/day → null; never perturbs energy). `estimated_kwh` is the
-// confidence denominator ("% estimated"); `finalized_at` marks a day past the ~72h estimated→final cutoff.
-// CUTOVER (once trusted): repoint the Sankey/flow read at this table's energy columns and drop `flow_1d`.
+// `area_id` is the LOGICAL SYSTEM / view the flows belong to (`resolveLogicalSystem`): an area-of-one
+// over a single physical system, OR a multi-device area whose points are drawn from CHILD systems (the
+// cross-system origin is collapsed into the Area; cross-system *edges* aren't representable). A
+// multi-device area and its members' areas-of-one each get their own rows, so a portfolio rollup must
+// never sum a multi-device area AND its members.
+//
+// The metric columns (emissions_g / renewable_kwh / cost_c) = energy × each source's per-interval
+// intensity (grid from OpenElectricity/Amber, battery from the provenance blend, solar = clean/free);
+// they are NULLABLE (intensity unknown for that edge/day → null; never perturbs energy). `estimated_kwh`
+// is the confidence denominator ("% estimated"); `finalized_at` marks a day past the ~72h
+// estimated→final cutoff.
 // ============================================================================
 export const pointReadingsFlowAttr1d = pgTable(
   "point_readings_flow_attr_1d",
@@ -487,11 +445,11 @@ export const pointReadingsFlowAttr1d = pgTable(
     areaId: uuid("area_id")
       .notNull()
       .references(() => areas.id),
-    day: text("day").notNull(), // YYYY-MM-DD, system-local (same convention as flow_1d / agg_1d)
+    day: text("day").notNull(), // YYYY-MM-DD, system-local (same convention as agg_1d)
     sourcePath: text("source_path").notNull(),
     loadPath: text("load_path").notNull(),
 
-    // Energy leg — identical to point_readings_flow_1d.energy_kwh (same allocation).
+    // Energy leg — the flow allocation's per-edge energy; what the Sankey reads (always >= 0).
     energyKwh: doublePrecision("energy_kwh").notNull(), // always >= 0
 
     // Metric legs — null when the source's intensity was unknown for that edge/day.
@@ -537,7 +495,7 @@ export const batteryProvenanceDaily = pgTable(
     areaId: uuid("area_id")
       .notNull()
       .references(() => areas.id),
-    day: text("day").notNull(), // YYYY-MM-DD, area-local (same convention as agg_1d / flow_1d)
+    day: text("day").notNull(), // YYYY-MM-DD, area-local (same convention as agg_1d)
 
     // Timeline anchor + shape. NULL first_interval_end = row not yet filled by the learn (e.g. a
     // checkpoint-only insert); the param read-back anchors each day's step at this timestamp.
@@ -781,7 +739,7 @@ export const roles = pgTable("roles", {
 //
 // `id` is a GUID (decoupled from systems.id). `legacy_system_id` is the integer ADDRESSING
 // HANDLE: an area-of-one's == its member's systems.id; a multi-device area's == the old
-// composite shim's systems.id. It drives the point_readings_flow_1d.area_id keying.
+// composite shim's systems.id. It drives the point_readings_flow_attr_1d.area_id keying.
 // Areas are organizational, NOT the access boundary (access stays system-granular until P4).
 // ============================================================================
 export const areas = pgTable(
@@ -881,7 +839,7 @@ export const areaBindings = pgTable(
 // DEFAULT from each member's own point_info (with area_bindings as an override) — so there is no
 // single-vs-multi special-case. `system_id` is a plain int (like `areas.legacy_system_id`) with NO FK to
 // systems: a member may be a child system whose `systems` row was deleted (migration 0014). The table
-// is fully rederivable, so the `area_id` CASCADE is safe and does NOT loosen point_readings_flow_1d's
+// is fully rederivable, so the `area_id` CASCADE is safe and does NOT loosen point_readings_flow_attr_1d's
 // data-loss firewall (that table is untouched).
 // ============================================================================
 export const areaDevices = pgTable(
@@ -1033,8 +991,6 @@ export type PointReadingAgg5m = typeof pointReadingsAgg5m.$inferSelect;
 export type NewPointReadingAgg5m = typeof pointReadingsAgg5m.$inferInsert;
 export type PointReadingAgg1d = typeof pointReadingsAgg1d.$inferSelect;
 export type NewPointReadingAgg1d = typeof pointReadingsAgg1d.$inferInsert;
-export type PointReadingFlow1d = typeof pointReadingsFlow1d.$inferSelect;
-export type NewPointReadingFlow1d = typeof pointReadingsFlow1d.$inferInsert;
 export type PointReadingFlowAttr1d =
   typeof pointReadingsFlowAttr1d.$inferSelect;
 export type NewPointReadingFlowAttr1d =

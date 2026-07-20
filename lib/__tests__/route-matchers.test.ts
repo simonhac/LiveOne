@@ -33,7 +33,6 @@ describe("isPublicRoute — middleware allow-list", () => {
     "/api/enphase-proxy",
     // Battery-provenance ops endpoints — self-authenticate in-handler (owner/admin or CRON_SECRET).
     "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/recompute-provenance",
-    "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/recompute-flow",
     "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/provenance-summary",
     "/api/areas/by-handle/1000002",
   ];

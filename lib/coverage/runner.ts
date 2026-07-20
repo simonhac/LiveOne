@@ -14,7 +14,6 @@ import { sessionManager } from "@/lib/session-manager";
 import { createPollCollector } from "@/lib/observations/poll-collector";
 import { recomputeAgg1dForDay } from "@/lib/db/planetscale/aggregate-points-pg";
 import { resolveLogicalSystem } from "@/lib/aggregation/logical-system";
-import { recomputeFlowMatrixForDay } from "@/lib/db/planetscale/flow-matrix-pg";
 import { learnAllForHandle } from "@/lib/db/planetscale/battery-provenance-daily-pg";
 import { recomputeBatteryProvenanceForWindow } from "@/lib/db/planetscale/battery-provenance-pg";
 import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates";
@@ -83,7 +82,6 @@ export interface CoverageRepairResult {
   };
   recompute: {
     agg1dDays: number;
-    flowDays: number;
     provenanceAreas: number;
     pending: number;
   };
@@ -328,7 +326,6 @@ export async function runCoverageRepair(
   const landedBySystem = new Map<number, string[]>();
   const recompute = {
     agg1dDays: 0,
-    flowDays: 0,
     provenanceAreas: 0,
     pending: 0,
   };
@@ -417,22 +414,25 @@ export async function runCoverageRepair(
 
       for (const area of areaRows) {
         if (area.handle == null) continue;
+        // Refresh the attributed flow matrix (flow_attr_1d) for the repaired days — the sole
+        // per-(area, day) flow matrix since flow_1d was retired. Battery Areas also re-fold the blend
+        // (learn first — best-effort so a learn hiccup can't block the flow refresh); battery-less Areas
+        // get the energy + grid/solar attribution rollup only.
         try {
           const ls = await resolveLogicalSystem(area.handle);
-          if (ls && ls.isComplete)
-            for (const day of days) {
-              await recomputeFlowMatrixForDay(db, ls, parseDate(day));
-              recompute.flowDays++;
+          if (ls && ls.isComplete && days.length) {
+            if (area.isBattery) {
+              try {
+                await learnAllForHandle(db, area.handle, nowMs, {
+                  rebuild: false,
+                });
+              } catch (err) {
+                console.error(
+                  `[RepairCoverage] battery learn failed area=${area.id}:`,
+                  err,
+                );
+              }
             }
-        } catch (err) {
-          console.error(
-            `[RepairCoverage] flow recompute failed area=${area.id}:`,
-            err,
-          );
-        }
-        if (area.isBattery) {
-          try {
-            await learnAllForHandle(db, area.handle, nowMs, { rebuild: false });
             const sorted = [...days].sort();
             const [winStartSec] = dayToUnixRangeForAggregation(
               parseDate(sorted[0]),
@@ -454,12 +454,12 @@ export async function runCoverageRepair(
               },
             );
             recompute.provenanceAreas++;
-          } catch (err) {
-            console.error(
-              `[RepairCoverage] provenance recompute failed area=${area.id}:`,
-              err,
-            );
           }
+        } catch (err) {
+          console.error(
+            `[RepairCoverage] flow/provenance recompute failed area=${area.id}:`,
+            err,
+          );
         }
       }
     }
@@ -519,7 +519,7 @@ export async function runCoverageRepair(
   lines.push(
     `Totals: repaired ${repaired}, unsettled ${unsettled}, errors ${errors}, deferred(cap) ${deferredForCap}` +
       (dryRun ? `, would-repair ${wouldRepair}` : "") +
-      `. Recompute: agg_1d ${recompute.agg1dDays}d, flow ${recompute.flowDays}d, provenance ${recompute.provenanceAreas} area(s)` +
+      `. Recompute: agg_1d ${recompute.agg1dDays}d, provenance ${recompute.provenanceAreas} area(s)` +
       (recompute.pending > 0
         ? `; ${recompute.pending} day(s) not yet landed (recompute deferred).`
         : "."),

@@ -12,8 +12,8 @@
  * days ≤ 2 days ago (a day mid-heal can't flap), with full SoC coverage, and only when the persisted
  * loss model is armed (η_c/idle/C learned) — an unarmed area is reported, not judged.
  *
- * Structure mirrors `lib/db/planetscale/flow-consistency.ts`: a pure reducer over per-day sums + a
- * self-contained loader, called by `monitor-observations`.
+ * Structure: a pure reducer over per-day sums + a self-contained loader, called by
+ * `monitor-observations`.
  */
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { latestArmedDailyParams } from "@/lib/db/planetscale/battery-provenance-daily-pg";

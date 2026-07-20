@@ -203,10 +203,9 @@ export interface RangeChunkInfo {
 }
 
 /**
- * Daily heal / backfill: recompute an explicit range in bounded chunks. Under the unified rollup this
- * covers EVERY complete logical system (so flow_attr_1d supersedes flow_1d fleet-wide — the rollup runs
- * energy-only + grid/solar attribution for battery-less Areas); otherwise only the battery Areas that
- * have a blend to materialise.
+ * Daily heal / backfill: recompute an explicit range in bounded chunks. Covers EVERY complete logical
+ * system — flow_attr_1d is the sole per-(area, day) flow matrix, so the rollup runs energy-only +
+ * grid/solar attribution for battery-less Areas as well as the battery blend.
  */
 export async function recomputeRange(
   startMs: number,
@@ -214,10 +213,9 @@ export async function recomputeRange(
   config?: ProvenanceConfig,
   onChunk?: (info: RangeChunkInfo) => void,
 ): Promise<void> {
-  const handles =
-    process.env.FLOW_ATTR_UNIFIED === "true"
-      ? (await listCompleteLogicalSystems()).map((ls) => ls.id)
-      : await listBatteryProvenanceHandles();
+  // The rollup covers EVERY complete logical system, so flow_attr_1d supersedes flow_1d fleet-wide
+  // (energy-only + grid/solar attribution for battery-less Areas).
+  const handles = (await listCompleteLogicalSystems()).map((ls) => ls.id);
   const start = Math.max(startMs, LIVEONE_BIRTHDATE_MS);
   for (const handle of handles) {
     for (let cs = start; cs < endMs; cs += CHUNK_MS) {

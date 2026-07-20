@@ -40,7 +40,6 @@ interface DoomedRow {
   handle: number;
   uuid: string;
   name: string;
-  flow1d: number;
   flowattr: number;
   bpdaily: number;
   bindings: number;
@@ -81,10 +80,25 @@ async function main() {
       `ABORT: expected KEEP areas missing: ${keepMissing.join(", ")} — wrong DB or already-mutated? Refusing.`,
     );
 
+  // `point_readings_flow_1d` was retired (migration 0029) and this script no longer touches it. If the
+  // table still exists its RESTRICT FK to `areas` would block the areas delete below, so refuse until
+  // 0029 has been applied to this database.
+  const flow1dGone =
+    (
+      (
+        await db.execute(
+          sql`SELECT to_regclass('public.point_readings_flow_1d') IS NULL AS gone`,
+        )
+      ).rows as unknown as { gone: boolean }[]
+    )[0]?.gone === true;
+  if (!flow1dGone)
+    throw new Error(
+      "ABORT: point_readings_flow_1d still exists — apply migration 0029 (drop flow_1d) before running this cleanup.",
+    );
+
   const rows = (
     await db.execute(sql`
     SELECT a.legacy_system_id AS handle, a.id AS uuid, a.display_name AS name,
-      (SELECT count(*)::int FROM point_readings_flow_1d f      WHERE f.area_id=a.id) AS flow1d,
       (SELECT count(*)::int FROM point_readings_flow_attr_1d f WHERE f.area_id=a.id) AS flowattr,
       (SELECT count(*)::int FROM battery_provenance_daily b    WHERE b.area_id=a.id) AS bpdaily,
       (SELECT count(*)::int FROM area_bindings b               WHERE b.area_id=a.id) AS bindings,
@@ -119,8 +133,7 @@ async function main() {
   }
 
   // Plan preview.
-  let tFlow1d = 0,
-    tFlowAttr = 0,
+  let tFlowAttr = 0,
     tBp = 0,
     tAreas = 0;
   for (const h of DOOMED) {
@@ -131,16 +144,15 @@ async function main() {
       );
       continue;
     }
-    tFlow1d += Number(r.flow1d);
     tFlowAttr += Number(r.flowattr);
     tBp += Number(r.bpdaily);
     tAreas += 1;
     console.log(
-      `  handle ${String(h).padEnd(8)} "${r.name}"  flow1d=${r.flow1d} flowattr=${r.flowattr} bp=${r.bpdaily} members=${r.members}  ${r.uuid}`,
+      `  handle ${String(h).padEnd(8)} "${r.name}"  flowattr=${r.flowattr} bp=${r.bpdaily} members=${r.members}  ${r.uuid}`,
     );
   }
   console.log(
-    `\nTOTAL: ${tAreas} areas, ${tFlow1d} flow_1d + ${tFlowAttr} flow_attr_1d + ${tBp} battery_provenance_daily rows (area_bindings/area_devices cascade)\n`,
+    `\nTOTAL: ${tAreas} areas, ${tFlowAttr} flow_attr_1d + ${tBp} battery_provenance_daily rows (area_bindings/area_devices cascade)\n`,
   );
 
   if (!APPLY) {
@@ -162,9 +174,6 @@ async function main() {
     await db.transaction(async (tx) => {
       await tx.execute(
         sql`DELETE FROM point_readings_flow_attr_1d WHERE area_id = ${r.uuid}`,
-      );
-      await tx.execute(
-        sql`DELETE FROM point_readings_flow_1d WHERE area_id = ${r.uuid}`,
       );
       await tx.execute(
         sql`DELETE FROM battery_provenance_daily WHERE area_id = ${r.uuid}`,

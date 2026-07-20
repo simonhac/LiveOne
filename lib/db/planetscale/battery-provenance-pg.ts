@@ -259,11 +259,10 @@ export async function recomputeBatteryProvenanceForWindow(
   };
   if (!inputs) return empty;
   const hasBattery = inputs.batterySystemId != null;
-  // A battery-less Area has no blend/fold to materialise. Legacy behaviour stops here; the unified
-  // rollup still records the (battery-less) energy + grid/solar attribution so flow_attr_1d covers
-  // every logical system, not only battery Areas.
-  const unifiedRollup =
-    process.env.FLOW_ATTR_UNIFIED === "true" && !!opts.writeRollup;
+  // A battery-less Area has no blend/fold to materialise, but the rollup still records its (battery-
+  // less) energy + grid/solar attribution so flow_attr_1d covers every logical system, not only battery
+  // Areas (it is the sole per-(area, day) flow matrix since flow_1d was retired).
+  const unifiedRollup = !!opts.writeRollup;
   if (!hasBattery && !unifiedRollup) return empty;
 
   // Midnights to checkpoint: strictly inside the WRITE window (a midnight at/before winStartMs falls in

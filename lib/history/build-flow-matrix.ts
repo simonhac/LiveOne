@@ -4,11 +4,11 @@
  * `point_readings_agg_5m` into `allRows` (the 30m bucketing happens *after*, in
  * `buildSeriesFromAggRows`), so the signed 5m series is in hand and the Sankey costs no extra query.
  * For 1d the history rows are daily averages that cancel direction — that path is served from the
- * materialized `point_readings_flow_1d` instead (see docs/architecture/energy-flow-matrix.md).
+ * materialized `point_readings_flow_attr_1d` instead (see docs/architecture/energy-flow-matrix.md).
  *
- * Parity: this mirrors the engine recompute (`lib/db/planetscale/flow-matrix-pg.ts`) — raw `avg`,
- * the same kW normalization, the same `buildFlowSeries`/`computeFlowMatrix` core — so the sub-daily
- * (5m) and materialized (1d) Sankeys agree by construction. Both apply the point's `transform` through
+ * Parity: this mirrors the engine's flow_attr rollup (`lib/db/planetscale/battery-provenance-pg.ts`) —
+ * raw `avg`, the same kW normalization, the same `buildFlowSeries`/`computeFlowMatrix` core — so the
+ * sub-daily (5m) and materialized (1d) Sankeys agree by construction. Both apply the point's `transform` through
  * the shared `applyPowerTransform` (only "i" = invert matters for a power point — e.g. a grid/AC-source
  * channel wired so import reads negative, a generator); it's applied IDENTICALLY here and in the engine
  * recompute, so the two paths stay byte-identical. That shared helper is the single home for the rule.

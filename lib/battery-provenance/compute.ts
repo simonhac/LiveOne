@@ -8,6 +8,7 @@
 import {
   computeFlowAccounting,
   SourceIntensity,
+  FlowSeries,
 } from "@/lib/aggregation/flow-matrix-core";
 import { extractBatteryFlows } from "./battery-flows";
 import { learnEwmaEta, type EtaDayDiag } from "./eta";
@@ -49,6 +50,84 @@ export interface ProvenanceComputeOptions {
    *  Unlike config.efficiency this does NOT pin a scalar for the window / disable the per-interval η —
    *  it only makes the fallback window-independent so a seeded fold matches the long fold. */
   efficiencyFallback?: number;
+}
+
+/** The per-interval fold outputs `buildSourceIntensities` reads for the `source.battery` node. */
+export type BatterySourceStep = Pick<
+  FoldStep,
+  | "batteryEmissionsIntensity"
+  | "batteryRenewableFraction"
+  | "batteryPrice"
+  | "estimatedFraction"
+>;
+
+export interface BuildSourceIntensitiesParams {
+  sources: FlowSeries[];
+  timeline: number[];
+  gridEmissions: (number | null)[];
+  gridRenewable: (number | null)[];
+  gridPrice: (number | null)[];
+  gridEmissionsEstimated: boolean[];
+  gridPriceEstimated: boolean[];
+  /** Per-interval battery-fold outputs. EMPTY for a battery-less Area — the `source.battery` node is
+   *  then absent from `sources`, so the battery branch never runs and no `steps` are read. */
+  steps: BatterySourceStep[];
+  /** Actual (out-of-pocket) solar cost per kWh; forgone revenue lives in the fold, not here. */
+  solarCost?: number;
+}
+
+/**
+ * Per-source intensity (emissions / renewable / price / estimated) for the attribution: solar is a
+ * constant (0 g, 100% renewable, `solarCost`), grid comes from OE/Amber, battery comes from the fold
+ * `steps`. Pure — no DB/IO — and battery-agnostic: with no battery source (and `steps: []`) it returns
+ * solar+grid intensities only. Extracted from `computeBatteryProvenance` so the read/tooltip paths can
+ * assemble intensities without the write orchestrators.
+ */
+export function buildSourceIntensities({
+  sources,
+  timeline,
+  gridEmissions,
+  gridRenewable,
+  gridPrice,
+  gridEmissionsEstimated,
+  gridPriceEstimated,
+  steps,
+  solarCost = 0,
+}: BuildSourceIntensitiesParams): (SourceIntensity | null)[] {
+  return sources.map((src) => {
+    if (src.path === "source.solar" || src.path.startsWith("source.solar.")) {
+      return {
+        emissions: timeline.map(() => 0),
+        renewable: timeline.map(() => 1),
+        price: timeline.map(() => solarCost),
+        estimated: timeline.map(() => false),
+      };
+    }
+    if (src.path === "source.grid") {
+      return {
+        emissions: gridEmissions,
+        renewable: gridRenewable,
+        price: gridPrice,
+        estimated: timeline.map(
+          (_, i) => gridEmissionsEstimated[i] || gridPriceEstimated[i],
+        ),
+      };
+    }
+    if (src.path === "source.battery") {
+      const emissions = new Array<number | null>(timeline.length).fill(null);
+      const renewable = new Array<number | null>(timeline.length).fill(null);
+      const price = new Array<number | null>(timeline.length).fill(null);
+      const estimated = new Array<boolean>(timeline.length).fill(false);
+      for (let i = 0; i < steps.length; i++) {
+        emissions[i] = steps[i].batteryEmissionsIntensity;
+        renewable[i] = steps[i].batteryRenewableFraction;
+        price[i] = steps[i].batteryPrice;
+        estimated[i] = steps[i].estimatedFraction > 0;
+      }
+      return { emissions, renewable, price, estimated };
+    }
+    return null; // e.g. source.generator — unknown intensity
+  });
 }
 
 export function computeBatteryProvenance(
@@ -327,42 +406,18 @@ export function computeBatteryProvenance(
   }
 
   // Per-source intensity for the attribution: solar const, grid from OE/Amber, battery from the fold.
-  const sourceIntensities: (SourceIntensity | null)[] = sources.map((src) => {
-    if (src.path === "source.solar" || src.path.startsWith("source.solar.")) {
-      return {
-        emissions: timeline.map(() => 0),
-        renewable: timeline.map(() => 1),
-        // The per-day attribution rollup stays ACTUAL (out-of-pocket) cost; forgone revenue lives only
-        // in the battery fold's delta accumulator (→ the `price-opportunity` derived point).
-        price: timeline.map(() => SOLAR_ACTUAL_COST),
-        estimated: timeline.map(() => false),
-      };
-    }
-    if (src.path === "source.grid") {
-      return {
-        emissions: inputs.gridEmissions,
-        renewable: inputs.gridRenewable,
-        price: inputs.gridPrice,
-        estimated: timeline.map(
-          (_, i) =>
-            inputs.gridEmissionsEstimated[i] || inputs.gridPriceEstimated[i],
-        ),
-      };
-    }
-    if (src.path === "source.battery") {
-      const emissions = new Array<number | null>(timeline.length).fill(null);
-      const renewable = new Array<number | null>(timeline.length).fill(null);
-      const price = new Array<number | null>(timeline.length).fill(null);
-      const estimated = new Array<boolean>(timeline.length).fill(false);
-      for (let i = 0; i < steps.length; i++) {
-        emissions[i] = steps[i].batteryEmissionsIntensity;
-        renewable[i] = steps[i].batteryRenewableFraction;
-        price[i] = steps[i].batteryPrice;
-        estimated[i] = steps[i].estimatedFraction > 0;
-      }
-      return { emissions, renewable, price, estimated };
-    }
-    return null; // e.g. source.generator — unknown intensity
+  // The rollup keeps ACTUAL (out-of-pocket) solar cost; forgone revenue lives only in the battery fold's
+  // delta accumulator (→ the `price-opportunity` derived point).
+  const sourceIntensities = buildSourceIntensities({
+    sources,
+    timeline,
+    gridEmissions: inputs.gridEmissions,
+    gridRenewable: inputs.gridRenewable,
+    gridPrice: inputs.gridPrice,
+    gridEmissionsEstimated: inputs.gridEmissionsEstimated,
+    gridPriceEstimated: inputs.gridPriceEstimated,
+    steps,
+    solarCost: SOLAR_ACTUAL_COST,
   });
 
   const accounting = computeFlowAccounting({
