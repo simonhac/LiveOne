@@ -62,7 +62,8 @@ import {
 } from "@/lib/battery-provenance/register";
 import { ensureHelperDevice } from "@/lib/areas/helper";
 import type { ProvenanceConfig } from "@/lib/battery-provenance/types";
-import type { FoldStep } from "@/lib/battery-provenance/fold";
+import type { FoldStep, FoldState } from "@/lib/battery-provenance/fold";
+import type { LogicalSystem } from "@/lib/aggregation/logical-system";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
 
@@ -706,4 +707,104 @@ export async function reconcileFromCheckpointBestEffort(
     );
     return null;
   }
+}
+
+export type ProvenanceSeedResult =
+  | {
+      seeded: true;
+      inputs: ProvenanceInputs;
+      initialState: FoldState;
+      efficiencyFallback: number;
+      anchorMs: number;
+    }
+  | { seeded: false; reason: string };
+
+/**
+ * Read-only counterpart to {@link reconcileBatteryProvenanceFromCheckpoint} for an arbitrary
+ * caller-supplied `[targetStartMs, endMs]` window — no "now" requirement, never writes. Seeds the fold
+ * from the freshest checkpoint at/before `targetStartMs`'s local day and loads provenance inputs from
+ * the checkpoint's anchor instead of a full `WARMUP_MS` lead-in, so an on-the-fly compute (the Sankey
+ * tooltip's attributed matrix, `buildAttributedFlowMatrix`) can skip the 7-day warm-up on every
+ * sub-daily request. Reuses the exact guard sequence the checkpointed reconcile trusts (span cap,
+ * pre-anchor staleness probe, canonical-inputs check) — every guard failure returns `{seeded:false}`
+ * so the caller can fall back to the unseeded `WARMUP_MS` load; this path must never be less safe than
+ * that fallback.
+ */
+export async function tryLoadSeededProvenanceInputs(
+  db: PgDb,
+  handle: number,
+  targetStartMs: number,
+  endMs: number,
+  logicalSystem?: LogicalSystem,
+): Promise<ProvenanceSeedResult> {
+  const [area] = await db
+    .select({ id: areas.id, tz: areas.timezoneOffsetMin })
+    .from(areas)
+    .where(eq(areas.legacySystemId, handle))
+    .limit(1);
+  if (!area) return { seeded: false, reason: "no-area" };
+
+  const cp = await loadLatestFoldCheckpoint(
+    db,
+    area.id,
+    dayIndexOf(targetStartMs, area.tz),
+  );
+  if (!cp) return { seeded: false, reason: "no-checkpoint" };
+  const { env } = cp;
+  if (env.anchorMs > targetStartMs)
+    return { seeded: false, reason: "anchor-after-window-start" };
+  if (endMs - env.anchorMs > MAX_SEED_SPAN_MS)
+    return { seeded: false, reason: "span-too-long" };
+
+  // Staleness probe: did anything rewrite the battery input's agg_5m at/just-before the anchor AFTER
+  // the checkpoint was written (a backfill/repair)? Same input-watermark proxy the checkpointed
+  // reconcile uses.
+  const [powerBind] = await db
+    .select({
+      sys: areaBindings.pointSystemId,
+      pid: areaBindings.pointId,
+    })
+    .from(areaBindings)
+    .where(
+      and(
+        eq(areaBindings.areaId, area.id),
+        eq(areaBindings.role, "battery"),
+        eq(areaBindings.metricType, "power"),
+      ),
+    )
+    .limit(1);
+  if (!powerBind) return { seeded: false, reason: "no-battery-bind" };
+  const [probe] = await db
+    .select({ maxUpdated: max(pointReadingsAgg5m.updatedAt) })
+    .from(pointReadingsAgg5m)
+    .where(
+      and(
+        eq(pointReadingsAgg5m.systemId, powerBind.sys),
+        eq(pointReadingsAgg5m.pointId, powerBind.pid),
+        gt(
+          pointReadingsAgg5m.intervalEnd,
+          new Date(env.anchorMs - PROBE_LOOKBACK_MS),
+        ),
+        lte(pointReadingsAgg5m.intervalEnd, new Date(env.anchorMs)),
+      ),
+    );
+  if (probe?.maxUpdated && probe.maxUpdated > cp.writtenAt)
+    return { seeded: false, reason: "pre-anchor-rewrite" };
+
+  const inputs = await loadProvenanceInputs(
+    handle,
+    { startMs: env.anchorMs, endMs },
+    { logicalSystem },
+  );
+  if (!inputs) return { seeded: false, reason: "no-inputs" };
+  if (!inputsAreCanonical(inputs))
+    return { seeded: false, reason: "non-canonical-inputs" };
+
+  return {
+    seeded: true,
+    inputs,
+    initialState: env.state,
+    efficiencyFallback: env.etaFallback,
+    anchorMs: env.anchorMs,
+  };
 }

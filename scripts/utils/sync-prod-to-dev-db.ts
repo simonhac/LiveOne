@@ -281,13 +281,29 @@ function isSslDisabled(value: string | null | undefined): boolean {
   );
 }
 
+// A `pg.Client` with no 'error' listener CRASHES THE WHOLE PROCESS on a socket-level error
+// (ECONNRESET, a dropped TLS session, …) — Node's default behaviour for an unhandled EventEmitter
+// 'error' event — bypassing the FAIL HARD design entirely: that's a raw uncaught exception, not a
+// query rejection, so the careful per-table try/catch (ROLLBACK before rethrow, clean top-level
+// handling) never runs. A transient network blip (this is a cross-Pacific connection held open for
+// the whole run) then looks identical to a real bug in the crash log. Attaching a listener is the
+// standard node-postgres fix: it stops the crash, and the in-flight query/COPY promise still
+// rejects from the same root cause (or the next query does, against the now-dead connection) —
+// which the existing FAIL HARD path already handles normally.
+function attachErrorHandler(client: Client, label: string): Client {
+  client.on("error", (err) => {
+    console.error(`[sync] connection error on ${label}:`, err);
+  });
+  return client;
+}
+
 // Build a pg Client the same way the app's pool does (lib/db/planetscale): parse
 // the URL and set TLS EXPLICITLY, because node-postgres' bundled
 // pg-connection-string can't handle PlanetScale's `sslrootcert=system` (it tries
 // to open('system') as a file → ENOENT and the connection dies). Managed Postgres
 // here connects encrypted-without-strict-CA; `sslmode=disable`/`DB_SSL=disable`
 // still opts out for a local plaintext server.
-function makeClient(url: string): Client {
+function makeClient(url: string, label: string): Client {
   try {
     const u = new URL(url);
     const sslDisabled =
@@ -296,13 +312,16 @@ function makeClient(url: string): Client {
     for (const p of ["sslmode", "sslrootcert", "sslcert", "sslkey", "ssl"]) {
       u.searchParams.delete(p);
     }
-    return new Client({
-      connectionString: u.toString(),
-      ssl: sslDisabled ? false : { rejectUnauthorized: false },
-    });
+    return attachErrorHandler(
+      new Client({
+        connectionString: u.toString(),
+        ssl: sslDisabled ? false : { rejectUnauthorized: false },
+      }),
+      label,
+    );
   } catch {
     // Not a parseable URL — hand it to pg as-is and let it surface the error.
-    return new Client({ connectionString: url });
+    return attachErrorHandler(new Client({ connectionString: url }), label);
   }
 }
 
@@ -557,8 +576,8 @@ async function main() {
   );
 
   // Two persistent connections for the whole run (see TRANSPORT in the header).
-  const prod = makeClient(prodUrl);
-  const dev = makeClient(devUrl);
+  const prod = makeClient(prodUrl, "prod");
+  const dev = makeClient(devUrl, "dev");
   await prod.connect();
   await dev.connect();
 

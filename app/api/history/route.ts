@@ -674,6 +674,7 @@ export async function GET(request: NextRequest) {
             basicParams.systemId!,
             startMs,
             endMs,
+            sankey.logicalSystem,
           );
           if (attr) {
             attributedFlow = attr;

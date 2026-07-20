@@ -1,26 +1,25 @@
 "use client";
 
 /**
- * The `chart` card. The lines variant renders standalone here (self-fetches the handle's `system`
- * for its timezone — the temporal navigator needs it to format the range label + encode historical
- * URLs). The stacked-areas variant never renders standalone: `collapseKey` folds it into the
- * section's SiteChartsGroup (chart:load / chart:generation).
+ * The `chart` card. The lines variant renders standalone here and mounts immediately (its history
+ * fetch doesn't need the handle's `system` to have landed yet — see the tz note below); the
+ * stacked-areas variant never renders standalone: `collapseKey` folds it into the section's
+ * SiteChartsGroup (chart:load / chart:generation).
  */
 import LinesChartCard from "@/components/LinesChartCard";
 import type { CardPlugin, CardRenderProps } from "./types";
-import {
-  ChartSkeleton,
-  maxPowerHintFromSystemInfo,
-  useAreaDatum,
-} from "./shared";
+import { maxPowerHintFromSystemInfo, useAreaDatum } from "./shared";
 
 function AreaLinesChart({ handle }: CardRenderProps) {
   const systemId = handle!;
   const { data, datum } = useAreaDatum(systemId);
-  const tz = datum?.system?.timezoneOffsetMin;
-  if (tz == null) {
-    return <ChartSkeleton />;
-  }
+  // `timezoneOffsetMin` only drives LinesChartCard's refetch-cadence scheduling and future
+  // older/newer/setPeriod URL writes — the current window (decoded from the URL) and the history
+  // fetch itself (server-resolved for `last=`; `encodeHistoryWindow` needs no tz for an explicit
+  // window either) don't depend on it. So mount immediately with a harmless placeholder instead of
+  // blocking the whole chart on `/api/data` landing first; the real value swaps in once `datum`
+  // resolves.
+  const tz = datum?.system?.timezoneOffsetMin ?? 0;
   const systemInfo = (
     data as { systemInfo?: { solarSize?: string; ratings?: string } } | null
   )?.systemInfo;

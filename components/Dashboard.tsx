@@ -1,11 +1,13 @@
 "use client";
 
 import { type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Layers } from "lucide-react";
 import { ChartFocusProvider } from "@/lib/charts/ChartFocusContext";
 import { CARD_RENDERERS } from "@/components/dashboard/cards/registry";
 import { SiteChartsGroup } from "@/components/dashboard/cards/site-charts";
 import { ChartSkeleton } from "@/components/dashboard/cards/shared";
+import { dashboardDataBatchQuery } from "@/lib/queries";
 import type {
   AreaSectionV3,
   CardV3,
@@ -55,6 +57,21 @@ export default function Dashboard({
   // resolved yet, in which case each card draws a skeleton. We have enough to draw the layout
   // immediately, so there's no "Loading…" gate before the skeletons appear.
   const sections = descriptor.sections.filter((s) => !s.hidden);
+
+  // Best-effort prefetch: when this dashboard's sections span 2+ distinct systems (e.g. a household
+  // area + an oe-grid region section), fire ONE /api/data request for all of them and seed each
+  // system's own dashboardDataQuery cache — see dashboardDataBatchQuery. Purely additive: every card
+  // still self-fetches via useAreaDatum as before, so a slow/absent batch just means no saving, never
+  // a regression. No-ops (disabled) below 2 systems.
+  const queryClient = useQueryClient();
+  const handles = [
+    ...new Set(
+      sections
+        .map((s) => areaById.get(s.areaId)?.legacySystemId)
+        .filter((id): id is number => id != null),
+    ),
+  ];
+  useQuery(dashboardDataBatchQuery(handles, queryClient));
 
   if (sections.length === 0) {
     return (
@@ -148,6 +165,7 @@ function AreaSectionView({
           systemId={handle}
           keys={chartKeys}
           sankeyOptionsKey={sankeyOptionsKey}
+          chartCapable={area?.chartCapable}
         />
       ) : (
         <ChartSkeleton key="site-charts" />

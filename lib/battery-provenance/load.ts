@@ -21,7 +21,10 @@ import {
 } from "@/lib/db/planetscale/schema";
 import { applyPowerTransform } from "@/lib/aggregation/flow-series";
 import { loadFlowSeriesFromAgg5m } from "@/lib/aggregation/flow-series-pg";
-import { resolveLogicalSystem } from "@/lib/aggregation/logical-system";
+import {
+  resolveLogicalSystem,
+  type LogicalSystem,
+} from "@/lib/aggregation/logical-system";
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
 import type { AreaLocation } from "@/lib/areas/types";
 import type { ExportTariffConfig } from "@/lib/capabilities/config";
@@ -72,6 +75,65 @@ async function readAgg5m(
     )
     .orderBy(asc(pointReadingsAgg5m.intervalEnd));
   return rows.map((r) => ({ t: r.t.getTime(), v: r.v, dq: r.dq }));
+}
+
+/** Raw OE emissions-intensity + renewables series for `region` (unprocessed — caller forward-fills).
+ *  `null` for a leg that has no OE system/point registered for the region. Three sequential round
+ *  trips are inherent (system lookup → point lookup → point reads), but the two point reads (once
+ *  point ids are known) run concurrently, and the whole chain runs alongside every other independent
+ *  read in the caller's `Promise.all`. */
+async function loadOeRawSeries(
+  db: PgDb,
+  region: string | null,
+  startMs: number,
+  endMs: number,
+  oeFillMs: number,
+): Promise<{
+  emissions: SeriesPoint[] | null;
+  renewable: SeriesPoint[] | null;
+}> {
+  if (!region) return { emissions: null, renewable: null };
+  const [oeSys] = await db
+    .select({ id: systems.id })
+    .from(systems)
+    .where(
+      and(
+        eq(systems.vendorType, "openelectricity"),
+        eq(systems.vendorSiteId, region),
+      ),
+    )
+    .limit(1);
+  if (!oeSys) return { emissions: null, renewable: null };
+  const oePts = await db
+    .select({ pointId: pointInfo.index, stem: pointInfo.logicalPathStem })
+    .from(pointInfo)
+    .where(
+      and(
+        eq(pointInfo.systemId, oeSys.id),
+        or(
+          eq(pointInfo.logicalPathStem, "grid.emissionsIntensity"),
+          eq(pointInfo.logicalPathStem, "grid.renewables"),
+        ),
+      ),
+    );
+  const results = await Promise.all(
+    oePts.map(async (op) => ({
+      stem: op.stem,
+      series: await readAgg5m(
+        db,
+        oeSys.id,
+        op.pointId,
+        startMs - oeFillMs,
+        endMs,
+      ),
+    })),
+  );
+  return {
+    emissions:
+      results.find((r) => r.stem === "grid.emissionsIntensity")?.series ?? null,
+    renewable:
+      results.find((r) => r.stem === "grid.renewables")?.series ?? null,
+  };
 }
 
 /** Forward-fill a source series onto the target timeline (≤ maxStaleMs); flags fills / non-good quality. */
@@ -165,6 +227,10 @@ export interface LoadOptions {
   noSoc?: boolean;
   /** Ablation: ignore the persisted capacity point, forcing the in-window fallback (harness `--no-capacity`). */
   noCapacity?: boolean;
+  /** Pre-resolved logical system for `handle`, when the caller already has one (e.g. `/api/history`
+   *  resolves it once for the energy-only Sankey and can hand it straight in here) — skips the
+   *  internal `resolveLogicalSystem` call. Must be the same `handle`; not verified. */
+  logicalSystem?: LogicalSystem;
 }
 
 /**
@@ -181,130 +247,185 @@ export async function loadProvenanceInputs(
     throw new Error("No Postgres connection (PLANETSCALE_DATABASE_URL).");
   const { startMs, endMs } = window;
 
-  const [area] = await db
-    .select({
-      id: areas.id,
-      location: areas.location,
-      tz: areas.timezoneOffsetMin,
-    })
-    .from(areas)
-    .where(eq(areas.legacySystemId, handle))
-    .limit(1);
+  // The Area lookup and the logical-system resolve are independent (the latter needs only `handle`)
+  // — fire concurrently. Flow series (source/load kW) are built from the SAME canonical
+  // `resolveLogicalSystem` + shared PG builder the Sankey reads, so the attributed matrix's edges
+  // match by construction — per-inverter solar-leaf granularity and area-of-ones (which have no power
+  // `area_bindings`) are covered too. This assembly is deliberately kept directly callable with an
+  // arbitrary {startMs, endMs} window so read paths (history/tooltips) can reuse it without
+  // reconstructing the flow-series build.
+  const [[area], ls] = await Promise.all([
+    db
+      .select({
+        id: areas.id,
+        location: areas.location,
+        tz: areas.timezoneOffsetMin,
+      })
+      .from(areas)
+      .where(eq(areas.legacySystemId, handle))
+      .limit(1),
+    opts.logicalSystem
+      ? Promise.resolve(opts.logicalSystem)
+      : resolveLogicalSystem(handle),
+  ]);
   if (!area) return null;
-
-  const bound = await boundPoints(db, area.id);
-  const batterySystemId =
-    bound.find((b) => b.role === "battery" && b.metric === "power")?.systemId ??
-    null;
-
-  // Flow series (source/load kW) are built from the SAME canonical `resolveLogicalSystem` + shared PG
-  // builder the Sankey reads, so the attributed matrix's edges match by construction — per-inverter
-  // solar-leaf granularity and area-of-ones (which have no power `area_bindings`) are covered too. This
-  // assembly is deliberately kept directly callable with an arbitrary {startMs, endMs} window so read
-  // paths (history/tooltips) can reuse it without reconstructing the flow-series build.
-  const ls = await resolveLogicalSystem(handle);
   if (!ls) return null;
-  const { timeline, sources, loads } = await loadFlowSeriesFromAgg5m(
-    db,
-    ls.points,
-    startMs,
-    endMs,
-  );
+
+  const PARAM_FILL_MS = 48 * 60 * 60 * 1000;
+
+  // The curated points, the flow-series build, and the persisted per-day learned params are mutually
+  // independent (each needs only `area.id` or `ls`, not one another's output) — fire concurrently.
+  // Persisted per-day learned params (η / C / η_c / idle) come from `battery_provenance_daily`
+  // (learn-in-shell / read-in-fold) — natural units (ratios / kWh / kWh-per-day), each day's value
+  // anchored at the day's first interval_end and forward-filled ≤48h onto the timeline below. The read
+  // has a 48h LEAD-IN so the last pre-window step carries into the window (a midnight-anchored window
+  // still sees yesterday's params). A series with NO rows (never learned / SoC-blind / pre-activation)
+  // stays undefined → compute falls back to its in-window bootstrap, exactly as when the old param
+  // points were unbound.
+  const [bound, flowBundle, paramRows] = await Promise.all([
+    boundPoints(db, area.id),
+    loadFlowSeriesFromAgg5m(db, ls.points, startMs, endMs),
+    db
+      .select({
+        t: batteryProvenanceDaily.firstIntervalEnd,
+        eta: batteryProvenanceDaily.eta,
+        capacityKwh: batteryProvenanceDaily.capacityKwh,
+        chargeEff: batteryProvenanceDaily.chargeEff,
+        idleLossKwhDay: batteryProvenanceDaily.idleLossKwhDay,
+        reserveFloorPct: batteryProvenanceDaily.reserveFloorPct,
+      })
+      .from(batteryProvenanceDaily)
+      .where(
+        and(
+          eq(batteryProvenanceDaily.areaId, area.id),
+          gte(
+            batteryProvenanceDaily.firstIntervalEnd,
+            new Date(startMs - PARAM_FILL_MS),
+          ),
+          lte(batteryProvenanceDaily.firstIntervalEnd, new Date(endMs)),
+        ),
+      )
+      .orderBy(asc(batteryProvenanceDaily.firstIntervalEnd)),
+  ]);
+  const { timeline, sources, loads } = flowBundle;
   if (timeline.length < 2 || sources.length === 0 || loads.length === 0)
     return null;
   const tIndex = new Map(timeline.map((t, i) => [t, i]));
 
-  // Battery SoC (optional). Every forward-filled series reads a LEAD-IN of its own fill limit before
-  // startMs, so the first in-window slots fill from the last pre-window row exactly as a longer window
-  // would — required for the checkpoint-seeded reconcile (its window starts at the checkpoint anchor)
-  // and strictly more correct for every caller.
+  const batterySystemId =
+    bound.find((b) => b.role === "battery" && b.metric === "power")?.systemId ??
+    null;
   const socBind = bound.find((b) => b.role === "battery" && b.metric === "soc");
   const SOC_FILL_MS = 30 * 60 * 1000;
-  const socSeries =
+  const region = nemRegionForLocation(
+    (area.location ?? null) as AreaLocation | null,
+  );
+  const OE_FILL_MS = 15 * 60 * 1000;
+  // Amber import price + export/feed-in (bound grid/rate points).
+  const rateBinds = bound
+    .filter((b) => b.role === "grid" && b.metric === "rate")
+    .filter(
+      (b) => b.stem === "bidi.grid.import" || b.stem === "bidi.grid.export",
+    );
+  const RATE_FILL_MS = 35 * 60 * 1000;
+  const chargeBind = bound.find(
+    (b) => b.metric === "energy" && b.stem === "bidi.battery.charge",
+  );
+  const dischargeBind = bound.find(
+    (b) => b.metric === "energy" && b.stem === "bidi.battery.discharge",
+  );
+
+  // Battery SoC, OE region emissions/renewables, Amber rates, the battery's generator-source config,
+  // and the exact charge/discharge energy registers are all mutually independent RAW reads — fire them
+  // all concurrently, then apply forward-fill/scatter/override (pure, timeline-dependent) synchronously
+  // below once everything has landed. Every forward-filled series reads a LEAD-IN of its own fill limit
+  // before startMs, so the first in-window slots fill from the last pre-window row exactly as a longer
+  // window would — required for the checkpoint-seeded reconcile (its window starts at the checkpoint
+  // anchor) and strictly more correct for every caller.
+  const [
+    socSeries,
+    oeSeries,
+    rateSeriesResults,
+    batSysRow,
+    chargeSeries,
+    dischargeSeries,
+  ] = await Promise.all([
     socBind && !opts.noSoc
-      ? await readAgg5m(
+      ? readAgg5m(
           db,
           socBind.systemId,
           socBind.pointId,
           startMs - SOC_FILL_MS,
           endMs,
         )
-      : [];
+      : Promise.resolve<SeriesPoint[]>([]),
+    loadOeRawSeries(db, region, startMs, endMs, OE_FILL_MS),
+    Promise.all(
+      rateBinds.map((rp) =>
+        readAgg5m(
+          db,
+          rp.systemId,
+          rp.pointId,
+          startMs - RATE_FILL_MS,
+          endMs,
+        ).then((s) => ({ stem: rp.stem, s })),
+      ),
+    ),
+    batterySystemId != null
+      ? db
+          .select({ config: systems.config })
+          .from(systems)
+          .where(eq(systems.id, batterySystemId))
+          .limit(1)
+          .then((r) => r[0])
+      : Promise.resolve(undefined),
+    chargeBind
+      ? readAgg5m(
+          db,
+          chargeBind.systemId,
+          chargeBind.pointId,
+          startMs,
+          endMs,
+          "delta",
+        )
+      : Promise.resolve(undefined),
+    dischargeBind
+      ? readAgg5m(
+          db,
+          dischargeBind.systemId,
+          dischargeBind.pointId,
+          startMs,
+          endMs,
+          "delta",
+        )
+      : Promise.resolve(undefined),
+  ]);
+
   const soc = opts.noSoc
     ? new Array<number | null>(timeline.length).fill(null)
     : forwardFill(timeline, socSeries, SOC_FILL_MS).value;
 
-  // OE region emissions + renewables (from the Area's location).
-  const region = nemRegionForLocation(
-    (area.location ?? null) as AreaLocation | null,
-  );
   let gridEmissions = new Array<number | null>(timeline.length).fill(null);
   let gridEmissionsEstimated = new Array<boolean>(timeline.length).fill(true);
   let gridRenewable = new Array<number | null>(timeline.length).fill(null);
-  if (region) {
-    const [oeSys] = await db
-      .select({ id: systems.id })
-      .from(systems)
-      .where(
-        and(
-          eq(systems.vendorType, "openelectricity"),
-          eq(systems.vendorSiteId, region),
-        ),
-      )
-      .limit(1);
-    if (oeSys) {
-      const oePts = await db
-        .select({ pointId: pointInfo.index, stem: pointInfo.logicalPathStem })
-        .from(pointInfo)
-        .where(
-          and(
-            eq(pointInfo.systemId, oeSys.id),
-            or(
-              eq(pointInfo.logicalPathStem, "grid.emissionsIntensity"),
-              eq(pointInfo.logicalPathStem, "grid.renewables"),
-            ),
-          ),
-        );
-      const OE_FILL_MS = 15 * 60 * 1000;
-      for (const op of oePts) {
-        const s = await readAgg5m(
-          db,
-          oeSys.id,
-          op.pointId,
-          startMs - OE_FILL_MS,
-          endMs,
-        );
-        const ff = forwardFill(timeline, s, OE_FILL_MS);
-        if (op.stem === "grid.emissionsIntensity") {
-          gridEmissions = ff.value.map(oeEmissionsToGPerKwh);
-          gridEmissionsEstimated = ff.estimated;
-        } else {
-          gridRenewable = ff.value.map((v) => (v === null ? null : v / 100));
-        }
-      }
-    }
+  if (oeSeries.emissions) {
+    const ff = forwardFill(timeline, oeSeries.emissions, OE_FILL_MS);
+    gridEmissions = ff.value.map(oeEmissionsToGPerKwh);
+    gridEmissionsEstimated = ff.estimated;
+  }
+  if (oeSeries.renewable) {
+    const ff = forwardFill(timeline, oeSeries.renewable, OE_FILL_MS);
+    gridRenewable = ff.value.map((v) => (v === null ? null : v / 100));
   }
 
-  // Amber import price + export/feed-in (bound grid/rate points).
-  const rateBinds = bound.filter(
-    (b) => b.role === "grid" && b.metric === "rate",
-  );
+  // `rateSeriesResults` preserves `rateBinds`' order, so a duplicate binding still resolves
+  // "last one wins" exactly as the original sequential loop did.
   let gridPrice = new Array<number | null>(timeline.length).fill(null);
   let gridPriceEstimated = new Array<boolean>(timeline.length).fill(true);
   let gridExportPrice = new Array<number | null>(timeline.length).fill(null);
-  const RATE_FILL_MS = 35 * 60 * 1000;
-  for (const rp of rateBinds) {
-    if (rp.stem !== "bidi.grid.import" && rp.stem !== "bidi.grid.export")
-      continue;
-    const s = await readAgg5m(
-      db,
-      rp.systemId,
-      rp.pointId,
-      startMs - RATE_FILL_MS,
-      endMs,
-    );
+  for (const { stem, s } of rateSeriesResults) {
     const ff = forwardFill(timeline, s, RATE_FILL_MS);
-    if (rp.stem === "bidi.grid.import") {
+    if (stem === "bidi.grid.import") {
       gridPrice = ff.value;
       gridPriceEstimated = ff.estimated;
     } else {
@@ -320,14 +441,9 @@ export async function loadProvenanceInputs(
   // transform flips the Selectronic's raw sign so generator supply reads as positive import → source.grid.)
   let exportTariff: ExportTariffConfig | undefined;
   if (batterySystemId != null) {
-    const [batSys] = await db
-      .select({ config: systems.config })
-      .from(systems)
-      .where(eq(systems.id, batterySystemId))
-      .limit(1);
     // Solar opportunity-cost source (none/amber/schedule); resolved to a series in `compute`.
-    exportTariff = batSys?.config?.batteryProvenance?.exportTariff;
-    const gen = batSys?.config?.batteryProvenance?.generatorSource;
+    exportTariff = batSysRow?.config?.batteryProvenance?.exportTariff;
+    const gen = batSysRow?.config?.batteryProvenance?.generatorSource;
     if (gen && Number.isFinite(gen.emissionsIntensity)) {
       gridEmissions = timeline.map(() => gen.emissionsIntensity);
       gridEmissionsEstimated = timeline.map(() => false);
@@ -342,70 +458,15 @@ export async function loadProvenanceInputs(
   }
 
   // ENERGY-register seam: prefer exact battery charge/discharge energy when the Area binds them.
-  let batteryChargeEnergyKwh: (number | null)[] | undefined;
-  let batteryDischargeEnergyKwh: (number | null)[] | undefined;
-  const chargeBind = bound.find(
-    (b) => b.metric === "energy" && b.stem === "bidi.battery.charge",
-  );
-  const dischargeBind = bound.find(
-    (b) => b.metric === "energy" && b.stem === "bidi.battery.discharge",
-  );
-  if (chargeBind) {
-    const s = await readAgg5m(
-      db,
-      chargeBind.systemId,
-      chargeBind.pointId,
-      startMs,
-      endMs,
-      "delta",
-    );
-    batteryChargeEnergyKwh = scatter(timeline, tIndex, s, (v) =>
-      toKwh(v, chargeBind.unit),
-    );
-  }
-  if (dischargeBind) {
-    const s = await readAgg5m(
-      db,
-      dischargeBind.systemId,
-      dischargeBind.pointId,
-      startMs,
-      endMs,
-      "delta",
-    );
-    batteryDischargeEnergyKwh = scatter(timeline, tIndex, s, (v) =>
-      toKwh(v, dischargeBind.unit),
-    );
-  }
+  const batteryChargeEnergyKwh = chargeSeries
+    ? scatter(timeline, tIndex, chargeSeries, (v) => toKwh(v, chargeBind!.unit))
+    : undefined;
+  const batteryDischargeEnergyKwh = dischargeSeries
+    ? scatter(timeline, tIndex, dischargeSeries, (v) =>
+        toKwh(v, dischargeBind!.unit),
+      )
+    : undefined;
 
-  // Persisted per-day learned params (η / C / η_c / idle) from `battery_provenance_daily`
-  // (learn-in-shell / read-in-fold) — natural units (ratios / kWh / kWh-per-day), each day's value
-  // anchored at the day's first interval_end and forward-filled ≤48h onto the timeline. The read has a
-  // 48h LEAD-IN so the last pre-window step carries into the window (a midnight-anchored window still
-  // sees yesterday's params). A series with NO rows (never learned / SoC-blind / pre-activation) stays
-  // undefined → compute falls back to its in-window bootstrap, exactly as when the old param points
-  // were unbound.
-  const PARAM_FILL_MS = 48 * 60 * 60 * 1000;
-  const paramRows = await db
-    .select({
-      t: batteryProvenanceDaily.firstIntervalEnd,
-      eta: batteryProvenanceDaily.eta,
-      capacityKwh: batteryProvenanceDaily.capacityKwh,
-      chargeEff: batteryProvenanceDaily.chargeEff,
-      idleLossKwhDay: batteryProvenanceDaily.idleLossKwhDay,
-      reserveFloorPct: batteryProvenanceDaily.reserveFloorPct,
-    })
-    .from(batteryProvenanceDaily)
-    .where(
-      and(
-        eq(batteryProvenanceDaily.areaId, area.id),
-        gte(
-          batteryProvenanceDaily.firstIntervalEnd,
-          new Date(startMs - PARAM_FILL_MS),
-        ),
-        lte(batteryProvenanceDaily.firstIntervalEnd, new Date(endMs)),
-      ),
-    )
-    .orderBy(asc(batteryProvenanceDaily.firstIntervalEnd));
   const paramSeries = (
     pick: (r: (typeof paramRows)[number]) => number | null,
   ): (number | null)[] | undefined => {

@@ -52,102 +52,111 @@ export async function fetchAggRowsPg(p: AggFetchParams): Promise<AggRow[]> {
   const idsBySystem = groupPointIdsBySystem(p.uniquePairs);
 
   if (p.interval === "1d") {
-    const rows: AggRow[] = [];
-    for (const [systemId, ids] of idsBySystem) {
-      const res = await db
-        .select({
-          systemId: pgAgg1d.systemId,
-          pointId: pgAgg1d.pointId,
-          day: pgAgg1d.day,
-          avg: pgAgg1d.avg,
-          min: pgAgg1d.min,
-          max: pgAgg1d.max,
-          last: pgAgg1d.last,
-          delta: pgAgg1d.delta,
-        })
-        .from(pgAgg1d)
-        .where(
-          and(
-            eq(pgAgg1d.systemId, systemId),
-            inArray(pgAgg1d.pointId, ids),
-            gte(pgAgg1d.day, p.startDate!),
-            lte(pgAgg1d.day, p.endDate!),
-          ),
-        )
-        // Order by `system_id, point_id, day`. The shared 1d transform
-        // (buildSeriesFromAggRows) maps rows in arrival order without re-sorting, so an unordered
-        // PG scan (e.g. a recomputed/upserted day returned out of heap position) would shift the
-        // served day series by one. Ordering here keeps the output deterministic.
-        .orderBy(pgAgg1d.systemId, pgAgg1d.pointId, pgAgg1d.day);
-      for (const r of res) {
-        rows.push({
-          system_id: r.systemId,
-          point_id: r.pointId,
-          day: r.day,
-          avg: r.avg,
-          min: r.min,
-          max: r.max,
-          last: r.last,
-          delta: r.delta,
-          data_quality: null, // PG point_readings_agg_1d has no data_quality column
-        });
-      }
-    }
-    return rows;
+    // One query per system, run CONCURRENTLY (independent systems don't need to serialize on the
+    // pool) — `Promise.all` preserves `idsBySystem`'s insertion order in the result array
+    // regardless of completion order, so the deterministic system/point/day ordering below is
+    // unaffected.
+    const perSystem = await Promise.all(
+      Array.from(idsBySystem, async ([systemId, ids]) => {
+        const res = await db
+          .select({
+            systemId: pgAgg1d.systemId,
+            pointId: pgAgg1d.pointId,
+            day: pgAgg1d.day,
+            avg: pgAgg1d.avg,
+            min: pgAgg1d.min,
+            max: pgAgg1d.max,
+            last: pgAgg1d.last,
+            delta: pgAgg1d.delta,
+          })
+          .from(pgAgg1d)
+          .where(
+            and(
+              eq(pgAgg1d.systemId, systemId),
+              inArray(pgAgg1d.pointId, ids),
+              gte(pgAgg1d.day, p.startDate!),
+              lte(pgAgg1d.day, p.endDate!),
+            ),
+          )
+          // Order by `system_id, point_id, day`. The shared 1d transform
+          // (buildSeriesFromAggRows) maps rows in arrival order without re-sorting, so an unordered
+          // PG scan (e.g. a recomputed/upserted day returned out of heap position) would shift the
+          // served day series by one. Ordering here keeps the output deterministic.
+          .orderBy(pgAgg1d.systemId, pgAgg1d.pointId, pgAgg1d.day);
+        return res.map(
+          (r): AggRow => ({
+            system_id: r.systemId,
+            point_id: r.pointId,
+            day: r.day,
+            avg: r.avg,
+            min: r.min,
+            max: r.max,
+            last: r.last,
+            delta: r.delta,
+            data_quality: null, // PG point_readings_agg_1d has no data_quality column
+          }),
+        );
+      }),
+    );
+    return perSystem.flat();
   }
 
-  // 5m / 30m: query the sparse PG rows, then densify to the exact grid.
+  // 5m / 30m: query the sparse PG rows, then densify to the exact grid. One query per system, run
+  // CONCURRENTLY (see the 1d path's ordering note above — same guarantee applies here).
   const queryFirstEpoch = p.queryFirstEpoch!;
   const lastEpoch = p.lastEpoch!;
-  const rows: AggRow[] = [];
 
-  for (const [systemId, ids] of idsBySystem) {
-    const res = await db
-      .select({
-        pointId: pgAgg5m.pointId,
-        intervalEnd: pgAgg5m.intervalEnd,
-        avg: pgAgg5m.avg,
-        min: pgAgg5m.min,
-        max: pgAgg5m.max,
-        last: pgAgg5m.last,
-        delta: pgAgg5m.delta,
-        dataQuality: pgAgg5m.dataQuality,
-      })
-      .from(pgAgg5m)
-      .where(
-        and(
-          eq(pgAgg5m.systemId, systemId),
-          inArray(pgAgg5m.pointId, ids),
-          gte(pgAgg5m.intervalEnd, new Date(queryFirstEpoch)),
-          lte(pgAgg5m.intervalEnd, new Date(lastEpoch)),
-        ),
-      );
+  const perSystem = await Promise.all(
+    Array.from(idsBySystem, async ([systemId, ids]) => {
+      const res = await db
+        .select({
+          pointId: pgAgg5m.pointId,
+          intervalEnd: pgAgg5m.intervalEnd,
+          avg: pgAgg5m.avg,
+          min: pgAgg5m.min,
+          max: pgAgg5m.max,
+          last: pgAgg5m.last,
+          delta: pgAgg5m.delta,
+          dataQuality: pgAgg5m.dataQuality,
+        })
+        .from(pgAgg5m)
+        .where(
+          and(
+            eq(pgAgg5m.systemId, systemId),
+            inArray(pgAgg5m.pointId, ids),
+            gte(pgAgg5m.intervalEnd, new Date(queryFirstEpoch)),
+            lte(pgAgg5m.intervalEnd, new Date(lastEpoch)),
+          ),
+        );
 
-    const byKey = new Map<string, (typeof res)[number]>();
-    for (const r of res)
-      byKey.set(`${r.pointId}:${r.intervalEnd.getTime()}`, r);
+      const byKey = new Map<string, (typeof res)[number]>();
+      for (const r of res)
+        byKey.set(`${r.pointId}:${r.intervalEnd.getTime()}`, r);
 
-    // Densify: emit a dense grid — seed at
-    // queryFirstEpoch, step 5min, and include the first grid point that reaches/passes lastEpoch
-    // (R+5min for every R < lastEpoch, so the largest emitted value is the first
-    // grid point ≥ lastEpoch). Rows ascending per point.
-    for (const pointId of ids) {
-      for (let t = queryFirstEpoch; ; t += FIVE_MIN_MS) {
-        const hit = byKey.get(`${pointId}:${t}`);
-        rows.push({
-          system_id: systemId,
-          point_id: pointId,
-          interval_end: t,
-          avg: hit?.avg ?? null,
-          min: hit?.min ?? null,
-          max: hit?.max ?? null,
-          last: hit?.last ?? null,
-          delta: hit?.delta ?? null,
-          data_quality: hit?.dataQuality ?? null,
-        });
-        if (t >= lastEpoch) break;
+      // Densify: emit a dense grid — seed at
+      // queryFirstEpoch, step 5min, and include the first grid point that reaches/passes lastEpoch
+      // (R+5min for every R < lastEpoch, so the largest emitted value is the first
+      // grid point ≥ lastEpoch). Rows ascending per point.
+      const systemRows: AggRow[] = [];
+      for (const pointId of ids) {
+        for (let t = queryFirstEpoch; ; t += FIVE_MIN_MS) {
+          const hit = byKey.get(`${pointId}:${t}`);
+          systemRows.push({
+            system_id: systemId,
+            point_id: pointId,
+            interval_end: t,
+            avg: hit?.avg ?? null,
+            min: hit?.min ?? null,
+            max: hit?.max ?? null,
+            last: hit?.last ?? null,
+            delta: hit?.delta ?? null,
+            data_quality: hit?.dataQuality ?? null,
+          });
+          if (t >= lastEpoch) break;
+        }
       }
-    }
-  }
-  return rows;
+      return systemRows;
+    }),
+  );
+  return perSystem.flat();
 }

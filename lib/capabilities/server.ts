@@ -24,6 +24,7 @@ import {
   capabilitiesFromPoints,
   isAggregateFromPoints,
 } from "@/lib/capabilities/derive";
+import { satisfies, CARD_CATALOG } from "@/lib/capabilities/catalog";
 import {
   applyCapabilityConfig,
   type DeviceConfig,
@@ -86,6 +87,23 @@ export async function capabilitiesForSystem(
   const { derived, overrides } = await resolveDeviceCapabilities(handle);
   // Per-device config overrides (no-op when unconfigured — parity preserved).
   return applyCapabilityConfig(derived, { capabilities: overrides });
+}
+
+/**
+ * Cheap CONFIG-only eligibility check for the chart/sankey cards (`{all:["solar/power"]}`) — just the
+ * points scan + the same catalog rule `capabilitiesFromLatest` checks client-side against `latest`,
+ * skipping the generator/grid-signals compound predicates `capabilitiesForSystem` also computes
+ * (irrelevant to chart eligibility). Lets a dashboard-descriptor read thread a synchronous "will this
+ * area ever show a chart" fact to the client, so `SiteChartsGroup` doesn't have to wait on
+ * `/api/data`'s live `latest` map before firing its (expensive) history/sankey fetch.
+ */
+export async function hasChartCapability(handle: number): Promise<boolean> {
+  const points = await PointManager.getInstance().getActivePointsForSystem(
+    handle,
+    false,
+    false,
+  );
+  return satisfies(capabilitiesFromPoints(points), CARD_CATALOG.chart.requires);
 }
 
 /**
