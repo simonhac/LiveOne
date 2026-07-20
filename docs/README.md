@@ -41,6 +41,7 @@
 ## Operations
 
 - [operations.md](operations.md) — monitoring signals & the Slack alert catalog (what each alert means + first triage)
+- [performance/dashboard-fetch-waterfall.md](performance/dashboard-fetch-waterfall.md) — reusable browser-based fetch-waterfall benchmark harness + recorded PROD baseline (2026-07-20, pre dashboard-fetch-slim-handoff merge) for comparing against post-merge prod
 
 ## Plans (proposed — not yet started)
 
