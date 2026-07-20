@@ -368,6 +368,9 @@ export const pointReadingsAgg5m = pgTable(
     ),
     intervalEndIdx: index("pr5m_interval_end_idx").on(table.intervalEnd),
     createdAtIdx: index("pr5m_created_at_idx").on(table.createdAt),
+    // Watermark column for the incremental prod→dev sync (sync-prod-to-dev-db.ts): the export
+    // filters `WHERE updated_at > <wm>`, which seq-scanned the whole ~3M-row table without this.
+    updatedAtIdx: index("pr5m_updated_at_idx").on(table.updatedAt),
     pointInfoFk: foreignKey({
       columns: [table.systemId, table.pointId],
       foreignColumns: [pointInfo.systemId, pointInfo.index],
