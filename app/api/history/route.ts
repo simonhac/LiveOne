@@ -25,7 +25,13 @@ import {
   type LogicalSystem,
 } from "@/lib/aggregation/logical-system";
 import { buildFlowMatrixFromAggRows } from "@/lib/history/build-flow-matrix";
-import type { EnergyFlowMatrix } from "@/lib/energy-flow-matrix";
+import { buildAttributedFlowMatrix } from "@/lib/history/build-attributed-flow-matrix";
+import { readAttributedDailyMatrices } from "@/lib/aggregation/flow-attr-read";
+import { planetscaleDb } from "@/lib/db/planetscale";
+import type {
+  EnergyFlowMatrix,
+  DailyFlowMatrices,
+} from "@/lib/energy-flow-matrix";
 
 // Initialize manager instances
 const pointManager = PointManager.getInstance();
@@ -435,6 +441,8 @@ function buildResponse(
   sqlQueries?: string[],
   flowMatrix?: EnergyFlowMatrix | null,
   flowMatrixOmittedReason?: string,
+  attributedFlow?: DailyFlowMatrices | null,
+  attributedFlowOmittedReason?: string,
 ): NextResponse {
   // Format date strings based on interval type
   let requestStartStr: string;
@@ -493,6 +501,15 @@ function buildResponse(
     response.flowMatrixResolution = "5m";
   } else if (flowMatrixOmittedReason) {
     response.flowMatrixOmittedReason = flowMatrixOmittedReason;
+  }
+
+  // The ATTRIBUTED matrix (energy + emissions/renewable/cost legs) behind the Sankey node tooltips —
+  // computed on the fly for sub-daily windows, read from `flow_attr_1d` for 1d. Never blocks the
+  // request on failure (P3 — see build-attributed-flow-matrix.ts); the reason explains a blank payload.
+  if (attributedFlow) {
+    response.attributedFlow = attributedFlow;
+  } else if (attributedFlowOmittedReason) {
+    response.attributedFlowOmittedReason = attributedFlowOmittedReason;
   }
 
   const jsonStr = formatOpenNEMResponse(response);
@@ -572,9 +589,9 @@ export async function GET(request: NextRequest) {
 
     const interval = basicParams.interval as "5m" | "30m" | "1d";
 
-    // Optional energy-flow Sankey bundled with the history payload (?include=sankey). Only sub-daily
-    // intervals are computed here (the in-hand signed 5m rows); 1d / long-range is served from the
-    // materialized flow-matrix (energy-flow-matrix) endpoint instead.
+    // Optional energy-flow Sankey bundled with the history payload (?include=sankey). The energy-only
+    // matrix is computed here for sub-daily intervals only (the in-hand signed 5m rows); 1d / long-range
+    // has no energy-only leg here (it never did — see `attributedFlow` below for its replacement).
     const includeParam = searchParams.get("include");
     const includeSankey = includeParam
       ? includeParam
@@ -584,16 +601,12 @@ export async function GET(request: NextRequest) {
       : false;
     let sankey: { logicalSystem: LogicalSystem } | undefined;
     let sankeyOmittedReason: string | undefined;
-    if (includeSankey) {
-      if (interval === "1d") {
-        sankeyOmittedReason = "1d-served-from-flow-matrix-endpoint";
+    if (includeSankey && interval !== "1d") {
+      const logicalSystem = await resolveLogicalSystem(basicParams.systemId!);
+      if (!logicalSystem || !logicalSystem.isComplete) {
+        sankeyOmittedReason = "not-a-logical-system";
       } else {
-        const logicalSystem = await resolveLogicalSystem(basicParams.systemId!);
-        if (!logicalSystem || !logicalSystem.isComplete) {
-          sankeyOmittedReason = "not-a-logical-system";
-        } else {
-          sankey = { logicalSystem };
-        }
+        sankey = { logicalSystem };
       }
     }
 
@@ -615,6 +628,67 @@ export async function GET(request: NextRequest) {
       sankey,
     );
 
+    // The ATTRIBUTED matrix (energy + emissions/renewable/cost/estimated legs) behind the Sankey node
+    // tooltips. Sub-daily: computed on the fly (P2 — same unified series universe as `sankey` above);
+    // wrapped in try/catch so a fold/provenance-load hiccup degrades to the energy-only matrix + limited
+    // tooltips instead of failing the whole history request (P3). 1d: read the materialized
+    // `flow_attr_1d` rollup for the window's local days (replaces the old flat refusal).
+    let attributedFlow: DailyFlowMatrices | undefined;
+    let attributedFlowOmittedReason: string | undefined;
+    if (includeSankey) {
+      if (interval === "1d") {
+        if (!planetscaleDb) {
+          attributedFlowOmittedReason = "database-unavailable";
+        } else {
+          try {
+            const startYMD = (timeRange.startTime as CalendarDate).toString();
+            const endYMD = (timeRange.endTime as CalendarDate).toString();
+            // `readAttributedDailyMatrices` (main, post-PR#193) takes a pre-resolved logical system;
+            // it handles null/incomplete internally (→ reason "not-a-logical-system").
+            const logicalSystem = await resolveLogicalSystem(
+              basicParams.systemId!,
+            );
+            const attr = await readAttributedDailyMatrices(
+              planetscaleDb,
+              logicalSystem,
+              startYMD,
+              endYMD,
+            );
+            if (attr.days.length > 0) {
+              attributedFlow = attr;
+            } else {
+              attributedFlowOmittedReason = attr.reason ?? "not-materialized";
+            }
+          } catch (error) {
+            console.error("[history] attributed flow (1d) failed:", error);
+            attributedFlowOmittedReason = "attributed-compute-failed";
+          }
+        }
+      } else if (sankey) {
+        try {
+          const startMs = (timeRange.startTime as ZonedDateTime)
+            .toDate()
+            .getTime();
+          const endMs = (timeRange.endTime as ZonedDateTime).toDate().getTime();
+          const attr = await buildAttributedFlowMatrix(
+            basicParams.systemId!,
+            startMs,
+            endMs,
+          );
+          if (attr) {
+            attributedFlow = attr;
+          } else {
+            attributedFlowOmittedReason = "no-provenance-inputs";
+          }
+        } catch (error) {
+          console.error("[history] attributed flow failed:", error);
+          attributedFlowOmittedReason = "attributed-compute-failed";
+        }
+      } else {
+        attributedFlowOmittedReason = sankeyOmittedReason;
+      }
+    }
+
     // Build and return response
     const durationMs = Date.now() - startTime;
     return buildResponse(
@@ -632,6 +706,8 @@ export async function GET(request: NextRequest) {
       includeSankey
         ? (sankeyOmittedReason ?? flowMatrixOmittedReason)
         : undefined,
+      attributedFlow,
+      attributedFlowOmittedReason,
     );
   } catch (error) {
     console.error("Error fetching historical data:", error);

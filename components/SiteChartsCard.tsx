@@ -3,13 +3,15 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useModalContext } from "@/contexts/ModalContext";
-import { siteDataQuery, flowMatrixQuery } from "@/lib/queries";
+import { siteDataQuery } from "@/lib/queries";
 import { type ChartData } from "@/lib/charts/types";
 import DashboardChart from "@/components/DashboardChart";
 import EnergyTable from "@/components/EnergyTable";
 import type { ProcessedSiteData } from "@/lib/site-data-processor";
 import EnergyFlowSankey, {
   type SankeyOptions,
+  type SankeyNodeTooltip,
+  type SankeyNodeTooltipResolver,
   DEFAULT_SANKEY_OPTIONS,
 } from "@/components/EnergyFlowSankey";
 import FlowsSettingsMenu, {
@@ -21,7 +23,19 @@ import {
   sumDailyFlowMatrices,
   pickDailyFlowMatrix,
   combineSolarSources,
+  reduceLoadProvenance,
+  reduceSourceProvenance,
+  type DailyFlowMatrices,
 } from "@/lib/energy-flow-matrix";
+import {
+  formatKwh,
+  formatKgCo2,
+  formatGramsPerKwh,
+  formatDollars,
+  formatCentsPerKwh,
+  formatRenewablePct,
+} from "@/lib/provenance-format";
+import { formatValue } from "@/lib/energy-formatting";
 import TemporalNavigator from "@/components/TemporalNavigator";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { useChartFocus, nearestIndex } from "@/lib/charts/ChartFocusContext";
@@ -402,34 +416,14 @@ export default function SiteChartsCard({
     }
   }, [siteData]);
 
-  // Long-range Sankey from Postgres (point_readings_flow_attr_1d), 30D only; a dependent query keyed on
-  // the site fetch's request window. When not yet loaded / errored / not materialized, pgDaily stays
-  // null and the render falls back to the client-side window calc.
+  // The Sankey's attributed payload (energy + emissions/renewable/cost legs) now rides the same
+  // site-history fetch for every period (see `lib/site-data-processor.ts`) — no separate 30D query.
+  // `toLocalYMD` maps a focused instant to the Area-local day string `attributedFlow.days` keys on.
   const flowOffsetMin = system?.timezoneOffsetMin || 0;
   const toLocalYMD = (iso: string) =>
     new Date(new Date(iso).getTime() + flowOffsetMin * 60000)
       .toISOString()
       .slice(0, 10);
-  const flowEnabled =
-    period === "30D" &&
-    !!systemId &&
-    !!processedHistoryData.requestStart &&
-    !!processedHistoryData.requestEnd;
-  const { data: pgFlowMatrixData } = useQuery(
-    flowMatrixQuery({
-      systemId: systemId ?? "",
-      startYMD: processedHistoryData.requestStart
-        ? toLocalYMD(processedHistoryData.requestStart)
-        : "",
-      endYMD: processedHistoryData.requestEnd
-        ? toLocalYMD(processedHistoryData.requestEnd)
-        : "",
-      timezoneOffsetMin: flowOffsetMin,
-      enabled: flowEnabled,
-    }),
-  );
-  // Raw per-day flow matrices (30D); the render sums them for the window or picks the hovered day.
-  const pgDaily = flowEnabled ? (pgFlowMatrixData ?? null) : null;
 
   // Prev/next navigation + keyboard handling now live in the shared TemporalNavigator (driven by the
   // URL via useTemporalRange) — rendered in this card's header below.
@@ -679,21 +673,29 @@ export default function SiteChartsCard({
             processedHistoryData.generation &&
             processedHistoryData.load &&
             (() => {
-              // 30D: the Sankey is REAL per-day energy from flow_attr_1d — sum the window's days when
-              // nothing is hovered, or pick the hovered day's matrix (kWh either way). Sub-daily
-              // (1D/7D) shows the instantaneous-POWER (kW) snapshot on hover, else the window
-              // matrix via selectFlowMatrix. `focused` drives the kW/kWh label below.
-              let matrix;
-              let focused = false;
-              if (period === "30D" && pgDaily && pgDaily.days.length > 0) {
-                const hoveredYMD = focusedTime
+              // The server-computed ATTRIBUTED payload (energy + emissions/renewable/cost legs) drives
+              // BOTH the rendered boxes and the node tooltips (P1 — one matrix for both, never drift).
+              // Absent (not-yet-loaded / area with no complete role set / provenance-load failure) →
+              // the old energy-only fallback chain, with tooltips degrading to energy-only (P3).
+              const attributedFlow = processedHistoryData.attributedFlow;
+              const hasAttributed =
+                !!attributedFlow && attributedFlow.days.length > 0;
+
+              // 30D hovered day (also the key into `attributedFlow.days`, which is keyed by local YMD
+              // for every period — the sub-daily builder shapes its window as a single day entry too).
+              const hoveredYMD =
+                period === "30D" && focusedTime
                   ? toLocalYMD(focusedTime.toISOString())
                   : null;
+
+              let matrix;
+              let focused = false;
+              if (period === "30D" && hasAttributed) {
                 const dayMatrix = hoveredYMD
-                  ? pickDailyFlowMatrix(pgDaily, hoveredYMD)
+                  ? pickDailyFlowMatrix(attributedFlow!, hoveredYMD)
                   : null;
                 focused = dayMatrix !== null;
-                matrix = dayMatrix ?? sumDailyFlowMatrices(pgDaily);
+                matrix = dayMatrix ?? sumDailyFlowMatrices(attributedFlow!);
               } else {
                 const instant =
                   period !== "30D" && hoveredIndex !== null
@@ -703,7 +705,11 @@ export default function SiteChartsCard({
                       )
                     : null;
                 focused = instant !== null;
-                matrix = instant ?? selectFlowMatrix(processedHistoryData);
+                matrix =
+                  instant ??
+                  (hasAttributed && period !== "30D"
+                    ? sumDailyFlowMatrices(attributedFlow!)
+                    : selectFlowMatrix(processedHistoryData));
               }
               if (!matrix) return null;
               // Capabilities from the RAW matrix node set (hover-invariant; computed BEFORE the
@@ -740,6 +746,129 @@ export default function SiteChartsCard({
                       period !== "30D",
                     )
                   : null;
+
+              // The attributed slice the tooltip reduces over — the SAME data the boxes above were
+              // built from (30D hovered day → just that day; otherwise the whole payload, which for
+              // sub-daily is already a single day entry covering the exact window).
+              const daySlice: DailyFlowMatrices | null =
+                unit === "kW" || !hasAttributed
+                  ? null
+                  : period === "30D" && hoveredYMD
+                    ? (() => {
+                        const d = attributedFlow!.days.find(
+                          (x) => x.day === hoveredYMD,
+                        );
+                        return d
+                          ? {
+                              sources: attributedFlow!.sources,
+                              loads: attributedFlow!.loads,
+                              days: [d],
+                            }
+                          : null;
+                      })()
+                    : attributedFlow!;
+
+              // Hours the tooltip's "energy" leg is averaged over, for the avg-kW secondary spelling.
+              const windowHours =
+                period === "30D"
+                  ? hoveredYMD
+                    ? 24
+                    : (attributedFlow?.days.length ?? 30) * 24
+                  : cd && cd.timestamps.length > 1
+                    ? (cd.timestamps[cd.timestamps.length - 1].getTime() -
+                        cd.timestamps[0].getTime()) /
+                      3_600_000
+                    : period === "7D"
+                      ? 24 * 7
+                      : 24;
+
+              const buildNodeTooltip: SankeyNodeTooltipResolver = (node) => {
+                const avgPower = (energyKwh: number): string => {
+                  const avgW =
+                    windowHours > 0 ? (energyKwh * 1000) / windowHours : 0;
+                  const { value, unit: u } = formatValue(avgW, "W");
+                  return `${value} ${u}`;
+                };
+
+                if (unit === "kW") {
+                  // Focused sub-daily sample: instantaneous power only (no integrals exist at a point).
+                  return {
+                    name: node.name,
+                    variant: "energy",
+                    energy: { primary: `${node.total.toFixed(1)} kW` },
+                  };
+                }
+                if (!daySlice) {
+                  // Attributed legs unavailable for this matrix — limited (energy-only) tooltip.
+                  return {
+                    name: node.name,
+                    variant: "energy",
+                    energy: {
+                      primary: `${formatKwh(node.total)} kWh`,
+                      secondary: avgPower(node.total),
+                    },
+                  };
+                }
+
+                const toFull = (summary: {
+                  energyKwh: number;
+                  costC: number;
+                  avgCentsPerKwh: number | null;
+                  pctRenewable: number | null;
+                  avgGramsPerKwh: number | null;
+                  kgCo2: number;
+                  pctEstimated: number;
+                }): SankeyNodeTooltip => ({
+                  name: node.name,
+                  variant: "full",
+                  energy: {
+                    primary: `${formatKwh(summary.energyKwh)} kWh`,
+                    secondary: avgPower(summary.energyKwh),
+                  },
+                  emissions: {
+                    primary: `${formatKgCo2(summary.kgCo2)} kg`,
+                    secondary: `${formatGramsPerKwh(summary.avgGramsPerKwh)} g/kWh`,
+                  },
+                  cost: {
+                    primary: formatDollars(summary.costC),
+                    secondary: `${formatCentsPerKwh(summary.avgCentsPerKwh)} c/kWh`,
+                  },
+                  renewable: {
+                    primary: formatRenewablePct(summary.pctRenewable),
+                  },
+                  estimatedPct: summary.pctEstimated,
+                });
+
+                if (node.id === "bidi.battery") {
+                  // Battery-middle's storage node: BOTH panels simultaneously — load-mode (charge) on
+                  // the left, source-mode (discharge) on the right.
+                  const charge = reduceLoadProvenance(daySlice, "load.battery");
+                  const discharge = reduceSourceProvenance(
+                    daySlice,
+                    "source.battery",
+                  );
+                  if (!charge && !discharge) return null;
+                  const empty: SankeyNodeTooltip = {
+                    name: node.name,
+                    variant: "energy",
+                    energy: { primary: "—" },
+                  };
+                  return {
+                    left: charge ? toFull(charge) : empty,
+                    right: discharge ? toFull(discharge) : empty,
+                  };
+                }
+
+                if (!node.id) return null;
+                const summary =
+                  node.side === "load"
+                    ? reduceLoadProvenance(daySlice, node.id)
+                    : reduceSourceProvenance(daySlice, node.id, {
+                        combineSolar: sankeyOptions.combineSolar,
+                      });
+                return summary ? toFull(summary) : null;
+              };
+
               return (
                 <div className="sm:p-4">
                   <div className="mb-2 flex items-center justify-between px-2 sm:px-0">
@@ -763,6 +892,7 @@ export default function SiteChartsCard({
                       }
                       width={600}
                       height={680}
+                      nodeTooltip={buildNodeTooltip}
                     />
                   </div>
                   {label && (

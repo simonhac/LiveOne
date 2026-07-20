@@ -3,6 +3,13 @@
 import { Car } from "lucide-react";
 import { ttInterphases } from "@/lib/fonts/amber";
 import type { LoadProvenanceSummary } from "@/lib/energy-flow-matrix";
+import {
+  formatCentsPerKwh,
+  formatDollars,
+  formatGramsPerKwh,
+  formatKwh,
+  formatRenewablePct,
+} from "@/lib/provenance-format";
 
 export interface LoadProvenanceCardProps {
   summary: LoadProvenanceSummary | null;
@@ -88,17 +95,12 @@ export default function LoadProvenanceCard({
     );
   }
 
-  const dollars = summary.costC / 100;
-  const dollarsText = `${dollars < 0 ? "−" : ""}$${Math.abs(dollars).toFixed(2)}`;
-  const renewableText =
-    summary.pctRenewable != null ? `${Math.round(summary.pctRenewable)}%` : "—";
+  const dollarsText = formatDollars(summary.costC);
+  const renewableText = formatRenewablePct(summary.pctRenewable);
   const renewableGreen =
     summary.pctRenewable != null && summary.pctRenewable > 50;
-  const emissionsText =
-    summary.avgGramsPerKwh != null
-      ? `${Math.round(summary.avgGramsPerKwh)}`
-      : "—";
-  const energyText = `${summary.energyKwh.toFixed(1)}`;
+  const emissionsText = formatGramsPerKwh(summary.avgGramsPerKwh);
+  const energyText = formatKwh(summary.energyKwh);
 
   const total = summary.energyKwh;
   const splitPct = summary.sources
@@ -147,7 +149,7 @@ export default function LoadProvenanceCard({
       <div className="mt-2 flex items-center gap-2 text-[11px]">
         {summary.avgCentsPerKwh != null && (
           <span className="text-gray-500">
-            avg {summary.avgCentsPerKwh.toFixed(1)}¢/kWh
+            avg {formatCentsPerKwh(summary.avgCentsPerKwh)}¢/kWh
           </span>
         )}
         {estimated > 0 && (

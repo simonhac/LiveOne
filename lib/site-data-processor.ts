@@ -1,7 +1,7 @@
 import { ChartData, SeriesData } from "@/lib/charts/types";
 import { generateSeriesConfig } from "@/lib/charts/series-config";
 import { getColorForPath } from "@/lib/chart-colors";
-import type { EnergyFlowMatrix } from "./energy-flow-matrix";
+import type { DailyFlowMatrices, EnergyFlowMatrix } from "./energy-flow-matrix";
 import { SeriesPath } from "@/lib/identifiers";
 import { matchesLogicalPath, stemSplit } from "@/lib/identifiers/logical-path";
 import { encodeHistoryWindow } from "@/lib/charts/history-window";
@@ -14,6 +14,10 @@ export interface ProcessedSiteData {
   requestEnd?: string;
   /** Server-computed sub-daily energy-flow matrix (when served), else null → compute client-side. */
   flowMatrix?: EnergyFlowMatrix | null;
+  /** Server-computed ATTRIBUTED flow matrix (energy + emissions/renewable/cost/estimated legs) behind
+   *  the Sankey node tooltips — served for every interval; absent/null → tooltips degrade to
+   *  energy-only (P3), same fallback discipline as `flowMatrix`. */
+  attributedFlow?: DailyFlowMatrices | null;
 }
 
 /**
@@ -52,6 +56,7 @@ async function fetchHistoryData(
   requestStart?: string;
   requestEnd?: string;
   flowMatrix?: EnergyFlowMatrix | null;
+  attributedFlow?: DailyFlowMatrices | null;
 }> {
   // Build API URL - use absolute time if provided, otherwise use relative
   let apiUrl: string;
@@ -66,9 +71,10 @@ async function fetchHistoryData(
     apiUrl = `/api/history?interval=${requestInterval}&last=${duration}&systemId=${systemId}&series=${seriesFilter}`;
   }
 
-  // Ask the history endpoint to bundle the energy-flow matrix from the same hi-res rows (sub-daily
-  // only; 1d/long-range is served from the flow-matrix (energy-flow-matrix) endpoint instead).
-  if (requestInterval !== "1d") apiUrl += "&include=sankey";
+  // Ask the history endpoint to bundle the energy-flow Sankey payload alongside the series data — for
+  // EVERY interval now (1d included: the attributed flow_attr_1d read replaced the old flat refusal),
+  // so the Sankey + its node tooltips ride the one site-data fetch with no separate 30D query.
+  apiUrl += "&include=sankey";
 
   // Use the shared fetcher so a dashboard share token (?access=) in the page URL is propagated
   // to the same-origin /api request (bare fetch would drop it → 401 on shared views).
@@ -82,6 +88,7 @@ async function fetchHistoryData(
       requestStart: data?.requestStart,
       requestEnd: data?.requestEnd,
       flowMatrix: data?.flowMatrix ?? null,
+      attributedFlow: data?.attributedFlow ?? null,
     };
   }
 
@@ -97,6 +104,7 @@ async function fetchHistoryData(
     requestStart: data.requestStart,
     requestEnd: data.requestEnd,
     flowMatrix: data.flowMatrix ?? null,
+    attributedFlow: data.attributedFlow ?? null,
   };
 }
 
@@ -114,6 +122,8 @@ interface FetchedSiteData {
   requestEnd?: string;
   /** Server-computed sub-daily energy-flow matrix (when ?include=sankey is served), else null. */
   flowMatrix?: EnergyFlowMatrix | null;
+  /** Server-computed attributed flow matrix (when ?include=sankey is served), else null. */
+  attributedFlow?: DailyFlowMatrices | null;
 }
 
 /**
@@ -305,6 +315,7 @@ async function fetchSiteData(
     requestStart,
     requestEnd,
     flowMatrix,
+    attributedFlow,
   } = await fetchHistoryData(
     systemId,
     requestInterval,
@@ -367,6 +378,7 @@ async function fetchSiteData(
     requestStart,
     requestEnd,
     flowMatrix,
+    attributedFlow,
   };
 }
 
@@ -670,6 +682,7 @@ function processSiteData(fetchedData: FetchedSiteData): ProcessedSiteData {
     requestStart,
     requestEnd,
     flowMatrix,
+    attributedFlow,
   } = fetchedData;
 
   const processedData: ProcessedSiteData = {
@@ -678,6 +691,7 @@ function processSiteData(fetchedData: FetchedSiteData): ProcessedSiteData {
     requestStart,
     requestEnd,
     flowMatrix,
+    attributedFlow,
   };
 
   // Process generation FIRST (needed for load Case 3)
