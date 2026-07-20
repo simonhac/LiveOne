@@ -20,7 +20,12 @@
 import { CalendarDate } from "@internationalized/date";
 import { computeBatteryProvenance } from "@/lib/battery-provenance/compute";
 import { loadProvenanceInputs } from "@/lib/battery-provenance/load";
-import { WARMUP_MS } from "@/lib/db/planetscale/battery-provenance-pg";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import {
+  WARMUP_MS,
+  tryLoadSeededProvenanceInputs,
+  type ProvenanceSeedResult,
+} from "@/lib/db/planetscale/battery-provenance-pg";
 import {
   computeFlowAccounting,
   type FlowAccountingResult,
@@ -31,7 +36,10 @@ import {
   colorForFlowPath,
   labelForFlowPath,
 } from "@/lib/aggregation/flow-node-meta";
-import { resolveLogicalSystem } from "@/lib/aggregation/logical-system";
+import {
+  resolveLogicalSystem,
+  type LogicalSystem,
+} from "@/lib/aggregation/logical-system";
 import type {
   DailyFlowMatrices,
   DailyFlowMatrix,
@@ -100,9 +108,12 @@ export function shapeAttributedFlowMatrix(
 }
 
 /**
- * Build the attributed flow matrix for logical-system `handle` over `[startMs, endMs]`. Loads a
- * `WARMUP_MS` lead-in for the battery fold to reach a reset before the window (same warm-up the prod
- * driver uses), runs the SAME `computeBatteryProvenance` fold the write path does (safe — and already
+ * Build the attributed flow matrix for logical-system `handle` over `[startMs, endMs]`. First tries to
+ * seed the battery fold from the freshest persisted checkpoint (`tryLoadSeededProvenanceInputs` —
+ * loads from the checkpoint's anchor instead of a full lead-in, typically O(today) instead of O(7
+ * days)); on any guard failure (no checkpoint, span too long, stale, non-canonical inputs) falls back
+ * to the unseeded `WARMUP_MS` lead-in (same warm-up the prod driver uses when it can't seed either).
+ * Either way runs the SAME `computeBatteryProvenance` fold the write path does (safe — and already
  * exercised — for battery-less Areas too: with no `source.battery` in `inputs.sources` the fold simply
  * produces no battery source-intensity entry), then re-runs `computeFlowAccounting` clipped to the exact
  * requested window (mirrors `writeAttrRollup`'s per-day re-slice).
@@ -115,14 +126,47 @@ export async function buildAttributedFlowMatrix(
   handle: number,
   startMs: number,
   endMs: number,
+  /** Pre-resolved logical system, when the caller already has one (e.g. `/api/history` resolves it
+   *  once for the energy-only Sankey) — skips two internal `resolveLogicalSystem` calls (here and
+   *  inside `loadProvenanceInputs`). Must be for the same `handle`; not verified. */
+  logicalSystem?: LogicalSystem,
 ): Promise<DailyFlowMatrices | null> {
-  const inputs = await loadProvenanceInputs(handle, {
-    startMs: startMs - WARMUP_MS,
-    endMs,
-  });
+  const db = requirePlanetscaleDb();
+  // Best-effort: any failure here (including a thrown error, not just a guard's {seeded:false})
+  // must degrade to the unseeded WARMUP_MS load below — seeding must never be LESS safe than the
+  // path that predates it.
+  let seed: ProvenanceSeedResult;
+  try {
+    seed = await tryLoadSeededProvenanceInputs(
+      db,
+      handle,
+      startMs,
+      endMs,
+      logicalSystem,
+    );
+  } catch (err) {
+    console.error("[history] checkpoint seed lookup failed:", err);
+    seed = { seeded: false, reason: "seed-lookup-threw" };
+  }
+  const inputs = seed.seeded
+    ? seed.inputs
+    : await loadProvenanceInputs(
+        handle,
+        { startMs: startMs - WARMUP_MS, endMs },
+        { logicalSystem },
+      );
   if (!inputs) return null;
 
-  const result = computeBatteryProvenance(inputs);
+  const result = computeBatteryProvenance(
+    inputs,
+    {},
+    seed.seeded
+      ? {
+          initialState: seed.initialState,
+          efficiencyFallback: seed.efficiencyFallback,
+        }
+      : {},
+  );
   const acc = computeFlowAccounting({
     timestamps: inputs.timeline,
     sources: inputs.sources,
@@ -131,9 +175,9 @@ export async function buildAttributedFlowMatrix(
     window: { startMs, endMs },
   });
 
-  const logicalSystem = await resolveLogicalSystem(handle);
+  const ls = logicalSystem ?? (await resolveLogicalSystem(handle));
   const displayNameByStem = new Map<string, string>();
-  for (const p of logicalSystem?.points ?? []) {
+  for (const p of ls?.points ?? []) {
     if (!displayNameByStem.has(p.stem))
       displayNameByStem.set(p.stem, p.displayName);
   }

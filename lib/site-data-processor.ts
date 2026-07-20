@@ -18,6 +18,11 @@ export interface ProcessedSiteData {
    *  the Sankey node tooltips — served for every interval; absent/null → tooltips degrade to
    *  energy-only (P3), same fallback discipline as `flowMatrix`. */
   attributedFlow?: DailyFlowMatrices | null;
+  /** Hot-water temperature series (`load.hws/temperature.avg`) — only requested/populated for the 1D
+   *  period (see `fetchSiteData`'s `period === "1D"` branch); null/absent otherwise. The hot-water
+   *  tile's sparkline is always a 24h/5m window, which the 1D site fetch already is, so it reads this
+   *  instead of firing its own `/api/history` call in that case. */
+  hwsTemperature?: { timestamps: Date[]; values: (number | null)[] } | null;
 }
 
 /**
@@ -114,6 +119,8 @@ async function fetchHistoryData(
 interface FetchedSiteData {
   powerSeries: ParsedSeries[];
   socSeries: ParsedSeries[];
+  /** `load.hws/temperature` series, when requested (1D only — see `fetchSiteData`). */
+  hwsSeries: ParsedSeries[];
   timestamps: Date[];
   selectedIndices: number[];
   filteredTimestamps: Date[];
@@ -308,6 +315,12 @@ async function fetchSiteData(
   } else {
     seriesFilter = "*/power.avg,bidi.battery/soc.last";
   }
+  // The hot-water tile's sparkline is always a 24h/5m window — exactly the 1D period's own request
+  // — so piggyback it on this fetch only then; 7D/30D keep the tile's own dedicated fetch (their
+  // window/resolution doesn't match what the sparkline needs).
+  if (period === "1D") {
+    seriesFilter += ",load.hws/temperature.avg";
+  }
 
   // Fetch and parse all series data
   const {
@@ -330,15 +343,17 @@ async function fetchSiteData(
     return null;
   }
 
-  // Separate power and SoC series. SoC series are typed "power" in the OpenNEM payload, so the
-  // type filter alone would pull them in; exclude them by path so they're handled only as the SoC
-  // overlay (socSeries / addSocSeries) below. Otherwise an empty SoC series (e.g. a battery SoC
-  // point with no 1d aggregates, which sorts first) would become powerSeries[0] and zero the whole
-  // chart's timeline in calculateTimeWindow.
+  // Separate power, SoC, and hot-water-temperature series. SoC/hws series are typed "power" in the
+  // OpenNEM payload (a legacy field, not the real metric — see build-series.ts), so the type filter
+  // alone would pull them in; exclude them by path so they're handled only via their own overlays
+  // (socSeries / addSocSeries below; hwsSeries via ProcessedSiteData.hwsTemperature). Otherwise an
+  // empty SoC series (e.g. a battery SoC point with no 1d aggregates, which sorts first) would become
+  // powerSeries[0] and zero the whole chart's timeline in calculateTimeWindow.
   let powerSeries = allSeries.filter(
     (d) =>
       d.type === "power" &&
-      !matchesLogicalPath(d.seriesPath!.pointPath, "bidi.battery", "soc"),
+      !matchesLogicalPath(d.seriesPath!.pointPath, "bidi.battery", "soc") &&
+      !matchesLogicalPath(d.seriesPath!.pointPath, "load.hws", "temperature"),
   );
   if (powerSeries.length === 0) {
     console.warn("No power series data available in response");
@@ -361,6 +376,11 @@ async function fetchSiteData(
     powerSeries.map((s) => s.id),
   );
 
+  // Extract hot-water temperature series (1D only — see the seriesFilter branch above).
+  const hwsSeries = allSeries.filter((d) =>
+    matchesLogicalPath(d.seriesPath!.pointPath, "load.hws", "temperature"),
+  );
+
   // Calculate timestamps and time window. Build the master timeline from a series that actually has
   // data — a single empty/short leading series must never collapse the whole chart's timeline.
   const timelineSeries =
@@ -371,6 +391,7 @@ async function fetchSiteData(
   return {
     powerSeries,
     socSeries,
+    hwsSeries,
     timestamps,
     selectedIndices,
     filteredTimestamps,
@@ -676,6 +697,7 @@ function processSiteData(fetchedData: FetchedSiteData): ProcessedSiteData {
   const {
     powerSeries,
     socSeries,
+    hwsSeries,
     selectedIndices,
     filteredTimestamps,
     requestInterval,
@@ -692,6 +714,12 @@ function processSiteData(fetchedData: FetchedSiteData): ProcessedSiteData {
     requestEnd,
     flowMatrix,
     attributedFlow,
+    hwsTemperature: hwsSeries[0]
+      ? {
+          timestamps: filteredTimestamps,
+          values: selectedIndices.map((i) => hwsSeries[0].history.data[i]),
+        }
+      : null,
   };
 
   // Process generation FIRST (needed for load Case 3)

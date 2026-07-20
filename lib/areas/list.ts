@@ -11,6 +11,7 @@ import { and, eq, inArray, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
 import { SystemsManager } from "@/lib/systems-manager";
+import { hasChartCapability } from "@/lib/capabilities/server";
 
 export interface ReadableArea {
   /** Area uuid (what a card's `areaId` holds). */
@@ -18,6 +19,26 @@ export interface ReadableArea {
   displayName: string;
   /** The integer addressing handle — the systemId a card binds its data queries to. */
   legacySystemId: number;
+  /** CONFIG-only chart/sankey eligibility (`hasChartCapability`) — present only when the caller asked
+   *  for it (`withChartCapability`); undefined otherwise. Lets a dashboard render thread this fact to
+   *  `SiteChartsGroup` without waiting on `/api/data`'s live `latest` map. */
+  chartCapable?: boolean;
+}
+
+/** Attach `chartCapable` to each row when `with` is true — concurrent, best-effort (a per-area failure
+ *  degrades that area to `false`, same as the pre-existing "no data yet" render). */
+async function withChartCapabilityIfRequested<
+  T extends { legacySystemId: number },
+>(rows: T[], want: boolean): Promise<(T & { chartCapable?: boolean })[]> {
+  if (!want) return rows;
+  return Promise.all(
+    rows.map(async (r) => ({
+      ...r,
+      chartCapable: await hasChartCapability(r.legacySystemId).catch(
+        () => false,
+      ),
+    })),
+  );
 }
 
 /**
@@ -27,6 +48,7 @@ export interface ReadableArea {
  */
 export async function listReadableAreas(
   userId: string,
+  opts: { withChartCapability?: boolean } = {},
 ): Promise<ReadableArea[]> {
   const systems = await SystemsManager.getInstance().getSystemsVisibleByUser(
     userId,
@@ -53,7 +75,7 @@ export async function listReadableAreas(
     .from(areas)
     .where(and(eq(areas.status, "active"), accessCond));
 
-  return rows
+  const present = rows
     .filter(
       (r): r is typeof r & { legacySystemId: number } =>
         r.legacySystemId != null,
@@ -64,6 +86,10 @@ export async function listReadableAreas(
       legacySystemId: r.legacySystemId,
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  return withChartCapabilityIfRequested(
+    present,
+    opts.withChartCapability ?? false,
+  );
 }
 
 /**
@@ -73,6 +99,7 @@ export async function listReadableAreas(
  */
 export async function resolveAreasByIds(
   areaIds: string[],
+  opts: { withChartCapability?: boolean } = {},
 ): Promise<ReadableArea[]> {
   const ids = [...new Set(areaIds)].filter(Boolean);
   if (ids.length === 0) return [];
@@ -84,12 +111,18 @@ export async function resolveAreasByIds(
     })
     .from(areas)
     .where(inArray(areas.id, ids));
-  const present = rows.filter(
-    (r): r is typeof r & { legacySystemId: number } => r.legacySystemId != null,
+  const present = rows
+    .filter(
+      (r): r is typeof r & { legacySystemId: number } =>
+        r.legacySystemId != null,
+    )
+    .map((r) => ({
+      id: r.id,
+      displayName: r.displayName,
+      legacySystemId: r.legacySystemId,
+    }));
+  return withChartCapabilityIfRequested(
+    present,
+    opts.withChartCapability ?? false,
   );
-  return present.map((r) => ({
-    id: r.id,
-    displayName: r.displayName,
-    legacySystemId: r.legacySystemId,
-  }));
 }

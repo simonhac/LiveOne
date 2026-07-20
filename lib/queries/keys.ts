@@ -31,6 +31,10 @@ export const queryKeys = {
 
   data: (systemId: SystemIdLike) => ["data", sid(systemId)] as const,
 
+  /** `ids` must already be deduped + sorted (see `dashboardDataBatchQuery`) so the key is stable
+   *  regardless of caller ordering. */
+  dataBatch: (ids: string[]) => ["dataBatch", ids.join(",")] as const,
+
   latest: (systemId: SystemIdLike) => ["latest", sid(systemId)] as const,
 
   history: (

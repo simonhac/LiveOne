@@ -65,7 +65,7 @@ const DEFAULT_TIMEZONE_OFFSET_MIN = 600;
  * - Date objects are converted to AEST formatted ISO8601 strings
  * - CalendarDate objects are converted to ISO8601 date strings (YYYY-MM-DD)
  */
-function transformDates(obj: any, timezoneOffsetMin: number): any {
+export function transformDates(obj: any, timezoneOffsetMin: number): any {
   if (obj === null || obj === undefined) {
     return obj;
   }

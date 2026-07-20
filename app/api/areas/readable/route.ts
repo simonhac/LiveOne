@@ -11,6 +11,8 @@ import { listReadableAreas } from "@/lib/areas/list";
 export async function GET(request: NextRequest) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
-  const areas = await listReadableAreas(auth.userId);
+  const areas = await listReadableAreas(auth.userId, {
+    withChartCapability: true,
+  });
   return NextResponse.json({ areas });
 }

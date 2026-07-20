@@ -93,7 +93,9 @@ export default async function DashboardPage({
         const descriptor: DashboardV3 = isDashboardV3(raw)
           ? raw
           : { version: 3, sections: [] };
-        const sharedAreas = await resolveAreasByIds(descriptorAreaIds(raw));
+        const sharedAreas = await resolveAreasByIds(descriptorAreaIds(raw), {
+          withChartCapability: true,
+        });
         return (
           <DashboardClient
             dashboard={{
@@ -136,7 +138,9 @@ export default async function DashboardPage({
     const grant = canEdit ? null : await getGrant(dashboard.id, userId);
     if (!canEdit && !grant) redirect("/dashboard");
     const sharedAreas = grant
-      ? await resolveAreasByIds(descriptorAreaIds(dashboard.descriptor))
+      ? await resolveAreasByIds(descriptorAreaIds(dashboard.descriptor), {
+          withChartCapability: true,
+        })
       : undefined;
     return await renderCompositionDashboard(dashboard, canEdit, sharedAreas);
   }
