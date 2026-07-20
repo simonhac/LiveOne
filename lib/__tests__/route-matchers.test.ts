@@ -86,7 +86,6 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     "/dashboard/simon/home",
     "/api/data",
     "/api/history",
-    "/api/energy-flow-matrix",
     "/api/system/1/latest",
     "/api/system/1/run-periods",
     "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/provenance-daily",

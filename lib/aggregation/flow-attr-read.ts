@@ -3,9 +3,8 @@
  * over a `[startYMD, endYMD]` local-day range, shaped into the {@link DailyFlowMatrices} the Sankey
  * client consumes (energy + the metric legs emissions/renewable/cost/estimated per edge).
  *
- * Extracted from the `/api/energy-flow-matrix` route so the route is a thin wrapper and other read
- * paths (e.g. the 1d branch of the history API) can call the exact same query + shaping. Pure DB read
- * — no auth, no HTTP.
+ * Originally extracted from the (now-retired) `/api/energy-flow-matrix` route; the sole caller is now
+ * the 1d branch of the history API (`?include=sankey`). Pure DB read — no auth, no HTTP.
  */
 
 import { and, eq, gte, lte } from "drizzle-orm";

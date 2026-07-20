@@ -2,12 +2,13 @@
 
 /**
  * The per-load provenance report (the EV by default) over a trailing window of completed days.
- * Reads the section handle's timezone, fetches the `source=modern` flow matrix, and reduces the
- * metric legs client-side into "$X, Y% renewable, Z g/kWh, N% estimated" + the source split.
+ * Reads the section handle's timezone, fetches the 1d attributed Sankey payload
+ * (`/api/history?interval=1d&include=sankey`), and reduces the metric legs client-side into
+ * "$X, Y% renewable, Z g/kWh, N% estimated" + the source split.
  */
 import { useQuery } from "@tanstack/react-query";
 import LoadProvenanceCard from "@/components/LoadProvenanceCard";
-import { flowMatrixQuery } from "@/lib/queries/flowMatrix";
+import { attributedFlowDailyQuery } from "@/lib/queries/attributedFlowDaily";
 import { reduceLoadProvenance } from "@/lib/energy-flow-matrix";
 import type { CardPlugin, CardRenderProps } from "./types";
 import { useAreaDatum } from "./shared";
@@ -28,12 +29,11 @@ function AreaLoadProvenance({ handle }: CardRenderProps) {
   const endYMD = end.toISOString().slice(0, 10);
 
   const { data: fm, isLoading } = useQuery(
-    flowMatrixQuery({
+    attributedFlowDailyQuery({
       systemId,
       startYMD,
       endYMD,
       timezoneOffsetMin: tz ?? 600,
-      source: "modern",
       enabled: tz != null && !paused,
     }),
   );
