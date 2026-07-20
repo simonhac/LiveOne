@@ -4,7 +4,10 @@ How the dashboard's energy‑flow **Sankey** stays correct over multi‑day rang
 
 > **See also** [battery-provenance.md](battery-provenance.md): the Sankey is the ENERGY leg of a unified
 > `computeFlowAccounting`; provenance adds the METRIC legs (emissions/renewable/cost) on the same allocation,
-> materialized to the superset `point_readings_flow_attr_1d` and served via `?source=modern` on the endpoint below.
+> materialized to the superset `point_readings_flow_attr_1d` and served alongside the energy leg (as
+> `attributedFlow`) by `GET /api/history?include=sankey` — the per-node hover/tap tooltips in the FE
+> Sankey (`components/EnergyFlowSankey.tsx` / `NodeTooltip.tsx`) reduce it client-side via
+> `reduceLoadProvenance`/`reduceSourceProvenance`.
 
 ## The problem it solves
 
@@ -57,12 +60,26 @@ After the daily `agg_1d` pass, the cron recomputes the matrix **per logical syst
 
 ## Read (web)
 
-Two serving paths, one shared computation:
+**One endpoint, `GET /api/history?include=sankey`, for every window** — the former standalone
+`/api/energy-flow-matrix` route was retired once the history endpoint grew a 1d branch (the 30D card and
+the ev-provenance card both moved onto it):
 
-- **Long‑range (30‑day / month / arbitrary)** — `GET /api/energy-flow-matrix?systemId&start&end` returns summed **completed days** from `point_readings_flow_1d` (today's partial day is not included — see the v1 limitation above). Returns an explicit `{reason}` when there's nothing to serve (e.g. a not-yet-materialized or non-logical system).
-- **Sub‑daily (1D/7D)** — bundled with the history payload via `GET /api/history?include=sankey`, computed on the fly from the **same signed 5‑minute rows the history read already loads** (5m and 30m both read `agg_5m`; the matrix is built before 30m bucketing, so 7D stays 5m‑accurate) — no extra query. Refused for `1d` and for filtered requests that don't cover the role set.
+- **1d (30‑day / month / arbitrary)** — reads summed **completed days** from `point_readings_flow_1d`
+  (`flowMatrix`, energy only — today's partial day is not included, a deliberate v1 limitation) and, in
+  parallel, from `point_readings_flow_attr_1d` (`attributedFlow`, energy + emissions/renewable/cost/
+  estimated legs, via `lib/aggregation/flow-attr-read.ts`'s `readAttributedDailyMatrices`). Either field
+  carries a `reason`/`attributedFlowOmittedReason` when there's nothing to serve (e.g. not‑yet‑materialized
+  or a non‑logical system).
+- **Sub‑daily (1D/7D)** — computed on the fly from the **same signed 5‑minute rows the history read
+  already loads** (5m and 30m both read `agg_5m`; the matrix is built before 30m bucketing, so 7D stays
+  5m‑accurate) — no extra query for the energy leg. The attributed leg additionally runs the battery-
+  provenance fold on the fly (`lib/history/build-attributed-flow-matrix.ts`, DB-bound, its own bounded
+  query) and degrades gracefully (`attributedFlowOmittedReason`) on failure — the energy‑only Sankey
+  never blocks on it. Refused for filtered requests that don't cover the role set.
 
-Both are presented through the shared `toEnergyFlowMatrix` (`lib/aggregation/flow-node-meta.ts`). Gated by `FLOW_MATRIX_SERVE_FROM_PG`; off → the dashboard computes sub‑daily client‑side and 30D shows the old client path. `FLOW_MATRIX_COMPUTE_IN_PG` (materialization) and `FLOW_MATRIX_SERVE_FROM_PG` (serving) are independent; rollback is a flag flip.
+Both energy legs are presented through the shared `toEnergyFlowMatrix` (`lib/aggregation/flow-node-meta.ts`).
+Gated by `FLOW_MATRIX_SERVE_FROM_PG`; off → the dashboard computes sub‑daily client‑side. `FLOW_MATRIX_COMPUTE_IN_PG`
+(materialization) and `FLOW_MATRIX_SERVE_FROM_PG` (serving) are independent; rollback is a flag flip.
 
 ## Invariants
 
@@ -79,7 +96,9 @@ Both are presented through the shared `toEnergyFlowMatrix` (`lib/aggregation/flo
 - `lib/aggregation/logical-system.ts` — role→point resolver (`resolveLogicalSystem`, `listCompleteLogicalSystems`).
 - `lib/aggregation/flow-node-meta.ts` — node label/color/order + the shared `toEnergyFlowMatrix` presenter.
 - `lib/energy-flow-matrix.ts` — browser adapter (`calculateEnergyFlowMatrix`).
-- `lib/history/build-flow-matrix.ts` — sub-daily compute from in-hand 5m rows (`buildFlowMatrixFromAggRows`).
-- `lib/db/planetscale/schema.ts` — `point_readings_flow_1d`.
+- `lib/history/build-flow-matrix.ts` — sub-daily energy-only compute from in-hand 5m rows (`buildFlowMatrixFromAggRows`).
+- `lib/history/build-attributed-flow-matrix.ts` — sub-daily ATTRIBUTED compute (energy + metric legs, on the fly).
+- `lib/aggregation/flow-attr-read.ts` — 1d ATTRIBUTED read (`readAttributedDailyMatrices`, from `point_readings_flow_attr_1d`).
+- `lib/db/planetscale/schema.ts` — `point_readings_flow_1d`, `point_readings_flow_attr_1d`.
 - `lib/db/planetscale/flow-matrix-pg.ts` — engine daily recompute (logical-system-driven).
-- `app/api/energy-flow-matrix/route.ts` — long-range read endpoint; `app/api/history/route.ts` — sub-daily `?include=sankey`.
+- `app/api/history/route.ts` — the sole serving route, `?include=sankey` (1d + sub-daily, energy + attributed).

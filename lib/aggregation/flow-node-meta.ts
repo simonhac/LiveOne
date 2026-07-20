@@ -4,8 +4,9 @@
  *
  * The flow table stores only directional canonical paths (`source.battery`, `load.battery`,
  * `source.grid`, `load.grid`, `source.solar*`, `load.<sub>`, `load.rest-of-house`, `load`).
- * The serving endpoint (`app/api/energy-flow-matrix/route.ts`) turns those into the
- * `EnergyFlowNode { id, label, color }` shape the Sankey expects. Colors come from the same
+ * Every serving path (`/api/history`'s sub-daily + 1d `include=sankey` branches,
+ * `lib/aggregation/flow-attr-read.ts`) turns those into the `EnergyFlowNode { id, label, color }`
+ * shape the Sankey expects. Colors come from the same
  * `getColorForPath` the browser path uses — we just normalize the directional battery/grid
  * forms to the underlying device stem (`bidi.battery` / `bidi.grid`) first, since
  * `getColorForPath` keys those by device, not direction. Labels mirror what the client shows

@@ -43,12 +43,13 @@ export const queryKeys = {
   siteData: (systemId: SystemIdLike, period: string, rangeKey: string) =>
     ["siteData", sid(systemId), period, rangeKey] as const,
 
-  flowMatrix: (
+  /** The 1d attributed Sankey payload (`/api/history?interval=1d&include=sankey`) for a range of
+   *  completed local days — e.g. the ev-provenance card's trailing-30-days window. */
+  attributedFlowDaily: (
     systemId: SystemIdLike,
     startYMD: string,
     endYMD: string,
-    source: "legacy" | "modern" = "legacy",
-  ) => ["flowMatrix", sid(systemId), startYMD, endYMD, source] as const,
+  ) => ["attributedFlowDaily", sid(systemId), startYMD, endYMD] as const,
 
   amber: (systemId: SystemIdLike, rangeKey: string) =>
     ["amber", sid(systemId), rangeKey] as const,
@@ -71,7 +72,7 @@ const SYSTEM_RESOURCES = [
   "latest",
   "history",
   "siteData",
-  "flowMatrix",
+  "attributedFlowDaily",
   "amber",
   "runPeriods",
 ] as const;

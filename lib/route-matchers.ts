@@ -55,8 +55,7 @@ export const isPublicRoute = createRouteMatcher(publicRoutes);
 const shareableRoutes = [
   "/dashboard(.*)", // the shared dashboard page (validates the token server-side)
   "/api/data", // live values + readings — requireDashboardAccess
-  "/api/history", // time series — requireDashboardAccess
-  "/api/energy-flow-matrix", // sankey — requireDashboardAccess
+  "/api/history", // time series + sankey (?include=sankey) — requireDashboardAccess
   "/api/system/(.*)", // per-system read endpoints the cards use (latest, run-periods)
   "/api/areas/(.*)/provenance-daily", // battery-provenance history panel — requireDashboardAccess
 ];
