@@ -402,7 +402,7 @@ export default function SiteChartsCard({
     }
   }, [siteData]);
 
-  // Long-range Sankey from Postgres (point_readings_flow_1d), 30D only; a dependent query keyed on
+  // Long-range Sankey from Postgres (point_readings_flow_attr_1d), 30D only; a dependent query keyed on
   // the site fetch's request window. When not yet loaded / errored / not materialized, pgDaily stays
   // null and the render falls back to the client-side window calc.
   const flowOffsetMin = system?.timezoneOffsetMin || 0;
@@ -679,7 +679,7 @@ export default function SiteChartsCard({
             processedHistoryData.generation &&
             processedHistoryData.load &&
             (() => {
-              // 30D: the Sankey is REAL per-day energy from flow_1d — sum the window's days when
+              // 30D: the Sankey is REAL per-day energy from flow_attr_1d — sum the window's days when
               // nothing is hovered, or pick the hovered day's matrix (kWh either way). Sub-daily
               // (1D/7D) shows the instantaneous-POWER (kW) snapshot on hover, else the window
               // matrix via selectFlowMatrix. `focused` drives the kW/kWh label below.

@@ -5,7 +5,7 @@
  * The split MUST come from the flow-matrix allocation rule (a source's instantaneous share of total
  * generation), because only that rule knows how much of a charge interval came from solar vs grid.
  * This mirrors `computeFlowMatrix`'s convention exactly (trapezoidal load energy, LEFT-endpoint source
- * proportion) so the fold's charge/discharge totals stay consistent with `point_readings_flow_1d`'s
+ * proportion) so the fold's charge/discharge totals stay consistent with `point_readings_flow_attr_1d`'s
  * `load.battery` / `source.battery` cells.
  *
  * Discharge is taken directly from the `source.battery` series (its integrated energy), not from the
@@ -52,7 +52,7 @@ function leftPower(series: FlowSeries, i: number): number {
  * non-null — matching `computeFlowMatrix`, which skips a source from allocation when either endpoint
  * is null (while still counting its left endpoint in the denominator). Without this gate a source with
  * a valid left / null right endpoint (a mid-interval data gap) would be over-credited into the battery
- * and diverge from `point_readings_flow_1d`'s cells; here that share falls through to `otherChargeKwh`.
+ * and diverge from `point_readings_flow_attr_1d`'s cells; here that share falls through to `otherChargeKwh`.
  */
 function pairedLeftPower(series: FlowSeries, i: number): number {
   const a = series.power[i];

@@ -55,7 +55,7 @@ export interface DailyFlowMatrix {
 }
 
 /**
- * The 30D Sankey payload: per-day energy matrices from `point_readings_flow_1d`, served RAW (not
+ * The 30D Sankey payload: per-day energy matrices from `point_readings_flow_attr_1d`, served RAW (not
  * pre-summed). The node arrays are the union across the window so every day's matrix shares one
  * index order — the client sums them for the window view ({@link sumDailyFlowMatrices}) or picks
  * one day for the hovered view ({@link pickDailyFlowMatrix}).
@@ -406,8 +406,8 @@ export function calculateEnergyFlowMatrix(
   const prepared = prepareFlowInputs(data);
   if (!prepared) return null;
 
-  // Delegate the integration to the shared, pure core so this live path and the engine's
-  // daily recompute (lib/db/planetscale/flow-matrix-pg.ts) compute identical values by
+  // Delegate the integration to the shared, pure core so this live path and the engine's daily
+  // flow_attr rollup (lib/db/planetscale/battery-provenance-pg.ts) compute identical values by
   // construction.
   const result = computeFlowMatrix({
     timestamps: prepared.timestamps,
@@ -430,7 +430,7 @@ export function calculateEnergyFlowMatrix(
  * the instantaneous POWER (kW) at that 5m/30m sample. Reuses the same node preparation as
  * {@link calculateEnergyFlowMatrix}, then snapshots the flow at `index` via
  * {@link computeInstantFlowMatrix}. Returns null when there's no complete flow or the index is out
- * of range. The 30D hover instead indexes a real per-day energy matrix from `flow_1d` (see
+ * of range. The 30D hover instead indexes a real per-day energy matrix from `flow_attr_1d` (see
  * {@link pickDailyFlowMatrix}); it does NOT use this power snapshot.
  */
 export function calculateInstantFlowMatrix(
@@ -458,9 +458,9 @@ export function calculateInstantFlowMatrix(
 }
 
 /**
- * Pick the window energy-flow matrix for a sankey from the NON-flow_1d sources: the history
+ * Pick the window energy-flow matrix for a sankey from the NON-materialized sources: the history
  * response's bundled matrix (1D/7D), else computed client-side from generation + load. The 30D
- * Sankey is served from the per-day flow_1d matrices instead (see {@link sumDailyFlowMatrices} /
+ * Sankey is served from the per-day flow_attr_1d matrices instead (see {@link sumDailyFlowMatrices} /
  * {@link pickDailyFlowMatrix}); this is its fallback when those aren't materialized.
  * Returns null when there is no complete flow to diagram (missing generation OR load) — the data-driven
  * gate for "this area has loads + sources". Extracted so every sankey site shares one precedence.

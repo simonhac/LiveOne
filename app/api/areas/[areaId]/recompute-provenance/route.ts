@@ -20,10 +20,11 @@ const DEFAULT_LIMIT = 14;
 const MAX_LIMIT = 31;
 
 /**
- * POST /api/areas/[areaId]/recompute-provenance — materialise ONE battery Area's provenance over a date
- * range: the learned η (`bidi.battery/round-trip-efficiency`), the 3 blend points, and the
- * `point_readings_flow_attr_1d` rollup. Runs in BOUNDED BATCHES (mirrors `recompute-flow`) so a long range
- * can't blow the function timeout. This is the API path for activating an Area's battery-provenance (e.g. a
+ * POST /api/areas/[areaId]/recompute-provenance — materialise ONE Area's `point_readings_flow_attr_1d`
+ * rollup (the sole flow/Sankey matrix) over a date range: energy + grid/solar attribution for ANY
+ * complete Area, PLUS the battery blend (learned η `bidi.battery/round-trip-efficiency` + the 3 blend
+ * points) when a battery is bound. Runs in BOUNDED BATCHES so a long range can't blow the function
+ * timeout. This is the API path for activating/recomputing an Area's Sankey + battery-provenance (e.g. a
  * newly-bound off-grid site) WITHOUT direct DB access — helper device + blend points are ensured on demand.
  * Authorized for the area's **owner** or an **admin**.
  *
@@ -74,7 +75,11 @@ export async function POST(
   const handle = area.legacySystemId;
   const tz = area.tz;
 
-  // Provenance only exists for an Area with a bound battery.
+  // flow_attr_1d (the sole flow/Sankey matrix) covers battery AND battery-less complete Areas: energy +
+  // grid/solar attribution always, the battery blend only when a battery is bound. Detect a bound
+  // battery to decide whether to run the battery-only learn below — a battery-less Area still gets its
+  // energy/attribution rollup written (the daily cron already materialises these; this route lets the
+  // "Recompute" button do the same on demand rather than 422'ing).
   const [bat] = await planetscaleDb
     .select({ id: areaBindings.id })
     .from(areaBindings)
@@ -86,11 +91,7 @@ export async function POST(
       ),
     )
     .limit(1);
-  if (!bat)
-    return NextResponse.json(
-      { error: "Area has no bound battery (role=battery, metric=power)" },
-      { status: 422 },
-    );
+  const hasBattery = !!bat;
 
   const body = (await request.json().catch(() => ({}))) as {
     start?: string;
@@ -154,7 +155,7 @@ export async function POST(
   let learnedEtaDays: number | null = null;
   let learnMode: string | null = null;
   let reducedDays: number | null = null;
-  if (isFirstBatch) {
+  if (isFirstBatch && hasBattery) {
     const isFullHistory =
       typeof body.start !== "string" && typeof body.last !== "string";
     const r = await learnAllForHandle(planetscaleDb, handle, Date.now(), {

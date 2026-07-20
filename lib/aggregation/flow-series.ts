@@ -1,9 +1,9 @@
 /**
  * Pure domain helpers for assembling energy-flow source/load series — NO database, NO UI.
  *
- * Shared by the browser matrix adapter (`lib/energy-flow-matrix.ts`) and the engine's daily
- * recompute (`lib/db/planetscale/flow-matrix-pg.ts`) so both resolve the same canonical
- * nodes by construction.
+ * Shared by the browser matrix adapter (`lib/energy-flow-matrix.ts`) and the engine's daily flow_attr
+ * rollup (`lib/db/planetscale/battery-provenance-pg.ts`) so both resolve the same canonical nodes by
+ * construction.
  */
 
 import { FlowSeries } from "./flow-matrix-core";

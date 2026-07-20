@@ -41,7 +41,7 @@ export interface LogicalSystem {
   /**
    * The Area this view belongs to (the area whose `legacy_system_id == id`). Always present:
    * `resolveLogicalSystem` returns `null` (and logs) rather than yielding an Area-less system, so
-   * the flow recompute never writes an un-keyed `point_readings_flow_1d` row. `area_id` is the
+   * the flow rollup never writes an un-keyed `point_readings_flow_attr_1d` row. `area_id` is the
    * primary key of that table (P3-tail-1). See areas-and-dashboards.md (P3).
    */
   areaId: string;
@@ -82,7 +82,7 @@ export async function resolveLogicalSystem(
 
   const isComplete = isCompleteRoleSet(points.map((p) => p.stem));
 
-  // A logical system MUST map to an Area — `area_id` is the primary key of point_readings_flow_1d
+  // A logical system MUST map to an Area — `area_id` is the primary key of point_readings_flow_attr_1d
   // (P3-tail-1). Flow is AREA-only: a system with no Area has no flow to record, so return null (never
   // mint one here). Areas are EXPLICIT now — a device gets a flow view only once a user groups it into
   // an Area (createArea); it is NOT auto-minted at create-time or lazily healed here.

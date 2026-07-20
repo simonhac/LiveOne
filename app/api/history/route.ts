@@ -574,7 +574,7 @@ export async function GET(request: NextRequest) {
 
     // Optional energy-flow Sankey bundled with the history payload (?include=sankey). Only sub-daily
     // intervals are computed here (the in-hand signed 5m rows); 1d / long-range is served from the
-    // materialized flow_1d endpoint instead.
+    // materialized flow-matrix (energy-flow-matrix) endpoint instead.
     const includeParam = searchParams.get("include");
     const includeSankey = includeParam
       ? includeParam

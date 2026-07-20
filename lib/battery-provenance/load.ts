@@ -19,12 +19,7 @@ import {
   pointReadingsAgg5m,
   systems,
 } from "@/lib/db/planetscale/schema";
-import {
-  applyPowerTransform,
-  buildFlowSeries,
-  ClassifiedPoint,
-} from "@/lib/aggregation/flow-series";
-import type { FlowSeries } from "@/lib/aggregation/flow-matrix-core";
+import { applyPowerTransform } from "@/lib/aggregation/flow-series";
 import { loadFlowSeriesFromAgg5m } from "@/lib/aggregation/flow-series-pg";
 import { resolveLogicalSystem } from "@/lib/aggregation/logical-system";
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
@@ -202,39 +197,19 @@ export async function loadProvenanceInputs(
     bound.find((b) => b.role === "battery" && b.metric === "power")?.systemId ??
     null;
 
-  // Flow series (source/load kW). When unifying, build them from the SAME canonical
-  // `resolveLogicalSystem` + shared PG builder that `point_readings_flow_1d` uses, so flow_attr's
-  // edges match flow_1d byte-for-byte (fixes per-inverter solar-leaf granularity) and area-of-ones —
-  // which have no power `area_bindings` — are covered too. Legacy path builds straight off the bound
-  // power points. Gated until flow_1d↔flow_attr parity is confirmed on prod (FLOW_ATTR_UNIFIED).
-  let timeline: number[];
-  let sources: FlowSeries[];
-  let loads: FlowSeries[];
-  if (process.env.FLOW_ATTR_UNIFIED === "true") {
-    const ls = await resolveLogicalSystem(handle);
-    if (!ls) return null;
-    const bundle = await loadFlowSeriesFromAgg5m(db, ls.points, startMs, endMs);
-    ({ timeline, sources, loads } = bundle);
-  } else {
-    const powerPoints = bound.filter((b) => b.metric === "power" && b.stem);
-    const perPoint = await Promise.all(
-      powerPoints.map(async (p) => ({
-        p,
-        series: await readAgg5m(db, p.systemId, p.pointId, startMs, endMs),
-      })),
-    );
-    const tset = new Set<number>();
-    for (const { series } of perPoint) for (const s of series) tset.add(s.t);
-    timeline = [...tset].sort((a, b) => a - b);
-    const tIndexLocal = new Map(timeline.map((t, i) => [t, i]));
-    const classified: ClassifiedPoint[] = perPoint.map(({ p, series }) => ({
-      stem: p.stem!,
-      power: scatter(timeline, tIndexLocal, series, (v) =>
-        applyPowerTransform(toKw(v, p.unit), p.transform),
-      ),
-    }));
-    ({ sources, loads } = buildFlowSeries(classified));
-  }
+  // Flow series (source/load kW) are built from the SAME canonical `resolveLogicalSystem` + shared PG
+  // builder the Sankey reads, so the attributed matrix's edges match by construction — per-inverter
+  // solar-leaf granularity and area-of-ones (which have no power `area_bindings`) are covered too. This
+  // assembly is deliberately kept directly callable with an arbitrary {startMs, endMs} window so read
+  // paths (history/tooltips) can reuse it without reconstructing the flow-series build.
+  const ls = await resolveLogicalSystem(handle);
+  if (!ls) return null;
+  const { timeline, sources, loads } = await loadFlowSeriesFromAgg5m(
+    db,
+    ls.points,
+    startMs,
+    endMs,
+  );
   if (timeline.length < 2 || sources.length === 0 || loads.length === 0)
     return null;
   const tIndex = new Map(timeline.map((t, i) => [t, i]));

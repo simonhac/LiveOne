@@ -25,7 +25,6 @@ const publicRoutes = [
   // are SURGICAL (specific suffixes) so the sibling mutation/CRUD routes — /api/areas,
   // /api/areas/[id], /api/areas/[id]/bindings — stay Clerk-gated.
   "/api/areas/(.*)/recompute-provenance",
-  "/api/areas/(.*)/recompute-flow",
   "/api/areas/(.*)/provenance-summary",
   "/api/areas/by-handle/(.*)",
   // All other routes (pages + APIs) require Clerk auth, except share links (?access=, below)

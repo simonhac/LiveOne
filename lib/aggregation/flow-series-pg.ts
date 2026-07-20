@@ -1,9 +1,9 @@
 /**
  * Shared PG→FlowSeries builder — the single place that turns a set of logical power points + a time
  * window of `point_readings_agg_5m` into the canonical source/load `FlowSeries` the flow accounting
- * integrates. Used by BOTH the energy-only `point_readings_flow_1d` recompute
- * (`flow-matrix-pg.ts`) and the attributed `point_readings_flow_attr_1d` rollup, so the two tables
- * are built from byte-identical edges by construction — the whole point of unifying them.
+ * integrates. Used by the engine's attributed `point_readings_flow_attr_1d` rollup
+ * (`battery-provenance-pg.ts`) — the sole flow matrix — so the materialised Sankey and any live path
+ * built on this helper share byte-identical edges by construction.
  *
  * DB-touching but domain-light: it reads signed 5-minute `avg` for the given point refs (which may
  * span child systems for a multi-device area), aligns them onto one dense timeline, converts to kW +

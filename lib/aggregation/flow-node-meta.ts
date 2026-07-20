@@ -1,6 +1,6 @@
 /**
  * Resolve display metadata (label, color, ordering) for the canonical energy-flow paths
- * stored in `point_readings_flow_1d` — NO database access here.
+ * stored in `point_readings_flow_attr_1d` — NO database access here.
  *
  * The flow table stores only directional canonical paths (`source.battery`, `load.battery`,
  * `source.grid`, `load.grid`, `source.solar*`, `load.<sub>`, `load.rest-of-house`, `load`).
@@ -126,7 +126,7 @@ export function compareLoadPaths(a: string, b: string): number {
 /**
  * Assemble the served `EnergyFlowMatrix` from a computed (source-path, load-path, energy) matrix:
  * sort source/load paths canonically, remap the matrix, recompute totals, and resolve each node's
- * `{id, label, color}`. Shared by the on-the-fly history compute and the `flow_1d` read endpoint so
+ * `{id, label, color}`. Shared by the on-the-fly history compute and the flow-matrix read endpoint so
  * both present identical node identity/order. `sources`/`loads`/`matrix` are aligned (matrix is
  * `[sourceIdx][loadIdx]`); ordering of the inputs is irrelevant since this re-sorts.
  */
@@ -170,7 +170,7 @@ export function toEnergyFlowMatrix(
 }
 
 /**
- * Reshape raw `point_readings_flow_1d` rows into per-day energy matrices WITHOUT summing across days
+ * Reshape raw `point_readings_flow_attr_1d` rows into per-day energy matrices WITHOUT summing across days
  * (the client sums for the window view or picks a day for the hovered view). The node arrays are the
  * canonical-sorted union of paths across the whole window, so every day's dense matrix shares one
  * index order. Totals are intentionally omitted here — derived by the client per view.

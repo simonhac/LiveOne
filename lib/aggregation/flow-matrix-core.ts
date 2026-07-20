@@ -15,9 +15,9 @@
  *     SOURCE series. Splitting a signed bidirectional series and computing rest-of-house are
  *     domain concerns owned by the callers, not this integrator.
  *
- * Shared by the browser adapter (`lib/energy-flow-matrix.ts`) and the engine's daily
- * recompute (`lib/db/planetscale/flow-matrix-pg.ts`) so both compute identical values by
- * construction — the same discipline as `lib/aggregation/point-aggregates.ts`.
+ * Shared by the browser adapter (`lib/energy-flow-matrix.ts`) and the engine's daily flow_attr rollup
+ * (`lib/db/planetscale/battery-provenance-pg.ts`) so both compute identical values by construction —
+ * the same discipline as `lib/aggregation/point-aggregates.ts`.
  */
 
 export interface FlowSeries {

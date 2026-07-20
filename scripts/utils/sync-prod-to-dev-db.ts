@@ -119,7 +119,6 @@ const FULL: FullTable[] = [
       children: [
         { table: "area_devices", cols: ["area_id"] },
         { table: "area_bindings", cols: ["area_id"] },
-        { table: "point_readings_flow_1d", cols: ["area_id"] },
         { table: "point_readings_flow_attr_1d", cols: ["area_id"] },
         { table: "battery_provenance_daily", cols: ["area_id"] },
         { table: "device_trackers", cols: ["area_id"] },
@@ -242,30 +241,24 @@ const INCREMENTAL: IncrementalTable[] = [
     overlap: "2 days",
     onConflict: "update",
   },
-  {
-    name: "point_readings_flow_1d",
-    mode: "incremental",
-    watermark: "updated_at",
-    overlap: "2 days",
-    onConflict: "update",
-    // FK safety vs snapshot skew: `areas` is copied minutes earlier in the run (separate snapshot), so a
-    // transient areas idDrift/ordering gap can stage a flow row referencing an area not yet in dev — which
-    // aborts the WHOLE sync (the 2026-07-17 failure). Skip those rows, like point_readings skips
-    // session-less readings; they re-sync next run within the overlap. `areas` is tiny, so this is trivial.
-    filter: "area_id IN (SELECT id FROM public.areas)",
-  },
-  // Derived per-(area, day) tables, same class as flow_1d: materialised by the engine, NOT recomputed
-  // on dev (crons off), so dev/preview only has them if we copy them. flow_attr_1d is the attributed
-  // superset the modern Sankey + provenance-summary read; battery_provenance_daily powers the
-  // Battery-Contents card + daily provenance panels. Both keyed by updated_at, both idDrift children of
-  // `areas` (cleared + re-populated here on a uuid realign, bounded by the overlap — see areas.idDrift).
+  // Derived per-(area, day) tables materialised by the engine, NOT recomputed on dev (crons off), so
+  // dev/preview only has them if we copy them. flow_attr_1d is the attributed matrix the Sankey +
+  // provenance-summary read (the sole flow matrix since flow_1d was retired); battery_provenance_daily
+  // powers the Battery-Contents card + daily provenance panels. Both keyed by updated_at, both idDrift
+  // children of `areas` (cleared + re-populated here on a uuid realign, bounded by the overlap — see
+  // areas.idDrift).
+  //
+  // FK safety vs snapshot skew: `areas` is copied minutes earlier in the run (separate snapshot), so a
+  // transient areas idDrift/ordering gap can stage a row referencing an area not yet in dev — which would
+  // abort the WHOLE sync (the 2026-07-17 failure). Skip those rows (`area_id IN (SELECT id FROM
+  // public.areas)`); they re-sync next run within the overlap. `areas` is tiny, so this is trivial.
   {
     name: "point_readings_flow_attr_1d",
     mode: "incremental",
     watermark: "updated_at",
     overlap: "2 days",
     onConflict: "update",
-    filter: "area_id IN (SELECT id FROM public.areas)", // FK safety — see point_readings_flow_1d
+    filter: "area_id IN (SELECT id FROM public.areas)", // FK safety — see the comment above
   },
   {
     name: "battery_provenance_daily",
@@ -273,7 +266,7 @@ const INCREMENTAL: IncrementalTable[] = [
     watermark: "updated_at",
     overlap: "2 days",
     onConflict: "update",
-    filter: "area_id IN (SELECT id FROM public.areas)", // FK safety — see point_readings_flow_1d
+    filter: "area_id IN (SELECT id FROM public.areas)", // FK safety — see the comment above
   },
 ];
 
