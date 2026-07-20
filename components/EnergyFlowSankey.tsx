@@ -99,6 +99,10 @@ interface PanelPlacement {
   top: number;
   beakTop: number;
   variant: "side" | "overlay";
+  /** Beak shape: the "diamond" centred on the node (tall nodes), or a "half beak" hugging the node's
+   *  top/bottom edge (short nodes, where the diamond would overshoot). `beakTop` is interpreted per
+   *  variant — see NodeTooltip. */
+  beakVariant: "diamond" | "half-top" | "half-bottom";
   /** False during the measure pass (panel mounted off-position, hidden) — see the positioning effect. */
   visible: boolean;
 }
@@ -111,6 +115,9 @@ interface HoveredNode {
     | { left: SankeyNodeTooltip; right: SankeyNodeTooltip };
   /** The node's SVG-space box at hover time (layout is invalidated on every effect re-run). */
   geomSvg: { x0: number; x1: number; y0: number; y1: number };
+  /** Whether the node box is tall enough to render its own title chip — when true the tooltip omits
+   *  the (redundant) heading. */
+  titleVisibleInNode: boolean;
   /** Which discovered column the node sits in — drives which side(s) the panel(s) appear on. */
   columnPos: "left" | "right" | "interior";
   /** The node's vertical position within its column — "top"/"bottom" anchor the panel to that edge of
@@ -160,6 +167,15 @@ function shortenLabel(label: string): string {
 // Colors now come from the matrix nodes (energy-flow-matrix.ts uses centralized colors)
 
 const LINK_MIN = 0.01; // ignore negligible flows (kWh/kW)
+
+/** Min node box height (px) for the node to render its own title chip (see the draw loop). Below this
+ *  the node has no title, so the hover tooltip carries the heading instead. */
+const MIN_HEIGHT_FOR_LABEL = 28;
+/** The diamond beak's px size. Nodes shorter than this get the "half beak" (see NodeTooltip) so the
+ *  diamond doesn't overshoot the node. */
+const BEAK_SIZE = 12;
+/** The half beak's px size (width & height) — keep in sync with NodeTooltip's half-beak dimensions. */
+const HALF_BEAK_SIZE = 7;
 
 /** Classic two-column graph: every source above threshold → a left node, every load → a right node. */
 function buildColumnsGraph(
@@ -683,6 +699,7 @@ export default function EnergyFlowSankey({
             key: nodeKey,
             content,
             geomSvg: { x0: node.x0, x1: node.x1, y0: node.y0, y1: node.y1 },
+            titleVisibleInNode: node.y1 - node.y0 >= MIN_HEIGHT_FOR_LABEL,
             columnPos,
             vertPos,
             color: node.color,
@@ -715,7 +732,7 @@ export default function EnergyFlowSankey({
       const spacing = 15;
 
       // Minimum heights needed for each element
-      const minHeightForLabel = labelBoxHeight + 10; // label + some padding
+      const minHeightForLabel = MIN_HEIGHT_FOR_LABEL; // = labelBoxHeight + 10 (label + some padding)
       const minHeightForValue = minHeightForLabel + energyValueHeight + spacing;
       const minHeightForUnit = 65; // Show kWh unit when box is at least 65px tall
       const minHeightForPercentage = 100; // Show percentage when box is at least 100px tall
@@ -870,13 +887,14 @@ export default function EnergyFlowSankey({
         top: 0,
         beakTop: 0,
         variant: "overlay",
+        beakVariant: "diamond",
         visible: true,
       });
       setPlacementR(null);
       return;
     }
 
-    const PANEL_WIDTH = 184; // keep in sync with NodeTooltip's `width` default
+    const PANEL_WIDTH = 160; // keep in sync with NodeTooltip's `width` default
     const GAP = 12;
     const PAD = 8;
     // Captured into a local `const` so `isDualTooltip`'s narrowing survives into the nested `compute`
@@ -902,6 +920,7 @@ export default function EnergyFlowSankey({
       const nodeTopVp = r.top + y0 * sy;
       const nodeBottomVp = r.top + y1 * sy;
       const nodeCenterYVp = r.top + ((y0 + y1) / 2) * sy;
+      const nodeHeightVp = nodeBottomVp - nodeTopVp;
 
       const H = ref.current?.offsetHeight || estimatedHeight;
       let left =
@@ -919,6 +938,7 @@ export default function EnergyFlowSankey({
           top: 0,
           beakTop: 0,
           variant: "overlay",
+          beakVariant: "diamond",
           visible: true,
         };
       }
@@ -933,11 +953,37 @@ export default function EnergyFlowSankey({
             ? nodeBottomVp - H
             : nodeCenterYVp - H / 2;
       const top = Math.max(bandTopVp, Math.min(desiredTop, bandBottomVp - H));
-      const beakTop = Math.max(
-        12,
-        Math.min(nodeCenterYVp - top, Math.max(H - 12, 12)),
-      );
-      return { side, left, top, beakTop, variant: "side", visible: true };
+
+      // Beak placement. Tall node: a diamond centred on the node's vertical centre (clamped so it can't
+      // run off the panel). Short node (shorter than the diamond): a half beak whose flat edge sits on
+      // the node's near edge — its BOTTOM edge for a bottom/middle node, its TOP edge for a top node —
+      // so the beak hugs the thin node instead of the diamond floating past it. `beakTop` is the y (in
+      // panel coords) of that flat edge (half beak) or the diamond's centre (diamond); see NodeTooltip.
+      let beakVariant: PanelPlacement["beakVariant"] = "diamond";
+      let beakTop: number;
+      if (nodeHeightVp < BEAK_SIZE) {
+        if (hovered.vertPos === "top") {
+          beakVariant = "half-top";
+          beakTop = Math.max(0, Math.min(nodeTopVp - top, H - HALF_BEAK_SIZE));
+        } else {
+          beakVariant = "half-bottom";
+          beakTop = Math.max(HALF_BEAK_SIZE, Math.min(nodeBottomVp - top, H));
+        }
+      } else {
+        beakTop = Math.max(
+          12,
+          Math.min(nodeCenterYVp - top, Math.max(H - 12, 12)),
+        );
+      }
+      return {
+        side,
+        left,
+        top,
+        beakTop,
+        variant: "side",
+        beakVariant,
+        visible: true,
+      };
     };
 
     const ESTIMATE_FULL = 300;
@@ -1018,6 +1064,8 @@ export default function EnergyFlowSankey({
     placement: PanelPlacement | null;
     ref: React.RefObject<HTMLDivElement | null>;
     color: string;
+    /** Omit the heading when the node box already shows its own title (see `titleVisibleInNode`). */
+    showHeading: boolean;
   }[] = hovered
     ? isDualTooltip(hovered.content)
       ? [
@@ -1027,6 +1075,7 @@ export default function EnergyFlowSankey({
             placement: placementL,
             ref: panelRefL,
             color: hovered.color,
+            showHeading: !hovered.titleVisibleInNode,
           },
           {
             key: "right" as const,
@@ -1034,6 +1083,7 @@ export default function EnergyFlowSankey({
             placement: placementR,
             ref: panelRefR,
             color: hovered.color,
+            showHeading: !hovered.titleVisibleInNode,
           },
         ]
       : hovered.columnPos === "right"
@@ -1044,6 +1094,7 @@ export default function EnergyFlowSankey({
               placement: placementR,
               ref: panelRefR,
               color: hovered.color,
+              showHeading: !hovered.titleVisibleInNode,
             },
           ]
         : [
@@ -1053,6 +1104,7 @@ export default function EnergyFlowSankey({
               placement: placementL,
               ref: panelRefL,
               color: hovered.color,
+              showHeading: !hovered.titleVisibleInNode,
             },
           ]
     : [];
@@ -1081,6 +1133,8 @@ export default function EnergyFlowSankey({
                 left={p.placement.left}
                 top={p.placement.top}
                 beakTop={p.placement.beakTop}
+                beakVariant={p.placement.beakVariant}
+                showHeading={p.showHeading}
                 hidden={!p.placement.visible}
                 panelRef={p.ref}
                 onClose={() => setHovered(null)}
